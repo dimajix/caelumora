@@ -44,6 +44,219 @@ they were there:
   `ChannelLoop::remove_participant`, the entity stores' `delete_*` - and every listing changes with
   it.
 
+## Plan (2026-10-05)
+
+Decided by the maintainer: what a user deletes is deleted *softly* - marked, hidden, kept - and a
+*hard* delete, here called a purge, is an administrator's act or the result of a retention policy
+he configures. Whether something deleted may be restored, and by whom, is the `SecurityManager`'s
+decision like any other. This covers sessions, channels and agents with their state (histories,
+transcripts, notes), and participants removed from a channel.
+
+### The rules
+
+- **Deleting marks.** The document stays in the `EntityStore` with `deleted: Some(Removal)` - who
+  and when. It is the entity's state, like `created_at`, not a protocol: the act itself, and a
+  purge, which leaves nothing to mark, belong to the audit log ([140](140-audit-log.md)).
+- **What is marked is not there** for every read, listing, update and delete of the store - also
+  for the system - so that no caller has to remember to filter. It is reached only by the reads
+  that ask for what was deleted (`get_deleted_…`, `list_deleted_…`), with a permission of their
+  own.
+- **The runtime state stays** until the purge: the `StateStore` is not touched by a delete. It is
+  reachable only through its channel or agent, so hiding the document hides it.
+- **A channel is reached through its session.** Deleting a session marks the session only; its
+  channels are hidden with it, because every path to a channel leads through its session
+  (`session.channels`, `Views::channel_of`). So no cascade of marks, and restoring a session brings
+  back exactly the channels that were not deleted themselves. Nothing in production may read a
+  channel past its session; `EntityStore::list_channels` has no production caller and gets none.
+- **Ids are never reused**: `create_…` of an id that is marked is a `Conflict`. Names are free
+  again: a deleted channel or agent does not block its name, and restoring one whose name was taken
+  meanwhile is refused as the conflict it is.
+- **Restoring** takes the mark away and nothing else: a session restored is started when it is
+  opened, like any stored session; a channel restored into its session is listed in it again and
+  started if the session runs.
+- **Purging** removes the document and the state for good - what `delete` does today. Only what
+  is marked is purged by a caller (delete first); the runtime undoes a failed creation with it as
+  the system.
+
+### Types and traits (`caelumora-model`)
+
+- `Removal { by: ActorId, at: DateTime<Utc> }` (new, `removal.rs`): the mark - of a deleted entity
+  and of a participant that left. `by` is `SecurityContext::caller_id`, as the log has it today.
+- `trait Deletable: Secured { fn deleted(&self) -> Option<&Removal>; fn set_deleted(&mut self,
+  deleted: Option<Removal>); }` - what the stores are generic over, besides `Secured`. A trait of
+  its own: carrying attributes and being deletable are two things, and `Secured` is implemented by
+  what is not stored.
+- `deleted: Option<Removal>` with `#[serde(default, skip_serializing_if = "Option::is_none")]` on
+  every stored kind - `Session`, `Channel`, `Agent`, and `Personality`, `SessionTemplate`, `User`,
+  `UserProfile`, `ComponentDescriptor` - so that every kind keeps the same operations (issue 93)
+  and the stores implement them once. Documents stored before load unchanged; no migration.
+- `EntityKind { Personality, SessionTemplate, Agent, Session, Channel, User, UserProfile,
+  Component }` (new) and three actions keyed by it, each carrying the stored attributes:
+  `ActionType::ReadDeleted(EntityKind, &SecurityAttributes)`, `Restore(…)`, `Purge(…)`. Per-kind
+  variants like `DeleteSession` would be 24 more; the kind as a value is the better shape, and the
+  existing per-kind variants could follow it later - named here, not done. `Actions::entity`
+  (`store_impl/access.rs`) and `StoreError::NotFound::entity` become the `EntityKind` instead of a
+  `&'static str`.
+- `Channel::former: Vec<FormerParticipant>` (`#[serde(default)]`) with `FormerParticipant {
+  participant: Participant, left: Removal }`. A list of its own rather than a status in
+  `participants`: six places read `participants` as "who is in the channel" (`ChannelLoop::new`,
+  `participant_attributes`, `require_cleared`, `ChannelView::members`, `shows_approvals`, the
+  controller), and `Participant` would change its stored shape. Its `HistoryLimit` is not kept: a
+  participant added again is given a new one.
+- `AccessQuestions`: `may_restore(context, kind, attributes)` and `may_purge(…)` for the
+  capabilities in snapshots (`can_restore`, `can_purge`).
+- `GlobalEvent::SessionRestored(SessionId)`, `ChannelRestored(SessionId, ChannelId)`,
+  `AgentRestored(AgentId)`, published like their `…Created`. `…Deleted` stays what a delete
+  announces. A purge announces nothing: nobody but the trash shows what it removes.
+
+### `EntityStore` (trait, `MemoryStore`, `JsonFileStore`)
+
+Per kind, besides the five operations:
+
+| Operation | asks | does |
+|---|---|---|
+| `delete_x(ctx, id) -> bool` | `DeleteX`, as today | marks; `false` if nothing there, or marked already |
+| `restore_x(ctx, id) -> ()` | `Restore(kind, stored)` | removes the mark; `NotFound` if not marked or not readable |
+| `purge_x(ctx, id) -> bool` | `Purge(kind, stored)` | removes the document, marked or not |
+| `get_deleted_x(ctx, id) -> X` | `ReadDeleted(kind, stored)` | the marked document; `NotFound` otherwise |
+| `list_deleted_x(ctx) -> Vec<X>` | `ListX`, then `ReadDeleted` each | the marked documents |
+
+- `Access` (`store_impl/access.rs`) is bound to `Deletable`: `read`, `filter`, `change` and
+  `delete` treat a marked entity as absent; new `read_deleted`, `restore`, `purge`. `Actions` gets
+  the `kind`.
+- `MemoryStore`: `delete_in` sets the mark; new `restore_in`, `purge_in` (today's `delete_in`),
+  `get_deleted_in`, `list_deleted_in`.
+- `JsonFileStore`: `delete_file` rewrites the document with the mark, at its path - one file per
+  id stays true; `purge_file` is today's `delete_file`; `list_dir` and `read_file` filter.
+- `find_user_by_name` skips the marked.
+- The cost: 32 signatures on the trait, each one line over the generic helpers.
+
+`StateStore`: `delete_channel_state` stays and is called on a purge only. New
+`delete_agent_state(agent_id)` - the agent's own state and its state in every channel - for the
+purge of an agent.
+
+### Policy (`OwnershipSecurityManager`)
+
+- `Delete…`: the owner, as today.
+- `ReadDeleted`, `Restore`: the owner - whoever deleted something of their own sees it in the
+  trash and takes it back.
+- `Purge`: the system only, until there is an administrator
+  ([125](125-invisible-admin.md)); the retention policy ([07](07-session-deletion-audit.md)) acts
+  as the system.
+- A policy that wants a user's delete to be final configures the retention to purge at once (07).
+
+### Runtime
+
+- `SessionManager::delete_session(ctx, id)`: as today up to the store - `DeleteSession`, stop the
+  loop, `ChannelDeleted` per channel, `SessionDeleted` - but `delete_session` marks, and neither
+  the channels' documents nor their state are touched.
+- `SessionManager::restore_session(ctx, id) -> Session`: `EntityStore::restore_session`, then
+  `SessionRestored`. Not started.
+- `SessionManager::purge_session(ctx, id)`: `get_deleted_session` (only what is marked),
+  `purge_session`, then as the system `purge_channel` and `delete_channel_state` for every channel
+  of `session.channels` and every deleted channel with its `session_id`.
+- `SessionLoop::delete_channel(ctx, id)`: as today - out of `session.channels`, loop stopped,
+  events - but the document is marked and the state stays.
+- `SessionLoop::restore_channel(ctx, id) -> Arc<ChannelLoop>`: `get_deleted_channel`, must be of
+  this session; the name must be free (`channel_by_name`); `restore_channel`;
+  `SessionController::add_channel`; start the loop as `create_channel` does, from the stored state;
+  `ChannelRestored`.
+- `SessionLoop::purge_channel(ctx, id)`: `purge_channel`, `delete_channel_state`.
+- `discard_channel` and the rollback in `create_session` purge as the system.
+- `ChannelController::remove_participant` moves the participant to `former` with the `Removal`;
+  `add_participant` takes it out again. Attributes, history limits and events as today.
+- Readers that change by the filter alone, each with its test: `Views::privacy_of` (a deleted
+  session is gone: recall by the origin's privacy when written, as for a purged one),
+  `template::agent` (a deleted agent's name is not reused but free), `SessionLoop::channel_by_name`.
+
+### Views (`caelumora_runtime::view`)
+
+- `ChannelView::former_members() -> Vec<MemberView>` from `Channel::former`;
+  `ChannelView::member(actor)` looks there after `participants`. Finding a former agent by its
+  messages stays for channels stored before; users become former members too.
+  `MemberView::left() -> Option<&Removal>` replaces the `former` flag.
+- `Reached<T> { There(T), Gone(Removal), Never }` (new) is what `Views::channel_of` and
+  `Views::agent_of` answer, in place of `Option`. `Gone` only to a viewer who could read it were
+  it there (the stored attributes, as the store asks); to everyone else it never was, so nothing
+  can be probed. `Views::name_of` names a deleted agent by its stored name, so that old messages
+  keep their sender.
+- `Views::deleted_sessions()`, `SessionView::deleted_channels()`: the trash, through
+  `list_deleted_…` as the viewer.
+- Snapshots: `ChannelSnapshot::former_members: Vec<MemberSnapshot>` (with `Detail::MEMBERS`),
+  `MemberSnapshot::left: Option<Removal>`; `SessionSnapshot` and `ChannelSnapshot` of the trash
+  carry `deleted: Removal`, `can_restore`, `can_purge`.
+
+### REST (`caelumora-rest-server`)
+
+| Route | |
+|---|---|
+| `DELETE /sessions/{id}`, `DELETE …/channels/{cid}` | unchanged for clients: now soft |
+| `GET /sessions?deleted=true`, `GET /sessions/{id}/channels?deleted=true` | the trash, each entry with `deleted`, `can_restore`, `can_purge` |
+| `POST /sessions/{id}/restore`, `POST …/channels/{cid}/restore` | restore; `409` if the name is taken, `404` if not deleted or not visible |
+| `POST /sessions/{id}/purge`, `POST …/channels/{cid}/purge` | purge; `403` unless the policy allows |
+| `GET …/channels/{cid}` | additionally `former_members`, each with `left` |
+| `…/actors/{aid}/history`, `given-up-turns`, `messages/{mid}/context`, `GET …/participants/{aid}` | also for a former member: `member_of` asks `ChannelView::member` |
+| `DELETE /agents/{id}`, `POST /agents/{id}/restore`, `POST /agents/{id}/purge`, `GET /agents?deleted=true` | step 6 |
+
+`KnowledgeRefResponse` gets `channel_deleted: bool` from `Reached::Gone`. All additions are
+additive for `caelumora-web-ui`. `ApiError::from_runtime` maps the new refusals; a restore blocked
+by a name is the existing name conflict.
+
+### Web UI
+
+- The member list gets a folded group "Former members", each with when it left and - where
+  `can_read_context` - the history icon, so that the turn an agent gave up when it was removed
+  ([146](146-show-given-up-turns.md)) can be read.
+- The sidebar gets "Deleted sessions", the channel list "Deleted channels": name, who and when,
+  "Restore" where `can_restore`, "Delete for good" where `can_purge`, the latter confirmed.
+- `SessionRestored` and `ChannelRestored` on the global stream reload the lists.
+
+### Steps
+
+1. **The mark and the filter** - no behaviour change. `Removal`, `Deletable`, `deleted` on every
+   stored kind, `EntityKind` in `Actions` and `StoreError`; both stores treat a marked document as
+   absent. Nothing sets a mark yet; the store suite (`store_impl/suite.rs`) tests it with documents
+   marked by hand. STORAGE.md.
+2. **The store's operations.** `delete_x` marks; `restore_x`, `purge_x`, `get_deleted_x`,
+   `list_deleted_x`; `ActionType::ReadDeleted`, `Restore`, `Purge`, the default policy and
+   `AccessQuestions`; `StateStore::delete_agent_state`. In the same step every runtime caller of
+   `delete_x` moves to `purge_x`, so that the runtime still deletes for good. Store suite, security
+   suite (who may restore, purge and read what was deleted; nothing marked is probed). SECURITY.md,
+   STORAGE.md.
+3. **Former participants.** `Channel::former`, the controller, `ChannelView::former_members` and
+   `member`, `MemberView::left`, the snapshots, REST `member_of` and `former_members`, the web UI's
+   group. Independent of steps 1 and 2 except for `Removal`; closes the gap of 146. The test
+   `session.rs` "a removed participant is gone" changes: it is former. CHANNELS.md, REST-SERVER.md,
+   WEB-UI.md.
+4. **Sessions and channels are deleted softly.** `delete_session`, `delete_channel`,
+   `restore_…`, `purge_…` as above, the events, the tests that assert that state is gone
+   (`session.rs` 782, 1073, 1651; `json.rs` 667) now assert that it stays and goes with the purge.
+   Security suite: the acts in someone's name. CHANNELS.md, STORAGE.md.
+5. **Reading what was deleted.** `Reached`, `Views::deleted_sessions`,
+   `SessionView::deleted_channels`, the REST routes of the trash, restore and purge,
+   `channel_deleted`, the web UI's trash. REST-SERVER.md, WEB-UI.md.
+6. **Deleting an agent.** There is no way to delete an agent today - no route, no runtime method,
+   `AgentDeleted` is never published. `RuntimeManager::delete_agent(ctx, id)`: `DeleteAgent`, mark,
+   `AgentDeleted`, and its actor stopped in every running channel
+   (`ChannelLoop::stop_participant`, without touching the document: it stays a participant that no
+   longer exists, as `ChannelLoop::new` and `GoneMember` already treat one). `restore_agent` starts
+   it again where the channel runs; `purge_agent` adds `delete_agent_state`. What it said stays in
+   the channels' histories. The REST routes for agents are the first of their kind and can be
+   decided when this step is due.
+
+Steps 1 and 2 are the restructuring, 3 to 6 the features; each is a commit of its own. The
+retention policy and the purge by it are [07](07-session-deletion-audit.md)'s, the administrator's
+rights [125](125-invisible-admin.md)'s, the record of the acts [140](140-audit-log.md)'s.
+
+### Not covered
+
+- **Removing one entry of a chain** - a message from a history or a transcript. Purging a whole
+  channel removes its chains; removing one entry would break every digest after it and needs
+  redaction (the content goes, the entry's digest stays). Noted in 07.
+- **Memory entries written in a purged channel** stay the agent's: [19](19-memory-tiers.md).
+- **Participants of a session** (`Session::participants`) are not removed anywhere yet; a `former`
+  list there follows the channel's when they are.
+
 ## Done when
 
 - Deleting a session, a channel or an agent and removing a participant leave a mark with who and
@@ -51,6 +264,8 @@ they were there:
 - Listings and reads leave out what is marked deleted, unless asked for what was.
 - The views reach a former member from the channel's document and tell a gone channel from one that
   never was.
+- What was deleted can be listed, restored and purged, each as the `SecurityManager` allows; a
+  purge removes the document and its state.
 
 ## History
 
@@ -61,3 +276,13 @@ they were there:
   was removed is recorded, but the web UI offers an agent's history and given-up turns for members
   only, so it cannot be shown once the agent has left - exactly when it would be asked for. A former
   member known to the views would make it reachable.
+- **2026-10-05** — Analysed and planned. Three things were found mixed in this issue: former
+  participants, deleted entities, and who did it. A first proposal kept only the former participants
+  here and left deleted entities to 07 and 140, because a mark keeps the content a user wants gone.
+  The maintainer resolved that the other way: a user's delete is soft, a hard delete - a purge - is
+  the administrator's or a retention policy's, and who may restore is the `SecurityManager`'s
+  decision. With that, marking is right, and the section *Plan* says how: the mark and what the
+  stores do with it, former participants as a list of their own, restore and purge, the views and
+  the REST API, in six steps. Decided along the way: no cascade of marks from a session to its
+  channels (a channel is only reached through its session); the mark carries who and when also for
+  a participant that left, since it is the entity's state - the acts themselves stay 140's.

@@ -43,3 +43,25 @@ An audit trail that preserves the content defeats that.
 
 - **2026-09-10** — Issue created from `TODO.md`. Deletion itself had already landed in `540e482`;
   the audit question is what remains open, hence *in progress* rather than *open*.
+- **2026-10-05** — The retention policy decided by the maintainer, while planning
+  [164](164-soft-deletion-and-former-members.md): **a user's delete is soft, a hard delete is the
+  administrator's.** Deleting a session marks it and keeps its content; it is removed for good by a
+  purge, which an administrator runs ([125](125-invisible-admin.md)) or a retention policy he
+  configured. That answers the tension above between evidence and removal by rule rather than at
+  the moment of deleting. Marking, restoring and the purge as an operation
+  (`SessionManager::purge_session`) are 164's steps; what remains here, after them:
+  - **The retention policy.** A section `retention` in `AppConfig` with `purge_deleted_after:
+    Option<Duration>` - `None` keeps what was deleted until someone purges it, zero makes a user's
+    delete final at once, for a deployment where deletion must mean removal. Possibly per kind
+    (sessions, channels, agents) later; one value first. CONFIGURATION.md.
+  - **The purge by it.** A background task of the runtime, started with the `SessionManager`, that
+    from time to time lists what is marked (`list_deleted_…` as the system) and purges what was
+    deleted longer ago than configured (`Removal::at`), sessions with their channels and state. It
+    logs every purge and, once [140](140-audit-log.md) exists, records it there - a purge leaves
+    nothing else behind.
+  - **Removing one entry of a chain** - a single message of a history or transcript - is not a
+    purge: the chains' digests cover every entry, and contexts refer to them
+    ([06](06-context-in-message-for-auditability.md)). It needs redaction: the content goes, the
+    entry and its digest stay. Not planned; noted here for when single messages are to be deleted.
+  - *Done when* then reads: the policy is this, `delete_session` marks (164), and the configured
+    retention is enforced by the purge task.

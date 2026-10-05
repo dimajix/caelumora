@@ -37,3 +37,9 @@ nobody in the channel sees them.
 
 - **2026-09-29** — Opened with issue 124 while working on issue 104: the maintainer wants live
   following for participants only, and an invisible admin with a way of their own as the exception.
+- **2026-10-05** — From [164](164-soft-deletion-and-former-members.md): what users delete is only
+  marked, and removing it for good - `ActionType::Purge` - is the administrator's. Until this role
+  exists, the default policy grants `Purge` to the system alone, so only the retention policy
+  ([07](07-session-deletion-audit.md)) purges. The administrator is to be granted, for every
+  entity: `ReadDeleted` (the trash of everybody), `Restore` and `Purge`. This answers part of
+  "whether an admin may also act" above: these three, at least.

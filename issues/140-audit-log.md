@@ -51,3 +51,10 @@ a participant of a channel, approving a tool call, deleting a session
   `wakeup`, knows no caller: who removed the agent or deleted the channel is recorded with that act,
   here, and found for a stopped turn by channel, agent and time. Until then it is only in the log
   (`remove_participant`, `delete_channel`).
+- **2026-10-05** — From [164](164-soft-deletion-and-former-members.md): deleting becomes marking,
+  and the mark (`Removal`: who, when) is kept in the document - of a deleted session, channel or
+  agent, and of a participant that left a channel. That is the entity's state, not this log: it is
+  gone when the entity is restored, a participant added again or the entity purged. The acts to
+  record here are therefore: delete, restore, purge (by a person or by the retention policy of
+  [07](07-session-deletion-audit.md)), and a participant removed or added again. The purge depends
+  on this log most: it leaves nothing else that says what was there.
