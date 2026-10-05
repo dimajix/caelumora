@@ -413,13 +413,13 @@ impl<'a> TranscriptView<'a> {
 pub struct ContextResolver<'a> {
     transcript: TranscriptView<'a>,
     prompts: &'a Kept<String>,
-    tool_sets: &'a Kept<Vec<ToolDefinition>>,
+    offered_tools: &'a Kept<Vec<ToolDefinition>>,
 }
 
 impl<'a> ContextResolver<'a> {
     /// The resolver over the data of `state`.
     pub fn of(state: &'a AgentChannelState) -> Self {
-        Self { transcript: TranscriptView::of(state), prompts: &state.prompts, tool_sets: &state.tool_sets }
+        Self { transcript: TranscriptView::of(state), prompts: &state.prompts, offered_tools: &state.offered_tools }
     }
 
     /// What the model of `agent` is given, or was given, for the message
@@ -436,7 +436,7 @@ impl<'a> ContextResolver<'a> {
         let (before, during) = entries.split_at(turn_start);
         let items = self.assemble(&reference.prompts, &reference.profile, agent, before, during)?;
         let tools = match &reference.tools {
-            Some(digest) => self.tool_sets.get(digest)?.clone(),
+            Some(digest) => self.offered_tools.get(digest)?.clone(),
             None => Vec::new(),
         };
         Some(ResolvedContext { reference: reference.clone(), items, tools })
@@ -693,7 +693,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         let offered = vec![ToolDefinition { name: "echo".to_string(), description: "echoes".to_string(), parameters: ToolParameters::object([("text", ToolParameters::string("what"))], ["text"]) }];
         let digest = crate::digest::tools(&offered);
-        state.tool_sets.keep(digest, || offered.clone());
+        state.offered_tools.keep(digest, || offered.clone());
 
         let resolver = ContextResolver::of(&state);
         let with = |tools| ContextRef { tools, ..ContextRef::default() };

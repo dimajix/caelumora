@@ -313,9 +313,10 @@ in `actor_impl/agent.rs`) and puts its calls up for approval (`GuardedToolExecut
 same `Tool`s. A tool that changes or disappears during a turn is offered as it is from the next turn
 on; a call of one that is gone fails as unknown.
 
-Beginning a turn (`AgentChannelState::begin_turn`) keeps the set in `AgentChannelState::tool_sets`,
-once per digest (`digest::tools`, in the order offered), and puts its digest into the turn's
-context, so that every message of the turn records it; no tools are recorded as `None`.
+Beginning a turn (`AgentChannelState::begin_turn`) keeps the set in
+`AgentChannelState::offered_tools`, once per digest (`digest::tools`, in the order offered), and
+puts its digest into the turn's context, so that every message of the turn records it; no tools are
+recorded as `None`.
 `LLMClient::chat_completion` gets the tools from the resolved context, like the messages, so what
 the model was offered and what is recorded as offered are the same.
 

@@ -209,8 +209,9 @@ pub struct AgentChannelState {
     pub prompts: Kept<String>,
     /// Every set of tools the agent's model was offered in this channel, by
     /// digest, each kept once: what the `ContextRef`s in the history point
-    /// to (issue 137).
-    pub tool_sets: Kept<Vec<ToolDefinition>>,
+    /// to (issue 137). Stored as `tool_sets` before issue 194 took the name.
+    #[serde(alias = "tool_sets")]
+    pub offered_tools: Kept<Vec<ToolDefinition>>,
     /// The turn under way, `None` between turns (issue 85). Stored with the
     /// rest, so that a turn cut off by a crash is resumed (issue 75).
     pub turn: Option<TurnState>,
@@ -264,7 +265,7 @@ impl AgentChannelState {
         let offered = (!tools.is_empty()).then(|| {
             let definitions: Vec<ToolDefinition> = tools.iter().map(Tool::definition).collect();
             let digest = crate::digest::tools(&definitions);
-            self.tool_sets.keep(digest, || definitions);
+            self.offered_tools.keep(digest, || definitions);
             digest
         });
         let mut work = Work::new(event_context, security_context, classification);
@@ -365,7 +366,9 @@ pub enum AgentChannelStateChange {
     Notes(Stored<LedgerEntry<Notes>>),
     PrivateNotes(Stored<LedgerEntry<Notes>>),
     Prompt { digest: Digest, text: String },
-    ToolSet { digest: Digest, tools: Vec<ToolDefinition> },
+    /// Stored as `tool_set` before issue 194 took the name.
+    #[serde(alias = "tool_set")]
+    OfferedTools { digest: Digest, tools: Vec<ToolDefinition> },
     ProcessingState(ActorState),
     /// The turn under way, whole: it is changed in place at every step
     /// (`prepare_resume`, the turn's own methods), and bounded by one turn.
@@ -385,7 +388,7 @@ impl Journaled for AgentChannelState {
         changes.extend(self.notes.changes().map(AgentChannelStateChange::Notes));
         changes.extend(self.private_notes.changes().map(AgentChannelStateChange::PrivateNotes));
         changes.extend(self.prompts.changes().into_iter().map(|(digest, text)| AgentChannelStateChange::Prompt { digest, text }));
-        changes.extend(self.tool_sets.changes().into_iter().map(|(digest, tools)| AgentChannelStateChange::ToolSet { digest, tools }));
+        changes.extend(self.offered_tools.changes().into_iter().map(|(digest, tools)| AgentChannelStateChange::OfferedTools { digest, tools }));
         changes.push(AgentChannelStateChange::ProcessingState(self.processing_state));
         changes.push(AgentChannelStateChange::Turn(self.turn.clone()));
         changes.push(AgentChannelStateChange::Remote(self.remote.clone()));
@@ -398,7 +401,7 @@ impl Journaled for AgentChannelState {
         self.notes.mark_stored();
         self.private_notes.mark_stored();
         self.prompts.mark_stored();
-        self.tool_sets.mark_stored();
+        self.offered_tools.mark_stored();
     }
 
     fn apply(&mut self, change: Self::Change) -> Result<(), String> {
@@ -408,7 +411,7 @@ impl Journaled for AgentChannelState {
             AgentChannelStateChange::Notes(change) => self.notes.apply(change)?,
             AgentChannelStateChange::PrivateNotes(change) => self.private_notes.apply(change)?,
             AgentChannelStateChange::Prompt { digest, text } => self.prompts.apply(digest, text),
-            AgentChannelStateChange::ToolSet { digest, tools } => self.tool_sets.apply(digest, tools),
+            AgentChannelStateChange::OfferedTools { digest, tools } => self.offered_tools.apply(digest, tools),
             AgentChannelStateChange::ProcessingState(state) => self.processing_state = state,
             AgentChannelStateChange::Turn(turn) => self.turn = turn,
             AgentChannelStateChange::Remote(remote) => self.remote = remote,
@@ -538,7 +541,7 @@ pub(crate) mod tests {
         let turn = state.turn.as_ref().expect("a turn was begun");
         assert_eq!(turn.work.label(), internal, "it has seen the transcript");
         assert_eq!(turn.work.context.transcript, state.transcript.digest(), "it continues the transcript");
-        assert!(turn.work.context.tools.is_some() && state.tool_sets.len() == 1, "the set offered is kept once");
+        assert!(turn.work.context.tools.is_some() && state.offered_tools.len() == 1, "the set offered is kept once");
 
         begin(&mut state, Vec::new());
         assert!(state.turn.as_ref().is_some_and(|t| t.work.context.tools.is_none()), "no tools, no set");
@@ -621,7 +624,7 @@ pub(crate) mod tests {
         state.notes.push(NoteChange::Add { id: NoteId(1), text: "noted".to_string(), classification: Classification::CHANNEL_DEFAULT }, Default::default(), id(2));
         state.private_notes.push(NoteChange::Add { id: NoteId(1), text: "mine".to_string(), classification: Classification::CHANNEL_DEFAULT }, Default::default(), id(2));
         state.prompts.keep(crate::digest::prompt("system"), || "system".to_string());
-        state.tool_sets.keep(crate::digest::tools(&[]), Vec::new);
+        state.offered_tools.keep(crate::digest::tools(&[]), Vec::new);
         state.processing_state = ActorState::WaitingForApproval;
         state.turn = Some(TurnState { model_calls: 3, ..TurnState::default() });
 
@@ -632,12 +635,12 @@ pub(crate) mod tests {
             AgentChannelStateChange::Notes(_) => "notes",
             AgentChannelStateChange::PrivateNotes(_) => "private_notes",
             AgentChannelStateChange::Prompt { .. } => "prompt",
-            AgentChannelStateChange::ToolSet { .. } => "tool_set",
+            AgentChannelStateChange::OfferedTools { .. } => "offered_tools",
             AgentChannelStateChange::ProcessingState(_) => "processing_state",
             AgentChannelStateChange::Turn(_) => "turn",
             AgentChannelStateChange::Remote(_) => "remote",
         }).collect();
-        assert_eq!(parts, ["history", "transcript", "notes", "private_notes", "prompt", "tool_set", "processing_state", "turn", "remote"], "what was added, then the small parts whole");
+        assert_eq!(parts, ["history", "transcript", "notes", "private_notes", "prompt", "offered_tools", "processing_state", "turn", "remote"], "what was added, then the small parts whole");
         replayed(&state, &mut copy);
 
         state.mark_stored();
@@ -645,6 +648,18 @@ pub(crate) mod tests {
         assert_eq!(state.changes().len(), 3, "between turns a step is the small parts alone");
         replayed(&state, &mut copy);
         assert!(copy.turn.is_none());
+    }
+
+    #[test]
+    fn the_tools_offered_are_read_under_the_name_they_were_stored_with_before_issue_194() {
+        let digest = crate::digest::tools(&[]);
+        let change: AgentChannelStateChange = serde_json::from_value(serde_json::json!({ "tool_set": { "digest": digest, "tools": [] } })).unwrap();
+        assert!(matches!(change, AgentChannelStateChange::OfferedTools { .. }));
+
+        let mut stored = serde_json::to_value(AgentChannelState::default()).unwrap();
+        let offered = stored.as_object_mut().and_then(|s| s.remove("offered_tools")).unwrap();
+        stored["tool_sets"] = offered;
+        serde_json::from_value::<AgentChannelState>(stored).expect("the old name is read");
     }
 
     #[test]

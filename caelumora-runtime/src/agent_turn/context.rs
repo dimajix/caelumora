@@ -234,6 +234,6 @@ mod tests {
         assert_eq!(offered(second.id), ["echo", "notes"], "the whole turn offers the same tools");
         assert!(offered(third.id).is_empty(), "none were offered");
         assert_eq!(offered(fourth.id), ["echo", "notes"]);
-        assert_eq!(state.tool_sets.len(), 1, "a set offered again is kept once");
+        assert_eq!(state.offered_tools.len(), 1, "a set offered again is kept once");
     }
 }
