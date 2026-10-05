@@ -1,6 +1,6 @@
 # 231 — The panels of the web UI have a fixed width
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -44,3 +44,13 @@ shared mechanism does it for all of them, and WEB-UI.md describes it.
 
 - **2026-10-05** — Issue created at the maintainer's request, together with
   [230](230-member-actions-menu.md): the width of the panels should be changeable with the mouse.
+- **2026-10-05** — Done. `usePanelWidth` (`caelumora-web-ui/src/panelWidth.ts`) holds a panel's
+  width with its bounds - `sidebar` 180-480 px, `members` 200-480, `detail` 320-960, each at most
+  two fifths of the window - and keeps it in local storage once a drag ends or a key moved it; the
+  context, history and tools panels share `detail`, as they take the same place. `ResizeHandle` is
+  a separator beside the panel, not in it, so that it does not scroll with the members list:
+  pointer events, arrow keys (Shift for larger steps), Home and End, and a double click or Enter
+  back to the usual width. The three detail panels lost their own `w-[28rem]`; `ChatView` gives
+  them their width. Kept in the browser, not the profile, as weighed above. `setPointerCapture`
+  throws for a pointer the browser does not know (`NotFoundError`), which would end the drag before
+  it began; it is tried, and without it the drag follows the pointer while it stays on the handle.

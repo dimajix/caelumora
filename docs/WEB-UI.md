@@ -46,9 +46,10 @@ The UI shows what the server says and repeats no rule of its own:
 | `src/globalEvents.ts` | What the session list does with a global event |
 | `src/command.ts`, `src/mention.ts` | The lexical rules mirrored from the model |
 | `src/messages.ts` | Helpers for showing messages, shared by the chat and the context panel |
+| `src/panelWidth.ts` | The widths of the panels beside the chat, kept in browser storage |
 | `src/moderator.ts`, `src/confidentiality.ts` | Labels and explanations of responder policies and classifications |
 | `src/App.tsx` | Login state, keep-alive, the error banner, the layout |
-| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `MarkdownMessage`, `ContextPanel`, `HistoryPanel`, `ToolsPanel`, `ToolSetList`, `DeletedList`, `NotesList`, `TokenGauge`, `HoverCard`, `ActionMenu`, `UsageStats`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ErrorBanner` |
+| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `MarkdownMessage`, `ContextPanel`, `HistoryPanel`, `ToolsPanel`, `ToolSetList`, `DeletedList`, `NotesList`, `TokenGauge`, `HoverCard`, `ActionMenu`, `ResizeHandle`, `UsageStats`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ErrorBanner` |
 
 ## Talking to the server
 
@@ -85,6 +86,21 @@ the check of the session are handled in one place:
 Messages can arrive twice, in the snapshot and as an event; they are dropped by id.
 
 ## What it shows
+
+### Panel widths
+
+The panels beside the chat - the sidebar, the members of a channel, and the panel that shows an
+agent's context, history or tools in their place - can be made wider or narrower (issue 231): their
+edge towards the chat is a handle (`ResizeHandle`), dragged with the mouse, a finger or a pen, or
+focused and moved with the arrow keys (Shift for larger steps, Home and End for the narrowest and
+widest); a double click, or Enter, returns it to the width it starts with. Each panel has a
+narrowest and a widest width, and takes at most two fifths of the window, so that the chat keeps
+room. The handle sits beside the panel, not in it, so that it does not scroll with the members
+list.
+
+The width is kept per panel - the context, history and tools panels share one - in this browser's
+local storage (`usePanelWidth`, `src/panelWidth.ts`), not in the user's profile: the right width
+depends on the screen. Without storage the panels start at their usual width every time.
 
 ### The session list
 

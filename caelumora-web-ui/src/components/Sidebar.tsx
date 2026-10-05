@@ -18,6 +18,8 @@ import {dispatchGlobalEvent, sessionChange} from '../globalEvents';
 import {loadLastTemplate, saveLastTemplate} from '../session';
 import {openEventStream} from '../stream';
 import {ActionMenu} from './ActionMenu';
+import {ResizeHandle} from './ResizeHandle';
+import {usePanelWidth} from '../panelWidth';
 import {DeletedList} from './DeletedList';
 import {NewChannelDialog} from './NewChannelDialog';
 import {PrivacyDialog} from './PrivacyDialog';
@@ -89,6 +91,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onChannelDeleted,
 }) => {
   const [sessions, setSessions] = useState<SessionSnapshot[]>([]);
+  const panel = usePanelWidth('sidebar');
   const [templates, setTemplates] = useState<SessionTemplate[]>([]);
   // The template a new session is created from, preselected with the one
   // used last in this browser (issue 40).
@@ -278,7 +281,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   return (
-    <div className="w-64 bg-gray-900 text-gray-100 flex flex-col border-r border-gray-800">
+    <>
+    <div className="shrink-0 bg-gray-900 text-gray-100 flex flex-col border-r border-gray-800" style={{width: panel.width}}>
       <div className="p-4 border-b border-gray-800 space-y-3">
         <h1 className="font-bold text-lg">Caelumora</h1>
         <div className="flex items-center gap-2">
@@ -470,5 +474,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </button>
       </div>
     </div>
+    <ResizeHandle panel={panel} panelSide="left" label="Resize the sidebar" />
+    </>
   );
 };

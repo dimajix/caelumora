@@ -60,6 +60,8 @@ import {formatArguments, formatTimestamp, formatTokens, formatTokensShort, merge
 import {TokenGauge} from './TokenGauge';
 import {HoverCard} from './HoverCard';
 import {ActionMenu, type MenuAction} from './ActionMenu';
+import {ResizeHandle} from './ResizeHandle';
+import {usePanelWidth} from '../panelWidth';
 import {UsageStats} from './UsageStats';
 import {ContextPanel} from './ContextPanel';
 import {HistoryPanel} from './HistoryPanel';
@@ -122,6 +124,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   const [channel, setChannel] = useState<ChannelResponse | null>(null);
   const [notes, setNotes] = useState<PublishedNotes[]>([]);
   const [sideTab, setSideTab] = useState<'members' | 'notes'>('members');
+  // The widths of the members panel and of the panel showing an agent's
+  // context, history or tools (issue 231).
+  const membersPanel = usePanelWidth('members');
+  const detailPanel = usePanelWidth('detail');
   // Restored from session storage, so a forced re-login does not lose it.
   const [inputText, setInputText] = useState(() => loadDraft(channelId));
   const [isSending, setIsSending] = useState(false);
@@ -161,6 +167,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   // 207); a context opened from it is shown on top and returns to it.
   const [historyOf, setHistoryOf] = useState<{channelId: string; member: ChannelMember; givenUp?: boolean} | null>(null);
   const [toolsOf, setToolsOf] = useState<{channelId: string; member: ChannelMember} | null>(null);
+  // Whether one of them takes the place of the members panel.
+  const detailShown = contextOf?.channelId === channelId || historyOf?.channelId === channelId || toolsOf?.channelId === channelId;
   // Whether the former members of the channel are unfolded (issue 164).
   const [showFormer, setShowFormer] = useState(false);
   // The commands this user may run here, for `/` completion (issue 28).
@@ -969,7 +977,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           onClose={() => setReclassifying(null)}
         />
       ))}
-      {contextOf && contextOf.channelId === channelId ? (
+      {detailShown ? (
+        <>
+        <ResizeHandle panel={detailPanel} panelSide="right" label="Resize the panel" />
+        <div className="shrink-0 max-w-full flex min-h-0" style={{width: detailPanel.width}}>
+        {contextOf && contextOf.channelId === channelId ? (
         <ContextPanel
           key={contextOf.message.id}
           sessionId={sessionId}
@@ -998,8 +1010,13 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           member={toolsOf.member}
           onClose={() => setToolsOf(null)}
         />
+        ) : null}
+        </div>
+        </>
       ) : (
-      <div className="w-64 border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 overflow-y-auto hidden md:block">
+      <>
+      <ResizeHandle panel={membersPanel} panelSide="right" label="Resize the members panel" className="hidden md:block" />
+      <div className="shrink-0 border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 overflow-y-auto hidden md:block" style={{width: membersPanel.width}}>
         <div className="p-4">
           <div className="flex items-center gap-1 mb-4 text-gray-500 dark:text-gray-400" role="tablist">
             <button
@@ -1152,6 +1169,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           </>)}
         </div>
       </div>
+      </>
       )}
     </div>
   );
