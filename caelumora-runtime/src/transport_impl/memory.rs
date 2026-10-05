@@ -1,6 +1,6 @@
 use crate::transport::{EventPredicate, EventReceiver, EventSender, TransportError, TransportResult};
 use async_trait::async_trait;
-use caelumora_model::actor::Envelope;
+use caelumora_model::actor::{ActorId, Envelope};
 use std::collections::VecDeque;
 use tokio::sync::mpsc;
 
@@ -85,6 +85,54 @@ impl EventSender for InMemoryEventSender {
     }
 }
 
+/// The sender an actor of a channel is given (issue 228): it passes on
+/// only what speaks as the actor it is for (`speaks_as`) and refuses
+/// anything else, so that the channel need not take the sender an
+/// envelope names on trust. A refusal is a bug of the actor, and logged as
+/// an error.
+pub struct OriginEventSender {
+    origin: ActorId,
+    inner: Box<dyn EventSender>,
+}
+
+impl OriginEventSender {
+    pub fn new(origin: ActorId, inner: Box<dyn EventSender>) -> Self {
+        Self { origin, inner }
+    }
+
+    /// Whether `event` speaks as the actor: it names the actor as its
+    /// sender and as the caller of its security context, and so does every
+    /// message it carries. Who the actor acts for - the context's initiator
+    /// - may be someone else: an agent answers on behalf of whoever asked
+    /// it.
+    fn speaks_as(&self, event: &Envelope) -> bool {
+        event.context.sender_id == self.origin
+            && event.security.caller_id == self.origin
+            && event.event.messages().iter().all(|m| m.sender_id == self.origin)
+    }
+
+    fn admits(&self, event: &Envelope) -> TransportResult<()> {
+        if self.speaks_as(event) {
+            return Ok(());
+        }
+        tracing::error!("Refused {}: sent by {} in the name of another", event.describe(), self.origin);
+        Err(TransportError::Refused { origin: self.origin })
+    }
+}
+
+#[async_trait]
+impl EventSender for OriginEventSender {
+    async fn send(&self, event: Envelope) -> TransportResult<()> {
+        self.admits(&event)?;
+        self.inner.send(event).await
+    }
+
+    fn try_send(&self, event: Envelope) -> TransportResult<()> {
+        self.admits(&event)?;
+        self.inner.try_send(event)
+    }
+}
+
 /// Decorator that applies a filter predicate before forwarding to an inner `EventSender`.
 /// An event the filter rejects is dropped and the send succeeds, on `send()` and
 /// `try_send()` alike: filtering is what this sender is for, not a failure (issue 115).
@@ -166,4 +214,25 @@ mod tests {
         assert!(matches!(rx.try_recv().map(|e| e.event), Ok(ActorEvent::ResponseRequested)), "only what passes arrives");
         assert!(rx.try_recv().is_err(), "nothing else");
     }
+
+    #[tokio::test]
+    async fn an_actor_s_sender_passes_on_only_what_speaks_as_the_actor() {
+        use caelumora_model::agent::AgentId;
+        let (tx, mut rx) = mpsc::channel(4);
+        let agent = ActorId::Agent(AgentId::new());
+        let sender = OriginEventSender::new(agent, Box::new(InMemoryEventSender::new(tx)));
+        let as_actor = |sender_id: ActorId, caller: ActorId| Envelope::new(
+            SecurityContext::default().next(caller),
+            EventContext { sender_id, ..EventContext::default() },
+            ActorEvent::ResponseStarted,
+        );
+        let someone = ActorId::System;
+
+        assert!(matches!(sender.send(as_actor(someone, agent)).await, Err(TransportError::Refused { origin }) if origin == agent), "another's envelope");
+        assert!(matches!(sender.try_send(as_actor(agent, someone)), Err(TransportError::Refused { .. })), "another's context");
+        sender.send(as_actor(agent, agent)).await.expect("its own");
+        assert_eq!(rx.try_recv().map(|e| e.context.sender_id).ok(), Some(agent), "only its own is passed on");
+        assert!(rx.try_recv().is_err());
+    }
+
 }

@@ -1,6 +1,6 @@
 # 228 — The channel takes an actor's word for who sent an envelope
 
-**Status:** open
+**Status:** done
 **Area:** Identity and access management
 
 ## The problem
@@ -49,3 +49,16 @@ guaranteed by the transport, as "actors send only through `run`'s transport" alr
 - **2026-10-05** — Opened while doing [14](14-approval-privilege.md): the approver enforces who may
   approve by the context an answer comes with, and nothing guarantees that context belongs to the
   sender.
+- **2026-10-05** — Done, decided with the maintainer: each actor is given an `OriginEventSender`
+  (`ChannelLoop::spawn_actor`, the only place an actor gets one), which passes on only an envelope
+  that speaks as the actor - its sender, the caller of its `SecurityContext` and the sender of every
+  message it carries (`OriginEventSender::speaks_as`, with `ActorEvent::messages`, which
+  `ChannelLoop::admits` uses too). Anything else is refused with `TransportError::Refused` and
+  logged with `error!`: today it can only be a bug, and the actor learns of it where it happened.
+  Checking in the channel instead, with the origin carried next to each envelope, was built first
+  and given up: it needed a pair type through the channel's output for no gain, since no envelope
+  reaches that output but through an actor's sender. Overwriting the sender was rejected, since it
+  would turn a false claim into a true one, and so was stopping the actor. The initiator is not
+  checked: an agent acts on behalf of whoever asked it. All actors kept the convention already;
+  three tests did not - a test actor without a context and stored tasks of the external agent under
+  a made-up agent id - and were corrected.

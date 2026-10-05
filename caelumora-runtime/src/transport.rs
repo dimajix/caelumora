@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use caelumora_model::actor::Envelope;
+use caelumora_model::actor::{ActorId, Envelope};
 
 #[derive(Debug, thiserror::Error)]
 pub enum TransportError {
@@ -9,6 +9,10 @@ pub enum TransportError {
     Closed,
     #[error("transport backend: {0}")]
     Backend(String),
+    /// The sender may not send it (issue 228): `origin` sent an envelope
+    /// that speaks as another.
+    #[error("{origin} may not send in the name of another")]
+    Refused { origin: ActorId },
 }
 
 pub type TransportResult<T> = Result<T, TransportError>;

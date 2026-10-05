@@ -176,6 +176,19 @@ impl ActorEvent {
         }
     }
 
+    /// The messages the event carries, in order; none for an event that
+    /// carries no message.
+    pub fn messages(&self) -> Vec<&Message> {
+        match self {
+            ActorEvent::PartialMessageGenerated(m)
+            | ActorEvent::CompleteMessageGenerated(m)
+            | ActorEvent::IntermediatePartialGenerated(m)
+            | ActorEvent::IntermediateMessageGenerated(m) => vec![m],
+            ActorEvent::FullResponseGenerated(messages) => messages.iter().collect(),
+            _ => Vec::new(),
+        }
+    }
+
     /// The variant's name, for logs - never the payload, which may carry
     /// message content.
     pub fn kind(&self) -> &'static str {

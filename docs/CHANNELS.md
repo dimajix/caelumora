@@ -134,6 +134,15 @@ approves or announces, and its task sends it on through the transport `run` was 
 actor's output; no actor takes a way around it. The queue closes when the actor's task ends - also
 when it is aborted with its channel - so that sending to a stopped channel fails instead of waiting.
 
+The channel does not take an actor's word for whose name it speaks in (issue 228). Each actor is
+given an `OriginEventSender`, which passes on only an envelope that speaks as the actor
+(`OriginEventSender::speaks_as`): one that names it as its sender (`EventContext::sender_id`), as
+the caller of its `SecurityContext`, and as the sender of every message it carries. Anything else is
+refused with `TransportError::Refused` and logged as an error - it is a bug of the actor, which
+learns of it where it happened. Who the actor acts for - the context's initiator - may be someone
+else: an agent answers on behalf of whoever asked it. What the channel says itself - a moderator's
+notice, `ParticipantRemoved` - does not come through an actor's sender.
+
 Waking the channel for a message is the actor's job, too: it sends a `WakeupRequested` ahead of
 every message, in the message's span. Neither a frontend nor the channel decides that by itself
 (issue 90).
