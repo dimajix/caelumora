@@ -40,11 +40,7 @@ pub fn register(registry: &mut ComponentRegistry) {
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
                 .ok_or_else(|| ComponentError::InvalidConfig("parameter 'prompt' is missing".to_string()))?;
-            let position = match descriptor.params.get("position") {
-                None => PromptPosition::default(),
-                Some(value) => serde_json::from_value(value.clone())
-                    .map_err(|_| ComponentError::InvalidConfig("parameter 'position' must be \"start\" or \"before_turn_input\"".to_string()))?,
-            };
+            let position = PromptPosition::of_params(&descriptor.params)?;
 
             let classification = match descriptor.params.get("classification") {
                 None => Classification::PUBLIC,

@@ -191,3 +191,6 @@ Order: step 0 alone, then 1-3 together, then 4, 5 and 6 each on their own.
   sets are in the record its context names. Decided with the maintainer: the description is the
   provider's, and only a generic provider such as `mcp_tool` takes one from its configuration
   (step 5) - no common override on the component descriptor or for every tool provider.
+- **2026-10-05** — Step 4 done: the optional component `tool_sets_prompt_provider` names the
+  unavailable tool sets the work began with (`AgentWork::tool_sets`). Reading the parameter
+  `position` moved into `PromptPosition::of_params`, which its two other readers share.

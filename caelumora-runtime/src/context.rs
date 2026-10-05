@@ -5,6 +5,7 @@
 //! has exactly one `ContextProvider` and any number of `PromptProvider`s
 //! (issue 98).
 
+use crate::component::ComponentError;
 use crate::work::AgentWork;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -25,6 +26,22 @@ pub enum PromptPosition {
     /// message: some models merge every system message into the system
     /// prompt and move it to the front, where it would invalidate the cache.
     BeforeTurnInput,
+}
+
+impl PromptPosition {
+    /// The parameter `position` of a prompt provider's configuration
+    /// `params`, `Start` if it has none.
+    ///
+    /// # Errors
+    /// `ComponentError::InvalidConfig` if it is neither `start` nor
+    /// `before_turn_input`.
+    pub fn of_params(params: &serde_json::Value) -> Result<Self, ComponentError> {
+        match params.get("position") {
+            None => Ok(Self::default()),
+            Some(value) => serde_json::from_value(value.clone())
+                .map_err(|_| ComponentError::InvalidConfig("parameter 'position' must be \"start\" or \"before_turn_input\"".to_string())),
+        }
+    }
 }
 
 /// What a [`PromptProvider`] contributes: the text of its part, the

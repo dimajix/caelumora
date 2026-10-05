@@ -20,11 +20,6 @@ The trait has these methods:
 *   `describe(name, params)` - the text approvers are shown for a call; by default the tool's
     description.
 
-The tools of one provider are a *tool set* (`ToolSet`, issue 194), named after its component -
-unique within the agent - with the provider's description and, if it is unavailable, why. A model's
-backend is given the tools natively, without the sets; the sets are kept in the record of what the
-model was offered and shown in the web UI.
-
 A `Tool` declares its `name`, `description` and `parameters`, whether it `requires_approval`, its
 `visibility`, and optionally the `classification` of its results. Approval and classification are
 decided per tool by its provider, not by the personality; `mcp_tool` takes them from its parameters
@@ -33,6 +28,22 @@ decided per tool by its provider, not by the personality; `mcp_tool` takes them 
 `execute` answers with a `ToolOutput`: the tool's value and, if the tool classifies it - by its
 input, by what it read, by the source it drew on - its classification. A tool that does not classify
 returns a plain value (`Ok(value.into())`).
+
+### Tool sets
+
+The tools of one provider are a *tool set* (`ToolSet`, issue 194), named after its component -
+unique within the agent - with the provider's description and, if it is unavailable, why. A model's
+backend is given the tools natively, without the sets; the sets are kept in the record of what the
+model was offered and shown in the web UI. The description is the provider's own: built-in
+components word it for their tools, and only a generic provider such as `mcp_tool` takes one from
+its configuration.
+
+The model needs no prompt to learn of its tools, but a source that is unavailable leaves no trace in
+what it is offered (issue 32). The optional component `tool_sets_prompt_provider` names the
+unavailable sets of the tool sets the turn began with (`AgentWork::tool_sets`) - each with its
+description and why, in general terms - and tells the model to say they are unavailable rather than
+that it cannot do what they do. While every set is available it contributes nothing. A personality
+without it tells its model nothing of missing tools.
 
 ### Tool visibility
 

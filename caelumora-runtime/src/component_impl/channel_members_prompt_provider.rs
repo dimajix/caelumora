@@ -193,11 +193,7 @@ pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
         ComponentKind::new(CHANNEL_MEMBERS_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>(),
         |descriptor, _context| {
-            let position = match descriptor.params.get("position") {
-                None => PromptPosition::default(),
-                Some(value) => serde_json::from_value(value.clone())
-                    .map_err(|_| ComponentError::InvalidConfig("parameter 'position' must be \"start\" or \"before_turn_input\"".to_string()))?,
-            };
+            let position = PromptPosition::of_params(&descriptor.params)?;
             let changes_only = match descriptor.params.get("changes_only") {
                 None => false,
                 Some(value) => value.as_bool()
