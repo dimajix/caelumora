@@ -1,11 +1,13 @@
 // The logged-in user's profile (issue 176): how they introduce themselves to
-// the agents. What may be written is the server's to decide; the dialog only
-// counts the characters it says are allowed.
+// the agents, and the language they prefer (issue 56). What may be written
+// is the server's to decide; the dialog only counts the characters it says
+// are allowed.
 
 import React, {useEffect, useState} from 'react';
 import {X} from 'lucide-react';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
+import {LanguageField} from './LanguageField';
 
 interface ProfileDialogProps {
   username: string;
@@ -14,8 +16,9 @@ interface ProfileDialogProps {
 
 export const ProfileDialog: React.FC<ProfileDialogProps> = ({username, onClose}) => {
   // `null` until the profile is loaded.
-  const [saved, setSaved] = useState<string | null>(null);
+  const [saved, setSaved] = useState<{introduction: string; language: string} | null>(null);
   const [introduction, setIntroduction] = useState('');
+  const [language, setLanguage] = useState('');
   const [maxChars, setMaxChars] = useState<number | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -25,8 +28,9 @@ export const ProfileDialog: React.FC<ProfileDialogProps> = ({username, onClose})
     api.getProfile()
       .then(profile => {
         if (cancelled) return;
-        setSaved(profile.introduction ?? '');
+        setSaved({introduction: profile.introduction ?? '', language: profile.preferred_language ?? ''});
         setIntroduction(profile.introduction ?? '');
+        setLanguage(profile.preferred_language ?? '');
         setMaxChars(profile.max_introduction_chars);
       })
       .catch(error => {
@@ -38,7 +42,8 @@ export const ProfileDialog: React.FC<ProfileDialogProps> = ({username, onClose})
   const loaded = saved !== null;
   const length = [...introduction.trim()].length;
   const tooLong = maxChars !== null && length > maxChars;
-  const unchanged = introduction.trim() === (saved ?? '').trim();
+  const unchanged = introduction.trim() === (saved?.introduction ?? '').trim()
+    && language.trim() === (saved?.language ?? '');
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -46,7 +51,7 @@ export const ProfileDialog: React.FC<ProfileDialogProps> = ({username, onClose})
     setIsSaving(true);
     setProblem(null);
     try {
-      await api.setIntroduction(introduction.trim() || null);
+      await api.updateProfile({introduction: introduction.trim() || null, preferred_language: language.trim() || null});
       onClose();
     } catch (error) {
       if (error instanceof ApiRequestError && error.status < 500 && error.status !== 401) {
@@ -98,6 +103,13 @@ export const ProfileDialog: React.FC<ProfileDialogProps> = ({username, onClose})
             Every agent in every channel you take part in is given this, marked as written by you.
             Through them, everyone there may learn it.
           </div>
+          <LanguageField
+            label="Preferred language"
+            value={language}
+            disabled={!loaded}
+            onChange={setLanguage}
+            hint="the channels you create are held in it unless you choose another; their agents are told to write in it."
+          />
           {problem && <div role="alert" className="text-xs text-red-400">{problem}</div>}
         </div>
 

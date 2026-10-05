@@ -6,7 +6,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::{EntityStore, StoreError, StoreResult, StoreResultExt};
-use caelumora_model::user::{UserProfile, MAX_INTRODUCTION_CHARS};
+use caelumora_model::user::UserProfile;
 use crate::auth::AuthenticatedUser;
 use crate::error::{ApiError, Json};
 use crate::models::{ProfileRequest, ProfileResponse};
@@ -17,19 +17,20 @@ pub async fn get_profile(State(state): State<Arc<AppState>>, user: Authenticated
     let store = state.runtime_manager.entity_store();
     let profile = store.get_user_profile(&user.security_context(), user.id).await.optional()
         .map_err(|e| ApiError::internal("profile_failed", "reading the profile", &e.into()))?;
-    let introduction = profile.and_then(|profile| profile.introduction);
-    Ok(Json(ProfileResponse { introduction, max_introduction_chars: MAX_INTRODUCTION_CHARS }))
+    Ok(Json(ProfileResponse::of(profile)))
 }
 
-/// Sets the user's introduction; `null` or blank removes it. Answers
-/// `400 invalid_introduction` for one that is too long or contains control
-/// characters.
+/// Sets the user's profile: their introduction - `null` or blank removes
+/// it - and the language they prefer (issue 56), `null` for none. Answers
+/// `400 invalid_introduction` for an introduction that is too long or
+/// contains control characters.
 pub async fn update_profile(State(state): State<Arc<AppState>>, user: AuthenticatedUser, Json(payload): Json<ProfileRequest>) -> Result<Json<ProfileResponse>, ApiError> {
-    let profile = UserProfile::introducing(user.id, payload.introduction.as_deref())
+    let mut profile = UserProfile::introducing(user.id, payload.introduction.as_deref())
         .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, "invalid_introduction", e.to_string()))?;
+    profile.preferred_language = payload.preferred_language;
     save(state.runtime_manager.entity_store().as_ref(), &user.security_context(), &profile).await
         .map_err(|e| ApiError::internal("profile_failed", "saving the profile", &e.into()))?;
-    Ok(Json(ProfileResponse { introduction: profile.introduction, max_introduction_chars: MAX_INTRODUCTION_CHARS }))
+    Ok(Json(ProfileResponse::of(Some(profile))))
 }
 
 /// Stores `profile` as `context`, whether its user has one already or not:

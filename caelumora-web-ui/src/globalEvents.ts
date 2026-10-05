@@ -108,6 +108,19 @@ export function reclassifiedChannel(event: GlobalEvent): {channelId: string; cla
   return update?.ClassificationChanged ? {channelId: value[1], classification: update.ClassificationChanged} : null;
 }
 
+/**
+ * The channel whose language changed and its language now - `null` for none
+ * in particular - for `ChannelUpdated` with `LanguageChanged` (issue 56);
+ * `null` for any other event.
+ */
+export function languageChangedChannel(event: GlobalEvent): {channelId: string; language: string | null} | null {
+  const value = event.ChannelUpdated;
+  if (!Array.isArray(value) || typeof value[1] !== 'string') return null;
+  const update = value[2];
+  if (typeof update !== 'object' || update === null || !('LanguageChanged' in update)) return null;
+  return {channelId: value[1], language: (update as {LanguageChanged: string | null}).LanguageChanged ?? null};
+}
+
 /** The message that was reclassified, for `MessageReclassified` (issue 133); `null` for any other event. */
 export function reclassifiedMessage(event: GlobalEvent): {channelId: string; messageId: string; classification: Classification} | null {
   const value = event.MessageReclassified;

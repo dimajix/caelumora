@@ -280,6 +280,7 @@ impl ChannelView {
             moderator: self.moderator(),
             responder_policy: self.responder_policy(),
             classification: self.channel.classification.clone(),
+            language: self.channel.language.clone(),
             can_change: self.may_change().await,
             members,
             former_members,

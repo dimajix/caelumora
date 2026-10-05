@@ -1,6 +1,7 @@
 // Creating a channel in a running session (issue 09): its name, its
-// moderator, its classification - a level and compartments (issue 133) -
-// and who of the session takes part besides the user.
+// moderator, its classification - a level and compartments (issue 133) -,
+// its language (issue 56) and who of the session takes part besides the
+// user.
 
 import React, {useEffect, useState} from 'react';
 import {X} from 'lucide-react';
@@ -9,6 +10,7 @@ import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
 import {DEFAULT_RESPONDER_POLICY, RESPONDER_POLICY_KINDS, responderPolicyInfo} from '../moderator';
 import {CONFIDENTIALITY_LEVELS, DEFAULT_CLASSIFICATION, confidentialityInfo, type ConfidentialityLevel} from '../confidentiality';
+import {LanguageField} from './LanguageField';
 
 /** The key an `ActorId` is told apart by. */
 function actorKey(id: ActorId): string {
@@ -37,6 +39,7 @@ export const NewChannelDialog: React.FC<NewChannelDialogProps> = ({session, user
   const [level, setLevel] = useState<ConfidentialityLevel>(DEFAULT_CLASSIFICATION.level);
   const [compartments, setCompartments] = useState<Compartment[]>([]);
   const [chosenCompartments, setChosenCompartments] = useState<Set<string>>(new Set());
+  const [language, setLanguage] = useState('');
   const [chosen, setChosen] = useState<Set<string>>(() => new Set(candidates.map(p => actorKey(p.id))));
   const [problem, setProblem] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
@@ -47,6 +50,14 @@ export const NewChannelDialog: React.FC<NewChannelDialogProps> = ({session, user
     api.getCompartments()
       .then(setCompartments)
       .catch(error => reportError('Failed to fetch the compartments', error));
+  }, []);
+
+  // The language the user prefers, offered as the channel's - which is what
+  // the server takes if none is sent.
+  useEffect(() => {
+    api.getProfile()
+      .then(profile => setLanguage(current => current || (profile.preferred_language ?? '')))
+      .catch(error => reportError('Failed to fetch the profile', error));
   }, []);
 
   const toggleCompartment = (name: string) => {
@@ -77,6 +88,7 @@ export const NewChannelDialog: React.FC<NewChannelDialogProps> = ({session, user
         // Public takes no compartment.
         classification: {level, compartments: level === 'public' ? [] : [...chosenCompartments]},
         participants: candidates.filter(p => chosen.has(actorKey(p.id))).map(p => p.id),
+        language: language.trim() || undefined,
       });
       onCreated(channel);
     } catch (error) {
@@ -172,6 +184,13 @@ export const NewChannelDialog: React.FC<NewChannelDialogProps> = ({session, user
               ))}
             </fieldset>
           )}
+
+          <LanguageField
+            label="Language"
+            value={language}
+            onChange={setLanguage}
+            hint="its agents are told to write in it. Empty: the language you prefer, if you set one in your profile."
+          />
 
           <fieldset className="space-y-1">
             <legend className="text-xs text-gray-400">Participants</legend>

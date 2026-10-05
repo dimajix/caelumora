@@ -19,6 +19,7 @@
 use crate::actor::ActorId;
 use crate::approval::ApprovalRequest;
 use crate::confidentiality::Classification;
+use crate::language::Language;
 use crate::digest::Digest;
 use crate::message::TokenUsage;
 use crate::note::Note;
@@ -85,6 +86,8 @@ pub struct ChannelSnapshot {
     pub responder_policy: Option<String>,
     /// The classification of the channel's contents (issue 133).
     pub classification: Classification,
+    /// The language its conversation is held in (issue 56), if any.
+    pub language: Option<Language>,
     /// Whether the viewer may rename the channel and add or remove its
     /// participants (`UpdateChannel`, issue 46).
     pub can_change: bool,

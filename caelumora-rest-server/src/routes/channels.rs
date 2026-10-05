@@ -17,6 +17,7 @@ use caelumora_model::approval::{ApprovalId, ApprovalResponse};
 use caelumora_model::channel::moderation_components;
 use caelumora_model::command::{Command, CommandVisibility};
 use caelumora_model::confidentiality::Classification;
+use caelumora_model::language::Language;
 use caelumora_model::context::ContextItem;
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::security::SecurityContext;
@@ -79,7 +80,7 @@ pub async fn create_channel(
     let context = user.security_context();
 
     let components = moderation_components(payload.moderator.as_deref(), payload.responder_policy.as_deref());
-    let spec = ChannelSpec { name: payload.name, components, participants: payload.participants, classification: payload.classification, language: None };
+    let spec = ChannelSpec { name: payload.name, components, participants: payload.participants, classification: payload.classification, language: payload.language };
     let channel = session.create_channel(&context, spec).await
         .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("creating a channel in session {session_id}")))?;
     Ok(Json(crate::routes::channel_view(&state, &user, session_id, channel.id()).await?))
@@ -315,6 +316,22 @@ pub async fn reclassify_channel(
     let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     channel.reclassify(&user.security_context(), classification).await
         .map_err(|e| ApiError::from_runtime(e, Subject::Session, "reclassifying the channel"))?;
+    Ok(Json(crate::routes::channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?))
+}
+
+/// Has the channel's conversation held in the language the body names - a
+/// BCP 47 tag such as `"de"` - or in none in particular (`null`, issue
+/// 56): whoever may change the channel. Its agents are told from their next
+/// turn on. Answers with the channel as the user sees it now.
+pub async fn set_channel_language(
+    State(state): State<Arc<AppState>>,
+    Path((id, cid)): Path<(Uuid, Uuid)>,
+    user: AuthenticatedUser,
+    Json(language): Json<Option<Language>>,
+) -> Result<Json<ChannelResponse>, ApiError> {
+    let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    channel.update_language(&user.security_context(), language).await
+        .map_err(|e| ApiError::from_runtime(e, Subject::Session, "changing the language of the channel"))?;
     Ok(Json(crate::routes::channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?))
 }
 

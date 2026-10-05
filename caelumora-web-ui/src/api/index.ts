@@ -17,6 +17,7 @@ import type {
   SessionSnapshot,
   SessionTemplate,
   Compartment,
+  ProfileRequest,
   ProfileResponse,
   UserResponse
 } from '../types';
@@ -83,12 +84,12 @@ export const api = {
     return res.json();
   },
 
-  /** Sets the logged-in user's introduction; `null` or blank removes it. */
-  async setIntroduction(introduction: string | null): Promise<ProfileResponse> {
+  /** Sets the logged-in user's profile: their introduction and the language they prefer. */
+  async updateProfile(profile: ProfileRequest): Promise<ProfileResponse> {
     const res = await request('/profile', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ introduction }),
+      body: JSON.stringify(profile),
     });
     await ensureOk(res, 'Failed to save the profile');
     return res.json();
@@ -194,6 +195,17 @@ export const api = {
       body: JSON.stringify(classification),
     });
     await ensureOk(res, 'Failed to change the classification');
+    return res.json();
+  },
+
+  /** Has the channel held in `language` - none in particular if `null` (issue 56); answers with the channel as it is now. */
+  async setChannelLanguage(sessionId: string, channelId: string, language: string | null): Promise<ChannelResponse> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/language`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(language),
+    });
+    await ensureOk(res, 'Failed to change the language');
     return res.json();
   },
 

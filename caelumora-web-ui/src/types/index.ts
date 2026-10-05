@@ -23,6 +23,14 @@ export interface UserResponse {
 export interface ProfileResponse {
   introduction: string | null;
   max_introduction_chars: number;
+  /** The language you prefer, a BCP 47 tag such as `de` (issue 56); your new channels are held in it. */
+  preferred_language: string | null;
+}
+
+/** Your profile as it is to be: both fields are replaced, `null` for none. */
+export interface ProfileRequest {
+  introduction: string | null;
+  preferred_language: string | null;
 }
 
 export interface SessionResponse {
@@ -111,6 +119,8 @@ export interface ChannelResponse {
   responder_policy: string | null;
   /** The classification of the channel's contents (issue 133). */
   classification: Classification;
+  /** The language its conversation is held in, a BCP 47 tag (issue 56); `null` for none in particular. */
+  language: string | null;
   /** Whether you may rename it and add or remove participants (issue 46). */
   can_change: boolean;
   /** Who took part and left (issue 164), in the order they left, each with `left`. */
@@ -370,6 +380,8 @@ export interface CreateChannelRequest {
   participants: ActorId[];
   /** The classification of the channel's contents; the server's default if absent. */
   classification?: Classification;
+  /** The language its conversation is held in (issue 56); the one you prefer if absent. */
+  language?: string;
 }
 
 /**

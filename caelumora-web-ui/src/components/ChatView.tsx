@@ -5,6 +5,7 @@ import {
   ChevronRight,
   Gauge,
   History,
+  Languages,
   NotebookPen,
   Pencil,
   Scale,
@@ -46,7 +47,9 @@ import {
 } from '../confidentiality';
 import {ClassificationPicker} from './ClassificationPicker';
 import {ClassificationDialog} from './ClassificationDialog';
-import {changedChannel, membershipChangedChannel, onGlobalEvent, reclassifiedChannel, reclassifiedMessage} from '../globalEvents';
+import {LanguageDialog} from './LanguageDialog';
+import {languageLabel} from '../language';
+import {changedChannel, languageChangedChannel, membershipChangedChannel, onGlobalEvent, reclassifiedChannel, reclassifiedMessage} from '../globalEvents';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
 import {type ClassValue, clsx} from 'clsx';
@@ -163,6 +166,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   // Whether the dialog to add a participant is open (issue 46).
   const [isAddingParticipant, setIsAddingParticipant] = useState(false);
   // What is being reclassified (issue 133): the channel, or one message.
+  const [isChangingLanguage, setIsChangingLanguage] = useState(false);
   const [reclassifying, setReclassifying] = useState<{kind: 'channel'} | {kind: 'message'; message: Message} | null>(null);
 
   // The server returns members in no particular order.
@@ -253,6 +257,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
       const message = reclassifiedMessage(event);
       if (message && message.channelId === channelId) {
         setMessages(prev => prev.map(m => m.id === message.messageId ? {...m, classification: message.classification} : m));
+        return;
+      }
+      const language = languageChangedChannel(event);
+      if (language) {
+        if (language.channelId === channelId) setChannel(prev => prev && {...prev, language: language.language});
         return;
       }
       const reclassified = reclassifiedChannel(event);
@@ -905,6 +914,14 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           onClose={() => setIsAddingParticipant(false)}
         />
       )}
+      {isChangingLanguage && channel && (
+        <LanguageDialog
+          title={`Language of ${channel.name}`}
+          current={channel.language}
+          onSubmit={async (language) => setChannel(await api.setChannelLanguage(sessionId, channelId, language))}
+          onClose={() => setIsChangingLanguage(false)}
+        />
+      )}
       {reclassifying && channel && (reclassifying.kind === 'channel' ? (
         <ClassificationDialog
           title={`Classification of ${channel.name}`}
@@ -1003,6 +1020,26 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
                   className="p-0.5 opacity-60 hover:opacity-100 focus:opacity-100"
                   title="Change the classification"
                   aria-label="Change the classification of the channel"
+                >
+                  <Pencil size={12} />
+                </button>
+              )}
+            </div>
+          )}
+          {channel && (
+            <div
+              className="flex items-center gap-2 mb-4 -mt-2 text-xs text-gray-500 dark:text-gray-400"
+              title="The language the agents are told to write in. Nothing is translated."
+            >
+              <Languages size={14} />
+              <span>Language:</span>
+              <span className="text-gray-700 dark:text-gray-300">{languageLabel(channel.language)}</span>
+              {channel.can_change && (
+                <button
+                  onClick={() => setIsChangingLanguage(true)}
+                  className="p-0.5 opacity-60 hover:opacity-100 focus:opacity-100"
+                  title="Change the language"
+                  aria-label="Change the language of the channel"
                 >
                   <Pencil size={12} />
                 </button>

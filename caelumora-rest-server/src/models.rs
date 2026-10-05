@@ -1,11 +1,13 @@
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::{Classification, Compartment};
 use caelumora_model::message::{Message, TokenUsage};
+use caelumora_model::language::Language;
 use caelumora_model::name::Name;
 use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::template::{SessionTemplate, SessionTemplateId};
+use caelumora_model::user::{UserProfile, MAX_INTRODUCTION_CHARS};
 use caelumora_model::snapshot;
 use caelumora_runtime::view::{Reached, SessionView};
 use serde::{Deserialize, Serialize};
@@ -63,14 +65,29 @@ impl From<&SessionTemplate> for TemplateResponse {
 pub struct ProfileResponse {
     pub introduction: Option<String>,
     pub max_introduction_chars: usize,
+    /// The language the user prefers (issue 56), a BCP 47 tag such as `de`.
+    pub preferred_language: Option<Language>,
 }
 
-/// A change of the logged-in user's profile: their introduction, `null` or
-/// blank for none.
+impl ProfileResponse {
+    /// `profile` as answered; one without anything in it if there is none.
+    pub(crate) fn of(profile: Option<UserProfile>) -> Self {
+        let (introduction, preferred_language) = profile.map_or((None, None), |profile| (profile.introduction, profile.preferred_language));
+        Self { introduction, max_introduction_chars: MAX_INTRODUCTION_CHARS, preferred_language }
+    }
+}
+
+/// The logged-in user's profile as it is to be: their introduction, `null`
+/// or blank for none, and the language they prefer, `null` for none - both
+/// replaced.
 #[derive(Debug, Deserialize)]
 pub struct ProfileRequest {
     #[serde(default)]
     pub introduction: Option<String>,
+    /// Checked as it is read: a text that is no language tag is a malformed
+    /// request.
+    #[serde(default)]
+    pub preferred_language: Option<Language>,
 }
 
 /// A compartment a classification may name (issue 133), as configured.
@@ -300,6 +317,10 @@ pub struct CreateChannelRequest {
     /// `strictly_confidential` - and `compartments`, which must be
     /// configured; `internal` without compartments if absent.
     pub classification: Option<Classification>,
+    /// The language its conversation is held in (issue 56), a BCP 47 tag;
+    /// the one the requesting user prefers if absent.
+    #[serde(default)]
+    pub language: Option<Language>,
 }
 
 #[derive(Debug, Serialize)]
@@ -319,6 +340,9 @@ pub struct ChannelResponse {
     pub responder_policy: Option<String>,
     /// The classification of the channel's contents (issue 133).
     pub classification: Classification,
+    /// The language its conversation is held in (issue 56); `null` for none
+    /// in particular.
+    pub language: Option<Language>,
     /// Whether the requesting user may rename the channel and add or remove
     /// its participants (issue 46).
     pub can_change: bool,
@@ -337,6 +361,7 @@ impl From<snapshot::ChannelSnapshot> for ChannelResponse {
             moderator: view.moderator,
             responder_policy: view.responder_policy,
             classification: view.classification,
+            language: view.language,
             can_change: view.can_change,
             former_members: view.former_members.into_iter().filter_map(ChannelMemberResponse::of).collect(),
         }
@@ -682,6 +707,7 @@ mod tests {
             moderator: Some("policy_moderator".to_string()),
             responder_policy: Some("broadcast_policy".to_string()),
             classification: Classification::CHANNEL_DEFAULT,
+            language: None,
             can_change: true,
             members: vec![member(alice, None), member(approver, Some("Approver")), member(ActorId::System, Some("system"))],
             former_members: Vec::new(),
@@ -717,6 +743,7 @@ mod tests {
             moderator: None,
             responder_policy: None,
             classification: Classification::CHANNEL_DEFAULT,
+            language: None,
             can_change: false,
             members: vec![member(alice, "alice", Vec::new()), member(helper, "Helper", vec![note])],
             former_members: Vec::new(),
@@ -755,6 +782,7 @@ mod tests {
             moderator: None,
             responder_policy: None,
             classification: Classification::CHANNEL_DEFAULT,
+            language: None,
             can_change: true,
             members: vec![member(alice, None)],
             former_members: vec![member(helper, Some(left.clone()))],
@@ -775,5 +803,14 @@ mod tests {
         assert_eq!(json["usage"], serde_json::json!({ "calls": 2, "prompt_tokens": 300, "completion_tokens": 20, "last_call_tokens": 170, "context_size": 8192 }));
         let json = serde_json::to_value(ChannelMemberResponse::of(member(None)).unwrap()).unwrap();
         assert!(json.get("usage").is_none());
+    }
+
+    #[test]
+    fn a_language_is_a_tag_checked_as_the_request_is_read() {
+        let request: ProfileRequest = serde_json::from_str(r#"{"introduction": null, "preferred_language": "de_ch"}"#).unwrap();
+        assert_eq!(request.preferred_language, Some(Language::parse("de-CH").unwrap()));
+        assert!(serde_json::from_str::<ProfileRequest>(r#"{"preferred_language": "Deutsch"}"#).is_err(), "no tag");
+        let request: CreateChannelRequest = serde_json::from_str(r#"{"name": "side"}"#).unwrap();
+        assert_eq!(request.language, None, "the preferred one when left out");
     }
 }

@@ -95,6 +95,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(channels::get_channel_messages).post(channels::send_message),
         )
         .route("/sessions/{id}/channels/{cid}/classification", axum::routing::put(channels::reclassify_channel))
+        .route("/sessions/{id}/channels/{cid}/language", axum::routing::put(channels::set_channel_language))
         .route("/sessions/{id}/channels/{cid}/restore", post(channels::restore_channel))
         .route("/sessions/{id}/channels/{cid}/messages/{mid}/classification", axum::routing::put(channels::reclassify_message))
         .route("/sessions/{id}/channels/{cid}/approvals", post(channels::send_approval))
