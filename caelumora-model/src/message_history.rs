@@ -1,12 +1,13 @@
 //! The history of a channel as an agent keeps it (issue 06): the chain of
 //! what happened in it - messages said, each of the agent's own with what it
-//! was produced from, and reclassifications (issue 133) - read into the
-//! messages as they stand (issue 197).
+//! was produced from, reclassifications (issue 133) and changes to what was
+//! said (issue 234) - read into the messages as they stand (issue 197).
 
 use crate::chain::Chain;
 use crate::confidentiality::Classification;
 use crate::context::ContextRef;
 use crate::message::{Message, MessageId};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
@@ -24,6 +25,12 @@ pub enum HistoryEntry {
     /// The message `message` - on whichever branch - is classified
     /// `classification` from here on (issue 133).
     Reclassified { message: MessageId, classification: Classification },
+    /// The message `message.id` - on whichever branch - reads as `message`
+    /// from here on (issue 234, `Message::modify`).
+    Modified { message: Message },
+    /// The message `message` - on whichever branch - was taken back by its
+    /// author at `at` (issue 234, `Message::revoke`).
+    Revoked { message: MessageId, at: DateTime<Utc> },
     /// The channel was classified `channel`, and every message said so far
     /// fits into it from here on (`Classification::fitted_into`).
     Fitted { channel: Classification },
@@ -31,9 +38,10 @@ pub enum HistoryEntry {
 
 /// The conversation as it happened - a chain like a `Transcript`. What it
 /// records is read from start to end into the messages as they stand: a
-/// reclassification applies to a message on any branch, as a change made
-/// in the channel does, so it is folded over every branch in the order
-/// things happened.
+/// reclassification, a modification or a revocation applies to a message on
+/// any branch, as a change made in the channel does, so it is folded over
+/// every branch in the order things happened. A message taken back stays, without what it
+/// said (`Message::revoked`), so that whatever names it by id finds it.
 pub type MessageHistory = Chain<HistoryEntry>;
 
 impl Chain<HistoryEntry> {
@@ -50,8 +58,8 @@ impl Chain<HistoryEntry> {
     }
 
     /// The messages of every branch as they stand, in the order they were
-    /// said: every message said, with every reclassification since applied
-    /// to it.
+    /// said: every message said, with every reclassification, modification
+    /// and revocation since applied to it.
     fn fold(&self) -> Vec<Message> {
         let mut messages: Vec<Message> = Vec::new();
         let mut at: HashMap<MessageId, usize> = HashMap::new();
@@ -64,6 +72,16 @@ impl Chain<HistoryEntry> {
                 HistoryEntry::Reclassified { message, classification } => {
                     if let Some(&i) = at.get(message) {
                         messages[i].classification = classification.clone();
+                    }
+                }
+                HistoryEntry::Modified { message } => {
+                    if let Some(&i) = at.get(&message.id) {
+                        messages[i].modify(message);
+                    }
+                }
+                HistoryEntry::Revoked { message, at: when } => {
+                    if let Some(&i) = at.get(message) {
+                        messages[i].revoke(*when);
                     }
                 }
                 HistoryEntry::Fitted { channel } => {
@@ -127,6 +145,29 @@ impl Chain<HistoryEntry> {
         true
     }
 
+    /// Records that the message `modified.id` - on whichever branch -
+    /// reads as `modified` from now on (issue 234). `false`, and nothing is
+    /// recorded, if there is no such message or it cannot be modified so as
+    /// it stands (`Message::modify`): taken back, or by another sender.
+    pub fn modify(&mut self, modified: Message) -> bool {
+        if !self.message(modified.id).is_some_and(|mut m| m.modify(&modified)) {
+            return false;
+        }
+        self.record(HistoryEntry::Modified { message: modified });
+        true
+    }
+
+    /// Records that the message `id` - on whichever branch - was taken back
+    /// at `at` (issue 234). `false`, and nothing is recorded, if there is no
+    /// such message or it was taken back already.
+    pub fn revoke(&mut self, id: MessageId, at: DateTime<Utc>) -> bool {
+        if !self.message(id).is_some_and(|mut m| m.revoke(at)) {
+            return false;
+        }
+        self.record(HistoryEntry::Revoked { message: id, at });
+        true
+    }
+
     /// Records that the channel is classified `channel` now, which every
     /// message said so far - on every branch: all of them were said in the
     /// channel - fits into from now on (`Classification::fitted_into`).
@@ -147,7 +188,7 @@ impl HistoryEntry {
     fn said(&self) -> Option<&Message> {
         match self {
             HistoryEntry::Said { message, .. } => Some(message),
-            HistoryEntry::Reclassified { .. } | HistoryEntry::Fitted { .. } => None,
+            HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. } => None,
         }
     }
 
@@ -251,5 +292,50 @@ mod tests {
         stored.apply(changes).unwrap();
         assert_eq!(stored.digest(), history.digest());
         assert!(stored.messages().iter().all(|m| m.classification == public));
+    }
+
+    #[test]
+    fn a_change_is_recorded_and_read_into_the_messages_as_they_stand() {
+        let at = chrono::Utc::now();
+        let modified = |n, content: &str| Message { content: Some(content.to_string()), timestamp: at, ..make_message(id(n)) };
+        let mut history = MessageHistory::default();
+        history.extend(vec![make_message(id(1))]);
+        let fork = history.digest();
+        history.extend(vec![make_message(id(2))]);
+        history.move_head(fork.as_ref());
+        history.extend(vec![make_message(id(3))]);
+        let before = history.digest();
+
+        assert!(history.modify(modified(1, "corrected")), "on the active path");
+        assert!(history.revoke(id(2), at), "on a branch no longer active");
+        assert!(!history.modify(modified(9, "never said")), "never said here");
+        assert!(!history.modify(modified(2, "too late")), "taken back already");
+        assert!(!history.modify(Message { sender_id: crate::actor::ActorId::System, ..make_message(id(3)) }), "by another sender");
+        assert_ne!(history.digest(), before, "recorded: the digest covers it");
+        assert_eq!(history.all_entries().len(), 5, "one entry each, nothing rewritten");
+
+        let messages = history.messages();
+        assert_eq!(messages.iter().map(|m| m.id).collect::<Vec<_>>(), [id(1), id(3)], "in their places");
+        assert_eq!((messages[0].content.as_deref(), messages[0].modified), (Some("corrected"), Some(at)));
+        let revoked = history.message(id(2)).expect("a message taken back is still found");
+        assert!(revoked.content.is_none() && revoked.revoked == Some(at));
+        assert_eq!(history.last_message_id(), id(3), "a change is no message said");
+
+        let loaded: MessageHistory = serde_json::from_value(serde_json::to_value(&history).unwrap()).unwrap();
+        assert_eq!(loaded.messages()[0].content.as_deref(), Some("corrected"));
+        assert_eq!(loaded.digest(), history.digest());
+    }
+
+    #[test]
+    fn a_change_since_the_history_was_stored_replays_onto_it() {
+        let mut history = MessageHistory::default();
+        history.extend(vec![make_message(id(1)), make_message(id(2))]);
+        let mut stored: MessageHistory = serde_json::from_value(serde_json::to_value(&history).unwrap()).unwrap();
+        history.mark_stored();
+
+        history.revoke(id(2), chrono::Utc::now());
+        stored.apply(history.changes().expect("changed")).unwrap();
+        assert_eq!(stored.digest(), history.digest());
+        assert!(stored.message(id(2)).is_some_and(|m| m.revoked.is_some()));
     }
 }

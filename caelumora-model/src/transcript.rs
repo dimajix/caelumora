@@ -1,12 +1,13 @@
 //! An agent's transcript (issue 50): the chain of messages its context is
-//! built from, and the turns it gave up (issue 145), as what happened
-//! (issue 197).
+//! built from, their modifications and revocations (issue 234) and the
+//! turns it gave up (issue 145), as what happened (issue 197).
 
 use crate::chain::{Chain, Node};
 use crate::digest::Digest;
 use crate::message::{Message, MessageId};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// What happened in a `Transcript`; its node carries the digest of the
 /// transcript up to and including it (issue 06).
@@ -18,6 +19,12 @@ use serde::{Deserialize, Serialize};
 pub enum TranscriptEntry {
     /// A message the model was given, or produced.
     Message(Message),
+    /// The message `message.id`, before it on the path, is given as
+    /// `message` from here on (issue 234, `Message::modify`).
+    Modified { message: Message },
+    /// The message `message`, before it on the path, was taken back at `at`
+    /// (issue 234, `Message::revoke`), and is no longer given.
+    Revoked { message: MessageId, at: DateTime<Utc> },
     /// A turn was given up (issue 145): its messages stay as a branch no
     /// longer active, ending in the entry `end` names, and the transcript
     /// goes on from here without them.
@@ -77,12 +84,37 @@ pub type Transcript = Chain<TranscriptEntry>;
 /// The entries of `path` - a path of a transcript from its root, as
 /// `entries` or `prefix` give it - each with the message it holds as it
 /// stands at the end of the path, `None` if it holds none: what a model
-/// given the path is given, and where. The one rule every reader of a
-/// transcript's messages reads them by (issue 234); what has to consider
-/// every entry ever added - the tokens used, whether a message reached the
-/// transcript at all - reads `all_entries` instead.
-pub fn as_they_stand<'a>(path: impl IntoIterator<Item = &'a Node<TranscriptEntry>>) -> impl Iterator<Item = (&'a Node<TranscriptEntry>, Option<Message>)> {
-    path.into_iter().map(|node| (node, node.entry.message().cloned()))
+/// given the path is given, and where. Every modification and revocation
+/// on the path applies to the message it names, which comes before it, so
+/// the path is gone through twice: once for them, then for the messages. A
+/// message taken back
+/// holds none any more; its entry stays, and a prompt part placed after it
+/// stays where it was. The one rule every reader of a transcript's messages
+/// reads them by (issue 234); what has to consider every entry ever added -
+/// the tokens used, whether a message reached the transcript at all - reads
+/// `all_entries` instead.
+pub fn as_they_stand<'a, P>(path: P) -> impl Iterator<Item = (&'a Node<TranscriptEntry>, Option<Message>)>
+where
+    P: IntoIterator<Item = &'a Node<TranscriptEntry>>,
+    P::IntoIter: Clone,
+{
+    let path = path.into_iter();
+    let mut changes: HashMap<MessageId, Vec<&'a TranscriptEntry>> = HashMap::new();
+    for node in path.clone() {
+        if let Some(id) = node.entry.changed() {
+            changes.entry(id).or_default().push(&node.entry);
+        }
+    }
+    path.map(move |node| {
+        let message = node.entry.message().and_then(|message| {
+            let mut message = message.clone();
+            for change in changes.get(&message.id).into_iter().flatten() {
+                change.apply_to(&mut message);
+            }
+            message.revoked.is_none().then_some(message)
+        });
+        (node, message)
+    })
 }
 
 impl Chain<TranscriptEntry> {
@@ -113,6 +145,39 @@ impl Chain<TranscriptEntry> {
     /// Appends `msg` and returns the digest of the transcript before it.
     pub fn push(&mut self, msg: Message) -> Option<Digest> {
         self.push_with(TranscriptEntry::Message(msg), crate::digest::transcript_chain)
+    }
+
+    /// Records that the message `modified.id` of the active path is given
+    /// as `modified` from now on (issue 234). `false`, and nothing is
+    /// recorded, if the message is not on the active path as it stands -
+    /// never given to the model, on a branch no longer active, or taken
+    /// back - or cannot be modified so (`Message::modify`). Not while a
+    /// turn is under way, as for every entry: its messages continue the
+    /// transcript as it was when it began.
+    pub fn modify(&mut self, modified: Message) -> bool {
+        if !self.standing(modified.id).is_some_and(|mut m| m.modify(&modified)) {
+            return false;
+        }
+        self.push_with(TranscriptEntry::Modified { message: modified }, crate::digest::transcript_chain);
+        true
+    }
+
+    /// Records that the message `id` of the active path was taken back at
+    /// `at` (issue 234), so that the model is no longer given it. `false`,
+    /// and nothing is recorded, if it is not on the active path as it
+    /// stands, as for `modify`.
+    pub fn revoke(&mut self, id: MessageId, at: DateTime<Utc>) -> bool {
+        if self.standing(id).is_none() {
+            return false;
+        }
+        self.push_with(TranscriptEntry::Revoked { message: id, at }, crate::digest::transcript_chain);
+        true
+    }
+
+    /// The message `id` of the active path as it stands, `None` if it is
+    /// not on it or was taken back.
+    fn standing(&self, id: MessageId) -> Option<Message> {
+        as_they_stand(self.entries()).find_map(|(_, m)| m.filter(|m| m.id == id))
     }
 
     /// Records that the turn whose branch ends in the entry `end` names was
@@ -148,7 +213,29 @@ impl TranscriptEntry {
     pub fn message(&self) -> Option<&Message> {
         match self {
             TranscriptEntry::Message(message) => Some(message),
-            TranscriptEntry::GivenUp { .. } => None,
+            TranscriptEntry::Modified { .. } | TranscriptEntry::Revoked { .. } | TranscriptEntry::GivenUp { .. } => None,
+        }
+    }
+
+    /// The message it modifies or takes back, if it does.
+    fn changed(&self) -> Option<MessageId> {
+        match self {
+            TranscriptEntry::Modified { message } => Some(message.id),
+            TranscriptEntry::Revoked { message, .. } => Some(*message),
+            TranscriptEntry::Message(_) | TranscriptEntry::GivenUp { .. } => None,
+        }
+    }
+
+    /// Applies what it changes to `message` as it stands, if it changes it.
+    fn apply_to(&self, message: &mut Message) {
+        match self {
+            TranscriptEntry::Modified { message: modified } => {
+                message.modify(modified);
+            }
+            TranscriptEntry::Revoked { at, .. } => {
+                message.revoke(*at);
+            }
+            TranscriptEntry::Message(_) | TranscriptEntry::GivenUp { .. } => {}
         }
     }
 }
@@ -328,5 +415,42 @@ mod tests {
         assert_eq!(stored.messages().iter().map(|m| m.id).collect::<Vec<_>>(), [id(1), id(4)]);
         assert_eq!(stored.given_up_turns().len(), 1, "the record came along");
         assert_eq!(stored.given_up_turns()[0].messages.iter().map(|m| m.id).collect::<Vec<_>>(), [id(2), id(3)]);
+    }
+
+    #[test]
+    fn a_change_is_given_to_the_model_from_where_it_was_recorded() {
+        let at = Utc::now();
+        let texts = |messages: Vec<Message>| messages.into_iter().map(|m| m.content.unwrap_or_default()).collect::<Vec<_>>();
+        let mut transcript = Transcript::default();
+        transcript.extend(vec![make_message(id(1)), Message { content: Some("second".to_string()), ..make_message(id(2)) }]);
+        let before = transcript.digest().unwrap();
+
+        assert!(transcript.modify(Message { content: Some("corrected".to_string()), timestamp: at, ..make_message(id(1)) }));
+        assert!(transcript.revoke(id(2), at));
+        assert!(!transcript.revoke(id(2), at), "taken back already");
+        assert!(!transcript.modify(Message { content: Some("too late".to_string()), ..make_message(id(2)) }), "taken back already");
+        assert!(!transcript.revoke(id(9), at), "never given");
+        transcript.push(make_message(id(3)));
+
+        assert_eq!(texts(transcript.messages()), ["corrected", "hello"], "as it stands, without what was taken back");
+        let then: Vec<Message> = as_they_stand(transcript.prefix(&before).unwrap()).filter_map(|(_, m)| m).collect();
+        assert_eq!(texts(then), ["hello", "second"], "a digest taken before names what was given then");
+        let entries = as_they_stand(transcript.entries()).map(|(_, m)| m.map(|m| m.id)).collect::<Vec<_>>();
+        assert_eq!(entries, [Some(id(1)), None, None, None, Some(id(3))], "every entry stays, in its place");
+
+        let loaded: Transcript = serde_json::from_value(serde_json::to_value(&transcript).unwrap()).unwrap();
+        assert_eq!(texts(loaded.messages()), ["corrected", "hello"]);
+        assert_eq!(loaded.digest(), transcript.digest());
+    }
+
+    #[test]
+    fn a_change_applies_only_on_the_active_path() {
+        let mut transcript = Transcript::default();
+        transcript.push(make_message(id(1)));
+        let fork = transcript.digest();
+        transcript.push(make_message(id(2)));
+        transcript.move_head(fork.as_ref());
+        assert!(!transcript.revoke(id(2), Utc::now()), "not given to the model any more");
+        assert_eq!(transcript.all_entries().len(), 2, "nothing recorded");
     }
 }

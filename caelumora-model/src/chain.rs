@@ -110,7 +110,7 @@ impl<E> Chain<E> {
     }
 
     /// The entries of the active path, from the root up to the head.
-    pub fn entries(&self) -> impl DoubleEndedIterator<Item = &Node<E>> + ExactSizeIterator {
+    pub fn entries(&self) -> impl DoubleEndedIterator<Item = &Node<E>> + ExactSizeIterator + Clone {
         self.path.iter().map(|&i| &self.nodes[i])
     }
 

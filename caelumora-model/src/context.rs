@@ -724,4 +724,28 @@ mod tests {
         assert_eq!(roles(SystemMessages::Anywhere), [System, User, System, System]);
         assert_eq!(SystemMessages::default(), SystemMessages::OnlyAtStart);
     }
+
+    #[test]
+    fn a_context_is_resolved_with_the_messages_as_they_stood_when_it_was_taken() {
+        let mut state = AgentChannelState::default();
+        let question = text("question");
+        let after_question = {
+            state.transcript.push(question.clone());
+            state.transcript.digest()
+        };
+        state.transcript.push(text("aside"));
+        let then = ContextRef { transcript: state.transcript.digest(), ..ContextRef::default() };
+        state.prompts.keep(prompt("notes"), || "notes".to_string());
+
+        let at = chrono::Utc::now();
+        state.transcript.modify(Message { content: Some("question, corrected".to_string()), timestamp: at, ..question.clone() });
+        let aside = state.transcript.messages()[1].id;
+        state.transcript.revoke(aside, at);
+        let notes = PromptRef { text: prompt("notes"), role: MessageRole::User, after: after_question, classification: None };
+        let now = ContextRef { transcript: state.transcript.digest(), prompts: vec![notes], ..ContextRef::default() };
+
+        let resolver = ContextResolver::of(&state);
+        assert_eq!(contents(&resolver.resolve(&then, ActorId::None).expect("resolved").items), ["question", "aside"], "what the model saw then");
+        assert_eq!(contents(&resolver.resolve(&now, ActorId::None).expect("resolved").items), ["question, corrected", "prompt:notes"], "what stands now");
+    }
 }

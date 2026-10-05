@@ -75,6 +75,17 @@ pub struct Message {
     /// `completion_tokens` fill. `None` where it is not known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_size: Option<u64>,
+    /// When the message was last modified (issue 234), `None` if it never
+    /// was. Set where what stands is read - from the changes a chain
+    /// recorded after the message - never by its sender, and not covered by
+    /// the digest: the change is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modified: Option<DateTime<Utc>>,
+    /// When the message was taken back by its author (issue 234), `None` if
+    /// it was not. A message taken back is read without what it said - no
+    /// content, reasoning, tool calls or results. Set like `modified`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revoked: Option<DateTime<Utc>>,
 }
 
 // No `Default`: a message has no classification that would be right
@@ -104,6 +115,8 @@ impl Message {
             completion_duration: None,
             total_duration: None,
             context_size: None,
+            modified: None,
+            revoked: None,
         }
     }
 }
@@ -157,6 +170,43 @@ impl Message {
     /// hear.
     pub fn as_heard(&self) -> Option<Message> {
         self.is_heard().then(|| Message { role: MessageRole::User, tool_calls: Vec::new(), tool_results: Vec::new(), ..self.clone() })
+    }
+    /// Modifies the message as it stands by `modified`, the same message
+    /// as it reads from now on (issue 234), and returns whether it did: only
+    /// one not taken back, by the same sender in the same role. It keeps its
+    /// place, its id and the time it was said, and takes over what
+    /// `modified` says - content and reasoning - how it is classified, whom
+    /// it mentions, and when it was modified (`modified`, its `timestamp`).
+    /// Its tool calls and results stay those it was said with: a call and
+    /// its result would come apart.
+    pub fn modify(&mut self, modified: &Message) -> bool {
+        let applies = modified.id == self.id && self.revoked.is_none() && modified.sender_id == self.sender_id && modified.role == self.role;
+        if applies {
+            self.content = modified.content.clone();
+            self.reasoning = modified.reasoning.clone();
+            self.reasoning_visibility = modified.reasoning_visibility;
+            self.classification = modified.classification.clone();
+            self.mentions = modified.mentions.clone();
+            self.modified = Some(modified.timestamp);
+        }
+        applies
+    }
+
+    /// Takes the message as it stands back, as of `at` (issue 234), and
+    /// returns whether it did: only one not taken back already. It keeps its
+    /// place and its id, and loses what it said - content, reasoning, tool
+    /// calls and results, mentions.
+    pub fn revoke(&mut self, at: DateTime<Utc>) -> bool {
+        let applies = self.revoked.is_none();
+        if applies {
+            self.content = None;
+            self.reasoning = None;
+            self.tool_calls.clear();
+            self.tool_results.clear();
+            self.mentions.clear();
+            self.revoked = Some(at);
+        }
+        applies
     }
 }
 
@@ -342,5 +392,34 @@ pub(crate) mod tests {
         assert!(stored.visibility.is_shown(), "a call without labels is public");
         let plain = serde_json::to_value(make_message(MessageId::new())).unwrap();
         assert!(plain.get("reasoning_visibility").is_none());
+    }
+
+    #[test]
+    fn a_message_is_modified_and_taken_back_as_it_stands() {
+        let said = Message { tool_calls: vec![call("1", ToolVisibility::SHOWN)], ..make_message(id(1)) };
+        let public = crate::confidentiality::Classification::general(crate::confidentiality::Confidentiality::Public);
+        let when = said.timestamp + chrono::Duration::minutes(5);
+        let modified = Message { content: Some("hello, corrected".to_string()), classification: public.clone(), timestamp: when, tool_calls: Vec::new(), ..said.clone() };
+
+        let mut message = said.clone();
+        assert!(message.modify(&modified));
+        assert_eq!(message.content.as_deref(), Some("hello, corrected"));
+        assert_eq!(message.classification, public, "how it is classified, too");
+        assert_eq!((message.timestamp, message.modified), (said.timestamp, Some(when)), "said when it was, modified when it was changed");
+        assert_eq!(message.tool_calls.len(), 1, "its calls are not taken over");
+
+        let mut other = said.clone();
+        assert!(!other.modify(&Message { sender_id: ActorId::System, ..modified.clone() }), "by another sender");
+        assert!(!other.modify(&Message { role: MessageRole::Assistant, ..modified.clone() }), "in another role");
+        assert!(!other.modify(&Message { id: id(2), ..modified.clone() }), "another message");
+        assert_eq!(other.content, said.content, "left as it was");
+
+        assert!(message.revoke(when));
+        assert_eq!(message.revoked, Some(when));
+        assert!(message.content.is_none() && message.tool_calls.is_empty(), "nothing of what it said");
+        assert!(!message.is_heard(), "nobody hears it");
+        let before = serde_json::to_value(&message).unwrap();
+        assert!(!message.modify(&modified) && !message.revoke(when), "nothing changes it any more");
+        assert_eq!(serde_json::to_value(&message).unwrap(), before);
     }
 }

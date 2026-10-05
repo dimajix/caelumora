@@ -240,14 +240,14 @@ Every content is one entry type, an enum of what can happen, with its methods as
 on its chain ([197](../issues/197-one-chain-one-model-of-change.md)); what stands is read from
 the entries:
 
-*   `Transcript` is `Chain<TranscriptEntry>`: a `Message` the model was given or produced, or the
-    record of a turn `GivenUp`. `messages` is the messages of the active path, what the model is
-    given.
+*   `Transcript` is `Chain<TranscriptEntry>`: a `Message` the model was given or produced, a
+    message `Modified` or `Revoked`, or the record of a turn `GivenUp`. `messages` is the messages
+    of the active path as they stand, what the model is given.
 *   `MessageHistory` is `Chain<HistoryEntry>`: a message `Said`, with what it was produced from
-    for the agent's own, a message `Reclassified`, the channel's classification `Fitted`.
-    `messages` and `message(id)` fold every branch in the order things happened into the messages
-    as they stand, so a reclassification applies to a message on any branch, as it did in the
-    channel.
+    for the agent's own, a message `Reclassified`, `Modified` or `Revoked`, the channel's
+    classification `Fitted`. `messages` and `message(id)` fold every branch in the order things
+    happened into the messages as they stand, so a reclassification, a modification or a revocation
+    applies to a message on any branch, as it did in the channel.
 *   Notes and memory are `Chain<LedgerEntry<K>>`, a ledger of changes to numbered items (see
     [MEMORY.md](MEMORY.md)).
 
@@ -280,8 +280,37 @@ A chain is a tree with a head ([08](../issues/08-retry-and-edit-past-answers.md)
     [193](../issues/193-external-state-rewritten-whole.md)).
 
 Giving up a turn ([145](../issues/145-ended-turns-leave-a-record.md), see [Beginning and ending a
-turn](#beginning-and-ending-a-turn)) moves the heads of the transcript and the history back;
-regenerating an answer (08) will move them too.
+turn](#beginning-and-ending-a-turn)) moves the heads of the transcript and the history back.
+Changing a message does not: it is recorded after it (see below).
+
+### Changes to a message
+
+A message once said can be modified or taken back by its author
+([234](../issues/234-modify-revoke-and-retry-messages.md)). Neither rewrites it: the change is an
+entry of its own after it - `Modified` with the message as it reads from now on, or `Revoked` - in
+every chain that holds the message (`modify` and `revoke` of `MessageHistory` and `Transcript`, both
+through `AgentChannelState::modify_message` and `revoke_message`). A chain that does not hold the
+message records nothing, and so does one where the message as it stands cannot be changed so: taken
+back already, or modified by another sender or in another role.
+
+What stands is read from the entries, by one rule, kept with the message (`Message::modify`,
+`Message::revoke`):
+
+*   a modified message keeps its place, its id and the time it was said, and takes over what the
+    change says - content, reasoning, classification, mentions - and when it was made
+    (`Message::modified`). Its tool calls and results stay those it was said with, so that a call
+    and its result cannot come apart;
+*   a message taken back keeps its place and loses what it said - content, reasoning, tool calls
+    and results (`Message::revoked`). The history keeps it so, for whatever names it by id; the
+    model is no longer given it.
+
+The transcript's messages are read in one place, `transcript::as_they_stand`: every entry of a path
+with its message as it stands at the end of that path. `messages`, the `ContextResolver` and
+`given_up_turns` read through it. Since a change is applied only within the path that holds it, a
+`ContextRef` taken before the change resolves to the message as the model saw it then, and one
+taken after to what stands. A prompt part placed after a message taken back stays where it was: the
+entry is still there. What is about every entry ever added - the tokens used, whether a message
+reached the transcript at all - reads `all_entries` instead.
 
 ### What is recorded
 

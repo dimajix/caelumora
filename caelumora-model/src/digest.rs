@@ -6,7 +6,7 @@
 //! one place, with a version tag in front of it, so that the scheme can
 //! change without old and new digests ever being mistaken for each other.
 
-use crate::message::Message;
+use crate::message::{Message, MessageId};
 use crate::message_history::HistoryEntry;
 use crate::transcript::TranscriptEntry;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -187,14 +187,43 @@ pub fn message_chain(previous: Option<&Digest>, message: &Message) -> Digest {
     e.finish()
 }
 
+/// The digest of a chain of messages ending in the modification of one of
+/// them to `modified` (issue 234) - the same in a history and a transcript -
+/// whose predecessor chain has the digest `previous`. It covers the message
+/// and what the modification takes over that a model sees or that decides
+/// where it may go - content, reasoning, classification - not when it was
+/// made.
+pub fn message_modified(previous: Option<&Digest>, modified: &Message) -> Digest {
+    let mut e = Encoder::new("caelumora.message-modified.v1");
+    e.opt_digest(previous);
+    e.bytes(modified.id.0.as_bytes());
+    e.opt_str(modified.content.as_deref());
+    e.opt_str(modified.reasoning.as_deref());
+    e.json(&to_json(&modified.classification));
+    e.finish()
+}
+
+/// The digest of a chain of messages ending in `message` taken back (issue
+/// 234), as `message_modified`: the message, not when.
+pub fn message_revoked(previous: Option<&Digest>, message: MessageId) -> Digest {
+    let mut e = Encoder::new("caelumora.message-revoked.v1");
+    e.opt_digest(previous);
+    e.bytes(message.0.as_bytes());
+    e.finish()
+}
+
 /// The digest of a transcript (issue 50) ending in `entry`, whose
 /// predecessor chain has the digest `previous`: a message as
 /// `message_chain`, so that every digest recorded before issue 197 names
 /// what it named; a turn given up (issue 145) by what it says - the branch
-/// it ends, the reason and the count, not the time - in a scheme of its own.
+/// it ends, the reason and the count, not the time - in a scheme of its own;
+/// a message modified or taken back as `message_modified` and
+/// `message_revoked`.
 pub fn transcript_chain(previous: Option<&Digest>, entry: &TranscriptEntry) -> Digest {
     match entry {
         TranscriptEntry::Message(message) => message_chain(previous, message),
+        TranscriptEntry::Modified { message } => message_modified(previous, message),
+        TranscriptEntry::Revoked { message, .. } => message_revoked(previous, *message),
         TranscriptEntry::GivenUp { end, given_up } => {
             let mut e = Encoder::new("caelumora.transcript-given-up.v1");
             e.opt_digest(previous);
@@ -210,10 +239,13 @@ pub fn transcript_chain(previous: Option<&Digest>, entry: &TranscriptEntry) -> D
 /// chain has the digest `previous`: a message said as `message_chain`, so
 /// that every digest recorded before issue 197 names what it named; a
 /// reclassification (issue 133) by what it says - the message and the
-/// classification, or the channel - in a scheme of its own.
+/// classification, or the channel - in a scheme of its own; a message
+/// modified or taken back as `message_modified` and `message_revoked`.
 pub fn history_chain(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest {
     match entry {
         HistoryEntry::Said { message, .. } => message_chain(previous, message),
+        HistoryEntry::Modified { message } => message_modified(previous, message),
+        HistoryEntry::Revoked { message, .. } => message_revoked(previous, *message),
         HistoryEntry::Reclassified { message, classification } => {
             let mut e = Encoder::new("caelumora.history-reclassified.v1");
             e.opt_digest(previous);

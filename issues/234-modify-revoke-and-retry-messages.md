@@ -444,3 +444,18 @@ describe the events, the routes and what revoking does not do.
   `given_up_turns` read through it; `TranscriptView::usage`, `AgentContextView::in_transcript` and
   the label of an external agent keep reading every entry, since they are about what was ever
   added. No change of behaviour.
+- **2026-10-05** — Step 2 done. The shared type `MessageChange` proposed above was built first and
+  then dropped on the maintainer's objection: `HistoryEntry` and `TranscriptEntry` have explicit
+  variants `Modified { message }` and `Revoked { message, at }`, as `Reclassified` is one, and the
+  rule that reads what stands is kept with the message - `Message::modify(&modified)` and
+  `Message::revoke(at)`, each returning whether it applied - so it still exists once. A
+  modification applies only to a message not taken back, by the same sender in the same role, and
+  takes over content, reasoning, classification and mentions, never tool calls or results, so that
+  a call and its result cannot come apart - which answers open question 4 for the model. The digest
+  schemes are shared by both chains (`digest::message_modified`: the message, content, reasoning,
+  classification; `digest::message_revoked`: the message; never the time).
+  `transcript::as_they_stand` goes through a path twice, once for its modifications and
+  revocations and once for its messages; `Chain::entries` is `Clone` for it. The agent takes them in
+  through `AgentChannelState::modify_message(heard, perceived)` - a version its perceive processors
+  dropped takes the message back in the transcript - and `revoke_message(id, at)`. AGENT-TURN.md has
+  a section *Changes to a message*.
