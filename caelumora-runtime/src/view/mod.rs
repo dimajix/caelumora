@@ -791,6 +791,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_agents_private_notes_are_read_from_every_channel_of_the_session_by_who_may() {
+        use caelumora_model::ledger::Change;
+        use caelumora_model::message::MessageId;
+        use caelumora_model::note::{NoteId, NoteOrigin};
+        use caelumora_model::store::StateStore;
+
+        let (store, manager) = owned_runtime();
+        let (alice, bob) = (user("alice"), user("bob"));
+        let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
+        let mut session = make_session("hers", ActorId::User(alice.id), vec![ActorId::User(bob.id), ActorId::Agent(helper.id)]);
+        session.participants = record_users(&store, &[&alice, &bob]).await;
+        session.participants.push(Participant::Agent(helper.id));
+        let template = main_channel(&session);
+        session.channels.clear();
+        let mut channel_of = |name: &str| {
+            let channel = Channel { id: ChannelId::new(), name: Name::new(name).unwrap(), ..template.clone() };
+            session.channels.push(channel.id);
+            channel
+        };
+        let (zeta, quiet, alpha) = (channel_of("zeta"), channel_of("quiet"), channel_of("alpha"));
+        let system = SecurityContext::system();
+        store.create_session(&system, &session).await.unwrap();
+        for channel in [&zeta, &quiet, &alpha] {
+            store.create_channel(&system, channel).await.unwrap();
+        }
+        for (channel, text) in [(&zeta, "noted in zeta"), (&alpha, "noted in alpha")] {
+            let mut state = caelumora_model::agent::AgentChannelState::default();
+            state.private_notes.push(Change::Add { id: NoteId(1), text: text.to_string(), classification: Classification::CHANNEL_DEFAULT }, NoteOrigin::default(), MessageId::default());
+            store.put_agent_channel_state(helper.id, channel.id, &mut state).await.unwrap();
+        }
+
+        let read = |viewer: Viewer| {
+            let manager = &manager;
+            async move { manager.views(viewer).session(session.id).await.unwrap().private_notes_of(helper.id).await }
+        };
+        let found = read(as_user(alice.id)).await.expect("alice made the agent");
+        let found: Vec<_> = found.iter().map(|(channel, notes, _)| (channel.name().as_str(), notes[0].text.as_str())).collect();
+        assert_eq!(found, [("alpha", "noted in alpha"), ("zeta", "noted in zeta")], "by the channels' names, without one noting nothing");
+        let refused = read(as_user(bob.id)).await.expect_err("not bob's to read");
+        assert!(matches!(refused, ViewError::Forbidden { .. }), "{refused}");
+    }
+
+    #[tokio::test]
     async fn an_agent_whose_personality_is_gone_keeps_its_name_and_its_state() {
         use caelumora_model::note::{NoteId, NoteOrigin};
         use caelumora_model::ledger::Change;

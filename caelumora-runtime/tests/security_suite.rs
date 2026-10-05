@@ -532,6 +532,25 @@ async fn what_an_agent_saw_is_its_owners_alone() {
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
+/// An agent's private notes across the channels of a session (issue 233)
+/// are read as what it saw: by its owner, not by another member.
+#[tokio::test]
+async fn an_agents_private_notes_are_its_owners_alone() {
+    let world = World::new().await;
+    let global = world.personality("global", None, &[]).await;
+    let helper = world.agent("helper", world.alice, &global).await;
+    let session = world.shared_session(&[helper], &[]).await;
+    let notes = |user| {
+        let world = &world;
+        let session = session.id();
+        async move { world.manager.views(Viewer::new(World::as_user(user))).session(session).await.unwrap().private_notes_of(helper).await }
+    };
+
+    assert!(notes(world.alice).await.is_ok(), "read by its owner");
+    assert!(matches!(notes(world.bob).await, Err(ViewError::Forbidden { .. })), "not by bob, who takes part");
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
 /// What an agent can do now - its tools (issue 194) - is read by every
 /// member of the channel it works in, not only by its owner; not by
 /// whoever is no member.

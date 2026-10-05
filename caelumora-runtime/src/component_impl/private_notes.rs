@@ -26,7 +26,6 @@ use crate::work::AgentWork;
 use crate::tool::{classification_argument, id_argument, reclassify_parameters, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
-use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::session::ChannelId;
 use caelumora_model::digest::Digest;
@@ -154,21 +153,15 @@ impl PromptProvider for PrivateNotesComponent {
         let own = AgentNotes::current(work, NoteKind::Private);
         let mut elsewhere = Vec::new();
         if let Some(session) = work.session() {
-            for channel in session.all_channels().await {
-                if channel.id() == work.channel_id() {
-                    continue;
-                }
-                // Not a member there: nothing noted there.
-                let Ok(me) = channel.member(ActorId::Agent(work.agent_id())).await else { continue };
-                match me.private_notes().await {
-                    Ok((notes, digest)) if !notes.is_empty() => elsewhere.push(Elsewhere { channel: channel.id(), name: channel.name().to_string(), notes, digest }),
-                    Ok(_) => {}
-                    // The agent can still answer without them.
-                    Err(e) => warn!("Reading the private notes of agent {} in channel {} failed: {}", work.agent_id(), channel.id(), e),
-                }
+            match session.private_notes_of(work.agent_id()).await {
+                Ok(found) => elsewhere.extend(found.into_iter()
+                    // This channel's come from the turn, with its own changes.
+                    .filter(|(channel, ..)| channel.id() != work.channel_id())
+                    .map(|(channel, notes, digest)| Elsewhere { channel: channel.id(), name: channel.name().to_string(), notes, digest })),
+                // The agent can still answer without them.
+                Err(e) => warn!("Reading the private notes of agent {} failed: {}", work.agent_id(), e),
             }
         }
-        elsewhere.sort_by(|l, r| l.name.cmp(&r.name));
 
         let private = |channel, digest, notes: &[Note]| KnowledgeRef {
             channel,
