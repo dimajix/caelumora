@@ -134,8 +134,10 @@ server's to decide.
 
 What the user deleted stays in the trash until it is purged (issue 164, `DeletedList`): below the
 sessions a folded "Deleted sessions", and in every unfolded session a folded "Deleted channels",
-each loaded when unfolded and again on `SessionDeleted`, `SessionRestored`, `ChannelDeleted` and
-`ChannelRestored`. An entry shows who deleted it when, and offers "Restore" where `can_restore`
+each loaded when shown and again on `SessionDeleted`, `SessionRestored`, `ChannelDeleted` and
+`ChannelRestored`. A list is shown only while it holds an entry (issue 232): the server leaves out
+what the user may not read, so an empty list means nothing to see, whichever the reason, and it
+disappears as soon as its last entry is restored or purged. An entry shows who deleted it when, and offers "Restore" where `can_restore`
 and "Delete for good" - confirmed by a second click - where `can_purge`; a channel only with its
 session. A restored session or channel is fetched again like a new one.
 

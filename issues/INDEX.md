@@ -206,7 +206,7 @@ argues against it, and what came out of the last attempt.
 | [227](227-agent-management.md) | open | Agents cannot be seen or managed on their own, only as members of channels: no list, no renaming, no trash in the web UI, nothing of what an agent has across channels. |
 | [230](230-member-actions-menu.md) | done | The action buttons on every channel member in the web UI keep their place even when hidden, so the member's name is cut off almost entirely. |
 | [231](231-resizable-panels.md) | done | The panels of the web UI - sidebar, channel members, an agent's context and history - have a fixed width that cannot be changed. |
-| [232](232-empty-trash-shown.md) | open | The sections of deleted sessions and channels are shown in the sidebar even where they hold nothing the user may see, so every unfolded session carries an empty line. |
+| [232](232-empty-trash-shown.md) | done | The sections of deleted sessions and channels are shown in the sidebar even where they hold nothing the user may see, so every unfolded session carries an empty line. |
 
 ## Context and knowledge
 

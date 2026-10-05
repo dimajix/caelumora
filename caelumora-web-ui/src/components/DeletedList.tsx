@@ -1,7 +1,8 @@
 // What was deleted - sessions, or the channels of a session - folded below
 // what is there (issue 164): who deleted it and when, with "Restore" and
 // "Delete for good" where the server says the user may. Loaded when
-// unfolded, and again whenever `version` changes.
+// shown, and again whenever `version` changes; shown only while it holds
+// an entry the user may see (issue 232) - the server leaves out the others.
 
 import React, {useEffect, useState} from 'react';
 import {ChevronDown, ChevronRight, RotateCcw, Trash2} from 'lucide-react';
@@ -27,7 +28,6 @@ export const DeletedList: React.FC<DeletedListProps> = ({title, load, version, o
   const [confirming, setConfirming] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!open) return;
     let current = true;
     load()
       .then(found => { if (current) setDeleted(found); })
@@ -35,13 +35,16 @@ export const DeletedList: React.FC<DeletedListProps> = ({title, load, version, o
     return () => { current = false; };
     // `load` is a new function on every render; what it loads changes with `version`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, version]);
+  }, [version]);
 
   const act = async (action: (id: string) => Promise<void>, id: string) => {
     setConfirming(null);
     await action(id);
     setDeleted(prev => prev && prev.filter(d => d.id !== id));
   };
+
+  // Nothing deleted, nothing the user may see, or not loaded (yet): no heading.
+  if (!deleted || deleted.length === 0) return null;
 
   return (
     <div>
@@ -55,9 +58,7 @@ export const DeletedList: React.FC<DeletedListProps> = ({title, load, version, o
       </button>
       {open && (
         <div className="ml-4 space-y-1">
-          {deleted === null && <div className="p-2 text-xs text-gray-500">Loading…</div>}
-          {deleted?.length === 0 && <div className="p-2 text-xs text-gray-500 italic">Nothing deleted</div>}
-          {deleted?.map(entry => {
+          {deleted.map(entry => {
             const at = formatTimestamp(entry.deleted.at);
             return (
               <div key={entry.id} className="group/deleted flex items-center rounded-md hover:bg-gray-800 text-xs text-gray-500">

@@ -1,6 +1,6 @@
 # 232 — The trash is shown in the sidebar even where there is nothing in it
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -59,3 +59,8 @@ else - and WEB-UI.md says so.
 
 - **2026-10-05** — Issue created at the maintainer's request: the two trash sections of the sidebar
   should be hidden when there is nothing deleted, or nothing the logged-in user may see.
+- **2026-10-05** — Done, the recommended way. `DeletedList` loads when it is rendered and again
+  when `version` changes, no longer when unfolded, and renders nothing while its list is not loaded,
+  failed to load or is empty; the "Loading…" and "Nothing deleted" lines went with it. Restoring or
+  purging the last entry empties the list from its own state, so it disappears at once. No change to
+  the REST API or the runtime. WEB-UI.md updated.
