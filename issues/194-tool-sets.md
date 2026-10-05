@@ -1,6 +1,6 @@
 # 194 — An agent's tools are a flat list, not grouped by the provider they come from
 
-**Status:** open
+**Status:** in progress
 **Area:** Tools and approvals
 
 ## The problem
@@ -123,9 +123,9 @@ impl ToolSet<Tool> {
 - `fn unavailable(&self) -> Option<String>`, default `None`.
 - The **name** is not the provider's: it is the id of its component, which the executor already
   holds (`ComponentImpl::id`), unique within the agent.
-- The description can be overridden in the configuration: a common parameter `description` of
-  every tool-providing component, read by one shared helper.
-- Built-in components write their own description.
+- The description is the provider's: built-in components write their own, worded for a tool set.
+  Only a generic provider, whose tools it does not know itself, takes one from its configuration -
+  for now `mcp_tool` (step 5). There is no common override for every component.
 
 ### Step 3 - executor and turn
 
@@ -149,7 +149,8 @@ a model is seen to need it.
 ### Step 5 - MCP
 
 - `McpToolProvider` takes the description from the server's `instructions` in its `initialize`
-  result, else a generic text naming the component; the configured `description` overrides both.
+  result, else a generic text naming the component; a parameter `description` of its
+  configuration overrides both.
 - A failed discovery sets `unavailable` instead of only logging. Retrying discovery is issue 126:
   since the executor asks its providers each time, a refreshed provider is followed without
   further change.
@@ -183,3 +184,10 @@ Order: step 0 alone, then 1-3 together, then 4, 5 and 6 each on their own.
 - **2026-10-05** — Plan decided with the maintainer: an optional prompt provider that names only
   unavailable tool sets, the record grouped by set, the view at the participant. Issue 32 is
   solved in steps 4 and 5.
+- **2026-10-05** — Step 0 done: the record of what was offered is `offered_tools`. Steps 1 to 3
+  done: `ToolSet<T>` in the model, `ToolProvider::description` and `unavailable`,
+  `ToolExecutor::tool_sets`, the record keeps the sets (`digest::tool_sets`), and the context panel
+  of the web UI groups the tools offered. The turn keeps its tools flat (`TurnState::tools`); the
+  sets are in the record its context names. Decided with the maintainer: the description is the
+  provider's, and only a generic provider such as `mcp_tool` takes one from its configuration
+  (step 5) - no common override on the component descriptor or for every tool provider.

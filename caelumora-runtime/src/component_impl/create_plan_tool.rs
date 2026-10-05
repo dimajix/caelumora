@@ -83,6 +83,10 @@ fn parse_plan(args: &Value) -> ToolResult<Plan> {
 
 #[async_trait]
 impl ToolProvider for CreatePlanToolProvider {
+    fn description(&self) -> String {
+        "Plan a larger piece of work in steps before doing it.".to_string()
+    }
+
     fn tools(&self) -> Vec<Tool> {
         vec![Tool {
             name: CREATE_PLAN_TOOL_NAME.to_string(),

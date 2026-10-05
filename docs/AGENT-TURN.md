@@ -305,7 +305,8 @@ channel's history identifies the agent by the message's sender.
 ### Tools offered
 
 A turn offers its model the agent's tools as they were when it began: they are asked for once, in
-`AgentActor::request_response`, and fixed in the turn (`TurnState::tools`, issue 137) like its
+their tool sets (`GuardedToolExecutor::tool_sets`, issue 194), in `AgentActor::request_response`,
+and fixed in the turn (`TurnState::tools`, flat, issue 137) like its
 classification and publication - a resumed turn keeps them. The model is told of a tool only its
 name, description and parameters - a `ToolDefinition` (`Tool::definition`); whether its calls need
 approval and how far they may travel stay with the runtime, which labels the model's answer (`label`
@@ -313,12 +314,14 @@ in `actor_impl/agent.rs`) and puts its calls up for approval (`GuardedToolExecut
 same `Tool`s. A tool that changes or disappears during a turn is offered as it is from the next turn
 on; a call of one that is gone fails as unknown.
 
-Beginning a turn (`AgentChannelState::begin_turn`) keeps the set in
-`AgentChannelState::offered_tools`, once per digest (`digest::tools`, in the order offered), and
-puts its digest into the turn's context, so that every message of the turn records it; no tools are
-recorded as `None`.
-`LLMClient::chat_completion` gets the tools from the resolved context, like the messages, so what
-the model was offered and what is recorded as offered are the same.
+Beginning a turn (`AgentChannelState::begin_turn`) keeps the tool sets - each as the model is told
+of it, `ToolSet<ToolDefinition>` - in `AgentChannelState::offered_tools`, once per digest
+(`digest::tool_sets`, in the order offered), and puts its digest into the turn's context, so that
+every message of the turn records it; no tool sets are recorded as `None`. An offer recorded before
+issue 194, a flat list of tools, is read as one set without a name.
+`LLMClient::chat_completion` gets the tools from the resolved context, like the messages - the
+tools of all sets in one list, since the backends know no sets - so what the model was offered and
+what is recorded as offered are the same.
 
 ### Reasoning given back
 

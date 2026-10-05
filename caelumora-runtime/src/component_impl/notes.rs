@@ -48,6 +48,10 @@ pub struct NotesComponent {
 
 #[async_trait]
 impl ToolProvider for NotesComponent {
+    fn description(&self) -> String {
+        "Notes in this channel: what you want to remember here, and what the others noted.".to_string()
+    }
+
     fn tools(&self) -> Vec<Tool> {
         vec![
             Tool {

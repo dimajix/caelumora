@@ -54,6 +54,10 @@ pub struct PrivateNotesComponent {
 
 #[async_trait]
 impl ToolProvider for PrivateNotesComponent {
+    fn description(&self) -> String {
+        "Your private notes: what only you should remember across your channels of this session.".to_string()
+    }
+
     fn tools(&self) -> Vec<Tool> {
         vec![
             Tool {

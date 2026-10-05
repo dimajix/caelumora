@@ -19,6 +19,10 @@ pub struct CalculatorToolProvider;
 
 #[async_trait]
 impl ToolProvider for CalculatorToolProvider {
+    fn description(&self) -> String {
+        "Evaluate mathematical expressions.".to_string()
+    }
+
     fn tools(&self) -> Vec<Tool> {
         vec![Tool {
             name: CALCULATE_TOOL_NAME.to_string(),

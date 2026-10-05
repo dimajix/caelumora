@@ -453,10 +453,23 @@ export interface MessageContextResponse {
   items: (SeenPrompt | SeenMessage)[];
   /** What was read from notes and histories before the message was produced (issue 17). */
   knowledge: KnowledgeRef[];
-  /** The digest of the set of tools the model was offered, null if none (issue 137). */
+  /** The digest of the tool sets the model was offered, null if none (issue 137). */
   tools_digest: string | null;
-  /** The tools the model was offered, as it was told of them. */
-  tools: ToolDefinition[];
+  /** The tools the model was offered, as it was told of them, in their sets (issue 194). */
+  tool_sets: ToolSet<ToolDefinition>[];
+}
+
+/**
+ * The tools of one source of an agent - a component, e.g. an MCP server - with what they are for
+ * (issue 194). A record made before has one set without a name.
+ */
+export interface ToolSet<T> {
+  /** The component the tools come from; empty in a record made before tool sets. */
+  name: string;
+  description: string;
+  tools: T[];
+  /** Why the source gives no tools now; absent if it does. */
+  unavailable?: string;
 }
 
 /** A tool as a model is offered it (issue 137). */

@@ -22,6 +22,10 @@ pub struct StopToolProvider;
 
 #[async_trait]
 impl ToolProvider for StopToolProvider {
+    fn description(&self) -> String {
+        "End your part in the conversation.".to_string()
+    }
+
     fn tools(&self) -> Vec<Tool> {
         let properties: Vec<(String, ToolParameters)> = vec![];
         let required: Vec<String> = vec![];

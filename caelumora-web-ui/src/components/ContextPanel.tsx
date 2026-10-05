@@ -9,7 +9,7 @@
 
 import React, {useEffect, useState} from 'react';
 import {Copy, ScrollText, X} from 'lucide-react';
-import type {ChannelMember, KnowledgeRef, Message, MessageContextResponse, SeenMessage, SeenPrompt, ToolDefinition} from '../types';
+import type {ChannelMember, KnowledgeRef, Message, MessageContextResponse, SeenMessage, SeenPrompt, ToolDefinition, ToolSet} from '../types';
 import {type Classification, classificationDescription, classificationLabel} from '../confidentiality';
 import {clsx as cn} from 'clsx';
 import {api} from '../api';
@@ -173,22 +173,38 @@ const KnowledgeList: React.FC<{knowledge: KnowledgeRef[]; sessionId: string}> = 
   </details>
 );
 
-const ToolList: React.FC<{tools: ToolDefinition[]}> = ({tools}) => (
+/** The tools offered, by the set they came from (issue 194). */
+const ToolList: React.FC<{sets: ToolSet<ToolDefinition>[]}> = ({sets}) => (
   <details className="rounded-md border border-gray-200 dark:border-gray-700 text-sm">
     <summary className="cursor-pointer px-3 py-2 font-semibold text-gray-700 dark:text-gray-200">
-      Tools offered ({tools.length})
+      Tools offered ({sets.reduce((count, set) => count + set.tools.length, 0)})
     </summary>
-    <div className="px-3 pb-2 space-y-2">
-      {tools.map(tool => (
-        <details key={tool.name}>
-          <summary className="cursor-pointer text-xs">
-            <code className="font-mono font-semibold text-gray-800 dark:text-gray-100">{tool.name}</code>
-            <span className="text-gray-500 dark:text-gray-400"> - {tool.description}</span>
-          </summary>
-          <pre className="mt-1 whitespace-pre-wrap text-[11px] text-gray-600 dark:text-gray-300">
-            {JSON.stringify(tool.parameters, null, 2)}
-          </pre>
-        </details>
+    <div className="px-3 pb-2 space-y-3">
+      {sets.map((set, index) => (
+        <div key={set.name || index} className="space-y-1">
+          {set.name && (
+            <div className="text-xs">
+              <span className="font-semibold text-gray-700 dark:text-gray-200">{set.name}</span>
+              {set.description && <span className="text-gray-500 dark:text-gray-400"> - {set.description}</span>}
+            </div>
+          )}
+          {set.unavailable && (
+            <div className="text-xs text-amber-600 dark:text-amber-400">Unavailable: {set.unavailable}</div>
+          )}
+          <div className={set.name ? 'ml-3 space-y-2' : 'space-y-2'}>
+            {set.tools.map(tool => (
+              <details key={tool.name}>
+                <summary className="cursor-pointer text-xs">
+                  <code className="font-mono font-semibold text-gray-800 dark:text-gray-100">{tool.name}</code>
+                  <span className="text-gray-500 dark:text-gray-400"> - {tool.description}</span>
+                </summary>
+                <pre className="mt-1 whitespace-pre-wrap text-[11px] text-gray-600 dark:text-gray-300">
+                  {JSON.stringify(tool.parameters, null, 2)}
+                </pre>
+              </details>
+            ))}
+          </div>
+        </div>
       ))}
     </div>
   </details>
@@ -267,7 +283,7 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({sessionId, channelId,
         {context && (
           <>
             {context.knowledge?.length > 0 && <KnowledgeList knowledge={context.knowledge} sessionId={sessionId} />}
-            {context.tools?.length > 0 && <ToolList tools={context.tools} />}
+            {context.tool_sets?.length > 0 && <ToolList sets={context.tool_sets} />}
             {rows.slice(0, pinned).map(row => row.kind === 'prompt' && (
               <PromptView key={row.digest} prompt={row} leading />
             ))}

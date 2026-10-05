@@ -188,7 +188,7 @@ impl AgentActor {
             event_context,
             security_context,
             classification,
-            self.tool_executor.tools(),
+            self.tool_executor.tool_sets(),
             self.llm_client.profile(),
         );
         self.control.begin_turn();
@@ -868,7 +868,7 @@ mod tests {
     use caelumora_model::confidentiality::Confidentiality;
     use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
     use caelumora_model::message::{MessageId, MessageRole};
-    use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
+    use caelumora_model::tool::{Tool, ToolParameters, ToolSet, ToolVisibility};
 
     fn tool(name: &str, visibility: ToolVisibility) -> Tool {
         Tool {
@@ -902,7 +902,7 @@ mod tests {
         let agent = AgentId::new();
         let channel = Classification::general(Confidentiality::Confidential);
         let mut agent_channel_state = AgentChannelState::default();
-        agent_channel_state.begin_turn(Default::default(), Default::default(), channel.clone(), vec![tool("shown", ToolVisibility::SHOWN), tool("call_only", ToolVisibility::CALL_ONLY)], Default::default());
+        agent_channel_state.begin_turn(Default::default(), Default::default(), channel.clone(), vec![ToolSet::new("tools", "some tools", vec![tool("shown", ToolVisibility::SHOWN), tool("call_only", ToolVisibility::CALL_ONLY)])], Default::default());
         let mut turn = Turn::of(agent, "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached()).expect("a turn was begun");
 
         let mut message = answer(&["shown", "call_only", "unknown"]);
@@ -928,7 +928,7 @@ mod tests {
         let both = || vec![tool("shown", ToolVisibility::SHOWN), tool("call_only", ToolVisibility::CALL_ONLY)];
         let reasoning = |tools: Vec<Tool>, personality: Visibility, private_knowledge: bool, calls: &[&str], complete: bool| {
             let mut agent_channel_state = AgentChannelState::default();
-            agent_channel_state.begin_turn(Default::default(), Default::default(), Classification::CHANNEL_DEFAULT, tools, Default::default());
+            agent_channel_state.begin_turn(Default::default(), Default::default(), Classification::CHANNEL_DEFAULT, vec![ToolSet::new("tools", "some tools", tools)], Default::default());
             let mut turn = Turn::of(agent, "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached()).expect("a turn was begun");
             if private_knowledge {
                 turn.record_knowledge(KnowledgeRef { channel: turn.channel_id(), session: turn.session_id(), source: KnowledgeSource::PrivateNotes { agent, digest: None }, classification: None });

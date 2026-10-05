@@ -34,6 +34,12 @@ impl<V> Kept<V> {
         }
     }
 
+    /// The values made of these by `f`, under the same digests - for values
+    /// read in an older form.
+    pub fn map<W>(self, mut f: impl FnMut(V) -> W) -> Kept<W> {
+        Kept { values: self.values.into_iter().map(|(digest, value)| (digest, f(value))).collect(), pending: self.pending }
+    }
+
     pub fn get(&self, digest: &Digest) -> Option<&V> {
         self.values.get(digest)
     }

@@ -606,7 +606,7 @@ mod tests {
         let context = seen.context_of(answer.id).expect("what the call was given (issue 205)");
         assert_eq!(context.items.len(), 1, "the messages of the one call, no prompt parts");
         assert!(matches!(&context.items[0], caelumora_model::context::ContextItem::Conversation { message } if message.id == question.id));
-        assert!(context.tools.is_empty(), "and no tools: those are the remote agent's");
+        assert!(context.tool_sets.is_empty(), "and no tools: those are the remote agent's");
         assert_eq!(seen.classification_of(answer.id), Some(Classification::CHANNEL_DEFAULT), "its answer is in its history");
         assert_eq!(member.private_notes().await.unwrap(), (Vec::new(), None));
         assert!(member.notes().await.unwrap().expect("an agent").notes.is_empty(), "it writes none");

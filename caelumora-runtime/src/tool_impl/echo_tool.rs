@@ -17,6 +17,10 @@ pub struct EchoToolProvider;
 
 #[async_trait]
 impl ToolProvider for EchoToolProvider {
+    fn description(&self) -> String {
+        "Echo the input, for testing.".to_string()
+    }
+
     fn tools(&self) -> Vec<Tool> {
         vec![Tool {
             name: ECHO_TOOL_NAME.to_string(),

@@ -27,7 +27,7 @@ use crate::digest::Digest;
 use crate::kept::Kept;
 use crate::message::{Message, MessageRole, TokenUsage};
 use crate::transcript::{Transcript, TranscriptEntry};
-use crate::tool::ToolDefinition;
+use crate::tool::{ToolDefinition, ToolSet};
 use serde::{Deserialize, Serialize};
 
 /// A prompt part an agent's model was given besides the conversation - the
@@ -342,8 +342,8 @@ pub struct ContextRef {
     /// The digest of the agent's transcript before the message.
     pub transcript: Option<Digest>,
     pub prompts: Vec<PromptRef>,
-    /// The digest of the set of tools the model was offered
-    /// (`crate::digest::tools`), `None` if it was offered none.
+    /// The digest of the tool sets the model was offered
+    /// (`crate::digest::tool_sets`), `None` if it was offered none.
     pub tools: Option<Digest>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub knowledge: Vec<KnowledgeRef>,
@@ -362,7 +362,8 @@ pub struct ResolvedContext {
     /// What the history recorded for the message.
     pub reference: ContextRef,
     pub items: Vec<ContextItem>,
-    pub tools: Vec<ToolDefinition>,
+    /// The tools offered, in their sets (issue 194).
+    pub tool_sets: Vec<ToolSet<ToolDefinition>>,
 }
 
 /// An agent's transcript continued by the messages of its turn under way
@@ -413,7 +414,7 @@ impl<'a> TranscriptView<'a> {
 pub struct ContextResolver<'a> {
     transcript: TranscriptView<'a>,
     prompts: &'a Kept<String>,
-    offered_tools: &'a Kept<Vec<ToolDefinition>>,
+    offered_tools: &'a Kept<Vec<ToolSet<ToolDefinition>>>,
 }
 
 impl<'a> ContextResolver<'a> {
@@ -435,11 +436,11 @@ impl<'a> ContextResolver<'a> {
         let turn_start = entries.len().checked_sub(reference.turn_entries)?;
         let (before, during) = entries.split_at(turn_start);
         let items = self.assemble(&reference.prompts, &reference.profile, agent, before, during)?;
-        let tools = match &reference.tools {
+        let tool_sets = match &reference.tools {
             Some(digest) => self.offered_tools.get(digest)?.clone(),
             None => Vec::new(),
         };
-        Some(ResolvedContext { reference: reference.clone(), items, tools })
+        Some(ResolvedContext { reference: reference.clone(), items, tool_sets })
     }
 
     /// The items the model of `agent` is given: the entries `before` the
@@ -691,14 +692,15 @@ mod tests {
     fn the_tools_offered_are_resolved_from_their_set() {
         use crate::tool::ToolParameters;
         let mut state = AgentChannelState::default();
-        let offered = vec![ToolDefinition { name: "echo".to_string(), description: "echoes".to_string(), parameters: ToolParameters::object([("text", ToolParameters::string("what"))], ["text"]) }];
-        let digest = crate::digest::tools(&offered);
+        let echo = ToolDefinition { name: "echo".to_string(), description: "echoes".to_string(), parameters: ToolParameters::object([("text", ToolParameters::string("what"))], ["text"]) };
+        let offered = vec![ToolSet::new("echo_tool", "echoes", vec![echo])];
+        let digest = crate::digest::tool_sets(&offered);
         state.offered_tools.keep(digest, || offered.clone());
 
         let resolver = ContextResolver::of(&state);
         let with = |tools| ContextRef { tools, ..ContextRef::default() };
-        assert_eq!(resolver.resolve(&with(Some(digest)), ActorId::None).expect("the set is kept").tools, offered);
-        assert!(resolver.resolve(&with(None), ActorId::None).expect("no tools offered").tools.is_empty());
+        assert_eq!(resolver.resolve(&with(Some(digest)), ActorId::None).expect("the set is kept").tool_sets, offered);
+        assert!(resolver.resolve(&with(None), ActorId::None).expect("no tools offered").tool_sets.is_empty());
         assert!(resolver.resolve(&with(Some(prompt("never recorded"))), ActorId::None).is_none(), "a set that was not kept");
     }
 

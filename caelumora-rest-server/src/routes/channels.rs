@@ -402,7 +402,7 @@ pub async fn message_context(
         items: seen.items.into_iter().map(|item| SeenItemResponse::of(item, &causes)).collect(),
         knowledge,
         tools_digest: seen.reference.tools,
-        tools: seen.tools,
+        tool_sets: seen.tool_sets,
     }))
 }
 

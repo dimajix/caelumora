@@ -140,6 +140,62 @@ pub struct ToolDefinition {
     pub parameters: ToolParameters,
 }
 
+/// The tools of one source of an agent - a component, e.g. an MCP server -
+/// with what they are for (issue 194): `T` is `Tool` as the runtime has
+/// them, `ToolDefinition` as a model is offered them and the record keeps
+/// them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToolSet<T = Tool> {
+    /// The id of the component the tools come from, unique within the
+    /// agent.
+    pub name: String,
+    /// What the tools are for, written for a model.
+    pub description: String,
+    pub tools: Vec<T>,
+    /// Why the source gives no tools now, in general terms - never the
+    /// error, which may name hosts (issue 32). `None`: available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unavailable: Option<String>,
+}
+
+impl<T> ToolSet<T> {
+    /// The available set `name` of `tools`, for `description`.
+    pub fn new(name: impl Into<String>, description: impl Into<String>, tools: Vec<T>) -> Self {
+        Self { name: name.into(), description: description.into(), tools, unavailable: None }
+    }
+}
+
+impl ToolSet<Tool> {
+    /// The set as its model is offered it (issue 137).
+    pub fn definition(&self) -> ToolSet<ToolDefinition> {
+        ToolSet {
+            name: self.name.clone(),
+            description: self.description.clone(),
+            tools: self.tools.iter().map(Tool::definition).collect(),
+            unavailable: self.unavailable.clone(),
+        }
+    }
+}
+
+/// The tool sets a model was offered as they were recorded: as sets since
+/// issue 194, before as a flat list of definitions - read as one set
+/// without a name or description.
+#[derive(Deserialize)]
+#[serde(untagged)]
+pub(crate) enum RecordedToolSets {
+    Sets(Vec<ToolSet<ToolDefinition>>),
+    Flat(Vec<ToolDefinition>),
+}
+
+impl From<RecordedToolSets> for Vec<ToolSet<ToolDefinition>> {
+    fn from(recorded: RecordedToolSets) -> Self {
+        match recorded {
+            RecordedToolSets::Sets(sets) => sets,
+            RecordedToolSets::Flat(tools) => vec![ToolSet::new("", "", tools)],
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolCall {
     pub id: Option<String>,

@@ -456,11 +456,11 @@ pub struct MessageContextResponse {
     /// What was read from notes and histories before the message was
     /// produced (issue 17).
     pub knowledge: Vec<KnowledgeRefResponse>,
-    /// The digest of the set of tools the model was offered, `None` if it
-    /// was offered none (issue 137).
+    /// The digest of the tool sets the model was offered, `None` if it was
+    /// offered none (issue 137).
     pub tools_digest: Option<caelumora_model::digest::Digest>,
-    /// The tools, as the model was told of them.
-    pub tools: Vec<caelumora_model::tool::ToolDefinition>,
+    /// The tools, as the model was told of them, in their sets (issue 194).
+    pub tool_sets: Vec<caelumora_model::tool::ToolSet<caelumora_model::tool::ToolDefinition>>,
 }
 
 /// Which of the classifications in a message's context set its label

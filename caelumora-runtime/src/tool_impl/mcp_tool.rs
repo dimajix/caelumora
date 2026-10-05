@@ -216,6 +216,10 @@ fn call_tool_result_to_value(name: &str, result: rmcp::model::CallToolResult) ->
 
 #[async_trait]
 impl ToolProvider for McpToolProvider {
+    fn description(&self) -> String {
+        format!("The tools of the MCP server '{}'.", self.descriptor_id)
+    }
+
     fn tools(&self) -> Vec<Tool> {
         self.cached_tools.clone()
     }

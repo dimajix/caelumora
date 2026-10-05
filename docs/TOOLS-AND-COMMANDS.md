@@ -10,12 +10,20 @@ approved, user commands, and lists the built-in ones. How components are built i
 ## Tools
 
 A component offers tools by implementing `ToolProvider`; one component may expose several `Tool`s.
-The trait has three methods:
+The trait has these methods:
 
+*   `description()` - what its tools are for, written for a model: the description of its tool set.
 *   `tools()` - the tools the component offers.
+*   `unavailable()` - why it gives no tools now, in general terms and never with the error; by
+    default `None`, available.
 *   `execute(name, params, turn)` - runs one of them.
 *   `describe(name, params)` - the text approvers are shown for a call; by default the tool's
     description.
+
+The tools of one provider are a *tool set* (`ToolSet`, issue 194), named after its component -
+unique within the agent - with the provider's description and, if it is unavailable, why. A model's
+backend is given the tools natively, without the sets; the sets are kept in the record of what the
+model was offered and shown in the web UI.
 
 A `Tool` declares its `name`, `description` and `parameters`, whether it `requires_approval`, its
 `visibility`, and optionally the `classification` of its results. Approval and classification are
@@ -98,7 +106,8 @@ What happened outside the process - a request the remote side already received -
 and whether the remote side stops depends on it (for MCP servers see below).
 
 The default executor has the `ToolProvider`s of the agent's components injected, with their
-component ids. It runs a call on the provider that has the tool - no more.
+component ids. It runs a call on the provider that has the tool - no more - and gives the agent's
+tools as one tool set per provider (`ToolExecutor::tool_sets`), asked of the providers each time.
 
 ### Two tools of the same name
 

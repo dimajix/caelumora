@@ -45,6 +45,10 @@ fn duration(seconds: f64) -> Option<Duration> {
 
 #[async_trait]
 impl ToolProvider for SleepToolProvider {
+    fn description(&self) -> String {
+        "Wait for a while, for testing.".to_string()
+    }
+
     fn tools(&self) -> Vec<Tool> {
         vec![Tool {
             name: SLEEP_TOOL_NAME.to_string(),

@@ -36,7 +36,8 @@ impl Turn<'_> {
                 },
             })
             .collect();
-        Ok((messages, resolved.tools))
+        // The backends are given the tools natively, which knows no sets.
+        Ok((messages, resolved.tool_sets.into_iter().flat_map(|set| set.tools).collect()))
     }
 
     /// Sets the prompt parts the model of the turn is given besides the
@@ -84,7 +85,7 @@ mod tests {
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::context::{KnowledgeRef, ModelProfile};
     use caelumora_model::message::MessageId;
-    use caelumora_model::tool::Tool;
+    use caelumora_model::tool::{Tool, ToolSet};
 
     #[tokio::test]
     async fn the_model_is_given_reasoning_as_its_rule_says_and_that_is_recorded() {
@@ -214,7 +215,8 @@ mod tests {
         let mut state = AgentChannelState::default();
         let (first, second, third, fourth) = (answer("first"), answer("second"), answer("third"), answer("fourth"));
         let take_turn = |state: &mut AgentChannelState, tools: Vec<Tool>, messages: &[&Message]| {
-            state.begin_turn(Default::default(), Default::default(), Default::default(), tools.clone(), Default::default());
+            let sets = if tools.is_empty() { Vec::new() } else { vec![ToolSet::new("tools", "some tools", tools.clone())] };
+            state.begin_turn(Default::default(), Default::default(), Default::default(), sets, Default::default());
             let mut turn = Turn::of(agent, "agent".to_string(), state, crate::agent_state::AgentStateHandle::detached()).expect("a turn was begun");
             let (_, offered) = turn.full_context().unwrap();
             assert_eq!(offered, tools.iter().map(Tool::definition).collect::<Vec<_>>(), "the model is offered what the turn began with");
@@ -229,7 +231,7 @@ mod tests {
         take_turn(&mut state, vec![tool("echo", true), tool("notes", false)], &[&fourth]);
 
         let offered = |id| ContextResolver::of(&state).resolve(&state.recorded_context_of(id).unwrap(), ActorId::Agent(agent))
-            .expect("everything it names is here").tools.into_iter().map(|t| t.name).collect::<Vec<_>>();
+            .expect("everything it names is here").tool_sets.into_iter().flat_map(|set| set.tools).map(|t| t.name).collect::<Vec<_>>();
         assert_eq!(offered(first.id), ["echo", "notes"]);
         assert_eq!(offered(second.id), ["echo", "notes"], "the whole turn offers the same tools");
         assert!(offered(third.id).is_empty(), "none were offered");

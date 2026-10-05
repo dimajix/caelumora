@@ -56,6 +56,10 @@ impl std::fmt::Debug for AgentMemoryComponent {
 
 #[async_trait]
 impl ToolProvider for AgentMemoryComponent {
+    fn description(&self) -> String {
+        "Your memory: what you should know across all your channels and sessions.".to_string()
+    }
+
     fn tools(&self) -> Vec<Tool> {
         vec![
             Tool {

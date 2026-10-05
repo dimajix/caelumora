@@ -31,6 +31,10 @@ pub struct ChannelHistoryComponent;
 
 #[async_trait]
 impl ToolProvider for ChannelHistoryComponent {
+    fn description(&self) -> String {
+        "Read the history of the other channels of this session.".to_string()
+    }
+
     fn tools(&self) -> Vec<Tool> {
         vec![Tool {
             name: READ_HISTORY_TOOL_NAME.to_string(),

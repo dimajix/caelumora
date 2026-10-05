@@ -8,17 +8,18 @@ use crate::agent_turn::Turn;
 use crate::component::{ComponentError, ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry, ComponentResult};
 use crate::tool::{ToolError, ToolExecutor, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
-use caelumora_model::tool::{Tool, ToolCall};
+use caelumora_model::tool::{ToolCall, ToolSet};
 use std::sync::Arc;
 
 pub const DEFAULT_TOOL_EXECUTOR_KIND: &str = "default_tool_executor";
 
 /// Runs the tools of an agent's components. It keeps the providers, not
 /// their tools: those are asked for each time, since a provider's tools may
-/// change while the agent runs (issue 100).
+/// change while the agent runs (issue 100). Each provider's tools are a
+/// tool set named after its component (issue 194).
 #[derive(Debug)]
 pub struct DefaultToolExecutor {
-    providers: Vec<Arc<dyn ToolProvider>>,
+    providers: Vec<ComponentImpl<dyn ToolProvider>>,
 }
 
 impl DefaultToolExecutor {
@@ -42,11 +43,11 @@ impl DefaultToolExecutor {
                 seen.push((tool.name, provider.id.clone()));
             }
         }
-        Ok(Self { providers: providers.into_iter().map(|p| p.facet).collect() })
+        Ok(Self { providers })
     }
 
     /// The provider of the tool `name`, as the providers' tools are now.
-    fn provider_of(&self, name: &str) -> ToolResult<&Arc<dyn ToolProvider>> {
+    fn provider_of(&self, name: &str) -> ToolResult<&ComponentImpl<dyn ToolProvider>> {
         self.providers.iter().find(|p| p.tools().iter().any(|t| t.name == name))
             .ok_or_else(|| ToolError::UnknownTool(name.to_string()))
     }
@@ -62,8 +63,10 @@ impl ToolExecutor for DefaultToolExecutor {
         self.provider_of(&call.function_name)?.describe(&call.function_name, &call.arguments)
     }
 
-    fn tools(&self) -> Vec<Tool> {
-        self.providers.iter().flat_map(|p| p.tools()).collect()
+    fn tool_sets(&self) -> Vec<ToolSet> {
+        self.providers.iter()
+            .map(|p| ToolSet { unavailable: p.unavailable(), ..ToolSet::new(p.id.clone(), p.description(), p.tools()) })
+            .collect()
     }
 }
 
@@ -86,6 +89,7 @@ mod tests {
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::security::SecurityContext;
+    use caelumora_model::tool::Tool;
     use serde_json::{json, Value};
 
     #[derive(Debug)]
@@ -93,6 +97,9 @@ mod tests {
 
     #[async_trait]
     impl ToolProvider for MockToolProvider {
+        fn description(&self) -> String {
+            "mock tools".to_string()
+        }
         fn tools(&self) -> Vec<Tool> {
             vec![Tool {
                 name: "test_tool".to_string(),
@@ -132,6 +139,39 @@ mod tests {
         assert_eq!(output.value, json!({"result": "ok"}));
         let unknown = executor.execute(&call("does_not_exist"), &mut context).await;
         assert!(matches!(unknown, Err(ToolError::UnknownTool(name)) if name == "does_not_exist"));
+    }
+
+    /// A provider whose source cannot be reached.
+    #[derive(Debug)]
+    struct Unreachable;
+
+    #[async_trait]
+    impl ToolProvider for Unreachable {
+        fn description(&self) -> String {
+            "remote tools".to_string()
+        }
+        fn tools(&self) -> Vec<Tool> {
+            Vec::new()
+        }
+        fn unavailable(&self) -> Option<String> {
+            Some("its server cannot be reached".to_string())
+        }
+        async fn execute(&self, name: &str, _params: &Value, _turn: &mut Turn) -> ToolResult<ToolOutput> {
+            Err(ToolError::UnknownTool(name.to_string()))
+        }
+    }
+
+    #[test]
+    fn each_provider_s_tools_are_a_set_named_after_its_component() {
+        let remote = ComponentImpl { id: "remote".to_string(), fail_policy: Default::default(), facet: Arc::new(Unreachable) as Arc<dyn ToolProvider> };
+        let executor = DefaultToolExecutor::new(vec![component("local"), remote]).unwrap();
+        let sets: Vec<_> = executor.tool_sets().into_iter()
+            .map(|set| (set.name, set.description, set.tools.into_iter().map(|t| t.name).collect::<Vec<_>>(), set.unavailable))
+            .collect();
+        assert_eq!(sets, [
+            ("local".to_string(), "mock tools".to_string(), vec!["test_tool".to_string()], None),
+            ("remote".to_string(), "remote tools".to_string(), Vec::new(), Some("its server cannot be reached".to_string())),
+        ], "in the order of the configuration, an unavailable one included");
     }
 
     #[test]

@@ -3,7 +3,7 @@ use crate::component::ComponentImpl;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityManager};
-use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolCallState, ToolVisibility, ToolResultStatus};
+use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolCallState, ToolSet, ToolVisibility, ToolResultStatus};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::Value;
@@ -228,8 +228,16 @@ impl ToolError {
 
 #[async_trait]
 pub trait ToolProvider: Send + Sync + Debug {
+    /// What its tools are for, written for a model: the description of its
+    /// tool set, which is named after its component (issue 194).
+    fn description(&self) -> String;
     /// Returns a list of tools provided by this component.
     fn tools(&self) -> Vec<Tool>;
+    /// Why it gives no tools now, in general terms - never the error, which
+    /// may name hosts (issue 32). `None`: available.
+    fn unavailable(&self) -> Option<String> {
+        None
+    }
 
     /// Executes a specific tool by name.
     async fn execute(&self, name: &str, params: &Value, turn: &mut Turn) -> ToolResult<ToolOutput>;
@@ -261,11 +269,12 @@ pub trait ToolExecutor: Send + Sync + Debug {
     /// Called only for calls the policy permits.
     async fn execute(&self, call: &ToolCall, turn: &mut Turn) -> ToolResult<ToolOutput>;
     fn describe(&self, call: &ToolCall) -> ToolResult<String>;
-    /// The tools there are now, for the model and for labelling its calls.
-    /// Asked of the providers each time: a provider's tools may change while
-    /// the agent runs - an MCP server replaced by a newer one - and caching
-    /// them is the provider's (issue 100).
-    fn tools(&self) -> Vec<Tool>;
+    /// The tools there are now, in the sets of the providers they come from
+    /// (issue 194), for the model and for labelling its calls. Asked of the
+    /// providers each time: a provider's tools may change while the agent
+    /// runs - an MCP server replaced by a newer one - and caching them is
+    /// the provider's (issue 100).
+    fn tool_sets(&self) -> Vec<ToolSet>;
 }
 
 /// How a tool call of the model is admitted, before anything runs
@@ -410,8 +419,8 @@ impl GuardedToolExecutor {
         if asks { Admission::Ask { description } } else { Admission::Run }
     }
 
-    pub fn tools(&self) -> Vec<Tool> {
-        self.executor.tools()
+    pub fn tool_sets(&self) -> Vec<ToolSet> {
+        self.executor.tool_sets()
     }
 
     /// Nothing if `call` may be run now: the caller is an agent and the
@@ -483,6 +492,9 @@ mod tests {
 
     #[async_trait]
     impl ToolProvider for MockToolProvider {
+        fn description(&self) -> String {
+            "mock tools".to_string()
+        }
         fn tools(&self) -> Vec<Tool> {
             vec![
                 tool("test_tool", self.requires_approval, None),
@@ -623,7 +635,7 @@ mod tests {
         let mut agent_channel_state = AgentChannelState::default();
         agent_channel_state.turn = Some(caelumora_model::turn::TurnState {
             work: caelumora_model::work::Work { security_context: SecurityContext { caller_id: ActorId::Agent(AgentId::new()), ..SecurityContext::default() }, ..Default::default() },
-            tools: executor.tools(),
+            tools: executor.tool_sets().into_iter().flat_map(|set| set.tools).collect(),
             ..Default::default()
         });
         agent_channel_state
