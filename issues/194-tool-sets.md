@@ -74,6 +74,100 @@ agent's current tool sets with their tools on the level of the agent, not of a m
 - **Presentation.** Issue 165 adds a presentation to a tool for the UI; a tool set may later carry
   one as well (e.g. an icon), but that is not part of this issue.
 
+## Decision and plan
+
+Decided with the maintainer on 2026-10-05:
+
+- **The prompt part is an optional `PromptProvider`.** The backends are given the tools natively
+  (Ollama's `tools`), so the model needs no prompt to learn of them. The prompt part names at most
+  what the native definitions cannot say: the tool sets that are unavailable (issue 32). A
+  personality that does not configure the component is told nothing of them - accepted, since
+  the component is the one place this is decided.
+- **The record keeps the grouping:** what a message was offered is a set of tool sets by digest,
+  so that the per-message view shows the same grouping as the view at the participant.
+- **The view is at the participant**, not at the agent: an agent's components - and so its tools -
+  are built per channel, for its actor there, with that channel's security context
+  (`AgentActor::new`). What an agent can do exists at run time only as "this agent in this
+  channel".
+
+### Step 0 - free the name (no change of behaviour)
+
+`AgentChannelState::tool_sets: Kept<Vec<ToolDefinition>>` and `AgentChannelStateChange::ToolSet`
+(stored as `"tool_set"`) already mean "the tools a message was offered". They are renamed, e.g.
+to `offered_tools` / `OfferedTools`; the stored tag `"tool_set"` stays readable
+(`#[serde(alias)]`). A commit of its own.
+
+### Step 1 - the type, in `caelumora-model/src/tool.rs`
+
+One generic type rather than two:
+
+```rust
+pub struct ToolSet<T = Tool> {
+    pub name: String,
+    pub description: String,
+    pub tools: Vec<T>,
+    /// Why the source gives no tools now, in general terms - never the error, which may name
+    /// hosts (issue 32). `None`: available.
+    pub unavailable: Option<String>,
+}
+
+impl ToolSet<Tool> {
+    /// The set as its model is offered it (issue 137).
+    pub fn definition(&self) -> ToolSet<ToolDefinition>;
+}
+```
+
+### Step 2 - `ToolProvider`
+
+- `fn description(&self) -> String` - what its tools are for, written for a model.
+- `fn unavailable(&self) -> Option<String>`, default `None`.
+- The **name** is not the provider's: it is the id of its component, which the executor already
+  holds (`ComponentImpl::id`), unique within the agent.
+- The description can be overridden in the configuration: a common parameter `description` of
+  every tool-providing component, read by one shared helper.
+- Built-in components write their own description.
+
+### Step 3 - executor and turn
+
+- `ToolExecutor::tools()` becomes `tool_sets() -> Vec<ToolSet>`; `GuardedToolExecutor` likewise.
+  `DefaultToolExecutor` builds each set from a provider and its component id.
+- A turn begins with tool sets. `Turn::tools()` stays the flat view that approval, classification
+  and `unknown_tool` need.
+- The collision rule of issue 37 is unchanged: tool names stay unique across all sets.
+- The model's backend is still given the flat list of `ToolDefinition`s.
+- The record keeps `ToolSet<ToolDefinition>` by digest (`crate::digest`). A record written
+  before - a flat list - is read as one set without name or description.
+
+### Step 4 - the optional prompt part
+
+A component, e.g. `tool_sets_prompt_provider`, implementing `PromptProvider`. It reads the tool
+sets the work began with from `AgentWork` and names the unavailable ones ("The tools of
+'github-mcp' are currently unavailable"); no text if all are available. Placed and recorded like
+every prompt part. Whether it can optionally also list the sets' descriptions is left open until
+a model is seen to need it.
+
+### Step 5 - MCP
+
+- `McpToolProvider` takes the description from the server's `instructions` in its `initialize`
+  result, else a generic text naming the component; the configured `description` overrides both.
+- A failed discovery sets `unavailable` instead of only logging. Retrying discovery is issue 126:
+  since the executor asks its providers each time, a refreshed provider is followed without
+  further change.
+
+### Step 6 - view, REST and web UI
+
+- The channel's views read the current tool sets of a participant from its running actor - the
+  tools it would offer at the start of its next turn - each tool with its labels (visibility,
+  classification, whether a call needs approval). A participant whose actor is not running shows
+  as such rather than as one without tools.
+- Who may see them is a new access question in `AccessQuestions`, with its test in the security
+  suite.
+- REST: `GET /sessions/{session}/channels/{channel}/members/{member}/tools`.
+- Web UI: the tool sets at the member, where it is shown as a participant; the context panel of
+  a message shows the offered tools grouped by set.
+
+Order: step 0 alone, then 1-3 together, then 4, 5 and 6 each on their own.
+
 ## Done when
 
 - Every `ToolProvider` gives its tools as a tool set with a name and a short description; MCP
@@ -86,3 +180,6 @@ agent's current tool sets with their tools on the level of the agent, not of a m
 ## History
 
 - **2026-10-02** — Opened at the maintainer's request.
+- **2026-10-05** — Plan decided with the maintainer: an optional prompt provider that names only
+  unavailable tool sets, the record grouped by set, the view at the participant. Issue 32 is
+  solved in steps 4 and 5.

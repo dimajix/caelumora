@@ -59,3 +59,8 @@ presents itself as the agent being less capable than it is.
 
 - **2026-09-22** — Split off from [15](15-disallowed-tool-errors-to-llm.md), which covers tool calls
   that are refused or fail; this one covers tools the model never learns about.
+- **2026-10-05** — To be solved within [194](194-tool-sets.md): a provider reports itself
+  unavailable in its tool set (step 5), and an optional prompt provider names the unavailable sets
+  to the model (step 4). The maintainer decided for an optional component; a personality without it
+  is told nothing, deliberately. Retrying discovery stays with
+  [126](126-mcp-tools-discovered-once.md).
