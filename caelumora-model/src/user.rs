@@ -49,7 +49,7 @@ pub enum UserUpdateEvent {
 /// user - derived from `user_id` rather than stored, so that nobody can
 /// write a profile of someone else that is theirs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(from = "StoredUserProfile")]
+#[serde(from = "UserProfileFields")]
 pub struct UserProfile {
     user_id: UserId,
     /// How the user introduces themselves; `None` if they have not.
@@ -119,9 +119,10 @@ impl Secured for UserProfile {
     }
 }
 
-/// A profile as stored: without its owner, which is derived.
+/// A profile as it is written down: without its owner, which is derived
+/// from `user_id` when it is read.
 #[derive(Deserialize)]
-struct StoredUserProfile {
+struct UserProfileFields {
     user_id: UserId,
     #[serde(default)]
     introduction: Option<String>,
@@ -131,9 +132,9 @@ struct StoredUserProfile {
     deleted: Option<crate::removal::Removal>,
 }
 
-impl From<StoredUserProfile> for UserProfile {
-    fn from(stored: StoredUserProfile) -> Self {
-        UserProfile { preferred_language: stored.preferred_language, deleted: stored.deleted, ..UserProfile::new(stored.user_id, stored.introduction) }
+impl From<UserProfileFields> for UserProfile {
+    fn from(fields: UserProfileFields) -> Self {
+        UserProfile { preferred_language: fields.preferred_language, deleted: fields.deleted, ..UserProfile::new(fields.user_id, fields.introduction) }
     }
 }
 
