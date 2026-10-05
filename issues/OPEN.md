@@ -87,12 +87,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [22](22-skill-management.md) | open | Skills do not exist: there is no unit of procedural knowledge below a personality, and no rule for who may load one into a turn. |
 | [166](166-memory-as-topic-documents.md) | open | Agent memory is a flat list of one-line entries, all of them in every prompt, with nothing to group, revise or fetch them by topic. |
 
-## Code structure
-
-| No. | Status | Issue |
-|---|---|---|
-| [229](229-services-fetched-through-the-runtime.md) | in progress | Central services - the `SecurityManager`, the stores, the event bus - are fetched through the runtime at every use, often through long chains, so no type says what it depends on. |
-
 ## Open architecture questions
 
 | No. | Status | Issue |

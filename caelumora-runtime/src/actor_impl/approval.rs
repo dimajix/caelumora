@@ -53,8 +53,8 @@ impl ApproverActor {
         Self {
             id: ActorId::Approver(approver.id),
             approver,
-            security: actor_runtime.security_manager(),
-            controllers: actor_runtime.runtime_manager().controller_manager(),
+            security: Arc::clone(actor_runtime.security_manager()),
+            controllers: Arc::clone(actor_runtime.runtime_manager().controller_manager()),
             actor_runtime,
             channel,
             pending: Mutex::new(HashMap::new()),
@@ -518,7 +518,7 @@ mod tests {
             former: Vec::new(),
         };
         store.create_channel(&system, &channel).await.unwrap();
-        let executor = CommandExecutor::empty(runtime.security_manager());
+        let executor = CommandExecutor::empty(Arc::clone(runtime.security_manager()));
         let channel = ChannelLoop::new(channel, ChannelRuntime::new(runtime.clone(), Arc::new(executor))).await.unwrap();
         let actor: Arc<dyn Any + Send + Sync> = channel.actor_by_id(ActorId::Approver(approver.id)).unwrap();
         let approver = Arc::downcast::<ApproverActor>(actor).unwrap();

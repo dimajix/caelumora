@@ -180,7 +180,7 @@ impl UserActor {
         let channel = self.actor_runtime.channel_loop()
             .ok_or_else(|| anyhow!("channel {} no longer exists", self.channel_id))?;
         let executor = self.actor_runtime.command_executor();
-        let context = CommandContext { issuer: &self.security_context, channel: &channel, executor: &executor };
+        let context = CommandContext { issuer: &self.security_context, channel: &channel, executor };
         debug!("UserActor {} runs /{}", self.id, name);
         let output = executor.execute(name, args, &context).await?;
         if output.visibility == CommandVisibility::Channel {
@@ -326,7 +326,7 @@ mod tests {
         let store = Arc::new(MemoryStore::new());
         let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
-        let channel_runtime = ChannelRuntime::new(runtime.clone(), Arc::new(CommandExecutor::empty(runtime.security_manager())));
+        let channel_runtime = ChannelRuntime::new(runtime.clone(), Arc::new(CommandExecutor::empty(Arc::clone(runtime.security_manager()))));
         let channel = Channel {
             id: ChannelId::new(),
             session_id: SessionId::new(),

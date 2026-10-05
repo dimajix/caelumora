@@ -140,9 +140,9 @@ impl SessionLoop {
         let session_loop = Arc::new(Self {
             id,
             session_controller,
-            security: runtime_manager.security_manager(),
-            entities: runtime_manager.entity_store(),
-            events: runtime_manager.event_bus(),
+            security: Arc::clone(runtime_manager.security_manager()),
+            entities: Arc::clone(runtime_manager.entity_store()),
+            events: Arc::clone(runtime_manager.event_bus()),
             runtime_manager,
             commands,
             channels,
@@ -519,9 +519,9 @@ impl SessionManager {
             sessions: DashMap::new(),
             handles: DashMap::new(),
             starts: DashMap::new(),
-            security: runtime_manager.security_manager(),
-            entities: runtime_manager.entity_store(),
-            events: runtime_manager.event_bus(),
+            security: Arc::clone(runtime_manager.security_manager()),
+            entities: Arc::clone(runtime_manager.entity_store()),
+            events: Arc::clone(runtime_manager.event_bus()),
             runtime_manager,
         }
     }

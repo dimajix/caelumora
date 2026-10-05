@@ -70,22 +70,21 @@ impl ChannelRuntime {
         let _ = self.channel.set(Arc::downgrade(channel));
     }
 
-    pub fn security_manager(&self) -> Arc<dyn SecurityManager> { self.runtime_manager.security_manager() }
+    pub fn security_manager(&self) -> &Arc<dyn SecurityManager> { self.runtime_manager.security_manager() }
 
-    pub fn secret_manager(&self) -> Arc<SecretManager> { self.runtime_manager.secret_manager() }
+    pub fn secret_manager(&self) -> &Arc<SecretManager> { self.runtime_manager.secret_manager() }
 
-    pub fn component_registry(&self) -> Arc<ComponentRegistry> { self.runtime_manager.component_registry() }
+    pub fn component_registry(&self) -> &Arc<ComponentRegistry> { self.runtime_manager.component_registry() }
 
-    pub fn state_store(&self) -> Arc<dyn StateStore> { self.runtime_manager.state_store() }
+    pub fn state_store(&self) -> &Arc<dyn StateStore> { self.runtime_manager.state_store() }
 
+    pub fn event_bus(&self) -> &Arc<EventBus> { self.runtime_manager.event_bus() }
 
-    pub fn event_bus(&self) -> Arc<EventBus> { self.runtime_manager.event_bus() }
-
-    pub fn controller_manager(&self) -> Arc<ControllerManager> { self.runtime_manager.controller_manager() }
+    pub fn controller_manager(&self) -> &Arc<ControllerManager> { self.runtime_manager.controller_manager() }
 
     /// The entities - for what a channel checks of its participants (issue
     /// 191).
-    pub fn entity_store(&self) -> Arc<dyn EntityStore> { self.runtime_manager.entity_store() }
+    pub fn entity_store(&self) -> &Arc<dyn EntityStore> { self.runtime_manager.entity_store() }
 
     pub fn new_recorder(&self) -> Result<Box<dyn Recorder>> { self.runtime_manager.new_recorder() }
 }
@@ -113,18 +112,18 @@ impl ActorRuntime {
         self.actor
     }
 
-    pub fn security_manager(&self) -> Arc<dyn SecurityManager> { self.runtime.runtime_manager.security_manager() }
+    pub fn security_manager(&self) -> &Arc<dyn SecurityManager> { self.runtime.runtime_manager.security_manager() }
 
-    pub fn secret_manager(&self) -> Arc<SecretManager> { self.runtime.runtime_manager.secret_manager() }
+    pub fn secret_manager(&self) -> &Arc<SecretManager> { self.runtime.runtime_manager.secret_manager() }
 
-    pub fn component_registry(&self) -> Arc<ComponentRegistry> {
+    pub fn component_registry(&self) -> &Arc<ComponentRegistry> {
         self.runtime.runtime_manager.component_registry()
     }
 
     /// The user commands of the actor's session. Only a `UserActor` runs
     /// them: commands are for people, agents act through tools.
-    pub fn command_executor(&self) -> Arc<CommandExecutor> {
-        self.runtime.command_executor.clone()
+    pub fn command_executor(&self) -> &Arc<CommandExecutor> {
+        &self.runtime.command_executor
     }
 
     /// The session `id` as stored, as `security` may read it.
@@ -259,7 +258,7 @@ impl RuntimeManager {
     pub async fn new_command_executor(&self, session: &Session) -> ComponentResult<CommandExecutor> {
         let owner: ActorId = session.security_attributes.owner_id;
         let security = SecurityContext::new(owner, session.id, Default::default());
-        let context = ComponentContext::new(security, self.security_manager(), self.secret_manager());
+        let context = ComponentContext::new(security, Arc::clone(self.security_manager()), Arc::clone(self.secret_manager()));
         let mut providers = Vec::new();
         // Each configuration on its own, so that component ids only need to
         // be unique within one of them.
@@ -267,32 +266,32 @@ impl RuntimeManager {
             let container = ComponentContainer::from_config(config, &self.component_registry, &context).await?;
             providers.extend(container.get_all::<dyn CommandProvider>(None));
         }
-        CommandExecutor::new(self.security_manager(), providers)
+        CommandExecutor::new(Arc::clone(self.security_manager()), providers)
     }
 
-    pub fn event_bus(&self) -> Arc<EventBus> {
-        self.event_bus.clone()
+    pub fn event_bus(&self) -> &Arc<EventBus> {
+        &self.event_bus
     }
 
-    pub fn security_manager(&self) -> Arc<dyn SecurityManager> { self.security_manager.clone() }
+    pub fn security_manager(&self) -> &Arc<dyn SecurityManager> { &self.security_manager }
 
-    pub fn state_store(&self) -> Arc<dyn StateStore> { self.state_store.clone() }
+    pub fn state_store(&self) -> &Arc<dyn StateStore> { &self.state_store }
 
-    pub fn entity_store(&self) -> Arc<dyn EntityStore> { self.entity_store.clone() }
+    pub fn entity_store(&self) -> &Arc<dyn EntityStore> { &self.entity_store }
 
-    pub fn secret_manager(&self) -> Arc<SecretManager> { self.secret_manager.clone() }
+    pub fn secret_manager(&self) -> &Arc<SecretManager> { &self.secret_manager }
 
-    pub fn component_registry(&self) -> Arc<ComponentRegistry> {
-        self.component_registry.clone()
+    pub fn component_registry(&self) -> &Arc<ComponentRegistry> {
+        &self.component_registry
     }
 
-    pub fn controller_manager(&self) -> Arc<ControllerManager> {
-        self.controller_manager.clone()
+    pub fn controller_manager(&self) -> &Arc<ControllerManager> {
+        &self.controller_manager
     }
 
     /// The owner of every running agent's `AgentState` (issue 62).
-    pub fn agent_states(&self) -> Arc<crate::agent_state::AgentStates> {
-        self.agent_states.clone()
+    pub fn agent_states(&self) -> &Arc<crate::agent_state::AgentStates> {
+        &self.agent_states
     }
 
     pub fn new_recorder(&self) -> Result<Box<dyn Recorder>> {
@@ -313,7 +312,7 @@ mod tests {
         let store = Arc::new(MemoryStore::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
         let manager = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
-        let commands = Arc::new(CommandExecutor::empty(manager.security_manager()));
+        let commands = Arc::new(CommandExecutor::empty(Arc::clone(manager.security_manager())));
         ChannelRuntime::new(manager, commands)
     }
 

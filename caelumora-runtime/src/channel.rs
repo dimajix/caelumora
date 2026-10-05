@@ -211,7 +211,7 @@ impl Member {
 /// participant reports.
 pub(crate) async fn require_cleared(runtime: &RuntimeManager, context: &SecurityContext, channel: &Channel) -> Result<()> {
     for participant in &channel.participants {
-        if let Some(member) = Member::of(participant, channel, &runtime.controller_manager(), runtime.security_manager().as_ref()).await? {
+        if let Some(member) = Member::of(participant, channel, runtime.controller_manager(), runtime.security_manager().as_ref()).await? {
             member.require_cleared(runtime.entity_store().as_ref(), runtime.security_manager().as_ref(), context, &channel.classification, channel.id).await?;
         }
     }
@@ -325,14 +325,14 @@ impl ChannelLoop {
     pub async fn new(channel: Channel, runtime: ChannelRuntime) -> Result<Arc<Self>> {
         let id = channel.id;
         let session_id = channel.session_id;
-        let state_store = runtime.state_store();
+        let state_store = Arc::clone(runtime.state_store());
         // Its components (issue 174) act on behalf of the channel's owner,
         // as an agent's act on behalf of its owner.
         let security_context = SecurityContext::new(channel.security_attributes.owner_id, session_id, id);
         let components = ComponentContainer::from_config(
             &channel.components,
-            &runtime.component_registry(),
-            &ComponentContext::new(security_context, runtime.security_manager(), runtime.secret_manager()),
+            runtime.component_registry(),
+            &ComponentContext::new(security_context, Arc::clone(runtime.security_manager()), Arc::clone(runtime.secret_manager())),
         )
         .await
         .map_err(SessionError::InvalidModerator)?;
@@ -358,10 +358,10 @@ impl ChannelLoop {
             id,
             session_id,
             channel: channel_controller,
-            security: runtime.security_manager(),
-            entities: runtime.entity_store(),
-            controllers: runtime.controller_manager(),
-            events: runtime.event_bus(),
+            security: Arc::clone(runtime.security_manager()),
+            entities: Arc::clone(runtime.entity_store()),
+            controllers: Arc::clone(runtime.controller_manager()),
+            events: Arc::clone(runtime.event_bus()),
             runtime,
             actors: ArcSwap::from_pointee(HashMap::new()),
             leaving: std::sync::Mutex::new(HashMap::new()),
@@ -1323,7 +1323,7 @@ mod tests {
         };
         let builtin = |id: &str, facet: Arc<dyn crate::command::CommandProvider>| ComponentImpl { id: id.to_string(), fail_policy: ComponentFailPolicy::FailOpen, facet };
         let executor = CommandExecutor::new(
-            runtime.security_manager(),
+            Arc::clone(runtime.security_manager()),
             vec![builtin("help", Arc::new(HelpCommandProvider)), builtin("wakeup", Arc::new(WakeupCommandProvider))],
         ).unwrap();
         ChannelLoop::new(channel, ChannelRuntime::new(runtime, Arc::new(executor))).await.unwrap()
@@ -1908,7 +1908,7 @@ mod tests {
         };
         // Stored, so that leaving it can be stored too.
         runtime.entity_store().create_channel(&SecurityContext::system(), &channel).await.unwrap();
-        let executor = CommandExecutor::empty(runtime.security_manager());
+        let executor = CommandExecutor::empty(Arc::clone(runtime.security_manager()));
         let channel = ChannelLoop::new(channel, ChannelRuntime::new(runtime, Arc::new(executor))).await.unwrap();
         (channel, context, agent_id, alice.id)
     }
@@ -2596,8 +2596,8 @@ mod tests {
         running.abort();
         let _ = running.await;
         let document = Channel::clone(&channel.channel());
-        let manager = channel.runtime.new_actor_runtime(ActorId::System, document.session_id, document.id).runtime_manager().clone();
-        let executor = CommandExecutor::empty(manager.security_manager());
+        let manager = Arc::clone(channel.runtime.new_actor_runtime(ActorId::System, document.session_id, document.id).runtime_manager());
+        let executor = CommandExecutor::empty(Arc::clone(manager.security_manager()));
         let restarted = ChannelLoop::new(document.clone(), ChannelRuntime::new(manager, Arc::new(executor))).await.unwrap();
         let mut events = restarted.observe();
         let running = tokio::spawn({ let restarted = restarted.clone(); async move { restarted.run().await } });
@@ -2973,7 +2973,7 @@ mod tests {
         if let Some(mut stored) = stored {
             runtime.state_store().put_agent_channel_state(agent_id, channel.id, &mut stored).await.unwrap();
         }
-        let executor = CommandExecutor::empty(runtime.security_manager());
+        let executor = CommandExecutor::empty(Arc::clone(runtime.security_manager()));
         let channel = ChannelLoop::new(channel, ChannelRuntime::new(runtime, Arc::new(executor))).await?;
         Ok((channel, context, agent_id, alice.id))
     }

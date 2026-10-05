@@ -1,6 +1,6 @@
 # 229 — Central services are fetched through the runtime again and again
 
-**Status:** in progress
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -123,3 +123,10 @@ reason to look a service up each time does not apply.
   changed. Left reaching through it: the approver for the `ControllerManager` (step 2, as decided)
   and a test in `channel.rs` that builds a channel anew after a restart and needs a fresh
   `ChannelRuntime`.
+- **2026-10-05** — Step 6, the accessors: the accessors of `RuntimeManager`, `ChannelRuntime` and
+  `ActorRuntime` lend `&Arc<…>` instead of a new `Arc` at every call; who keeps a service clones it
+  with `Arc::clone`, which [CODING-GUIDELINES.md](../docs/CODING-GUIDELINES.md) now asks for
+  ("Cloning shared pointers"). No behaviour changed. Not yet done: the code clones its `Arc`s with
+  `.clone()` elsewhere - clippy's `clone_on_ref_ptr` finds about 350 places; enabling the lint and
+  converting them is a step of its own. With this step the issue is done as far as it set out: the
+  types named above hold their services, and the accessors lend.

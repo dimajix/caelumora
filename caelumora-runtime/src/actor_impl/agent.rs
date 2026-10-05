@@ -86,17 +86,17 @@ impl AgentActor {
 
         let components = ComponentContainer::from_config(
             &personality.components,
-            &actor_runtime.component_registry(),
+            actor_runtime.component_registry(),
             // Its components get nothing of its runtime (issue 128); what they
             // read of the session they read through their turn (issue 163).
-            &ComponentContext::new(security_context.clone(), actor_runtime.security_manager(), actor_runtime.secret_manager()),
+            &ComponentContext::new(security_context.clone(), Arc::clone(actor_runtime.security_manager()), Arc::clone(actor_runtime.secret_manager())),
         )
         .await?;
         let context_provider = components.one::<dyn ContextProvider>().await?;
         let llm_client = components.one::<dyn LLMClient>().await?;
         let perceive_in_processors = components.get_all::<dyn PerceiveInProcessor>(None);
         let emit_out_processors = components.get_all::<dyn EmitOutProcessor>(None);
-        let tool_executor = GuardedToolExecutor::new(actor_runtime.security_manager(), components.one::<dyn ToolExecutor>().await?);
+        let tool_executor = GuardedToolExecutor::new(Arc::clone(actor_runtime.security_manager()), components.one::<dyn ToolExecutor>().await?);
 
         let mut agent_channel_state = actor_runtime.load_channel_state().await?;
         let not_executed = prepare_resume(&mut agent_channel_state);

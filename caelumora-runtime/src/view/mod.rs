@@ -165,10 +165,10 @@ pub struct Views {
 impl Views {
     pub(crate) fn new(runtime: &RuntimeManager, running: Arc<dyn RunningSessions>, viewer: Viewer) -> Self {
         Self {
-            security: runtime.security_manager(),
-            entities: runtime.entity_store(),
-            states: runtime.state_store(),
-            components: runtime.component_registry(),
+            security: Arc::clone(runtime.security_manager()),
+            entities: Arc::clone(runtime.entity_store()),
+            states: Arc::clone(runtime.state_store()),
+            components: Arc::clone(runtime.component_registry()),
             running,
             viewer,
         }

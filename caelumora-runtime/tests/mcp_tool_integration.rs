@@ -73,7 +73,7 @@ async fn build_container(params: serde_json::Value) -> ComponentContainer {
     let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
     let runtime_manager = RuntimeManager::new(store.clone(), store.clone(), secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), caelumora_runtime::component::ComponentRegistry::built_in(store.clone())).unwrap();
     let registry = runtime_manager.component_registry();
-    let context = ComponentContext::new(SecurityContext::default(), runtime_manager.security_manager(), runtime_manager.secret_manager());
+    let context = ComponentContext::new(SecurityContext::default(), Arc::clone(runtime_manager.security_manager()), Arc::clone(runtime_manager.secret_manager()));
 
     let config = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
@@ -85,7 +85,7 @@ async fn build_container(params: serde_json::Value) -> ComponentContainer {
         }],
     };
 
-    ComponentContainer::from_config(&config, &registry, &context).await.unwrap()
+    ComponentContainer::from_config(&config, registry, &context).await.unwrap()
 }
 
 #[tokio::test]
@@ -162,7 +162,7 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
 
     let runtime_manager = RuntimeManager::new(store.clone(), store.clone(), secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), caelumora_runtime::component::ComponentRegistry::built_in(store.clone())).unwrap();
     let registry = runtime_manager.component_registry();
-    let context = ComponentContext::new(SecurityContext::default(), runtime_manager.security_manager(), runtime_manager.secret_manager());
+    let context = ComponentContext::new(SecurityContext::default(), Arc::clone(runtime_manager.security_manager()), Arc::clone(runtime_manager.secret_manager()));
 
     let ref_config = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
@@ -176,8 +176,8 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
 
     // Two independent containers (simulating two personalities, each with its own
     // SecurityContext) both referencing the same shared component config by id.
-    let container_a = ComponentContainer::from_config(&ref_config, &registry, &context).await.unwrap();
-    let container_b = ComponentContainer::from_config(&ref_config, &registry, &context).await.unwrap();
+    let container_a = ComponentContainer::from_config(&ref_config, registry, &context).await.unwrap();
+    let container_b = ComponentContainer::from_config(&ref_config, registry, &context).await.unwrap();
 
     let provider_a = container_a.get_all::<dyn ToolProvider>(None).remove(0).facet;
     let provider_b = container_b.get_all::<dyn ToolProvider>(None).remove(0).facet;

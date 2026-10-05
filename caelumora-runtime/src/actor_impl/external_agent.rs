@@ -147,8 +147,8 @@ impl ExternalAgentActor {
         let components = ComponentContainer::with_defaults(
             &personality.components,
             &defaults,
-            &actor_runtime.component_registry(),
-            &ComponentContext::new(security_context.clone(), actor_runtime.security_manager(), actor_runtime.secret_manager()),
+            actor_runtime.component_registry(),
+            &ComponentContext::new(security_context.clone(), Arc::clone(actor_runtime.security_manager()), Arc::clone(actor_runtime.secret_manager())),
         ).await?;
         let remote = components.one::<dyn ExternalAgent>().await?;
         let perceive_in_processors = components.get_all::<dyn PerceiveInProcessor>(None);

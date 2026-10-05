@@ -70,11 +70,21 @@ A type takes the services it works with - the `SecurityManager`, the stores, the
 *   **No threading next to the owner.** A service is not passed into a function beside the object
     that already holds it; the function becomes a method of that object, or takes the object.
 *   **Accessors lend.** An accessor returns `&Arc<dyn …>` or `&dyn …`; whoever keeps the service
-    clones it.
+    clones it, with `Arc::clone` (see below).
 *   **One step to ask.** A check reads as the question it is -
     `views.security().may_approve(views.context(), …)` - not as a walk through the runtime. A type
     that is asked often in someone's name holds that name with the services, as `Views` holds its
     viewer.
+
+### Cloning shared pointers
+
+An `Arc` (or `Rc`) is cloned with `Arc::clone(&value)`, not `value.clone()`: the call says that
+only a reference count goes up, where `.clone()` reads the same as a deep copy of a `Vec` or a
+`String` - the convention of the Rust book, and what clippy's `clone_on_ref_ptr` asks for. Where an
+accessor lends `&Arc<…>`, it is `Arc::clone(runtime.security_manager())`. A clone is made only
+where an owner is needed - a field, a task, a value moved elsewhere; a call that only uses the
+value borrows it. An `Arc<Concrete>` that becomes an `Arc<dyn Trait>` is cloned first and coerced
+where it is stored or passed.
 
 ## Error handling
 
