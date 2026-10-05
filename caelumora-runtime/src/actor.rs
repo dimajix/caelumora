@@ -8,6 +8,7 @@ use crate::transport::{EventReceiver, EventSender};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_model::message::Message;
 use caelumora_model::security::SecurityContext;
+use caelumora_model::tool::ToolSet;
 
 #[async_trait]
 pub(crate) trait Actor: Any + Debug + Send + Sync {
@@ -41,6 +42,14 @@ pub(crate) trait Actor: Any + Debug + Send + Sync {
 
     /// Returns the current processing state of the actor.
     fn state(&self) -> ActorState;
+
+    /// The tools it has now, in their tool sets (issue 194), as it would
+    /// offer them at the start of its next turn. `None` for an actor that
+    /// has no tools here - a user, an approver, an external agent, whose
+    /// tools are its remote side's.
+    fn tool_sets(&self) -> Option<Vec<ToolSet>> {
+        None
+    }
 
     /// Wakes the actor from `Sleeping`. Synchronous and infallible on
     /// purpose: it is called from other tasks and must take effect at once.

@@ -100,8 +100,9 @@ pub enum ViewError {
     NoChannelNamed(String),
     #[error("Channel {channel} has no member {actor}")]
     MemberNotFound { channel: ChannelId, actor: ActorId },
-    /// Reached, but not the viewer's to read: what an agent saw.
-    #[error("You are not permitted to see what {actor} saw")]
+    /// Reached, but not the viewer's to read: what an agent saw, which
+    /// tools it has.
+    #[error("You are not permitted to read this of {actor}")]
     Forbidden { actor: ActorId },
     /// Only agents have a context.
     #[error("There is nothing {actor} saw: it is no agent, or no longer exists")]

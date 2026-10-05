@@ -119,6 +119,9 @@ pub struct MemberSnapshot {
     /// Whether the viewer may see what this participant saw when it produced
     /// a message (`ReadAgentContext`, issue 41) - only ever for agents.
     pub can_read_context: bool,
+    /// Whether the viewer may see which tools this participant has now
+    /// (`ReadAgentTools`, issue 194) - only ever for agents.
+    pub can_read_tools: bool,
     /// What an agent member's model calls in the channel used (issue 209)
     /// - with `Detail::USAGE`; `None` also for a member whose calls report
     /// no tokens (an external agent, a user), before its first call, and if

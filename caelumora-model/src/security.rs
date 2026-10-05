@@ -36,6 +36,11 @@ pub enum ActionType<'a> {
     /// system prompt, internal messages and tool results included (issue
     /// 06). Carries the agent's attributes.
     ReadAgentContext(&'a SecurityAttributes),
+    /// Reading which tools an agent has now in a channel, in their tool
+    /// sets (issue 194): what it can do, not what it did. Carries the
+    /// agent's attributes and those of the channel, where its tools are
+    /// built.
+    ReadAgentTools { agent: &'a SecurityAttributes, channel: &'a SecurityAttributes },
     ListAgents,
     UpdateAgent(&'a SecurityAttributes),
     DeleteAgent(&'a SecurityAttributes),
@@ -163,6 +168,7 @@ impl ActionType<'_> {
             ActionType::CreateAgent(_) => "CreateAgent".into(),
             ActionType::GetAgent(_) => "GetAgent".into(),
             ActionType::ReadAgentContext(_) => "ReadAgentContext".into(),
+            ActionType::ReadAgentTools { .. } => "ReadAgentTools".into(),
             ActionType::ListAgents => "ListAgents".into(),
             ActionType::UpdateAgent(_) => "UpdateAgent".into(),
             ActionType::DeleteAgent(_) => "DeleteAgent".into(),
@@ -344,6 +350,11 @@ pub trait AccessQuestions {
     /// when it wrote a message (`ReadAgentContext`, issue 41).
     async fn may_read_agent_context(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool;
 
+    /// Whether `context` may see which tools the agent with `agent`
+    /// attributes has now in the channel with `channel` attributes
+    /// (`ReadAgentTools`, issue 194).
+    async fn may_read_agent_tools(&self, context: &SecurityContext, agent: &SecurityAttributes, channel: &SecurityAttributes) -> bool;
+
     /// Whether `context` may delete the agent with `agent` attributes
     /// (`DeleteAgent`, issue 164).
     async fn may_delete_agent(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool;
@@ -400,6 +411,10 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
 
     async fn may_read_agent_context(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool {
         self.check(context, ActionType::ReadAgentContext(agent)).await
+    }
+
+    async fn may_read_agent_tools(&self, context: &SecurityContext, agent: &SecurityAttributes, channel: &SecurityAttributes) -> bool {
+        self.check(context, ActionType::ReadAgentTools { agent, channel }).await
     }
 
     async fn may_delete_agent(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool {
@@ -551,6 +566,9 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::GetUserProfile(a)
             | ActionType::CancelChannel(a)
             | ActionType::WakeChannel(a) => Self::may_read(a, me),
+            // What an agent can do is read by whoever reads the agent, and by
+            // every member of the channel it works in with them.
+            ActionType::ReadAgentTools { agent, channel } => Self::may_read(agent, me) || Self::may_read(channel, me),
             ActionType::ReadChannel { reader, source } => self.rules.may_read_from(reader, source),
             ActionType::Classify(classification) => self.rules.may_classify(classification),
             ActionType::Reclassify { target, new, channel, .. } => {
@@ -671,6 +689,11 @@ mod tests {
         assert!(allows(bob, ActionType::CancelChannel(&hers)).await, "a contributor acts in it");
         assert!(allows(alice, ActionType::ReadAgentContext(&hers)).await);
         assert!(!allows(bob, ActionType::ReadAgentContext(&hers)).await, "what an agent saw is its owner's alone");
+        let theirs = SecurityAttributes { owner_id: carol, contributors: vec![] };
+        let tools = |agent, channel| ActionType::ReadAgentTools { agent, channel };
+        assert!(allows(bob, tools(&hers, &theirs)).await, "who reads the agent sees what it can do");
+        assert!(allows(carol, tools(&hers, &theirs)).await, "and every member of the channel");
+        assert!(!allows(carol, tools(&hers, &hers)).await, "but nobody else");
         assert!(!allows(bob, ActionType::UpdateSession(&hers)).await);
         assert!(!allows(bob, ActionType::DeleteSession(&hers)).await);
     }

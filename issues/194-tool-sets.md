@@ -1,6 +1,6 @@
 # 194 — An agent's tools are a flat list, not grouped by the provider they come from
 
-**Status:** in progress
+**Status:** done
 **Area:** Tools and approvals
 
 ## The problem
@@ -198,3 +198,13 @@ Order: step 0 alone, then 1-3 together, then 4, 5 and 6 each on their own.
   else by the server's `instructions`, else by a text naming the component; a failed discovery
   makes the set unavailable, with why in general terms (`McpError::unavailable`). Issue 32 is done
   with it.
+- **2026-10-05** — Step 6 done, and with it the issue: `ActionType::ReadAgentTools` with
+  `AccessQuestions::may_read_agent_tools`, answered by the ownership policy like `GetAgent`;
+  `Actor::tool_sets`, which an agent run here answers from its executor; `MemberView::tool_sets`
+  and `can_read_tools` in the member's snapshot; `GET …/actors/{aid}/tools` - under `actors/` like
+  the other routes of a member, not `members/` as planned; and in the web UI a tools panel at the
+  member, drawn by the `ToolSetList` the context panel now shares. `ViewError::Forbidden` names no
+  longer only what an agent saw, and the REST API answers it with the code of the route's subject.
+- **2026-10-05** — Changed at the maintainer's request before it was committed: `ReadAgentTools`
+  carries the channel's attributes as well, and the ownership policy lets every member of the
+  channel see the agent's tools, besides whoever reads the agent.

@@ -201,7 +201,10 @@ question, in the viewer's name:
 *   `ChannelView::members()` and `member(actor)` - which also reaches an agent that took part and
     left, by the messages it left in the history (`MemberView::former`), so that what it saw stays
     readable; `may_change()` asks `UpdateChannel`;
-*   `MemberView::may_read_context()` asks `ReadAgentContext`;
+*   `MemberView::may_read_context()` asks `ReadAgentContext`; `may_read_tools()` and `tool_sets()`
+    ask `ReadAgentTools` with the agent's and the channel's attributes (issue 194), which the
+    ownership policy grants whoever reads the agent and every member of the channel: what an agent
+    can do there is no secret among those it works with;
 *   `Views::channel_of(session, channel)` reaches what a memory entry's origin or a `KnowledgeRef`
     names, wherever it is, and answers `None` for what is gone or not the viewer's to read.
 

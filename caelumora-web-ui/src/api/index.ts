@@ -1,5 +1,6 @@
 import type {
   AddParticipantRequest,
+  AgentToolsResponse,
   ChannelMember,
   ChannelResponse,
   Command,
@@ -227,6 +228,13 @@ export const api = {
   async getAgentHistory(sessionId: string, channelId: string, actorUuid: string): Promise<HistoryMessage[]> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/actors/${actorUuid}/history`);
     await ensureOk(res, 'Failed to fetch the history');
+    return res.json();
+  },
+
+  /** The tools actor `actorUuid` has now in the channel, in their tool sets (issue 194). */
+  async getAgentTools(sessionId: string, channelId: string, actorUuid: string): Promise<AgentToolsResponse> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/actors/${actorUuid}/tools`);
+    await ensureOk(res, 'Failed to fetch the tools');
     return res.json();
   },
 

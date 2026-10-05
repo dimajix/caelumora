@@ -18,6 +18,7 @@ use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Place}
 use caelumora_model::session::ChannelId;
 use caelumora_model::snapshot::{ChannelSnapshot, Detail, MemberSnapshot, PublishedNotes};
 use caelumora_model::store::StoreError;
+use caelumora_model::tool::ToolSet;
 use std::sync::Arc;
 use tracing::warn;
 
@@ -362,6 +363,37 @@ impl MemberView {
         }
     }
 
+    /// Whether the viewer may see which tools the member has now
+    /// (`ReadAgentTools`, issue 194) - only ever for agents.
+    pub async fn may_read_tools(&self) -> bool {
+        match self.state.attributes() {
+            Some(attributes) => self.channel.views().runtime().security_manager().may_read_agent_tools(self.channel.views().viewer().context(), attributes, &self.channel.channel.security_attributes).await,
+            None => false,
+        }
+    }
+
+    /// The tools the member has now, in their tool sets (issue 194), as it
+    /// would offer them at the start of its next turn - read from its
+    /// actor, since an agent's tools are built for each of its channels.
+    /// `None` if it has none here: it is no agent run here, has left, or
+    /// the channel does not run.
+    ///
+    /// # Errors
+    /// `Forbidden` if the member is an agent whose tools the viewer may not
+    /// see (`ReadAgentTools`).
+    pub async fn tool_sets(&self) -> ViewResult<Option<Vec<ToolSet>>> {
+        let Some(attributes) = self.state.attributes() else { return Ok(None) };
+        let views = self.channel.views();
+        let forbidden = || ViewError::Forbidden { actor: self.id() };
+        views.runtime().security_manager()
+            .require(views.viewer().context(), ActionType::ReadAgentTools { agent: attributes, channel: &self.channel.channel.security_attributes }, forbidden).await
+            .map_err(|_| forbidden())?;
+        if self.former {
+            return Ok(None);
+        }
+        Ok(self.channel.running().and_then(|channel| channel.actor_by_id(self.id())).and_then(|actor| actor.tool_sets()))
+    }
+
     /// Whether the viewer may delete the member - an agent that exists,
     /// its owner (`DeleteAgent`, issue 164).
     pub async fn may_delete(&self) -> bool {
@@ -479,6 +511,7 @@ impl MemberView {
             name: self.name().map(str::to_string),
             handle: self.handle(),
             can_read_context: self.may_read_context().await,
+            can_read_tools: self.may_read_tools().await,
             can_delete: self.may_delete().await,
             usage,
             notes,

@@ -59,6 +59,7 @@ import {HoverCard} from './HoverCard';
 import {UsageStats} from './UsageStats';
 import {ContextPanel} from './ContextPanel';
 import {HistoryPanel} from './HistoryPanel';
+import {ToolsPanel} from './ToolsPanel';
 import {AddParticipantDialog} from './AddParticipantDialog';
 import {actorKey, actorUuid, handleOf, mentionQueryAt} from '../mention';
 import {commandQueryAt, parseInput} from '../command';
@@ -152,6 +153,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   // The agent whose history is shown, with the channel it belongs to (issue
   // 207); a context opened from it is shown on top and returns to it.
   const [historyOf, setHistoryOf] = useState<{channelId: string; member: ChannelMember; givenUp?: boolean} | null>(null);
+  const [toolsOf, setToolsOf] = useState<{channelId: string; member: ChannelMember} | null>(null);
   // Whether the former members of the channel are unfolded (issue 164).
   const [showFormer, setShowFormer] = useState(false);
   // The agent whose deletion was clicked once, to be confirmed (issue 164).
@@ -938,6 +940,14 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           onShowContext={message => setContextOf({channelId, message})}
           onClose={() => setHistoryOf(null)}
         />
+      ) : toolsOf && toolsOf.channelId === channelId ? (
+        <ToolsPanel
+          key={actorKey(toolsOf.member.id)}
+          sessionId={sessionId}
+          channelId={channelId}
+          member={toolsOf.member}
+          onClose={() => setToolsOf(null)}
+        />
       ) : (
       <div className="w-64 border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 overflow-y-auto hidden md:block">
         <div className="p-4">
@@ -1027,6 +1037,16 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
                     aria-label={`Show what ${member.name} heard and said`}
                   >
                     <History size={14} />
+                  </button>
+                )}
+                {member.can_read_tools && (
+                  <button
+                    onClick={() => { setHistoryOf(null); setToolsOf({channelId, member}); }}
+                    className="shrink-0 p-1 rounded-md text-gray-400 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-700"
+                    title={`Show the tools of ${member.name}`}
+                    aria-label={`Show the tools of ${member.name}`}
+                  >
+                    <Wrench size={14} />
                   </button>
                 )}
                 {member.can_delete && (deletingAgent === actorKey(member.id) ? (

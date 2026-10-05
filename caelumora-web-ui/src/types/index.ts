@@ -62,6 +62,8 @@ export interface ChannelMember {
   kind: ParticipantKind;
   /** Whether you may see what this participant saw when it wrote a message (issue 41). */
   can_read_context: boolean;
+  /** Whether you may see which tools it has now - only ever an agent (issue 194). */
+  can_read_tools: boolean;
   /**
    * What its model calls used (issue 209): sent with the channel stream's
    * snapshot and by `getParticipant`, not where channels are listed; absent
@@ -478,6 +480,20 @@ export interface ToolDefinition {
   description: string;
   /** Its parameters, as the model was told of them (`ToolParameters`). */
   parameters: unknown;
+}
+
+/** A tool as an agent has it, with what only the runtime acts on (issue 194). */
+export interface Tool extends ToolDefinition {
+  requires_approval: boolean;
+  /** Absent: its calls are shown to the channel. */
+  visibility?: ToolVisibility;
+  /** How its results are classified where they do not say; absent: as the channel. */
+  classification?: Classification;
+}
+
+/** The tools an agent has now in a channel (issue 194); null if it has none here - no agent run here, left, or the channel does not run. */
+export interface AgentToolsResponse {
+  tool_sets: ToolSet<Tool>[] | null;
 }
 
 /** Knowledge a message was produced with (issue 17). */

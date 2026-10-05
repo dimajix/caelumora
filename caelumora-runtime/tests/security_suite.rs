@@ -92,7 +92,7 @@ fn attributes_of<'a>(action: &ActionType<'a>) -> Option<&'a SecurityAttributes> 
     match *action {
         GetPersonality(a) | CreatePersonality(a) | UpdatePersonality(a) | DeletePersonality(a)
         | GetSessionTemplate(a) | CreateSessionTemplate(a) | UpdateSessionTemplate(a) | DeleteSessionTemplate(a)
-        | CreateAgent(a) | GetAgent(a) | ReadAgentContext(a) | UpdateAgent(a) | DeleteAgent(a)
+        | CreateAgent(a) | GetAgent(a) | ReadAgentContext(a) | ReadAgentTools { agent: a, .. } | UpdateAgent(a) | DeleteAgent(a)
         | CreateSession(a) | GetSession(a) | UpdateSession(a) | DeleteSession(a) | StopSession(a)
         | GetChannel(a) | CreateChannel(a) | UpdateChannel(a) | DeleteChannel(a)
         | GetUser(a) | CreateUser(a) | UpdateUser(a) | DeleteUser(a)
@@ -525,6 +525,39 @@ async fn what_an_agent_saw_is_its_owners_alone() {
     let his = member(world.bob).await;
     assert!(!his.may_read_context().await, "not offered to bob");
     assert!(matches!(his.context().await, Err(ViewError::Forbidden { .. })), "nor read by him");
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// What an agent can do now - its tools (issue 194) - is read by every
+/// member of the channel it works in, not only by its owner; not by
+/// whoever is no member.
+#[tokio::test]
+async fn which_tools_an_agent_has_is_read_by_the_members_of_its_channel() {
+    let world = World::new().await;
+    let global = world.personality("global", None, &[]).await;
+    let helper = world.agent("helper", world.alice, &global).await;
+    let session = world.shared_session(&[helper], &[]).await;
+    let channel = session.channels()[0].id();
+    let member = |user| {
+        let world = &world;
+        let session = session.id();
+        async move {
+            let view = world.manager.views(Viewer::new(World::as_user(user))).session(session).await.unwrap().channel(channel).await.unwrap();
+            view.members().await.into_iter().find(|m| m.id() == ActorId::Agent(helper)).expect("the agent is a member")
+        }
+    };
+
+    let hers = member(world.alice).await;
+    let (tools, asked) = world.asked(hers.tool_sets()).await;
+    assert!(tools.unwrap().is_some(), "read from its running actor");
+    assert_eq!(asked, checks(&["alice: ReadAgentTools(alice's) yes"]));
+    let his = member(world.bob).await;
+    assert!(his.may_read_tools().await, "offered to bob, who takes part in the channel");
+    let (tools, asked) = world.asked(his.tool_sets()).await;
+    assert!(tools.unwrap().is_some(), "and read by him");
+    assert_eq!(asked, checks(&["bob: ReadAgentTools(alice's) yes"]));
+    let theirs = world.manager.views(Viewer::new(World::as_user(world.carol))).session(session.id()).await;
+    assert!(theirs.is_err(), "carol, who is no member, does not even reach the channel");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

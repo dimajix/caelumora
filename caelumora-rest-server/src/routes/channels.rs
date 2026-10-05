@@ -1,5 +1,5 @@
 use crate::auth::AuthenticatedUser;
-use crate::models::{AddParticipantRequest, DeletedResponse, ListOptions, ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CreateChannelRequest, KnowledgeRefResponse, CommandReplyResponse, ExecuteCommandRequest, GivenUpTurnResponse, HistoryMessageResponse, LabelCauses, MessageContextResponse, SeenItemResponse, PublishedNotesResponse, SendApprovalRequest, SendMessageRequest, StreamOptions};
+use crate::models::{AddParticipantRequest, AgentToolsResponse, DeletedResponse, ListOptions, ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CreateChannelRequest, KnowledgeRefResponse, CommandReplyResponse, ExecuteCommandRequest, GivenUpTurnResponse, HistoryMessageResponse, LabelCauses, MessageContextResponse, SeenItemResponse, PublishedNotesResponse, SendApprovalRequest, SendMessageRequest, StreamOptions};
 use crate::state::AppState;
 use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response, Sse};
@@ -446,6 +446,19 @@ pub async fn agent_history(
         .map_err(|e| ApiError::from_runtime(e.into(), Subject::Context, "reading the history"))?;
     let history = view.history().into_iter().map(|message| history_message(&view, message)).collect();
     Ok(Json(history))
+}
+
+/// The tools actor `aid` has now in the channel (issue 194), for whoever
+/// may see them (`ReadAgentTools`).
+pub async fn agent_tools(
+    State(state): State<Arc<AppState>>,
+    Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
+    user: AuthenticatedUser,
+) -> Result<Json<AgentToolsResponse>, ApiError> {
+    let channel = crate::routes::channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let tool_sets = member_of(&channel, aid).await?.tool_sets().await
+        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Agent, "reading the tools"))?;
+    Ok(Json(AgentToolsResponse { tool_sets }))
 }
 
 pub async fn send_approval(

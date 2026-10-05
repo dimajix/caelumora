@@ -24,7 +24,7 @@ use caelumora_model::message::{Message, MessageEvent};
 use caelumora_model::transcript::GivenUpReason;
 use caelumora_model::plan::PlanProgress;
 use caelumora_model::security::{AccessQuestions, SecurityContext};
-use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState, ToolResultStatus};
+use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState, ToolResultStatus, ToolSet};
 use tracing::{debug, info, warn, Instrument};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -834,6 +834,10 @@ impl Actor for AgentActor {
 
     fn state(&self) -> ActorState {
         self.control.state()
+    }
+
+    fn tool_sets(&self) -> Option<Vec<ToolSet>> {
+        Some(self.tool_executor.tool_sets())
     }
 
     fn wakeup(&self) {
