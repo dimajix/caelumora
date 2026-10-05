@@ -10,7 +10,7 @@ use caelumora_model::actor::{ActorId, Envelope};
 /// 174); shared like every facet, so it keeps what it changes behind its own
 /// lock.
 #[async_trait]
-pub trait Moderator : Send + Sync + Debug {
+pub(crate) trait Moderator : Send + Sync + Debug {
     /// Whom `event` is delivered to, and as what: the event itself, or one
     /// of the moderator's own, such as a request to respond. What a user
     /// sees is what is routed to their actor (issue 220).

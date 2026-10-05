@@ -775,7 +775,7 @@ impl ChannelLoop {
         MentionDirectory::new(names.iter().map(|(id, name)| (*id, name.as_str())))
     }
 
-    pub fn actor_by_id(&self, actor_id: ActorId) -> Option<Arc<dyn Actor>> {
+    pub(crate) fn actor_by_id(&self, actor_id: ActorId) -> Option<Arc<dyn Actor>> {
         self.actors.load().get(&actor_id).map(|a| a.actor.clone())
     }
 

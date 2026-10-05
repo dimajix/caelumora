@@ -280,7 +280,7 @@ argues against it, and what came out of the last attempt.
 | [116](116-session-loop-channel-tables.md) | done | `SessionLoop` describes the one set of its channels with two tables and a queue. |
 | [123](123-session-handle-in-channel-runtime.md) | done | The channel runtime carries a handle to the session that only the channel needs, filled in a second step outside the session. |
 | [144](144-runtime-and-entity-accessors.md) | done | Runtimes forward attributes of their own and of the entity above in several ways, with no rule for what the runtime answers and what the entity answers itself. |
-| [147](147-actor-control-unchecked.md) | open | `Actor::cancel`, `wakeup` and `stop` check no permission, and `ChannelLoop::actor_by_id` hands them to any frontend, which could call them unchecked. |
+| [147](147-actor-control-unchecked.md) | done | `Actor::cancel`, `wakeup` and `stop` check no permission, and `ChannelLoop::actor_by_id` hands them to any frontend, which could call them unchecked. |
 | [152](152-three-signals-end-a-turn.md) | done | A turn is ended by three signals - a state switched from outside, a token and a flag - that the run loop reconciles with a precedence rule. |
 | [153](153-three-give-up-paths.md) | done | A turn is given up along three paths that do the same, with two enums carrying one classification. |
 | [154](154-model-step-mixes-four-things.md) | done | The model step mixes stamping messages, plan mode, streaming and plan progress in one function of 120 lines. |

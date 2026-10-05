@@ -93,12 +93,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [22](22-skill-management.md) | open | Skills do not exist: there is no unit of procedural knowledge below a personality, and no rule for who may load one into a turn. |
 | [166](166-memory-as-topic-documents.md) | open | Agent memory is a flat list of one-line entries, all of them in every prompt, with nothing to group, revise or fetch them by topic. |
 
-## Code structure
-
-| No. | Status | Issue |
-|---|---|---|
-| [147](147-actor-control-unchecked.md) | open | `Actor::cancel`, `wakeup` and `stop` check no permission, and `ChannelLoop::actor_by_id` hands them to any frontend, which could call them unchecked. |
-
 ## Open architecture questions
 
 | No. | Status | Issue |

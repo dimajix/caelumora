@@ -270,7 +270,10 @@ An **actor** is anything that sends and receives events in a channel.
 *   **`Actor`** (`caelumora_runtime::actor`) is the trait of all actors. Its task is `async fn run`,
     which receives envelopes and sends its output through the transport it is given. `wakeup`,
     `cancel` and `stop` are synchronous, because they come from other tasks and must take effect at
-    once. What an agent's model saw is not asked of its actor but read through the views (see
+    once. The trait is crate-internal (issue 147): only the channel controls its actors, after
+    the operation that does it checked its permission (see
+    [SECURITY.md](SECURITY.md#operations-that-check-themselves)). What an agent's model saw is not
+    asked of its actor but read through the views (see
     [AGENT-TURN.md](AGENT-TURN.md#asking-what-an-agent-saw)). The implementations are `AgentActor`,
     `UserActor`, `ApproverActor` and `ExternalAgentActor` (`caelumora_runtime::actor_impl`).
 *   **An actor's inbox** is an `EventReceiver` (`caelumora_runtime::transport`): `recv` waits for

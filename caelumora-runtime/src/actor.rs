@@ -10,7 +10,7 @@ use caelumora_model::message::Message;
 use caelumora_model::security::SecurityContext;
 
 #[async_trait]
-pub trait Actor: Any + Debug + Send + Sync {
+pub(crate) trait Actor: Any + Debug + Send + Sync {
     fn id(&self) -> ActorId;
     fn kind(&self) -> String;
     fn name(&self) -> String;

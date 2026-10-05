@@ -1,6 +1,6 @@
 # 147 — A frontend can cancel, wake and stop an actor without a permission check
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -49,3 +49,12 @@ stop an agent
   was checked, but `actor_by_id` lets a frontend call it directly.
 - **2026-09-30** — [141](141-turn-during-reclassification.md) added no control method: lowering a
   channel uses `cancel`, as a consequence of the reclassification (`ChannelLoop::cancel_actors`).
+- **2026-10-05** — Done, by visibility, not by a second trait. By now no frontend used
+  `actor_by_id` - `message_context` and `given_up_turns` are read through the views - and no crate
+  but the runtime used the `Actor` trait; the one path left was `ChannelLoop::user_actor`, whose
+  `UserActor` offered `stop` through the public trait. The `Actor` trait, the `Moderator` trait
+  (whose `add_actor` is handed actors) and `ChannelLoop::actor_by_id` became `pub(crate)`. The
+  split into a public `Actor` and an internal `ActorControl` was dropped: its public part would have
+  had no user outside the crate. Should other crates ever bring actors of their own, a call guard
+  (a parameter only the runtime can construct) would keep the control methods closed with the trait
+  public; that needs an extension point for actors first, which `create_actor` does not have.
