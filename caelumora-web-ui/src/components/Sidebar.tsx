@@ -5,7 +5,6 @@ import {
   Edit2,
   LogOut,
   MessageSquare,
-  MoreVertical,
   Plus,
   Shield,
   Trash2,
@@ -18,6 +17,7 @@ import {ApiRequestError, reportError} from '../errors';
 import {dispatchGlobalEvent, sessionChange} from '../globalEvents';
 import {loadLastTemplate, saveLastTemplate} from '../session';
 import {openEventStream} from '../stream';
+import {ActionMenu} from './ActionMenu';
 import {DeletedList} from './DeletedList';
 import {NewChannelDialog} from './NewChannelDialog';
 import {PrivacyDialog} from './PrivacyDialog';
@@ -28,6 +28,16 @@ import {twMerge} from 'tailwind-merge';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
+}
+
+/** How a session is named in the list: by its name, else by its id. */
+function sessionName(session: SessionSnapshot): string {
+  return session.name || `Session ${session.id?.slice?.(0, 8) || session.id}`;
+}
+
+/** How a channel is named in the list: by its name, else by its id. */
+function channelName(channel: ChannelResponse): string {
+  return channel.name || `Channel ${channel.id?.slice?.(0, 8) || channel.id}`;
 }
 
 /** Whether `event` may change what the trash holds (issue 164). */
@@ -85,7 +95,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [lastTemplateId, setLastTemplateId] = useState<string | null>(() => loadLastTemplate());
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(() => loadLastTemplate());
   const [expandedSessions, setExpandedSessions] = useState<Record<string, boolean>>({});
-  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [showProfile, setShowProfile] = useState(false);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState<string>('');
@@ -104,9 +113,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     api.getTemplates()
       .then(setTemplates)
       .catch(error => reportError('Failed to load templates', error));
-    const handleClickOutside = () => setOpenMenuId(null);
-    window.addEventListener('click', handleClickOutside);
-    return () => window.removeEventListener('click', handleClickOutside);
   }, []);
 
   /** Drops a session from the list - deleted here or elsewhere. */
@@ -201,9 +207,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  const handleRenameSession = (e: React.MouseEvent, sessionId: string, currentName: string) => {
-    e.stopPropagation();
-    setOpenMenuId(null);
+  const handleRenameSession = (sessionId: string, currentName: string) => {
     setEditingSessionId(sessionId);
     setEditingName(currentName);
   };
@@ -228,15 +232,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  const handleShowPrivacy = (e: React.MouseEvent, sessionId: string) => {
-    e.stopPropagation();
-    setOpenMenuId(null);
+  const handleShowPrivacy = (sessionId: string) => {
     setPrivacyOf(sessionId);
   };
 
-  const handleDeleteSession = async (e: React.MouseEvent, sessionId: string) => {
-    e.stopPropagation();
-    setOpenMenuId(null);
+  const handleDeleteSession = async (sessionId: string) => {
     try {
       await api.deleteSession(sessionId);
       removeSession(sessionId);
@@ -254,9 +254,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     onSelectChannel(session.id, channel.id);
   };
 
-  const handleDeleteChannel = async (e: React.MouseEvent, sessionId: string, channelId: string) => {
-    e.stopPropagation();
-    setOpenMenuId(null);
+  const handleDeleteChannel = async (sessionId: string, channelId: string) => {
     try {
       await api.deleteChannel(sessionId, channelId);
       setSessions(prev => prev.map(s => (s.id === sessionId
@@ -277,11 +275,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const handleRestoreChannel = async (sessionId: string, channelId: string) => {
     await api.restoreChannel(sessionId, channelId);
     await refreshSession(sessionId);
-  };
-
-  const toggleMenu = (e: React.MouseEvent, sessionId: string) => {
-    e.stopPropagation();
-    setOpenMenuId(openMenuId === sessionId ? null : sessionId);
   };
 
   return (
@@ -349,7 +342,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       onClick={(e) => e.stopPropagation()}
                     />
                   ) : (
-                    <span className="truncate">{session.name || `Session ${session.id?.slice?.(0, 8) || session.id}`}</span>
+                    <span className="truncate">{sessionName(session)}</span>
                   )}
                   {session.privacy && session.privacy !== 'private' && (
                     <span className="ml-1 shrink-0 text-gray-500" title={`${privacyInfo(session.privacy).label}: ${privacyInfo(session.privacy).description}`}>
@@ -358,45 +351,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   )}
                 </button>
                 
-                <button
-                  onClick={(e) => toggleMenu(e, session.id)}
-                  className="p-2 opacity-0 group-hover:opacity-100 hover:text-white transition-opacity"
-                  title="Session options"
-                >
-                  <MoreVertical size={16} />
-                </button>
-
-                {openMenuId === session.id && (
-                  <div className="absolute right-0 top-10 w-32 bg-gray-800 border border-gray-700 rounded-md shadow-lg z-50 py-1">
-                    <button
-                      onClick={(e) => handleRenameSession(e, session.id, session.name)}
-                      className="w-full flex items-center px-3 py-2 text-xs hover:bg-gray-700 transition-colors"
-                    >
-                      <Edit2 size={12} className="mr-2" />
-                      Rename
-                    </button>
-                    <button
-                      onClick={(e) => handleShowPrivacy(e, session.id)}
-                      className="w-full flex items-center px-3 py-2 text-xs hover:bg-gray-700 transition-colors"
-                    >
-                      <Shield size={12} className="mr-2" />
-                      Privacy
-                    </button>
-                    <button
-                      onClick={(e) => handleDeleteSession(e, session.id)}
-                      className="w-full flex items-center px-3 py-2 text-xs text-red-400 hover:bg-gray-700 transition-colors"
-                    >
-                      <Trash2 size={12} className="mr-2" />
-                      Delete
-                    </button>
-                  </div>
-                )}
+                <ActionMenu
+                  label={`Options of ${sessionName(session)}`}
+                  size={16}
+                  className="p-2 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-white transition-opacity"
+                  actions={[
+                    {label: 'Rename', icon: Edit2, onSelect: () => handleRenameSession(session.id, session.name)},
+                    {label: 'Privacy', icon: Shield, onSelect: () => handleShowPrivacy(session.id)},
+                    {label: 'Delete', icon: Trash2, danger: true, onSelect: () => void handleDeleteSession(session.id)},
+                  ]}
+                />
               </div>
               
               {expandedSessions[session.id] && (
                 <div className="ml-4 space-y-1">
                   {session.channels.map(channel => {
-                    const menuId = `channel:${channel.id}`;
                     return (
                       <div
                         key={channel.id}
@@ -410,26 +379,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           className="flex-1 min-w-0 flex items-center p-2"
                         >
                           <MessageSquare size={14} className="mr-2 shrink-0" />
-                          <span className="truncate">{channel.name || `Channel ${channel.id?.slice?.(0, 8) || channel.id}`}</span>
+                          <span className="truncate">{channelName(channel)}</span>
                         </button>
-                        <button
-                          onClick={(e) => toggleMenu(e, menuId)}
+                        <ActionMenu
+                          label={`Options of ${channelName(channel)}`}
                           className="p-2 opacity-0 group-hover/channel:opacity-100 focus:opacity-100 hover:text-white transition-opacity"
-                          title="Channel options"
-                        >
-                          <MoreVertical size={14} />
-                        </button>
-                        {openMenuId === menuId && (
-                          <div className="absolute right-0 top-9 w-32 bg-gray-800 border border-gray-700 rounded-md shadow-lg z-50 py-1">
-                            <button
-                              onClick={(e) => handleDeleteChannel(e, session.id, channel.id)}
-                              className="w-full flex items-center px-3 py-2 text-xs text-red-400 hover:bg-gray-700 transition-colors"
-                            >
-                              <Trash2 size={12} className="mr-2" />
-                              Delete
-                            </button>
-                          </div>
-                        )}
+                          actions={[
+                            {label: 'Delete', icon: Trash2, danger: true, onSelect: () => void handleDeleteChannel(session.id, channel.id)},
+                          ]}
+                        />
                       </div>
                     );
                   })}

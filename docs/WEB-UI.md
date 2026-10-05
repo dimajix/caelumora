@@ -48,7 +48,7 @@ The UI shows what the server says and repeats no rule of its own:
 | `src/messages.ts` | Helpers for showing messages, shared by the chat and the context panel |
 | `src/moderator.ts`, `src/confidentiality.ts` | Labels and explanations of responder policies and classifications |
 | `src/App.tsx` | Login state, keep-alive, the error banner, the layout |
-| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `MarkdownMessage`, `ContextPanel`, `HistoryPanel`, `ToolsPanel`, `ToolSetList`, `DeletedList`, `NotesList`, `TokenGauge`, `HoverCard`, `UsageStats`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ErrorBanner` |
+| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `MarkdownMessage`, `ContextPanel`, `HistoryPanel`, `ToolsPanel`, `ToolSetList`, `DeletedList`, `NotesList`, `TokenGauge`, `HoverCard`, `ActionMenu`, `UsageStats`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ErrorBanner` |
 
 ## Talking to the server
 
@@ -93,6 +93,14 @@ The sidebar lists the user's sessions with their channels. It follows the global
 takes a new name from `SessionUpdated`, and fetches a session again (`GET /sessions/{id}`) on any
 other `SessionUpdated` - a changed privacy - and on any event that changes its channels or their
 members. Starting and stopping are ignored.
+
+What can be done with a session - rename, privacy, delete - and with a channel - delete - is in a
+menu behind three dots at the end of its row, shown while the row is hovered (`ActionMenu`, issue
+230). The menu is used the same way wherever something in a list has actions: it lists only what
+may be done, and nothing - no button - where nothing may; it is reached with the keyboard too
+(arrow keys, Escape returns to the button); an entry that cannot be undone may ask once more in its
+place before it acts. Like the hover card it is placed in the page's body and inside the window
+(`floating.ts`), so that no scrolling list cuts it off.
 
 A session's privacy (issue 134, `privacy.ts`) is shown to everyone in it: a session other sessions
 may read is marked in the list, and its menu opens `PrivacyDialog`, where its owner (`can_change`)
@@ -199,7 +207,8 @@ All three show their numbers in the same hover card (`HoverCard` with `UsageStat
 groups under a heading, labels on the left and values aligned on the right, never wrapped, the card
 as wide as its content. It opens on hover, on keyboard focus and on tap, above its trigger - below
 where there is no room - and always inside the window; it is placed in the page's body, so that the
-scrolling member list and chat do not cut it off, and closes when the page scrolls.
+scrolling member list and chat do not cut it off, and closes when the page scrolls - placed by
+`useFloating` (`floating.ts`), like the menus.
 
 The member list is sorted by name and uses the members' handles for `@` completion and for
 highlighting mentions; participants that cannot be mentioned, such as approvers, have none. Who

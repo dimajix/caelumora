@@ -4,13 +4,10 @@
 // wide as its content, above the trigger - below where there is no room - and
 // always inside the window.
 
-import React, {useId, useLayoutEffect, useRef, useState} from 'react';
+import React, {useId, useState} from 'react';
 import {createPortal} from 'react-dom';
 import {clsx as cn} from 'clsx';
-
-/** How far the card keeps from its trigger and from the window's edges. */
-const GAP = 6;
-const MARGIN = 8;
+import {useFloating} from './floating';
 
 interface HoverCardProps {
   /** What the card is opened from; focusable unless it already holds something that is. */
@@ -23,43 +20,14 @@ interface HoverCardProps {
   focusable?: boolean;
 }
 
+const PLACEMENT = {prefer: 'above', align: 'start'} as const;
+
 export const HoverCard: React.FC<HoverCardProps> = ({children, content, className, focusable = true}) => {
   const id = useId();
-  const trigger = useRef<HTMLSpanElement>(null);
-  const card = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
-  const [position, setPosition] = useState<{left: number; top: number} | null>(null);
-
-  const close = () => {
-    setOpen(false);
-    setPosition(null);
-  };
-
-  // Placed once it is rendered and its size is known.
-  useLayoutEffect(() => {
-    if (!open || !trigger.current || !card.current) return;
-    const anchor = trigger.current.getBoundingClientRect();
-    const {width, height} = card.current.getBoundingClientRect();
-    const above = anchor.top - GAP - height;
-    const top = above >= MARGIN ? above : Math.min(anchor.bottom + GAP, window.innerHeight - MARGIN - height);
-    const left = Math.max(MARGIN, Math.min(anchor.left, window.innerWidth - MARGIN - width));
-    setPosition({left, top: Math.max(MARGIN, top)});
-  }, [open]);
-
+  const close = () => setOpen(false);
   // Where the trigger is no longer, the card is not either.
-  useLayoutEffect(() => {
-    if (!open) return;
-    const gone = () => {
-      setOpen(false);
-      setPosition(null);
-    };
-    window.addEventListener('scroll', gone, true);
-    window.addEventListener('resize', gone);
-    return () => {
-      window.removeEventListener('scroll', gone, true);
-      window.removeEventListener('resize', gone);
-    };
-  }, [open]);
+  const {trigger, floating: card, position} = useFloating<HTMLSpanElement, HTMLDivElement>(open, PLACEMENT, close);
 
   return (
     <span
