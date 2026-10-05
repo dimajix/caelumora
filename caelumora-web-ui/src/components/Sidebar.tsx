@@ -362,7 +362,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   actions={[
                     {label: 'Rename', icon: Edit2, onSelect: () => handleRenameSession(session.id, session.name)},
                     {label: 'Privacy', icon: Shield, onSelect: () => handleShowPrivacy(session.id)},
-                    {label: 'Delete', icon: Trash2, danger: true, onSelect: () => void handleDeleteSession(session.id)},
+                    {label: 'Delete', icon: Trash2, danger: true, confirm: 'Delete session?', onSelect: () => void handleDeleteSession(session.id)},
                   ]}
                 />
               </div>
@@ -389,7 +389,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           label={`Options of ${channelName(channel)}`}
                           className="p-2 opacity-0 group-hover/channel:opacity-100 focus:opacity-100 hover:text-white transition-opacity"
                           actions={[
-                            {label: 'Delete', icon: Trash2, danger: true, onSelect: () => void handleDeleteChannel(session.id, channel.id)},
+                            {label: 'Delete', icon: Trash2, danger: true, confirm: 'Delete channel?', onSelect: () => void handleDeleteChannel(session.id, channel.id)},
                           ]}
                         />
                       </div>

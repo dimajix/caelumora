@@ -61,3 +61,6 @@ WEB-UI.md describes it.
   channel whose agents were talking. A member's row now holds its name, handle, token gauge and
   the menu: "Show history", "Show tools", "Remove from channel", "Delete agent" ("Delete agent? It
   leaves every channel" on the first choice); a former member's menu holds "Show history".
+- **2026-10-05** — At the maintainer's request, deleting a session or a channel from the sidebar's
+  menu now asks once more as well ("Delete session?", "Delete channel?"), with the menu's
+  confirmation.

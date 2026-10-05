@@ -116,7 +116,8 @@ menu behind three dots at the end of its row, shown while the row is hovered (`A
 may be done, and nothing - no button - where nothing may; it is reached with the keyboard too
 (arrow keys, Escape returns to the button); an entry that cannot be undone may ask once more in its
 place before it acts. Like the hover card it is placed in the page's body and inside the window
-(`floating.ts`), so that no scrolling list cuts it off.
+(`floating.ts`), so that no scrolling list cuts it off. Deleting a session or a channel asks once
+more ("Delete session?", "Delete channel?"), though it only goes to the trash.
 
 A session's privacy (issue 134, `privacy.ts`) is shown to everyone in it: a session other sessions
 may read is marked in the list, and its menu opens `PrivacyDialog`, where its owner (`can_change`)
