@@ -92,7 +92,9 @@ impl ToolProvider for NotesComponent {
                 name: READ_NOTES_TOOL_NAME.to_string(),
                 description: "Read what the agents of another channel of this session noted. Without \
                     a channel, lists every channel you may read with its notes - also how to find out \
-                    which channels there are. The notes of your own channel are already shown to you."
+                    which channels there are. The notes of your own channel are already shown to you. \
+                    Notes of another channel come without numbers: they can only be revoked or \
+                    reclassified in that channel."
                     .to_string(),
                 parameters: ToolParameters::object(
                     [("channel", ToolParameters::string("The name of the channel; omit it for all channels"))],
@@ -159,6 +161,7 @@ impl NotesComponent {
             Some(name) => vec![session.channel_named(name).await?],
             None => session.channels().await,
         };
+        let here = turn.channel_id();
         let mut listed = Vec::new();
         let mut read = Vec::new();
         for channel in channels {
@@ -168,7 +171,7 @@ impl NotesComponent {
                     turn.record_knowledge(reference);
                 }
                 for note in agent_notes.notes {
-                    notes.push(serde_json::json!({ "by": agent_notes.name, "id": note.id.0, "text": note.text }));
+                    notes.push(listed_note(&agent_notes.name, &note, channel.id() == here));
                     read.push(note.classification);
                 }
             }
@@ -176,6 +179,17 @@ impl NotesComponent {
         }
         let value = serde_json::json!({ "channels": listed });
         Ok(ToolOutput { value, classification: Classification::join_all(&read) })
+    }
+}
+
+/// A note as `read_notes` lists it. Its number only `here`, in the turn's
+/// channel: the tools change notes of that channel only, and a number of
+/// another channel's chain would name a different note here (issue 60).
+fn listed_note(by: &str, note: &Note, here: bool) -> Value {
+    if here {
+        serde_json::json!({ "by": by, "id": note.id.0, "text": note.text })
+    } else {
+        serde_json::json!({ "by": by, "text": note.text })
     }
 }
 
@@ -270,6 +284,13 @@ mod tests {
         let others_at = text.find("Notes of Sassy:").unwrap();
         assert!(own_at < others_at, "{text}");
         assert!(text.contains("#1: The user is called Kaya."));
+    }
+
+    #[test]
+    fn read_notes_numbers_only_the_notes_of_the_turns_channel() {
+        let tea = note(3, "tea");
+        assert_eq!(listed_note("Sassy", &tea, true), serde_json::json!({ "by": "Sassy", "id": 3, "text": "tea" }));
+        assert_eq!(listed_note("Sassy", &tea, false), serde_json::json!({ "by": "Sassy", "text": "tea" }));
     }
 
     #[tokio::test]

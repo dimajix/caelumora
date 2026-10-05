@@ -44,6 +44,11 @@ the channel.
     forgetting a memory entry are both a `Remove`.
 *   **Numbers.** Notes are numbered per agent, counting up, and a number is never given again, so
     that a model can repeat it to revoke.
+*   **Changed where they were written.** The tools revoke and reclassify notes of the turn's
+    channel only; the chain of another channel is written by the agent's actor there (issue 60). A
+    number names a note in one chain, so numbers are shown only for notes of the turn's channel:
+    `read_notes` lists the notes of other channels without them, and so does the private notes
+    prompt part for the agent's private notes from other channels.
 *   **Staging.** `AgentNotes` numbers, notes, revokes and reclassifies (`NoteKind::Public` or
     `Private`). A change is staged as a `NoteChange` of its kind (`Turn::stage_note`, kept in
     `TurnState::notes` or `private_notes`) and pushed into its chain when the turn completes, after

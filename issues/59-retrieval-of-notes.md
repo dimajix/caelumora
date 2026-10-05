@@ -68,3 +68,8 @@ generation (RAG).
 - **2026-09-26** — Issue created at the maintainer's request: instead of putting all notes into the
   prompt, or letting the model search with a tool, a component could retrieve the relevant ones and
   put them into the context.
+- **2026-10-05** — From [60](60-note-ids-in-prompts.md), done: notes are revoked where they were
+  written, and a note is shown with its number only in its own channel. Retrieval that shows the
+  agent its notes from several chains together, for it to revoke or reclassify, needs ids that say
+  which chain they belong to (`planning#3`) - or shows the notes of other chains without numbers, as
+  today.

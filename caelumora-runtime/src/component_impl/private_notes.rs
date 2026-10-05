@@ -197,9 +197,10 @@ fn render(own: &[Note], elsewhere: &[Elsewhere]) -> String {
         format!("In this channel (change them with `{NOTE_PRIVATE_TOOL_NAME}` and `{REVOKE_PRIVATE_NOTE_TOOL_NAME}`):"),
         own.iter().map(|n| format!("#{}: {}", n.id, n.text)).collect(),
     )];
-    // Notes of other channels cannot be revoked here, so they go unnumbered.
+    // Notes of other channels cannot be revoked here, so they go unnumbered
+    // (issue 60).
     sections.extend(elsewhere.iter().map(|c| Section::new(
-        format!("From channel {}:", c.name),
+        format!("From channel {} (change them only there):", c.name),
         c.notes.iter().map(|n| n.text.clone()).collect(),
     )));
     render_sections(
@@ -243,8 +244,8 @@ mod tests {
     fn the_prompt_part_shows_this_channel_first_then_the_others_by_name() {
         let elsewhere = [Elsewhere { channel: ChannelId::default(), name: "research".to_string(), notes: vec![note(1, "Kaya prefers short answers.")], digest: None }];
         let text = render(&[note(2, "Remind Kaya of the deadline.")], &elsewhere);
-        assert!(text.find("#2: Remind Kaya").unwrap() < text.find("From channel research:").unwrap(), "{text}");
-        assert!(text.contains("- Kaya prefers short answers."));
+        assert!(text.find("#2: Remind Kaya").unwrap() < text.find("From channel research (change them only there):").unwrap(), "{text}");
+        assert!(text.contains("- Kaya prefers short answers."), "unnumbered: it cannot be revoked here");
     }
 
     #[tokio::test]

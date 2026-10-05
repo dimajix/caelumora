@@ -1,6 +1,6 @@
 # 60 — An agent cannot revoke every note of its own it is shown
 
-**Status:** open
+**Status:** done
 **Area:** Context & knowledge
 
 ## The problem
@@ -55,3 +55,17 @@ that id depends on where the note is shown:
 - **2026-09-26** — Issue created at the maintainer's request: notes of its own that appear in the
   prompt should have an id by which the agent can revoke them. Stated here as found: notes of the
   current channel already carry their ids; the gap is notes from other channels.
+- **2026-10-05** — Done, deciding against revoking in another channel: notes are revoked and
+  reclassified where they were written. A chain belongs to the agent's actor in its channel and to
+  that channel's branch; writing into it from elsewhere would need a message to that actor or a
+  local suppression - much machinery for a rare case, against the ownership rules. A wrong private
+  note is recalled elsewhere until the agent is in its channel again; that is accepted.
+
+  So the gap was not a missing way to revoke, but numbers where none is usable. The private notes
+  of other channels were already unnumbered; their header now says they can be changed only there.
+  `read_notes` lists a number only for notes of the turn's own channel (`listed_note`), and its
+  description says so - before, a number from another channel's chain could silently revoke a
+  different note of the same number here. Documented in MEMORY.md.
+
+  Qualified ids (`planning#3`) are needed only once notes of several chains are shown side by side
+  for the agent to act on; that is retrieval, [59](59-retrieval-of-notes.md), where it is noted.
