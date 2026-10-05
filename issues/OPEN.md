@@ -31,7 +31,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [173](173-message-inspection.md) | open | Nothing examines what a message says before the channel routes it, so content that should be classified stricter, redacted or refused reaches every participant. |
 | [221](221-adding-session-participants.md) | open | A session's participants are fixed when it is created: nobody - neither a user nor an agent, existing or created from a personality - can be added to it later. |
 | [223](223-full-inbox-drops-events.md) | open | An actor whose inbox is full - an agent in a long turn in a busy channel - loses what was said, requests and approvals without anyone learning of it. |
-| [234](234-modify-revoke-and-retry-messages.md) | open | A message once said can be neither changed nor taken back by its author, and an agent cannot be asked to answer again, so a mistake keeps influencing every later turn. |
+| [234](234-modify-revoke-and-retry-messages.md) | in progress | A message once said can be neither changed nor taken back by its author, and an agent cannot be asked to answer again, so a mistake keeps influencing every later turn. |
 
 ## Identity and access management
 

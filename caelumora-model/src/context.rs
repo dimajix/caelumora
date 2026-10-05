@@ -26,7 +26,7 @@ use crate::chain::Node;
 use crate::digest::Digest;
 use crate::kept::Kept;
 use crate::message::{Message, MessageRole, TokenUsage};
-use crate::transcript::{Transcript, TranscriptEntry};
+use crate::transcript::{as_they_stand, Transcript, TranscriptEntry};
 use crate::tool::ToolSet;
 use serde::{Deserialize, Serialize};
 
@@ -432,10 +432,10 @@ impl<'a> ContextResolver<'a> {
     /// is not a prefix of this one, a prompt or a set of tools that was
     /// never recorded, or a prompt whose entry is not in the prefix.
     pub fn resolve(&self, reference: &ContextRef, agent: ActorId) -> Option<ResolvedContext> {
-        let entries = self.transcript.prefix(reference.transcript.as_ref())?;
-        let turn_start = entries.len().checked_sub(reference.turn_entries)?;
-        let (before, during) = entries.split_at(turn_start);
-        let items = self.assemble(&reference.prompts, &reference.profile, agent, before, during)?;
+        let path = self.transcript.prefix(reference.transcript.as_ref())?;
+        let turn_start = path.len().checked_sub(reference.turn_entries)?;
+        let entries = as_they_stand(path).enumerate().map(|(i, (node, message))| (node, message, i >= turn_start));
+        let items = self.assemble(&reference.prompts, &reference.profile, agent, entries)?;
         let tool_sets = match &reference.tools {
             Some(digest) => self.offered_tools.get(digest)?.clone(),
             None => Vec::new(),
@@ -443,17 +443,17 @@ impl<'a> ContextResolver<'a> {
         Some(ResolvedContext { reference: reference.clone(), items, tool_sets })
     }
 
-    /// The items the model of `agent` is given: the entries `before` the
-    /// turn, then those `during` it, as `profile` gives them, with every
-    /// part of `prompts` after the entry it follows. `None` if a part's text
-    /// is not kept or its entry is not there.
+    /// The items the model of `agent` is given: the `entries` of the
+    /// transcript, each with its message as it stands and whether it is the
+    /// turn's own, as `profile` gives them, with every part of `prompts`
+    /// after the entry it follows. `None` if a part's text is not kept or
+    /// its entry is not there.
     fn assemble(
         &self,
         prompts: &[PromptRef],
         profile: &ModelProfile,
         agent: ActorId,
-        before: &[&Node<TranscriptEntry>],
-        during: &[&Node<TranscriptEntry>],
+        entries: impl Iterator<Item = (&'a Node<TranscriptEntry>, Option<Message>, bool)>,
     ) -> Option<Vec<ContextItem>> {
         // The parts after the transcript entry `after` - `None`: before
         // everything.
@@ -465,12 +465,11 @@ impl<'a> ContextResolver<'a> {
         };
 
         let mut items = after_entry(None)?;
-        let entries = before.iter().map(|e| (e, false)).chain(during.iter().map(|e| (e, true)));
-        for (node, in_turn) in entries {
+        for (node, message, in_turn) in entries {
             // The record of a turn given up is no message; a part may still
             // have been placed after it.
-            if let Some(message) = node.entry.message() {
-                items.push(ContextItem::Conversation { message: profile.given(message.clone(), agent, in_turn) });
+            if let Some(message) = message {
+                items.push(ContextItem::Conversation { message: profile.given(message, agent, in_turn) });
             }
             items.extend(after_entry(Some(node.digest))?);
         }

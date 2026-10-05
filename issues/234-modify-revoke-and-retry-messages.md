@@ -1,6 +1,6 @@
 # 234 — A message once said can be neither changed nor taken back, and an answer not asked for again
 
-**Status:** open
+**Status:** in progress
 **Area:** Sessions & channels
 
 ## The problem
@@ -438,3 +438,9 @@ describe the events, the routes and what revoking does not do.
   carried out with the operations every author has, and for now only for the last message; a user's
   own message may be modified or revoked anywhere. The plan above was written against the code as
   of `e07aa3d`.
+- **2026-10-05** — Step 1 done: a transcript's messages are read by one rule,
+  `transcript::as_they_stand` over a path - every entry with the message it holds as it stands at
+  the end of the path. `Transcript::messages`, the `ContextResolver`, `begin_turn` and
+  `given_up_turns` read through it; `TranscriptView::usage`, `AgentContextView::in_transcript` and
+  the label of an external agent keep reading every entry, since they are about what was ever
+  added. No change of behaviour.

@@ -2,7 +2,7 @@
 //! built from, and the turns it gave up (issue 145), as what happened
 //! (issue 197).
 
-use crate::chain::Chain;
+use crate::chain::{Chain, Node};
 use crate::digest::Digest;
 use crate::message::{Message, MessageId};
 use chrono::{DateTime, Utc};
@@ -74,10 +74,22 @@ pub struct GivenUpTurn {
 /// one of its branches, which can be recovered (`prefix`).
 pub type Transcript = Chain<TranscriptEntry>;
 
+/// The entries of `path` - a path of a transcript from its root, as
+/// `entries` or `prefix` give it - each with the message it holds as it
+/// stands at the end of the path, `None` if it holds none: what a model
+/// given the path is given, and where. The one rule every reader of a
+/// transcript's messages reads them by (issue 234); what has to consider
+/// every entry ever added - the tokens used, whether a message reached the
+/// transcript at all - reads `all_entries` instead.
+pub fn as_they_stand<'a>(path: impl IntoIterator<Item = &'a Node<TranscriptEntry>>) -> impl Iterator<Item = (&'a Node<TranscriptEntry>, Option<Message>)> {
+    path.into_iter().map(|node| (node, node.entry.message().cloned()))
+}
+
 impl Chain<TranscriptEntry> {
-    /// The messages of the active path: what the model is given.
+    /// The messages of the active path as they stand: what the model is
+    /// given.
     pub fn messages(&self) -> Vec<Message> {
-        self.entries().filter_map(|e| e.entry.message()).cloned().collect()
+        as_they_stand(self.entries()).filter_map(|(_, message)| message).collect()
     }
 
     /// Starts the active path anew, and returns the digest of what it held
@@ -120,10 +132,11 @@ impl Chain<TranscriptEntry> {
         self.all_entries()
             .filter_map(|node| {
                 let TranscriptEntry::GivenUp { end, given_up } = &node.entry else { return None };
-                let path = self.prefix(end)?;
+                let path: Vec<_> = as_they_stand(self.prefix(end)?).collect();
                 let start = path.len().saturating_sub(given_up.turn_entries);
-                let messages = path[start..].iter().filter_map(|e| e.entry.message()).cloned().collect();
-                let after = path[..start].iter().rev().filter_map(|e| e.entry.message()).find(|m| !m.internal).map(|m| m.id);
+                let (before, turn) = path.split_at(start);
+                let messages = turn.iter().filter_map(|(_, message)| message.clone()).collect();
+                let after = before.iter().rev().filter_map(|(_, message)| message.as_ref()).find(|m| !m.internal).map(|m| m.id);
                 Some(GivenUpTurn { given_up: given_up.clone(), messages, after })
             })
             .collect()

@@ -109,7 +109,7 @@ argues against it, and what came out of the last attempt.
 | [221](221-adding-session-participants.md) | open | A session's participants are fixed when it is created: nobody - neither a user nor an agent, existing or created from a personality - can be added to it later. |
 | [222](222-queued-requests-answered-one-by-one.md) | done | An agent - run here or external - asked while it answers works through every queued request afterwards, one answer each, to a conversation that has moved on. |
 | [223](223-full-inbox-drops-events.md) | open | An actor whose inbox is full - an agent in a long turn in a busy channel - loses what was said, requests and approvals without anyone learning of it. |
-| [234](234-modify-revoke-and-retry-messages.md) | open | A message once said can be neither changed nor taken back by its author, and an agent cannot be asked to answer again, so a mistake keeps influencing every later turn. |
+| [234](234-modify-revoke-and-retry-messages.md) | in progress | A message once said can be neither changed nor taken back by its author, and an agent cannot be asked to answer again, so a mistake keeps influencing every later turn. |
 
 ## Identity and access management
 

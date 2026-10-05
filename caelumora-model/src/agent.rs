@@ -272,7 +272,7 @@ impl AgentChannelState {
         let tools: Vec<Tool> = tool_sets.into_iter().flat_map(|set| set.tools).collect();
         let mut work = Work::new(event_context, security_context, classification);
         work.context = ContextRef { transcript: self.transcript.digest(), tools: offered, profile, ..ContextRef::default() };
-        self.transcript.entries().filter_map(|e| e.entry.message()).for_each(|m| work.see_message(m));
+        self.transcript.messages().iter().for_each(|m| work.see_message(m));
         let turn = TurnState { work, tools, ..TurnState::default() };
         self.turn = Some(turn);
     }
