@@ -59,7 +59,7 @@ Everything except `POST /auth/login` and `POST /auth/logout` requires a logged-i
 | `POST /auth/refresh` | Renew the session |
 | `GET /templates` | The session templates a new session can be made from |
 | `GET /compartments` | The configured compartments a channel's classification may name (issue 133) |
-| `GET /profile`, `PUT /profile` | The logged-in user's own profile (issue 176): their `introduction`, `null` if none, and `max_introduction_chars`; `PUT` sets it - `null` or blank removes it - and answers `400 invalid_introduction` for one that is too long or contains control characters |
+| `GET /profile`, `PUT /profile` | The logged-in user's own profile (issue 176): their `introduction`, `null` if none, `max_introduction_chars`, and the `preferred_language` their channels are held in, a BCP 47 tag or `null` (issue 56); `PUT` replaces both - `null` or blank removes the introduction - and answers `400 invalid_introduction` for one that is too long or contains control characters |
 | `GET /sessions`, `POST /sessions` | List the user's sessions - with `?deleted=true` those they deleted and may read as such, the trash, each with `deleted` (who, when), `can_restore` and `can_purge` (issue 164); create one from a template (`SessionManager::create_from_template`) |
 | `GET /agents`, `DELETE /agents/{id}` | The agents the user may read, each with `can_delete` - with `?deleted=true` the trash of agents, like that of sessions; delete one: it leaves every channel it takes part in (issue 164) |
 | `POST /agents/{id}/restore`, `POST /agents/{id}/purge` | Restore a deleted agent - into no channel; `409 already_exists` if its name was taken meanwhile - or remove it for good with its state (issue 164) |
@@ -67,9 +67,10 @@ Everything except `POST /auth/login` and `POST /auth/logout` requires a logged-i
 | `GET /sessions/{id}` | One session, in the form of the global stream's snapshot (`SessionSnapshot`), without starting it |
 | `PATCH /sessions/{id}`, `DELETE /sessions/{id}` | Rename, delete a session - marked and kept, with its channels (issue 164) |
 | `PUT /sessions/{id}/privacy` | Change whom the session lets read what was said in it - its owner (`privacy`: `private`, `same_owner` or `shared_audience`, issue 134); answers the `SessionSnapshot` |
-| `GET …/channels`, `POST …/channels` | List a session's channels - with `?deleted=true` those deleted from it, like the sessions' trash (issue 164); create one, with an optional `classification` (`level` and `compartments`, see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)) and optional kinds of its `moderator` and `responder_policy` (see [CHANNELS.md](CHANNELS.md#moderators)) |
+| `GET …/channels`, `POST …/channels` | List a session's channels - with `?deleted=true` those deleted from it, like the sessions' trash (issue 164); create one, with an optional `classification` (`level` and `compartments`, see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)) and optional kinds of its `moderator` and `responder_policy` (see [CHANNELS.md](CHANNELS.md#moderators)), and an optional `language`, the user's preferred one if absent (issue 56) |
 | `GET …/channels/{cid}`, `DELETE …/channels/{cid}` | One channel, with its `former_members`, each with `left` - who removed it and when (issue 164); delete it - marked and kept (issue 164) |
 | `PUT …/channels/{cid}/classification` | Reclassify the channel - its owner (issue 133) |
+| `PUT …/channels/{cid}/language` | Hold the channel in the language the body names - a BCP 47 tag such as `"de"` - or in none (`null`), whoever may change it (issue 56); answered like `GET` |
 | `POST …/channels/{cid}/restore` | Restore a deleted channel into its session and start it again, answered like `GET`; `409` if its name was taken meanwhile. A channel is purged only with its session (issue 164) |
 | `PUT …/messages/{mid}/classification` | Reclassify a message - its author or the channel's owner (issue 133; `message_not_found`) |
 | `GET …/messages`, `POST …/messages` | The channel's history, older messages on request; write a message, with an optional `classification` that releases it (issue 133; refused as `invalid_classification`) |

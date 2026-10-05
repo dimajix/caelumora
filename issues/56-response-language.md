@@ -1,6 +1,6 @@
 # 56 — Agents answer in English regardless of their users' language
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -65,3 +65,23 @@ participant reads as it is (and which history, notes, digests and `read_history`
 - **2026-09-26** — Issue created at the maintainer's request: agents often answer in English; a user
   should be able to choose a preferred language that the agents' answers follow, without translating
   answers, least of all per user into different languages.
+- **2026-10-05** — Done. A language is a BCP 47 tag (`Language`, in the model), checked by its form
+  and kept in its usual case. The preference lives in the `UserProfile` (`preferred_language`), not
+  in the `User` record: the profile belongs to the user and is written by them, while the record is
+  the system's and the user providers' - a preference grants nothing. A channel has a language
+  (`Channel::language`, `None` for none in particular), set when it is created - on request or from
+  a template - to the one its creator prefers unless the request names another, and changed or taken
+  back by whoever may change the channel (`ChannelLoop::update_language`, `UpdateChannel`, stored
+  like a new name). "auto" - the language of the last user message - was left out: it fails where
+  the issue begins. The agents are told by the component `channel_language_prompt_provider`, a part
+  of the personality like the roster rather than built in: a personality without it may ignore the
+  language. It reads the language through the views at every turn and names it in English and in
+  itself, with its tag (`German - Deutsch, BCP 47 tag "de-CH"`), from a small table
+  (`Language::names`) - a model follows a name more surely than a tag; with `changes_only` for
+  external agents. REST: `language` on channels, `PUT …/channels/{cid}/language`, and
+  `preferred_language` in `/profile`, whose `PUT` now replaces both fields. Web UI: the preference in
+  the profile dialog, the language preset in the new-channel dialog, shown and changed in the chat.
+  Not done: writing the part in the language itself rather than in English, which would belong in
+  the prompt catalogue ([57](57-prompt-catalogue.md)) and is worth it only if a comparison on the
+  models in use shows it; and creating a channel explicitly held in no language by someone who
+  prefers one - it is taken back after creating.

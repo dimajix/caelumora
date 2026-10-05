@@ -63,7 +63,7 @@ Decisions that cost an hour and close an issue are listed under [D](#d-questiona
 | [208](issues/208-generated-artifacts.md) | An `ArtifactStore` for binary content, references in messages, download, a panel. | open, well specified |
 | [169](issues/169-changing-classified-content.md) | The rule for changing something classified from several places: fixed container, the writer's label must flow into it, every change records where it was made. | open, proposal complete |
 | [20](issues/20-transactional-effects.md) | Tools declare whether they have an effect or only read; what a crash in the middle means. | open, a question |
-| [13](issues/13-approval-modes.md) | Remembered approvals scoped by tool *and argument shape* - for files: by path. | open |
+| [13](issues/13-approval-modes.md) | Remembered approvals scoped by tool *and argument shape*/compact - for files: by path. | open |
 | [165](issues/165-ask-the-user-tool.md) | A presentation per kind of tool call in the web UI - "could later present a file diff". | open |
 | [19](issues/19-memory-tiers.md), [MEMORY.md](docs/MEMORY.md) | The term: *workspace - documents several channels edit together; outside the branches, every change an effect.* | a table row |
 | [166](issues/166-memory-as-topic-documents.md) | Notes that "Caelumora has no file system for agents". | - |

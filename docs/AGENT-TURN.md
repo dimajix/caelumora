@@ -517,6 +517,25 @@ who they are, not by name. The component remembers what it told while it lives -
 each actor, so for each channel - and tells all of it again after a restart. For an agent run here
 the parameter makes no sense: its system prompt is built anew with every turn.
 
+### The channel's language
+
+A channel's conversation may be held in a language (`Channel::language`, issue 56, see
+[CHANNELS.md](CHANNELS.md#its-language)). Its agents are told so by the component
+`channel_language_prompt_provider`, which a personality wires in like the roster; one without it
+leaves its agents to choose - their instructions, tools and the parts the runtime adds are English,
+which pulls a model towards English. Nothing is translated: the conversation is one, in one
+language, which every participant reads as it is.
+
+The part reads the language through the turn's views (`ChannelView::language`) at the start of every
+turn, so a change reaches the agent with its next turn. It names the language in English and in the
+language itself, with its tag - "held in German - Deutsch, BCP 47 tag "de-CH". Write everything in
+German ..." - since a model follows a name more surely than a tag; the names come from a small table
+in the model (`Language::names`), found by the tag or what is left of it without its last subtags.
+A language the table does not know is named by its tag alone. A channel held in no language adds
+nothing. The part is public, and goes into the system prompt by default (`position`): the language
+changes rarely. With `changes_only`, for an external agent, it is told once and then only when it
+changed, taking back is told too ("no longer held in a particular language").
+
 ### Instructions within a turn
 
 The runtime steers the model within a turn, too: while a plan is executed, it tells the model which

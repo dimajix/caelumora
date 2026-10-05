@@ -48,9 +48,9 @@ This is the one place ownership is recorded.
 *   Initial data belongs to the system.
 *   A `User` record belongs to the system, too (issue 94): only the user providers and the setup
     write it, so that nobody can grant themselves roles. What a user writes about themselves lives
-    in a `UserProfile` of its own, owned by that user (issue 176). Its owner is derived from the
-    user it belongs to rather than stored, so that nobody can write a profile of someone else that
-    is theirs.
+    in a `UserProfile` of its own, owned by that user (issue 176) - how they introduce themselves
+    and the language they prefer (issue 56). Its owner is derived from the user it belongs to rather
+    than stored, so that nobody can write a profile of someone else that is theirs.
 *   Introductions - a personality's, a user's profile's - are public: they are given to every agent
     in every channel their agents or their user take part in. A personality's introduction is
     written by whoever may change the personality, like its system prompt; a user's by the user.

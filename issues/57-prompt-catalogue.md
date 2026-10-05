@@ -65,3 +65,8 @@ for a model be chosen? **First to be discussed is whether this is sensible at al
   [56](56-response-language.md): should the prompts spread through the code be kept in several
   languages, perhaps model-specific, where would such a collection be managed, and how is the best
   variant for a model chosen - to be discussed first whether this is sensible at all.
+- **2026-10-05** — From [56](56-response-language.md): the part telling an agent the language of its
+  channel (`channel_language_prompt_provider`) is English, naming the language in English and in
+  itself. Whether a part written in the channel's language holds a model to it more surely is open;
+  if a comparison on the models in use shows it does, that variant belongs in this catalogue, not in
+  constants beside the English one.
