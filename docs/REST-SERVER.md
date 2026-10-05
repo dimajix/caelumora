@@ -65,7 +65,7 @@ Everything except `POST /auth/login` and `POST /auth/logout` requires a logged-i
 | `PATCH /sessions/{id}`, `DELETE /sessions/{id}` | Rename, delete a session - marked and kept, with its channels (issue 164) |
 | `PUT /sessions/{id}/privacy` | Change whom the session lets read what was said in it - its owner (`privacy`: `private`, `same_owner` or `shared_audience`, issue 134); answers the `SessionSnapshot` |
 | `GET …/channels`, `POST …/channels` | List a session's channels; create one, with an optional `classification` (`level` and `compartments`, see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)) and optional kinds of its `moderator` and `responder_policy` (see [CHANNELS.md](CHANNELS.md#moderators)) |
-| `GET …/channels/{cid}`, `DELETE …/channels/{cid}` | One channel; delete it - marked and kept (issue 164) |
+| `GET …/channels/{cid}`, `DELETE …/channels/{cid}` | One channel, with its `former_members`, each with `left` - who removed it and when (issue 164); delete it - marked and kept (issue 164) |
 | `PUT …/channels/{cid}/classification` | Reclassify the channel - its owner (issue 133) |
 | `PUT …/messages/{mid}/classification` | Reclassify a message - its author or the channel's owner (issue 133; `message_not_found`) |
 | `GET …/messages`, `POST …/messages` | The channel's history, older messages on request; write a message, with an optional `classification` that releases it (issue 133; refused as `invalid_classification`) |
@@ -73,9 +73,9 @@ Everything except `POST /auth/login` and `POST /auth/logout` requires a logged-i
 | `POST …/cancel` | End the current turn of every agent in the channel |
 | `GET …/notes` | The notes the channel's agents published |
 | `POST …/participants`, `DELETE …/participants/{aid}` | Add a participant (with `history`), remove one; `not_cleared` if they are not cleared for the channel (issue 133) |
-| `GET …/participants/{aid}` | One participant, with what its model calls used (`usage`, issue 209) - fetched again when an agent's turn ends, instead of the whole channel |
+| `GET …/participants/{aid}` | One participant, with what its model calls used (`usage`, issue 209) - fetched again when an agent's turn ends, instead of the whole channel; a former member too, with `left` (issue 164) |
 | `GET …/actors/{aid}/messages/{mid}/context` | What an agent's model saw when it wrote a message |
-| `GET …/actors/{aid}/history` | All that was offered to an agent and what it said itself, whole like the channel's messages - each with `has_context` and `in_transcript` (issue 207) |
+| `GET …/actors/{aid}/history` | All that was offered to an agent and what it said itself, whole like the channel's messages - each with `has_context` and `in_transcript` (issue 207); like the context and the turns given up, also for a former member (issue 164) |
 | `GET …/actors/{aid}/given-up-turns` | The turns an agent gave up - failed or stopped - with their reason, the history message they branched off `after`, and their messages like the history's (issues 145, 146) |
 | `GET …/commands`, `POST …/commands` | The commands the user may see; run one |
 | `GET …/channels/{cid}/events` | The channel's stream |

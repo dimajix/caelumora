@@ -157,6 +157,14 @@ participants, stores the channel (`UpdateChannel` - only the owner) and announce
 `AgentChannelJoined`/`Left` or `UserChannelJoined`/`Left`. Events only announce; nothing changes a
 channel because an event arrived.
 
+A removed participant is kept as a former one (`Channel::former`, issue 164): `FormerParticipant`
+with who removed it and when (`Removal`), not among `participants`, which is who takes part now -
+so nothing that reads them changes. Added again, it is taken out of `former`; its history limit is
+not kept, it is given a new one. The views reach former members from the document
+(`ChannelView::former_members`, `ChannelView::member`, `MemberView::left`): what an agent said and
+saw stays readable for whoever may read its context. An agent that left before the channel kept who
+left is still found by the messages it left in the history.
+
 Adding is asked first as `UpdateChannel`, before anything of the newcomer is looked at (issue 198),
 and additionally as `ActionType::JoinChannel` with the channel's classification, where a policy can
 hold the channel's level against the newcomer (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).

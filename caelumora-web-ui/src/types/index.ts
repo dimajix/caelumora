@@ -68,6 +68,14 @@ export interface ChannelMember {
    * for a member whose calls report no tokens.
    */
   usage?: TokenUsage;
+  /** For a former member (issue 164): who removed it and when. */
+  left?: Removal;
+}
+
+/** That something was deleted, or someone left: by whom and when (issue 164). */
+export interface Removal {
+  by: ActorId;
+  at: string;
 }
 
 export interface ChannelResponse {
@@ -83,6 +91,8 @@ export interface ChannelResponse {
   classification: Classification;
   /** Whether you may rename it and add or remove participants (issue 46). */
   can_change: boolean;
+  /** Who took part and left (issue 164), in the order they left, each with `left`. */
+  former_members: ChannelMember[];
 }
 
 /** Who sees a part of what an agent produces (issue 133): the channel, or only the agent's owner. */

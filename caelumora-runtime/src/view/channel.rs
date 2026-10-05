@@ -13,6 +13,7 @@ use caelumora_model::digest::Digest;
 use caelumora_model::agent::AgentChannelState;
 use caelumora_model::name::Name;
 use caelumora_model::note::Note;
+use caelumora_model::removal::Removal;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Place};
 use caelumora_model::session::ChannelId;
 use caelumora_model::snapshot::{ChannelSnapshot, Detail, MemberSnapshot, PublishedNotes};
@@ -120,31 +121,43 @@ impl ChannelView {
     pub async fn members(&self) -> Vec<MemberView> {
         let mut members = Vec::with_capacity(self.channel.participants.len());
         for participant in &self.channel.participants {
-            members.push(MemberView::of(self.clone(), participant.clone(), false).await);
+            members.push(MemberView::of(self.clone(), participant.clone()).await);
         }
         members
     }
 
-    /// The member `actor` of the channel - or, for an agent that took part
-    /// and left, a former member (`MemberView::former`): its messages are in
-    /// the history and its state in the store, so what it saw stays
-    /// readable (issue 163). Until the store marks who left (issue 164), a
-    /// former member is known by the messages it left in the history the
-    /// viewer sees.
+    /// Who took part and left (issue 164), in the order they left: their
+    /// messages are in the history and an agent's state in the store, so
+    /// what it saw stays readable.
+    pub async fn former_members(&self) -> Vec<MemberView> {
+        let mut former = Vec::with_capacity(self.channel.former.len());
+        for left in &self.channel.former {
+            former.push(MemberView::of_former(self.clone(), left.participant.clone(), Some(left.left.clone())).await);
+        }
+        former
+    }
+
+    /// The member `actor` of the channel - or one that took part and left,
+    /// a former member (`MemberView::former`, issues 163, 164). An agent
+    /// that left before the channel kept who left is known by the messages
+    /// it left in the history the viewer sees.
     ///
     /// # Errors
     /// `MemberNotFound` if `actor` neither takes part in the channel nor
-    /// left messages in it; `Failed` if the history cannot be read.
+    /// left it; `Failed` if the history cannot be read.
     pub async fn member(&self, actor: ActorId) -> ViewResult<MemberView> {
         if let Some(participant) = self.channel.participants.iter().find(|p| p.actor_id() == actor) {
-            return Ok(MemberView::of(self.clone(), participant.clone(), false).await);
+            return Ok(MemberView::of(self.clone(), participant.clone()).await);
+        }
+        if let Some(left) = self.channel.former.iter().find(|f| f.participant.actor_id() == actor) {
+            return Ok(MemberView::of_former(self.clone(), left.participant.clone(), Some(left.left.clone())).await);
         }
         let not_found = || ViewError::MemberNotFound { channel: self.channel.id, actor };
         let ActorId::Agent(agent) = actor else { return Err(not_found()) };
         if !self.history().await?.messages.iter().any(|m| m.sender_id == actor) {
             return Err(not_found());
         }
-        Ok(MemberView::of(self.clone(), Participant::Agent(agent), true).await)
+        Ok(MemberView::of_former(self.clone(), Participant::Agent(agent), None).await)
     }
 
     /// The history as the viewer sees it (issue 46): all of it, unless they
@@ -244,10 +257,13 @@ impl ChannelView {
     /// the details `detail` asks for. A detail that cannot be read is left
     /// empty: the channel can be shown without it.
     pub async fn snapshot(&self, detail: Detail) -> ChannelSnapshot {
-        let mut members = Vec::new();
+        let (mut members, mut former_members) = (Vec::new(), Vec::new());
         if detail.contains(Detail::MEMBERS) {
             for member in self.members().await {
                 members.push(member.snapshot(detail).await);
+            }
+            for member in self.former_members().await {
+                former_members.push(member.snapshot(Detail::empty()).await);
             }
         }
         ChannelSnapshot {
@@ -258,6 +274,7 @@ impl ChannelView {
             classification: self.channel.classification.clone(),
             can_change: self.may_change().await,
             members,
+            former_members,
         }
     }
 }
@@ -271,20 +288,36 @@ pub struct MemberView {
     participant: Participant,
     /// Took part once and left.
     former: bool,
+    /// Who removed it and when, if the channel kept it (issue 164).
+    left: Option<Removal>,
     /// What the member is, as its kind makes it.
     state: Arc<dyn MemberState>,
 }
 
 impl MemberView {
-    async fn of(channel: ChannelView, participant: Participant, former: bool) -> Self {
+    /// `participant`, who takes part in `channel`.
+    async fn of(channel: ChannelView, participant: Participant) -> Self {
         let state = member_state(channel.views(), &participant, channel.id()).await;
-        Self { channel, participant, former, state }
+        Self { channel, participant, former: false, left: None, state }
+    }
+
+    /// `participant`, who took part in `channel` and left - removed as
+    /// `left` says, if the channel kept it.
+    async fn of_former(channel: ChannelView, participant: Participant, left: Option<Removal>) -> Self {
+        let state = member_state(channel.views(), &participant, channel.id()).await;
+        Self { channel, participant, former: true, left, state }
     }
 
     /// Whether the member took part once and left: not among the channel's
     /// participants any more, but what it said and saw is still there.
     pub fn former(&self) -> bool {
         self.former
+    }
+
+    /// Who removed the member and when (issue 164); `None` for one that
+    /// takes part, and for one that left before the channel kept it.
+    pub fn left(&self) -> Option<&Removal> {
+        self.left.as_ref()
     }
 
     /// The channel the member takes part in.
@@ -440,6 +473,7 @@ impl MemberView {
             usage,
             notes,
             pending_approvals,
+            left: self.left.clone(),
         }
     }
 }

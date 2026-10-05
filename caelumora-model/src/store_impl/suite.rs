@@ -116,6 +116,7 @@ fn channel() -> Channel {
         components: crate::channel::moderation_components(None, Some("broadcast_policy")),
         classification: Classification::CHANNEL_DEFAULT,
         history_limits: Vec::new(),
+        former: Vec::new(),
         participants: Vec::new(),
         security_attributes: Default::default(),
         deleted: None,

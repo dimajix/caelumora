@@ -191,6 +191,11 @@ Where `can_change` is set, the member list offers adding a participant of the se
 much of the history they may see (`AddParticipantDialog`, issue 46) - and removing one. The channel
 is fetched again when the global stream announces a join or leave for it.
 
+Below the members, a folded group "Former members" lists who took part and left (issue 164), each
+with when, and - where `can_read_context` - the history icon, so that what a removed agent did, the
+turn it gave up when it was removed included ([146](../issues/146-show-given-up-turns.md)), can
+still be read.
+
 A "Notes" tab next to the members shows the notes the channel's agents published (`NotesList`, issue
 17). They come with the snapshot and are fetched again (`GET …/notes`) when the global stream
 announces `AgentChannelStateChanged` for the channel.
@@ -227,5 +232,5 @@ none, last if the history does not hold it. Each is a folded block with why it e
 stopped, or the channel lowered - and when; opened, it shows the turn's messages with their tool
 calls and results, each with its context where it is recorded. A failed turn's notice in the chat
 offers "What the turn did" for an agent whose context the user may read, which opens the history
-panel with the latest turn given up unfolded. A turn given up because the agent left the channel
-cannot be shown once it has: the history panel is offered for members only.
+panel with the latest turn given up unfolded. A turn given up because the agent was removed from
+the channel is shown in its history panel, offered among the former members (issue 164).

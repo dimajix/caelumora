@@ -449,6 +449,7 @@ mod tests {
             ],
             security_attributes: caelumora_model::security::SecurityAttributes::default(),
             deleted: None,
+            former: Vec::new(),
         };
 
         store.create_channel(&caelumora_model::security::SecurityContext::system(), &channel).await.unwrap();
@@ -552,6 +553,7 @@ mod tests {
             participants: vec![Participant::User(alice), Participant::User(bob), Participant::Approver(approver.clone())],
             security_attributes: caelumora_model::security::SecurityAttributes::default(),
             deleted: None,
+            former: Vec::new(),
         };
         let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), store.clone()));
         let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandExecutor::empty(runtime_manager.security_manager())))
@@ -623,6 +625,7 @@ mod tests {
             ],
             security_attributes: caelumora_model::security::SecurityAttributes::default(),
             deleted: None,
+            former: Vec::new(),
         };
 
         store.create_channel(&caelumora_model::security::SecurityContext::system(), &channel).await.unwrap();
@@ -743,6 +746,7 @@ mod tests {
             ],
             security_attributes: caelumora_model::security::SecurityAttributes::default(),
             deleted: None,
+            former: Vec::new(),
         };
 
         store.create_channel(&caelumora_model::security::SecurityContext::system(), &channel).await.unwrap();
@@ -816,6 +820,7 @@ mod tests {
             participants: vec![Participant::Approver(approver.clone()), Participant::User(user.id)],
             security_attributes: caelumora_model::security::SecurityAttributes::default(),
             deleted: None,
+            former: Vec::new(),
         };
         store.create_channel(&caelumora_model::security::SecurityContext::system(), &channel).await.unwrap();
         let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), store.clone()));

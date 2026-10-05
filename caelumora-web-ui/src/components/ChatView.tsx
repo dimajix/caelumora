@@ -1,6 +1,7 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {
   AlertTriangle,
+  ChevronDown,
   ChevronRight,
   Gauge,
   History,
@@ -51,7 +52,7 @@ import {type ClassValue, clsx} from 'clsx';
 import {twMerge} from 'tailwind-merge';
 import {MarkdownMessage} from './MarkdownMessage';
 import {MessageFooter, MessageView, Reasoning} from './MessageView';
-import {formatArguments, formatTokens, formatTokensShort, mergeToolResults} from '../messages';
+import {formatArguments, formatTimestamp, formatTokens, formatTokensShort, mergeToolResults} from '../messages';
 import {TokenGauge} from './TokenGauge';
 import {HoverCard} from './HoverCard';
 import {UsageStats} from './UsageStats';
@@ -150,6 +151,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   // The agent whose history is shown, with the channel it belongs to (issue
   // 207); a context opened from it is shown on top and returns to it.
   const [historyOf, setHistoryOf] = useState<{channelId: string; member: ChannelMember; givenUp?: boolean} | null>(null);
+  // Whether the former members of the channel are unfolded (issue 164).
+  const [showFormer, setShowFormer] = useState(false);
   // The commands this user may run here, for `/` completion (issue 28).
   const [commands, setCommands] = useState<Command[]>([]);
   // Whether the dialog to add a participant is open (issue 46).
@@ -1033,6 +1036,44 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
               <UserPlus size={14} />
               <span>Add participant</span>
             </button>
+          )}
+          {(channel?.former_members?.length ?? 0) > 0 && (
+            <div className="mt-4">
+              <button
+                onClick={() => setShowFormer(shown => !shown)}
+                className="flex items-center gap-1 px-2 py-1 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-100"
+                aria-expanded={showFormer}
+              >
+                {showFormer ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                <span>Former members ({channel!.former_members.length})</span>
+              </button>
+              {showFormer && (
+                <div className="space-y-2 mt-1">
+                  {channel!.former_members.map(member => {
+                    const left = formatTimestamp(member.left?.at);
+                    return (
+                      <div key={actorKey(member.id)} className="group flex items-center space-x-2 p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+                        <div className="w-2 h-2 rounded-full bg-gray-300 dark:bg-gray-600 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm text-gray-500 dark:text-gray-400 truncate">{member.name}</div>
+                          {left && <div className="text-[11px] text-gray-400 dark:text-gray-500" title={left.full}>left {left.short}</div>}
+                        </div>
+                        {member.can_read_context && (
+                          <button
+                            onClick={() => setHistoryOf({channelId, member})}
+                            className="shrink-0 p-1 rounded-md text-gray-400 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-700"
+                            title={`Show what ${member.name} heard and said`}
+                            aria-label={`Show what ${member.name} heard and said`}
+                          >
+                            <History size={14} />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           )}
           </>)}
         </div>

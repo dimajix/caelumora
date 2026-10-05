@@ -53,6 +53,11 @@ pub struct Channel {
     /// later and may not see all of it (issue 46); everybody else sees all.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub history_limits: Vec<HistoryLimit>,
+    /// Who took part and left (issue 164): removed participants, with who
+    /// removed them and when. Not among `participants`, which is who takes
+    /// part now; one added again is taken out of here.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub former: Vec<FormerParticipant>,
     /// Set when it was deleted (issue 164): it stays stored, hidden from
     /// every read but those for what was deleted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -120,9 +125,19 @@ impl Channel {
             security_attributes,
             classification,
             history_limits: Vec::new(),
+            former: Vec::new(),
             deleted: None,
         }
     }
+}
+
+/// A participant that left a channel (issue 164): removed, by whom and
+/// when. Its history limit is not kept - one added again is given a new
+/// one.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FormerParticipant {
+    pub participant: Participant,
+    pub left: crate::removal::Removal,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

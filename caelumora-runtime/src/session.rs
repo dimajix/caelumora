@@ -845,6 +845,7 @@ mod tests {
             participants: Vec::new(),
             security_attributes: session.security_attributes.clone(),
             deleted: None,
+            former: Vec::new(),
         }
     }
 
@@ -1940,7 +1941,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_removed_participant_is_gone_and_announced_but_the_approver_stays() {
+    async fn a_removed_participant_is_kept_as_a_former_one_and_announced_but_the_approver_stays() {
         use crate::channel::ChannelError;
         let runtime = test_runtime();
         let manager = SessionManager::new(runtime.clone());
@@ -1953,6 +1954,8 @@ mod tests {
         assert!(!channel.members().iter().any(|m| m.id == other), "no longer a member");
         let stored = runtime.entity_store().get_channel(&ctx, channel.id()).await.unwrap();
         assert!(!stored.participants.iter().any(|p| p.actor_id() == other), "stored, not only in memory");
+        let former = stored.former.iter().find(|f| f.participant.actor_id() == other).expect("kept as a former participant (issue 164)");
+        assert_eq!(former.left.by, ctx.caller_id, "with who removed it");
         let events = drain(&mut rx);
         assert!(events.iter().any(|e| matches!(e, GlobalEvent::UserChannelLeft(_, cid, _) if *cid == channel.id())),
                 "the leave is announced: {events:?}");
@@ -1967,6 +1970,8 @@ mod tests {
         // Added again at once, once its old actor has ended (issue 171).
         channel.add_participant(&ctx, other, caelumora_model::channel::HistoryAccess::All).await.expect("added again");
         assert!(channel.user_actor(other.as_user_id().unwrap()).is_some(), "with a new actor");
+        let stored = runtime.entity_store().get_channel(&ctx, channel.id()).await.unwrap();
+        assert!(stored.former.is_empty(), "and no longer a former participant");
         manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 

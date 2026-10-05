@@ -324,6 +324,7 @@ mod tests {
             id: session.channels[0], session_id: session.id, name: Name::new("main").unwrap(), components: Default::default(),
             classification: Classification::CHANNEL_DEFAULT, history_limits: Vec::new(), participants, security_attributes: Default::default(),
             deleted: None,
+            former: Vec::new(),
         };
         store.create_session(&system, &session).await.unwrap();
         store.create_channel(&system, &channel).await.unwrap();

@@ -415,6 +415,7 @@ mod tests {
             participants: session.participants.clone(),
             security_attributes: session.security_attributes.clone(),
             deleted: None,
+            former: Vec::new(),
         }
     }
 
@@ -870,5 +871,43 @@ use caelumora_model::turn::TurnState;
         assert!(views.channel_of(session.id, channel.id).await.unwrap().is_none());
         assert!(views.channel_of(SessionId::new(), channel.id).await.unwrap().is_none());
         assert!(manager.views(as_user(UserId::new())).channel_of(session.id, reached.id()).await.unwrap().is_none(), "nor is it there for a stranger");
+    }
+
+    #[tokio::test]
+    async fn who_left_is_a_former_member_with_who_removed_them_also_without_a_word() {
+        use caelumora_model::channel::FormerParticipant;
+        use caelumora_model::removal::Removal;
+
+        let (store, manager) = owned_runtime();
+        let (alice, bob) = (user("alice"), user("bob"));
+        let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
+        let mut session = make_session("hers", ActorId::User(alice.id), vec![]);
+        session.participants = record_users(&store, &[&alice, &bob]).await;
+        session.participants.push(Participant::Agent(helper.id));
+        // Both took part and were removed by alice, neither said anything.
+        let mut channel = main_channel(&session);
+        channel.participants.retain(|p| p.actor_id() != ActorId::User(bob.id) && p.actor_id() != ActorId::Agent(helper.id));
+        let removed = Removal::now(ActorId::User(alice.id));
+        channel.former = vec![
+            FormerParticipant { participant: Participant::User(bob.id), left: removed.clone() },
+            FormerParticipant { participant: Participant::Agent(helper.id), left: removed.clone() },
+        ];
+        let system = SecurityContext::system();
+        store.create_session(&system, &session).await.unwrap();
+        store.create_channel(&system, &channel).await.unwrap();
+
+        let reached = manager.views(as_user(alice.id)).channel_of(session.id, channel.id).await.unwrap().expect("there");
+        let former = reached.member(ActorId::Agent(helper.id)).await.expect("kept as having left");
+        assert!(former.former() && former.left() == Some(&removed));
+        assert!(former.context().await.is_ok(), "what it saw is still the owner's to read");
+        let bob_left = reached.member(ActorId::User(bob.id)).await.expect("a user too");
+        assert!(bob_left.former() && bob_left.name() == Some("bob"));
+        assert_eq!(reached.former_members().await.iter().map(MemberView::id).collect::<Vec<_>>(), [ActorId::User(bob.id), ActorId::Agent(helper.id)], "in the order they left");
+        assert!(reached.members().await.iter().all(|m| !m.former()), "not among the members");
+
+        let snapshot = reached.snapshot(Detail::MEMBERS).await;
+        assert_eq!(snapshot.former_members.len(), 2);
+        assert!(snapshot.former_members.iter().all(|m| m.left.as_ref() == Some(&removed)), "each with who removed it, and when");
+        assert!(snapshot.members.iter().all(|m| m.left.is_none()));
     }
 }

@@ -242,10 +242,18 @@ fn actor_in(channel: &ChannelLoop, id: Uuid) -> Option<ActorId> {
     channel.actor_ids().into_iter().find(|actor| actor.id() == id)
 }
 
-/// The member of `channel` whose id is `id`, whatever kind it is.
+/// The member of `channel` whose id is `id`, whatever kind it is - or a
+/// former member (issue 164), whose history and context stay readable.
 async fn member_of(channel: &ChannelView, id: Uuid) -> Result<MemberView, ApiError> {
-    channel.members().await.into_iter().find(|member| member.id().id() == id)
-        .ok_or_else(|| ApiError::not_found("actor_not_found", format!("Actor {} is not in channel {}", id, channel.id())))
+    let mut members = channel.members().await;
+    members.extend(channel.former_members().await);
+    if let Some(member) = members.into_iter().find(|member| member.id().id() == id) {
+        return Ok(member);
+    }
+    // An agent that left before the channel kept who left is known by what
+    // it said.
+    channel.member(ActorId::Agent(AgentId(id))).await
+        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Participant, "finding the member"))
 }
 
 /// The actor the authenticated user acts through in `channel` (issue 30).

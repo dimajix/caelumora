@@ -866,6 +866,7 @@ mod tests {
             components: crate::channel::moderation_components(None, Some("broadcast_policy")),
             classification: crate::confidentiality::Classification::CHANNEL_DEFAULT,
             history_limits: Vec::new(),
+            former: Vec::new(),
             participants: Vec::new(),
             security_attributes: SecurityAttributes::default(),
             deleted: None,

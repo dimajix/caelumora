@@ -281,6 +281,9 @@ pub struct ChannelResponse {
     /// Whether the requesting user may rename the channel and add or remove
     /// its participants (issue 46).
     pub can_change: bool,
+    /// Who took part and left (issue 164), in the order they left, each
+    /// with `left`: who removed them and when.
+    pub former_members: Vec<ChannelMemberResponse>,
 }
 
 impl From<snapshot::ChannelSnapshot> for ChannelResponse {
@@ -294,6 +297,7 @@ impl From<snapshot::ChannelSnapshot> for ChannelResponse {
             responder_policy: view.responder_policy,
             classification: view.classification,
             can_change: view.can_change,
+            former_members: view.former_members.into_iter().filter_map(ChannelMemberResponse::of).collect(),
         }
     }
 }
@@ -314,6 +318,9 @@ pub struct ChannelMemberResponse {
     /// asked for alone, not where channels are listed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<TokenUsage>,
+    /// For a former member (issue 164): who removed it and when.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub left: Option<caelumora_model::removal::Removal>,
 }
 
 impl ChannelMemberResponse {
@@ -326,6 +333,7 @@ impl ChannelMemberResponse {
             handle: view.handle,
             can_read_context: view.can_read_context,
             usage: view.usage,
+            left: view.left,
         })
     }
 }
@@ -597,7 +605,7 @@ mod tests {
     #[test]
     fn a_channel_view_is_answered_with_kinds_and_a_name_for_the_deleted() {
         let (alice, approver) = (ActorId::User(UserId::new()), ActorId::Approver(ApproverId(Uuid::new_v4())));
-        let member = |id, name: Option<&str>| snapshot::MemberSnapshot { id, name: name.map(str::to_string), handle: None, can_read_context: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new() };
+        let member = |id, name: Option<&str>| snapshot::MemberSnapshot { id, name: name.map(str::to_string), handle: None, can_read_context: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), left: None };
         let view = snapshot::ChannelSnapshot {
             id: ChannelId::new(),
             name: "main".to_string(),
@@ -606,6 +614,7 @@ mod tests {
             classification: Classification::CHANNEL_DEFAULT,
             can_change: true,
             members: vec![member(alice, None), member(approver, Some("Approver")), member(ActorId::System, Some("system"))],
+            former_members: Vec::new(),
         };
 
         let response = ChannelResponse::from(view);
@@ -630,6 +639,7 @@ mod tests {
         };
         let member = |id, name: &str, notes: Vec<Note>| snapshot::MemberSnapshot {
             id, name: Some(name.to_string()), handle: None, can_read_context: false, usage: None, notes, pending_approvals: Vec::new(),
+            left: None,
         };
         let channel = snapshot::ChannelSnapshot {
             id: ChannelId::new(),
@@ -639,6 +649,7 @@ mod tests {
             classification: Classification::CHANNEL_DEFAULT,
             can_change: false,
             members: vec![member(alice, "alice", Vec::new()), member(helper, "Helper", vec![note])],
+            former_members: Vec::new(),
         };
 
         let json = serde_json::to_value(ChannelSnapshot::of(channel, Vec::new(), false)).unwrap();
@@ -651,9 +662,31 @@ mod tests {
     }
 
     #[test]
+    fn a_former_member_is_answered_apart_with_who_removed_it_and_when() {
+        let (alice, helper) = (ActorId::User(UserId::new()), ActorId::Agent(caelumora_model::agent::AgentId::new()));
+        let left = caelumora_model::removal::Removal::now(alice);
+        let member = |id, left| snapshot::MemberSnapshot { id, name: Some("x".to_string()), handle: None, can_read_context: true, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), left };
+        let view = snapshot::ChannelSnapshot {
+            id: ChannelId::new(),
+            name: "main".to_string(),
+            moderator: None,
+            responder_policy: None,
+            classification: Classification::CHANNEL_DEFAULT,
+            can_change: true,
+            members: vec![member(alice, None)],
+            former_members: vec![member(helper, Some(left.clone()))],
+        };
+        let json = serde_json::to_value(ChannelResponse::from(view)).unwrap();
+        assert!(json["members"][0].get("left").is_none(), "a member has not left");
+        assert_eq!(json["former_members"][0]["id"], serde_json::to_value(helper).unwrap());
+        assert_eq!(json["former_members"][0]["left"]["by"], serde_json::to_value(alice).unwrap());
+        assert_eq!(json["former_members"][0]["can_read_context"], true, "what it saw may still be read");
+    }
+
+    #[test]
     fn what_a_participant_used_is_answered_only_where_it_was_read() {
         let usage = TokenUsage { calls: 2, prompt_tokens: 300, completion_tokens: 20, last_call_tokens: 170, context_size: Some(8192) };
-        let member = |usage| snapshot::MemberSnapshot { id: ActorId::User(UserId::new()), name: Some("alice".to_string()), handle: None, can_read_context: false, usage, notes: Vec::new(), pending_approvals: Vec::new() };
+        let member = |usage| snapshot::MemberSnapshot { id: ActorId::User(UserId::new()), name: Some("alice".to_string()), handle: None, can_read_context: false, usage, notes: Vec::new(), pending_approvals: Vec::new(), left: None };
 
         let json = serde_json::to_value(ChannelMemberResponse::of(member(Some(usage))).unwrap()).unwrap();
         assert_eq!(json["usage"], serde_json::json!({ "calls": 2, "prompt_tokens": 300, "completion_tokens": 20, "last_call_tokens": 170, "context_size": 8192 }));

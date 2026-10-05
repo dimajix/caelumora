@@ -91,6 +91,9 @@ pub struct ChannelSnapshot {
     /// Its participants, in the order of the channel - with
     /// `Detail::MEMBERS`.
     pub members: Vec<MemberSnapshot>,
+    /// Who took part and left (issue 164), in the order they left, each
+    /// with `left` - with `Detail::MEMBERS`, without the other details.
+    pub former_members: Vec<MemberSnapshot>,
 }
 
 /// The notes one agent published in a channel.
@@ -129,4 +132,7 @@ pub struct MemberSnapshot {
     /// viewer who takes part in the channel as a user and reads all of it -
     /// with `Detail::APPROVALS`.
     pub pending_approvals: Vec<ApprovalRequest>,
+    /// Who removed a former member and when (issue 164); `None` for one that
+    /// takes part.
+    pub left: Option<crate::removal::Removal>,
 }

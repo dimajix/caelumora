@@ -381,3 +381,24 @@ rights [125](125-invisible-admin.md)'s, the record of the acts [140](140-audit-l
   the lock `delete_session` and `purge_session` hold. The cascade and the rollbacks of a failed
   creation mark first and purge then, in the runtime's name (`purge_channel_document`). A purge
   that removes nothing after all ends as `NotFound`, without touching the channels.
+- **2026-10-05** — Step 3 done: former participants.
+  - **Model:** `Channel::former: Vec<FormerParticipant>` (`participant`, `left: Removal`), written
+    only when not empty. `ChannelController::remove_participant` moves the participant there, with
+    the caller and the time; `add_participant` takes it out again. Nothing that reads
+    `participants` changed.
+  - **Views:** `ChannelView::former_members`, and `member` looks there after the participants; the
+    fallback by messages stays for agents that left before. `MemberView` keeps `former()` and has
+    `left()` - `None` for that fallback, whose removal is not known. The snapshot carries
+    `former_members` (with `Detail::MEMBERS`, without the other details) and `MemberSnapshot::left`.
+  - **REST:** `ChannelResponse::former_members`, `ChannelMemberResponse::left`; `member_of` finds
+    former members, so a removed agent's history, given-up turns and contexts, and
+    `GET …/participants/{aid}`, answer for it. This closes the gap noted from
+    [146](146-show-given-up-turns.md): the turn an agent gave up when it was removed can be read.
+  - **Web UI:** a folded group "Former members" below the member list, with when each left and the
+    history icon where `can_read_context`.
+  - **Tests:** the session test of removing a participant asserts the former entry and its removal
+    on adding again; a view test reaches a former user and agent that never said anything; a REST
+    test of `former_members`. CHANNELS.md, REST-SERVER.md, WEB-UI.md.
+
+  Not done as planned: `MemberView::left()` does not replace the `former` flag - a former member
+  found by its messages has left, but nobody recorded when.

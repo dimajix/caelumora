@@ -330,6 +330,7 @@ mod tests {
             classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
             history_limits: Vec::new(),
             deleted: None,
+            former: Vec::new(),
         };
         let user = caelumora_model::user::User {
             id: caelumora_model::user::UserId::new(),

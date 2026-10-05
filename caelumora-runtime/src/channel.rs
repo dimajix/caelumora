@@ -1305,6 +1305,7 @@ mod tests {
             classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
             history_limits: Vec::new(),
             deleted: None,
+            former: Vec::new(),
         };
         let builtin = |id: &str, facet: Arc<dyn crate::command::CommandProvider>| ComponentImpl { id: id.to_string(), fail_policy: ComponentFailPolicy::FailOpen, facet };
         let executor = CommandExecutor::new(
@@ -1889,6 +1890,7 @@ mod tests {
             classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
             history_limits: Vec::new(),
             deleted: None,
+            former: Vec::new(),
         };
         // Stored, so that leaving it can be stored too.
         runtime.entity_store().create_channel(&SecurityContext::system(), &channel).await.unwrap();
@@ -2951,6 +2953,7 @@ mod tests {
             classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
             history_limits: Vec::new(),
             deleted: None,
+            former: Vec::new(),
         };
         runtime.entity_store().create_channel(&SecurityContext::system(), &channel).await.unwrap();
         if let Some(mut stored) = stored {

@@ -2,7 +2,8 @@ use caelumora_model::name::Name;
 use arc_swap::ArcSwap;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::actor::ActorId;
-use caelumora_model::channel::{participant_attributes, Channel, ChannelId, ChannelUpdateEvent, HistoryLimit, HistoryStart, Participant};
+use caelumora_model::channel::{participant_attributes, Channel, ChannelId, ChannelUpdateEvent, FormerParticipant, HistoryLimit, HistoryStart, Participant};
+use caelumora_model::removal::Removal;
 use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
@@ -86,6 +87,8 @@ impl ChannelController {
         let mut channel = (**self.channel.load()).clone();
         let id = participant.actor_id();
         channel.participants.push(participant);
+        // Back again: no longer a former participant (issue 164).
+        channel.former.retain(|f| f.participant.actor_id() != id);
         channel.history_limits.retain(|l| l.participant != id);
         if let Some(start) = start {
             channel.history_limits.push(HistoryLimit { participant: id, start });
@@ -101,7 +104,9 @@ impl ChannelController {
     }
 
     /// Removes `participant` from the channel on behalf of `ctx` (issue 46)
-    /// and returns it, like [`Self::add_participant`]. The announcement
+    /// and returns it, like [`Self::add_participant`]. It is kept as a
+    /// former participant, with who removed it and when (issue 164). The
+    /// announcement
     /// (`AgentChannelLeft` / `UserChannelLeft`) carries the attributes the
     /// channel had, so that whoever was removed hears of it too.
     ///
@@ -115,6 +120,8 @@ impl ChannelController {
             .ok_or_else(|| StoreError::NotFound { entity: "participant", id: participant.to_string() })?;
         let removed = channel.participants.remove(index);
         channel.history_limits.retain(|l| l.participant != participant);
+        channel.former.retain(|f| f.participant.actor_id() != participant);
+        channel.former.push(FormerParticipant { participant: removed.clone(), left: Removal::now(ctx.caller_id) });
         let before = channel.security_attributes.clone();
         channel.security_attributes = participant_attributes(before.owner_id, &channel.participants);
         self.store(ctx, &channel).await?;
