@@ -23,6 +23,7 @@ use caelumora_model::command::default_commands;
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_model::external_agent::{ConversationId, TaskId};
 use caelumora_model::confidentiality::{Classification, Clearance, Compartments, ConfidentialityRules, Confidentiality, Roles};
+use caelumora_model::language::Language;
 use caelumora_model::name::{Name, ScopedName};
 use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::scope::Scope;
@@ -238,7 +239,7 @@ impl World {
         let users = [Participant::User(self.alice), Participant::User(self.bob)];
         let in_channel: Vec<Participant> = users.iter().cloned().chain(agents.iter().map(|a| Participant::Agent(*a))).collect();
         let in_session: Vec<Participant> = in_channel.iter().cloned().chain(waiting.iter().map(|a| Participant::Agent(*a))).collect();
-        let channel = Channel::build(SessionId::new(), alice, Name::new("main").unwrap(), quiet(), Classification::general(Confidentiality::Internal), in_channel);
+        let channel = Channel::build(SessionId::new(), alice, Name::new("main").unwrap(), quiet(), Classification::general(Confidentiality::Internal), None, in_channel);
         let session = Session {
             id: channel.session_id,
             name: "shared".to_string(),
@@ -474,10 +475,11 @@ async fn a_participant_takes_part_but_changes_nothing() {
 
     assert!(denied(&session.update_name(&bob, "his".to_string()).await.expect_err("not his to rename")));
     assert!(session.update_privacy(&bob, PrivacyConfig::default()).await.is_err(), "nor to change its privacy");
-    assert!(session.create_channel(&bob, ChannelSpec { name: Name::new("side").unwrap(), components: quiet(), participants: vec![], classification: None }).await.is_err(), "nor to add channels");
+    assert!(session.create_channel(&bob, ChannelSpec { name: Name::new("side").unwrap(), components: quiet(), participants: vec![], classification: None, language: None }).await.is_err(), "nor to add channels");
     assert!(session.delete_channel(&bob, main.id()).await.is_err(), "nor to delete them");
     assert!(main.remove_participant(&bob, ActorId::User(world.alice)).await.is_err(), "nor to remove others");
     assert!(main.reclassify(&bob, Classification::general(Confidentiality::Public)).await.is_err(), "nor to reclassify the channel");
+    assert!(denied(&main.update_language(&bob, Some(Language::parse("fr").unwrap())).await.expect_err("nor to change its language")));
     assert!(denied(&world.manager.stop_session(&bob, session.id()).await.expect_err("nor to stop it for everyone")));
     assert!(denied(&world.manager.delete_session(&bob, session.id()).await.expect_err("nor to delete it")));
     assert_eq!(session.name(), "shared", "nothing changed");
@@ -492,7 +494,9 @@ async fn the_owner_changes_and_ends_the_session() {
     let alice = World::as_user(world.alice);
 
     session.update_name(&alice, "renamed".to_string()).await.expect("hers to rename");
-    let side = session.create_channel(&alice, ChannelSpec { name: Name::new("side").unwrap(), components: quiet(), participants: vec![], classification: None }).await.expect("and to add channels");
+    let main = Arc::clone(&session.channels()[0]);
+    main.update_language(&alice, Some(Language::parse("de").unwrap())).await.expect("and to choose the language of its channels");
+    let side = session.create_channel(&alice, ChannelSpec { name: Name::new("side").unwrap(), components: quiet(), participants: vec![], classification: None, language: None }).await.expect("and to add channels");
     side.add_participant(&alice, ActorId::User(world.bob), HistoryAccess::All).await.expect("and people to them");
     session.delete_channel(&alice, side.id()).await.expect("and to delete them");
     assert!(world.manager.delete_session(&alice, session.id()).await.unwrap(), "and to delete it");
@@ -1092,7 +1096,7 @@ async fn deleting_a_session_needs_owning_it() {
 async fn creating_a_channel_needs_owning_its_session() {
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
-    let spec = |participants| ChannelSpec { name: Name::new("side").unwrap(), components: quiet(), participants, classification: None };
+    let spec = |participants| ChannelSpec { name: Name::new("side").unwrap(), components: quiet(), participants, classification: None, language: None };
     let (created, asked) = world.asked(session.create_channel(&World::as_user(world.alice), spec(vec![ActorId::User(world.bob)]))).await;
     assert!(created.is_ok());
     assert_eq!(asked, checks(&[
@@ -1113,7 +1117,7 @@ async fn creating_a_channel_needs_owning_its_session() {
 async fn who_may_not_create_a_channel_is_refused_before_the_others_are_looked_at() {
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
-    let spec = ChannelSpec { name: Name::new("his").unwrap(), components: quiet(), participants: vec![ActorId::User(world.alice)], classification: None };
+    let spec = ChannelSpec { name: Name::new("his").unwrap(), components: quiet(), participants: vec![ActorId::User(world.alice)], classification: None, language: None };
     let (refused, asked) = world.asked(session.create_channel(&World::as_user(world.bob), spec)).await;
     assert!(refused.is_err());
     assert_eq!(asked, checks(&["bob: UpdateSession(alice's) no"]));

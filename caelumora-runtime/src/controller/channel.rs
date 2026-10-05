@@ -1,5 +1,6 @@
 use caelumora_model::name::Name;
 use arc_swap::ArcSwap;
+use caelumora_model::language::Language;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::{participant_attributes, Channel, ChannelId, ChannelUpdateEvent, FormerParticipant, HistoryLimit, HistoryStart, Participant};
@@ -70,6 +71,17 @@ impl ChannelController {
     /// the channel is then unchanged.
     pub async fn update_classification(&self, ctx: &SecurityContext, classification: Classification) -> StoreResult<()> {
         let event = ChannelUpdateEvent::ClassificationChanged(classification);
+        self.update(ctx, &event).await
+    }
+
+    /// Has the channel's conversation held in `language` - or in none in
+    /// particular - on behalf of `ctx` (`UpdateChannel`, issue 56).
+    ///
+    /// # Errors
+    /// Whatever the store reports, `StoreError::PermissionDenied` included;
+    /// the channel is then unchanged.
+    pub async fn update_language(&self, ctx: &SecurityContext, language: Option<Language>) -> StoreResult<()> {
+        let event = ChannelUpdateEvent::LanguageChanged(language);
         self.update(ctx, &event).await
     }
 
@@ -155,6 +167,7 @@ impl ChannelController {
         match event {
             ChannelUpdateEvent::NameChanged(name) => channel.name = name.clone(),
             ChannelUpdateEvent::ClassificationChanged(classification) => channel.classification = classification.clone(),
+            ChannelUpdateEvent::LanguageChanged(language) => channel.language = language.clone(),
         }
         self.store(ctx, &channel).await?;
         let attributes = channel.security_attributes.clone();

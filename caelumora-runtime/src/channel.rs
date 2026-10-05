@@ -20,6 +20,7 @@ use crate::event::EventBus;
 use caelumora_model::agent::{Personality, PersonalityKind};
 use caelumora_model::approval::Approver;
 use caelumora_model::event::GlobalEvent;
+use caelumora_model::language::Language;
 use caelumora_model::confidentiality::{user_roles, Classification};
 use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::message::{Message, MessageId};
@@ -480,6 +481,21 @@ impl ChannelLoop {
     /// channel, or whatever else storing it reports.
     pub async fn update_name(&self, context: &SecurityContext, new_name: Name) -> Result<()> {
         Ok(self.channel.update_name(context, new_name).await?)
+    }
+
+    /// Has the channel's conversation held in `language`, or in none in
+    /// particular, on behalf of `context` (issue 56): stored first, which is
+    /// where the permission is checked (`UpdateChannel`), like a new name.
+    /// Its agents are told from their next turn on; nothing said before is
+    /// translated.
+    ///
+    /// # Errors
+    /// `StoreError::PermissionDenied` if `context` may not change the
+    /// channel, or whatever else storing it reports.
+    pub async fn update_language(&self, context: &SecurityContext, language: Option<Language>) -> Result<()> {
+        self.channel.update_language(context, language.clone()).await?;
+        info!(channel = %self.id, language = language.as_ref().map_or("none", Language::as_str), by = %context.caller_id, "Channel language changed");
+        Ok(())
     }
 
     /// Reclassifies the channel as `classification` on behalf of `context`
@@ -1312,6 +1328,7 @@ mod tests {
             participants,
             security_attributes: SecurityAttributes::default(),
             classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
+            language: None,
             history_limits: Vec::new(),
             deleted: None,
             former: Vec::new(),
@@ -1957,6 +1974,7 @@ mod tests {
             ],
             security_attributes: SecurityAttributes::default(),
             classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
+            language: None,
             history_limits: Vec::new(),
             deleted: None,
             former: Vec::new(),
@@ -3020,6 +3038,7 @@ mod tests {
             participants: vec![Participant::User(alice.id), Participant::Agent(agent_id)],
             security_attributes: SecurityAttributes::default(),
             classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
+            language: None,
             history_limits: Vec::new(),
             deleted: None,
             former: Vec::new(),

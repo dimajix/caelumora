@@ -9,6 +9,7 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::approval::ApprovalRequest;
 use caelumora_model::channel::{Channel, ChannelState, Participant};
 use caelumora_model::confidentiality::Classification;
+use caelumora_model::language::Language;
 use caelumora_model::digest::Digest;
 use caelumora_model::agent::AgentChannelState;
 use caelumora_model::name::Name;
@@ -82,6 +83,12 @@ impl ChannelView {
     /// The classification of the channel's contents (issue 133).
     pub fn classification(&self) -> &Classification {
         &self.channel.classification
+    }
+
+    /// The language the channel's conversation is held in (issue 56), if
+    /// any.
+    pub fn language(&self) -> Option<&Language> {
+        self.channel.language.as_ref()
     }
 
     /// What the channel holds classified `classification`: one side of the

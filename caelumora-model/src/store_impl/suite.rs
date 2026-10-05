@@ -115,6 +115,7 @@ fn channel() -> Channel {
         name: Name::new("general").unwrap(),
         components: crate::channel::moderation_components(None, Some("broadcast_policy")),
         classification: Classification::CHANNEL_DEFAULT,
+        language: None,
         history_limits: Vec::new(),
         former: Vec::new(),
         participants: Vec::new(),

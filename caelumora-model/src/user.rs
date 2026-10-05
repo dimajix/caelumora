@@ -1,4 +1,5 @@
 use crate::actor::ActorId;
+use crate::language::Language;
 use crate::security::{SecurityAttributes, Secured};
 use serde::{Deserialize, Serialize};
 
@@ -54,6 +55,10 @@ pub struct UserProfile {
     /// How the user introduces themselves; `None` if they have not.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub introduction: Option<String>,
+    /// The language the user would like the conversations of the channels
+    /// they create to be held in (issue 56); `None` if they did not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preferred_language: Option<Language>,
     /// Set when it was deleted (issue 164): it stays stored, hidden from
     /// every read but those for what was deleted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -99,7 +104,7 @@ impl UserProfile {
     /// The profile of user `user_id`, owned by them.
     pub fn new(user_id: UserId, introduction: Option<String>) -> Self {
         let security_attributes = SecurityAttributes { owner_id: ActorId::User(user_id), contributors: Vec::new() };
-        Self { user_id, introduction, deleted: None, security_attributes }
+        Self { user_id, introduction, preferred_language: None, deleted: None, security_attributes }
     }
 
     /// The user whose profile it is - also its id in the store.
@@ -121,12 +126,14 @@ struct StoredUserProfile {
     #[serde(default)]
     introduction: Option<String>,
     #[serde(default)]
+    preferred_language: Option<Language>,
+    #[serde(default)]
     deleted: Option<crate::removal::Removal>,
 }
 
 impl From<StoredUserProfile> for UserProfile {
     fn from(stored: StoredUserProfile) -> Self {
-        UserProfile { deleted: stored.deleted, ..UserProfile::new(stored.user_id, stored.introduction) }
+        UserProfile { preferred_language: stored.preferred_language, deleted: stored.deleted, ..UserProfile::new(stored.user_id, stored.introduction) }
     }
 }
 
@@ -145,8 +152,18 @@ mod tests {
         let profile: UserProfile = serde_json::from_value(stored).unwrap();
         assert_eq!(profile.security_attributes().owner_id, ActorId::User(user));
         assert_eq!(profile.introduction.as_deref(), Some("I run the budget."));
+        assert_eq!(profile.preferred_language, None, "a profile stored before issue 56 prefers none");
         let written = serde_json::to_value(&profile).unwrap();
         assert!(written.get("security_attributes").is_none(), "the owner is not written: {written}");
+    }
+
+    #[test]
+    fn a_preferred_language_is_kept_with_the_profile() {
+        let profile = UserProfile { preferred_language: Some(Language::parse("de").unwrap()), ..UserProfile::new(UserId::new(), None) };
+        let written = serde_json::to_value(&profile).unwrap();
+        assert_eq!(written["preferred_language"], "de");
+        let read: UserProfile = serde_json::from_value(written).unwrap();
+        assert_eq!(read.preferred_language, profile.preferred_language);
     }
 
     #[test]

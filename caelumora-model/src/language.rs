@@ -1,0 +1,144 @@
+//! The language a conversation is held in (issue 56): `Language`, a BCP 47
+//! tag such as `de` or `en-GB`. A user prefers one, a channel is held in
+//! one, and the agents of the channel are told which - nothing is
+//! translated.
+
+use serde::{Deserialize, Serialize};
+use std::fmt;
+
+/// The longest language tag, in characters: longer than any a user would
+/// choose, short enough for a prompt.
+pub const MAX_LANGUAGE_CHARS: usize = 35;
+
+/// Why a text is no language tag. The messages are meant for users.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum LanguageError {
+    #[error("a language must be a tag such as \"de\" or \"en-GB\"")]
+    Malformed,
+    #[error("a language tag must not be longer than {MAX_LANGUAGE_CHARS} characters")]
+    TooLong,
+}
+
+/// A language as a BCP 47 tag: a primary language of two or three letters,
+/// followed by subtags of one to eight letters or digits - a script, a
+/// region, a variant. Only its form is checked, not whether the language
+/// exists: models know the tags, and a list of them would always be
+/// incomplete. Kept in the usual case - `de-CH`, `zh-Hant-TW`, `sr-Latn` -
+/// so that one language is one tag; `_` is taken as `-`. Written down as a
+/// string, and checked when read.
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct Language(String);
+
+impl Language {
+    /// `tag` as a language, trimmed and in the usual case.
+    ///
+    /// # Errors
+    /// `LanguageError` if it is longer than `MAX_LANGUAGE_CHARS` or no tag
+    /// of the form above.
+    pub fn parse(tag: impl AsRef<str>) -> Result<Self, LanguageError> {
+        let tag = tag.as_ref().trim();
+        if tag.chars().count() > MAX_LANGUAGE_CHARS {
+            return Err(LanguageError::TooLong);
+        }
+        let mut subtags = tag.split(['-', '_']);
+        let primary = subtags.next().unwrap_or_default();
+        if !(2..=3).contains(&primary.len()) || !primary.chars().all(|c| c.is_ascii_alphabetic()) {
+            return Err(LanguageError::Malformed);
+        }
+        let mut canonical = primary.to_ascii_lowercase();
+        for subtag in subtags {
+            if !(1..=8).contains(&subtag.len()) || !subtag.chars().all(|c| c.is_ascii_alphanumeric()) {
+                return Err(LanguageError::Malformed);
+            }
+            canonical.push('-');
+            canonical.push_str(&case_of(subtag));
+        }
+        Ok(Self(canonical))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// A subtag after the primary language in its usual case: a script (four
+/// letters) capitalised, a region (two letters) in upper case, anything
+/// else in lower case.
+fn case_of(subtag: &str) -> String {
+    let letters = subtag.chars().all(|c| c.is_ascii_alphabetic());
+    match subtag.len() {
+        4 if letters => {
+            let (first, rest) = subtag.split_at(1);
+            first.to_ascii_uppercase() + &rest.to_ascii_lowercase()
+        }
+        2 if letters => subtag.to_ascii_uppercase(),
+        _ => subtag.to_ascii_lowercase(),
+    }
+}
+
+impl TryFrom<String> for Language {
+    type Error = LanguageError;
+    fn try_from(tag: String) -> Result<Self, LanguageError> {
+        Language::parse(tag)
+    }
+}
+
+impl From<Language> for String {
+    fn from(language: Language) -> Self {
+        language.0
+    }
+}
+
+impl AsRef<str> for Language {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for Language {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl fmt::Debug for Language {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self.0, f)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tag(text: &str) -> String {
+        Language::parse(text).expect("a language").to_string()
+    }
+
+    #[test]
+    fn a_language_is_kept_in_the_usual_case() {
+        assert_eq!(tag(" de "), "de");
+        assert_eq!(tag("DE-ch"), "de-CH");
+        assert_eq!(tag("zh-hant-tw"), "zh-Hant-TW");
+        assert_eq!(tag("en_GB"), "en-GB", "an underscore is taken as a hyphen");
+        assert_eq!(tag("es-419"), "es-419", "a numeric region stays as it is");
+        assert_eq!(tag("de-CH-1996"), "de-CH-1996");
+    }
+
+    #[test]
+    fn only_a_tag_is_a_language() {
+        for text in ["", "d", "deut", "de-", "de--CH", "de CH", "dé", "1de", "de-toolongsubtag"] {
+            assert_eq!(Language::parse(text), Err(LanguageError::Malformed), "{text:?}");
+        }
+        assert_eq!(Language::parse(format!("de{}", "-a".repeat(MAX_LANGUAGE_CHARS))), Err(LanguageError::TooLong));
+    }
+
+    #[test]
+    fn a_language_is_written_as_its_tag_and_checked_when_read() {
+        let language = Language::parse("en-gb").unwrap();
+        assert_eq!(serde_json::to_string(&language).unwrap(), "\"en-GB\"");
+        assert_eq!(serde_json::from_str::<Language>("\"pt_br\"").unwrap(), Language::parse("pt-BR").unwrap());
+        assert!(serde_json::from_str::<Language>("\"Deutsch\"").is_err());
+    }
+}

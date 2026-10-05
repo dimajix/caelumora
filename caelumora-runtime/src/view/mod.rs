@@ -570,6 +570,7 @@ mod tests {
             name: Name::new("main").unwrap(),
             components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
             classification: Classification::CHANNEL_DEFAULT,
+            language: None,
             history_limits: Vec::new(),
             participants: session.participants.clone(),
             security_attributes: session.security_attributes.clone(),
@@ -662,7 +663,7 @@ mod tests {
         let main = main_channel(&session);
         let running = manager.create_session(as_user(alice.id).context(), session, vec![main]).await.unwrap();
         // Alice's alone: bob takes part in the session, not in this channel.
-        let hers = running.create_channel(as_user(alice.id).context(), crate::session::ChannelSpec { name: Name::new("private").unwrap(), components: Default::default(), classification: None, participants: vec![] }).await.unwrap().id();
+        let hers = running.create_channel(as_user(alice.id).context(), crate::session::ChannelSpec { name: Name::new("private").unwrap(), components: Default::default(), classification: None, language: None, participants: vec![] }).await.unwrap().id();
         let id = running.id();
 
         let check = |state: &'static str| {

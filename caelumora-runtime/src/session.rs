@@ -9,6 +9,7 @@ use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::channel::Channel;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::confidentiality::Classification;
+use caelumora_model::language::Language;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityAttributes, SecurityContext, SecurityManager};
 use crate::view::{Viewer, Views};
@@ -82,6 +83,21 @@ pub struct ChannelSpec {
     /// for the default, as in a template. Set by whoever may create the
     /// channel - its owner.
     pub classification: Option<Classification>,
+    /// The language its conversation is held in (issue 56); `None` for the
+    /// one its creator prefers, if they prefer one.
+    pub language: Option<Language>,
+}
+
+/// The language the user `context` acts for prefers (issue 56), which
+/// what they create is held in unless they say otherwise; none if they
+/// prefer none or act for no user.
+///
+/// # Errors
+/// Whatever reading their profile reports, except that there is none.
+async fn preferred_language(store: &dyn EntityStore, context: &SecurityContext) -> StoreResult<Option<Language>> {
+    let Some(user) = context.initiator_id.as_user_id() else { return Ok(None) };
+    let profile = store.get_user_profile(context, user).await.optional()?;
+    Ok(profile.and_then(|profile| profile.preferred_language))
 }
 
 /// A channel of the session and, once `run` started it, its task.
@@ -256,6 +272,10 @@ impl SessionLoop {
         }
         let classification = spec.classification.unwrap_or_default();
         require_classification(&self.runtime_manager, context, &classification).await?;
+        let language = match spec.language {
+            Some(language) => Some(language),
+            None => preferred_language(self.entities.as_ref(), context).await?,
+        };
 
         // The creator first, if they take part in the session at all.
         let mut ids = vec![context.initiator_id];
@@ -272,7 +292,7 @@ impl SessionLoop {
             }
         }
 
-        let channel = Channel::build(self.id, session.security_attributes.owner_id, name, spec.components, classification, participants);
+        let channel = Channel::build(self.id, session.security_attributes.owner_id, name, spec.components, classification, language, participants);
         crate::channel::require_cleared(&self.runtime_manager, context, &channel).await?;
         let store = &self.entities;
         store.create_channel(context, &channel).await?;
@@ -590,7 +610,8 @@ impl SessionManager {
         let id = SessionId::new();
         let participants = crate::template::resolve_participants(store.as_ref(), context, &template, id, owner).await?;
         let name = name.unwrap_or_else(|| template.name.to_string());
-        let (session, channels) = template.build(id, owner, name, participants)?;
+        let language = preferred_language(store.as_ref(), context).await?;
+        let (session, channels) = template.build(id, owner, name, language.as_ref(), participants)?;
         self.create_session(context, session, channels).await
     }
 
@@ -967,6 +988,7 @@ mod tests {
             name: Name::new("main").unwrap(),
             components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
             classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
+            language: None,
             history_limits: Vec::new(),
             participants: Vec::new(),
             security_attributes: session.security_attributes.clone(),
@@ -1238,7 +1260,7 @@ mod tests {
     }
 
     fn spec(name: &str, participants: Vec<caelumora_model::actor::ActorId>) -> ChannelSpec {
-        ChannelSpec { name: Name::new(name).unwrap(), components: Default::default(), participants, classification: None }
+        ChannelSpec { name: Name::new(name).unwrap(), components: Default::default(), participants, classification: None, language: None }
     }
 
     #[tokio::test]
@@ -1275,12 +1297,16 @@ mod tests {
         };
         store.create_session_template(&SecurityContext::system(), &template).await.unwrap();
         let hers = SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
+        let mut profile = caelumora_model::user::UserProfile::new(owner, None);
+        profile.preferred_language = Some(Language::parse("de").unwrap());
+        store.create_user_profile(&hers, &profile).await.unwrap();
 
         let session = manager.create_from_template(&hers, template.id, None).await.expect("created and started");
         assert_eq!(session.name(), "pairing", "named after the template unless named");
         assert_eq!(session.session().security_attributes.owner_id, ActorId::User(owner));
         let main = session.channel_by_name("main").expect("the template's channel runs");
         assert!(main.user_actor(owner).is_some(), "the owner is the template's \"user\"");
+        assert_eq!(main.channel().language, profile.preferred_language, "held in the language the owner prefers");
         let stored = store.get_channel(&hers, main.id()).await.unwrap();
         assert!(stored.participants.iter().any(|p| matches!(p, Participant::Approver(a) if a.strategy == ApprovalStrategy::All)), "the template's approver");
         manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
@@ -1350,6 +1376,33 @@ mod tests {
         let started = events.iter().position(|e| matches!(e, GlobalEvent::ChannelStarted(_, cid) if *cid == channel.id()));
         assert!(created.is_some() && started.is_some() && created < started, "created, then started: {events:?}");
 
+        manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_channel_is_held_in_the_language_its_creator_prefers_unless_asked_otherwise() {
+        use caelumora_model::user::UserProfile;
+        let runtime = test_runtime();
+        let manager = SessionManager::new(Arc::clone(&runtime));
+        let (session, ctx, _) = running_session_of_a_user(&manager).await;
+        let language = |tag: &str| Some(Language::parse(tag).unwrap());
+
+        let unsaid = session.create_channel(&ctx, spec("unsaid", vec![])).await.unwrap();
+        assert_eq!(unsaid.channel().language, None, "no profile, no language");
+
+        let owner = ctx.initiator_id.as_user_id().unwrap();
+        let mut profile = UserProfile::new(owner, None);
+        profile.preferred_language = language("de");
+        runtime.entity_store().create_user_profile(&ctx, &profile).await.unwrap();
+        let preferred = session.create_channel(&ctx, spec("preferred", vec![])).await.unwrap();
+        assert_eq!(preferred.channel().language, language("de"), "the one the creator prefers");
+        let asked = session.create_channel(&ctx, ChannelSpec { language: language("en"), ..spec("asked", vec![]) }).await.unwrap();
+        assert_eq!(asked.channel().language, language("en"), "unless another is asked for");
+
+        asked.update_language(&ctx, None).await.expect("the owner changes it");
+        assert_eq!(asked.channel().language, None);
+        let stored = runtime.entity_store().get_channel(&ctx, asked.id()).await.unwrap();
+        assert_eq!(stored.language, None, "stored, not only in memory");
         manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
@@ -1860,7 +1913,7 @@ mod tests {
                 // cleared for anything.
                 let ActorId::Agent(id) = participant else { unreachable!("agents only") };
                 let channel = caelumora_model::channel::Channel::build(SessionId::new(), alice_id, caelumora_model::name::Name::new("probe").unwrap(),
-                    Default::default(), classification, vec![caelumora_model::channel::Participant::Agent(id)]);
+                    Default::default(), classification, None, vec![caelumora_model::channel::Participant::Agent(id)]);
                 crate::channel::require_cleared(&runtime, &alice_ctx, &channel).await.is_ok()
             }
         };

@@ -4,6 +4,7 @@ use crate::approval::{ApprovalStrategy, Approver, ApproverId};
 use crate::chain::Stored;
 use crate::component::{ComponentConfig, ComponentDescriptor};
 use crate::confidentiality::Classification;
+use crate::language::Language;
 use crate::message::MessageId;
 use crate::message_history::{HistoryEntry, MessageHistory};
 use crate::name::Name;
@@ -19,6 +20,9 @@ pub enum ChannelUpdateEvent {
     NameChanged(Name),
     /// Reclassified (issue 133).
     ClassificationChanged(Classification),
+    /// Its conversation is to be held in another language, or in none in
+    /// particular (issue 56).
+    LanguageChanged(Option<Language>),
 }
 
 define_id!(ChannelId);
@@ -49,6 +53,10 @@ pub struct Channel {
     /// The classification of the channel's contents (issue 133): what may
     /// flow into it, and who may read it. Set by its owner when creating it.
     pub classification: Classification,
+    /// The language its conversation is held in (issue 56): its agents are
+    /// told to write in it. `None` if it is held in none in particular.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<Language>,
     /// Where the view of the history begins for participants who joined
     /// later and may not see all of it (issue 46); everybody else sees all.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -107,8 +115,9 @@ impl Channel {
     /// A new channel of `participants`, owned by `owner`, as every channel is
     /// built - from a template or on request (issue 09): with an approver
     /// added if there is none, and with every user and agent in it as a
-    /// contributor (see `participant_attributes`).
-    pub fn build(session_id: SessionId, owner: ActorId, name: Name, components: ComponentConfig, classification: Classification, mut participants: Vec<Participant>) -> Self {
+    /// contributor (see `participant_attributes`). Held in `language`, if
+    /// any - by default the language its creator prefers.
+    pub fn build(session_id: SessionId, owner: ActorId, name: Name, components: ComponentConfig, classification: Classification, language: Option<Language>, mut participants: Vec<Participant>) -> Self {
         if !participants.iter().any(|p| matches!(p, Participant::Approver(_))) {
             participants.push(Participant::Approver(Approver {
                 id: ApproverId(Uuid::new_v4()),
@@ -124,6 +133,7 @@ impl Channel {
             participants,
             security_attributes,
             classification,
+            language,
             history_limits: Vec::new(),
             former: Vec::new(),
             deleted: None,

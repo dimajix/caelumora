@@ -27,6 +27,9 @@ personalities:
   - id: channel-members
     kind: channel_members_prompt_provider
     fail_policy: FailClosed
+  - id: channel-language
+    kind: channel_language_prompt_provider
+    fail_policy: FailClosed
   - id: create-plan-tool
     kind: create_plan_tool
     fail_policy: FailClosed
@@ -57,6 +60,9 @@ personalities:
     fail_policy: FailClosed
   - id: channel-members
     kind: channel_members_prompt_provider
+    fail_policy: FailClosed
+  - id: channel-language
+    kind: channel_language_prompt_provider
     fail_policy: FailClosed
   - id: create-plan-tool
     kind: create_plan_tool
@@ -92,6 +98,11 @@ personalities:
   components:
   - id: channel-members
     kind: channel_members_prompt_provider
+    params:
+      changes_only: true
+    fail_policy: FailClosed
+  - id: channel-language
+    kind: channel_language_prompt_provider
     params:
       changes_only: true
     fail_policy: FailClosed

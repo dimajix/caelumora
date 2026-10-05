@@ -6,7 +6,7 @@
 //! approval unless the parameter `requires_approval` says so.
 
 use crate::agent_turn::Turn;
-use crate::component::{ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
+use crate::component::{flag_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::tool::{arguments, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
@@ -88,11 +88,7 @@ pub fn register(registry: &mut ComponentRegistry) {
                 Some(value) => value.as_f64().filter(|s| duration(*s).is_some())
                     .ok_or_else(|| ComponentError::InvalidConfig(format!("parameter 'seconds' must be a number between 0 and {MAX_SECONDS}")))?,
             };
-            let requires_approval = match descriptor.params.get("requires_approval") {
-                None => false,
-                Some(value) => value.as_bool()
-                    .ok_or_else(|| ComponentError::InvalidConfig("parameter 'requires_approval' must be true or false".to_string()))?,
-            };
+            let requires_approval = flag_of_params(&descriptor.params, "requires_approval")?;
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::new(SleepToolProvider { seconds, requires_approval }));
             Ok(facets)

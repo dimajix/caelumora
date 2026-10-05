@@ -335,6 +335,7 @@ mod tests {
             participants: Vec::new(),
             security_attributes: SecurityAttributes::default(),
             classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
+            language: None,
             history_limits: Vec::new(),
             deleted: None,
             former: Vec::new(),

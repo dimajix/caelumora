@@ -511,6 +511,7 @@ mod tests {
             name: Name::new("test").unwrap(),
             components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
             classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
+            language: None,
             history_limits: Vec::new(),
             participants,
             security_attributes: SecurityAttributes::owned_by(ActorId::User(ids[0])),

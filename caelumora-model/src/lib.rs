@@ -31,6 +31,7 @@ pub mod template;
 pub mod store_impl;
 pub mod scope;
 pub mod name;
+pub mod language;
 pub mod component;
 pub mod event;
 pub mod security;

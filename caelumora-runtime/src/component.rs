@@ -45,6 +45,18 @@ pub enum ComponentError {
 
 pub type ComponentResult<T> = Result<T, ComponentError>;
 
+/// The switch `name` of a component's `params`, `false` if it is left out.
+///
+/// # Errors
+/// `ComponentError::InvalidConfig` if it is neither `true` nor `false`.
+pub fn flag_of_params(params: &serde_json::Value, name: &str) -> ComponentResult<bool> {
+    match params.get(name) {
+        None => Ok(false),
+        Some(value) => value.as_bool()
+            .ok_or_else(|| ComponentError::InvalidConfig(format!("parameter '{name}' must be true or false"))),
+    }
+}
+
 /// A facet type, by its id and - for messages - its name.
 #[derive(Debug, Clone, Copy)]
 struct FacetType {

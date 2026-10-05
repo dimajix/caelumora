@@ -16,7 +16,7 @@
 //! component remembers what it told while it lives - it is built for each
 //! actor, so for each channel - and tells all of it again after a restart.
 
-use crate::component::{ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
+use crate::component::{flag_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::context::{Prompt, PromptPosition, PromptProvider};
 use crate::work::AgentWork;
 use anyhow::Result;
@@ -194,11 +194,7 @@ pub fn register(registry: &mut ComponentRegistry) {
         ComponentKind::new(CHANNEL_MEMBERS_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>(),
         |descriptor, _context| {
             let position = PromptPosition::of_params(&descriptor.params)?;
-            let changes_only = match descriptor.params.get("changes_only") {
-                None => false,
-                Some(value) => value.as_bool()
-                    .ok_or_else(|| ComponentError::InvalidConfig("parameter 'changes_only' must be true or false".to_string()))?,
-            };
+            let changes_only = flag_of_params(&descriptor.params, "changes_only")?;
             let provider = if changes_only { ChannelMembersPromptProvider::changes_only(position) } else { ChannelMembersPromptProvider::new(position) };
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn PromptProvider>(Arc::new(provider));
@@ -318,7 +314,7 @@ mod tests {
         };
         let channel = Channel {
             id: session.channels[0], session_id: session.id, name: Name::new("main").unwrap(), components: Default::default(),
-            classification: Classification::CHANNEL_DEFAULT, history_limits: Vec::new(), participants, security_attributes: Default::default(),
+            classification: Classification::CHANNEL_DEFAULT, language: None, history_limits: Vec::new(), participants, security_attributes: Default::default(),
             deleted: None,
             former: Vec::new(),
         };
