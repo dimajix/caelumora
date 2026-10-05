@@ -33,6 +33,9 @@ pub enum GlobalEvent {
     AgentCreated(AgentId),
     AgentUpdated(AgentId, AgentUpdateEvent),
     AgentDeleted(AgentId),
+    /// A deleted agent was restored (issue 164); it takes part in no
+    /// channel until it is added again.
+    AgentRestored(AgentId),
     AgentChannelJoined(SessionId, ChannelId, AgentId),
     AgentChannelLeft(SessionId, ChannelId, AgentId),
     /// The agent's own state changed - its memory (issue 62). Published with

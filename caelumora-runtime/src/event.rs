@@ -46,7 +46,7 @@ impl PublishedEvent {
     fn read_action(&self) -> ActionType<'_> {
         let attributes = self.security_attributes();
         match self.event {
-            GlobalEvent::AgentCreated(..) | GlobalEvent::AgentUpdated(..) | GlobalEvent::AgentDeleted(..) => ActionType::GetAgent(attributes),
+            GlobalEvent::AgentCreated(..) | GlobalEvent::AgentUpdated(..) | GlobalEvent::AgentDeleted(..) | GlobalEvent::AgentRestored(..) => ActionType::GetAgent(attributes),
             GlobalEvent::UserCreated(_) | GlobalEvent::UserUpdated(..) | GlobalEvent::UserDeleted(_) => ActionType::GetUser(attributes),
             _ => ActionType::GetSession(attributes),
         }
@@ -236,7 +236,7 @@ impl EventBus {
                 topics_to_notify.push(SubscriptionTopic::Session(*sid));
                 topics_to_notify.push(SubscriptionTopic::Channel(*cid));
             }
-            GlobalEvent::AgentCreated(aid) | GlobalEvent::AgentUpdated(aid, _) | GlobalEvent::AgentDeleted(aid) => {
+            GlobalEvent::AgentCreated(aid) | GlobalEvent::AgentUpdated(aid, _) | GlobalEvent::AgentDeleted(aid) | GlobalEvent::AgentRestored(aid) => {
                 topics_to_notify.push(SubscriptionTopic::Agent(*aid));
             }
             GlobalEvent::AgentStateChanged(aid) => {

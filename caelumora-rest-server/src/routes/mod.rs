@@ -13,6 +13,7 @@ use caelumora_runtime::session::SessionLoop;
 use caelumora_runtime::view::{ChannelView, Viewer, Views};
 use std::sync::Arc;
 
+mod agents;
 mod channels;
 mod compartments;
 mod events;
@@ -75,6 +76,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/templates", get(templates::list_templates))
         .route("/compartments", get(compartments::list_compartments))
         .route("/profile", get(profile::get_profile).put(profile::update_profile))
+        .route("/agents", get(agents::list_agents))
+        .route("/agents/{id}", axum::routing::delete(agents::delete_agent))
+        .route("/agents/{id}/restore", post(agents::restore_agent))
+        .route("/agents/{id}/purge", post(agents::purge_agent))
         .route("/sessions", get(sessions::list_sessions).post(sessions::create_session))
         .route(
             "/sessions/{id}",

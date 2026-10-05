@@ -70,6 +70,8 @@ export interface ChannelMember {
   usage?: TokenUsage;
   /** For a former member (issue 164): who removed it and when. */
   left?: Removal;
+  /** Whether you may delete it - only ever an agent of yours (issue 164). */
+  can_delete: boolean;
 }
 
 /** That something was deleted, or someone left: by whom and when (issue 164). */

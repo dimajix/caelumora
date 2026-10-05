@@ -198,6 +198,10 @@ Where `can_change` is set, the member list offers adding a participant of the se
 much of the history they may see (`AddParticipantDialog`, issue 46) - and removing one. The channel
 is fetched again when the global stream announces a join or leave for it.
 
+An agent the user may delete (`can_delete`) has a delete button in the member list; it asks once
+more ("Delete agent?"), since the agent leaves every channel it takes part in, not only this one,
+and a restore - only over REST so far - brings it back into none (issue 164).
+
 Below the members, a folded group "Former members" lists who took part and left (issue 164), each
 with when, and - where `can_read_context` - the history icon, so that what a removed agent did, the
 turn it gave up when it was removed included ([146](../issues/146-show-given-up-turns.md)), can

@@ -119,6 +119,7 @@ impl ApiError {
 #[derive(Debug, Clone, Copy)]
 pub enum Subject {
     Session,
+    Agent,
     Participant,
     Cancel,
     Command,
@@ -129,6 +130,7 @@ impl Subject {
     fn forbidden(self) -> &'static str {
         match self {
             Subject::Session => "session_forbidden",
+            Subject::Agent => "agent_forbidden",
             Subject::Participant => "participant_forbidden",
             Subject::Cancel => "cancel_forbidden",
             Subject::Command => "command_forbidden",
@@ -139,6 +141,7 @@ impl Subject {
     fn failed(self) -> &'static str {
         match self {
             Subject::Session => "session_failed",
+            Subject::Agent => "agent_failed",
             Subject::Participant => "participant_failed",
             Subject::Cancel => "cancel_failed",
             Subject::Command => "command_failed",
@@ -222,6 +225,12 @@ impl ApiError {
         }
         if is_not_found(&error, "session") {
             return Self::not_found("session_not_found", user_message(&error).unwrap_or(detail));
+        }
+        if is_not_found(&error, "agent") {
+            return Self::not_found("agent_not_found", user_message(&error).unwrap_or(detail));
+        }
+        if let Some(caelumora_model::store::StoreError::Conflict(_)) = error.downcast_ref() {
+            return Self::conflict("already_exists", detail);
         }
         if is_not_found(&error, "session_template") {
             return Self::not_found("template_not_found", user_message(&error).unwrap_or(detail));

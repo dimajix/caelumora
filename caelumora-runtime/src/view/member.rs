@@ -73,10 +73,10 @@ pub(super) async fn member_state(views: &Views, participant: &Participant, chann
     match participant {
         Participant::User(id) => match runtime.entity_store().get_user(&SecurityContext::system(), *id).await {
             Ok(user) => Arc::new(UserMember { id: *id, name: user.username, store: runtime.entity_store(), introduction: OnceCell::new() }),
-            Err(StoreError::NotFound { .. }) => Arc::new(GoneMember),
+            Err(StoreError::NotFound { .. }) => Arc::new(GoneMember { name: None }),
             Err(e) => {
                 warn!("Cannot read user {}: {:#}", id, e);
-                Arc::new(GoneMember)
+                Arc::new(GoneMember { name: None })
             }
         },
         Participant::Approver(_) => Arc::new(ApproverMember { name: participant.actor_id().fixed_name() }),
@@ -87,7 +87,8 @@ pub(super) async fn member_state(views: &Views, participant: &Participant, chann
                 store: runtime.entity_store(),
                 introduction: OnceCell::new(),
             }),
-            None => Arc::new(GoneMember),
+            // A deleted agent keeps its name (issue 164), nothing else.
+            None => Arc::new(GoneMember { name: views.deleted_agent_name(*id).await }),
         },
     }
 }
@@ -135,12 +136,19 @@ impl MemberState for ApproverMember {
 }
 
 /// A user or agent that no longer exists: what it said stays, nothing else
-/// of it is known.
+/// of it is known - but the name of an agent that was deleted, not purged
+/// (issue 164).
 #[derive(Debug)]
-struct GoneMember;
+struct GoneMember {
+    name: Option<String>,
+}
 
 impl MemberState for GoneMember {
     fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    fn handle(&self) -> Option<String> {
         None
     }
 }

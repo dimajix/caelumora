@@ -67,6 +67,9 @@ The `OwnershipSecurityManager` decides by those attributes and the context's ini
     (`Restore`). Removing it for good (`Purge`) is the system's alone - the retention policy's
     ([07](../issues/07-session-deletion-audit.md)) - until there is an administrator
     ([125](../issues/125-invisible-admin.md)).
+*   Deleting an agent is its owner's (`DeleteAgent`). That it leaves channels owned by others is
+    done in the runtime's name: it is a consequence of the deletion, not a change of those channels
+    by the owner.
 *   The runtime acting on its own uses `SecurityContext::system()` (`ActorId::System`), which may do
     everything. This is deliberate and never a default: an empty context has no rights.
 

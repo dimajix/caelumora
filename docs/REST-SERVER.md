@@ -61,6 +61,8 @@ Everything except `POST /auth/login` and `POST /auth/logout` requires a logged-i
 | `GET /compartments` | The configured compartments a channel's classification may name (issue 133) |
 | `GET /profile`, `PUT /profile` | The logged-in user's own profile (issue 176): their `introduction`, `null` if none, and `max_introduction_chars`; `PUT` sets it - `null` or blank removes it - and answers `400 invalid_introduction` for one that is too long or contains control characters |
 | `GET /sessions`, `POST /sessions` | List the user's sessions - with `?deleted=true` those they deleted and may read as such, the trash, each with `deleted` (who, when), `can_restore` and `can_purge` (issue 164); create one from a template (`SessionManager::create_from_template`) |
+| `GET /agents`, `DELETE /agents/{id}` | The agents the user may read, each with `can_delete` - with `?deleted=true` the trash of agents, like that of sessions; delete one: it leaves every channel it takes part in (issue 164) |
+| `POST /agents/{id}/restore`, `POST /agents/{id}/purge` | Restore a deleted agent - into no channel; `409 already_exists` if its name was taken meanwhile - or remove it for good with its state (issue 164) |
 | `POST /sessions/{id}/restore`, `POST /sessions/{id}/purge` | Restore a deleted session - answered like `GET /sessions/{id}`, not started -, or remove it for good with its channels and their state; `403` unless the policy allows, by default the system's alone (issue 164) |
 | `GET /sessions/{id}` | One session, in the form of the global stream's snapshot (`SessionSnapshot`), without starting it |
 | `PATCH /sessions/{id}`, `DELETE /sessions/{id}` | Rename, delete a session - marked and kept, with its channels (issue 164) |

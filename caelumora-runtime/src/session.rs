@@ -4,6 +4,7 @@ use crate::command::CommandExecutor;
 use crate::runtime::{ChannelRuntime, RuntimeManager};
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
+use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::channel::Channel;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::confidentiality::Classification;
@@ -775,6 +776,106 @@ impl SessionManager {
         Ok(())
     }
 
+    /// Deletes agent `id` on behalf of `context` (issue 164): it leaves
+    /// every channel it takes part in - kept there as a former participant,
+    /// removed in the runtime's name, since deleting the agent was
+    /// permitted - and is marked deleted, with its state kept until it is
+    /// purged. What it said stays in the channels' histories. Asked about
+    /// before anything happens (`DeleteAgent`).
+    ///
+    /// Only the channels of sessions it takes part in are looked at: an
+    /// agent joins a channel only from its session. Those of deleted
+    /// sessions keep it; it is left out of them if they are restored, as
+    /// any participant that no longer exists.
+    ///
+    /// # Errors
+    /// `StoreError::NotFound` if there is no such agent or `context` may
+    /// not read it, `StoreError::PermissionDenied` if they may but not
+    /// delete it.
+    pub async fn delete_agent(&self, context: &SecurityContext, id: AgentId) -> Result<()> {
+        let store = self.runtime_manager.entity_store();
+        let agent = store.get_agent(context, id).await?;
+        self.runtime_manager.security_manager()
+            .require(context, ActionType::DeleteAgent(&agent.security_attributes), || StoreError::PermissionDenied).await?;
+        let actor = ActorId::Agent(id);
+        let system = SecurityContext::system();
+        for session in store.list_sessions(&system).await? {
+            if !session.participants.iter().any(|p| p.actor_id() == actor) {
+                continue;
+            }
+            // Held so that the session does not start while its channels'
+            // documents are changed here.
+            let start = self.start_lock(session.id);
+            let _starting = start.lock().await;
+            match self.running(session.id) {
+                Some(running) => {
+                    for channel in running.channels() {
+                        if channel.channel().participants.iter().any(|p| p.actor_id() == actor) {
+                            if let Err(e) = channel.remove_participant(&system, actor).await {
+                                warn!("Deleted agent {} could not leave channel {}: {:#}", id, channel.id(), e);
+                            }
+                        }
+                    }
+                }
+                None => {
+                    for channel in self.load_channels(&session).await? {
+                        if channel.participants.iter().any(|p| p.actor_id() == actor) {
+                            let channel_id = channel.id;
+                            if let Err(e) = self.runtime_manager.controller_manager().new_channel_controller(channel).remove_participant(&system, actor).await {
+                                warn!("Deleted agent {} could not leave channel {}: {:#}", id, channel_id, e);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        store.delete_agent(context, id).await?;
+        self.runtime_manager.event_bus().publish(GlobalEvent::AgentDeleted(id), agent.security_attributes.clone());
+        info!("Agent {} deleted by {}", id, context.caller_id);
+        Ok(())
+    }
+
+    /// Restores the deleted agent `id` on behalf of `context` (issue 164):
+    /// its mark taken away, with its state. It takes part in no channel
+    /// again - it left them when it was deleted - until it is added.
+    ///
+    /// # Errors
+    /// `StoreError::NotFound` if there is no such deleted agent or
+    /// `context` may not see it, `StoreError::PermissionDenied` if they may
+    /// but not restore it, `StoreError::Conflict` if another agent took its
+    /// name in its scope meanwhile.
+    pub async fn restore_agent(&self, context: &SecurityContext, id: AgentId) -> Result<Agent> {
+        let store = self.runtime_manager.entity_store();
+        let deleted = store.get_deleted_agent(context, id).await?;
+        if store.list_agents(&SecurityContext::system()).await?.iter().any(|a| a.name == deleted.name) {
+            return Err(StoreError::Conflict(format!("agent {} is taken meanwhile", deleted.name)).into());
+        }
+        store.restore_agent(context, id).await?;
+        let agent = Agent { deleted: None, ..deleted };
+        self.runtime_manager.event_bus().publish(GlobalEvent::AgentRestored(id), agent.security_attributes.clone());
+        info!("Agent {} restored by {}", id, context.caller_id);
+        Ok(agent)
+    }
+
+    /// Removes the deleted agent `id` for good on behalf of `context` (issue
+    /// 164): its document, its own state and its state in every channel.
+    /// Only what was deleted is purged; the store asks `Purge`. What it
+    /// said stays in the channels' histories, by an agent that no longer
+    /// exists.
+    ///
+    /// # Errors
+    /// `StoreError::NotFound` if there is no such deleted agent or
+    /// `context` may not see it, `StoreError::PermissionDenied` if they may
+    /// but not purge it.
+    pub async fn purge_agent(&self, context: &SecurityContext, id: AgentId) -> Result<()> {
+        if !self.runtime_manager.entity_store().purge_agent(context, id).await? {
+            return Err(StoreError::NotFound { entity: "agent", id: id.to_string() }.into());
+        }
+        self.runtime_manager.state_store().delete_agent_state(id).await?;
+        info!("Agent {} purged by {}", id, context.caller_id);
+        Ok(())
+    }
+
     /// The root of the views (issue 163): every session `viewer` may
     /// read, and from there their channels and members, running or not.
     pub fn views(self: &Arc<Self>, viewer: Viewer) -> Views {
@@ -1051,6 +1152,64 @@ mod tests {
         let ctx = SecurityContext::new(owner_id, session.id, Default::default());
         let session_loop = create(&manager, &ctx, session).await.expect("the session starts");
         (session_loop, ctx, other_id)
+    }
+
+    #[tokio::test]
+    async fn a_deleted_agent_leaves_its_channels_keeps_its_name_and_is_restored_into_none() {
+        use caelumora_model::agent::{Personality, PersonalityId};
+        use caelumora_model::channel::Participant;
+        use caelumora_model::scope::Scope;
+        let runtime = test_runtime();
+        let manager = Arc::new(SessionManager::new(runtime.clone()));
+        let store = runtime.entity_store();
+        let (system, ctx) = (SecurityContext::system(), SecurityContext::default());
+        let personality = Personality {
+            id: PersonalityId::new(), name: ScopedName::new("plain", Scope::GlobalScope).unwrap(), kind: Default::default(),
+            roles: None, description: String::new(), introduction: None, components: Default::default(),
+            security_attributes: Default::default(), reasoning_visibility: Default::default(), deleted: None,
+        };
+        store.create_personality(&system, &personality).await.unwrap();
+        let helper = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), &personality, ActorId::None);
+        store.create_agent(&system, &helper).await.unwrap();
+        let actor = ActorId::Agent(helper.id);
+
+        // In a running session's channel, and in a stopped one's.
+        let mut running = make_session("running");
+        running.participants = vec![Participant::Agent(helper.id)];
+        let running = create(&manager, &ctx, running).await.unwrap();
+        let talk = running.create_channel(&ctx, spec("talk", vec![actor])).await.unwrap();
+        let mut stopped = make_session("stopped");
+        stopped.participants = vec![Participant::Agent(helper.id)];
+        store.create_session(&system, &stopped).await.unwrap();
+        store.create_channel(&system, &Channel { participants: vec![Participant::Agent(helper.id)], ..main_channel(&stopped) }).await.unwrap();
+
+        manager.delete_agent(&ctx, helper.id).await.expect("deleted");
+
+        let left = |channel: &Channel| !channel.participants.iter().any(|p| p.actor_id() == actor) && channel.former.iter().any(|f| f.participant.actor_id() == actor);
+        assert!(left(&talk.channel()), "it left the running channel");
+        assert!(!talk.actor_ids().contains(&actor), "and its actor is gone");
+        assert!(left(&store.get_channel(&system, stopped.channels[0]).await.unwrap()), "and the stopped one");
+        assert!(store.get_agent(&system, helper.id).await.is_err(), "it is not there");
+        let reached = manager.views(Viewer::new(ctx.clone())).channel_of(running.id(), talk.id()).await.unwrap().there().unwrap();
+        let former = reached.member(actor).await.unwrap();
+        assert!(former.former() && former.name() == Some("helper"), "what it said keeps its sender");
+
+        manager.restore_agent(&ctx, helper.id).await.expect("restored");
+        assert!(store.get_agent(&system, helper.id).await.is_ok());
+        assert!(left(&talk.channel()), "but into no channel");
+        assert!(manager.restore_agent(&ctx, helper.id).await.is_err(), "not deleted");
+        assert!(manager.purge_agent(&ctx, helper.id).await.is_err(), "only what was deleted is purged");
+
+        // Its name taken meanwhile: not restored.
+        manager.delete_agent(&ctx, helper.id).await.unwrap();
+        let again = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), &personality, ActorId::None);
+        store.create_agent(&system, &again).await.unwrap();
+        let taken = manager.restore_agent(&ctx, helper.id).await.expect_err("its name is taken");
+        assert!(matches!(taken.downcast_ref::<StoreError>(), Some(StoreError::Conflict(_))), "{taken}");
+
+        manager.purge_agent(&ctx, helper.id).await.expect("purged");
+        assert!(store.get_deleted_agent(&system, helper.id).await.is_err(), "nothing left to restore");
+        manager.stop_session(&system, running.id()).await.unwrap();
     }
 
     fn spec(name: &str, participants: Vec<caelumora_model::actor::ActorId>) -> ChannelSpec {

@@ -135,6 +135,9 @@ pub struct MemberSnapshot {
     /// Who removed a former member and when (issue 164); `None` for one that
     /// takes part.
     pub left: Option<crate::removal::Removal>,
+    /// Whether the viewer may delete this member - only ever an agent, its
+    /// owner (`DeleteAgent`, issue 164).
+    pub can_delete: bool,
 }
 
 /// Something deleted - a session, a channel - as the trash shows it to the
@@ -150,4 +153,13 @@ pub struct DeletedSnapshot<I> {
     /// Whether the viewer may remove it for good - never for a channel,
     /// which is purged with its session.
     pub can_purge: bool,
+}
+
+/// An agent as the viewer sees it in the list of agents (issue 164).
+#[derive(Debug, Clone, PartialEq)]
+pub struct AgentSnapshot {
+    pub id: crate::agent::AgentId,
+    pub name: String,
+    /// Whether the viewer may delete it (`DeleteAgent`).
+    pub can_delete: bool,
 }

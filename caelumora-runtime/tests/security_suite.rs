@@ -1056,6 +1056,39 @@ async fn deleting_an_agent_needs_owning_it() {
     assert_eq!(asked, checks(&["alice: GetAgent(alice's) yes", "alice: DeleteAgent(alice's) yes"]));
 }
 
+/// Deleting an agent through the session manager (issue 164): reading it
+/// and deleting it - its owner's alone - before anything happens; it leaves
+/// its channels in the runtime's name. Restoring it is its owner's too,
+/// purging it not.
+#[tokio::test]
+async fn deleting_restoring_and_purging_an_agent_is_its_owners_but_purging() {
+    let world = World::new().await;
+    let shared = world.personality("shared", Some(world.bob), &[world.alice]).await;
+    let helper = world.agent("helper", world.alice, &shared).await;
+    let session = world.shared_session(&[], &[helper]).await;
+    let (_, asked) = world.asked(world.manager.delete_agent(&World::as_user(world.bob), helper)).await;
+    assert_eq!(asked, checks(&["bob: GetAgent(alice's) no"]));
+    let (deleted, asked) = world.asked(world.manager.delete_agent(&World::as_user(world.alice), helper)).await;
+    assert!(deleted.is_ok());
+    assert_eq!(asked, checks(&[
+        "alice: GetAgent(alice's) yes",
+        "alice: DeleteAgent(alice's) yes",
+        "alice: GetAgent(alice's) yes",
+        "alice: DeleteAgent(alice's) yes",
+    ]), "asked by the session manager before it changes any channel, and again by the store");
+    let (refused, asked) = world.asked(world.manager.purge_agent(&World::as_user(world.alice), helper)).await;
+    assert!(refused.is_err());
+    assert_eq!(asked, checks(&["alice: ReadDeleted(alice's) yes", "alice: Purge(alice's) no"]));
+    let (restored, asked) = world.asked(world.manager.restore_agent(&World::as_user(world.alice), helper)).await;
+    assert!(restored.is_ok());
+    assert_eq!(asked, checks(&[
+        "alice: ReadDeleted(alice's) yes",
+        "alice: ReadDeleted(alice's) yes",
+        "alice: Restore(alice's) yes",
+    ]), "only what was deleted, asked by the session manager and again by the store");
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
 /// Adding an agent to a channel: its personality in its own name - may it
 /// run -, its clearance, and changing the channel - its owner's alone.
 #[tokio::test]

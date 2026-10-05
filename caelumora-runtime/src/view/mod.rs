@@ -45,7 +45,7 @@ use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::removal::Removal;
 use caelumora_model::security::{AccessQuestions, Place, SecurityContext};
 use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::snapshot::DeletedSnapshot;
+use caelumora_model::snapshot::{AgentSnapshot, DeletedSnapshot};
 use caelumora_model::store::{EntityKind, StoreResultExt};
 use std::sync::Arc;
 
@@ -259,6 +259,47 @@ impl Views {
         })
     }
 
+    /// The agents the viewer may read (issue 164), in the order the store
+    /// lists them, with whether they may delete them.
+    ///
+    /// # Errors
+    /// `Failed` if the store cannot list them.
+    pub async fn agents(&self) -> ViewResult<Vec<AgentSnapshot>> {
+        let agents = self.runtime.entity_store().list_agents(self.viewer.context()).await
+            .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context("listing the agents")))?;
+        let policy = self.runtime.security_manager();
+        let mut listed = Vec::with_capacity(agents.len());
+        for agent in agents {
+            let can_delete = policy.may_delete_agent(self.viewer.context(), &agent.security_attributes).await;
+            listed.push(AgentSnapshot { id: agent.id, name: agent.name.to_string(), can_delete });
+        }
+        Ok(listed)
+    }
+
+    /// The agents the viewer deleted and may read as such (issue 164): the
+    /// trash of agents. An agent is purged as the policy allows.
+    ///
+    /// # Errors
+    /// `Failed` if the store cannot list them.
+    pub async fn deleted_agents(&self) -> ViewResult<Vec<DeletedSnapshot<AgentId>>> {
+        let agents = self.runtime.entity_store().list_deleted_agents(self.viewer.context()).await
+            .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context("listing the deleted agents")))?;
+        let policy = self.runtime.security_manager();
+        let mut deleted = Vec::with_capacity(agents.len());
+        for agent in agents {
+            let Some(removal) = agent.deleted.clone() else { continue };
+            let attributes = &agent.security_attributes;
+            deleted.push(DeletedSnapshot {
+                id: agent.id,
+                name: agent.name.to_string(),
+                deleted: removal,
+                can_restore: policy.may_restore(self.viewer.context(), EntityKind::Agent, attributes).await,
+                can_purge: policy.may_purge(self.viewer.context(), EntityKind::Agent, attributes).await,
+            });
+        }
+        Ok(deleted)
+    }
+
     /// The sessions the viewer deleted and may read as such (issue 164),
     /// in the order the store lists them: the trash.
     ///
@@ -298,9 +339,19 @@ impl Views {
     async fn name_of(&self, participant: &Participant) -> Option<String> {
         match participant {
             Participant::User(id) => self.runtime.entity_store().get_user(&SecurityContext::system(), *id).await.ok().map(|user| user.username),
-            Participant::Agent(id) => self.agent_of(*id).await.map(|agent| agent.name.to_string()),
+            Participant::Agent(id) => match self.agent_of(*id).await {
+                Some(agent) => Some(agent.name.to_string()),
+                None => self.deleted_agent_name(*id).await,
+            },
             Participant::Approver(_) => participant.actor_id().fixed_name().map(str::to_string),
         }
+    }
+
+    /// The name of agent `id` if it was deleted and not purged (issue 164):
+    /// what it said keeps its sender. Read in the runtime's name, like its
+    /// name while it exists.
+    pub(super) async fn deleted_agent_name(&self, id: AgentId) -> Option<String> {
+        self.runtime.entity_store().get_deleted_agent(&SecurityContext::system(), id).await.ok().map(|agent| agent.name.to_string())
     }
 
     /// The document of agent `id` - its name, its attributes, its

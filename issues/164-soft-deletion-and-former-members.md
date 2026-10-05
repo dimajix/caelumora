@@ -1,6 +1,6 @@
 # 164 — The store forgets what was deleted and who left
 
-**Status:** in progress
+**Status:** done
 **Area:** Persistence
 
 ## The problem
@@ -426,3 +426,32 @@ rights [125](125-invisible-admin.md)'s, the record of the acts [140](140-audit-l
   would have been optional on two types. `Views::agent_of` and `name_of` stay as they are until
   step 6, since no agent can be deleted before; there a deleted agent is to be named by its stored
   name.
+- **2026-10-05** — Step 6 done, and with it the issue: deleting an agent.
+  - **Decided by the maintainer:** a deleted agent leaves every channel it takes part in, as a
+    former participant (option b), rather than staying a participant without an actor; a restore
+    brings it back into none. The REST routes come now, the web UI only as an action in the
+    member list.
+  - **Runtime:** `SessionManager::delete_agent`, `restore_agent`, `purge_agent` - on the
+    `SessionManager`, not the `RuntimeManager` as planned, since only it knows the running
+    sessions, and an event must not change a channel. Deleting asks `DeleteAgent` first, then
+    removes the agent from the channels of every session it takes part in, in the runtime's name -
+    a running channel through `ChannelLoop::remove_participant`, a stopped one through a channel
+    controller of its own, under the session's start lock - then marks it and announces
+    `AgentDeleted`. Restoring is refused if another agent took its name in its scope, and announces
+    the new `AgentRestored`; purging removes its document and `delete_agent_state`.
+  - **Views:** a deleted agent keeps its name (`Views::deleted_agent_name`, `GoneMember` with a
+    name, no handle); `Views::agents` and `deleted_agents`; `MemberView::may_delete` and
+    `MemberSnapshot::can_delete` (`AccessQuestions::may_delete_agent`).
+  - **REST:** `GET /agents` (`?deleted=true`), `DELETE /agents/{id}`, `POST /agents/{id}/restore`
+    and `/purge`; `Subject::Agent`, `agent_not_found`, and a `StoreError::Conflict` is now `409
+    already_exists`. `ChannelMemberResponse::can_delete`.
+  - **Web UI:** a delete button for agents in the member list, confirmed by a second click.
+  - **Tests:** deleting, restoring, a name taken meanwhile and purging in `session.rs`, with a
+    running and a stopped channel; the security suite for all three.
+    CHANNELS.md, REST-SERVER.md, WEB-UI.md, SECURITY.md.
+
+  Left open: the agent's controller is shared by its running actors (`ControllerManager`); until
+  the last of them has ended after the deletion, adding the agent to a channel again could still
+  find it. Narrow, and not worth a mechanism yet. A session's own participants
+  (`Session::participants`) still list a deleted agent; nothing removes participants from sessions
+  yet. A web UI for the trash of agents, and for agents at all, waits for agent management.

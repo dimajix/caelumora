@@ -12,6 +12,7 @@ import {
   ScrollText,
   Send,
   Square,
+  Trash2,
   UserMinus,
   Unlink,
   UserPlus,
@@ -153,6 +154,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   const [historyOf, setHistoryOf] = useState<{channelId: string; member: ChannelMember; givenUp?: boolean} | null>(null);
   // Whether the former members of the channel are unfolded (issue 164).
   const [showFormer, setShowFormer] = useState(false);
+  // The agent whose deletion was clicked once, to be confirmed (issue 164).
+  const [deletingAgent, setDeletingAgent] = useState<string | null>(null);
   // The commands this user may run here, for `/` completion (issue 28).
   const [commands, setCommands] = useState<Command[]>([]);
   // Whether the dialog to add a participant is open (issue 46).
@@ -265,6 +268,18 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   /** Whether the user may change the classification of `msg`: its author, or the channel's owner. */
   const mayReclassify = (msg: Message) =>
     !!msg.id && !!msg.classification && (!!channel?.can_change || (typeof msg.sender_id === 'object' && msg.sender_id !== null && 'User' in msg.sender_id && msg.sender_id.User === user.id));
+
+  /** Deletes the agent `member` (issue 164): it leaves every channel, this one too. */
+  const deleteAgent = async (member: ChannelMember) => {
+    setDeletingAgent(null);
+    const uuid = actorUuid(member.id);
+    if (!uuid) return;
+    try {
+      await api.deleteAgent(uuid);
+    } catch (error) {
+      reportError(`Failed to delete ${member.name}`, error);
+    }
+  };
 
   const removeParticipant = async (member: ChannelMember) => {
     const uuid = actorUuid(member.id);
@@ -1014,6 +1029,24 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
                     <History size={14} />
                   </button>
                 )}
+                {member.can_delete && (deletingAgent === actorKey(member.id) ? (
+                  <button
+                    onClick={() => void deleteAgent(member)}
+                    className="shrink-0 px-1 rounded-md text-xs text-red-500 hover:bg-gray-200 dark:hover:bg-gray-700"
+                    title={`${member.name} leaves every channel it takes part in`}
+                  >
+                    Delete agent?
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setDeletingAgent(actorKey(member.id))}
+                    className="shrink-0 p-1 rounded-md text-gray-400 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-red-500 hover:bg-gray-200 dark:hover:bg-gray-700"
+                    title={`Delete the agent ${member.name}`}
+                    aria-label={`Delete the agent ${member.name}`}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                ))}
                 {/* The approver belongs to every channel and cannot be removed. */}
                 {channel?.can_change && member.kind !== 'approver' && (
                   <button

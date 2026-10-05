@@ -344,6 +344,10 @@ pub trait AccessQuestions {
     /// when it wrote a message (`ReadAgentContext`, issue 41).
     async fn may_read_agent_context(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool;
 
+    /// Whether `context` may delete the agent with `agent` attributes
+    /// (`DeleteAgent`, issue 164).
+    async fn may_delete_agent(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool;
+
     /// Whether `context` may make the tool call `call` (`CallTool`) - asked
     /// before a call is put up for approval.
     async fn may_call_tool(&self, context: &SecurityContext, call: &ToolCall) -> bool;
@@ -396,6 +400,10 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
 
     async fn may_read_agent_context(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool {
         self.check(context, ActionType::ReadAgentContext(agent)).await
+    }
+
+    async fn may_delete_agent(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool {
+        self.check(context, ActionType::DeleteAgent(agent)).await
     }
 
     async fn may_call_tool(&self, context: &SecurityContext, call: &ToolCall) -> bool {

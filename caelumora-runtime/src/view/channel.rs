@@ -362,6 +362,15 @@ impl MemberView {
         }
     }
 
+    /// Whether the viewer may delete the member - an agent that exists,
+    /// its owner (`DeleteAgent`, issue 164).
+    pub async fn may_delete(&self) -> bool {
+        match (self.state.agent(), self.state.attributes()) {
+            (Some(_), Some(attributes)) => self.channel.views().runtime().security_manager().may_delete_agent(self.channel.views().viewer().context(), attributes).await,
+            _ => false,
+        }
+    }
+
     /// The notes the member published in the channel (issue 17), with the
     /// digest of their chain - of a channel read entry by entry, those
     /// released to where the viewer reads from; `None` for a member that
@@ -470,6 +479,7 @@ impl MemberView {
             name: self.name().map(str::to_string),
             handle: self.handle(),
             can_read_context: self.may_read_context().await,
+            can_delete: self.may_delete().await,
             usage,
             notes,
             pending_approvals,

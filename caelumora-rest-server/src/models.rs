@@ -116,6 +116,21 @@ pub struct StreamOptions {
     pub snapshot: bool,
 }
 
+/// An agent the requesting user may read (issue 164), with whether they
+/// may delete it.
+#[derive(Debug, Serialize)]
+pub struct AgentResponse {
+    pub id: caelumora_model::agent::AgentId,
+    pub name: String,
+    pub can_delete: bool,
+}
+
+impl From<snapshot::AgentSnapshot> for AgentResponse {
+    fn from(view: snapshot::AgentSnapshot) -> Self {
+        Self { id: view.id, name: view.name, can_delete: view.can_delete }
+    }
+}
+
 /// Whether a listing lists what is there or what was deleted - the trash
 /// (issue 164).
 #[derive(Debug, Default, Deserialize)]
@@ -347,6 +362,9 @@ pub struct ChannelMemberResponse {
     /// For a former member (issue 164): who removed it and when.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub left: Option<caelumora_model::removal::Removal>,
+    /// Whether the requesting user may delete this member - only ever an
+    /// agent, its owner (issue 164).
+    pub can_delete: bool,
 }
 
 impl ChannelMemberResponse {
@@ -360,6 +378,7 @@ impl ChannelMemberResponse {
             can_read_context: view.can_read_context,
             usage: view.usage,
             left: view.left,
+            can_delete: view.can_delete,
         })
     }
 }
@@ -637,7 +656,7 @@ mod tests {
     #[test]
     fn a_channel_view_is_answered_with_kinds_and_a_name_for_the_deleted() {
         let (alice, approver) = (ActorId::User(UserId::new()), ActorId::Approver(ApproverId(Uuid::new_v4())));
-        let member = |id, name: Option<&str>| snapshot::MemberSnapshot { id, name: name.map(str::to_string), handle: None, can_read_context: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), left: None };
+        let member = |id, name: Option<&str>| snapshot::MemberSnapshot { id, name: name.map(str::to_string), handle: None, can_read_context: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), left: None, can_delete: false };
         let view = snapshot::ChannelSnapshot {
             id: ChannelId::new(),
             name: "main".to_string(),
@@ -671,7 +690,7 @@ mod tests {
         };
         let member = |id, name: &str, notes: Vec<Note>| snapshot::MemberSnapshot {
             id, name: Some(name.to_string()), handle: None, can_read_context: false, usage: None, notes, pending_approvals: Vec::new(),
-            left: None,
+            left: None, can_delete: false,
         };
         let channel = snapshot::ChannelSnapshot {
             id: ChannelId::new(),
@@ -710,7 +729,7 @@ mod tests {
     fn a_former_member_is_answered_apart_with_who_removed_it_and_when() {
         let (alice, helper) = (ActorId::User(UserId::new()), ActorId::Agent(caelumora_model::agent::AgentId::new()));
         let left = caelumora_model::removal::Removal::now(alice);
-        let member = |id, left| snapshot::MemberSnapshot { id, name: Some("x".to_string()), handle: None, can_read_context: true, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), left };
+        let member = |id, left| snapshot::MemberSnapshot { id, name: Some("x".to_string()), handle: None, can_read_context: true, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), left, can_delete: false };
         let view = snapshot::ChannelSnapshot {
             id: ChannelId::new(),
             name: "main".to_string(),
@@ -731,7 +750,7 @@ mod tests {
     #[test]
     fn what_a_participant_used_is_answered_only_where_it_was_read() {
         let usage = TokenUsage { calls: 2, prompt_tokens: 300, completion_tokens: 20, last_call_tokens: 170, context_size: Some(8192) };
-        let member = |usage| snapshot::MemberSnapshot { id: ActorId::User(UserId::new()), name: Some("alice".to_string()), handle: None, can_read_context: false, usage, notes: Vec::new(), pending_approvals: Vec::new(), left: None };
+        let member = |usage| snapshot::MemberSnapshot { id: ActorId::User(UserId::new()), name: Some("alice".to_string()), handle: None, can_read_context: false, usage, notes: Vec::new(), pending_approvals: Vec::new(), left: None, can_delete: false };
 
         let json = serde_json::to_value(ChannelMemberResponse::of(member(Some(usage))).unwrap()).unwrap();
         assert_eq!(json["usage"], serde_json::json!({ "calls": 2, "prompt_tokens": 300, "completion_tokens": 20, "last_call_tokens": 170, "context_size": 8192 }));

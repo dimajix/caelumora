@@ -276,6 +276,15 @@ export const api = {
     await ensureOk(res, 'Failed to delete session');
   },
 
+  /**
+   * Deletes an agent (issue 164): it leaves every channel it takes part in
+   * and is kept, marked, until it is purged.
+   */
+  async deleteAgent(agentUuid: string): Promise<void> {
+    const res = await request(`/agents/${agentUuid}`, {method: 'DELETE'});
+    await ensureOk(res, 'Failed to delete the agent');
+  },
+
   /** The sessions you deleted and may read as such: the trash (issue 164). */
   async getDeletedSessions(): Promise<Deleted[]> {
     const res = await request('/sessions?deleted=true');

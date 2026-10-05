@@ -165,6 +165,16 @@ not kept, it is given a new one. The views reach former members from the documen
 saw stays readable for whoever may read its context. An agent that left before the channel kept who
 left is still found by the messages it left in the history.
 
+Deleting an agent (`SessionManager::delete_agent`, `DeleteAgent`, issue 164) makes it leave every
+channel it takes part in, running or not, as a former participant - removed in the runtime's name,
+since deleting the agent was permitted; who deleted it is the agent's own mark. Only the channels of
+sessions it takes part in are looked at; those of deleted sessions keep it, and leave it out if
+they are restored, as any participant that no longer exists. A deleted agent keeps its name in the
+views, so that what it said keeps its sender. Restoring it (`restore_agent`) brings it back into no
+channel - it is added again where it is wanted - and is refused if another agent took its name in
+its scope meanwhile. Purging it (`purge_agent`) removes its document and its state, its own and in
+every channel.
+
 Adding is asked first as `UpdateChannel`, before anything of the newcomer is looked at (issue 198),
 and additionally as `ActionType::JoinChannel` with the channel's classification, where a policy can
 hold the channel's level against the newcomer (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
