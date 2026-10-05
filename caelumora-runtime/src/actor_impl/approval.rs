@@ -7,9 +7,9 @@ use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventCon
 use caelumora_model::agent::AgentId;
 use caelumora_model::approval::{ApprovalId, ApprovalRequest, ApprovalResponse, ApprovalStatus, ApprovalStrategy, Approver};
 use caelumora_model::channel::Participant;
-use crate::controller::ChannelController;
+use crate::controller::{ChannelController, ControllerManager};
 use caelumora_model::event::GlobalEvent;
-use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityAttributes, SecurityContext};
+use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityAttributes, SecurityContext, SecurityManager};
 use chrono::{DateTime, Duration, Utc};
 use tracing::{info, warn};
 use std::collections::HashMap;
@@ -39,6 +39,10 @@ pub struct ApproverActor {
     approver: Approver,
     actor_runtime: ActorRuntime,
     channel: Arc<ChannelController>,
+    /// Who may approve (issue 14).
+    security: Arc<dyn SecurityManager>,
+    /// Where the attributes of the agents that ask are read.
+    controllers: Arc<ControllerManager>,
     pending: Mutex<HashMap<ApprovalId, PendingApproval>>,
     /// Cancelled by `stop`: the channel is deleted, and the run ends.
     ended: CancellationToken,
@@ -49,6 +53,8 @@ impl ApproverActor {
         Self {
             id: ActorId::Approver(approver.id),
             approver,
+            security: actor_runtime.security_manager(),
+            controllers: actor_runtime.runtime_manager().controller_manager(),
             actor_runtime,
             channel,
             pending: Mutex::new(HashMap::new()),
@@ -59,7 +65,7 @@ impl ApproverActor {
     /// The attributes of `agent`, as stored - never as its request says,
     /// since the agent makes that itself. `None` if it cannot be read.
     async fn attributes_of(&self, agent: AgentId) -> Option<SecurityAttributes> {
-        match self.actor_runtime.runtime_manager().controller_manager().agent_controller(agent).await {
+        match self.controllers.agent_controller(agent).await {
             Ok(controller) => Some(controller.load().security_attributes.clone()),
             Err(e) => {
                 warn!("ApproverActor cannot read agent {}: {}", agent, e);
@@ -77,12 +83,11 @@ impl ApproverActor {
             return Vec::new();
         };
         let channel = self.channel.load();
-        let security = self.actor_runtime.runtime_manager().security_manager();
         let mut approvers = Vec::new();
         for participant in &channel.participants {
             let Participant::User(user) = participant else { continue };
             let Some(actor) = running.user_actor(*user) else { continue };
-            if security.may_approve(actor.security_context(), &attributes, &channel.security_attributes).await {
+            if self.security.may_approve(actor.security_context(), &attributes, &channel.security_attributes).await {
                 approvers.push(ActorId::User(*user));
             }
         }
@@ -193,7 +198,7 @@ impl ApproverActor {
         let Some(attributes) = self.attributes_of(p.agent_id).await else { return Ok(()) };
         let channel = self.channel.load();
         let action = ActionType::ApproveToolCall { agent: &attributes, channel: &channel.security_attributes };
-        if self.actor_runtime.runtime_manager().security_manager().require(security, action, || ()).await.is_err() {
+        if self.security.require(security, action, || ()).await.is_err() {
             warn!("ApproverActor: {} may not approve the calls of agent {}; its answer is left out", user_id, p.agent_id);
             return Ok(());
         }

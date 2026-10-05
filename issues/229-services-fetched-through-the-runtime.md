@@ -93,3 +93,12 @@ reason to look a service up each time does not apply.
   longer holds the runtime; it lends them (`security()`, `entities()`, `states()`, `components()`)
   together with the viewer's `context()`. `MemberView` reaches them through `views()`, so a check is
   `self.views().security().may_…(self.views().context(), …)`. No behaviour changed.
+- **2026-10-05** — Step 2, the approver: `ApproverActor` takes the `SecurityManager` and the
+  `ControllerManager` once, in `new`, and holds them, instead of reaching through
+  `runtime_manager()` at every use. The `ControllerManager` still comes through `runtime_manager()`,
+  which the `ActorRuntime` does not hand out on purpose ([69](69-scoped-actor-runtime.md)) - decided
+  with the maintainer as better than before, not as the end: reading the attributes of an agent that
+  asks from the running channel, which holds the controller its actor was built with, would need no
+  `ControllerManager` at all. No behaviour changed. `runtime_manager()` is also still reached from
+  outside the runtime module by `ViewsFactory::session`, which builds an agent's views, and by a
+  test in `channel.rs`.
