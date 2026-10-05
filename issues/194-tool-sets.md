@@ -194,3 +194,7 @@ Order: step 0 alone, then 1-3 together, then 4, 5 and 6 each on their own.
 - **2026-10-05** — Step 4 done: the optional component `tool_sets_prompt_provider` names the
   unavailable tool sets the work began with (`AgentWork::tool_sets`). Reading the parameter
   `position` moved into `PromptPosition::of_params`, which its two other readers share.
+- **2026-10-05** — Step 5 done: `mcp_tool` describes its tool set by its parameter `description`,
+  else by the server's `instructions`, else by a text naming the component; a failed discovery
+  makes the set unavailable, with why in general terms (`McpError::unavailable`). Issue 32 is done
+  with it.

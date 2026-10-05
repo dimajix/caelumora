@@ -48,7 +48,7 @@ impl EchoServer {
 #[tool_handler]
 impl ServerHandler for EchoServer {
     fn get_info(&self) -> ServerConfig {
-        ServerConfig::default()
+        ServerConfig::default().with_instructions("  Echo messages back, for testing.  ")
     }
 }
 
@@ -102,6 +102,8 @@ async fn discovers_and_calls_echo_tool_over_streamable_http() {
     assert_eq!(tools.len(), 1);
     assert_eq!(tools[0].name, "test-echo__echo");
     assert!(!tools[0].requires_approval, "no approval unless configured");
+    assert_eq!(provider.description(), "Echo messages back, for testing.", "what the server says of itself");
+    assert!(provider.unavailable().is_none());
 
     let mut agent_channel_state = caelumora_model::agent::AgentChannelState::default();
     agent_channel_state.begin_turn(Default::default(), Default::default(), Default::default(), Vec::new(), Default::default());
@@ -200,4 +202,16 @@ async fn unreachable_server_degrades_gracefully_instead_of_failing_construction(
     let providers = container.get_all::<dyn ToolProvider>(None);
     assert_eq!(providers.len(), 1);
     assert_eq!(providers[0].tools().len(), 0);
+    assert_eq!(providers[0].unavailable().as_deref(), Some("its server cannot be reached"), "its tool set says so, without the error (issue 32)");
+    assert_eq!(providers[0].description(), "The tools of the MCP server 'test-echo'.");
+}
+
+#[tokio::test]
+async fn a_configured_description_replaces_what_the_server_says_of_itself() {
+    let (addr, _server) = start_test_server().await;
+    let url = format!("http://{}/mcp", addr);
+
+    let container = build_container(json!({ "endpoint": { "url": url }, "description": "Messages echoed by the test server." })).await;
+    let provider = container.get_all::<dyn ToolProvider>(None)[0].facet.clone();
+    assert_eq!(provider.description(), "Messages echoed by the test server.");
 }

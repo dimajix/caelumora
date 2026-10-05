@@ -139,12 +139,18 @@ over the Streamable HTTP transport:
     `"{component_id}__{remote_tool_name}"`, so that servers cannot collide.
 *   **Discovery.** The tool list is discovered once, when the component is built, and cached. A
     server that is unreachable then does not fail the agent; it starts with no tools from that
-    server, and a warning is logged.
+    server, and a warning is logged with the error. Its tool set is unavailable, with why in
+    general terms - "its server cannot be reached", never the error, which may name hosts - so
+    that `tool_sets_prompt_provider` and the web UI can tell (issue 32). Discovering again is
+    issue 126.
+*   **Description.** The tool set is described by the parameter `description`, else by what the
+    server says of itself in the `instructions` of its `initialize` result, else as "The tools of
+    the MCP server '<component id>'" (issue 194).
 *   **Credentials.** `auth.secret` names a secret, resolved through the secret chain (see
     [SECURITY.md](SECURITY.md)); it is never a literal credential.
 *   **Parameters.** `url` (required), `auth` (optional; only `bearer` so far), `timeout_secs`
-    (default 10, for discovery and for every call) and `requires_approval` (default `false`, for
-    every tool of the server).
+    (default 10, for discovery and for every call), `requires_approval` (default `false`, for
+    every tool of the server), `classification` and `description`.
 *   **Calls.** Each call opens a connection of its own. The remote structured content is the result
     if there is one, else the joined text; a remote error is a failed call.
 *   **Interrupted calls.** An interrupted call (issue 161) drops its connection. rmcp then closes

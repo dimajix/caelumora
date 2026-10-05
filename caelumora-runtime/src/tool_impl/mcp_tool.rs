@@ -53,6 +53,27 @@ struct McpToolConfig {
     /// from the agent. Left out, as the channel.
     #[serde(default)]
     pub classification: Option<Classification>,
+    /// What this server's tools are for, written for a model: the
+    /// description of their tool set (issue 194). Left out, what the server
+    /// says of itself in its `instructions`, else a text naming the
+    /// component.
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+impl McpError {
+    /// Why the server's tools are unavailable after this error, in general
+    /// terms for the model and the user (issue 32) - never the error, which
+    /// may name hosts. That is in the log.
+    fn unavailable(&self) -> String {
+        match self {
+            McpError::Connect(..) => "its server cannot be reached",
+            McpError::ListTools(..) => "its server did not list its tools",
+            McpError::Timeout(_) => "its server did not answer in time",
+            McpError::ToolCallFailed(_) => "its server failed",
+            McpError::Secret(_) => "its credentials are not available",
+        }.to_string()
+    }
 }
 
 impl McpToolConfig {
@@ -62,7 +83,9 @@ impl McpToolConfig {
 }
 
 /// Exposes the tools of a single remote MCP server (reached over the
-/// Streamable HTTP transport) as a `ToolProvider`.
+/// Streamable HTTP transport) as a `ToolProvider`: one tool set, described
+/// as configured or as the server describes itself, and unavailable - with
+/// why, in general terms - if the server could not be asked for its tools.
 ///
 /// Tools are namespaced as `"{descriptor_id}__{remote_tool_name}"` to avoid
 /// collisions with built-in tools or other MCP servers, since
@@ -76,6 +99,10 @@ pub struct McpToolProvider {
     descriptor_id: String,
     config: McpToolConfig,
     cached_tools: Vec<Tool>,
+    /// What the server says of itself (`instructions`), if it did.
+    instructions: Option<String>,
+    /// Why its tools could not be discovered, `None` if they were.
+    unavailable: Option<String>,
     secret_manager: Arc<SecretManager>,
 }
 
@@ -108,10 +135,15 @@ async fn connect(endpoint: &RemoteEndpoint, auth_header: Option<String>) -> McpR
 }
 
 /// The tools of the MCP server `config` names, namespaced by `descriptor_id`
-/// and requiring approval as `config` says (issue 78).
-async fn discover_tools(descriptor_id: &str, config: &McpToolConfig, auth_header: Option<String>) -> McpResult<Vec<Tool>> {
+/// and requiring approval as `config` says (issue 78), with what the server
+/// says of itself in its `instructions`, if anything (issue 194).
+async fn discover_tools(descriptor_id: &str, config: &McpToolConfig, auth_header: Option<String>) -> McpResult<(Vec<Tool>, Option<String>)> {
     let endpoint = &config.endpoint;
     let service = connect(endpoint, auth_header).await?;
+    let instructions = service.peer_info()
+        .and_then(|info| info.instructions.clone())
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty());
     let remote_tools = service
         .list_all_tools()
         .await
@@ -119,7 +151,7 @@ async fn discover_tools(descriptor_id: &str, config: &McpToolConfig, auth_header
     let _ = service.cancel().await;
     let remote_tools = remote_tools?;
 
-    Ok(remote_tools
+    let tools = remote_tools
         .into_iter()
         .map(|t| {
             let description = t.description.map(|d| d.to_string()).unwrap_or_default();
@@ -133,7 +165,8 @@ async fn discover_tools(descriptor_id: &str, config: &McpToolConfig, auth_header
                 classification: config.classification.clone(),
             }
         })
-        .collect())
+        .collect();
+    Ok((tools, instructions))
 }
 
 /// Best-effort conversion of a JSON-Schema fragment (as used by MCP tool
@@ -217,11 +250,17 @@ fn call_tool_result_to_value(name: &str, result: rmcp::model::CallToolResult) ->
 #[async_trait]
 impl ToolProvider for McpToolProvider {
     fn description(&self) -> String {
-        format!("The tools of the MCP server '{}'.", self.descriptor_id)
+        self.config.description.clone()
+            .or_else(|| self.instructions.clone())
+            .unwrap_or_else(|| format!("The tools of the MCP server '{}'.", self.descriptor_id))
     }
 
     fn tools(&self) -> Vec<Tool> {
         self.cached_tools.clone()
+    }
+
+    fn unavailable(&self) -> Option<String> {
+        self.unavailable.clone()
     }
 
     async fn execute(&self, name: &str, params: &Value, turn: &mut Turn) -> ToolResult<ToolOutput> {
@@ -267,19 +306,21 @@ pub fn register(registry: &mut ComponentRegistry) {
                 let auth_header = config.endpoint.bearer_token(&secret_manager, &context.security_context).await?;
                 discover_tools(&descriptor.id, &config, auth_header).await
             };
-            let discovery_result: McpResult<Vec<Tool>> = match tokio::time::timeout(config.timeout(), discover).await {
+            let discovery_result: McpResult<(Vec<Tool>, Option<String>)> = match tokio::time::timeout(config.timeout(), discover).await {
                 Ok(result) => result,
                 Err(_) => Err(McpError::Timeout(format!("Timed out discovering tools from MCP server at '{}'", config.endpoint.shown()))),
             };
 
-            let cached_tools = match discovery_result {
-                Ok(tools) => tools,
+            // Not fatal: one unreachable server must not take down the
+            // agent. Its tool set says it is unavailable (issue 32).
+            let (cached_tools, instructions, unavailable) = match discovery_result {
+                Ok((tools, instructions)) => (tools, instructions, None),
                 Err(e) => {
                     warn!(
                         "MCP tool component '{}' failed to connect/discover tools ({}); starting with no tools available",
                         descriptor.id, e
                     );
-                    Vec::new()
+                    (Vec::new(), None, Some(e.unavailable()))
                 }
             };
 
@@ -288,6 +329,8 @@ pub fn register(registry: &mut ComponentRegistry) {
                 descriptor_id: descriptor.id.clone(),
                 config,
                 cached_tools,
+                instructions,
+                unavailable,
                 secret_manager,
             }));
             Ok(facets)
@@ -343,8 +386,11 @@ mod tests {
                 endpoint: RemoteEndpoint::new("http://example.invalid/mcp"),
                 requires_approval: false,
                 classification: None,
+                description: None,
             },
             cached_tools: vec![],
+            instructions: None,
+            unavailable: None,
             secret_manager: Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new()))),
         };
 

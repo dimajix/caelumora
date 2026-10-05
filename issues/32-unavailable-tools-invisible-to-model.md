@@ -1,6 +1,6 @@
 # 32 — Tools that failed to load are invisible to the model
 
-**Status:** open
+**Status:** done
 **Area:** Tools & approvals
 
 ## The problem
@@ -64,3 +64,8 @@ presents itself as the agent being less capable than it is.
   to the model (step 4). The maintainer decided for an optional component; a personality without it
   is told nothing, deliberately. Retrying discovery stays with
   [126](126-mcp-tools-discovered-once.md).
+- **2026-10-05** — Done with steps 4 and 5 of [194](194-tool-sets.md): an `mcp_tool` whose discovery
+  failed gives an unavailable tool set, naming why in general terms, and the optional
+  `tool_sets_prompt_provider` tells the model. Not enforced: a personality without that component
+  tells its model nothing, as the maintainer decided. Discovering again stays with
+  [126](126-mcp-tools-discovered-once.md), so the note is as current as the last discovery.
