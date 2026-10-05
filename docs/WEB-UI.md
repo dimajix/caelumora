@@ -141,12 +141,14 @@ else who may read it - the session's owner, say - is shown its history and no in
     When a chain between agents is cut off at its limit (`ChainCutOff`), a notice "Chain cut off"
     says so, naming the agents mentioned that were not asked, and that a message of a user starts a
     new chain; like a failed turn, it is gone on reload (issue 200).
-*   **Approvals.** A tool call that needs approval is shown with approve and deny. Once this user
-    answered, it waits for the decision; it disappears only when the approver ends it - decided,
-    timed out, or withdrawn by an agent whose turn ended (issue 148). The pending approvals come
-    with the stream's snapshot, so a reload shows them again; a request that arrives again - asked
-    anew by an agent after a restart - is shown once (issue 172). Whether this user answered is
-    known only to this page: after a reload, an answered approval is offered again.
+*   **Approvals.** A tool call that needs approval is shown to everybody, with approve and deny only
+    for who may approve the agent's calls (`can_approve` of the member, issue 14); everybody else is
+    told that it waits for whoever is responsible for the agent. Once this user answered, it waits
+    for the decision; it disappears only when the approver ends it - decided, timed out, or
+    withdrawn by an agent whose turn ended (issue 148). The pending approvals come with the stream's
+    snapshot, so a reload shows them again; a request that arrives again - asked anew by an agent
+    after a restart - is shown once (issue 172). Whether this user answered is known only to this
+    page: after a reload, an answered approval is offered again.
 *   **Stop.** The stop button ends the current turn of every agent (`POST …/cancel`).
 *   **Input.** A line starting with `/` is sent as a command, `//` as a literal slash
     (`command.ts`). Typing `@` completes the members' handles, `/` the commands the user may see. An

@@ -65,6 +65,12 @@ export interface ChannelMember {
   /** Whether you may see which tools it has now - only ever an agent (issue 194). */
   can_read_tools: boolean;
   /**
+   * Whether you may approve its tool calls - only ever an agent taking part,
+   * yours or one you contribute to (issue 14). Everybody sees what it waits
+   * for; only who may approve is asked.
+   */
+  can_approve: boolean;
+  /**
    * What its model calls used (issue 209): sent with the channel stream's
    * snapshot and by `getParticipant`, not where channels are listed; absent
    * for a member whose calls report no tokens.

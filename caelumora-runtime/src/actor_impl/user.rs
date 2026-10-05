@@ -79,6 +79,13 @@ impl UserActor {
         })
     }
 
+    /// The context this user acts in, here - what their answers carry, so
+    /// that whoever decides on them asks about them in the same one (the
+    /// approver, issue 14).
+    pub(crate) fn security_context(&self) -> &SecurityContext {
+        &self.security_context
+    }
+
     /// An envelope from this user. Envelopes are only ever built here, so the
     /// sender, session, channel and security context are always this actor's
     /// own, whatever the caller of `send_message` is.

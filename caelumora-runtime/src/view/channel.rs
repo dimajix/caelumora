@@ -372,6 +372,17 @@ impl MemberView {
         }
     }
 
+    /// Whether the viewer may approve the tool calls of the member
+    /// (`ApproveToolCall`, issue 14) - only ever for agents taking part.
+    /// Who may is asked when it calls a tool needing approval; everybody
+    /// else sees only that it waits.
+    pub async fn may_approve(&self) -> bool {
+        match self.state.attributes() {
+            Some(attributes) if !self.former => self.channel.views().runtime().security_manager().may_approve(self.channel.views().viewer().context(), attributes, &self.channel.channel.security_attributes).await,
+            _ => false,
+        }
+    }
+
     /// The tools the member has now, in their tool sets (issue 194), as it
     /// would offer them at the start of its next turn - read from its
     /// actor, since an agent's tools are built for each of its channels.
@@ -512,6 +523,7 @@ impl MemberView {
             handle: self.handle(),
             can_read_context: self.may_read_context().await,
             can_read_tools: self.may_read_tools().await,
+            can_approve: self.may_approve().await,
             can_delete: self.may_delete().await,
             usage,
             notes,

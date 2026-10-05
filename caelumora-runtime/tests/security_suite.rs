@@ -92,7 +92,7 @@ fn attributes_of<'a>(action: &ActionType<'a>) -> Option<&'a SecurityAttributes> 
     match *action {
         GetPersonality(a) | CreatePersonality(a) | UpdatePersonality(a) | DeletePersonality(a)
         | GetSessionTemplate(a) | CreateSessionTemplate(a) | UpdateSessionTemplate(a) | DeleteSessionTemplate(a)
-        | CreateAgent(a) | GetAgent(a) | ReadAgentContext(a) | ReadAgentTools { agent: a, .. } | UpdateAgent(a) | DeleteAgent(a)
+        | CreateAgent(a) | GetAgent(a) | ReadAgentContext(a) | ReadAgentTools { agent: a, .. } | ApproveToolCall { agent: a, .. } | UpdateAgent(a) | DeleteAgent(a)
         | CreateSession(a) | GetSession(a) | UpdateSession(a) | DeleteSession(a) | StopSession(a)
         | GetChannel(a) | CreateChannel(a) | UpdateChannel(a) | DeleteChannel(a)
         | GetUser(a) | CreateUser(a) | UpdateUser(a) | DeleteUser(a)
@@ -558,6 +558,138 @@ async fn which_tools_an_agent_has_is_read_by_the_members_of_its_channel() {
     assert_eq!(asked, checks(&["bob: ReadAgentTools(alice's) yes"]));
     let theirs = world.manager.views(Viewer::new(World::as_user(world.carol))).session(session.id()).await;
     assert!(theirs.is_err(), "carol, who is no member, does not even reach the channel");
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+// --- Approvals ---------------------------------------------------------------
+
+/// A model that answers its first call with `answer`, and no other.
+#[derive(Debug)]
+struct Once(Mutex<Option<caelumora_model::message::Message>>);
+
+#[async_trait]
+impl caelumora_runtime::llm::LLMClient for Once {
+    async fn chat_completion(&self, _: &[caelumora_model::message::Message], _: &[caelumora_model::tool::Tool])
+        -> futures::stream::BoxStream<'static, caelumora_runtime::llm::LLMResult<caelumora_model::message::MessageEvent>>
+    {
+        match self.0.lock().unwrap().take() {
+            Some(answer) => futures::stream::iter([Ok(caelumora_model::message::MessageEvent::Complete(answer))]).boxed(),
+            None => futures::stream::pending().boxed(),
+        }
+    }
+
+    fn profile(&self) -> caelumora_model::context::ModelProfile {
+        Default::default()
+    }
+}
+
+/// Waits until the policy was asked `line`.
+async fn asked_for(world: &World, line: &str) {
+    let line = checks(&[line]).remove(0);
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let names = world.policy.names.lock().unwrap().clone();
+            let asked = world.policy.asked.lock().unwrap().iter()
+                .map(|l| names.iter().fold(l.clone(), |l, (actor, name)| l.replace(&actor.to_string(), name)))
+                .any(|l| l == line);
+            if asked {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }).await.expect("asked");
+}
+
+/// Approving a tool call (issue 14) is for who is responsible for the
+/// agent - its owner and contributors: alice's answer counts, bob's, who
+/// only takes part, is left out. The approver asks in the context each
+/// answer comes with, and of everybody taking part to know whom to wait
+/// for; the view offers it to alice alone.
+#[tokio::test]
+async fn a_tool_call_is_approved_by_who_is_responsible_for_the_agent() {
+    use caelumora_model::actor::ActorEvent;
+    use caelumora_model::approval::ApprovalResponse;
+    use caelumora_model::message::{Message, MessageRole};
+    use caelumora_model::tool::{ToolCall, ToolVisibility};
+
+    let stop = Message {
+        role: MessageRole::Assistant,
+        content: Some("Good bye.".to_string()),
+        tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "stop".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN }],
+        ..Message::new(Classification::general(Confidentiality::Internal))
+    };
+    let model = Arc::new(Once(Mutex::new(Some(stop))));
+    let world = World::with_kinds(|registry| registry.register(ComponentKind::new("once").provides::<dyn caelumora_runtime::llm::LLMClient>(), move |_, _| {
+        let mut facets = ComponentFacets::empty();
+        facets.insert::<dyn caelumora_runtime::llm::LLMClient>(model.clone());
+        Ok(facets)
+    })).await;
+    let stopping = Personality {
+        components: ComponentConfig { component_nodes: vec![
+            ComponentDescriptor::new("model", "once"),
+            ComponentDescriptor::new("stop", caelumora_runtime::tool_impl::stop_tool::STOP_TOOL_KIND),
+        ] },
+        ..world.personality("stopping", None, &[]).await
+    };
+    world.store.update_personality(&World::system(), &stopping).await.unwrap();
+    let helper = world.agent("helper", world.alice, &stopping).await;
+    let session = world.shared_session(&[helper], &[]).await;
+    let main = session.channels()[0].clone();
+    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    let mut watch = main.user_actor(world.alice).expect("she takes part").watch();
+
+    main.user_actor(world.alice).unwrap().send_message("@helper stop".to_string(), None).await.expect("sent");
+    let request = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if let ActorEvent::ApprovalRequested(request) = watch.events.recv().await.expect("the channel runs").event {
+                break request;
+            }
+        }
+    }).await.expect("the call is put up for approval");
+
+    let view = |user| {
+        let world = &world;
+        let session = session.id();
+        let channel = main.id();
+        async move {
+            let view = world.manager.views(Viewer::new(World::as_user(user))).session(session).await.unwrap().channel(channel).await.unwrap();
+            view.members().await.into_iter().find(|m| m.id() == ActorId::Agent(helper)).expect("the agent is a member")
+        }
+    };
+    let (offered, asked) = world.asked(async { (view(world.alice).await.may_approve().await, view(world.bob).await.may_approve().await) }).await;
+    assert_eq!(offered, (true, false), "offered to alice alone");
+    let approving: Vec<&String> = asked.iter().filter(|line| line.contains("ApproveToolCall")).collect();
+    assert_eq!(approving, ["alice: ApproveToolCall(alice's) yes", "bob: ApproveToolCall(alice's) no"]);
+
+    let response = ApprovalResponse { id: request.id, agent_id: helper };
+    let (_, asked) = world.asked(async {
+        main.user_actor(world.bob).unwrap().send_approval(response.clone(), false).await.expect("sent");
+        asked_for(&world, "bob: ApproveToolCall(alice's) no").await;
+        main.user_actor(world.alice).unwrap().send_approval(response.clone(), true).await.expect("sent");
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                // The approver's decision, not the answers shown as given.
+                let envelope = watch.events.recv().await.expect("the channel runs");
+                if !matches!(envelope.context.sender_id, ActorId::Approver(_)) {
+                    continue;
+                }
+                match envelope.event {
+                    ActorEvent::ApprovalGranted(decided) if decided.id == request.id => break,
+                    ActorEvent::ApprovalDenied(decided) if decided.id == request.id => panic!("bob's answer counted"),
+                    _ => {}
+                }
+            }
+        }).await.expect("decided");
+    }).await;
+    let approving: Vec<&String> = asked.iter().filter(|line| line.contains("ApproveToolCall")).collect();
+    assert_eq!(approving, [
+        // bob answers, and is left out.
+        "bob: ApproveToolCall(alice's) no",
+        // alice answers; whom to wait for: her alone.
+        "alice: ApproveToolCall(alice's) yes",
+        "alice: ApproveToolCall(alice's) yes",
+        "bob: ApproveToolCall(alice's) no",
+    ]);
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

@@ -9,7 +9,7 @@ use caelumora_model::approval::{ApprovalId, ApprovalRequest, ApprovalResponse, A
 use caelumora_model::channel::Participant;
 use crate::controller::ChannelController;
 use caelumora_model::event::GlobalEvent;
-use caelumora_model::security::SecurityContext;
+use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityAttributes, SecurityContext};
 use chrono::{DateTime, Duration, Utc};
 use tracing::{info, warn};
 use std::collections::HashMap;
@@ -56,16 +56,44 @@ impl ApproverActor {
         }
     }
 
-    fn get_user_count(&self) -> usize {
+    /// The attributes of `agent`, as stored - never as its request says,
+    /// since the agent makes that itself. `None` if it cannot be read.
+    async fn attributes_of(&self, agent: AgentId) -> Option<SecurityAttributes> {
+        match self.actor_runtime.runtime_manager().controller_manager().agent_controller(agent).await {
+            Ok(controller) => Some(controller.load().security_attributes.clone()),
+            Err(e) => {
+                warn!("ApproverActor cannot read agent {}: {}", agent, e);
+                None
+            }
+        }
+    }
+
+    /// The users taking part who may approve the calls of `agent`
+    /// (`ApproveToolCall`, issue 14), each asked in the context of their own
+    /// actor - the one their answers come with. Nobody while the channel
+    /// does not run or the agent cannot be read.
+    async fn approvers_of(&self, agent: AgentId) -> Vec<ActorId> {
+        let (Some(running), Some(attributes)) = (self.actor_runtime.channel_loop(), self.attributes_of(agent).await) else {
+            return Vec::new();
+        };
         let channel = self.channel.load();
-        channel.participants.iter().filter(|p| matches!(p, Participant::User(_))).count()
+        let security = self.actor_runtime.runtime_manager().security_manager();
+        let mut approvers = Vec::new();
+        for participant in &channel.participants {
+            let Participant::User(user) = participant else { continue };
+            let Some(actor) = running.user_actor(*user) else { continue };
+            if security.may_approve(actor.security_context(), &attributes, &channel.security_attributes).await {
+                approvers.push(ActorId::User(*user));
+            }
+        }
+        approvers
     }
 
     /// Follows the channel's participants (issue 46), which its
     /// `ChannelController` has already changed when the event arrives: an
     /// agent that left takes its pending approvals with it - they are
     /// answered as denied, so that nobody keeps waiting for them - and every
-    /// join or leave may decide a pending approval, since the number of users
+    /// join or leave may decide a pending approval, since who may approve
     /// changed.
     async fn handle_global_event(&self, event:&GlobalEvent, output: &dyn EventSender) {
         match event {
@@ -105,10 +133,10 @@ impl ApproverActor {
                 self.handle_request(req, env.context, env.security, output).await
             }
             ActorEvent::ApprovalGranted(res) => {
-                self.handle_response(env.context.sender_id, res, ApprovalStatus::Approved, output).await
+                self.handle_response(env.context.sender_id, &env.security, res, ApprovalStatus::Approved, output).await
             }
             ActorEvent::ApprovalDenied(res) => {
-                self.handle_response(env.context.sender_id, res, ApprovalStatus::Denied, output).await
+                self.handle_response(env.context.sender_id, &env.security, res, ApprovalStatus::Denied, output).await
             }
             ActorEvent::ApprovalRequestWithdrawn { id } => {
                 self.handle_withdrawal(env.context.sender_id, id, output).await
@@ -119,20 +147,28 @@ impl ApproverActor {
 
     /// Takes `request` up and asks the users. A request it already holds -
     /// asked again by an agent that resumed its turn (issue 172) - is only
-    /// announced again: the answers given so far and the timeout stay.
+    /// announced again: the answers given so far and the timeout stay. One
+    /// that nobody taking part may approve is denied at once, not put to
+    /// anyone (issue 14).
     async fn handle_request(&self, request: ApprovalRequest, context:EventContext, security:SecurityContext, output: &dyn EventSender) -> Result<()> {
         {
             let mut pending = self.pending.lock().await;
-            if !pending.contains_key(&request.id) {
-                pending.insert(request.id, PendingApproval {
-                    id: request.id,
-                    agent_id: request.agent_id,
-                    strategy: self.approver.strategy,
-                    responses: HashMap::new(),
-                    timeout: Utc::now() + Duration::minutes(10), // Default timeout 10 mins
-                    security_context: security.clone(),
-                    event_context: context.clone(),
-                });
+            let approval = pending.entry(request.id).or_insert_with(|| PendingApproval {
+                id: request.id,
+                agent_id: request.agent_id,
+                strategy: self.approver.strategy,
+                responses: HashMap::new(),
+                timeout: Utc::now() + Duration::minutes(10), // Default timeout 10 mins
+                security_context: security.clone(),
+                event_context: context.clone(),
+            });
+            let approvers = self.approvers_of(approval.agent_id).await;
+            if approvers.is_empty() {
+                info!("ApproverActor: nobody in channel {} may approve the calls of agent {}; denied", self.channel.id(), approval.agent_id);
+                if let Some(p) = pending.remove(&request.id) {
+                    self.send_decision(p, ApprovalStatus::Denied, output).await?;
+                }
+                return Ok(());
             }
         }
 
@@ -146,25 +182,29 @@ impl ApproverActor {
         Ok(())
     }
 
-    async fn handle_response(&self, user_id: ActorId, response: ApprovalResponse, status: ApprovalStatus, output: &dyn EventSender) -> Result<()> {
+    /// Counts the answer of `user_id`, given in `security`, if they may
+    /// approve the calls of the agent that asked (`ApproveToolCall`, issue
+    /// 14); an answer of anyone else is left out. Only who may approve is
+    /// asked, so such an answer comes from a client going round what it was
+    /// shown, and is not told.
+    async fn handle_response(&self, user_id: ActorId, security: &SecurityContext, response: ApprovalResponse, status: ApprovalStatus, output: &dyn EventSender) -> Result<()> {
         let mut pending = self.pending.lock().await;
-        let mut to_remove = None;
-
-        if let Some(p) = pending.get_mut(&response.id) {
-            p.responses.insert(user_id, status);
-            
-            let user_count = self.get_user_count();
-            if let Some(decision) = self.check_strategy(p, user_count) {
-                to_remove = Some((response.id, decision));
-            }
+        let Some(p) = pending.get_mut(&response.id) else { return Ok(()) };
+        let Some(attributes) = self.attributes_of(p.agent_id).await else { return Ok(()) };
+        let channel = self.channel.load();
+        let action = ActionType::ApproveToolCall { agent: &attributes, channel: &channel.security_attributes };
+        if self.actor_runtime.runtime_manager().security_manager().require(security, action, || ()).await.is_err() {
+            warn!("ApproverActor: {} may not approve the calls of agent {}; its answer is left out", user_id, p.agent_id);
+            return Ok(());
         }
+        p.responses.insert(user_id, status);
 
-        if let Some((id, decision)) = to_remove {
-            if let Some(p) = pending.remove(&id) {
+        let approvers = self.approvers_of(p.agent_id).await;
+        if let Some(decision) = Self::check_strategy(p, &approvers) {
+            if let Some(p) = pending.remove(&response.id) {
                 self.send_decision(p, decision, output).await?;
             }
         }
-
         Ok(())
     }
 
@@ -189,13 +229,10 @@ impl ApproverActor {
         let mut pending = self.pending.lock().await;
         let mut to_remove = Vec::new();
 
-        {
-            let user_count = self.get_user_count();
-
-            for (id, p) in pending.iter() {
-                if let Some(decision) = self.check_strategy(p, user_count) {
-                    to_remove.push((*id, decision));
-                }
+        for (id, p) in pending.iter() {
+            let approvers = self.approvers_of(p.agent_id).await;
+            if let Some(decision) = Self::check_strategy(p, &approvers) {
+                to_remove.push((*id, decision));
             }
         }
 
@@ -208,10 +245,19 @@ impl ApproverActor {
         Ok(())
     }
 
-    fn check_strategy(&self, p: &PendingApproval, user_count: usize) -> Option<ApprovalStatus> {
-        let approved_count = p.responses.values().filter(|&&s| s == ApprovalStatus::Approved).count();
-        let denied_count = p.responses.values().filter(|&&s| s == ApprovalStatus::Denied).count();
-        let total_responses = p.responses.len();
+    /// The decision on `p` its strategy reaches, counting the answers of
+    /// `approvers` - those taking part who may approve, now - and only
+    /// theirs: who left or may no longer approve does not count, either
+    /// way. Without anyone who may approve, it is denied.
+    fn check_strategy(p: &PendingApproval, approvers: &[ActorId]) -> Option<ApprovalStatus> {
+        let user_count = approvers.len();
+        if user_count == 0 {
+            return Some(ApprovalStatus::Denied);
+        }
+        let counted = || p.responses.iter().filter(|(id, _)| approvers.contains(id)).map(|(_, status)| *status);
+        let approved_count = counted().filter(|&s| s == ApprovalStatus::Approved).count();
+        let denied_count = counted().filter(|&s| s == ApprovalStatus::Denied).count();
+        let total_responses = counted().count();
 
         match p.strategy {
             ApprovalStrategy::Any => {
@@ -385,480 +431,249 @@ impl Actor for ApproverActor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::name::Name;
+    use crate::channel::ChannelLoop;
     use crate::command::CommandExecutor;
-    use crate::runtime::ChannelRuntime;
-    use caelumora_model::command::default_commands;
-    use crate::runtime::RuntimeManager;
+    use crate::runtime::{ChannelRuntime, RuntimeManager};
     use crate::transport_impl::{InMemoryEventReceiver, InMemoryEventSender};
-    use caelumora_model::agent::AgentId;
-    use caelumora_model::approval::{Approver, ApproverId};
+    use caelumora_model::agent::{Agent, Personality, PersonalityId};
+    use caelumora_model::approval::ApproverId;
     use caelumora_model::channel::{Channel, ChannelId, Participant};
+    use caelumora_model::command::default_commands;
+    use caelumora_model::name::{Name, ScopedName};
     use caelumora_model::secret::SecretManager;
-    use caelumora_model::security::DummySecurityManager;
+    use caelumora_model::security::{OwnershipSecurityManager, SecurityManager};
     use caelumora_model::session::SessionId;
     use caelumora_model::store::EntityStore;
+    use caelumora_model::store_impl::memory::MemoryStore;
     use caelumora_model::tool::ToolCall;
     use caelumora_model::user::{User, UserId};
     use serde_json::json;
-    use std::sync::Arc;
+    use std::any::Any;
     use tokio::sync::mpsc;
-    use uuid::Uuid;
 
-    fn test_secret_manager() -> Arc<SecretManager> {
-        Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())))
+    /// The approver of a channel of users, under the ownership policy, run
+    /// on its own: the channel is built, so that its users have their
+    /// actors, but not run. The agent whose calls are approved is stored,
+    /// not taking part - the approver only reads its attributes.
+    struct Approving {
+        channel: Arc<ChannelLoop>,
+        approver: Arc<ApproverActor>,
+        runtime: Arc<RuntimeManager>,
+        agent: AgentId,
+        users: Vec<UserId>,
+        input: mpsc::Sender<Envelope>,
+        output: mpsc::Receiver<Envelope>,
     }
 
-    #[tokio::test]
-    async fn test_approval_actor_any_strategy() {
-        let store = Arc::new(caelumora_model::store_impl::memory::MemoryStore::new());
-        let runtime_manager = Arc::new(
-            RuntimeManager::new(store.clone(), store.clone(), test_secret_manager(), Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap(),
-        );
-
-        let agent_id = AgentId::new();
-        let session_id = SessionId::new();
-        let channel_id = ChannelId::new();
-        let approval_id = ApprovalId::new();
-
-        let user1_id = UserId(Uuid::new_v4());
-        let user1 = User {
-            id: user1_id,
-            username: "user1".to_string(),
-            email: "user1@example.com".to_string(),
-            roles: vec![],
+    /// `Approving` with `strategy`, `users` users - the first owning the
+    /// channel - and an agent of `agent`, given the users.
+    async fn approving(strategy: ApprovalStrategy, users: usize, agent: impl FnOnce(&[UserId]) -> SecurityAttributes) -> Approving {
+        let store = Arc::new(MemoryStore::new());
+        let system = SecurityContext::system();
+        let mut ids = Vec::new();
+        for n in 0..users {
+            let user = User { id: UserId::new(), username: format!("user{n}"), email: String::new(), roles: vec![], deleted: None };
+            store.create_user(&system, &user).await.unwrap();
+            ids.push(user.id);
+        }
+        let personality = Personality {
+            description: String::new(),
+            introduction: None,
+            id: PersonalityId::new(),
+            name: ScopedName::new("plain", Default::default()).unwrap(),
+            kind: Default::default(),
+            roles: None,
+            components: Default::default(),
+            security_attributes: Default::default(),
+            reasoning_visibility: Default::default(),
             deleted: None,
         };
+        store.create_personality(&system, &personality).await.unwrap();
+        let mut stored = Agent::new(ScopedName::new("helper", Default::default()).unwrap(), &personality, ActorId::System);
+        stored.security_attributes = agent(&ids);
+        store.create_agent(&system, &stored).await.unwrap();
 
-        let approver = Approver {
-            id: ApproverId(Uuid::new_v4()),
-            strategy: ApprovalStrategy::Any,
-        };
-        let approver_id = approver.id;
-
+        let security: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
+        let secrets = Arc::new(SecretManager::new(vec![], security.clone()));
+        let registry = crate::component::ComponentRegistry::built_in(store.clone());
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, security, default_commands(), Default::default(), registry).unwrap());
+        let approver = Approver { id: ApproverId::new(), strategy };
+        let mut participants: Vec<Participant> = ids.iter().map(|id| Participant::User(*id)).collect();
+        participants.push(Participant::Approver(approver.clone()));
         let channel = Channel {
-            id: channel_id,
-            session_id,
+            id: ChannelId::new(),
+            session_id: SessionId::new(),
             name: Name::new("test").unwrap(),
             components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
             classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
             history_limits: Vec::new(),
-            participants: vec![
-                Participant::User(user1.id),
-                Participant::Approver(approver.clone()),
-            ],
-            security_attributes: caelumora_model::security::SecurityAttributes::default(),
+            participants,
+            security_attributes: SecurityAttributes::owned_by(ActorId::User(ids[0])),
             deleted: None,
             former: Vec::new(),
         };
+        store.create_channel(&system, &channel).await.unwrap();
+        let executor = CommandExecutor::empty(runtime.security_manager());
+        let channel = ChannelLoop::new(channel, ChannelRuntime::new(runtime.clone(), Arc::new(executor))).await.unwrap();
+        let actor: Arc<dyn Any + Send + Sync> = channel.actor_by_id(ActorId::Approver(approver.id)).unwrap();
+        let approver = Arc::downcast::<ApproverActor>(actor).unwrap();
 
-        store.create_channel(&caelumora_model::security::SecurityContext::system(), &channel).await.unwrap();
-        let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), store.clone()));
-        let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandExecutor::empty(runtime_manager.security_manager())))
-            .new_actor_runtime(ActorId::Approver(approver.id), session_id, channel_id);
-        let actor = ApproverActor::new(channel_controller.clone(), approver, actor_runtime);
-        let (tx, rx) = mpsc::channel(100);
-        let (output_tx, mut output_rx) = mpsc::channel(100);
-
-        let actor_arc = Arc::new(actor);
-        let actor_clone = actor_arc.clone();
+        let (input, rx) = mpsc::channel(100);
+        let (tx, output) = mpsc::channel(100);
+        let running = approver.clone();
         tokio::spawn(async move {
-            let a: &dyn Actor = actor_clone.as_ref();
-            let receiver = Box::new(InMemoryEventReceiver::new(rx));
-            let sender = Box::new(InMemoryEventSender::new(output_tx));
-            a.run(receiver, sender).await.unwrap();
+            running.run(Box::new(InMemoryEventReceiver::new(rx)), Box::new(InMemoryEventSender::new(tx))).await.unwrap();
         });
+        Approving { channel, approver, runtime, agent: stored.id, users: ids, input, output }
+    }
 
-        let request = ApprovalRequest {
-            id: approval_id,
-            session_id,
-            channel_id,
-            agent_id,
-            tool_call: ToolCall {
-                id: Some("call_1".to_string()),
-                function_name: "test_tool".to_string(),
-                arguments: json!("{}".to_string()),
-                visibility: Default::default(),
-            },
-            description: "test".to_string(),
-        };
-
-        let context = EventContext::new(session_id, channel_id, ActorId::Agent(agent_id), "Agent".to_string());
-        let envelope = Envelope::new(caelumora_model::security::SecurityContext::default(), context, ActorEvent::ApprovalRequested(request));
-
-        tx.send(envelope).await.unwrap();
-
-        // Should receive forward request
-        let forward_env = output_rx.recv().await.unwrap();
-        let new_approval_id = if let ActorEvent::ApprovalRequested(req) = forward_env.event {
-            assert_eq!(req.id, approval_id, "one id from the agent's request to the decision");
-            req.id
-        } else {
-            panic!("Expected ApprovalRequested");
-        };
-
-        // Send approval from user 1
-        let user1_actor_id = ActorId::User(user1_id);
-        let response = ApprovalResponse {
-            id: new_approval_id,
-            agent_id,
-        };
-        let context1 = EventContext::new(session_id, channel_id, user1_actor_id, "User 1".to_string());
-        let env1 = Envelope::new(caelumora_model::security::SecurityContext::default(), context1, ActorEvent::ApprovalGranted(response));
-        tx.send(env1).await.unwrap();
-
-        // Decision reached (Any strategy)
-        let decision_env: Envelope = output_rx.recv().await.unwrap();
-        if let ActorEvent::ApprovalGranted(res) = decision_env.event {
-            assert_eq!(res.id, approval_id);
-            assert_eq!(res.agent_id, agent_id);
-        } else {
-            panic!("Expected ApprovalGranted, got {:?}", decision_env.event);
+    impl Approving {
+        fn request(&self) -> ApprovalRequest {
+            ApprovalRequest {
+                id: ApprovalId::new(),
+                session_id: self.channel.session_id(),
+                channel_id: self.channel.id(),
+                agent_id: self.agent,
+                tool_call: ToolCall { id: Some("call_1".to_string()), function_name: "test_tool".to_string(), arguments: json!({}), visibility: Default::default() },
+                description: "test".to_string(),
+            }
         }
+
+        /// `event` from `actor`, in its own context, as its actor sends it.
+        fn from(&self, actor: ActorId, event: ActorEvent) -> Envelope {
+            let (session, channel) = (self.channel.session_id(), self.channel.id());
+            Envelope::new(SecurityContext::new(actor, session, channel), EventContext::new(session, channel, actor, actor.to_string()), event)
+        }
+
+        /// The agent asks for `request`, and it is put to the users.
+        async fn ask(&mut self, request: &ApprovalRequest) {
+            self.input.send(self.from(ActorId::Agent(self.agent), ActorEvent::ApprovalRequested(request.clone()))).await.unwrap();
+            let asked = self.next().await;
+            assert!(matches!(asked.event, ActorEvent::ApprovalRequested(ref r) if r.id == request.id), "put to the users: {:?}", asked.event);
+            assert_eq!(asked.context.sender_id, ActorId::Approver(self.approver.approver.id));
+        }
+
+        /// The `n`th user answers `request`.
+        async fn answer(&self, n: usize, request: &ApprovalRequest, approved: bool) {
+            let response = ApprovalResponse { id: request.id, agent_id: self.agent };
+            let event = if approved { ActorEvent::ApprovalGranted(response) } else { ActorEvent::ApprovalDenied(response) };
+            self.input.send(self.from(ActorId::User(self.users[n]), event)).await.unwrap();
+        }
+
+        async fn next(&mut self) -> Envelope {
+            tokio::time::timeout(std::time::Duration::from_secs(2), self.output.recv()).await.expect("sent in time").expect("still running")
+        }
+
+        async fn nothing(&mut self) {
+            assert!(tokio::time::timeout(std::time::Duration::from_millis(100), self.output.recv()).await.is_err(), "nothing is decided");
+        }
+    }
+
+    /// The agent's attributes: owned by the first user, the others contributors.
+    fn shared(users: &[UserId]) -> SecurityAttributes {
+        SecurityAttributes { owner_id: ActorId::User(users[0]), contributors: users[1..].iter().map(|u| ActorId::User(*u)).collect() }
+    }
+
+    #[tokio::test]
+    async fn one_approval_of_who_may_decides_any() {
+        let mut approving = approving(ApprovalStrategy::Any, 1, shared).await;
+        let request = approving.request();
+        approving.ask(&request).await;
+        approving.answer(0, &request, true).await;
+        let decided = approving.next().await;
+        assert!(matches!(decided.event, ActorEvent::ApprovalGranted(ref r) if r.id == request.id && r.agent_id == approving.agent), "one id from the agent's request to the decision: {:?}", decided.event);
 
         // A request withdrawn (issue 148) - only by the agent that asked -
         // is forgotten, and the users are told.
-        let withdrawn_id = ApprovalId::new();
-        let request = ApprovalRequest { id: withdrawn_id, ..request_of(agent_id, session_id, channel_id) };
-        let agent_context = EventContext::new(session_id, channel_id, ActorId::Agent(agent_id), "Agent".to_string());
-        tx.send(Envelope::new(Default::default(), agent_context.clone(), ActorEvent::ApprovalRequested(request))).await.unwrap();
-        assert!(matches!(output_rx.recv().await.unwrap().event, ActorEvent::ApprovalRequested(_)));
-        let user_context = EventContext::new(session_id, channel_id, user1_actor_id, "User 1".to_string());
-        tx.send(Envelope::new(Default::default(), user_context.clone(), ActorEvent::ApprovalRequestWithdrawn { id: withdrawn_id })).await.unwrap();
-        tx.send(Envelope::new(Default::default(), agent_context, ActorEvent::ApprovalRequestWithdrawn { id: withdrawn_id })).await.unwrap();
-        let told = output_rx.recv().await.unwrap();
-        assert!(matches!(told.event, ActorEvent::ApprovalRequestWithdrawn { id } if id == withdrawn_id), "not the user's withdrawal: {:?}", told.event);
-        assert_eq!(told.context.sender_id, ActorId::Approver(approver_id));
-        tx.send(Envelope::new(Default::default(), user_context, ActorEvent::ApprovalGranted(ApprovalResponse { id: withdrawn_id, agent_id }))).await.unwrap();
-        assert!(tokio::time::timeout(std::time::Duration::from_millis(100), output_rx.recv()).await.is_err(), "nothing is decided any longer");
+        let withdrawn = approving.request();
+        approving.ask(&withdrawn).await;
+        let user = ActorId::User(approving.users[0]);
+        approving.input.send(approving.from(user, ActorEvent::ApprovalRequestWithdrawn { id: withdrawn.id })).await.unwrap();
+        approving.input.send(approving.from(ActorId::Agent(approving.agent), ActorEvent::ApprovalRequestWithdrawn { id: withdrawn.id })).await.unwrap();
+        let told = approving.next().await;
+        assert!(matches!(told.event, ActorEvent::ApprovalRequestWithdrawn { id } if id == withdrawn.id), "not the user's withdrawal: {:?}", told.event);
+        approving.answer(0, &withdrawn, true).await;
+        approving.nothing().await;
+    }
+
+    #[tokio::test]
+    async fn the_answer_of_who_may_not_approve_is_left_out_and_not_waited_for() {
+        // Two users, only the first - the agent's owner - may approve.
+        let mut approving = approving(ApprovalStrategy::All, 2, |users| SecurityAttributes::owned_by(ActorId::User(users[0]))).await;
+        let request = approving.request();
+        approving.ask(&request).await;
+
+        approving.answer(1, &request, false).await;
+        approving.nothing().await;
+        approving.answer(0, &request, true).await;
+        let decided = approving.next().await;
+        assert!(matches!(decided.event, ActorEvent::ApprovalGranted(_)), "all who may approve did: {:?}", decided.event);
+    }
+
+    #[tokio::test]
+    async fn a_request_nobody_here_may_approve_is_denied_at_once() {
+        // The agent belongs to someone not taking part.
+        let mut approving = approving(ApprovalStrategy::All, 1, |_| SecurityAttributes::owned_by(ActorId::User(UserId::new()))).await;
+        let request = approving.request();
+        approving.input.send(approving.from(ActorId::Agent(approving.agent), ActorEvent::ApprovalRequested(request.clone()))).await.unwrap();
+        let decided = approving.next().await;
+        assert!(matches!(decided.event, ActorEvent::ApprovalDenied(ref r) if r.id == request.id), "denied, not put to anyone: {:?}", decided.event);
+        assert!(approving.approver.pending.lock().await.is_empty(), "nothing pending");
+    }
+
+    #[tokio::test]
+    async fn the_calls_of_an_agent_of_the_system_are_approved_by_whose_channel_it_is() {
+        let mut approving = approving(ApprovalStrategy::Any, 2, |_| SecurityAttributes::owned_by(ActorId::System)).await;
+        let request = approving.request();
+        approving.ask(&request).await;
+        approving.answer(1, &request, true).await;
+        approving.nothing().await;
+        approving.answer(0, &request, true).await;
+        assert!(matches!(approving.next().await.event, ActorEvent::ApprovalGranted(_)), "the channel's owner approved");
     }
 
     #[tokio::test]
     async fn a_request_asked_again_keeps_the_answers_given_so_far() {
-        let store = Arc::new(caelumora_model::store_impl::memory::MemoryStore::new());
-        let runtime_manager = Arc::new(
-            RuntimeManager::new(store.clone(), store.clone(), test_secret_manager(), Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap(),
-        );
-        let (agent_id, session_id, channel_id) = (AgentId::new(), SessionId::new(), ChannelId::new());
-        let (alice, bob) = (UserId(Uuid::new_v4()), UserId(Uuid::new_v4()));
         // Both have to approve.
-        let approver = Approver { id: ApproverId(Uuid::new_v4()), strategy: ApprovalStrategy::All };
-        let channel = Channel {
-            id: channel_id,
-            session_id,
-            name: Name::new("test").unwrap(),
-            components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
-            classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
-            history_limits: Vec::new(),
-            participants: vec![Participant::User(alice), Participant::User(bob), Participant::Approver(approver.clone())],
-            security_attributes: caelumora_model::security::SecurityAttributes::default(),
-            deleted: None,
-            former: Vec::new(),
-        };
-        let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), store.clone()));
-        let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandExecutor::empty(runtime_manager.security_manager())))
-            .new_actor_runtime(ActorId::Approver(approver.id), session_id, channel_id);
-        let actor = Arc::new(ApproverActor::new(channel_controller, approver, actor_runtime));
-        let (tx, rx) = mpsc::channel(100);
-        let (output_tx, mut output_rx) = mpsc::channel(100);
-        tokio::spawn(async move {
-            let receiver = Box::new(InMemoryEventReceiver::new(rx));
-            let sender = Box::new(InMemoryEventSender::new(output_tx));
-            actor.run(receiver, sender).await.unwrap();
-        });
-
-        let request = request_of(agent_id, session_id, channel_id);
-        let agent_context = EventContext::new(session_id, channel_id, ActorId::Agent(agent_id), "Agent".to_string());
-        let answer = |user: UserId| Envelope::new(
-            Default::default(),
-            EventContext::new(session_id, channel_id, ActorId::User(user), "User".to_string()),
-            ActorEvent::ApprovalGranted(ApprovalResponse { id: request.id, agent_id }),
-        );
-        tx.send(Envelope::new(Default::default(), agent_context.clone(), ActorEvent::ApprovalRequested(request.clone()))).await.unwrap();
-        assert!(matches!(output_rx.recv().await.unwrap().event, ActorEvent::ApprovalRequested(_)));
-        tx.send(answer(alice)).await.unwrap();
+        let mut approving = approving(ApprovalStrategy::All, 2, shared).await;
+        let request = approving.request();
+        approving.ask(&request).await;
+        approving.answer(0, &request, true).await;
 
         // The agent resumed its turn and asks again (issue 172): the users
-        // are asked again, alice's answer stays.
-        tx.send(Envelope::new(Default::default(), agent_context, ActorEvent::ApprovalRequested(request.clone()))).await.unwrap();
-        assert!(matches!(output_rx.recv().await.unwrap().event, ActorEvent::ApprovalRequested(ref r) if r.id == request.id), "announced again");
-        tx.send(answer(bob)).await.unwrap();
-        let decided = output_rx.recv().await.unwrap();
+        // are asked again, the first answer stays.
+        approving.ask(&request).await;
+        approving.answer(1, &request, true).await;
+        let decided = approving.next().await;
         assert!(matches!(decided.event, ActorEvent::ApprovalGranted(ref r) if r.id == request.id), "both approved: {:?}", decided.event);
     }
 
-    fn request_of(agent_id: AgentId, session_id: SessionId, channel_id: ChannelId) -> ApprovalRequest {
-        ApprovalRequest {
-            id: ApprovalId::new(),
-            session_id,
-            channel_id,
-            agent_id,
-            tool_call: ToolCall { id: Some("call_2".to_string()), function_name: "test_tool".to_string(), arguments: json!({}), visibility: Default::default() },
-            description: "test".to_string(),
-        }
-    }
-
     #[tokio::test]
-    async fn test_approval_actor_dynamic_membership() {
-        let store = Arc::new(caelumora_model::store_impl::memory::MemoryStore::new());
-        let runtime_manager = Arc::new(
-            RuntimeManager::new(store.clone(), store.clone(), test_secret_manager(), Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap(),
-        );
+    async fn a_user_who_leaves_is_no_longer_waited_for() {
+        let mut approving = approving(ApprovalStrategy::All, 2, shared).await;
+        let request = approving.request();
+        approving.ask(&request).await;
+        approving.answer(0, &request, true).await;
+        approving.nothing().await;
 
-        let session_id = SessionId::new();
-        let channel_id = ChannelId::new();
-
-        let approver = Approver {
-            id: ApproverId(Uuid::new_v4()),
-            strategy: ApprovalStrategy::All,
-        };
-
-        let channel = Channel {
-            id: channel_id,
-            session_id,
-            name: Name::new("test").unwrap(),
-            components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
-            classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
-            history_limits: Vec::new(),
-            participants: vec![
-                Participant::Approver(approver.clone()),
-            ],
-            security_attributes: caelumora_model::security::SecurityAttributes::default(),
-            deleted: None,
-            former: Vec::new(),
-        };
-
-        store.create_channel(&caelumora_model::security::SecurityContext::system(), &channel).await.unwrap();
-        let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), store.clone()));
-        let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandExecutor::empty(runtime_manager.security_manager())))
-            .new_actor_runtime(ActorId::Approver(approver.id), session_id, channel_id);
-        let actor = ApproverActor::new(channel_controller.clone(), approver, actor_runtime);
-        let (tx, rx) = mpsc::channel(100);
-        let (output_tx, mut output_rx) = mpsc::channel(100);
-
-        let actor_arc = Arc::new(actor);
-        let actor_clone = actor_arc.clone();
-        tokio::spawn(async move {
-            let a: &dyn Actor = actor_clone.as_ref();
-            let receiver = Box::new(InMemoryEventReceiver::new(rx));
-            let sender = Box::new(InMemoryEventSender::new(output_tx));
-            a.run(receiver, sender).await.unwrap();
-        });
-
-        // Give some time for the actor to start and subscribe
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-        // 1. Join user1
-        let user1_id = UserId(Uuid::new_v4());
-        let user1 = User {
-            id: user1_id,
-            username: "user1".to_string(),
-            email: "user1@example.com".to_string(),
-            roles: vec![],
-            deleted: None,
-        };
-        store.create_user(&caelumora_model::security::SecurityContext::default(), &user1).await.unwrap();
-
-        // Joining goes through the channel's controller, which announces it
-        // (issue 46).
-        channel_controller.add_participant(&caelumora_model::security::SecurityContext::system(), Participant::User(user1.id), None).await.unwrap();
-
-        // Give some time for the event to be processed
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-        // 2. Request approval
-        let agent_id = AgentId::new();
-        let approval_id = ApprovalId::new();
-        let request = ApprovalRequest {
-            id: approval_id,
-            session_id,
-            channel_id,
-            agent_id,
-            tool_call: ToolCall {
-                id: Some("call_1".to_string()),
-                function_name: "test_tool".to_string(),
-                arguments: json!("{}".to_string()),
-                visibility: Default::default(),
-            },
-            description: "test".to_string(),
-        };
-        let req_env = Envelope::new(
-            caelumora_model::security::SecurityContext::default(),
-            EventContext::new(session_id, channel_id, ActorId::Agent(agent_id), "Agent".to_string()),
-            ActorEvent::ApprovalRequested(request)
-        );
-        tx.send(req_env).await.unwrap();
-
-        let forward_env = output_rx.recv().await.unwrap();
-        let new_approval_id = if let ActorEvent::ApprovalRequested(req) = forward_env.event {
-            req.id
-        } else {
-            panic!("Expected ApprovalRequested");
-        };
-
-        // 3. User1 approves
-        let response = ApprovalResponse { id: new_approval_id, agent_id };
-        let context1 = EventContext::new(session_id, channel_id, ActorId::User(user1_id), "User 1".to_string());
-        let env1 = Envelope::new(caelumora_model::security::SecurityContext::default(), context1, ActorEvent::ApprovalGranted(response));
-        tx.send(env1).await.unwrap();
-
-        // 4. Decision reached (All strategy, user count is 1)
-        let decision_env = output_rx.recv().await.unwrap();
-        if let ActorEvent::ApprovalGranted(res) = decision_env.event {
-            assert_eq!(res.id, approval_id);
-        } else {
-            panic!("Expected ApprovalGranted");
-        }
-    }
-
-    #[tokio::test]
-    async fn test_approval_actor_leave_decision() {
-        let store = Arc::new(caelumora_model::store_impl::memory::MemoryStore::new());
-        let runtime_manager = Arc::new(
-            RuntimeManager::new(store.clone(), store.clone(), test_secret_manager(), Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap(),
-        );
-
-        let session_id = SessionId::new();
-        let channel_id = ChannelId::new();
-
-        let approver = Approver {
-            id: ApproverId(Uuid::new_v4()),
-            strategy: ApprovalStrategy::All,
-        };
-
-        let user1_id = UserId(Uuid::new_v4());
-        let user2_id = UserId(Uuid::new_v4());
-
-        let user1 = User { id: user1_id, username: "u1".to_string(), email: "".to_string(), roles: vec![], deleted: None };
-        let user2 = User { id: user2_id, username: "u2".to_string(), email: "".to_string(), roles: vec![], deleted: None };
-
-        let channel = Channel {
-            id: channel_id,
-            session_id,
-            name: Name::new("test").unwrap(),
-            components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
-            classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
-            history_limits: Vec::new(),
-            participants: vec![
-                Participant::Approver(approver.clone()),
-                Participant::User(user1.id),
-                Participant::User(user2.id),
-            ],
-            security_attributes: caelumora_model::security::SecurityAttributes::default(),
-            deleted: None,
-            former: Vec::new(),
-        };
-
-        store.create_channel(&caelumora_model::security::SecurityContext::system(), &channel).await.unwrap();
-        let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), store.clone()));
-        let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandExecutor::empty(runtime_manager.security_manager())))
-            .new_actor_runtime(ActorId::Approver(approver.id), session_id, channel_id);
-        let actor = ApproverActor::new(channel_controller.clone(), approver, actor_runtime);
-        let (tx, rx) = mpsc::channel(100);
-        let (output_tx, mut output_rx) = mpsc::channel(100);
-
-        let actor_arc = Arc::new(actor);
-        let actor_clone = actor_arc.clone();
-        tokio::spawn(async move {
-            let a: &dyn Actor = actor_clone.as_ref();
-            let receiver = Box::new(InMemoryEventReceiver::new(rx));
-            let sender = Box::new(InMemoryEventSender::new(output_tx));
-            a.run(receiver, sender).await.unwrap();
-        });
-
-        // 1. Request approval
-        let agent_id = AgentId::new();
-        let approval_id = ApprovalId::new();
-        let request = ApprovalRequest {
-            id: approval_id,
-            session_id,
-            channel_id,
-            agent_id,
-            tool_call: ToolCall { id: None, function_name: "f".to_string(), arguments: json!("".to_string()), visibility: Default::default() },
-            description: "test".to_string(),
-        };
-        tx.send(Envelope::new(Default::default(), EventContext::new(session_id, channel_id, ActorId::Agent(agent_id), "Agent".to_string()), ActorEvent::ApprovalRequested(request))).await.unwrap();
-
-        let forward_env = output_rx.recv().await.unwrap();
-        let new_approval_id = if let ActorEvent::ApprovalRequested(req) = forward_env.event { req.id } else { panic!() };
-
-        // 2. User 1 approves
-        tx.send(Envelope::new(Default::default(), EventContext::new(session_id, channel_id, ActorId::User(user1_id), "u1".to_string()), ActorEvent::ApprovalGranted(ApprovalResponse { id: new_approval_id, agent_id }))).await.unwrap();
-
-        // 3. User 2 leaves
-        channel_controller.remove_participant(&caelumora_model::security::SecurityContext::system(), ActorId::User(user2_id)).await.unwrap();
-
-        // Give some time for the event to be processed
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-        // 4. Decision should be reached now
-        let decision_env = output_rx.recv().await.unwrap();
-        if let ActorEvent::ApprovalGranted(res) = decision_env.event {
-            assert_eq!(res.id, approval_id);
-        } else {
-            panic!("Expected ApprovalGranted, got {:?}", decision_env.event);
-        }
+        approving.channel.remove_participant(&SecurityContext::system(), ActorId::User(approving.users[1])).await.unwrap();
+        let decided = approving.next().await;
+        assert!(matches!(decided.event, ActorEvent::ApprovalGranted(ref r) if r.id == request.id), "all who are left approved: {:?}", decided.event);
     }
 
     #[tokio::test]
     async fn an_agent_that_leaves_takes_its_pending_approvals_with_it() {
-        let store = Arc::new(caelumora_model::store_impl::memory::MemoryStore::new());
-        let runtime_manager = Arc::new(
-            RuntimeManager::new(store.clone(), store.clone(), test_secret_manager(), Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap(),
-        );
-        let session_id = SessionId::new();
-        let channel_id = ChannelId::new();
-        let approver = Approver { id: ApproverId(Uuid::new_v4()), strategy: ApprovalStrategy::All };
-        let user = User { id: UserId(Uuid::new_v4()), username: "u1".to_string(), email: "".to_string(), roles: vec![], deleted: None };
-        let channel = Channel {
-            id: channel_id,
-            session_id,
-            name: Name::new("test").unwrap(),
-            components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
-            classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
-            history_limits: Vec::new(),
-            participants: vec![Participant::Approver(approver.clone()), Participant::User(user.id)],
-            security_attributes: caelumora_model::security::SecurityAttributes::default(),
-            deleted: None,
-            former: Vec::new(),
-        };
-        store.create_channel(&caelumora_model::security::SecurityContext::system(), &channel).await.unwrap();
-        let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), store.clone()));
-        let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandExecutor::empty(runtime_manager.security_manager())))
-            .new_actor_runtime(ActorId::Approver(approver.id), session_id, channel_id);
-        let actor = Arc::new(ApproverActor::new(channel_controller, approver, actor_runtime));
-        let (tx, rx) = mpsc::channel(100);
-        let (output_tx, mut output_rx) = mpsc::channel(100);
-        let running = actor.clone();
-        tokio::spawn(async move {
-            let a: &dyn Actor = running.as_ref();
-            a.run(Box::new(InMemoryEventReceiver::new(rx)), Box::new(InMemoryEventSender::new(output_tx))).await.unwrap();
-        });
-
-        let agent_id = AgentId::new();
-        let approval_id = ApprovalId::new();
-        let request = ApprovalRequest {
-            id: approval_id,
-            session_id,
-            channel_id,
-            agent_id,
-            tool_call: ToolCall { id: None, function_name: "f".to_string(), arguments: json!("".to_string()), visibility: Default::default() },
-            description: "test".to_string(),
-        };
-        tx.send(Envelope::new(Default::default(), EventContext::new(session_id, channel_id, ActorId::Agent(agent_id), "Agent".to_string()), ActorEvent::ApprovalRequested(request))).await.unwrap();
-        output_rx.recv().await.expect("the request is put to the users");
+        let mut approving = approving(ApprovalStrategy::All, 1, shared).await;
+        let request = approving.request();
+        approving.ask(&request).await;
 
         // The agent leaves before anyone decided (issue 46).
-        runtime_manager.event_bus().publish(GlobalEvent::AgentChannelLeft(session_id, channel_id, agent_id), Default::default());
+        let (session, channel) = (approving.channel.session_id(), approving.channel.id());
+        approving.runtime.event_bus().publish(GlobalEvent::AgentChannelLeft(session, channel, approving.agent), Default::default());
 
         // Nobody keeps waiting: the request is answered as denied.
-        let decision = tokio::time::timeout(tokio::time::Duration::from_secs(2), output_rx.recv()).await
-            .expect("answered at once")
-            .unwrap();
-        match decision.event {
-            ActorEvent::ApprovalDenied(res) => assert_eq!(res.id, approval_id),
-            other => panic!("Expected ApprovalDenied, got {:?}", other.kind()),
-        }
-        assert!(actor.pending.lock().await.is_empty(), "nothing pending any more");
+        let decided = approving.next().await;
+        assert!(matches!(decided.event, ActorEvent::ApprovalDenied(ref r) if r.id == request.id), "denied: {:?}", decided.event);
+        assert!(approving.approver.pending.lock().await.is_empty(), "nothing pending any more");
     }
 }

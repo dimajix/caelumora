@@ -169,15 +169,18 @@ suspends its turn while it waits, and nothing blocks.
     `WaitingForApproval`. Its state, the pending calls included, is stored after every step.
 2.  **Request.** The agent emits `ApprovalRequested`, carrying the call's `ApprovalId`. The
     moderator routes it to the channel's `ApproverActor` only. The approver passes it on unchanged
-    to the users (`UserActor`s), whose frontends show it.
+    to the users (`UserActor`s), whose frontends show it - to everybody, so that all see what the
+    agent waits for; only who may approve is asked (see below). A request nobody taking part may
+    approve is denied at once instead.
 3.  **Answers.** A user approves or denies over REST (`POST …/approvals`) or in the TUI.
     `UserActor::send_approval` sends `ApprovalGranted` or `ApprovalDenied` with the same id, which
     the moderator again routes to the approver only.
-4.  **Decision.** The approver collects the answers and decides by its `ApprovalStrategy` (`Any`,
-    `Majority`, `All`, `DenyOnFirst`). It decides again when users join or leave. A request nobody
-    decides times out after ten minutes. The approver sends `ApprovalGranted`, `ApprovalDenied` or
-    `ApprovalTimedOut` to the agent - the only way a decision reaches an agent (issue 81) - and to
-    the users: an approval is over only once the approver says so, not when one user answered.
+4.  **Decision.** The approver collects the answers of those who may approve and decides by its
+    `ApprovalStrategy` (`Any`, `Majority`, `All`, `DenyOnFirst`), counted among them alone. It
+    decides again when users join or leave. A request nobody decides times out after ten minutes.
+    The approver sends `ApprovalGranted`, `ApprovalDenied` or `ApprovalTimedOut` to the agent - the
+    only way a decision reaches an agent (issue 81) - and to the users: an approval is over only
+    once the approver says so, not when one user answered.
 5.  **Resumption.** The agent runs the granted calls and continues its turn.
 
 A turn that ends while it waits - cancelled, given up - withdraws its requests (issue 148): the
@@ -193,6 +196,25 @@ pending - in `WaitingForApproval`, or stored right after asking - asks again, wi
 (`TurnState::pending_approvals`). The approver takes a request it does not know up as new, with a
 new timeout; one it still holds it only announces again, keeping the answers given so far. Answers
 given before a restart are lost with the approver's memory: the users are asked again.
+
+### Who may approve
+
+Who may approve a call is the `SecurityManager`'s to decide, and the approver enforces it (issue
+14): the action `ApproveToolCall` carries the attributes of the agent - loaded, never taken from the
+request, which the agent makes itself - and of the channel. The ownership policy grants it the
+agent's owner and contributors, who are responsible for it also in someone else's channel; for an
+agent of the system, the channel's owner.
+
+*   An answer counts only if its sender may approve: the approver asks with the context the answer
+    came with (`Enforcement::require`) and leaves out any other, logged and without telling the
+    sender - only who may approve is offered the buttons, so such an answer comes from a client
+    going round what it was shown.
+*   The strategies count only those taking part who may approve, now: the approver asks
+    `may_approve` for every user of the channel, in the context of their own `UserActor` - the one
+    their answers come with. An answer of someone who left or may no longer approve does not count,
+    either way. With nobody left who may approve, the request is denied.
+*   The views offer it with `MemberView::may_approve` (`can_approve` of a member), which the web UI
+    shows the buttons by.
 
 Messages that arrive while the agent waits for approval are queued and processed in order once it
 resumes, so its context stays consistent.

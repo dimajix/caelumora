@@ -112,3 +112,8 @@ personality the adder may not read.
 - **2026-10-04** — Issue created at the maintainer's request. Found: a session's participants are
   fixed by its template, the channel dialog offers only those, and the REST API lists neither users
   nor agents.
+- **2026-10-05** — From [14](14-approval-privilege.md): only the agents of the session's owner, those
+  they contribute to and those of the system can be in a session today, because a template finds
+  agents only among those its creator may read. Once agents can be added, adding one should ask the
+  same, so that nobody brings in an agent whose tools - and the credentials behind them - they have
+  no right to use.

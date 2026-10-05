@@ -357,6 +357,10 @@ pub struct ChannelMemberResponse {
     /// Whether the requesting user may see which tools this participant has
     /// now (issue 194) - only ever for agents.
     pub can_read_tools: bool,
+    /// Whether the requesting user may approve this participant's tool
+    /// calls (issue 14) - only ever for agents taking part. Everybody sees
+    /// a pending approval; only who may approve is asked.
+    pub can_approve: bool,
     /// What the participant's model calls in the channel used (issue 209):
     /// given by the snapshot of the channel's stream and for a participant
     /// asked for alone, not where channels are listed.
@@ -380,6 +384,7 @@ impl ChannelMemberResponse {
             handle: view.handle,
             can_read_context: view.can_read_context,
             can_read_tools: view.can_read_tools,
+            can_approve: view.can_approve,
             usage: view.usage,
             left: view.left,
             can_delete: view.can_delete,
@@ -670,7 +675,7 @@ mod tests {
     #[test]
     fn a_channel_view_is_answered_with_kinds_and_a_name_for_the_deleted() {
         let (alice, approver) = (ActorId::User(UserId::new()), ActorId::Approver(ApproverId(Uuid::new_v4())));
-        let member = |id, name: Option<&str>| snapshot::MemberSnapshot { id, name: name.map(str::to_string), handle: None, can_read_context: false, can_read_tools: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), left: None, can_delete: false };
+        let member = |id, name: Option<&str>| snapshot::MemberSnapshot { id, name: name.map(str::to_string), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), left: None, can_delete: false };
         let view = snapshot::ChannelSnapshot {
             id: ChannelId::new(),
             name: "main".to_string(),
@@ -703,7 +708,7 @@ mod tests {
             written_at: chrono::Utc::now(),
         };
         let member = |id, name: &str, notes: Vec<Note>| snapshot::MemberSnapshot {
-            id, name: Some(name.to_string()), handle: None, can_read_context: false, can_read_tools: false, usage: None, notes, pending_approvals: Vec::new(),
+            id, name: Some(name.to_string()), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, usage: None, notes, pending_approvals: Vec::new(),
             left: None, can_delete: false,
         };
         let channel = snapshot::ChannelSnapshot {
@@ -743,7 +748,7 @@ mod tests {
     fn a_former_member_is_answered_apart_with_who_removed_it_and_when() {
         let (alice, helper) = (ActorId::User(UserId::new()), ActorId::Agent(caelumora_model::agent::AgentId::new()));
         let left = caelumora_model::removal::Removal::now(alice);
-        let member = |id, left| snapshot::MemberSnapshot { id, name: Some("x".to_string()), handle: None, can_read_context: true, can_read_tools: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), left, can_delete: false };
+        let member = |id, left| snapshot::MemberSnapshot { id, name: Some("x".to_string()), handle: None, can_read_context: true, can_read_tools: false, can_approve: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), left, can_delete: false };
         let view = snapshot::ChannelSnapshot {
             id: ChannelId::new(),
             name: "main".to_string(),
@@ -764,7 +769,7 @@ mod tests {
     #[test]
     fn what_a_participant_used_is_answered_only_where_it_was_read() {
         let usage = TokenUsage { calls: 2, prompt_tokens: 300, completion_tokens: 20, last_call_tokens: 170, context_size: Some(8192) };
-        let member = |usage| snapshot::MemberSnapshot { id: ActorId::User(UserId::new()), name: Some("alice".to_string()), handle: None, can_read_context: false, can_read_tools: false, usage, notes: Vec::new(), pending_approvals: Vec::new(), left: None, can_delete: false };
+        let member = |usage| snapshot::MemberSnapshot { id: ActorId::User(UserId::new()), name: Some("alice".to_string()), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, usage, notes: Vec::new(), pending_approvals: Vec::new(), left: None, can_delete: false };
 
         let json = serde_json::to_value(ChannelMemberResponse::of(member(Some(usage))).unwrap()).unwrap();
         assert_eq!(json["usage"], serde_json::json!({ "calls": 2, "prompt_tokens": 300, "completion_tokens": 20, "last_call_tokens": 170, "context_size": 8192 }));

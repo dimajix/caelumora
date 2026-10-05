@@ -130,10 +130,14 @@ asked:
 *   by the views an agent's turn navigates and by the components, deciding what an agent may read of
     other channels or recall (see [MEMORY.md](MEMORY.md)); a component asks with the
     `SecurityManager` and `SecurityContext` of its `ComponentContext` (issue 131);
-*   by an agent, deciding what it may put up for approval.
+*   by an agent, deciding what it may put up for approval;
+*   by the approver, deciding whom it waits for (`may_approve`, issue 14); an answer it checks as
+    the operation it counts for, with `Enforcement::require`.
 
 The questions are `may_read_channel`, `may_change_channel`, `may_change_session`,
-`may_channel_read`, `may_read_agent_context`, `may_call_tool` and `may_see_channel`.
+`may_channel_read`, `may_read_agent_context`, `may_read_agent_tools`, `may_approve`,
+`may_delete_agent`, `may_call_tool`, `may_publish`, `may_see_channel`, `may_restore` and
+`may_purge`.
 
 `AccessQuestions` is an extension trait on every `SecurityManager`, by blanket implementation. Each
 question gets a name and one place, but only translates into an `ActionType`. The decision stays
@@ -204,7 +208,9 @@ question, in the viewer's name:
 *   `MemberView::may_read_context()` asks `ReadAgentContext`; `may_read_tools()` and `tool_sets()`
     ask `ReadAgentTools` with the agent's and the channel's attributes (issue 194), which the
     ownership policy grants whoever reads the agent and every member of the channel: what an agent
-    can do there is no secret among those it works with;
+    can do there is no secret among those it works with; `may_approve()` asks `ApproveToolCall`,
+    which the ownership policy grants the agent's owner and contributors, for an agent of the
+    system the channel's owner (issue 14, see [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md#who-may-approve));
 *   `Views::channel_of(session, channel)` reaches what a memory entry's origin or a `KnowledgeRef`
     names, wherever it is, and answers `None` for what is gone or not the viewer's to read.
 

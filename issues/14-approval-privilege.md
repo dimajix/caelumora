@@ -1,6 +1,6 @@
 # 14 — Who is allowed to approve
 
-**Status:** open
+**Status:** done
 **Area:** Tools & approvals
 
 ## The problem
@@ -47,3 +47,29 @@ approvals exist for: a multi-participant channel where not everyone is equally t
 - **2026-09-23** — Unblocked by [30](30-user-actor-for-authenticated-user.md): an approval now
   carries the user who made it (their own `UserActor`), and approvals from non-participants are
   already refused. Deciding *which* participants may approve is what is left.
+- **2026-10-05** — Decided with the maintainer:
+  - **The `SecurityManager` decides, the approver enforces.** A new action `ApproveToolCall { agent,
+    channel }` with the question `may_approve`. The approver is where an answer counts, so it is the
+    enforcement point: it asks with the context an answer came with (`Enforcement::require`) and
+    leaves out answers that are refused. It asks the same question for each user taking part, with
+    the context of their own `UserActor`, so that `Majority`, `All` and `DenyOnFirst` count only
+    those who may approve. `UserActor::send_approval` does not check as well.
+  - **Who may approve:** the agent's owner and its contributors - who is responsible for an agent
+    answers for it, also in someone else's channel. The agent's attributes are loaded, never taken
+    from the request, which the agent makes itself. For an agent of the system, the channel's owner
+    approves.
+  - **Everybody sees a pending approval, only who may approve is asked:** the views tell with
+    `can_approve`, and the web UI shows the buttons only then. An answer of someone else is
+    therefore no misunderstanding but a client going round the UI; it is left out and logged, and
+    the sender is not told - which settles the consideration above that the responder should be
+    told.
+  - **Nobody may approve:** a request nobody in the channel may approve is denied at once instead of
+    waiting for its timeout, for every strategy.
+- **2026-10-05** — Done as decided. `ApproveToolCall { agent, channel }` with `may_approve`; the
+  ownership policy grants it the agent's owner and contributors, for an agent of the system the
+  channel's owner. `ApproverActor` enforces it on every answer and counts, for every strategy, only
+  the answers of those taking part who may approve now, asked with their `UserActor`'s context; a
+  request nobody may approve is denied at once. Members carry `can_approve`, and the web UI shows
+  the buttons only then. In the security suite. Not done here: the model is told of such a denial as
+  if a user had declined. The approver trusts the context an answer carries, which nothing
+  guarantees belongs to its sender: [228](228-envelope-sender-not-enforced.md).

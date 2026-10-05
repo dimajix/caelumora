@@ -613,6 +613,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
     }
   };
 
+  // Only who may approve the agent's calls is asked (issue 14); everybody
+  // else sees what it waits for.
+  const mayApprove = (approval: ApprovalRequest) =>
+    members.some(m => actorKey(m.id) === actorKey({Agent: approval.agent_id}) && m.can_approve);
+
   const handleApproval = async (approval: ApprovalRequest, approved: boolean) => {
     try {
       await api.respondToApproval(sessionId, channelId, approval.id, approval.agent_id, approved);
@@ -766,6 +771,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
                 </pre>
                 {answeredApprovals.includes(approval.id) ? (
                   <p className="text-sm text-gray-500 dark:text-gray-400 text-center">Answered - waiting for the decision.</p>
+                ) : !mayApprove(approval) ? (
+                  <p className="text-sm text-gray-500 dark:text-gray-400 text-center">Waiting for whoever is responsible for the agent.</p>
                 ) : (
                 <div className="flex gap-2">
                   <button

@@ -41,6 +41,10 @@ pub enum ActionType<'a> {
     /// agent's attributes and those of the channel, where its tools are
     /// built.
     ReadAgentTools { agent: &'a SecurityAttributes, channel: &'a SecurityAttributes },
+    /// Answering whether a tool call of an agent may run (issue 14): an
+    /// answer that counts for the approval it was asked for. Carries the
+    /// agent's attributes and those of the channel the call is made in.
+    ApproveToolCall { agent: &'a SecurityAttributes, channel: &'a SecurityAttributes },
     ListAgents,
     UpdateAgent(&'a SecurityAttributes),
     DeleteAgent(&'a SecurityAttributes),
@@ -169,6 +173,7 @@ impl ActionType<'_> {
             ActionType::GetAgent(_) => "GetAgent".into(),
             ActionType::ReadAgentContext(_) => "ReadAgentContext".into(),
             ActionType::ReadAgentTools { .. } => "ReadAgentTools".into(),
+            ActionType::ApproveToolCall { .. } => "ApproveToolCall".into(),
             ActionType::ListAgents => "ListAgents".into(),
             ActionType::UpdateAgent(_) => "UpdateAgent".into(),
             ActionType::DeleteAgent(_) => "DeleteAgent".into(),
@@ -355,6 +360,11 @@ pub trait AccessQuestions {
     /// (`ReadAgentTools`, issue 194).
     async fn may_read_agent_tools(&self, context: &SecurityContext, agent: &SecurityAttributes, channel: &SecurityAttributes) -> bool;
 
+    /// Whether `context` may approve the tool calls of the agent with
+    /// `agent` attributes in the channel with `channel` attributes
+    /// (`ApproveToolCall`, issue 14).
+    async fn may_approve(&self, context: &SecurityContext, agent: &SecurityAttributes, channel: &SecurityAttributes) -> bool;
+
     /// Whether `context` may delete the agent with `agent` attributes
     /// (`DeleteAgent`, issue 164).
     async fn may_delete_agent(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool;
@@ -415,6 +425,10 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
 
     async fn may_read_agent_tools(&self, context: &SecurityContext, agent: &SecurityAttributes, channel: &SecurityAttributes) -> bool {
         self.check(context, ActionType::ReadAgentTools { agent, channel }).await
+    }
+
+    async fn may_approve(&self, context: &SecurityContext, agent: &SecurityAttributes, channel: &SecurityAttributes) -> bool {
+        self.check(context, ActionType::ApproveToolCall { agent, channel }).await
     }
 
     async fn may_delete_agent(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool {
@@ -517,9 +531,12 @@ impl SecurityManager for DummySecurityManager {
 ///   owner or its author, a note or memory entry by its author - always to
 ///   a classification the rules let be given, and what is in a channel
 ///   never above it.
+/// - A tool call of an agent is approved by the agent's owner and its
+///   contributors, of an agent of the system by the channel's owner
+///   (issue 14).
 /// - Searching and listing are allowed; their results are filtered by what
 ///   the caller may read. Tool calls, secrets and commands are governed
-///   elsewhere for now (approvals, issues 12 and 23).
+///   elsewhere for now (issues 12 and 23).
 ///
 /// Who "you" are is the context's initiator: the person an action was
 /// started for, also when an agent carries it out.
@@ -569,6 +586,11 @@ impl SecurityManager for OwnershipSecurityManager {
             // What an agent can do is read by whoever reads the agent, and by
             // every member of the channel it works in with them.
             ActionType::ReadAgentTools { agent, channel } => Self::may_read(agent, me) || Self::may_read(channel, me),
+            // Who is responsible for an agent answers for its calls, also in
+            // someone else's channel; for an agent of the system, whose
+            // channel it is.
+            ActionType::ApproveToolCall { agent, channel } if Self::system_owned(agent) => channel.owner_id == me && me != ActorId::None,
+            ActionType::ApproveToolCall { agent, .. } => agent.owner_id == me || agent.contributors.contains(&me),
             ActionType::ReadChannel { reader, source } => self.rules.may_read_from(reader, source),
             ActionType::Classify(classification) => self.rules.may_classify(classification),
             ActionType::Reclassify { target, new, channel, .. } => {
@@ -694,6 +716,14 @@ mod tests {
         assert!(allows(bob, tools(&hers, &theirs)).await, "who reads the agent sees what it can do");
         assert!(allows(carol, tools(&hers, &theirs)).await, "and every member of the channel");
         assert!(!allows(carol, tools(&hers, &hers)).await, "but nobody else");
+        let approve = |agent, channel| ActionType::ApproveToolCall { agent, channel };
+        assert!(allows(alice, approve(&hers, &theirs)).await, "the agent's owner approves its calls, in any channel");
+        assert!(allows(bob, approve(&hers, &theirs)).await, "and so do its contributors");
+        assert!(!allows(carol, approve(&hers, &theirs)).await, "not whose channel it is");
+        let systems = SecurityAttributes::owned_by(ActorId::System);
+        assert!(allows(carol, approve(&systems, &theirs)).await, "an agent of the system: whose channel it is");
+        assert!(!allows(alice, approve(&systems, &theirs)).await, "nobody else");
+        assert!(!allows(bob, approve(&SecurityAttributes::default(), &hers)).await, "not even a contributor of the channel");
         assert!(!allows(bob, ActionType::UpdateSession(&hers)).await);
         assert!(!allows(bob, ActionType::DeleteSession(&hers)).await);
     }

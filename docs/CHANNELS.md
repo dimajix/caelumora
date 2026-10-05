@@ -214,8 +214,8 @@ loop takes such changes over a queue and ends once its last actor has ended.
 
 A removed actor is stopped at once - an agent without finishing its turn - and its state is kept,
 for the record and for a later return. The approver answers a leaving agent's pending approvals as
-denied, so that nothing keeps waiting, and decides the others again, since the number of users
-changed. The approver itself cannot be removed.
+denied, so that nothing keeps waiting, and decides the others again, since who may approve them
+changed (issue 14). The approver itself cannot be removed.
 
 A participant added again while its old actor still ends - storing its state, at most `STOP_GRACE`
 before it is aborted - waits for it (issue 171): `ChannelLoop` keeps the task of every removed actor
