@@ -91,8 +91,18 @@ export function membershipChangedChannel(event: GlobalEvent): string | null {
  * no content: whoever shows the notes fetches them again.
  */
 export function changedChannel(event: GlobalEvent): string | null {
+  return changedAgentState(event)?.channelId ?? null;
+}
+
+/**
+ * Whose state changed where, for `AgentChannelStateChanged`; `null` for any
+ * other event - for what follows one agent across a session (issue 233).
+ */
+export function changedAgentState(event: GlobalEvent): {sessionId: string; channelId: string; agentId: string} | null {
   const value = event.AgentChannelStateChanged;
-  return Array.isArray(value) && typeof value[1] === 'string' ? value[1] : null;
+  if (!Array.isArray(value) || !value.every(id => typeof id === 'string')) return null;
+  const [sessionId, channelId, agentId] = value as string[];
+  return {sessionId, channelId, agentId};
 }
 
 /**

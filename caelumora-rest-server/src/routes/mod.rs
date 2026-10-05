@@ -88,6 +88,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/sessions/{id}/privacy", axum::routing::put(sessions::update_session_privacy))
         .route("/sessions/{id}/restore", post(sessions::restore_session))
         .route("/sessions/{id}/purge", post(sessions::purge_session))
+        .route("/sessions/{id}/actors/{aid}/private_notes", get(sessions::agent_private_notes))
         .route("/sessions/{id}/channels", get(channels::list_channels).post(channels::create_channel))
         .route("/sessions/{id}/channels/{cid}", get(channels::get_channel).delete(channels::delete_channel))
         .route(

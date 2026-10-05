@@ -1,10 +1,11 @@
 use crate::auth::AuthenticatedUser;
 use crate::error::{ApiError, Subject};
-use crate::models::{CreateSessionRequest, DeletedResponse, ListOptions, RenameSessionRequest, SessionPrivacyRequest, SessionResponse, SessionSnapshot};
+use crate::models::{CreateSessionRequest, DeletedResponse, ListOptions, PrivateNotesResponse, RenameSessionRequest, SessionPrivacyRequest, SessionResponse, SessionSnapshot};
 use crate::state::AppState;
 use axum::response::{IntoResponse, Response};
 use axum::{extract::{Query, State}, http::StatusCode};
 use crate::error::{Json, Path};
+use caelumora_model::agent::AgentId;
 use caelumora_model::snapshot::Detail;
 use caelumora_model::session::SessionId;
 use caelumora_model::template::SessionTemplateId;
@@ -54,6 +55,27 @@ pub async fn get_session(
     let session = crate::routes::views(&state, &user).session(session_id).await
         .map_err(|e| ApiError::from_runtime(e.into(), Subject::Session, &format!("loading session {session_id}")))?;
     Ok(Json(session.snapshot(Detail::CHANNELS | Detail::MEMBERS).await.into()))
+}
+
+/// The private notes agent `aid` wrote in the channels of session `id` the
+/// user may read (issue 233), sorted by the channel's name, for whoever may
+/// read what it saw (`ReadAgentContext`).
+pub async fn agent_private_notes(
+    State(state): State<Arc<AppState>>,
+    Path((id, aid)): Path<(Uuid, Uuid)>,
+    user: AuthenticatedUser,
+) -> Result<Json<Vec<PrivateNotesResponse>>, ApiError> {
+    let session_id = SessionId(id);
+    let session = crate::routes::views(&state, &user).session(session_id).await
+        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Session, &format!("loading session {session_id}")))?;
+    let found = session.private_notes_of(AgentId(aid)).await
+        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Context, "reading the private notes"))?;
+    Ok(Json(found.into_iter().map(|(channel, notes, digest)| PrivateNotesResponse {
+        channel_id: channel.id(),
+        channel_name: channel.name().to_string(),
+        notes,
+        digest,
+    }).collect()))
 }
 
 /// Restores the deleted session `id` (issue 164) and answers it as `GET`

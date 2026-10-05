@@ -207,7 +207,7 @@ argues against it, and what came out of the last attempt.
 | [230](230-member-actions-menu.md) | done | The action buttons on every channel member in the web UI keep their place even when hidden, so the member's name is cut off almost entirely. |
 | [231](231-resizable-panels.md) | done | The panels of the web UI - sidebar, channel members, an agent's context and history - have a fixed width that cannot be changed. |
 | [232](232-empty-trash-shown.md) | done | The sections of deleted sessions and channels are shown in the sidebar even where they hold nothing the user may see, so every unfolded session carries an empty line. |
-| [233](233-private-notes-panel.md) | open | An agent's private notes can be read only inside the context of one of its messages, as they stood then, not on their own, current and for every channel of the session. |
+| [233](233-private-notes-panel.md) | done | An agent's private notes can be read only inside the context of one of its messages, as they stood then, not on their own, current and for every channel of the session. |
 
 ## Context and knowledge
 

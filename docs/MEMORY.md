@@ -79,8 +79,9 @@ The `private_notes` component (issue 51) gives an agent a second chain per chann
 *   **Staging.** Changes are staged and taken over with the turn like public ones
     (`NoteKind::Private`).
 *   **Prompt part.** Its `BeforeTurnInput` part shows the agent its private notes of this channel
-    and - through the turn's views, `MemberView::private_notes` in each - of every other channel of
-    the session that this channel may read (`AccessQuestions::may_channel_read`, the same rule as
+    and - through the turn's views, `SessionView::private_notes_of`, which reads
+    `MemberView::private_notes` in each - of every other channel of the session that this channel
+    may read (`AccessQuestions::may_channel_read`, the same rule as
     for [reading another channel](#reading-other-channels)). A note carries [the turn's
     label](CONFIDENTIALITY.md#what-a-turn-writes-as) - the classification of what the turn had seen,
     at most its channel's - stamped when it is written, and is read note by note;
@@ -88,7 +89,9 @@ The `private_notes` component (issue 51) gives an agent a second chain per chann
     [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reclassification)).
 *   **Hidden calls.** Both tools are `ToolVisibility::HIDDEN`, so the calls never reach the channel.
     "Private" means private from other agents and other users, not from the agent's owner, who sees
-    them in the context panel, which is theirs alone (issue 54).
+    them in the context panel, which is theirs alone (issue 54), and - current, from every channel
+    of the session they may read - in the private notes panel, through the same
+    `SessionView::private_notes_of` (issue 233, see [WEB-UI.md](WEB-UI.md)).
 
 ## Agent memory
 

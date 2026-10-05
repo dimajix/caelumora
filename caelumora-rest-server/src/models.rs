@@ -224,6 +224,16 @@ impl From<snapshot::PublishedNotes> for PublishedNotesResponse {
     }
 }
 
+/// The private notes one agent wrote in one channel of a session (issue
+/// 233), with the digest of their chain.
+#[derive(Debug, Serialize)]
+pub struct PrivateNotesResponse {
+    pub channel_id: ChannelId,
+    pub channel_name: String,
+    pub notes: Vec<caelumora_model::note::Note>,
+    pub digest: Option<caelumora_model::digest::Digest>,
+}
+
 /// The state of the system when a global stream connects: the sessions and
 /// channels the user may read, as the REST endpoints decide it.
 #[derive(Debug, Serialize)]

@@ -49,7 +49,7 @@ The UI shows what the server says and repeats no rule of its own:
 | `src/panelWidth.ts` | The widths of the panels beside the chat, kept in browser storage |
 | `src/moderator.ts`, `src/confidentiality.ts` | Labels and explanations of responder policies and classifications |
 | `src/App.tsx` | Login state, keep-alive, the error banner, the layout |
-| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `MarkdownMessage`, `ContextPanel`, `HistoryPanel`, `ToolsPanel`, `ToolSetList`, `DeletedList`, `NotesList`, `TokenGauge`, `HoverCard`, `ActionMenu`, `ResizeHandle`, `UsageStats`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ErrorBanner` |
+| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `MarkdownMessage`, `ContextPanel`, `HistoryPanel`, `ToolsPanel`, `PrivateNotesPanel`, `ToolSetList`, `DeletedList`, `NotesList`, `TokenGauge`, `HoverCard`, `ActionMenu`, `ResizeHandle`, `UsageStats`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ErrorBanner` |
 
 ## Talking to the server
 
@@ -98,9 +98,9 @@ narrowest and a widest width, and takes at most two fifths of the window, so tha
 room. The handle sits beside the panel, not in it, so that it does not scroll with the members
 list.
 
-The width is kept per panel - the context, history and tools panels share one - in this browser's
-local storage (`usePanelWidth`, `src/panelWidth.ts`), not in the user's profile: the right width
-depends on the screen. Without storage the panels start at their usual width every time.
+The width is kept per panel - the context, history, tools and private notes panels share one - in
+this browser's local storage (`usePanelWidth`, `src/panelWidth.ts`), not in the user's profile: the
+right width depends on the screen. Without storage the panels start at their usual width every time.
 
 ### The session list
 
@@ -137,9 +137,10 @@ sessions a folded "Deleted sessions", and in every unfolded session a folded "De
 each loaded when shown and again on `SessionDeleted`, `SessionRestored`, `ChannelDeleted` and
 `ChannelRestored`. A list is shown only while it holds an entry (issue 232): the server leaves out
 what the user may not read, so an empty list means nothing to see, whichever the reason, and it
-disappears as soon as its last entry is restored or purged. An entry shows who deleted it when, and offers "Restore" where `can_restore`
-and "Delete for good" - confirmed by a second click - where `can_purge`; a channel only with its
-session. A restored session or channel is fetched again like a new one.
+disappears as soon as its last entry is restored or purged. An entry shows who deleted it when, and
+offers "Restore" where `can_restore` and "Delete for good" - confirmed by a second click - where
+`can_purge`; a channel only with its session. A restored session or channel is fetched again like
+a new one.
 
 A new session is created from a template; the one used last in this browser is preselected (issue
 40). A new channel is created with its name, responder policy, classification - a level and, if any
@@ -237,9 +238,9 @@ answers - the channel's `responder_policy` (issue 174) - is shown above it as it
 a user or by another agent.
 
 A member's row shows its name and handle, and below them how full its context is; what can be done
-with the member is in its menu (`ActionMenu`, issue 230) - "Show history", "Show tools", "Remove
-from channel", "Delete agent" - each only where the member offers it, and no menu where it offers
-nothing.
+with the member is in its menu (`ActionMenu`, issue 230) - "Show history", "Show private notes",
+"Show tools", "Remove from channel", "Delete agent" - each only where the member offers it, and no
+menu where it offers nothing.
 
 Where `can_change` is set, the member list offers adding a participant of the session - with how
 much of the history they may see (`AddParticipantDialog`, issue 46) - and the menu removing one.
@@ -252,14 +253,23 @@ where it is unavailable, why - each tool marked where a call needs approval, is 
 only, or has its results classified. The sets are drawn by `ToolSetList`, as in the context panel.
 An agent that has no tools here - external, or its channel not running - says so.
 
+An agent whose context the user may read (`can_read_context`) has "Show private notes" in its menu
+beside "Show history" (issue 233). It opens the private notes panel (`PrivateNotesPanel`): what the
+agent noted for itself in every channel of the session the user may read
+(`GET /sessions/{id}/actors/{aid}/private_notes`), grouped by channel - this channel first, the
+others by name - each note with when it was written and its classification, and with its number
+only in this channel, where the agent is shown it. It is fetched again whenever the global stream
+announces `AgentChannelStateChanged` for that agent in the session. Who may read an agent's context
+sees its private notes there anyway (issue 54); the panel shows them current and on their own.
+
 An agent the user may delete (`can_delete`) has "Delete agent" in its menu; it asks once more in its
 place ("Delete agent? It leaves every channel"), since the agent leaves every channel it takes part
 in, not only this one, and a restore - only over REST so far - brings it back into none (issue 164).
 
 Below the members, a folded group "Former members" lists who took part and left (issue 164), each
-with when, and - where `can_read_context` - "Show history" in its menu, so that what a removed agent
-did, the turn it gave up when it was removed included ([146](../issues/146-show-given-up-turns.md)),
-can still be read.
+with when, and - where `can_read_context` - "Show history" and "Show private notes" in its menu, so
+that what a removed agent did, the turn it gave up when it was removed included
+([146](../issues/146-show-given-up-turns.md)), and what it kept to itself can still be read.
 
 A "Notes" tab next to the members shows the notes the channel's agents published (`NotesList`, issue
 17). They come with the snapshot and are fetched again (`GET …/notes`) when the global stream

@@ -12,6 +12,7 @@ import type {
   CreateSessionRequest,
   Deleted,
   Message,
+  PrivateNotes,
   PublishedNotes,
   SessionResponse,
   SessionSnapshot,
@@ -247,6 +248,13 @@ export const api = {
   async getAgentTools(sessionId: string, channelId: string, actorUuid: string): Promise<AgentToolsResponse> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/actors/${actorUuid}/tools`);
     await ensureOk(res, 'Failed to fetch the tools');
+    return res.json();
+  },
+
+  /** The private notes agent `agentUuid` wrote in the channels of the session the user may read, by channel name (issue 233). */
+  async getPrivateNotes(sessionId: string, agentUuid: string): Promise<PrivateNotes[]> {
+    const res = await request(`/sessions/${sessionId}/actors/${agentUuid}/private_notes`);
+    await ensureOk(res, 'Failed to fetch the private notes');
     return res.json();
   },
 

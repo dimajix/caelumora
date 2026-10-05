@@ -188,6 +188,16 @@ export interface Note {
   written_at: string;
   /** Where it was noted: the digest of the agent's transcript then. */
   origin: { transcript: string | null };
+  /** The label of the turn that wrote it, unless it was reclassified since. */
+  classification: Classification;
+}
+
+/** The private notes an agent wrote in one channel of a session (issue 233). */
+export interface PrivateNotes {
+  channel_id: string;
+  channel_name: string;
+  notes: Note[];
+  digest: string | null;
 }
 
 /** The notes one agent published in a channel. */

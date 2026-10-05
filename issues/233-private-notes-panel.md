@@ -1,6 +1,6 @@
 # 233 — An agent's private notes can be read only in the context of a message
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -87,3 +87,20 @@ REST-SERVER.md and WEB-UI.md.
   against [54](54-private-notes-visible-to-users.md): `ReadAgentContext`, decided 2026-09-26, and
   `MemberView::private_notes` already asks it. The maintainer then widened it from the current
   channel to every channel of the session, each note with the channel it came from.
+- **2026-10-05** — Done, in two steps. *Restructure:* `SessionView::private_notes_of(agent)` walks
+  `all_channels`, reads `MemberView::private_notes` in each where the agent is a member, and returns
+  per channel the `ChannelView`, the notes and their digest, sorted by the channel's name - a tuple,
+  not a type, as its two callers are close by. `Forbidden` ends the walk; a failed channel is
+  logged and left out. `PrivateNotesComponent` takes its notes from elsewhere from it and drops its
+  own channel's, whose notes come from the turn. Its behaviour is unchanged: it logged and skipped
+  every failure before, and a `Forbidden` comes for every channel or none, since all are asked of
+  the same agent. *Extend:* `GET /sessions/{id}/actors/{aid}/private_notes` (`PrivateNotesResponse`:
+  `channel_id`, `channel_name`, `notes`, `digest`), and in the web UI "Show private notes" beside
+  "Show history" in the menu of an agent and of a former member where `can_read_context`, opening
+  `PrivateNotesPanel` in the detail slot. Two corrections to the considerations above:
+  `AgentChannelStateChanged` carries the session and the agent as well as the channel, so the panel
+  reloads only for its agent in its session; and the members panel shows no classification of a
+  note - the panel shows it, the TypeScript `Note` gained the `classification` the server always
+  sent. Tests: a view test of the walk (sorted, a channel without notes left out, `Forbidden` for a
+  member who is not the owner) and `an_agents_private_notes_are_its_owners_alone` in the security
+  suite. REST-SERVER.md, WEB-UI.md and MEMORY.md updated. Not tried in a browser.

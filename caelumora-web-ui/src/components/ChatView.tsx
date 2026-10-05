@@ -6,6 +6,7 @@ import {
   Gauge,
   History,
   Languages,
+  Lock,
   NotebookPen,
   Pencil,
   Scale,
@@ -66,6 +67,7 @@ import {UsageStats} from './UsageStats';
 import {ContextPanel} from './ContextPanel';
 import {HistoryPanel} from './HistoryPanel';
 import {ToolsPanel} from './ToolsPanel';
+import {PrivateNotesPanel} from './PrivateNotesPanel';
 import {AddParticipantDialog} from './AddParticipantDialog';
 import {actorKey, actorUuid, handleOf, mentionQueryAt} from '../mention';
 import {commandQueryAt, parseInput} from '../command';
@@ -167,8 +169,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   // 207); a context opened from it is shown on top and returns to it.
   const [historyOf, setHistoryOf] = useState<{channelId: string; member: ChannelMember; givenUp?: boolean} | null>(null);
   const [toolsOf, setToolsOf] = useState<{channelId: string; member: ChannelMember} | null>(null);
+  // The agent whose private notes are shown (issue 233).
+  const [privateNotesOf, setPrivateNotesOf] = useState<{channelId: string; member: ChannelMember} | null>(null);
   // Whether one of them takes the place of the members panel.
-  const detailShown = contextOf?.channelId === channelId || historyOf?.channelId === channelId || toolsOf?.channelId === channelId;
+  const detailShown = contextOf?.channelId === channelId || historyOf?.channelId === channelId
+    || toolsOf?.channelId === channelId || privateNotesOf?.channelId === channelId;
   // Whether the former members of the channel are unfolded (issue 164).
   const [showFormer, setShowFormer] = useState(false);
   // The commands this user may run here, for `/` completion (issue 28).
@@ -303,10 +308,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
 
   /** What can be done with `member` of the channel: what it offers (issue 230). */
   const memberActions = (member: ChannelMember): MenuAction[] => [
-    ...historyActions(member),
+    ...contextActions(member),
     ...(member.can_read_tools ? [{
       label: 'Show tools', icon: Wrench, title: `Show the tools of ${member.name}`,
-      onSelect: () => { setHistoryOf(null); setToolsOf({channelId, member}); },
+      onSelect: () => { setHistoryOf(null); setPrivateNotesOf(null); setToolsOf({channelId, member}); },
     }] : []),
     // The approver belongs to every channel and cannot be removed.
     ...(channel?.can_change && member.kind !== 'approver' ? [{
@@ -320,10 +325,13 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
     }] : []),
   ];
 
-  /** Reading what `member` heard and said - for a former member too - where it may be read. */
-  const historyActions = (member: ChannelMember): MenuAction[] => member.can_read_context ? [{
+  /** Reading what `member` heard, said and kept to itself - for a former member too - where it may be read. */
+  const contextActions = (member: ChannelMember): MenuAction[] => member.can_read_context ? [{
     label: 'Show history', icon: History, title: `Show what ${member.name} heard and said`,
     onSelect: () => setHistoryOf({channelId, member}),
+  }, {
+    label: 'Show private notes', icon: Lock, title: `Show what ${member.name} noted for itself in this session`,
+    onSelect: () => { setHistoryOf(null); setToolsOf(null); setPrivateNotesOf({channelId, member}); },
   }] : [];
 
   const removeParticipant = async (member: ChannelMember) => {
@@ -1010,6 +1018,14 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           member={toolsOf.member}
           onClose={() => setToolsOf(null)}
         />
+      ) : privateNotesOf && privateNotesOf.channelId === channelId ? (
+        <PrivateNotesPanel
+          key={actorKey(privateNotesOf.member.id)}
+          sessionId={sessionId}
+          channelId={channelId}
+          member={privateNotesOf.member}
+          onClose={() => setPrivateNotesOf(null)}
+        />
         ) : null}
         </div>
         </>
@@ -1157,7 +1173,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
                         <ActionMenu
                           label={`Options of ${member.name}`}
                           className={ROW_MENU}
-                          actions={historyActions(member)}
+                          actions={contextActions(member)}
                         />
                       </div>
                     );
