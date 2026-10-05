@@ -60,7 +60,72 @@ impl Language {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// The language's name in English and in the language itself, e.g.
+    /// `("German", "Deutsch")` - for a model, which follows a name more
+    /// surely than a tag. Found by the tag, or by what is left of it
+    /// without its last subtags (`de-CH` is German); `None` for a language
+    /// the table does not know, which is then named by its tag alone.
+    pub fn names(&self) -> Option<(&'static str, &'static str)> {
+        let mut tag = self.0.as_str();
+        loop {
+            if let Some((_, english, native)) = NAMES.iter().find(|(known, ..)| *known == tag) {
+                return Some((english, native));
+            }
+            tag = &tag[..tag.rfind('-')?];
+        }
+    }
 }
+
+/// The names of common languages by their tags, in English and in the
+/// language itself: those the web UI suggests, and some more.
+const NAMES: &[(&str, &str, &str)] = &[
+    ("ar", "Arabic", "العربية"),
+    ("bg", "Bulgarian", "български"),
+    ("ca", "Catalan", "català"),
+    ("cs", "Czech", "čeština"),
+    ("da", "Danish", "dansk"),
+    ("de", "German", "Deutsch"),
+    ("el", "Greek", "Ελληνικά"),
+    ("en", "English", "English"),
+    ("en-GB", "British English", "British English"),
+    ("en-US", "American English", "American English"),
+    ("es", "Spanish", "español"),
+    ("et", "Estonian", "eesti"),
+    ("fa", "Persian", "فارسی"),
+    ("fi", "Finnish", "suomi"),
+    ("fr", "French", "français"),
+    ("he", "Hebrew", "עברית"),
+    ("hi", "Hindi", "हिन्दी"),
+    ("hr", "Croatian", "hrvatski"),
+    ("hu", "Hungarian", "magyar"),
+    ("id", "Indonesian", "Bahasa Indonesia"),
+    ("it", "Italian", "italiano"),
+    ("ja", "Japanese", "日本語"),
+    ("ko", "Korean", "한국어"),
+    ("lt", "Lithuanian", "lietuvių"),
+    ("lv", "Latvian", "latviešu"),
+    ("nb", "Norwegian Bokmål", "norsk bokmål"),
+    ("nl", "Dutch", "Nederlands"),
+    ("nn", "Norwegian Nynorsk", "norsk nynorsk"),
+    ("no", "Norwegian", "norsk"),
+    ("pl", "Polish", "polski"),
+    ("pt", "Portuguese", "português"),
+    ("pt-BR", "Brazilian Portuguese", "português do Brasil"),
+    ("ro", "Romanian", "română"),
+    ("ru", "Russian", "русский"),
+    ("sk", "Slovak", "slovenčina"),
+    ("sl", "Slovenian", "slovenščina"),
+    ("sr", "Serbian", "српски"),
+    ("sv", "Swedish", "svenska"),
+    ("th", "Thai", "ไทย"),
+    ("tr", "Turkish", "Türkçe"),
+    ("uk", "Ukrainian", "українська"),
+    ("vi", "Vietnamese", "Tiếng Việt"),
+    ("zh", "Chinese", "中文"),
+    ("zh-Hans", "Simplified Chinese", "简体中文"),
+    ("zh-Hant", "Traditional Chinese", "繁體中文"),
+];
 
 /// A subtag after the primary language in its usual case: a script (four
 /// letters) capitalised, a region (two letters) in upper case, anything
@@ -132,6 +197,17 @@ mod tests {
             assert_eq!(Language::parse(text), Err(LanguageError::Malformed), "{text:?}");
         }
         assert_eq!(Language::parse(format!("de{}", "-a".repeat(MAX_LANGUAGE_CHARS))), Err(LanguageError::TooLong));
+    }
+
+    #[test]
+    fn a_language_is_named_by_its_tag_or_what_is_left_of_it() {
+        let names = |text: &str| Language::parse(text).unwrap().names();
+        assert_eq!(names("de"), Some(("German", "Deutsch")));
+        assert_eq!(names("de-CH-1996"), Some(("German", "Deutsch")), "without its region and variant");
+        assert_eq!(names("zh-Hant-TW"), Some(("Traditional Chinese", "繁體中文")), "as far as the table knows it");
+        assert_eq!(names("pt-BR"), Some(("Brazilian Portuguese", "português do Brasil")));
+        assert_eq!(names("tlh"), None, "a language the table does not know");
+        assert!(NAMES.iter().all(|(tag, ..)| Language::parse(tag).is_ok_and(|language| language.as_str() == *tag)), "every tag of the table as a language keeps it");
     }
 
     #[test]

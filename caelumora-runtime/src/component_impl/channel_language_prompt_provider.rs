@@ -2,7 +2,8 @@
 //! agent which language its channel's conversation is held in, so that it
 //! writes in it - although its instructions, its tools and the parts the
 //! runtime adds are in English, which pulls a model towards English.
-//! Nothing is translated: the conversation is one, in one language.
+//! Nothing is translated: the conversation is one, in one language. The
+//! language is named in English and in itself, and by its tag.
 //!
 //! The language is a property of the channel, read afresh at the start of
 //! every turn through the agent's views, so that a change reaches it with
@@ -88,13 +89,19 @@ impl PromptProvider for ChannelLanguagePromptProvider {
 }
 
 /// The prompt part telling the agent to write in `language`; empty if the
-/// channel is held in none in particular. The tag is what the model is
-/// given: models know them, and Caelumora keeps no names of languages.
+/// channel is held in none in particular. The language is named in English
+/// and in itself where `Language::names` knows it - a model follows a name
+/// more surely than a tag - and always by its tag, which says the region.
 fn render(language: Option<&Language>) -> String {
     let Some(language) = language else { return String::new() };
+    let (held_in, write_in) = match language.names() {
+        Some((english, native)) if english == native => (format!("{english} (BCP 47 tag \"{language}\")"), english.to_string()),
+        Some((english, native)) => (format!("{english} - {native}, BCP 47 tag \"{language}\""), english.to_string()),
+        None => (format!("the language with the BCP 47 tag \"{language}\""), "it".to_string()),
+    };
     format!("[Language of this channel]\n\
-        This channel's conversation is held in the language with the BCP 47 tag \"{language}\". \
-        Write everything in it - your answers, your messages to the others and what you note down - \
+        This channel's conversation is held in {held_in}. \
+        Write everything in {write_in} - your answers, your messages to the others and what you note down - \
         whatever language your instructions, your tools or earlier messages are in.\n")
 }
 
@@ -138,10 +145,14 @@ mod tests {
     }
 
     #[test]
-    fn the_agent_is_told_the_tag_of_the_language_to_write_in() {
-        let text = render(language("de-CH").as_ref());
-        assert!(text.starts_with("[Language of this channel]\n"), "{text}");
-        assert!(text.contains("the BCP 47 tag \"de-CH\""), "{text}");
+    fn the_agent_is_told_the_language_by_its_names_and_its_tag() {
+        assert_eq!(render(language("de-CH").as_ref()), "[Language of this channel]\n\
+            This channel's conversation is held in German - Deutsch, BCP 47 tag \"de-CH\". \
+            Write everything in German - your answers, your messages to the others and what you note down - \
+            whatever language your instructions, your tools or earlier messages are in.\n");
+        assert!(render(language("en").as_ref()).contains("held in English (BCP 47 tag \"en\"). Write everything in English"), "a name once if it is the same");
+        let unknown = render(language("tlh").as_ref());
+        assert!(unknown.contains("held in the language with the BCP 47 tag \"tlh\". Write everything in it"), "{unknown}");
         assert_eq!(render(None), "", "a channel held in no language adds nothing");
     }
 
