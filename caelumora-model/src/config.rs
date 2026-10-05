@@ -6,7 +6,7 @@ use crate::secret::SecretManager;
 use crate::secret_impl::env::EnvSecretProvider;
 use crate::secret_impl::file::FileSecretProvider;
 use crate::security::{DummySecurityManager, OwnershipSecurityManager, SecurityManager};
-use crate::store::{EntityStore, StateStore, StoreError};
+use crate::store::{ComponentStore, EntityStore, StateStore, StoreError};
 use crate::store_impl::json::JsonFileStore;
 use crate::store_impl::memory::MemoryStore;
 use crate::user_provider::{UserManager, UserProvider};
@@ -66,10 +66,11 @@ impl PersistenceBackend {
     }
 }
 
-/// What `PersistenceBackend::open` returns: a store with both faces, so
-/// that one match serves `create_entity_store` and `create_state_store`.
-trait Store: EntityStore + StateStore {}
-impl<T: EntityStore + StateStore> Store for T {}
+/// What `PersistenceBackend::open` returns: a store with every face, so
+/// that one match serves `create_entity_store`, `create_component_store`
+/// and `create_state_store`.
+trait Store: EntityStore + ComponentStore + StateStore {}
+impl<T: EntityStore + ComponentStore + StateStore> Store for T {}
 
 #[derive(Debug, Deserialize, Default, Clone)]
 #[serde(default, deny_unknown_fields)]
@@ -355,6 +356,16 @@ impl AppConfig {
     /// # Errors
     /// `ConfigError::Store` if the store cannot be opened.
     pub fn create_entity_store(&self, security_manager: Arc<dyn SecurityManager>) -> ConfigResult<Arc<dyn EntityStore>> {
+        Ok(self.persistence.entity_store.open(security_manager)?)
+    }
+
+    /// The component store: kept where the entity store is, under
+    /// `persistence.entity_store`, as the preconfigured components were
+    /// before they had a store of their own.
+    ///
+    /// # Errors
+    /// `ConfigError::Store` if the store cannot be opened.
+    pub fn create_component_store(&self, security_manager: Arc<dyn SecurityManager>) -> ConfigResult<Arc<dyn ComponentStore>> {
         Ok(self.persistence.entity_store.open(security_manager)?)
     }
 

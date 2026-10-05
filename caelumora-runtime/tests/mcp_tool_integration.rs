@@ -2,10 +2,10 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use caelumora_model::command::default_commands;
-use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
+use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy, StoredComponent};
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{DummySecurityManager, SecurityContext};
-use caelumora_model::store::EntityStore;
+use caelumora_model::store::ComponentStore;
 use caelumora_model::store_impl::memory::MemoryStore;
 use caelumora_runtime::component::{ComponentContainer, ComponentContext};
 use caelumora_runtime::tool_impl::mcp_tool;
@@ -77,7 +77,6 @@ async fn build_container(params: serde_json::Value) -> ComponentContainer {
 
     let config = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
-            security_attributes: Default::default(),
             id: "test-echo".to_string(),
             kind: mcp_tool::MCP_TOOL_KIND.to_string(),
             params,
@@ -143,19 +142,18 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
     let store = Arc::new(MemoryStore::new());
     let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
 
-    // Preconfigured components now live in the EntityStore rather than in application-level
+    // Preconfigured components live in the ComponentStore rather than in application-level
     // config, so seed it directly.
     store
         .create_component(
             &SecurityContext::default(),
-            &ComponentDescriptor {
-                security_attributes: Default::default(),
+            &StoredComponent::new(ComponentDescriptor {
                 id: "shared-echo".to_string(),
                 kind: mcp_tool::MCP_TOOL_KIND.to_string(),
                 params: json!({ "endpoint": { "url": url } }),
                 tags: vec![],
                 fail_policy: ComponentFailPolicy::FailOpen,
-            },
+            }, Default::default()),
         )
         .await
         .unwrap();
@@ -166,7 +164,6 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
 
     let ref_config = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
-            security_attributes: Default::default(),
             id: "github-tool".to_string(),
             kind: caelumora_runtime::component::PRECONFIGURED_REF_KIND.to_string(),
             params: json!({ "id": "shared-echo" }),

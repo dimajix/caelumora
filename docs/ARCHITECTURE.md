@@ -154,7 +154,8 @@ Details: [SECURITY.md](SECURITY.md#views), [MEMORY.md](MEMORY.md#reading-other-c
 Two stores, configured separately:
 
 *   the **`EntityStore`** keeps long-lived documents - personalities, templates, agents, users and
-    their profiles, sessions and channels;
+    their profiles, sessions and channels - and, beside it, the **`ComponentStore`** the
+    preconfigured components that personalities and templates refer to;
 *   the **`StateStore`** keeps what changes while a session runs - the channel's history, each
     agent's state in each channel, and each agent's own state.
 

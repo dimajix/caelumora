@@ -242,6 +242,7 @@ async fn main() -> anyhow::Result<()> {
     let security_manager = config.create_security_manager();
     let state_store = config.create_state_store(security_manager.clone())?;
     let entity_store = config.create_entity_store(security_manager.clone())?;
+    let component_store = config.create_component_store(security_manager.clone())?;
     let secret_manager = config.create_secret_manager(security_manager.clone())?;
 
     let runtime = Arc::new(RuntimeManager::new(
@@ -251,7 +252,7 @@ async fn main() -> anyhow::Result<()> {
         security_manager.clone(),
         config.commands.clone(),
         config.component_defaults.clone(),
-        ComponentRegistry::built_in(entity_store.clone()),
+        ComponentRegistry::built_in(component_store),
     )?);
     caelumora_runtime::seed::load(entity_store.as_ref(), &config.seed).await?;
 

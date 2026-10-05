@@ -43,6 +43,7 @@ async fn main() -> anyhow::Result<()> {
     let security_manager = config.create_security_manager();
     let state_store = config.create_state_store(security_manager.clone())?;
     let entity_store = config.create_entity_store(security_manager.clone())?;
+    let component_store = config.create_component_store(security_manager.clone())?;
     let secret_manager = config.create_secret_manager(security_manager.clone())?;
     let user_manager = config.create_user_manager(entity_store.clone())?;
     if user_manager.is_empty() {
@@ -62,7 +63,7 @@ async fn main() -> anyhow::Result<()> {
         security_manager.clone(),
         config.commands.clone(),
         config.component_defaults.clone(),
-        ComponentRegistry::built_in(entity_store.clone()),
+        ComponentRegistry::built_in(component_store),
     )?);
     let session_manager = Arc::new(SessionManager::new(runtime_manager.clone()));
 

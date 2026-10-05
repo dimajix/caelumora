@@ -24,10 +24,11 @@ is in [AGENT-TURN.md](AGENT-TURN.md).
     facets.
 
 A descriptor of the reserved kind `ref` (`PRECONFIGURED_REF_KIND`) builds no component of its own:
-its `params` are `{ "id": "..." }`, naming a preconfigured descriptor stored in the `EntityStore`.
-It is read afresh every time it is built, in the context of the graph that refers to it, so secrets
-are resolved as that caller; the price is that the component is not shared between references (a
-preconfigured `mcp_tool` discovers its tools again for every personality that uses it).
+its `params` are `{ "id": "..." }`, naming a preconfigured descriptor stored in the
+`ComponentStore`. It is read afresh every time it is built, in the context of the graph that refers
+to it, so secrets are resolved as that caller; the price is that the component is not shared
+between references (a preconfigured `mcp_tool` discovers its tools again for every personality that
+uses it).
 
 ## Facets
 

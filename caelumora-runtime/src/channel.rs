@@ -1872,7 +1872,6 @@ mod tests {
                 params: serde_json::Value::Null,
                 tags: Vec::new(),
                 fail_policy: Default::default(),
-                security_attributes: Default::default(),
             }],
         };
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, security, default_commands(), defaults, registry).unwrap());
@@ -2055,7 +2054,6 @@ mod tests {
             params: serde_json::Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
-            security_attributes: Default::default(),
         }] };
         let model = Scripted(std::sync::Mutex::new([answer("Good bye.", stop), answer("I am back.", Vec::new())].into()));
         let Stuck { channel, context, agent, helper, mut events, running } = with_an_agent(Arc::new(model), components).await;
@@ -2102,7 +2100,6 @@ mod tests {
             params: serde_json::Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
-            security_attributes: Default::default(),
         }] };
         let Stuck { channel, context, agent, helper, mut events, running } =
             with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([bye].into()))), components).await;
@@ -2152,7 +2149,6 @@ mod tests {
             params: serde_json::Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
-            security_attributes: Default::default(),
         }] };
         let Stuck { channel, context, agent, helper, mut events, running } =
             with_an_agent(Arc::new(Scripted(std::sync::Mutex::new(script.into()))), components).await;
@@ -2214,7 +2210,6 @@ mod tests {
             params: serde_json::Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
-            security_attributes: Default::default(),
         }] };
         let Stuck { channel, agent, running, .. } =
             with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([calculate].into()))), components).await;
@@ -2278,7 +2273,6 @@ mod tests {
             params: serde_json::Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
-            security_attributes: Default::default(),
         }] };
         let Stuck { channel, context: _, agent, helper, mut events, running } =
             with_an_agent(Arc::new(FailsAfter(std::sync::Mutex::new([calculate.clone()].into()))), components).await;
@@ -2333,7 +2327,6 @@ mod tests {
             params: serde_json::Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
-            security_attributes: Default::default(),
         }] };
         let Stuck { channel, context, agent, running, .. } =
             with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([calculate].into()))), components).await;
@@ -2390,7 +2383,6 @@ mod tests {
             params: serde_json::Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
-            security_attributes: Default::default(),
         }] };
         (calculate, components)
     }
@@ -2466,7 +2458,6 @@ mod tests {
             params: serde_json::Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
-            security_attributes: Default::default(),
         }] };
         let Stuck { channel, context, agent, helper, mut events, running } =
             with_an_agent_under(Arc::new(FlowRule), Arc::new(Scripted(std::sync::Mutex::new([bye].into()))), components).await;
@@ -2509,7 +2500,6 @@ mod tests {
             params: serde_json::Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
-            security_attributes: Default::default(),
         }] };
         let Stuck { channel, context, agent, helper, mut events, running } =
             with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([bye].into()))), components).await;
@@ -2574,7 +2564,6 @@ mod tests {
             params: serde_json::Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
-            security_attributes: Default::default(),
         }] };
         let Stuck { channel, agent, helper, mut events, running, .. } =
             with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([bye].into()))), components).await;
@@ -2626,7 +2615,6 @@ mod tests {
             params: serde_json::json!({ "seconds": 60 }),
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
-            security_attributes: Default::default(),
         }] };
         let unasked = Message { role: MessageRole::Assistant, content: Some("never given".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
         let model = Arc::new(Scripted(std::sync::Mutex::new([call, unasked].into())));
@@ -2724,7 +2712,6 @@ mod tests {
             params: serde_json::Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
-            security_attributes: Default::default(),
         }] };
         let Stuck { channel, context, agent, helper, running, .. } =
             with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([bye].into()))), components).await;
@@ -2764,7 +2751,6 @@ mod tests {
             params: serde_json::Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
-            security_attributes: Default::default(),
         }] };
         let Stuck { agent, helper, mut events, running, .. } =
             with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([not_a_plan, answer].into()))), components).await;

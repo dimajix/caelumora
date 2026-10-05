@@ -1,7 +1,8 @@
 # Storage
 
 Caelumora keeps two kinds of data apart: long-lived **entities** - definitions and identities - in
-the `EntityStore`, and frequently changing runtime **state** in the `StateStore`. This document
+the `EntityStore`, and frequently changing runtime **state** in the `StateStore`; preconfigured
+components have a `ComponentStore` of their own. This document
 describes both stores, who writes what, and the controllers that hold the entities of a running
 session live. How access to stored entities is checked is in [SECURITY.md](SECURITY.md); which
 stores are used is configured in [CONFIGURATION.md](CONFIGURATION.md).
@@ -17,7 +18,14 @@ The `EntityStore` trait (in `caelumora-model`) stores the long-lived domain enti
 *   **User profiles**: what a user says about themselves - so far their introduction (issue 176).
     One `UserProfile` per user, stored under the user's id; see [SECURITY.md](SECURITY.md#ownership)
     for why it is not part of the `User` record.
-*   **Preconfigured components**: `ComponentDescriptor`s kept by id.
+
+Preconfigured components are not among them. They are runtime configuration that personalities and
+templates refer to by `kind: "ref"`, and the `ComponentStore` keeps them: a `StoredComponent` - the
+`ComponentDescriptor` with the attributes of who may use and change it - by its id, with the same
+five operations, checked the same way. A descriptor inside a personality or template carries no
+attributes; it is covered by those of what holds it. Both implementations serve as component store
+too; `AppConfig::create_component_store` opens it where the entity store is, so the components stay
+in `components/` of its directory.
 
 Every entity has a name, and the fields that mean something for it (issue 177):
 
@@ -56,7 +64,7 @@ The stores are generic over `Stored` (`caelumora_model::removal`), which asks ev
 it was deleted. The kinds that deleting is to mark implement `Deletable` and carry `deleted:
 Option<Removal>` - who deleted it and when: sessions, channels, agents, users, user profiles,
 personalities and session templates. The field is written only when set, so documents stored before
-it load unchanged. A preconfigured component is not marked: it is runtime configuration, reached
+it load unchanged. A preconfigured component in the `ComponentStore` is not marked: it is reached
 only through the personalities and templates that refer to it, and hidden with them; it is deleted
 for good.
 

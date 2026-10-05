@@ -5,7 +5,7 @@ use std::fmt::Debug;
 
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
 use crate::channel::{Channel, ChannelId, ChannelState};
-use crate::component::ComponentDescriptor;
+use crate::component::StoredComponent;
 use crate::security::SecurityContext;
 use crate::session::{Session, SessionId};
 use crate::template::{SessionTemplate, SessionTemplateId};
@@ -71,9 +71,9 @@ pub trait Journaled: Serialize + DeserializeOwned + Send {
 }
 
 
-/// The kinds of entity an `EntityStore` keeps (issue 164): what the
-/// actions that concern every kind alike are keyed by, and its name in
-/// errors.
+/// The kinds the stores keep - the entities of the `EntityStore` and the
+/// components of the `ComponentStore` (issue 164): what the actions that
+/// concern every kind alike are keyed by, and its name in errors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EntityKind {
     Personality,
@@ -177,13 +177,21 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn update_user_profile(&self, ctx: &SecurityContext, value: &UserProfile) -> StoreResult<()>;
     async fn delete_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool>;
     async fn list_user_profiles(&self, ctx: &SecurityContext) -> StoreResult<Vec<UserProfile>>;
+}
 
-    // Preconfigured components (referenceable elsewhere via `kind: "ref"`)
-    async fn create_component(&self, ctx: &SecurityContext, value: &ComponentDescriptor) -> StoreResult<()>;
-    async fn get_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<ComponentDescriptor>;
-    async fn update_component(&self, ctx: &SecurityContext, value: &ComponentDescriptor) -> StoreResult<()>;
+/// The preconfigured components: runtime configuration that personalities
+/// and templates refer to by `kind: "ref"`, kept by id - not an entity of
+/// their own standing, so not in the `EntityStore`. The same five
+/// operations, checked the same way (`store_impl::access`); deleting
+/// removes for good, since a component is hidden with what refers to it
+/// (issue 164).
+#[async_trait]
+pub trait ComponentStore : Debug + Sync + Send {
+    async fn create_component(&self, ctx: &SecurityContext, value: &StoredComponent) -> StoreResult<()>;
+    async fn get_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<StoredComponent>;
+    async fn update_component(&self, ctx: &SecurityContext, value: &StoredComponent) -> StoreResult<()>;
     async fn delete_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<bool>;
-    async fn list_components(&self, ctx: &SecurityContext) -> StoreResult<Vec<ComponentDescriptor>>;
+    async fn list_components(&self, ctx: &SecurityContext) -> StoreResult<Vec<StoredComponent>>;
 }
 
 /// The runtime state (issue 193): every kind `Journaled`, read whole and

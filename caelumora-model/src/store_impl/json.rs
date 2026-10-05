@@ -1,11 +1,11 @@
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
 use crate::channel::{Channel, ChannelId, ChannelState};
-use crate::component::ComponentDescriptor;
+use crate::component::StoredComponent;
 use crate::removal::Stored;
 use crate::security::SecurityManager;
 use crate::store_impl::access::{Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, USERS, USER_PROFILES};
 use crate::session::{Session, SessionId};
-use crate::store::{EntityStore, Journaled, StateStore, StoreError, StoreResult};
+use crate::store::{ComponentStore, EntityStore, Journaled, StateStore, StoreError, StoreResult};
 use crate::template::{SessionTemplate, SessionTemplateId};
 use crate::user::{User, UserId, UserProfile};
 use async_trait::async_trait;
@@ -512,21 +512,24 @@ impl EntityStore for JsonFileStore {
     async fn list_user_profiles(&self, ctx: &SecurityContext) -> StoreResult<Vec<UserProfile>> {
         self.list_dir(ctx, &USER_PROFILES, self.user_profiles_dir()).await
     }
+}
 
-    // Components
-    async fn create_component(&self, ctx: &SecurityContext, value: &ComponentDescriptor) -> StoreResult<()> {
-        self.create_file(ctx, &COMPONENTS, self.component_path(&value.id), value.id.clone(), value).await
+/// Preconfigured components, kept like the entities (issue 164).
+#[async_trait]
+impl ComponentStore for JsonFileStore {
+    async fn create_component(&self, ctx: &SecurityContext, value: &StoredComponent) -> StoreResult<()> {
+        self.create_file(ctx, &COMPONENTS, self.component_path(value.id()), value.id().to_string(), value).await
     }
-    async fn get_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<ComponentDescriptor> {
+    async fn get_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<StoredComponent> {
         self.get_file(ctx, &COMPONENTS, self.component_path(id), id.to_string()).await
     }
-    async fn update_component(&self, ctx: &SecurityContext, value: &ComponentDescriptor) -> StoreResult<()> {
-        self.update_file(ctx, &COMPONENTS, self.component_path(&value.id), value.id.clone(), value).await
+    async fn update_component(&self, ctx: &SecurityContext, value: &StoredComponent) -> StoreResult<()> {
+        self.update_file(ctx, &COMPONENTS, self.component_path(value.id()), value.id().to_string(), value).await
     }
     async fn delete_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<bool> {
-        self.delete_file::<ComponentDescriptor>(ctx, &COMPONENTS, self.component_path(id)).await
+        self.delete_file::<StoredComponent>(ctx, &COMPONENTS, self.component_path(id)).await
     }
-    async fn list_components(&self, ctx: &SecurityContext) -> StoreResult<Vec<ComponentDescriptor>> {
+    async fn list_components(&self, ctx: &SecurityContext) -> StoreResult<Vec<StoredComponent>> {
         self.list_dir(ctx, &COMPONENTS, self.components_dir()).await
     }
 }
@@ -628,6 +631,12 @@ mod tests {
     async fn behaves_as_a_state_store() {
         let dir = tempdir().unwrap();
         suite::state_store_behaves(&store(dir.path())).await;
+    }
+
+    #[tokio::test]
+    async fn behaves_as_a_component_store() {
+        let dir = tempdir().unwrap();
+        suite::component_store_behaves(&store(dir.path())).await;
     }
 
     #[async_trait::async_trait]

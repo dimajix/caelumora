@@ -25,11 +25,6 @@ pub struct ComponentDescriptor {
     pub tags: Vec<String>,
     #[serde(default)]
     pub fail_policy: ComponentFailPolicy,
-    /// Who may use and change a preconfigured component (issue 11). Only
-    /// meaningful for descriptors kept in the `EntityStore`; those inside a
-    /// personality are covered by the personality's attributes.
-    #[serde(default)]
-    pub security_attributes: SecurityAttributes,
 }
 
 impl ComponentDescriptor {
@@ -42,16 +37,40 @@ impl ComponentDescriptor {
             params: Value::Null,
             tags: Vec::new(),
             fail_policy: Default::default(),
-            security_attributes: Default::default(),
         }
     }
 }
 
-/// Deleted for good, not marked (issue 164): it is reached only through the
-/// personalities and templates that refer to it, and hidden with them.
-impl crate::removal::Stored for ComponentDescriptor {}
+/// A preconfigured component: a descriptor kept in the `ComponentStore`
+/// under its id, which personalities and templates refer to by `kind:
+/// "ref"`, with who may use and change it (issue 11). Stored as the
+/// descriptor with its attributes beside its fields.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredComponent {
+    #[serde(flatten)]
+    pub descriptor: ComponentDescriptor,
+    #[serde(default)]
+    pub security_attributes: SecurityAttributes,
+}
 
-impl Secured for ComponentDescriptor {
+impl StoredComponent {
+    /// `descriptor`, kept with `security_attributes`.
+    pub fn new(descriptor: ComponentDescriptor, security_attributes: SecurityAttributes) -> Self {
+        Self { descriptor, security_attributes }
+    }
+
+    /// What it is kept under.
+    pub fn id(&self) -> &str {
+        &self.descriptor.id
+    }
+}
+
+/// Deleted for good, not marked (issue 164): it is runtime configuration,
+/// reached only through the personalities and templates that refer to it,
+/// and hidden with them.
+impl crate::removal::Stored for StoredComponent {}
+
+impl Secured for StoredComponent {
     fn security_attributes(&self) -> &SecurityAttributes {
         &self.security_attributes
     }
@@ -64,3 +83,25 @@ pub enum ComponentFailPolicy {
     FailClosed,
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::actor::ActorId;
+
+    #[test]
+    fn a_stored_component_is_written_as_the_descriptor_with_its_attributes_beside_its_fields() {
+        let owner = ActorId::System;
+        let stored = StoredComponent::new(ComponentDescriptor::new("search", "web_search"), SecurityAttributes::owned_by(owner));
+        let json = serde_json::to_value(&stored).unwrap();
+        assert_eq!(json["id"], "search");
+        assert_eq!(json["kind"], "web_search");
+        assert_eq!(json["security_attributes"]["owner_id"], serde_json::to_value(owner).unwrap(), "as before the store of its own");
+
+        let read: StoredComponent = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(read.id(), "search");
+        assert_eq!(read.security_attributes.owner_id, owner);
+        let descriptor: ComponentDescriptor = serde_json::from_value(json).unwrap();
+        assert_eq!(descriptor.kind, "web_search", "a descriptor with attributes written into it still reads");
+    }
+}

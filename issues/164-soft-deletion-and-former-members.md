@@ -94,7 +94,8 @@ transcripts, notes), and participants removed from a channel.
 - **Not a preconfigured component** (`ComponentDescriptor`, decided by the maintainer): it is
   runtime configuration, reached only through the personalities and templates that refer to it by
   `kind: "ref"`, and hidden with them while they are marked - as a channel is with its session. It
-  implements `Stored` with no mark, is deleted for good as today, and has no restore or purge. A
+  is kept in a `ComponentStore` of its own (see the history), implements `Stored` with no mark, is
+  deleted for good as today, and has no restore or purge. A
   purge of a personality does not take its components along: another may refer to them. Deleting
   a component that is still referred to - by a marked personality too - leaves the reference
   dangling, as today; whether deleting it should be refused then is a question of referential
@@ -315,3 +316,15 @@ rights [125](125-invisible-admin.md)'s, the record of the acts [140](140-audit-l
   operations. The maintainer decided against it: a component is runtime configuration reached only
   through what refers to it, so the trait was split into `Stored` (asked of every kind) and
   `Deletable` (the kinds deleting marks); see *Types and traits*.
+- **2026-10-05** — A restructuring after step 1, at the maintainer's request and without a change in
+  behaviour: preconfigured components moved out of the `EntityStore` into a `ComponentStore` of
+  their own (`caelumora_model::store`), beside it as the `StateStore` is. With the entities all
+  deletable but one, the component was the exception in the `EntityStore`; now each store's kinds
+  have the same operations. The store keeps a `StoredComponent` - the `ComponentDescriptor`
+  flattened, with `security_attributes` beside it - so that the descriptor is configuration only and
+  lost the attributes it carried in every personality and template for nothing. The stored format
+  is unchanged. `MemoryStore` and `JsonFileStore` implement the new trait too;
+  `AppConfig::create_component_store` opens it where the entity store is (no configuration of its
+  own), and `ComponentRegistry` takes it instead of the `EntityStore`. The store suite runs
+  components in `component_store_behaves`. STORAGE.md, COMPONENTS.md, ARCHITECTURE.md,
+  CONFIGURATION.md.

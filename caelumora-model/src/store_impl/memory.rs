@@ -1,8 +1,8 @@
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
 use crate::channel::{Channel, ChannelId, ChannelState};
-use crate::component::ComponentDescriptor;
+use crate::component::StoredComponent;
 use crate::session::{Session, SessionId};
-use crate::store::{EntityStore, Journaled, StateStore, StoreError, StoreResult};
+use crate::store::{ComponentStore, EntityStore, Journaled, StateStore, StoreError, StoreResult};
 use crate::template::{SessionTemplate, SessionTemplateId};
 use async_trait::async_trait;
 use tracing::info;
@@ -27,7 +27,7 @@ pub struct MemoryStore {
     agent_states: RwLock<HashMap<AgentId, AgentState>>,
     agent_channel_states: RwLock<HashMap<(AgentId, ChannelId), AgentChannelState>>,
     channel_states: RwLock<HashMap<ChannelId, ChannelState>>,
-    components: RwLock<HashMap<String, ComponentDescriptor>>,
+    components: RwLock<HashMap<String, StoredComponent>>,
 }
 
 impl Default for MemoryStore {
@@ -268,21 +268,24 @@ impl EntityStore for MemoryStore {
     async fn list_user_profiles(&self, ctx: &SecurityContext) -> StoreResult<Vec<UserProfile>> {
         self.list_in(ctx, &self.user_profiles, &USER_PROFILES).await
     }
+}
 
-    // Components
-    async fn create_component(&self, ctx: &SecurityContext, value: &ComponentDescriptor) -> StoreResult<()> {
-        self.create_in(ctx, &self.components, &COMPONENTS, value.id.clone(), value).await
+/// Preconfigured components, kept like the entities (issue 164).
+#[async_trait]
+impl ComponentStore for MemoryStore {
+    async fn create_component(&self, ctx: &SecurityContext, value: &StoredComponent) -> StoreResult<()> {
+        self.create_in(ctx, &self.components, &COMPONENTS, value.id().to_string(), value).await
     }
-    async fn get_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<ComponentDescriptor> {
+    async fn get_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<StoredComponent> {
         self.get_in(ctx, &self.components, &COMPONENTS, &id.to_string()).await
     }
-    async fn update_component(&self, ctx: &SecurityContext, value: &ComponentDescriptor) -> StoreResult<()> {
-        self.update_in(ctx, &self.components, &COMPONENTS, value.id.clone(), value).await
+    async fn update_component(&self, ctx: &SecurityContext, value: &StoredComponent) -> StoreResult<()> {
+        self.update_in(ctx, &self.components, &COMPONENTS, value.id().to_string(), value).await
     }
     async fn delete_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<bool> {
         self.delete_in(ctx, &self.components, &COMPONENTS, &id.to_string()).await
     }
-    async fn list_components(&self, ctx: &SecurityContext) -> StoreResult<Vec<ComponentDescriptor>> {
+    async fn list_components(&self, ctx: &SecurityContext) -> StoreResult<Vec<StoredComponent>> {
         self.list_in(ctx, &self.components, &COMPONENTS).await
     }
 }
@@ -343,6 +346,11 @@ mod tests {
     #[tokio::test]
     async fn behaves_as_a_state_store() {
         suite::state_store_behaves(&MemoryStore::new()).await;
+    }
+
+    #[tokio::test]
+    async fn behaves_as_a_component_store() {
+        suite::component_store_behaves(&MemoryStore::new()).await;
     }
 
     #[async_trait::async_trait]

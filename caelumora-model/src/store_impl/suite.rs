@@ -6,14 +6,14 @@
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
 use crate::turn::TurnState;
 use crate::channel::{Channel, ChannelId, ChannelState};
-use crate::component::ComponentDescriptor;
+use crate::component::{ComponentDescriptor, StoredComponent};
 use crate::confidentiality::{Classification, Visibility};
 use crate::external_agent::ConversationId;
 use crate::name::{Name, ScopedName};
 use crate::scope::Scope;
 use crate::security::SecurityContext;
 use crate::session::{Session, SessionId};
-use crate::store::{EntityStore, Journaled, StateStore, StoreError};
+use crate::store::{ComponentStore, EntityStore, Journaled, StateStore, StoreError};
 use crate::template::{ChannelTemplate, ParticipantTemplate, SessionTemplate, SessionTemplateId};
 use crate::removal::{Deletable, Removal};
 use crate::user::{User, UserId, UserProfile};
@@ -132,15 +132,14 @@ fn user(username: &str) -> User {
     }
 }
 
-fn component() -> ComponentDescriptor {
-    ComponentDescriptor {
-        id: "search".to_string(),
-        kind: "web_search".to_string(),
-        params: Default::default(),
-        tags: Vec::new(),
-        fail_policy: Default::default(),
-        security_attributes: Default::default(),
-    }
+fn component() -> StoredComponent {
+    StoredComponent::new(ComponentDescriptor::new("search", "web_search"), Default::default())
+}
+
+/// Preconfigured components go through the same life as the entities.
+pub(crate) async fn component_store_behaves(store: &dyn ComponentStore) {
+    lifecycle!(store, component(), component_id, descriptor.kind, "component",
+        create_component, get_component, update_component, delete_component, list_components);
 }
 
 /// A store that marks a document deleted by hand, writing it as it would
@@ -160,8 +159,8 @@ fn marked<T: Deletable>(mut value: T) -> T {
 
 // A named function rather than a closure: a closure returning a borrow of
 // its argument doesn't get the lifetime inferred.
-fn component_id(value: &ComponentDescriptor) -> &str {
-    &value.id
+fn component_id(value: &StoredComponent) -> &str {
+    value.id()
 }
 
 /// Every kind of entity goes through the same life, and users are also
@@ -181,8 +180,6 @@ pub(crate) async fn entity_store_behaves(store: &dyn EntityStore) {
         create_user, get_user, update_user, delete_user, list_users);
     lifecycle!(store, UserProfile::new(UserId::new(), None), |v: &UserProfile| v.user_id(), introduction, "user_profile",
         create_user_profile, get_user_profile, update_user_profile, delete_user_profile, list_user_profiles);
-    lifecycle!(store, component(), component_id, kind, "component",
-        create_component, get_component, update_component, delete_component, list_components);
 
     let ctx = SecurityContext::default();
     let alice = user("alice");

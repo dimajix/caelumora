@@ -14,7 +14,7 @@
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{SecurityContext, SecurityManager};
-use caelumora_model::store::EntityStore;
+use caelumora_model::store::ComponentStore;
 use futures::future::BoxFuture;
 use serde::Deserialize;
 use std::any::{Any, TypeId};
@@ -198,7 +198,7 @@ struct Single {
     default_kind: Option<String>,
 }
 
-/// Reserved `kind` that resolves to a preconfigured component stored in the `EntityStore`
+/// Reserved `kind` that resolves to a preconfigured component stored in the `ComponentStore`
 /// instead of invoking a factory. `params` must deserialize to `{ "id": "<preconfigured id>" }`.
 pub const PRECONFIGURED_REF_KIND: &str = "ref";
 
@@ -213,7 +213,7 @@ pub struct ComponentRegistry {
     /// The configuration's defaults for singles (`AppConfig::component_defaults`),
     /// by the single they provide.
     defaults: HashMap<TypeId, ComponentDescriptor>,
-    entity_store: Arc<dyn EntityStore>,
+    component_store: Arc<dyn ComponentStore>,
 }
 
 impl std::fmt::Debug for ComponentRegistry {
@@ -226,23 +226,23 @@ impl std::fmt::Debug for ComponentRegistry {
 }
 
 impl ComponentRegistry {
-    pub fn new(entity_store: Arc<dyn EntityStore>) -> Self {
+    pub fn new(component_store: Arc<dyn ComponentStore>) -> Self {
         Self {
             kinds: HashMap::new(),
             singles: HashMap::new(),
             defaults: HashMap::new(),
-            entity_store,
+            component_store,
         }
     }
 
     /// A registry with every built-in component kind (the `register_all` of
     /// `component_impl`, `tool_impl`, `command_impl`, `llm_impl`,
     /// `external_impl` and `moderator_impl`), resolving references to
-    /// preconfigured components in `entity_store`. A binary passes it to
+    /// preconfigured components in `component_store`. A binary passes it to
     /// the `RuntimeManager` as it is; a test may register kinds of its own
     /// first, such as a stand-in for the model.
-    pub fn built_in(entity_store: Arc<dyn EntityStore>) -> Self {
-        let mut registry = Self::new(entity_store);
+    pub fn built_in(component_store: Arc<dyn ComponentStore>) -> Self {
+        let mut registry = Self::new(component_store);
         crate::component_impl::register_all(&mut registry);
         crate::tool_impl::register_all(&mut registry);
         crate::command_impl::register_all(&mut registry);
@@ -366,7 +366,7 @@ impl ComponentRegistry {
     }
 
     /// `node` itself, or - for `kind: "ref"` - the preconfigured descriptor
-    /// it names, fetched from the EntityStore fresh on every call, using the
+    /// it names, fetched from the ComponentStore fresh on every call, using the
     /// ComponentContext of whichever component graph is referencing it. This
     /// ensures things like secret resolution run under the actual caller's
     /// ComponentContext rather than a synthetic one, at the cost of not
@@ -379,10 +379,11 @@ impl ComponentRegistry {
         let target: PreconfiguredRef = serde_json::from_value(node.params.clone())
             .map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
         let descriptor = self
-            .entity_store
+            .component_store
             .get_component(&context.security_context, &target.id)
             .await
-            .map_err(|e| ComponentError::InvalidConfig(format!("no preconfigured component '{}': {}", target.id, e)))?;
+            .map_err(|e| ComponentError::InvalidConfig(format!("no preconfigured component '{}': {}", target.id, e)))?
+            .descriptor;
         if descriptor.kind == PRECONFIGURED_REF_KIND {
             return Err(ComponentError::InvalidConfig(format!(
                 "preconfigured component '{}' cannot itself be a ref",
@@ -736,6 +737,7 @@ impl ComponentContainer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::component::StoredComponent;
     use caelumora_model::security::DummySecurityManager;
     use caelumora_model::session::SessionId;
     use caelumora_model::store_impl::memory::MemoryStore;
@@ -763,7 +765,6 @@ mod tests {
 
     fn descriptor(id: &str, kind: &str, params: serde_json::Value) -> ComponentDescriptor {
         ComponentDescriptor {
-            security_attributes: Default::default(),
             id: id.to_string(),
             kind: kind.to_string(),
             params,
@@ -781,7 +782,7 @@ mod tests {
 
         let store = Arc::new(MemoryStore::new());
         store
-            .create_component(&SecurityContext::default(), &descriptor("shared-marker", "counter", json!({})))
+            .create_component(&SecurityContext::default(), &StoredComponent::new(descriptor("shared-marker", "counter", json!({})), Default::default()))
             .await
             .unwrap();
 
@@ -825,7 +826,7 @@ mod tests {
         store
             .create_component(
                 &SecurityContext::default(),
-                &descriptor("a", PRECONFIGURED_REF_KIND, json!({ "id": "b" })),
+                &StoredComponent::new(descriptor("a", PRECONFIGURED_REF_KIND, json!({ "id": "b" })), Default::default()),
             )
             .await
             .unwrap();
