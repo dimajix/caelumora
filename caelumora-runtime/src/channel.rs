@@ -16,10 +16,8 @@ use arc_swap::ArcSwap;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_model::channel::{Channel, ChannelId, ChannelState, HistoryAccess, HistoryStart, Participant};
 use crate::controller::{AgentController, ChannelController, ControllerManager, UserController};
-use crate::event::EventBus;
 use caelumora_model::agent::{Personality, PersonalityKind};
 use caelumora_model::approval::Approver;
-use caelumora_model::event::GlobalEvent;
 use caelumora_model::language::Language;
 use caelumora_model::confidentiality::{user_roles, Classification};
 use caelumora_model::mention::{handle_of, MentionDirectory};
@@ -288,7 +286,6 @@ pub struct ChannelLoop {
     security: Arc<dyn SecurityManager>,
     entities: Arc<dyn EntityStore>,
     controllers: Arc<ControllerManager>,
-    events: Arc<EventBus>,
     /// The actors of the participants, each with what it was built from -
     /// what a reclassification asks its clearances of; replaced as a whole
     /// when someone joins or leaves (issue 46), so that every reader sees
@@ -369,7 +366,6 @@ impl ChannelLoop {
             security: Arc::clone(runtime.security_manager()),
             entities: Arc::clone(runtime.entity_store()),
             controllers: Arc::clone(runtime.controller_manager()),
-            events: Arc::clone(runtime.event_bus()),
             runtime,
             actors: ArcSwap::from_pointee(HashMap::new()),
             leaving: std::sync::Mutex::new(HashMap::new()),
@@ -557,40 +553,6 @@ impl ChannelLoop {
             self.state_store.put_channel_state(self.id, &mut state).await?;
         }
         info!(channel = %self.id, %classification, fitted, lowered, by = %context.caller_id, "Channel reclassified");
-        Ok(())
-    }
-
-    /// Reclassifies message `message` as `classification` on behalf of
-    /// `context` (issue 133): asked as `ActionType::Reclassify` - its author
-    /// or the channel's owner, never above the channel - then changed in the
-    /// history, stored and announced (`GlobalEvent::MessageReclassified`).
-    ///
-    /// # Errors
-    /// `ChannelError::MessageNotFound` if the history has no such message,
-    /// `ChannelError::Forbidden` if `context` may not reclassify it as
-    /// asked, `ChannelError::MessageRevoked` if it was taken back (issue
-    /// 239); whatever storing it reports.
-    pub async fn reclassify_message(&self, context: &SecurityContext, message: MessageId, classification: Classification) -> Result<()> {
-        let channel = self.classification();
-        let attributes = self.security_attributes();
-        let mut state = self.state.lock().await;
-        let not_found = || ChannelError::MessageNotFound { message, channel: self.id };
-        let (author, current) = state.history.message(message)
-            .map(|m| (m.sender_id, m.classification))
-            .ok_or_else(not_found)?;
-        let action = ActionType::Reclassify {
-            target: Reclassified::Message { author, attributes: &attributes },
-            current: &current,
-            new: &classification,
-            channel: &channel,
-        };
-        self.require(context, action, "reclassifying a message of").await?;
-        if !state.history.reclassify(message, classification.clone()) {
-            return Err(ChannelError::MessageRevoked { message, channel: self.id }.into());
-        }
-        self.state_store.put_channel_state(self.id, &mut state).await?;
-        drop(state);
-        self.events.publish(GlobalEvent::MessageReclassified(self.session_id, self.id, message, classification), attributes);
         Ok(())
     }
 
@@ -1081,7 +1043,10 @@ impl ChannelLoop {
     /// author - the sender the history names - may change it, as the policy
     /// says in the envelope's context, and it can be changed so as it stands
     /// (`Message::modify`, `Message::revoke`): not taken back, and modified
-    /// by its own sender in its own role. A request to answer again, too:
+    /// by its own sender in its own role. A reclassification (issue 239)
+    /// likewise, but by its author or the channel's owner, as the policy
+    /// says (`may_reclassify`), never above the channel. A request to
+    /// answer again, too:
     /// its sender may ask it (`may_retry_message`), and it names the agent
     /// that said the message, not taken back, as its author. The gate for
     /// every actor, whatever it checked itself; anything else is dropped,
@@ -1095,6 +1060,15 @@ impl ChannelLoop {
             },
             ActorEvent::MessageRevoked { message, at } => match self.message(*message).await {
                 Some(mut message) => self.security.may_revoke_message(&event.security, message.sender_id, &channel).await && message.revoke(*at),
+                None => false,
+            },
+            ActorEvent::MessageReclassified { message, classification } => match self.message(*message).await {
+                Some(mut said) => {
+                    let current = said.classification.clone();
+                    let target = Reclassified::Message { author: said.sender_id, attributes: &channel };
+                    self.security.may_reclassify(&event.security, target, &current, classification, &self.classification()).await
+                        && said.reclassify(classification)
+                }
                 None => false,
             },
             ActorEvent::RetryRequested { message, author } => match self.message(*message).await {
@@ -1224,6 +1198,7 @@ impl ChannelLoop {
             // Admitted, so they apply (`admits_change`, issue 234).
             ActorEvent::MessageModified(modified) => state.history.modify(modified.clone()),
             ActorEvent::MessageRevoked { message, at } => state.history.revoke(*message, *at),
+            ActorEvent::MessageReclassified { message, classification } => state.history.reclassify(*message, classification.clone()),
             _ => false,
         };
 
@@ -1924,11 +1899,23 @@ mod tests {
         channel.process_envelope(from(alice_id, ActorEvent::MessageModified(modified(alice_id, "hello"))), &actors).await;
         let standing = channel.message(said.id).await.expect("said");
         assert_eq!((standing.content.as_deref(), standing.modified.is_some()), (Some("hello"), true), "its author modifies it");
+
+        // Reclassified as the policy says (issue 239): here, with nobody
+        // owning the channel, by its author alone.
+        let reclassified = |classification| ActorEvent::MessageReclassified { message: said.id, classification };
+        let above = Classification::general(caelumora_model::confidentiality::Confidentiality::Confidential);
+        channel.process_envelope(from(bob_id, reclassified(Classification::PUBLIC)), &actors).await;
+        channel.process_envelope(from(alice_id, reclassified(above)), &actors).await;
+        assert_eq!(entries().await, 2, "neither by another nor above the channel");
+        channel.process_envelope(from(alice_id, reclassified(Classification::PUBLIC)), &actors).await;
+        assert_eq!(channel.message(said.id).await.map(|m| m.classification), Some(Classification::PUBLIC), "its author releases it");
+
         channel.process_envelope(from(alice_id, revoked()), &actors).await;
         assert!(channel.message(said.id).await.is_some_and(|m| m.revoked.is_some() && m.content.is_none()), "and takes it back");
         channel.process_envelope(from(alice_id, revoked()), &actors).await;
         channel.process_envelope(from(alice_id, ActorEvent::MessageModified(modified(alice_id, "again"))), &actors).await;
-        assert_eq!(entries().await, 3, "nothing changes it once taken back");
+        channel.process_envelope(from(alice_id, reclassified(Classification::CHANNEL_DEFAULT)), &actors).await;
+        assert_eq!(entries().await, 4, "nothing changes it once taken back");
         assert_eq!(channel.history().await.len(), 1, "it stays in its place");
 
         // Only an agent is asked to answer again, and only for its own message.
@@ -1955,14 +1942,19 @@ mod tests {
         assert!(matches!(error(his.revoke_message(said.id).await), ChannelError::Forbidden { .. }), "not his to take back");
         assert!(matches!(error(hers.revoke_message(MessageId::new()).await), ChannelError::MessageNotFound { .. }), "never said");
         let above = Classification::general(caelumora_model::confidentiality::Confidentiality::Confidential);
-        assert!(matches!(error(hers.modify_message(said.id, "hello".to_string(), Some(above)).await), ChannelError::ClassificationRefused { .. }), "not above the channel");
+        assert!(matches!(error(hers.modify_message(said.id, "hello".to_string(), Some(above.clone())).await), ChannelError::ClassificationRefused { .. }), "not above the channel");
         assert!(matches!(error(hers.request_retry(said.id).await), ChannelError::NotAnAgentsMessage { .. }), "no agent said it");
         assert!(matches!(error(his.request_retry(MessageId::new()).await), ChannelError::MessageNotFound { .. }));
+        assert!(matches!(error(his.reclassify_message(said.id, Classification::PUBLIC).await), ChannelError::Forbidden { .. }), "not his to release");
+        assert!(matches!(error(hers.reclassify_message(said.id, above.clone()).await), ChannelError::Forbidden { .. }), "never above the channel");
+        assert!(matches!(error(hers.reclassify_message(MessageId::new(), Classification::PUBLIC).await), ChannelError::MessageNotFound { .. }));
         hers.modify_message(said.id, "hello".to_string(), None).await.expect("hers to modify");
+        hers.reclassify_message(said.id, Classification::PUBLIC).await.expect("and to release");
         hers.revoke_message(said.id).await.expect("and to take back");
 
         channel.process_envelope(from_alice(ActorEvent::MessageRevoked { message: said.id, at: chrono::Utc::now() }), &HashMap::new()).await;
         assert!(matches!(error(hers.modify_message(said.id, "hello".to_string(), None).await), ChannelError::MessageRevoked { .. }), "taken back, it stays so");
+        assert!(matches!(error(hers.reclassify_message(said.id, Classification::PUBLIC).await), ChannelError::MessageRevoked { .. }), "with nothing left to release");
     }
 
     #[tokio::test]
@@ -2021,6 +2013,15 @@ mod tests {
                 && !state.transcript.messages().iter().any(|m| m.id == question)
         })).await;
         assert!(channel.message(question).await.is_some_and(|m| m.revoked.is_some()), "so does the channel");
+
+        // Another's message released (issue 239), as the policy lets alice
+        // here: it reaches the agent that said it, which is not its sender.
+        let first = channel.history().await.iter().find(|m| m.content.as_deref() == Some("first")).expect("answered").id;
+        alice.reclassify_message(first, Classification::PUBLIC).await.expect("hers to release");
+        until("the agent takes the release in", Box::new(move |state| {
+            state.history.message(first).is_some_and(|m| m.classification == Classification::PUBLIC)
+                && state.transcript.messages().iter().any(|m| m.id == first && m.classification == Classification::PUBLIC)
+        })).await;
         running.abort();
     }
 
@@ -2265,7 +2266,9 @@ mod tests {
             let gate = Arc::clone(&self.gate);
             Box::pin(futures::stream::once(async move {
                 gate.acquire().await.unwrap().forget();
+                // An id of its own, as every model client gives its answers.
                 Ok(caelumora_model::message::MessageEvent::Complete(Message {
+                    id: MessageId::new(),
                     role: caelumora_model::message::MessageRole::Assistant,
                     content: Some(answer.to_string()),
                     ..Message::new(Classification::CHANNEL_DEFAULT)

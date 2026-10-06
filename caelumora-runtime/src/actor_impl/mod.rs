@@ -101,10 +101,11 @@ async fn take_in_modified(
 /// Takes in what an agent was told while it could not listen (issue 222),
 /// the same for both kinds of agent: `received`, and everything `rx` holds
 /// already behind it, in order. What others said is perceived as it comes
-/// (`perceive`, with the agent's `processors`), and so is a
-/// message modified or taken back since (issue 234); of the requests to
-/// respond the last is returned - one answer to the conversation as it stands, in
-/// the authority of the last who asked - and the others are dropped, as is
+/// (`perceive`, with the agent's `processors`), and so is a message
+/// modified or taken back since (issue 234); a reclassification is recorded
+/// as it is (issue 239). Of the requests to respond the last is returned -
+/// one answer to the conversation as it stands, in the authority of the
+/// last who asked - and the others are dropped, as is
 /// every other event but the requests to answer again (issue 234), which
 /// are returned in order, each to be answered. Neither commits nor stores:
 /// when that happens is the actor's.
@@ -134,6 +135,10 @@ async fn take_in(
                 }
                 ActorEvent::MessageRevoked { message, at } => {
                     state.revoke_message(message, at);
+                    None
+                }
+                ActorEvent::MessageReclassified { message, classification } => {
+                    state.reclassify_message(message, classification);
                     None
                 }
                 ActorEvent::ResponseRequested => Some(event),

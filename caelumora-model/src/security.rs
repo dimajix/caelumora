@@ -406,6 +406,12 @@ pub trait AccessQuestions {
     /// channel as it admits the revocation.
     async fn may_revoke_message(&self, context: &SecurityContext, author: ActorId, channel: &SecurityAttributes) -> bool;
 
+    /// Whether `context` may reclassify `target`, classified `current`, as
+    /// `new` in a channel classified `channel` (`Reclassify`, issue 133) -
+    /// asked by the channel as it admits a message's reclassification
+    /// (issue 239).
+    async fn may_reclassify(&self, context: &SecurityContext, target: Reclassified<'_>, current: &Classification, new: &Classification, channel: &Classification) -> bool;
+
     /// Whether `context` may ask an agent of the channel with `channel`
     /// attributes to answer again instead of one of its messages
     /// (`RetryMessage`, issue 234) - asked by the channel as it admits the
@@ -481,6 +487,10 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
 
     async fn may_revoke_message(&self, context: &SecurityContext, author: ActorId, channel: &SecurityAttributes) -> bool {
         self.check(context, ActionType::RevokeMessage { author, channel }).await
+    }
+
+    async fn may_reclassify(&self, context: &SecurityContext, target: Reclassified<'_>, current: &Classification, new: &Classification, channel: &Classification) -> bool {
+        self.check(context, ActionType::Reclassify { target, current, new, channel }).await
     }
 
     async fn may_retry_message(&self, context: &SecurityContext, channel: &SecurityAttributes) -> bool {

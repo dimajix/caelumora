@@ -1,6 +1,4 @@
 use crate::agent::{AgentId, AgentUpdateEvent};
-use crate::confidentiality::Classification;
-use crate::message::MessageId;
 use crate::channel::{ChannelId, ChannelUpdateEvent};
 use crate::session::{SessionId, SessionUpdateEvent};
 use crate::user::{UserId, UserUpdateEvent};
@@ -19,10 +17,6 @@ pub enum GlobalEvent {
     SessionStopped(SessionId),
     ChannelCreated(SessionId, ChannelId),
     ChannelUpdated(SessionId, ChannelId, ChannelUpdateEvent),
-    /// A message of a channel was reclassified (issue 133). Published with
-    /// the channel's attributes; without content, since the message is
-    /// fetched by whoever may read it.
-    MessageReclassified(SessionId, ChannelId, MessageId, Classification),
     ChannelDeleted(SessionId, ChannelId),
     /// A deleted channel was restored into its session (issue 164).
     ChannelRestored(SessionId, ChannelId),

@@ -386,8 +386,10 @@ pub async fn set_channel_language(
     Ok(Json(crate::routes::channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?))
 }
 
-/// Reclassifies a message of the channel (issue 133): its author or the
-/// channel's owner, never above the channel.
+/// Reclassifies a message of the channel (issues 133, 239): its author or
+/// the channel's owner, never above the channel - as a participant, through
+/// their actor, as every change to a message. Answered once it is on its
+/// way; the channel's stream shows it as `MessageReclassified`.
 pub async fn reclassify_message(
     State(state): State<Arc<AppState>>,
     Path((id, cid, mid)): Path<(Uuid, Uuid, Uuid)>,
@@ -395,8 +397,10 @@ pub async fn reclassify_message(
     Json(classification): Json<Classification>,
 ) -> Result<StatusCode, ApiError> {
     let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    channel.reclassify_message(&user.security_context(), MessageId(mid), classification).await
+    let user_actor = user_actor_of(&channel, &user)?;
+    let span_id = user_actor.reclassify_message(MessageId(mid), classification).await
         .map_err(|e| ApiError::from_runtime(e, Subject::Session, "reclassifying a message"))?;
+    tracing::Span::current().record("span_id", tracing::field::display(span_id));
     Ok(StatusCode::OK)
 }
 

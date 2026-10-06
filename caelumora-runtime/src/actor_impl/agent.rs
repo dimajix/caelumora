@@ -768,6 +768,7 @@ impl Actor for AgentActor {
                     | ActorEvent::FullResponseGenerated(_)
                     | ActorEvent::MessageModified(_)
                     | ActorEvent::MessageRevoked { .. }
+                    | ActorEvent::MessageReclassified { .. }
                     | ActorEvent::RetryRequested { .. }
                     | ActorEvent::ResponseRequested
             )

@@ -1,6 +1,7 @@
 use crate::agent::{AgentId, RetryRefused};
 use crate::approval::{ApprovalId, ApprovalRequest, ApprovalResponse, ApproverId};
 use crate::channel::ChannelId;
+use crate::confidentiality::Classification;
 use crate::message::{Message, MessageId};
 use crate::security::SecurityContext;
 use crate::session::SessionId;
@@ -170,6 +171,16 @@ pub enum ActorEvent {
         message: MessageId,
         at: DateTime<Utc>,
     },
+    /// The message `message` is classified `classification` from now on
+    /// (issues 133, 239): sent by its author or the channel's owner, without
+    /// content. The channel admits it only for a message of its history,
+    /// not taken back, that its sender may reclassify so - never above the
+    /// channel - and it is recorded wherever the message is held
+    /// (`Message::reclassify`). It asks nobody to respond.
+    MessageReclassified {
+        message: MessageId,
+        classification: Classification,
+    },
     /// `author`, an agent, is asked to answer again instead of its message
     /// `message` (issue 234): sent by a user's actor, admitted by the
     /// channel only for a message of its history that `author` said, and
@@ -255,6 +266,7 @@ impl ActorEvent {
             ActorEvent::ChainCutOff { .. } => "ChainCutOff",
             ActorEvent::MessageModified(_) => "MessageModified",
             ActorEvent::MessageRevoked { .. } => "MessageRevoked",
+            ActorEvent::MessageReclassified { .. } => "MessageReclassified",
             ActorEvent::RetryRequested { .. } => "RetryRequested",
             ActorEvent::RetryAccepted { .. } => "RetryAccepted",
             ActorEvent::RetryRejected { .. } => "RetryRejected",
@@ -387,6 +399,9 @@ impl Envelope {
             }
             ActorEvent::MessageRevoked { message, .. } => {
                 format!("MessageRevoked(sender_id={}, sender_name={}, mid={})", ctx.sender_id, ctx.sender_name, message)
+            }
+            ActorEvent::MessageReclassified { message, classification } => {
+                format!("MessageReclassified(sender_id={}, sender_name={}, mid={}, classification={})", ctx.sender_id, ctx.sender_name, message, classification)
             }
             ActorEvent::RetryRequested { message, author } => {
                 format!("RetryRequested(sender_id={}, mid={}, author={})", ctx.sender_id, message, author)

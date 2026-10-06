@@ -28,7 +28,7 @@ use caelumora_model::name::{Name, ScopedName};
 use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::scope::Scope;
 use caelumora_model::secret::SecretManager;
-use caelumora_model::security::{ActionType, OwnershipSecurityManager, SecurityAttributes, SecurityContext, SecurityManager};
+use caelumora_model::security::{ActionType, OwnershipSecurityManager, Reclassified, SecurityAttributes, SecurityContext, SecurityManager};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::store::{EntityStore, StateStore, StoreError};
 use caelumora_model::store_impl::memory::MemoryStore;
@@ -66,6 +66,7 @@ impl Recorder {
         match action {
             ActionType::JoinChannel { participant, .. } => format!("{kind}({})", self.name(*participant)),
             ActionType::ModifyMessage { author, .. } | ActionType::RevokeMessage { author, .. } => format!("{kind}({}'s)", self.name(*author)),
+            ActionType::Reclassify { target: Reclassified::Message { author, .. }, .. } => format!("{kind}({}'s message)", self.name(*author)),
             _ => match attributes_of(action) {
                 Some(attributes) => format!("{kind}({}'s)", self.name(attributes.owner_id)),
                 None => kind,
@@ -557,6 +558,54 @@ async fn a_message_is_modified_and_taken_back_by_its_author_alone() {
         shown(&mut watch, "MessageRevoked").await;
     }).await;
     assert_eq!(asked, checks(&["alice: RevokeMessage(alice's) yes", "alice: RevokeMessage(alice's) yes"]));
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// M3: a message is reclassified (issues 133, 239) by its author, or by the
+/// channel's owner - not by another participant. Asked as `Reclassify` of
+/// the message's author by the actor that sends it, and again by the
+/// channel as it admits it; nothing else, since nothing of the message's
+/// content enters the channel again.
+#[tokio::test]
+async fn a_message_is_reclassified_by_its_author_or_the_channels_owner() {
+    use caelumora_model::actor::ActorEvent;
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
+    let (mut hers, mut his) = (alice.watch(), bob.watch());
+    alice.send_message("from alice".to_string(), None).await.expect("sent");
+    let ActorEvent::FullResponseGenerated(said) = shown(&mut his, "FullResponseGenerated").await else { unreachable!() };
+    let alices = said[0].id;
+    bob.send_message("from bob".to_string(), None).await.expect("sent");
+    // Her actor shows her what she says, too; his message is what the
+    // channel routes to her.
+    let bobs = loop {
+        let ActorEvent::FullResponseGenerated(said) = shown(&mut hers, "FullResponseGenerated").await else { unreachable!() };
+        if said[0].sender_id == ActorId::User(world.bob) {
+            break said[0].id;
+        }
+    };
+    let public = Classification::general(Confidentiality::Public);
+
+    let (refused, asked) = world.asked(bob.reclassify_message(alices, public.clone())).await;
+    assert!(denied(&refused.expect_err("not his")));
+    assert_eq!(asked, checks(&["bob: Reclassify(alice's message) no"]), "refused before anything else is asked");
+
+    let (_, asked) = world.asked(async {
+        bob.reclassify_message(bobs, public.clone()).await.expect("his own");
+        shown(&mut hers, "MessageReclassified").await;
+    }).await;
+    assert_eq!(asked, checks(&["bob: Reclassify(bob's message) yes", "bob: Reclassify(bob's message) yes"]), "his actor, then the channel");
+
+    let internal = Classification::general(Confidentiality::Internal);
+    let (_, asked) = world.asked(async {
+        alice.reclassify_message(bobs, internal.clone()).await.expect("her channel");
+        // His actor showed him his own before.
+        while !matches!(shown(&mut his, "MessageReclassified").await, ActorEvent::MessageReclassified { classification, .. } if classification == internal) {}
+    }).await;
+    assert_eq!(asked, checks(&["alice: Reclassify(bob's message) yes", "alice: Reclassify(bob's message) yes"]), "the owner, another's");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

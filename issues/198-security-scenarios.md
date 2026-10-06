@@ -188,3 +188,9 @@ be given.
   again, `asking_an_agent_to_answer_again_is_for_whoever_takes_part`. Bob, who takes part, may ask
   it of a message of alice's channel (`RetryMessage`(alice's) yes), as he may cancel; the request is
   refused after that question because no agent said the message.
+- **2026-10-06** — From [239](239-reclassified-message-not-in-agents-state.md): reclassifying a
+  message, `a_message_is_reclassified_by_its_author_or_the_channels_owner`. Bob may not reclassify
+  alice's message, refused with the first question (`Reclassify`(alice's message) no); his own he
+  may, asked `Reclassify`(bob's message) by his actor and again by the channel; alice, the
+  channel's owner, may reclassify his, asked the same - all yes. Nothing else is asked: no content
+  enters the channel again.

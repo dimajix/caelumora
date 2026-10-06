@@ -10,7 +10,7 @@ use caelumora_model::channel::{Channel, ChannelId};
 use caelumora_model::command::{Command, CommandVisibility};
 use caelumora_model::message::{Message, MessageId, MessageRole};
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::security::{ActionType, Enforcement, SecurityAttributes, SecurityContext};
+use caelumora_model::security::{ActionType, Enforcement, Reclassified, SecurityAttributes, SecurityContext};
 use caelumora_model::session::SessionId;
 use crate::controller::UserController;
 use chrono::Utc;
@@ -188,6 +188,44 @@ impl UserActor {
         self.message_to_change(&channel_loop, message, |author, channel| ActionType::RevokeMessage { author, channel }, "taking back a message of").await?;
         let span_id = Uuid::new_v4();
         self.send(self.envelope(ActorEvent::MessageRevoked { message, at: Utc::now() }, span_id)).await?;
+        Ok(span_id)
+    }
+
+    /// Reclassifies the message `message` as `classification` (issues 133,
+    /// 239): its author's own, or any in a channel this user owns, never
+    /// above the channel. Asked here (`Reclassify`), so that the user learns
+    /// of a refusal, and again by the channel as it admits the
+    /// reclassification; recorded wherever the message is held, so that the
+    /// agents' next turns are labelled by it as it stands. Nobody is asked to
+    /// respond.
+    ///
+    /// Returns the `span_id` of the envelope, as `send_message` does.
+    ///
+    /// # Errors
+    /// `ChannelError::MessageNotFound` if the channel has no such message,
+    /// `Forbidden` if this user may not reclassify it so, `MessageRevoked`
+    /// if it was taken back; an error if the channel is gone.
+    pub async fn reclassify_message(&self, message: MessageId, classification: Classification) -> anyhow::Result<Uuid> {
+        use crate::channel::ChannelError;
+        let channel_loop = self.actor_runtime.channel_loop()
+            .ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))?;
+        let said = channel_loop.message(message).await
+            .ok_or(ChannelError::MessageNotFound { message, channel: self.channel_id })?;
+        let (attributes, channel) = (channel_loop.security_attributes(), channel_loop.classification());
+        let action = ActionType::Reclassify {
+            target: Reclassified::Message { author: said.sender_id, attributes: &attributes },
+            current: &said.classification,
+            new: &classification,
+            channel: &channel,
+        };
+        self.actor_runtime.security_manager()
+            .require(&self.security_context, action, || ChannelError::Forbidden { action: "reclassifying a message of", channel: self.channel_id })
+            .await?;
+        if said.revoked.is_some() {
+            return Err(ChannelError::MessageRevoked { message, channel: self.channel_id }.into());
+        }
+        let span_id = Uuid::new_v4();
+        self.send(self.envelope(ActorEvent::MessageReclassified { message, classification }, span_id)).await?;
         Ok(span_id)
     }
 

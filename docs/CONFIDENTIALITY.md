@@ -150,12 +150,25 @@ never above its channel, and only with configured compartments.
         web UI warns of.
 
     The web UI says so when a change releases the channel.
-*   **A message** (`ChannelLoop::reclassify_message`, REST `PUT …/messages/{mid}/classification`) is
-    recorded in the channel's history as an entry of its own, `HistoryEntry::Reclassified` (issue
-    197): the message stays what it was said as, and is read as it stands now
-    (`MessageHistory::messages`, `message`). Announced as `GlobalEvent::MessageReclassified`,
-    without content. Lowering a channel records one `HistoryEntry::Fitted`, which every message
-    said so far is read through.
+*   **A message** (`UserActor::reclassify_message`, REST `PUT …/messages/{mid}/classification`) is
+    a change to what was said, made by a participant, and goes as a modification goes (see
+    [CHANNELS.md](CHANNELS.md#changing-what-was-said), issue
+    [239](../issues/239-reclassified-message-not-in-agents-state.md)): the actor of whoever
+    reclassifies - its author, or the channel's owner for someone else's - asks `Reclassify` and
+    sends `ActorEvent::MessageReclassified`, without content; the channel asks again as it admits
+    it. The owner reclassifies as a participant: one who is not has no actor in the channel and is
+    refused. A message taken back is not reclassified - it says nothing that could be released.
+
+    It is recorded as an entry of its own, `Reclassified` (issue 197), in the channel's history and
+    in the history and transcript of every agent that holds the message: the message stays what it
+    was said as, and is read as it stands now (`MessageHistory::messages`, `message`,
+    `transcript::as_they_stand`). So a turn begun afterwards is labelled by the message as it
+    stands: a message released no longer raises the label of what the agents write next. A turn
+    under way keeps what it has seen, as it does when a channel is raised.
+
+    Lowering a channel records one `HistoryEntry::Fitted`, which every message said so far is read
+    through - in the channel's history alone: the agents' state keeps the messages as they were,
+    whose labels never exceed the channel's anyway.
 
 *   **A note or a memory entry** is reclassified by its agent, through a tool that asks for approval
     (`reclassify_note`, `reclassify_private_note`, `reclassify_memory`): a change of its chain

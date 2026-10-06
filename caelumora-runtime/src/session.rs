@@ -1778,16 +1778,17 @@ mod tests {
         // Two users' messages arrive in either order.
         let id_of = |history: &[caelumora_model::message::Message], text: &str| history.iter().find(|m| m.content.as_deref() == Some(text)).map(|m| m.id).unwrap();
         let (bobs, alices) = (id_of(&history, "from bob"), id_of(&history, "from alice"));
-        let mut events = runtime.event_bus().subscribe_all();
 
+        // A change to what was said, through the actor of whoever makes it
+        // (issue 239).
+        let (as_alice, as_bob) = (hr.user_actor(alice.id).unwrap(), hr.user_actor(bob.id).unwrap());
         let released = classified(Confidentiality::Internal, &["hr", "finance"]);
-        hr.reclassify_message(&bob_ctx, bobs, released.clone()).await.expect("the author releases their message");
-        let refused = hr.reclassify_message(&bob_ctx, alices, released.clone()).await.expect_err("not another's");
+        as_bob.reclassify_message(bobs, released.clone()).await.expect("the author releases their message");
+        let refused = as_bob.reclassify_message(alices, released.clone()).await.expect_err("not another's");
         assert!(matches!(refused.downcast_ref::<ChannelError>(), Some(ChannelError::Forbidden { .. })), "{refused}");
-        let missing = hr.reclassify_message(&alice_ctx, caelumora_model::message::MessageId::new(), released.clone()).await.expect_err("no such message");
+        let missing = as_alice.reclassify_message(caelumora_model::message::MessageId::new(), released.clone()).await.expect_err("no such message");
         assert!(matches!(missing.downcast_ref::<ChannelError>(), Some(ChannelError::MessageNotFound { .. })), "{missing}");
-        assert!(drain(&mut events).iter().any(|e| matches!(e, GlobalEvent::MessageReclassified(_, cid, mid, c) if *cid == hr.id() && *mid == bobs && *c == released)),
-                "announced");
+        classified_as(&hr, bobs, &released).await;
 
         let lowered = classified(Confidentiality::Internal, &["hr"]);
         assert!(hr.reclassify(&bob_ctx, lowered.clone()).await.is_err(), "only the owner reclassifies the channel");
@@ -2092,6 +2093,17 @@ mod tests {
     }
 
     /// Waits until `channel`'s history holds `count` messages.
+    /// Waits until the message `id` of `channel` is classified `classification`.
+    async fn classified_as(channel: &ChannelLoop, id: caelumora_model::message::MessageId, classification: &Classification) {
+        for _ in 0..100 {
+            if channel.message(id).await.is_some_and(|m| m.classification == *classification) {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("message {id} was never classified {classification}");
+    }
+
     async fn history_of(channel: &ChannelLoop, count: usize) -> Vec<caelumora_model::message::Message> {
         for _ in 0..100 {
             let history = channel.history().await;

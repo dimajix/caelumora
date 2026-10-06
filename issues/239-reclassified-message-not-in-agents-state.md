@@ -135,3 +135,12 @@ follow from the message as it stands.
   `as_they_stand`, and `AgentChannelState::reclassify_message` applies it to both; both chains
   share `digest::message_reclassified`, in the history's scheme. Until step 2 the channel answers
   a reclassification of a message taken back with `MessageRevoked`.
+- **2026-10-06** — Step 2: `ActorEvent::MessageReclassified` from `UserActor::reclassify_message`,
+  admitted by `admits_change` with the new `AccessQuestions::may_reclassify`, recorded by
+  `append_history`, routed with the other changes and taken in by `take_in` for both kinds of
+  agent. `ChannelLoop::reclassify_message`, `GlobalEvent::MessageReclassified` and the channel's
+  event bus, which only it used, are gone. The REST route had to go through the user's actor in
+  this step already, since the channel's method is gone; the web UI follows in step 3 and until
+  then shows a reclassification only once the channel is loaded again. The stand-in model of the
+  channel's tests gave every answer the same id - unlike every model client - which a
+  reclassification of one of them showed; it gives each its own now.

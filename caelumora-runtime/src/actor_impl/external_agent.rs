@@ -761,7 +761,7 @@ impl Actor for ExternalAgentActor {
     }
 
     fn event_filter(&self) -> fn(&Envelope) -> bool {
-        |event| matches!(event.event, ActorEvent::ResponseRequested | ActorEvent::FullResponseGenerated(_) | ActorEvent::MessageModified(_) | ActorEvent::MessageRevoked { .. } | ActorEvent::RetryRequested { .. })
+        |event| matches!(event.event, ActorEvent::ResponseRequested | ActorEvent::FullResponseGenerated(_) | ActorEvent::MessageModified(_) | ActorEvent::MessageRevoked { .. } | ActorEvent::MessageReclassified { .. } | ActorEvent::RetryRequested { .. })
     }
 
     /// Takes in what it missed as what it hears (issues 190, 196, 206); the

@@ -128,7 +128,7 @@ impl Moderator for PolicyModerator {
             }
             // A change to what was said reaches everyone who may hold the
             // message (issue 234); each applies it if it does.
-            ActorEvent::MessageModified(_) | ActorEvent::MessageRevoked { .. } => {
+            ActorEvent::MessageModified(_) | ActorEvent::MessageRevoked { .. } | ActorEvent::MessageReclassified { .. } => {
                 self.actors().route_to_participants(event)
             }
             // Whom a request to answer again names, and what it answers, to

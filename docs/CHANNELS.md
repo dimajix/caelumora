@@ -192,6 +192,13 @@ message, and what they said in reply stays.
     An agent that never held the message records nothing. An external agent's transcript holds only
     what the remote agent has not been given yet, so a change reaches the remote agent only if the
     message did not.
+*   **Reclassifying** a message goes the same way
+    ([239](../issues/239-reclassified-message-not-in-agents-state.md)):
+    `UserActor::reclassify_message(message, classification)` asks `Reclassify` - its author, or the
+    channel's owner for someone else's, never above the channel - and sends
+    `ActorEvent::MessageReclassified`; the channel admits it as the policy says, records it, and it
+    reaches everyone who heard the message, whose next turns are labelled by it as it stands (see
+    [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reclassification)).
 *   **Taking back is not erasing.** The message stays in every participant's record, in the
     contexts of what was answered to it, and with a remote agent that was given it (see
     [CONFIDENTIALITY.md](CONFIDENTIALITY.md#messages)).

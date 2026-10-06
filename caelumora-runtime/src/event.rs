@@ -232,7 +232,7 @@ impl EventBus {
                 topics_to_notify.push(SubscriptionTopic::Session(*sid));
             }
             GlobalEvent::ChannelCreated(sid, cid) | GlobalEvent::ChannelUpdated(sid, cid, _) | GlobalEvent::ChannelDeleted(sid, cid) | GlobalEvent::ChannelRestored(sid, cid) |
-            GlobalEvent::ChannelStarted(sid, cid) | GlobalEvent::ChannelStopped(sid, cid) | GlobalEvent::MessageReclassified(sid, cid, _, _) => {
+            GlobalEvent::ChannelStarted(sid, cid) | GlobalEvent::ChannelStopped(sid, cid) => {
                 topics_to_notify.push(SubscriptionTopic::Session(*sid));
                 topics_to_notify.push(SubscriptionTopic::Channel(*cid));
             }
