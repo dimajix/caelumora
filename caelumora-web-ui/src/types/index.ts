@@ -254,6 +254,11 @@ export interface Message {
   sender_id?: ActorId;
   /** Internal scaffolding (deliberation, plan steps, mid-plan tool steps): never shown in the chat. */
   internal?: boolean;
+  /**
+   * The turn of an agent that produced it (issue 235), as `ResponseStarted`
+   * announced it; absent for a user's message.
+   */
+  turn_id?: string;
   content: string | null;
   /** The model's reasoning (issue 216), if it may be seen here. */
   reasoning?: string;
@@ -307,11 +312,16 @@ export interface PlanStepEvent {
 
 /**
  * Events without a payload. The server sends them as a bare string
- * (`"ResponseStarted"`), not as an object like the other events.
+ * (`"WakeupRequested"`), not as an object like the other events.
  */
-export type UnitActorEvent = 'ResponseRequested' | 'ResponseStarted' | 'WakeupRequested';
+export type UnitActorEvent = 'ResponseRequested' | 'WakeupRequested';
 
 export interface ActorEvent {
+  /**
+   * An answer of the sender begins: its turn (issue 235), whose messages
+   * carry the same `turn_id`.
+   */
+  ResponseStarted?: { turn_id: string };
   PartialMessageGenerated?: Message;
   CompleteMessageGenerated?: Message;
   ApprovalRequested?: ApprovalRequest;

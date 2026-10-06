@@ -2523,6 +2523,81 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn every_message_of_a_turn_carries_the_turn_its_start_announced() {
+        use caelumora_model::approval::ApprovalResponse;
+        use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+        use caelumora_model::message::MessageRole;
+        use caelumora_model::tool::{ToolCall, ToolVisibility};
+
+        // A plan: a call, its result, the steps' internal answers and the
+        // final one - every kind of message a turn produces.
+        let said = |content: &str| Message { role: MessageRole::Assistant, content: Some(content.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+        let plan = Message {
+            role: MessageRole::Assistant,
+            tool_calls: vec![ToolCall {
+                id: Some("1".to_string()),
+                function_name: "create_plan".to_string(),
+                arguments: serde_json::json!({ "summary": "one step", "steps": [{ "description": "first" }] }),
+                visibility: ToolVisibility::SHOWN,
+            }],
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        };
+        let script = [plan, said("first done"), said("all done")];
+        let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
+            id: "plan".to_string(),
+            kind: crate::component_impl::create_plan_tool::CREATE_PLAN_TOOL_KIND.to_string(),
+            params: serde_json::Value::Null,
+            tags: vec![],
+            fail_policy: ComponentFailPolicy::FailClosed,
+        }] };
+        let Stuck { channel, context, agent, helper, mut events, running } =
+            with_an_agent(Arc::new(Scripted(std::sync::Mutex::new(script.into()))), components).await;
+
+        let mut started = None;
+        let mut shown = Vec::new();
+        let request = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let envelope = events.recv().await.expect("the channel is running");
+                let agents = envelope.context.sender_id == ActorId::Agent(agent);
+                match envelope.event {
+                    ActorEvent::ResponseStarted { turn_id } if agents => started = Some(turn_id),
+                    ActorEvent::CompleteMessageGenerated(m) | ActorEvent::IntermediateMessageGenerated(m) if agents => shown.push(m.turn_id),
+                    ActorEvent::ApprovalRequested(request) => break request,
+                    _ => {}
+                }
+            }
+        }).await.expect("the plan is put up for approval");
+        let ActorId::User(alice) = context.initiator_id else { panic!("alice acts") };
+        channel.user_actor(alice).unwrap().send_approval(ApprovalResponse { id: request.id, agent_id: agent }, true).await.unwrap();
+
+        let final_messages = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let envelope = events.recv().await.expect("the channel is running");
+                if envelope.context.sender_id != ActorId::Agent(agent) { continue }
+                match envelope.event {
+                    ActorEvent::FullResponseGenerated(messages) => break messages,
+                    ActorEvent::CompleteMessageGenerated(m) | ActorEvent::IntermediateMessageGenerated(m) => shown.push(m.turn_id),
+                    _ => {}
+                }
+            }
+        }).await.expect("the turn ends");
+        settled(&helper, ActorState::Idle).await;
+
+        let started = started.expect("the turn announced itself");
+        assert_eq!(shown.len(), 4, "the call, its result, the step's answer and the final answer: {shown:?}");
+        assert!(shown.iter().all(|turn| *turn == Some(started)), "each shown as the turn's: {shown:?}");
+        assert!(final_messages.iter().all(|m| m.turn_id == Some(started)), "and published so");
+        let answer = final_messages.iter().find(|m| m.content.as_deref() == Some("all done")).expect("the final answer");
+        assert_eq!(channel.message(answer.id).await.and_then(|m| m.turn_id), Some(started), "the channel's history keeps it");
+
+        let stored = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+        let (own, heard): (Vec<_>, Vec<_>) = stored.transcript.messages().into_iter().partition(|m| m.sender_id == ActorId::Agent(agent));
+        assert!(own.len() >= 4 && own.iter().all(|m| m.turn_id == Some(started)), "its transcript keeps every message of the turn as the turn's");
+        assert!(heard.iter().all(|m| m.turn_id.is_none()), "what it heard is no turn's of its own");
+        running.abort();
+    }
+
+    #[tokio::test]
     async fn a_turn_is_stored_with_the_step_that_comes_next() {
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         use caelumora_model::message::MessageRole;
@@ -3574,6 +3649,38 @@ mod tests {
         // The context of each answer is what was given in its call (issue 205).
         assert_eq!(given_for(&state, agent, &first[0]), ["@alice: hello"], "as it was given, marked");
         assert_eq!(given_for(&state, agent, &second[0]), ["@alice: How are you?"], "not what it was given before");
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn an_external_agent_s_answer_carries_the_turn_its_start_announced() {
+        use crate::external::ExternalEvent;
+        let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![vec![
+            Ok(ExternalEvent::Started(task("t-1"))),
+            Ok(ExternalEvent::Partial("Hel".to_string())),
+            Ok(ExternalEvent::Message("Hello, alice.".to_string())),
+            Ok(ExternalEvent::Completed),
+        ]]));
+        let Stuck { channel, agent, mut events, running, .. } = with_an_external_agent(Arc::clone(&remote)).await;
+
+        let (started, partial, answer) = tokio::time::timeout(Duration::from_secs(5), async {
+            let (mut started, mut partial) = (None, None);
+            loop {
+                let envelope = events.recv().await.expect("the channel is running");
+                if envelope.context.sender_id != ActorId::Agent(agent) { continue }
+                match envelope.event {
+                    ActorEvent::ResponseStarted { turn_id } => started = Some(turn_id),
+                    ActorEvent::PartialMessageGenerated(m) => partial = m.turn_id,
+                    ActorEvent::FullResponseGenerated(messages) => break (started, partial, messages),
+                    _ => {}
+                }
+            }
+        }).await.expect("it answers");
+        let started = started.expect("its answer announced itself");
+        assert_eq!(partial, Some(started), "what it streams is of the turn");
+        assert_eq!(answer.iter().map(|m| m.turn_id).collect::<Vec<_>>(), [Some(started)], "and what it answers");
+        let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+        assert_eq!(state.history.messages().last().and_then(|m| m.turn_id), Some(started), "kept so in its history");
         running.abort();
     }
 

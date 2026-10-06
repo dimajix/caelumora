@@ -167,6 +167,13 @@ The server has two server-sent event streams:
 Both are built by one `sse::stream`: snapshot, resync on lag through `sse::resync_on_lag`, and the
 end at the token's expiry or when the watch ends (issues 38, 104).
 
+An `Envelope`'s event is an `ActorEvent` as serde writes it: an object named by the event, or a
+bare string for the few without anything to carry (`"ResponseRequested"`, `"WakeupRequested"`). An
+agent's answer begins with `{"ResponseStarted": {"turn_id": …}}`, and every message of it, partial
+or complete, carries the same `turn_id` (issue 235) - also the messages of a channel's history, so
+that a client tells which messages are one answer, and which answer is under way after a reload, by
+the id rather than by who sent what when.
+
 ### Who follows a channel
 
 A channel is followed live only by its participants, through their own actor (`UserActor::watch`,

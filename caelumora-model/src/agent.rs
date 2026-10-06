@@ -13,7 +13,7 @@ use crate::memory::{Memories, MemoryChain};
 use crate::message_history::{HistoryEntry, MessageHistory};
 use crate::transcript::{as_they_stand, GivenUp, GivenUpReason, Transcript, TranscriptEntry};
 use crate::turn::{TurnEntry, TurnState};
-use crate::work::Work;
+use crate::work::{TurnId, Work};
 use crate::note::{NoteChain, NoteChange, NoteOrigin, Notes};
 use crate::name::{Name, ScopedName};
 use crate::security::{Secured, SecurityAttributes, SecurityContext};
@@ -329,7 +329,7 @@ impl AgentChannelState {
     /// it reads, publishes and remembers is judged alike, and what its model
     /// is given and offered too. The turn has seen the transcript, which is
     /// what the model is given first (issue 168). Whatever a previous turn
-    /// left behind is gone.
+    /// left behind is gone. Returns the turn's id (issue 235).
     pub fn begin_turn(
         &mut self,
         event_context: EventContext,
@@ -337,7 +337,7 @@ impl AgentChannelState {
         classification: Classification,
         tool_sets: Vec<ToolSet>,
         profile: ModelProfile,
-    ) {
+    ) -> TurnId {
         let offered = (!tool_sets.is_empty()).then(|| {
             let digest = crate::digest::tool_sets(&tool_sets);
             self.offered_tools.keep(digest, || tool_sets.clone());
@@ -347,8 +347,10 @@ impl AgentChannelState {
         let mut work = Work::new(event_context, security_context, classification);
         work.context = ContextRef { transcript: self.transcript.digest(), tools: offered, profile, ..ContextRef::default() };
         self.transcript.messages().iter().for_each(|m| work.see_message(m));
+        let turn_id = work.turn_id;
         let turn = TurnState { work, tools, ..TurnState::default() };
         self.turn = Some(turn);
+        turn_id
     }
 
     /// Takes over what a turn produced (issues 06, 17, 136): its `entries`
@@ -619,7 +621,8 @@ pub(crate) mod tests {
         assert!(json.contains("\"WaitingForApproval\""));
         let decoded: AgentChannelState = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.processing_state, ActorState::WaitingForApproval);
-        assert_eq!(decoded.turn.map(|t| t.messages().count()), Some(1), "the turn is resumed from what was stored");
+        assert_eq!(decoded.turn.as_ref().map(|t| t.messages().count()), Some(1), "the turn is resumed from what was stored");
+        assert_eq!(decoded.turn.map(|t| t.work.turn_id), waiting.turn.map(|t| t.work.turn_id), "as the same turn");
     }
 
     fn said(content: &str, classification: Classification) -> Message {
@@ -667,8 +670,10 @@ pub(crate) mod tests {
         let mut state = a_state_that_heard("add 1 and 2", Classification::CHANNEL_DEFAULT);
         begin(&mut state, Vec::new());
         let mut turn = state.turn.take().expect("a turn was begun");
+        let turn_id = turn.work.turn_id;
         turn.push(Message { internal: true, ..said("thinking", Classification::CHANNEL_DEFAULT) });
         let answer = said("3", Classification::CHANNEL_DEFAULT);
+        assert!(answer.turn_id.is_none(), "built without it");
         turn.push(answer.clone());
         let produced_from = turn.entries[1].context.clone();
         let expected = turn.entries.last().map(|e| e.node.digest);
@@ -678,6 +683,9 @@ pub(crate) mod tests {
         assert_eq!(state.transcript.digest(), expected, "the turn's messages have the digests they were given");
         assert_eq!(state.transcript.entries().count(), 3);
         assert_eq!(state.history.messages().iter().map(|m| m.content.clone().unwrap_or_default()).collect::<Vec<_>>(), ["add 1 and 2", "3"]);
+        let turns: Vec<_> = state.transcript.messages().iter().map(|m| m.turn_id).collect();
+        assert_eq!(turns, [None, Some(turn_id), Some(turn_id)], "what the turn keeps is the turn's, what was heard no turn's");
+        assert_eq!(state.history.messages().last().and_then(|m| m.turn_id), Some(turn_id));
         assert_eq!(state.recorded_context_of(answer.id), Some(produced_from), "with what it was produced from");
         assert_eq!(state.notes.current().len(), 1);
     }

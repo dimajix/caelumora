@@ -1,6 +1,7 @@
 use crate::actor::ActorId;
 use crate::confidentiality::{Classification, Visibility};
 use crate::tool::{ToolCall, ToolCallResult};
+use crate::work::TurnId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -53,6 +54,16 @@ pub struct Message {
     /// from `MessageHistory` and end-of-turn `FullResponseGenerated`
     /// broadcasts (the user-facing/audit trail).
     pub internal: bool,
+    /// The turn that produced it (issue 235) - an agent's turn, or the work
+    /// of an external agent (`Work::turn_id`) - so that which messages of an
+    /// agent belong together can be told from the messages alone. `None`
+    /// for a user's message, one of the runtime outside a turn, and one
+    /// stored before it was kept. Set by the turn as it makes the message
+    /// its own, never taken over by a modification (`modify`): a changed
+    /// message stays in the turn it was produced in. Not covered by the
+    /// digest, like `timestamp`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<TurnId>,
     /// Participants addressed by `@`-mentions in `content`, resolved once
     /// when the message entered the channel (see `crate::mention`). Stored
     /// rather than re-parsed so that a later rename cannot change whom a past
@@ -108,6 +119,7 @@ impl Message {
             timestamp: Utc::now(),
             metadata: HashMap::new(),
             internal: false,
+            turn_id: None,
             mentions: Vec::new(),
             prompt_tokens: None,
             completion_tokens: None,
@@ -403,14 +415,16 @@ pub(crate) mod tests {
         assert!(stored.visibility.is_shown(), "a call without labels is public");
         let plain = serde_json::to_value(make_message(MessageId::new())).unwrap();
         assert!(plain.get("reasoning_visibility").is_none());
+        assert!(plain.get("turn_id").is_none(), "a message of no turn says nothing of one");
     }
 
     #[test]
     fn a_message_is_modified_and_taken_back_as_it_stands() {
-        let said = Message { tool_calls: vec![call("1", ToolVisibility::SHOWN)], ..make_message(id(1)) };
+        let turn = crate::work::TurnId::new();
+        let said = Message { tool_calls: vec![call("1", ToolVisibility::SHOWN)], turn_id: Some(turn), ..make_message(id(1)) };
         let public = crate::confidentiality::Classification::general(crate::confidentiality::Confidentiality::Public);
         let when = said.timestamp + chrono::Duration::minutes(5);
-        let modified = Message { content: Some("hello, corrected".to_string()), classification: public.clone(), timestamp: when, tool_calls: Vec::new(), ..said.clone() };
+        let modified = Message { content: Some("hello, corrected".to_string()), classification: public.clone(), timestamp: when, tool_calls: Vec::new(), turn_id: None, ..said.clone() };
 
         let mut message = said.clone();
         assert!(message.modify(&modified));
@@ -418,6 +432,7 @@ pub(crate) mod tests {
         assert_eq!(message.classification, public, "how it is classified, too");
         assert_eq!((message.timestamp, message.modified), (said.timestamp, Some(when)), "said when it was, modified when it was changed");
         assert_eq!(message.tool_calls.len(), 1, "its calls are not taken over");
+        assert_eq!(message.turn_id, Some(turn), "nor its turn: it stays in the one it was produced in");
 
         let mut other = said.clone();
         assert!(!other.modify(&Message { sender_id: ActorId::System, ..modified.clone() }), "by another sender");

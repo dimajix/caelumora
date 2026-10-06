@@ -1,6 +1,6 @@
 # 235 — An answer still being generated cannot be asked for again
 
-**Status:** open
+**Status:** in progress
 **Area:** Sessions & channels
 
 ## The problem
@@ -365,3 +365,23 @@ ended, and its answer is replaced as a completed one is.
   that hit its turn is accepted whatever came with it, merged with a request of the same batch
   into one turn; `ChannelLoop::cancel_actor` is built beside it as an operation of its own, after
   `wakeup_actor`, under `CancelChannel`. The plan above.
+- **2026-10-06** — Step 1 done, without a change of behaviour. `TurnId` (`caelumora_model::work`),
+  `Work::turn_id` - given by `Work::new`, stored with the work, a new one for work stored before -
+  and `AgentChannelState::begin_turn` returns it. `Message::turn_id`, outside every digest and not
+  taken over by `Message::modify`: `TurnState::push` sets it on everything the turn keeps, `stamp`
+  on what the model says, partial and complete; the tool message of `ToolCalls::collect` and the
+  message a given-up turn tells its model with get it where they are built, since what is sent of
+  them is built before it is kept. The external agent builds its `Work` before it announces the
+  answer now, so that `ResponseStarted` can name it, and gives its partial and recorded messages
+  the work's id - including what a long task says later, the work that began it being known; an
+  external agent without a channel thus fails before `ResponseStarted` rather than after it.
+  `ResponseStarted { turn_id }`. `RunControl` keeps the id with the turn's token
+  (`begin_turn(turn)`, `RunControl::new(state, turn)` for a resumed one) and answers
+  `turn_under_way()`; until step 3 asks it, `AgentActor::cancel` logs which turn it cancels. The
+  web UI reads `ResponseStarted` as an object and keeps `turnId` per answer under way, from the
+  event or from the first message of the answer; the TUI matched no `ResponseStarted`. Tests: every
+  message of a planning turn, shown, published, in the channel's history and in the agent's
+  transcript, carries the id `ResponseStarted` named, and an external agent's alike; a partial
+  message stamped is the turn's; a given-up turn's telling is; work and a stored turn keep their
+  id; `RunControl` knows the turn under way, a resumed one too; the digest ignores the id.
+  AGENT-TURN.md (*The `Turn`*), REST-SERVER.md (*Streams*), WEB-UI.md.

@@ -11,11 +11,20 @@ use crate::message::Message;
 use crate::security::SecurityContext;
 use serde::{Deserialize, Serialize};
 
+crate::define_id!(TurnId);
+
 /// A piece of work of an agent: the contexts it is done in, the most it may
 /// write as, what it has seen so far, and what what comes of it is produced
 /// from.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Work {
+    /// Which piece of work it is (issue 235): given when it begins and kept
+    /// with it, so that a turn resumed after a restart is the same turn.
+    /// Every message it produces carries it (`Message::turn_id`), and so
+    /// does `ResponseStarted`. Work stored before it was kept gets a new
+    /// one as it is loaded.
+    #[serde(default = "TurnId::new")]
+    pub turn_id: TurnId,
     /// The envelope it answers, continued in the agent's name - its sender
     /// is the agent: carries the ids (`span_id`, `correlation_id`) that tie
     /// it to what started it, so that what comes of it, later too, stays in
@@ -49,7 +58,7 @@ impl Work {
     /// Work begun in the contexts given, in a channel classified
     /// `classification`, which has seen nothing yet.
     pub fn new(event_context: EventContext, security_context: SecurityContext, classification: Classification) -> Self {
-        Self { event_context, security_context, classification, seen: Some(Classification::PUBLIC), context: ContextRef::default() }
+        Self { turn_id: TurnId::new(), event_context, security_context, classification, seen: Some(Classification::PUBLIC), context: ContextRef::default() }
     }
 
     /// The classification of what it writes - messages, notes, what is
@@ -132,8 +141,18 @@ mod tests {
             "classification": Classification::CHANNEL_DEFAULT,
             "seen": Classification::PUBLIC,
         });
-        let work: Work = serde_json::from_value(stored).unwrap();
+        let work: Work = serde_json::from_value(stored.clone()).unwrap();
         assert_eq!(work.label(), Classification::PUBLIC);
         assert_eq!(work.context, ContextRef::default());
+        let again: Work = serde_json::from_value(stored).unwrap();
+        assert_ne!(work.turn_id, again.turn_id, "work stored before its id was kept gets a new one");
+    }
+
+    #[test]
+    fn work_keeps_its_id_when_stored() {
+        let work = Work::new(EventContext::default(), SecurityContext::default(), Classification::CHANNEL_DEFAULT);
+        assert_ne!(work.turn_id, Work::new(EventContext::default(), SecurityContext::default(), Classification::CHANNEL_DEFAULT).turn_id, "each its own");
+        let stored: Work = serde_json::from_value(serde_json::to_value(&work).unwrap()).unwrap();
+        assert_eq!(stored.turn_id, work.turn_id);
     }
 }

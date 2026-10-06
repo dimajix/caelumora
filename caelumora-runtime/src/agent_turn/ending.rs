@@ -119,13 +119,17 @@ impl Turn<'_> {
         let answering = self.answering();
         let turn = self.agent_channel_state.turn.take().unwrap_or_default();
         let label = turn.work.label();
+        let turn_id = turn.work.turn_id;
         let TurnState { entries, .. } = turn;
         let messages: Vec<&Message> = entries.iter().filter_map(|e| e.node.entry.message()).collect();
         let executed = executed_calls(&messages);
+        // The record of the turn on the active branch: its own, like the
+        // messages it names.
         let told = (!executed.is_empty()).then(|| Message {
             id: caelumora_model::message::MessageId::new(),
             content: Some(told_of_executed(&reason, &executed, names_only.is_none())),
             internal: true,
+            turn_id: Some(turn_id),
             ..Message::new(names_only.unwrap_or(label))
         });
         self.agent_channel_state.give_up_turn(entries, reason);
@@ -207,8 +211,10 @@ mod tests {
     fn what_ran_in_a_turn_given_up_is_told_in_full_or_by_name() {
         let mut state = a_state_with("mail bob");
         let turn = a_turn_that_called(&mut state, "send_mail", true);
+        let turn_id = turn.turn_id();
         turn.give_up(GivenUpReason::Failed { message: "boom".to_string() }, None);
         let told = state.transcript.messages().pop().unwrap();
+        assert_eq!(told.turn_id, Some(turn_id), "the record of the turn it tells of");
         let text = told.content.unwrap();
         assert!(text.contains("send_mail") && text.contains("bob") && text.contains("sent"), "{text}");
         assert_eq!(told.classification, Classification::CHANNEL_DEFAULT, "as the turn");

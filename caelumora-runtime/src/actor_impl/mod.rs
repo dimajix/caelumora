@@ -264,7 +264,7 @@ mod tests {
         let heard = |text: &str| envelope(ActorEvent::FullResponseGenerated(vec![said(text)]));
         let mut last = envelope(ActorEvent::ResponseRequested);
         last.security.caller_id = caelumora_model::actor::ActorId::System;
-        for event in [envelope(ActorEvent::ResponseRequested), heard("two"), envelope(ActorEvent::ResponseStarted), last, heard("three")] {
+        for event in [envelope(ActorEvent::ResponseRequested), heard("two"), envelope(ActorEvent::ResponseStarted { turn_id: caelumora_model::work::TurnId::new() }), last, heard("three")] {
             tx.try_send(event).expect("room");
         }
 

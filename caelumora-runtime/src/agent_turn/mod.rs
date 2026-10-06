@@ -46,6 +46,7 @@ use anyhow::Result;
 use caelumora_model::actor::{ActorEvent, ActorState};
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::turn::TurnState;
+use caelumora_model::work::TurnId;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::KnowledgeRef;
 use caelumora_model::memory::{MemoryChange, MemoryOrigin};
@@ -117,6 +118,11 @@ impl<'a> Turn<'a> {
     /// (`AgentWork::session`).
     pub fn session(&self) -> Option<SessionView> {
         self.work().session()
+    }
+
+    /// Which turn this is (issue 235).
+    pub fn turn_id(&self) -> TurnId {
+        self.current().work.turn_id
     }
 
     /// The agent whose turn this is.

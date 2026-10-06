@@ -90,8 +90,11 @@ impl TurnState {
     /// stands, and moves the context on past it (issue 136). The message
     /// gets the digest it will have in the transcript, computed as the
     /// transcript's chain would: the turn's messages continue the agent's
-    /// transcript, which does not change while a turn runs.
-    pub fn push(&mut self, message: Message) {
+    /// transcript, which does not change while a turn runs. It is the
+    /// turn's from now on (`Message::turn_id`, issue 235), whoever built
+    /// it.
+    pub fn push(&mut self, mut message: Message) {
+        message.turn_id = Some(self.work.turn_id);
         let context = self.work.context.clone();
         let digest = crate::digest::message_chain(context.transcript.as_ref(), &message);
         self.work.context.transcript = Some(digest);

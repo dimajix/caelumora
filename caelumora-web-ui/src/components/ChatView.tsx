@@ -113,6 +113,11 @@ interface Answer {
   /** Its sender, as `actorKey`. */
   sender: string;
   name: string | null;
+  /**
+   * The turn it is (issue 235): from `ResponseStarted`, or - for an answer
+   * that began before the page was loaded - from its first message.
+   */
+  turnId: string | null;
   reasoning: string;
   content: string;
   step: PlanStepEvent | null;
@@ -125,7 +130,7 @@ interface Answer {
 function withAnswer(answers: Answer[], sender: string, name: string | null, change: (answer: Answer) => Answer): Answer[] {
   const index = answers.findIndex(a => a.sender === sender);
   if (index < 0) {
-    return [...answers, change({sender, name, reasoning: '', content: '', step: null})];
+    return [...answers, change({sender, name, turnId: null, reasoning: '', content: '', step: null})];
   }
   return answers.map((a, i) => i === index ? change({...a, name: name ?? a.name}) : a);
 }
@@ -437,15 +442,17 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
         const answererName = envelope.context.sender_name || null;
         // The answer of the envelope's sender, if it has one, has ended.
         const answerEnded = () => setAnswers(prev => prev.filter(a => a.sender !== answerer));
-        if (actorEvent === 'ResponseStarted') {
-          // A new answer begins after those under way.
-          setAnswers(prev => withAnswer(prev.filter(a => a.sender !== answerer), answerer, answererName, a => a));
-        } else if (typeof actorEvent === 'string') {
-          // The other payload-less events have nothing to show.
+        if (typeof actorEvent === 'string') {
+          // The payload-less events have nothing to show.
+        } else if (actorEvent.ResponseStarted) {
+          // A new answer begins after those under way, as the turn it names.
+          const turnId = actorEvent.ResponseStarted.turn_id;
+          setAnswers(prev => withAnswer(prev.filter(a => a.sender !== answerer), answerer, answererName, a => ({...a, turnId})));
         } else if (actorEvent.PartialMessageGenerated) {
           const partial = actorEvent.PartialMessageGenerated;
           setAnswers(prev => withAnswer(prev, answerer, answererName, a => ({
             ...a,
+            turnId: a.turnId ?? partial.turn_id ?? null,
             reasoning: a.reasoning + (partial.reasoning ?? ''),
             content: a.content + (partial.content ?? ''),
           })));
@@ -467,7 +474,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
             return [...prev, newMsg];
           });
           // Its sender may go on: what streams in next is its next message.
-          setAnswers(prev => prev.map(a => a.sender === answerer ? {...a, reasoning: '', content: ''} : a));
+          const turnId = actorEvent.CompleteMessageGenerated.turn_id ?? null;
+          setAnswers(prev => prev.map(a => a.sender === answerer ? {...a, turnId: a.turnId ?? turnId, reasoning: '', content: ''} : a));
         } else if (actorEvent.MessageModified) {
           // In its place, as the server reads it (`Message::modify`, issue
           // 234): its words, classification and mentions, and when.

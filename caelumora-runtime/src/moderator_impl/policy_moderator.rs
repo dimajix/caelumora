@@ -141,7 +141,7 @@ impl Moderator for PolicyModerator {
             }
             // How an answer comes about - streamed, step by step - is for
             // the users watching (issue 220); the agents hear the answer.
-            ActorEvent::ResponseStarted |
+            ActorEvent::ResponseStarted { .. } |
             ActorEvent::PartialMessageGenerated(_) |
             ActorEvent::CompleteMessageGenerated(_) |
             ActorEvent::IntermediatePartialGenerated(_) |
@@ -551,7 +551,7 @@ mod tests {
         let message = || Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT);
         let step = || (0, 2, "first".to_string());
         let events = [
-            ActorEvent::ResponseStarted,
+            ActorEvent::ResponseStarted { turn_id: caelumora_model::work::TurnId::new() },
             ActorEvent::PartialMessageGenerated(message()),
             ActorEvent::CompleteMessageGenerated(message()),
             ActorEvent::IntermediatePartialGenerated(message()),

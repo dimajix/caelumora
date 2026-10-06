@@ -134,6 +134,7 @@ impl<'t> ToolCalls<'t> {
             content: None,
             timestamp: chrono::Utc::now(),
             internal,
+            turn_id: Some(self.turn.work.turn_id),
             ..Message::new(self.turn.work.label())
         };
         self.turn.push(message.clone());

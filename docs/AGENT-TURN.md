@@ -28,15 +28,15 @@ issue 222), then commits once:
     (`actor_impl::perceive`, issue 206). No turn begins, and nothing is asked of the policy (issues
     85, 90).
 *   **Begin.** The last `ResponseRequested` from the moderator among what was taken in begins one
-    turn on its state (`AgentChannelState::begin_turn`, see below), announces `ResponseStarted` and
-    has the agent's `ContextProvider` assemble the context. The agent goes on in `Planning`. The
-    requests before it are dropped: the one turn answers the conversation as it stands, having
-    heard every message, and acts in the contexts of the last request - with the authority of the
-    last who asked, never of someone who did not. An agent that falls behind thus answers once
-    when it is free again, not once per request that waited, each to a conversation that has moved
-    on. A sleeping agent ignores the request; only `wakeup` ends the sleep. Whether it sleeps is
-    read once everything is taken in: the channel wakes an agent before it delivers the message
-    that asks it, and the request may come in the same batch.
+    turn on its state (`AgentChannelState::begin_turn`, see below), announces `ResponseStarted`
+    with the turn's id and has the agent's `ContextProvider` assemble the context. The agent goes
+    on in `Planning`. The requests before it are dropped: the one turn answers the conversation as
+    it stands, having heard every message, and acts in the contexts of the last request - with the
+    authority of the last who asked, never of someone who did not. An agent that falls behind thus
+    answers once when it is free again, not once per request that waited, each to a conversation
+    that has moved on. A sleeping agent ignores the request; only `wakeup` ends the sleep. Whether
+    it sleeps is read once everything is taken in: the channel wakes an agent before it delivers
+    the message that asks it, and the request may come in the same batch.
 *   **Answer again.** Without a request to respond, the last `RetryRequested` among what was taken
     in is answered (issue 234, see [CHANNELS.md](CHANNELS.md#answering-again)): if the message is
     the agent's last answer (`AgentChannelState::retried`), it is taken back with the internal
@@ -100,6 +100,7 @@ runs around them: abandoning tool calls, applying the agent's memory, telling th
 The working state of a turn is one value, `AgentChannelState::turn: Option<TurnState>`, which is
 `None` between turns (issue 85). It holds what the turn is and what it has done so far:
 
+*   which turn it is (`TurnId`, issue 235),
 *   the envelope it answers (`EventContext`),
 *   whose authority it acts with (`SecurityContext`),
 *   the classification of its channel as the turn began - where the channel is, the turn reads from
@@ -113,10 +114,21 @@ The working state of a turn is one value, `AgentChannelState::turn: Option<TurnS
 *   the changes staged to the agent's states,
 *   the tool calls, the plan and the state a tool requested.
 
-The envelope, the authority, the classification, the label and the context of the next message
-are the turn's `Work` (`caelumora_model::work`, `TurnState::work`): what any piece of work of an
-agent is, a turn as much as an external agent's exchange with its remote agent (issue 204, see
+The id, the envelope, the authority, the classification, the label and the context of the next
+message are the turn's `Work` (`caelumora_model::work`, `TurnState::work`): what any piece of work
+of an agent is, a turn as much as an external agent's exchange with its remote agent (issue 204, see
 [CHANNELS.md](CHANNELS.md)). The rest is the turn's own.
+
+The id is given when the work begins and stored with it, so that a turn resumed after a restart is
+the same turn; work stored before it was kept gets a new one as it is loaded. `ResponseStarted`
+announces it, and every message the work produces carries it (`Message::turn_id`), so that which
+messages of an agent belong to one turn can be told from the messages alone - by a client that
+loads a channel during a turn as much as from a history. `TurnState::push` sets it on everything
+the turn keeps, whoever built the message; what is only shown, a partial message, gets it where the
+agent makes the model's message its own (`stamp`); an external agent sets it on what it streams and
+answers. It is not covered by the digest, like a message's time, and a modification does not take
+it over: a changed message stays in the turn it was produced in. The agent's `RunControl` knows
+the turn under way by its id as well, the one place reachable while the run loop holds the state.
 
 Work between turns does not touch it: perceiving a message only appends to the transcript and the
 history. Between turns the `AgentActor` works on its `AgentChannelState` itself; a `Turn` is had

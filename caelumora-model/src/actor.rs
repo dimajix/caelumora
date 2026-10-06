@@ -6,6 +6,7 @@ use crate::message::{Message, MessageId};
 use crate::security::SecurityContext;
 use crate::session::SessionId;
 use crate::user::UserId;
+use crate::work::TurnId;
 use chrono::{DateTime, Utc};
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
@@ -80,7 +81,12 @@ pub enum ActorEvent {
     /// an approver to the users, so that nobody is asked any longer.
     ApprovalRequestWithdrawn { id: ApprovalId },
     ResponseRequested,
-    ResponseStarted,
+    /// An answer begins: the turn `turn_id` of the sender (issue 235) - an
+    /// agent's turn or an external agent's work - whose messages carry the
+    /// same id. Announced before anything of it, so that an answer that is
+    /// not streamed is known as under way, and which turn it is, before it
+    /// ends.
+    ResponseStarted { turn_id: TurnId },
     PartialMessageGenerated(Message),
     CompleteMessageGenerated(Message),
     FullResponseGenerated(Vec<Message>),
@@ -251,7 +257,7 @@ impl ActorEvent {
             ActorEvent::ApprovalTimedOut(_) => "ApprovalTimedOut",
             ActorEvent::ApprovalRequestWithdrawn { .. } => "ApprovalRequestWithdrawn",
             ActorEvent::ResponseRequested => "ResponseRequested",
-            ActorEvent::ResponseStarted => "ResponseStarted",
+            ActorEvent::ResponseStarted { .. } => "ResponseStarted",
             ActorEvent::PartialMessageGenerated(_) => "PartialMessageGenerated",
             ActorEvent::CompleteMessageGenerated(_) => "CompleteMessageGenerated",
             ActorEvent::FullResponseGenerated(_) => "FullResponseGenerated",

@@ -104,7 +104,7 @@ impl AgentActor {
             warn!("Agent {} in channel {}: {} approved tool calls were not executed before the restart; the model is told", agent_id, channel.id, not_executed);
         }
         let agent_state = actor_runtime.agent_state(attributes).await?;
-        let control = RunControl::new(agent_channel_state.processing_state);
+        let control = RunControl::new(agent_channel_state.processing_state, agent_channel_state.turn.as_ref().map(|t| t.work.turn_id));
         let views = actor_runtime.views(security_context.clone());
 
         Ok(AgentActor {
@@ -184,18 +184,18 @@ impl AgentActor {
         let classification = self.actor_runtime.channel_loop().map(|c| c.classification())
             .ok_or_else(|| anyhow!("Agent {} has no channel to take a turn in", self.id()))?;
         let Answering { event_context, security_context } = Answering::to(request, self.id(), self.agent_controller.name());
-        state.begin_turn(
+        let turn_id = state.begin_turn(
             event_context,
             security_context,
             classification,
             self.tool_executor.tool_sets(),
             self.llm_client.profile(),
         );
-        self.control.begin_turn();
+        self.control.begin_turn(turn_id);
         let mut turn = self.turn_under_way(state)?;
 
-        debug!("Starting generating messages for agent {} {}", self.id(), turn.agent_name());
-        turn.send_event(ActorEvent::ResponseStarted, output).await?;
+        debug!("Starting generating messages for agent {} {} in turn {}", self.id(), turn.agent_name(), turn_id);
+        turn.send_event(ActorEvent::ResponseStarted { turn_id }, output).await?;
         // The agent's `ContextProvider` assembles what the model is given,
         // whatever its fail policy: without a context there is nothing to
         // give the model. Parts that may be left out are the prompt
@@ -660,7 +660,8 @@ enum TurnFlow {
     NoChannel,
 }
 
-/// Makes `message` of the model the agent's: its sender, its labels
+/// Makes `message` of the model the agent's: its sender, its turn
+/// (issue 235) - partial ones too, which the turn never keeps - its labels
 /// (`label`), and whether it is internal - part of executing a plan
 /// (`Turn::in_plan_step`); the final answer after the last step is
 /// not, and must reach the user live. `reasoning_visibility` and
@@ -668,6 +669,7 @@ enum TurnFlow {
 fn stamp(message: &mut Message, turn: &Turn, reasoning_visibility: Visibility, complete: bool) {
     message.sender_name = turn.agent_name().to_string();
     message.sender_id = ActorId::Agent(turn.agent_id());
+    message.turn_id = Some(turn.turn_id());
     label(message, turn, reasoning_visibility, complete);
     message.internal = turn.in_plan_step();
 }
@@ -906,11 +908,10 @@ impl Actor for AgentActor {
     }
 
     fn cancel(&self) {
-        info!(
-            "Cancelling agent {} {}",
-            self.id(),
-            self.agent_controller.name()
-        );
+        match self.control.turn_under_way() {
+            Some(turn) => info!("Cancelling agent {} {} in turn {}", self.id(), self.agent_controller.name(), turn),
+            None => info!("Cancelling agent {} {}: no turn is under way", self.id(), self.agent_controller.name()),
+        }
         self.control.cancel();
     }
 
@@ -964,10 +965,14 @@ mod tests {
         agent_channel_state.begin_turn(Default::default(), Default::default(), channel.clone(), vec![ToolSet::new("tools", "some tools", vec![tool("shown", ToolVisibility::SHOWN), tool("call_only", ToolVisibility::CALL_ONLY)])], Default::default());
         let mut turn = Turn::of(agent, "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached()).expect("a turn was begun");
 
+        let mut partial = answer(&[]);
+        stamp(&mut partial, &turn, Visibility::Channel, false);
+        assert_eq!(partial.turn_id, Some(turn.turn_id()), "a partial message too, which the turn never keeps");
         let mut message = answer(&["shown", "call_only", "unknown"]);
         stamp(&mut message, &turn, Visibility::Channel, true);
 
         assert_eq!((message.sender_id, message.sender_name.as_str()), (ActorId::Agent(agent), "agent"));
+        assert_eq!(message.turn_id, Some(turn.turn_id()));
         assert!(!message.internal, "no plan under way");
         assert_eq!(message.classification, Classification::PUBLIC, "the turn has seen nothing yet");
         turn.see(&Classification::general(Confidentiality::Internal));

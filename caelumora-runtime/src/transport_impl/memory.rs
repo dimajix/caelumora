@@ -185,7 +185,7 @@ mod tests {
 
         tx.try_send(envelope(ActorEvent::ResponseRequested)).expect("room");
         tx.try_send(envelope(ActorEvent::FullResponseGenerated(Vec::new()))).expect("room");
-        tx.try_send(envelope(ActorEvent::ResponseStarted)).expect("room");
+        tx.try_send(envelope(ActorEvent::ResponseStarted { turn_id: caelumora_model::work::TurnId::new() })).expect("room");
         // Puts the request aside while it takes what it waits for.
         receiver.recv_matching(|e| matches!(e.event, ActorEvent::FullResponseGenerated(_))).await.expect("queued");
 
@@ -207,8 +207,8 @@ mod tests {
             |e| matches!(e.event, ActorEvent::ResponseRequested),
         );
 
-        sender.send(envelope(ActorEvent::ResponseStarted)).await.expect("filtered, not failed");
-        sender.try_send(envelope(ActorEvent::ResponseStarted)).expect("filtered, not failed");
+        sender.send(envelope(ActorEvent::ResponseStarted { turn_id: caelumora_model::work::TurnId::new() })).await.expect("filtered, not failed");
+        sender.try_send(envelope(ActorEvent::ResponseStarted { turn_id: caelumora_model::work::TurnId::new() })).expect("filtered, not failed");
         sender.try_send(envelope(ActorEvent::ResponseRequested)).expect("passes the filter");
 
         assert!(matches!(rx.try_recv().map(|e| e.event), Ok(ActorEvent::ResponseRequested)), "only what passes arrives");
@@ -224,7 +224,7 @@ mod tests {
         let as_actor = |sender_id: ActorId, caller: ActorId| Envelope::new(
             SecurityContext::default().next(caller),
             EventContext { sender_id, ..EventContext::default() },
-            ActorEvent::ResponseStarted,
+            ActorEvent::ResponseStarted { turn_id: caelumora_model::work::TurnId::new() },
         );
         let someone = ActorId::System;
 

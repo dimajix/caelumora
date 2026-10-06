@@ -346,6 +346,7 @@ mod tests {
         let mut described = original.clone();
         described.timestamp = chrono::Utc::now() + chrono::Duration::hours(1);
         described.prompt_tokens = Some(42);
+        described.turn_id = Some(crate::work::TurnId::new());
         assert_eq!(message_chain(None, &original), message_chain(None, &described), "only what the model sees counts");
     }
 

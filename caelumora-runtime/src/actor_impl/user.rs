@@ -510,7 +510,7 @@ mod tests {
 
     fn envelope_from(sender: ActorId) -> Envelope {
         let context = EventContext::new(Default::default(), Default::default(), sender, "agent".to_string());
-        Envelope::new(SecurityContext::default(), context, ActorEvent::ResponseStarted)
+        Envelope::new(SecurityContext::default(), context, ActorEvent::ResponseStarted { turn_id: caelumora_model::work::TurnId::new() })
     }
 
     #[tokio::test]

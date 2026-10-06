@@ -45,10 +45,10 @@ use caelumora_model::agent::{AgentId, Personality};
 use caelumora_model::channel::Channel;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-use caelumora_model::context::{ContextRef, PromptPart};
+use caelumora_model::context::PromptPart;
 use caelumora_model::agent::AgentChannelState;
 use caelumora_model::external_agent::{OpenTaskState, TaskId};
-use caelumora_model::work::Work;
+use caelumora_model::work::{TurnId, Work};
 use caelumora_model::message::{Message, MessageId, MessageRole};
 use caelumora_model::security::{AccessQuestions, SecurityContext, SecurityManager};
 use chrono::Utc;
@@ -291,13 +291,13 @@ impl ExternalAgentActor {
         token: &CancellationToken,
         output: &dyn EventSender,
     ) -> Result<Ending> {
-        answering.send(ActorEvent::ResponseStarted, output).await?;
         let channel = self.actor_runtime.channel_loop()
             .ok_or_else(|| anyhow!("external agent {} has no channel to answer in", self.id()))?;
         // The work of this exchange, as a turn: bound by the channel as it
         // is now, and written as what it has seen - what the remote agent
         // brings in itself, and all it was given in this channel (issue 212).
         let mut work = Work::new(answering.event_context.clone(), answering.security_context.clone(), channel.classification());
+        answering.send(ActorEvent::ResponseStarted { turn_id: work.turn_id }, output).await?;
         // How it is given what was said, recorded with the context of what
         // comes of it, so that the context is resolved as it was given
         // (issue 135).
@@ -407,7 +407,7 @@ impl ExternalAgentActor {
                 }
                 // Shown as it is written, to whoever waits for the answer.
                 Step::Partial(piece) => {
-                    let partial = self.message(Some(piece), work.label());
+                    let partial = self.message(Some(piece), work.label(), Some(work.turn_id));
                     answering.send(ActorEvent::PartialMessageGenerated(partial), output).await?;
                 }
                 Step::Ended => break,
@@ -415,7 +415,7 @@ impl ExternalAgentActor {
             }
         }
 
-        Ok(Ending::Answered(self.record(state, answer, work.label(), Some(work.context)).map(Box::new)))
+        Ok(Ending::Answered(self.record(state, answer, work.label(), Some(&work)).map(Box::new)))
     }
 
     /// Records `task` as begun - or, asked back before, taken up again - by
@@ -527,21 +527,20 @@ impl ExternalAgentActor {
             warn!("External agent {} has no channel to speak in", self.id());
             return;
         };
-        let (speaking, label, context) = match work {
-            Some(work) => (self.speaking_for(&work), work.label(), Some(work.context)),
+        let (speaking, label) = match &work {
+            Some(work) => (self.speaking_for(work), work.label()),
             None => (
                 Answering {
                     event_context: EventContext::new(self.security_context.session_id, self.security_context.channel_id, self.id(), self.name()),
                     security_context: self.security_context.clone(),
                 },
                 self.remote.classification().unwrap_or_else(|| channel.classification()),
-                None,
             ),
         };
         let events = match outcome {
             Err(reason) => vec![ActorEvent::TurnFailed { message: format!("{} could not finish: {reason}", self.name()) }],
             // Nobody asked: it says nothing if it has nothing to say.
-            Ok(answer) => match self.record(state, answer, label, context) {
+            Ok(answer) => match self.record(state, answer, label, work.as_ref()) {
                 Some(message) => answered(Some(message)),
                 None => Vec::new(),
             },
@@ -600,18 +599,19 @@ impl ExternalAgentActor {
         state.remote.close(task);
     }
 
-    /// The message `answer` comes to - `None` if nothing came - kept in its
-    /// history with its `context`: what the remote agent was given in the
-    /// call it came of (`Work::context`), if that is known.
-    fn record(&self, state: &mut AgentChannelState, answer: Answer, classification: Classification, context: Option<ContextRef>) -> Option<Message> {
-        let message = self.message(Some(answer.finish()?), classification);
+    /// The message `answer` comes to - `None` if nothing came - classified
+    /// `classification`, kept in its history as what came of `work`, if that
+    /// is known: of its turn (issue 235), with what the remote agent was
+    /// given in the call it came of (`Work::context`) as its context.
+    fn record(&self, state: &mut AgentChannelState, answer: Answer, classification: Classification, work: Option<&Work>) -> Option<Message> {
+        let message = self.message(Some(answer.finish()?), classification, work.map(|w| w.turn_id));
         trace!("External agent {} answers {:?}", self.id(), message.content);
-        state.history.push(message.clone(), context);
+        state.history.push(message.clone(), work.map(|w| w.context.clone()));
         Some(message)
     }
 
-    /// A message of this agent with `content`.
-    fn message(&self, content: Option<String>, classification: Classification) -> Message {
+    /// A message of this agent with `content`, of the turn `turn_id`.
+    fn message(&self, content: Option<String>, classification: Classification, turn_id: Option<TurnId>) -> Message {
         Message {
             role: MessageRole::Assistant,
             content,
@@ -619,6 +619,7 @@ impl ExternalAgentActor {
             sender_id: self.id(),
             sender_name: self.name(),
             timestamp: Utc::now(),
+            turn_id,
             ..Message::new(classification)
         }
     }
