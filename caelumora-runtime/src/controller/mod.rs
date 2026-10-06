@@ -8,7 +8,8 @@
 //! Every controller is built the same way - the document, the event
 //! publisher, the store - holds a write lock while it changes its document,
 //! and takes over changes made elsewhere through `process_global_event`.
-//! The user's has no store: users are not changed through it.
+//! The user's writes the user's profile; the user record itself belongs to
+//! the system and is not changed through it.
 //!
 //! A session and its channels run in one instance, and so do their
 //! controllers. Agents and users do not belong to a session: one of them
@@ -34,7 +35,7 @@ use caelumora_model::channel::Channel;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::Session;
-use caelumora_model::store::{EntityStore, StoreResult};
+use caelumora_model::store::{EntityStore, StoreResult, StoreResultExt};
 use caelumora_model::user::UserId;
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -122,7 +123,8 @@ impl ControllerManager {
             return Ok(controller);
         }
         let user = self.entity_store.get_user(&SecurityContext::system(), id).await?;
-        let controller = Arc::new(UserController::new(user));
+        let profile = self.entity_store.get_user_profile(&SecurityContext::system(), id).await.optional()?;
+        let controller = Arc::new(UserController::new(user, profile, Arc::<EventBus>::clone(&self.event_bus), Arc::clone(&self.entity_store)));
         remember(&mut users, id, &controller);
         Ok(controller)
     }
@@ -161,7 +163,7 @@ impl ControllerManager {
                                 controller.process_global_event(&event);
                             }
                         }
-                        GlobalEvent::UserUpdated(id, _) => {
+                        GlobalEvent::UserUpdated(id, _) | GlobalEvent::UserProfileUpdated(id, _) => {
                             if let Some(controller) = users.lock().await.get(id).and_then(Weak::upgrade) {
                                 controller.process_global_event(&event);
                             }

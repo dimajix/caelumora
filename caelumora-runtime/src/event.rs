@@ -48,6 +48,7 @@ impl PublishedEvent {
         match self.event {
             GlobalEvent::AgentCreated(..) | GlobalEvent::AgentUpdated(..) | GlobalEvent::AgentDeleted(..) | GlobalEvent::AgentRestored(..) => ActionType::GetAgent(attributes),
             GlobalEvent::UserCreated(_) | GlobalEvent::UserUpdated(..) | GlobalEvent::UserDeleted(_) => ActionType::GetUser(attributes),
+            GlobalEvent::UserProfileUpdated(..) => ActionType::GetUserProfile(attributes),
             _ => ActionType::GetSession(attributes),
         }
     }
@@ -247,7 +248,7 @@ impl EventBus {
                 topics_to_notify.push(SubscriptionTopic::Channel(*cid));
                 topics_to_notify.push(SubscriptionTopic::Agent(*aid));
             }
-            GlobalEvent::UserCreated(uid) | GlobalEvent::UserUpdated(uid, _) | GlobalEvent::UserDeleted(uid) => {
+            GlobalEvent::UserCreated(uid) | GlobalEvent::UserUpdated(uid, _) | GlobalEvent::UserDeleted(uid) | GlobalEvent::UserProfileUpdated(uid, _) => {
                 topics_to_notify.push(SubscriptionTopic::User(*uid));
             }
             GlobalEvent::AgentChannelJoined(sid, cid, _) | GlobalEvent::AgentChannelLeft(sid, cid, _) |
@@ -359,6 +360,21 @@ mod tests {
         assert_eq!(kinds(drain(&mut alices).await), ["SessionCreated", "ChannelCreated", "SessionDeleted"], "the owner gets it all, in order - a deletion too");
         assert_eq!(kinds(drain(&mut bobs).await), ["SessionCreated", "ChannelCreated", "SessionDeleted"], "so does a contributor");
         assert_eq!(kinds(drain(&mut carols).await), ["UserCreated"], "a stranger only her own user event");
+    }
+
+    #[tokio::test]
+    async fn a_profile_s_change_reaches_its_user_alone() {
+        let bus = EventBus::new(Arc::new(OwnershipSecurityManager::new()));
+        let (alice, bob) = (UserId::new(), UserId::new());
+        let mut alices = bus.subscribe_as(as_user(alice));
+        let mut bobs = bus.subscribe_as(as_user(bob));
+
+        let profile = caelumora_model::user::UserProfile::new(alice, Some("I run the budget.".to_string()));
+        let attributes = caelumora_model::security::Secured::security_attributes(&profile).clone();
+        bus.publish(GlobalEvent::UserProfileUpdated(alice, profile), attributes);
+
+        assert_eq!(drain(&mut alices).await.len(), 1, "hers");
+        assert!(drain(&mut bobs).await.is_empty(), "not his, although her user record is everybody's");
     }
 
     #[tokio::test]

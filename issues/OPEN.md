@@ -54,7 +54,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 
 | No. | Status | Issue |
 |---|---|---|
-| [13](13-approval-modes.md) | open | Approvals cannot be remembered — no "always approve" for a scope, no brave mode — so repeated prompts train the user to approve without reading. |
+| [13](13-approval-modes.md) | in progress | Approvals cannot be remembered — no "always approve" for a scope, no brave mode — so repeated prompts train the user to approve without reading. |
 | [126](126-mcp-tools-discovered-once.md) | open | An MCP server's tools are discovered once, when the agent is built, so a replaced or temporarily unreachable server is not followed. |
 | [139](139-mcp-result-classification.md) | open | An MCP server cannot classify its results one by one, only be configured with one classification for all of them. |
 | [180](180-outbound-flow-unchecked.md) | open | What an agent writes into the arguments of a remote MCP tool leaves the system with no confidentiality rule asked; only what comes back is checked. |

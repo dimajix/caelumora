@@ -1,29 +1,53 @@
 use arc_swap::ArcSwap;
-use caelumora_model::event::GlobalEvent;
-use caelumora_model::user::{User, UserId, UserUpdateEvent};
+use caelumora_model::event::{EventPublisher, GlobalEvent};
+use caelumora_model::language::Language;
+use caelumora_model::security::{Secured, SecurityContext};
+use caelumora_model::store::{EntityStore, StoreError, StoreResult};
+use caelumora_model::user::{User, UserId, UserProfile, UserUpdateEvent};
 use std::sync::Arc;
 
 /// The live user of this instance, shared by all the user's actors in all
-/// sessions (issue 121). It has no store: users are not changed through
-/// it, only kept current when a change is announced.
+/// sessions (issue 121), with their profile. The user record is not changed
+/// through it - it belongs to the system (issue 94) and is only kept current
+/// when a change is announced - but the profile is: the controller is its
+/// one writer in this instance (issue 13).
 #[derive(Debug)]
 pub struct UserController {
     id: UserId,
     user: ArcSwap<User>,
+    /// What the user says about themselves; an empty one of theirs while
+    /// they never wrote one.
+    profile: ArcSwap<UserProfile>,
+    event_publisher: Arc<dyn EventPublisher>,
+    entity_store: Arc<dyn EntityStore>,
+    /// Held while the profile is changed and stored, like the other
+    /// controllers.
+    write_lock: tokio::sync::Mutex<()>,
 }
 
 impl UserController {
+    /// The live `user` with their `profile`, `None` if they have none yet.
     /// Made by the `ControllerManager`, which keeps one per user.
-    pub(crate) fn new(user: User) -> Self {
+    pub(crate) fn new(user: User, profile: Option<UserProfile>, event_publisher: Arc<dyn EventPublisher>, entity_store: Arc<dyn EntityStore>) -> Self {
         let id = user.id;
         Self {
             id,
             user: ArcSwap::from_pointee(user),
+            profile: ArcSwap::from_pointee(profile.unwrap_or_else(|| UserProfile::new(id, None))),
+            event_publisher,
+            entity_store,
+            write_lock: tokio::sync::Mutex::new(()),
         }
     }
 
     pub fn load(&self) -> arc_swap::Guard<Arc<User>> {
         self.user.load()
+    }
+
+    /// The user's profile as it stands. Handed out as the runtime holds it:
+    /// whoever acts with it in someone's name checks that themselves.
+    pub fn profile(&self) -> arc_swap::Guard<Arc<UserProfile>> {
+        self.profile.load()
     }
 
     pub fn id(&self) -> UserId {
@@ -32,6 +56,42 @@ impl UserController {
 
     pub fn username(&self) -> String {
         self.user.load().username.clone()
+    }
+
+    /// Sets how the user introduces themselves and the language they prefer
+    /// (issues 176, 56), on behalf of `ctx`; the rest of the profile stays.
+    /// Stored first - which is where the permission is checked - and only
+    /// then changed live and announced. Answers the profile as it now
+    /// stands.
+    ///
+    /// # Errors
+    /// `StoreError::Validation` for an introduction that is too long or
+    /// contains control characters (`UserProfile::introduce`), otherwise
+    /// whatever the store reports; the profile is then unchanged.
+    pub async fn update_profile(&self, ctx: &SecurityContext, introduction: Option<&str>, preferred_language: Option<Language>) -> StoreResult<UserProfile> {
+        let _guard = self.write_lock.lock().await;
+        let mut profile = (**self.profile.load()).clone();
+        profile.introduce(introduction).map_err(|e| StoreError::Validation(e.to_string()))?;
+        profile.preferred_language = preferred_language;
+        self.save(ctx, &profile).await?;
+        self.profile.store(Arc::new(profile.clone()));
+        let attributes = profile.security_attributes().clone();
+        self.event_publisher.publish(GlobalEvent::UserProfileUpdated(self.id, profile.clone()), attributes);
+        Ok(profile)
+    }
+
+    /// Stores `profile` as `ctx`, whether the user has one already or not:
+    /// changed if there is one, else created - and changed after all if one
+    /// was created meanwhile, in another instance. The store asks whether
+    /// `ctx` may.
+    async fn save(&self, ctx: &SecurityContext, profile: &UserProfile) -> StoreResult<()> {
+        match self.entity_store.update_user_profile(ctx, profile).await {
+            Err(StoreError::NotFound { .. }) => match self.entity_store.create_user_profile(ctx, profile).await {
+                Err(StoreError::Conflict(_)) => self.entity_store.update_user_profile(ctx, profile).await,
+                created => created,
+            },
+            updated => updated,
+        }
     }
 
     fn process_user_update(&self, event: &UserUpdateEvent) {
@@ -44,12 +104,90 @@ impl UserController {
         }
     }
 
+    /// Takes over a change made elsewhere - already stored there - once it
+    /// is announced. An event carries the resulting value, so taking over
+    /// this controller's own change again changes nothing.
     pub fn process_global_event(&self, event: &GlobalEvent) {
         match event {
             GlobalEvent::UserUpdated(uid, update) if *uid == self.id => {
                 self.process_user_update(update);
             }
+            GlobalEvent::UserProfileUpdated(uid, profile) if *uid == self.id => {
+                self.profile.store(Arc::new(profile.clone()));
+            }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use caelumora_model::actor::ActorId;
+    use caelumora_model::store_impl::memory::MemoryStore;
+    use caelumora_model::security::OwnershipSecurityManager;
+    use std::sync::Mutex;
+
+    /// What was announced, in order.
+    #[derive(Debug, Default)]
+    struct Announced(Mutex<Vec<GlobalEvent>>);
+
+    impl EventPublisher for Announced {
+        fn publish(&self, event: GlobalEvent, _attributes: caelumora_model::security::SecurityAttributes) {
+            self.0.lock().unwrap().push(event);
+        }
+    }
+
+    fn alice() -> User {
+        User { id: UserId::new(), username: "alice".to_string(), email: String::new(), roles: Vec::new(), deleted: None }
+    }
+
+    fn as_user(id: UserId) -> SecurityContext {
+        SecurityContext::new(ActorId::User(id), Default::default(), Default::default())
+    }
+
+    #[tokio::test]
+    async fn a_profile_is_stored_first_then_taken_over_and_announced() {
+        let store = Arc::new(MemoryStore::with_security_manager(Arc::new(OwnershipSecurityManager::new())));
+        let announced = Arc::new(Announced::default());
+        let user = alice();
+        let controller = UserController::new(user.clone(), None, Arc::<Announced>::clone(&announced), Arc::<MemoryStore>::clone(&store));
+        let hers = as_user(user.id);
+
+        for text in ["I run the budget.", "I run the budget and the team."] {
+            let profile = controller.update_profile(&hers, Some(text), None).await.expect("her own, created once and changed after");
+            assert_eq!(profile.introduction.as_deref(), Some(text));
+            assert_eq!(controller.profile().introduction.as_deref(), Some(text), "live");
+            assert_eq!(store.get_user_profile(&hers, user.id).await.unwrap().introduction.as_deref(), Some(text), "stored");
+        }
+        assert!(matches!(announced.0.lock().unwrap().as_slice(), [GlobalEvent::UserProfileUpdated(..), GlobalEvent::UserProfileUpdated(id, p)] if *id == user.id && p.introduction.as_deref() == Some("I run the budget and the team.")));
+    }
+
+    #[tokio::test]
+    async fn a_refused_profile_changes_nothing() {
+        let store = Arc::new(MemoryStore::with_security_manager(Arc::new(OwnershipSecurityManager::new())));
+        let announced = Arc::new(Announced::default());
+        let user = alice();
+        let controller = UserController::new(user.clone(), None, Arc::<Announced>::clone(&announced), Arc::<MemoryStore>::clone(&store));
+
+        let invalid = controller.update_profile(&as_user(user.id), Some("a\u{1b}[2Jb"), None).await;
+        assert!(matches!(invalid, Err(StoreError::Validation(_))), "{invalid:?}");
+        let forged = controller.update_profile(&as_user(UserId::new()), Some("I am alice."), None).await;
+        assert!(matches!(forged, Err(StoreError::PermissionDenied)), "not by someone else: {forged:?}");
+
+        assert_eq!(controller.profile().introduction, None);
+        assert!(announced.0.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_profile_changed_elsewhere_is_taken_over() {
+        let user = alice();
+        let controller = UserController::new(user.clone(), None, Arc::new(()), Arc::new(MemoryStore::new()));
+        let changed = UserProfile::new(user.id, Some("I run the budget.".to_string()));
+
+        controller.process_global_event(&GlobalEvent::UserProfileUpdated(UserId::new(), UserProfile::new(UserId::new(), Some("not hers".to_string()))));
+        assert_eq!(controller.profile().introduction, None, "another user's");
+        controller.process_global_event(&GlobalEvent::UserProfileUpdated(user.id, changed));
+        assert_eq!(controller.profile().introduction.as_deref(), Some("I run the budget."));
     }
 }

@@ -1,6 +1,6 @@
 # 13 — Approval workflow: "Always approve" and "Brave mode"
 
-**Status:** open
+**Status:** in progress
 **Area:** Tools & approvals
 
 ## The problem
@@ -333,3 +333,9 @@ A session's and a channel's rules: a dialog of the owner's, like `LanguageDialog
   and could not answer a call `Forbidden`. A person's rules of every reach live in their profile,
   which only they read; the `UserController` takes the profile over first, as a step of its own. A
   rule is not bound to an agent for now.
+- **2026-10-06** — Step 0 done: the `UserController` holds the profile beside the user record, with
+  the store and the event publisher, and `PUT /profile` goes through it (`update_profile`, the
+  introduction checked by `UserProfile::introduce`). It announces the profile as it now stands,
+  `GlobalEvent::UserProfileUpdated(UserId, UserProfile)` - a profile is read by its user alone, and
+  the bus delivers by `GetUserProfile`, so the event can carry it after all; *The design in detail*
+  thought it could not. `GET /profile` still reads the store, as every other reader does.

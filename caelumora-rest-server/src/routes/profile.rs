@@ -4,9 +4,7 @@
 use std::sync::Arc;
 use axum::extract::State;
 use axum::http::StatusCode;
-use caelumora_model::security::SecurityContext;
-use caelumora_model::store::{EntityStore, StoreError, StoreResult, StoreResultExt};
-use caelumora_model::user::UserProfile;
+use caelumora_model::store::{StoreError, StoreResultExt};
 use crate::auth::AuthenticatedUser;
 use crate::error::{ApiError, Json};
 use crate::models::{ProfileRequest, ProfileResponse};
@@ -23,45 +21,16 @@ pub async fn get_profile(State(state): State<Arc<AppState>>, user: Authenticated
 /// Sets the user's profile: their introduction - `null` or blank removes
 /// it - and the language they prefer (issue 56), `null` for none. Answers
 /// `400 invalid_introduction` for an introduction that is too long or
-/// contains control characters.
+/// contains control characters. Changed through the user's controller, the
+/// profile's one writer (issue 13).
 pub async fn update_profile(State(state): State<Arc<AppState>>, user: AuthenticatedUser, Json(payload): Json<ProfileRequest>) -> Result<Json<ProfileResponse>, ApiError> {
-    let mut profile = UserProfile::introducing(user.id, payload.introduction.as_deref())
-        .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, "invalid_introduction", e.to_string()))?;
-    profile.preferred_language = payload.preferred_language;
-    save(state.runtime_manager.entity_store().as_ref(), &user.security_context(), &profile).await
-        .map_err(|e| ApiError::internal("profile_failed", "saving the profile", &e.into()))?;
+    let controller = state.runtime_manager.controller_manager().user_controller(user.id).await
+        .map_err(|e| ApiError::internal("profile_failed", "reading the profile", &e.into()))?;
+    let profile = controller.update_profile(&user.security_context(), payload.introduction.as_deref(), payload.preferred_language).await
+        .map_err(|e| match e {
+            StoreError::Validation(reason) => ApiError::new(StatusCode::BAD_REQUEST, "invalid_introduction", reason),
+            e => ApiError::internal("profile_failed", "saving the profile", &e.into()),
+        })?;
     Ok(Json(ProfileResponse::of(Some(profile))))
 }
 
-/// Stores `profile` as `context`, whether its user has one already or not:
-/// changed if there is one, else created - and changed after all if one was
-/// created meanwhile. The store asks whether `context` may.
-async fn save(store: &dyn EntityStore, context: &SecurityContext, profile: &UserProfile) -> StoreResult<()> {
-    match store.update_user_profile(context, profile).await {
-        Err(StoreError::NotFound { .. }) => match store.create_user_profile(context, profile).await {
-            Err(StoreError::Conflict(_)) => store.update_user_profile(context, profile).await,
-            created => created,
-        },
-        updated => updated,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use caelumora_model::actor::ActorId;
-    use caelumora_model::security::OwnershipSecurityManager;
-    use caelumora_model::store_impl::memory::MemoryStore;
-    use caelumora_model::user::UserId;
-
-    #[tokio::test]
-    async fn a_profile_is_created_once_and_changed_after() {
-        let store = MemoryStore::with_security_manager(Arc::new(OwnershipSecurityManager::new()));
-        let alice = UserId::new();
-        let context = SecurityContext::new(ActorId::User(alice), Default::default(), Default::default());
-        for text in ["I run the budget.", "I run the budget and the team."] {
-            save(&store, &context, &UserProfile::introducing(alice, Some(text)).unwrap()).await.expect("her own");
-            assert_eq!(store.get_user_profile(&context, alice).await.unwrap().introduction.as_deref(), Some(text));
-        }
-    }
-}

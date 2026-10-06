@@ -238,8 +238,10 @@ them live, writing them and announcing changes is the runtime's (issue 86).
 *   **Events.** Controllers publish their changes on the `EventBus` (see [EVENTS.md](EVENTS.md)) and
     take over changes announced elsewhere through `process_global_event`.
 *   **One shape.** Every controller is built from the document, the event publisher and the store.
-    The `UserController` is the exception: users are not changed through it, so it has no store and
-    announces nothing.
+    The `UserController` holds the user's record and their profile: the record belongs to the
+    system (issue 94) and is only kept current, the profile is written through it (issue 13) -
+    `PUT /profile` goes there, and it announces the profile as it now stands
+    (`UserProfileUpdated`), which only its user and the runtime receive.
 
 ### Session-owned and per-instance controllers
 

@@ -89,6 +89,17 @@ impl UserProfile {
     /// `IntroductionError` if it is longer than `MAX_INTRODUCTION_CHARS` or
     /// contains a control character that is no whitespace.
     pub fn introducing(user_id: UserId, introduction: Option<&str>) -> Result<Self, IntroductionError> {
+        let mut profile = Self::new(user_id, None);
+        profile.introduce(introduction)?;
+        Ok(profile)
+    }
+
+    /// Introduces the user as `introduction` says, trimmed - as nobody if
+    /// nothing is left of it - checked as `introducing` checks it.
+    ///
+    /// # Errors
+    /// `IntroductionError`, as `introducing`; the profile is then unchanged.
+    pub fn introduce(&mut self, introduction: Option<&str>) -> Result<(), IntroductionError> {
         let introduction = introduction.map(str::trim).filter(|text| !text.is_empty());
         if let Some(text) = introduction {
             if text.chars().count() > MAX_INTRODUCTION_CHARS {
@@ -98,7 +109,8 @@ impl UserProfile {
                 return Err(IntroductionError::ControlCharacter);
             }
         }
-        Ok(Self::new(user_id, introduction.map(str::to_string)))
+        self.introduction = introduction.map(str::to_string);
+        Ok(())
     }
 
     /// The profile of user `user_id`, owned by them.
@@ -175,6 +187,12 @@ mod tests {
         assert_eq!(UserProfile::introducing(user, Some(" \n ")).unwrap().introduction, None, "nothing in it is none");
         assert_eq!(UserProfile::introducing(user, Some(&"x".repeat(MAX_INTRODUCTION_CHARS + 1))).unwrap_err(), IntroductionError::TooLong);
         assert_eq!(UserProfile::introducing(user, Some("a\u{1b}[2Jb")).unwrap_err(), IntroductionError::ControlCharacter);
+
+        let mut introduced = profile.clone();
+        assert!(introduced.introduce(Some("a\u{1b}[2Jb")).is_err());
+        assert_eq!(introduced.introduction, profile.introduction, "unchanged by what is refused");
+        introduced.introduce(None).unwrap();
+        assert_eq!(introduced.introduction, None);
     }
 
     #[tokio::test]

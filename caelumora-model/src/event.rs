@@ -1,7 +1,7 @@
 use crate::agent::{AgentId, AgentUpdateEvent};
 use crate::channel::{ChannelId, ChannelUpdateEvent};
 use crate::session::{SessionId, SessionUpdateEvent};
-use crate::user::{UserId, UserUpdateEvent};
+use crate::user::{UserId, UserProfile, UserUpdateEvent};
 use crate::security::SecurityAttributes;
 use serde::{Deserialize, Serialize};
 
@@ -46,6 +46,10 @@ pub enum GlobalEvent {
     UserCreated(UserId),
     UserUpdated(UserId, UserUpdateEvent),
     UserDeleted(UserId),
+    /// The profile of a user changed (issue 13), as it now stands.
+    /// Published with the profile's attributes: only its user, and the
+    /// runtime, receive it.
+    UserProfileUpdated(UserId, UserProfile),
 }
 
 pub trait EventPublisher: Send + Sync + std::fmt::Debug {
