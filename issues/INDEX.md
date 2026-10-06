@@ -152,7 +152,7 @@ argues against it, and what came out of the last attempt.
 
 | No. | Status | Issue |
 |---|---|---|
-| [13](13-approval-modes.md) | in progress | Approvals cannot be remembered — no "always approve" for a scope, no brave mode — so repeated prompts train the user to approve without reading. |
+| [13](13-approval-modes.md) | done | Approvals cannot be remembered — no "always approve" for a scope, no brave mode — so repeated prompts train the user to approve without reading. |
 | [14](14-approval-privilege.md) | done | Any user in the channel can approve any tool call; ineligible responses cannot be ignored because eligibility does not exist. |
 | [15](15-disallowed-tool-errors-to-llm.md) | done | A refused tool call does not reach the model as something it can act on, so the agent retries or proceeds as if it had succeeded. |
 | [32](32-unavailable-tools-invisible-to-model.md) | done | A tool source that failed to load (e.g. an unreachable MCP server) leaves no trace in the model's context, so the agent acts as if the tools never existed. |
@@ -175,6 +175,8 @@ argues against it, and what came out of the last attempt.
 | [180](180-outbound-flow-unchecked.md) | open | What an agent writes into the arguments of a remote MCP tool leaves the system with no confidentiality rule asked; only what comes back is checked. |
 | [194](194-tool-sets.md) | done | An agent's tools reach the model and the UI as a flat list without the grouping and purpose of the provider they come from, and the UI shows them only per message, not for the agent. |
 | [226](226-concurrent-tool-calls.md) | open | The tool calls of one step run one after the other, because every tool holds the turn while it runs, so a step of several slow calls takes the sum of their durations. |
+| [246](246-mcp-tool-hints.md) | open | An MCP server's hints on its tools - read-only, destructive - are ignored, so all tools of a server need approval alike. |
+| [247](247-tool-own-matcher.md) | open | A rule on tool calls can match an argument that is a language - a shell command, SQL - only by its text, which a chained command slips past. |
 
 ## User interaction
 

@@ -1,6 +1,6 @@
 # 13 — Approval workflow: "Always approve" and "Brave mode"
 
-**Status:** in progress
+**Status:** done
 **Area:** Tools & approvals
 
 ## The problem
@@ -366,4 +366,7 @@ A session's and a channel's rules: a dialog of the owner's, like `LanguageDialog
   when a rule answered. As decided in step 0, `UserProfileUpdated` carries the profile. A decision
   of the approver carries no `by_rule`: it is the approver's, and the answer it rests on is
   recorded with the rule.
-
+- **2026-10-06** — Done: what *Done when* asks for stands since step 2. What is left goes on in
+  issues of its own - step 3, a tool's own matcher, waits for a tool with an argument that is a
+  language ([247](247-tool-own-matcher.md)); the MCP hints, which *The MCP hints* made a point of
+  this issue but no step took up, are [246](246-mcp-tool-hints.md).
