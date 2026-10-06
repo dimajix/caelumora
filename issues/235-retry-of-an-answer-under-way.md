@@ -385,3 +385,19 @@ ended, and its answer is replaced as a completed one is.
   message stamped is the turn's; a given-up turn's telling is; work and a stored turn keep their
   id; `RunControl` knows the turn under way, a resumed one too; the digest ignores the id.
   AGENT-TURN.md (*The `Turn`*), REST-SERVER.md (*Streams*), WEB-UI.md.
+- **2026-10-06** — Step 2 done. `ChannelLoop::cancel_actor(context, actor)` beside `wakeup_actor`:
+  `CancelChannel` first, then `Actor::cancel` of that actor alone. Open question 1, decided with the
+  maintainer: the channel does not become quiet - the others are still asked to respond, and the
+  answer the turn is taken over with reaches everyone as any answer does. An actor that is not in
+  the channel is `ChannelError::NotAParticipant`; `wakeup_actor` answered the same case with an
+  untyped error and now gives the same one, a difference without a reason. `POST
+  …/participants/{aid}/cancel` (`cancel_participant`) maps it as `remove_participant` does the
+  participant, `404 participant_not_found` and `403 cancel_forbidden`. Open question 4: the web UI
+  has a stop icon on every answer under way, beside the channel's stop button - small enough for
+  this step. Tests in `channel.rs`: one actor's turn ends, the other's does not, and the next
+  message is answered; one actor is refused under a policy that refuses cancelling, before it is
+  looked up. The security suite (S4): bob may cancel one actor as a participant, asked as
+  `CancelChannel`; carol is refused without learning whether the actor is there. CHANNELS.md
+  (*Cancelling*), SECURITY.md, REST-SERVER.md, WEB-UI.md. Not verified in the browser: the stop
+  icon calls the route that the tests cover, and step 4 verifies the answers under way with a
+  model.

@@ -519,6 +519,30 @@ async fn shown(watch: &mut caelumora_runtime::actor_impl::user::ChannelWatch, wa
     }).await.unwrap_or_else(|_| panic!("{wanted} is shown"))
 }
 
+/// S4: cancelling one actor (issue 235) is cancelling, asked as
+/// `CancelChannel` of the channel: whoever may stop the channel may stop
+/// one of its actors - bob as a participant - and who may not is refused
+/// before anything of the actor is looked at, so that he does not learn who
+/// is in the channel.
+#[tokio::test]
+async fn cancelling_one_actor_is_for_whoever_may_cancel_the_channel() {
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let (bob, carol) = (World::as_user(world.bob), World::as_user(world.carol));
+    world.manager.open_session(&bob, session.id()).await.expect("he opens it");
+
+    let (cancelled, asked) = world.asked(main.cancel_actor(&bob, ActorId::User(world.alice))).await;
+    cancelled.expect("his to cancel, as a participant");
+    assert_eq!(asked, checks(&["bob: CancelChannel(alice's) yes"]), "asked as cancelling the channel");
+
+    let nobody = ActorId::User(UserId::new());
+    let (refused, asked) = world.asked(main.cancel_actor(&carol, nobody)).await;
+    assert!(denied(&refused.expect_err("not hers to cancel")), "refused, not told that nobody of that id is there");
+    assert_eq!(asked, checks(&["carol: CancelChannel(alice's) no"]));
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
 /// M1: a message is its author's to modify and to take back (issue 234) -
 /// not another participant's. Asked by the author's actor before it sends
 /// the change, and again by the channel as it admits it, with whether the

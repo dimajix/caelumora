@@ -743,17 +743,37 @@ impl ChannelLoop {
         Ok(asleep)
     }
 
+    /// Ends the current turn of one actor deliberately (issue 235), like
+    /// `cancel` and under the same permission: the policy that lets someone
+    /// stop the channel lets them stop one of its actors. The channel is not
+    /// kept quiet - that is the channel's state, not the actor's: the others
+    /// are still asked to respond, and the answer the actor's turn is taken
+    /// over with reaches everyone as any answer does.
+    ///
+    /// # Errors
+    /// `ChannelError::Forbidden` if the `SecurityManager` refuses
+    /// `CancelChannel`, before anything of the actor is looked at;
+    /// `NotAParticipant` if `actor` is not in this channel.
+    pub async fn cancel_actor(&self, context: &SecurityContext, actor: ActorId) -> Result<()> {
+        let channel = self.channel.load();
+        self.require(context, ActionType::CancelChannel(&channel.security_attributes), "cancelling").await?;
+        self.actor_by_id(actor)
+            .ok_or(ChannelError::NotAParticipant { participant: actor, channel: self.id })?
+            .cancel();
+        Ok(())
+    }
+
     /// Wakes one actor deliberately, like `wakeup` and under the same
     /// permission. Returns whether it was asleep.
     ///
     /// # Errors
     /// `ChannelError::Forbidden` if the `SecurityManager` refuses
-    /// `WakeChannel`; an error if `actor` is not in this channel.
+    /// `WakeChannel`; `NotAParticipant` if `actor` is not in this channel.
     pub async fn wakeup_actor(&self, context: &SecurityContext, actor: ActorId) -> Result<bool> {
         let channel = self.channel.load();
         self.require(context, ActionType::WakeChannel(&channel.security_attributes), "waking the agents of").await?;
         let actor = self.actor_by_id(actor)
-            .ok_or_else(|| anyhow!("actor {} is not in channel {}", actor, self.id))?;
+            .ok_or(ChannelError::NotAParticipant { participant: actor, channel: self.id })?;
         let was_asleep = actor.state() == ActorState::Sleeping;
         self.quiet.store(false, Ordering::SeqCst);
         actor.wakeup();
@@ -1404,9 +1424,14 @@ mod tests {
         let alice = user("alice");
         let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
         let refused = channel_with(&[&alice], Arc::new(DenyAll)).await;
+        // Refused before the actor is looked up: who may not learns nothing
+        // of who is in the channel.
+        let somebody = ActorId::Agent(caelumora_model::agent::AgentId::new());
         for error in [
             refused.cancel(&context).await.expect_err("cancelling is refused"),
+            refused.cancel_actor(&context, somebody).await.expect_err("cancelling one actor is refused"),
             refused.wakeup(&context).await.expect_err("waking is refused"),
+            refused.wakeup_actor(&context, somebody).await.expect_err("waking one actor is refused"),
         ] {
             assert!(crate::error::is_forbidden(&error), "the caller can tell a refusal from a failure: {error}");
             assert!(!error.to_string().contains("DenyAll"), "a refusal does not disclose the rule: {error}");
@@ -1790,11 +1815,12 @@ mod tests {
         running.abort();
     }
 
-    /// An agent asleep that only tells whether it was woken.
+    /// An agent asleep that only tells whether it was woken or cancelled.
     #[derive(Debug)]
     struct Sleeper {
         id: ActorId,
         woken: AtomicBool,
+        cancelled: AtomicBool,
     }
 
     #[async_trait::async_trait]
@@ -1808,7 +1834,43 @@ mod tests {
             if self.woken.load(Ordering::SeqCst) { ActorState::Idle } else { ActorState::Sleeping }
         }
         fn wakeup(&self) { self.woken.store(true, Ordering::SeqCst); }
+        fn cancel(&self) { self.cancelled.store(true, Ordering::SeqCst); }
         fn stop(&self) {}
+    }
+
+    fn sleeper() -> Arc<Sleeper> {
+        Arc::new(Sleeper { id: ActorId::Agent(caelumora_model::agent::AgentId::new()), woken: AtomicBool::new(false), cancelled: AtomicBool::new(false) })
+    }
+
+    #[tokio::test]
+    async fn cancelling_one_actor_ends_its_turn_alone_and_keeps_the_channel_answering() {
+        use caelumora_model::actor::EventContext;
+        use caelumora_model::approval::{ApprovalStrategy, ApproverId};
+        let alice = user("alice");
+        let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
+        let (cancelled, other) = (sleeper(), sleeper());
+        let channel = channel_moderated_by(&[&alice], Arc::new(AskBack(other.id))).await;
+        for actor in [&cancelled, &other] {
+            channel.adopt(Arc::<Sleeper>::clone(actor), Member::Approver(Approver { id: ApproverId::new(), strategy: ApprovalStrategy::Any })).await;
+        }
+
+        channel.cancel_actor(&context, cancelled.id).await.expect("permitted");
+        assert!(cancelled.cancelled.load(Ordering::SeqCst), "its turn is ended");
+        assert!(!other.cancelled.load(Ordering::SeqCst), "the other's goes on");
+
+        let said = Envelope::new(
+            context.clone(),
+            EventContext { sender_id: ActorId::User(alice.id), ..EventContext::default() },
+            ActorEvent::FullResponseGenerated(vec![Message::new(Classification::CHANNEL_DEFAULT)]),
+        );
+        channel.route_event(&HashMap::new(), said).await;
+        assert!(other.woken.load(Ordering::SeqCst), "the channel is not quiet: the next message is answered");
+
+        let stranger = ActorId::Agent(caelumora_model::agent::AgentId::new());
+        let error = channel.cancel_actor(&context, stranger).await.expect_err("not in the channel");
+        assert!(matches!(error.downcast_ref::<ChannelError>(), Some(ChannelError::NotAParticipant { .. })), "{error}");
+        let error = channel.wakeup_actor(&context, stranger).await.expect_err("nor to be woken");
+        assert!(matches!(error.downcast_ref::<ChannelError>(), Some(ChannelError::NotAParticipant { .. })), "the same error: {error}");
     }
 
     #[tokio::test]
@@ -1817,7 +1879,6 @@ mod tests {
         use caelumora_model::approval::{ApprovalStrategy, ApproverId};
         let alice = user("alice");
         let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
-        let sleeper = || Arc::new(Sleeper { id: ActorId::Agent(caelumora_model::agent::AgentId::new()), woken: AtomicBool::new(false) });
         let (asked, other) = (sleeper(), sleeper());
         let channel = channel_moderated_by(&[&alice], Arc::new(AskBack(asked.id))).await;
         for actor in [&asked, &other] {

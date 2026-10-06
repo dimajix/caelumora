@@ -377,6 +377,15 @@ reclassification; each agent then gives its turn up instead of taking it over (i
 Afterwards the channel is *quiet* until it is woken. What is said is still delivered, so that every
 agent's transcript keeps up with the history, but nobody is asked to respond to it.
 
+`ChannelLoop::cancel_actor` ends the turn of one actor alone (issue 235) - the stop icon on an
+answer under way in the web UI. It is cancelling, under the same permission (`CancelChannel`),
+asked before the actor is looked up, so that who may not learns nothing of who is in the channel;
+an actor that is not there is `ChannelError::NotAParticipant`, as for `wakeup_actor`. The turn ends
+as on a cancel of the channel, but the channel does not become quiet: being quiet is the channel's
+state, not one actor's. The others go on answering and are asked to respond as before, and the
+answer the cancelled turn is taken over with reaches everyone as any answer does - another agent
+may respond to it.
+
 ### Waking
 
 A quiet channel is woken in one of two ways:

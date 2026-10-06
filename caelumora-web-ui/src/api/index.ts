@@ -322,6 +322,14 @@ export const api = {
     return res.json();
   },
 
+  /** Ends the turn of one participant of the channel; the others go on (issue 235). */
+  async cancelParticipant(sessionId: string, channelId: string, actorUuid: string): Promise<void> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/participants/${actorUuid}/cancel`, {
+      method: 'POST',
+    });
+    await ensureOk(res, 'Failed to stop the answer');
+  },
+
   async cancelChannel(sessionId: string, channelId: string): Promise<void> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/cancel`, {
       method: 'POST',

@@ -197,7 +197,9 @@ else who may read it - the session's owner, say - is shown its history and no in
     snapshot, so a reload shows them again; a request that arrives again - asked anew by an agent
     after a restart - is shown once (issue 172). Whether this user answered is known only to this
     page: after a reload, an answered approval is offered again.
-*   **Stop.** The stop button ends the current turn of every agent (`POST …/cancel`).
+*   **Stop.** The stop button ends the current turn of every agent (`POST …/cancel`). The stop
+    icon on an answer under way ends that agent's turn alone (`POST …/participants/{aid}/cancel`,
+    issue 235); the other answers go on.
 *   **Input.** A line starting with `/` is sent as a command, `//` as a literal slash
     (`command.ts`). Typing `@` completes the members' handles, `/` the commands the user may see. An
     unsent draft survives a forced re-login, in the session storage. A message can be sent while

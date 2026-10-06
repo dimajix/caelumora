@@ -167,11 +167,12 @@ not do it is refused before the rest is looked at, and learns nothing of the oth
 `UpdateChannel` first, as `remove_participant` does when the change is stored.
 
 **Actors are controlled only through such operations.** `Actor::cancel`, `wakeup` and `stop` check
-nothing: they are the consequence of an act that was checked - `ChannelLoop::cancel`, `wakeup`,
-`wakeup_actor`, `remove_participant`, `SessionLoop::delete_channel` - and know no caller. So that
-this holds by structure rather than by discipline, the `Actor` trait, the `Moderator` trait that is
-handed actors, and `ChannelLoop::actor_by_id` are crate-internal (issue 147): a frontend reaches
-its user's actor through `ChannelLoop::user_actor`, but none of the control methods.
+nothing: they are the consequence of an act that was checked - `ChannelLoop::cancel`,
+`cancel_actor`, `wakeup`, `wakeup_actor`, `remove_participant`, `SessionLoop::delete_channel` - and
+know no caller. So that this holds by structure rather than by discipline, the `Actor` trait, the
+`Moderator` trait that is handed actors, and `ChannelLoop::actor_by_id` are crate-internal (issue
+147): a frontend reaches its user's actor through `ChannelLoop::user_actor`, but none of the
+control methods.
 
 ## The security suite
 

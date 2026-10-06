@@ -771,6 +771,18 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
     }
   };
 
+  /** Stops the answer of one agent alone (issue 235); the others go on. */
+  const stopAnswer = async (answer: Answer) => {
+    const member = members.find(m => actorKey(m.id) === answer.sender);
+    const uuid = actorUuid(member?.id);
+    if (!uuid) return;
+    try {
+      await api.cancelParticipant(sessionId, channelId, uuid);
+    } catch (error) {
+      reportError('Failed to stop the answer', error);
+    }
+  };
+
   // Only who may approve the agent's calls is asked (issue 14); everybody
   // else sees what it waits for.
   const mayApprove = (approval: ApprovalRequest) =>
@@ -968,6 +980,14 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
                   <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
                   generating…
                 </span>
+                <button
+                  type="button"
+                  onClick={() => void stopAnswer(answer)}
+                  className="ml-auto p-0.5 rounded-sm text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
+                  title="Stop this answer alone"
+                >
+                  <Square size={12} fill="currentColor" />
+                </button>
               </div>
               {answer.reasoning && <Reasoning text={answer.reasoning} thinking={!answer.content} />}
               {answer.content && <MarkdownMessage content={answer.content} />}

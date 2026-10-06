@@ -355,6 +355,22 @@ pub async fn cancel_channel(
     Ok(StatusCode::OK)
 }
 
+/// Ends the turn of one participant of the channel (issue 235), under the
+/// same permission as cancelling the channel (`CancelChannel`, checked by
+/// the channel). The others go on, and the channel stays answering.
+pub async fn cancel_participant(
+    State(state): State<Arc<AppState>>,
+    Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
+    user: AuthenticatedUser,
+) -> Result<StatusCode, ApiError> {
+    let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let participant = actor_in(&channel, aid)
+        .ok_or_else(|| ApiError::not_found("participant_not_found", format!("{} takes no part in channel {}", aid, cid)))?;
+    channel.cancel_actor(&user.security_context(), participant).await
+        .map_err(|e| ApiError::from_runtime(e, Subject::Cancel, &format!("cancelling a participant of channel {cid}")))?;
+    Ok(StatusCode::OK)
+}
+
 
 /// Reclassifies the channel (issue 133): only its owner. Lowering it
 /// releases what is in it. Answers with the channel as the user sees it now.
