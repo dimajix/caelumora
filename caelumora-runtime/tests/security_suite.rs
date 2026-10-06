@@ -581,6 +581,10 @@ async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
     let (refused, asked) = world.asked(bob.request_retry(said[0].id)).await;
     assert!(matches!(refused.expect_err("no agent said it").downcast_ref::<ChannelError>(), Some(ChannelError::NotAnAgentsMessage { .. })));
     assert_eq!(asked, checks(&["bob: RetryMessage(alice's) yes"]), "his to ask, as a participant");
+    let view = world.manager.views(Viewer::new(World::as_user(world.bob))).session(session.id()).await.unwrap().channel(main.id()).await.unwrap();
+    let (offered, asked) = world.asked(view.may_retry()).await;
+    assert!(offered, "and offered to him");
+    assert_eq!(asked, checks(&["bob: RetryMessage(alice's) yes"]), "by the same question");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

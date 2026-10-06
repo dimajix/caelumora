@@ -91,6 +91,10 @@ pub struct ChannelSnapshot {
     /// Whether the viewer may rename the channel and add or remove its
     /// participants (`UpdateChannel`, issue 46).
     pub can_change: bool,
+    /// Whether the viewer may ask an agent of the channel to answer again
+    /// instead of one of its messages (`RetryMessage`, issue 234) - whether
+    /// the agent does is its own to decide.
+    pub can_retry: bool,
     /// Its participants, in the order of the channel - with
     /// `Detail::MEMBERS`.
     pub members: Vec<MemberSnapshot>,

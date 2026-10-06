@@ -103,6 +103,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             axum::routing::put(channels::modify_message).delete(channels::revoke_message),
         )
         .route("/sessions/{id}/channels/{cid}/messages/{mid}/classification", axum::routing::put(channels::reclassify_message))
+        .route("/sessions/{id}/channels/{cid}/messages/{mid}/retry", post(channels::retry_message))
         .route("/sessions/{id}/channels/{cid}/approvals", post(channels::send_approval))
         .route("/sessions/{id}/channels/{cid}/cancel", post(channels::cancel_channel))
         .route("/sessions/{id}/channels/{cid}/notes", get(channels::get_notes))

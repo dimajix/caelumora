@@ -123,6 +123,11 @@ export interface ChannelResponse {
   language: string | null;
   /** Whether you may rename it and add or remove participants (issue 46). */
   can_change: boolean;
+  /**
+   * Whether you may ask an agent in it to answer again instead of one of its
+   * messages (issue 234); whether it does is the agent's to decide.
+   */
+  can_retry: boolean;
   /** Who took part and left (issue 164), in the order they left, each with `left`. */
   former_members: ChannelMember[];
 }
@@ -280,6 +285,9 @@ export interface Message {
   // UI only: a chain between agents was cut off at its limit (issue 200),
   // a notice that is gone on reload; `notAsked` are the agents mentioned.
   chainCutOff?: {maxAgentHops: number; notAsked: ActorId[]};
+  // UI only: the sender would not answer again instead of a message (issue
+  // 234), a notice that is gone on reload.
+  retryRejected?: RetryRefused;
   // Usage statistics
   prompt_tokens?: number;
   completion_tokens?: number;
@@ -343,7 +351,17 @@ export interface ActorEvent {
   MessageModified?: Message;
   /** Its author took the message `message` back at `at` (issue 234). */
   MessageRevoked?: { message: string; at: string };
+  /** The sender answers again instead of its message `message` (issue 234). */
+  RetryAccepted?: { message: string };
+  /** The sender does not answer again instead of its message `message`, for `reason` (issue 234). */
+  RetryRejected?: { message: string; reason: RetryRefused };
 }
+
+/**
+ * Why an agent does not answer again (issue 234): a known few, which the UI
+ * words itself; one it does not know is shown as such.
+ */
+export type RetryRefused = 'not_its_answer' | 'not_last' | 'calls_ran' | 'asked_again' | 'elsewhere';
 
 /** A user command, as `/help` and completion show it (issue 28). */
 export interface Command {

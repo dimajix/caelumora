@@ -9,6 +9,7 @@ import {
   Lock,
   NotebookPen,
   Pencil,
+  RotateCcw,
   Scale,
   Shield,
   ScrollText,
@@ -24,6 +25,7 @@ import {
 } from 'lucide-react';
 import type {
   ActorId,
+  RetryRefused,
   ApprovalRequest,
   ChannelMember,
   ChannelResponse,
@@ -78,6 +80,18 @@ import {loadDraft, saveDraft} from '../session';
 
 /** The menu button of a member's row: shown while the row is hovered or the button focused. */
 const ROW_MENU = 'text-gray-400 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-700';
+
+/** Why an agent did not answer again (issue 234), as this page words it. */
+function retryRefusedText(reason: RetryRefused): string {
+  switch (reason) {
+    case 'not_its_answer': return 'that is not an answer of its own it could give again';
+    case 'not_last': return 'more was said or done since that answer';
+    case 'calls_ran': return 'tools that already ran would be taken back with it';
+    case 'asked_again': return 'it was asked again in the meantime';
+    case 'elsewhere': return 'it runs elsewhere and cannot take back what it was given';
+    default: return 'for a reason this page does not know';
+  }
+}
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -319,6 +333,26 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
     }
   };
 
+  /**
+   * Whether the user may ask the agent that said `msg` to answer again (issue
+   * 234): the last message of the chat, an agent's, while nothing is being
+   * generated. The agent has the last word; this is an offer, not a promise.
+   */
+  const mayRetry = (msg: Message) => {
+    if (!participant || !channel?.can_retry || answers.length > 0 || !msg.id) return false;
+    if (typeof msg.sender_id !== 'object' || msg.sender_id === null || !('Agent' in msg.sender_id)) return false;
+    const last = [...messages].reverse().find(m => m.id && !m.revoked);
+    return last?.id === msg.id;
+  };
+
+  const retry = async (msg: Message) => {
+    try {
+      await api.retryMessage(sessionId, channelId, msg.id!);
+    } catch (error) {
+      reportError('Failed to ask for another answer', error);
+    }
+  };
+
   /** Takes `msg` back on the second click; the first asks for it. */
   const takeBack = async (msg: Message) => {
     if (revoking !== msg.id) {
@@ -451,6 +485,20 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           setMessages(prev => prev.map(m => m.id === message
             ? {...m, content: null, reasoning: undefined, tool_calls: [], tool_results: [], mentions: [], revoked: at}
             : m));
+        } else if (actorEvent.RetryAccepted) {
+          // Its answer is taken back next and a new one begins: shown as
+          // under way from now on.
+          setAnswers(prev => withAnswer(prev.filter(a => a.sender !== answerer), answerer, answererName, a => a));
+        } else if (actorEvent.RetryRejected) {
+          // Like a failed turn: shown, but not part of the history.
+          const notice: Message = {
+            role: 'System',
+            content: null,
+            sender_name: envelope.context.sender_name,
+            retryRejected: actorEvent.RetryRejected.reason,
+            timestamp: envelope.timestamp,
+          };
+          setMessages(prev => [...prev, notice]);
         } else if (actorEvent.ApprovalRequested) {
           // Asked again by an agent that resumed its turn (issue 172), or
           // already in the snapshot: shown once.
@@ -806,6 +854,18 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
               )}
               <MessageFooter message={msg} />
             </div>
+          ) : msg.retryRejected ? (
+            <div
+              key={idx}
+              className="max-w-[80%] p-3 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-900/60 text-gray-800 dark:text-gray-200 text-sm"
+            >
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider mb-1 opacity-70">
+                <RotateCcw size={14} />
+                <span>Not answered again</span>
+              </div>
+              <div className="wrap-break-word">{msg.sender_name || 'The agent'} did not answer again: {retryRefusedText(msg.retryRejected)}.</div>
+              <MessageFooter message={msg} />
+            </div>
           ) : msg.revoked ? (
             <div
               key={idx}
@@ -834,8 +894,18 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
               badges={channel && msg.classification && !sameClassification(msg.classification, channel.classification)
                 ? [`released: ${classificationLabel(msg.classification)}`]
                 : undefined}
-              actions={(mayShowContext(msg) || mayReclassify(msg) || mayChange(msg)) ? (
+              actions={(mayShowContext(msg) || mayReclassify(msg) || mayChange(msg) || mayRetry(msg)) ? (
                 <>
+                  {mayRetry(msg) && (
+                    <button
+                      onClick={() => void retry(msg)}
+                      className="p-0.5 opacity-60 hover:opacity-100 focus:opacity-100"
+                      title="Ask for another answer instead of this one"
+                      aria-label="Ask for another answer instead of this one"
+                    >
+                      <RotateCcw size={13} />
+                    </button>
+                  )}
                   {mayChange(msg) && (
                     <button
                       onClick={() => { setRevoking(null); setEditing(msg.id!); }}

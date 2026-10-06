@@ -4,7 +4,7 @@ use caelumora_model::approval::{ApprovalId, ApprovalResponse};
 use caelumora_model::command::{parse_input, UserInput};
 use caelumora_model::config::AppConfig;
 use caelumora_model::mention::mention_spans;
-use caelumora_model::message::Message;
+use caelumora_model::message::{Message, MessageId};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::user::{User, UserId};
 use caelumora_runtime::component::ComponentRegistry;
@@ -51,6 +51,9 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
     // agent to answer. Covers both plan proposals and regular tool calls -
     // both flow through the same generic ApprovalRequested event.
     let mut pending_approvals: HashMap<Uuid, AgentId> = HashMap::new();
+    // The last answer of an agent shown, which `/retry` asks it to give
+    // again (issue 234).
+    let mut last_answer: Option<MessageId> = None;
     let handles: HashMap<ActorId, String> = channel.members()
         .into_iter()
         .filter_map(|m| Some((m.id, m.handle?)))
@@ -78,6 +81,9 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                     // shows it; the full response that ends an answer holds
                     // them again (issue 220).
                     Some(ActorEvent::CompleteMessageGenerated(message)) => {
+                        if matches!(message.sender_id, ActorId::Agent(_)) {
+                            last_answer = Some(message.id);
+                        }
                         if let Some(content) = &message.content {
                             println!("\r{}> {}", message.sender_name, render_content(&message, content, &handles));
                         }
@@ -95,6 +101,12 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                     }
                     Some(ActorEvent::MessageRevoked { .. }) => {
                         println!("\r{} took a message back", sender);
+                    }
+                    Some(ActorEvent::RetryAccepted { .. }) => {
+                        println!("\r{} answers again", sender);
+                    }
+                    Some(ActorEvent::RetryRejected { reason, .. }) => {
+                        println!("\r{} cannot answer again: {}", sender, reason);
                     }
                     Some(ActorEvent::TurnFailed { message }) => {
                         println!("\r[error] An agent could not answer: {}", message);
@@ -152,8 +164,21 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                             }
                             continue;
                         }
-                        // `/approve` and `/deny` above are this terminal's own;
-                        // every other command goes to the channel (issue 28).
+                        if input == "/retry" {
+                            match last_answer {
+                                Some(answer) => {
+                                    if let Err(e) = user_actor.request_retry(answer).await {
+                                        let message = caelumora_runtime::error::user_message(&e).unwrap_or_else(|| e.to_string());
+                                        println!("[error] {}", message);
+                                    }
+                                }
+                                None => println!("No answer of an agent to give again"),
+                            }
+                            continue;
+                        }
+                        // `/approve`, `/deny` and `/retry` above are this
+                        // terminal's own; every other command goes to the
+                        // channel (issue 28).
                         match parse_input(input) {
                             UserInput::Command { name, args } => {
                                 match user_actor.execute_command(&name, &args).await {

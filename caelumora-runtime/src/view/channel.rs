@@ -125,6 +125,12 @@ impl ChannelView {
         self.views().security().may_change_channel(self.views().context(), &self.channel.security_attributes).await
     }
 
+    /// Whether the viewer may ask an agent of the channel to answer again
+    /// instead of one of its messages (`RetryMessage`, issue 234).
+    pub async fn may_retry(&self) -> bool {
+        self.views().security().may_retry_message(self.views().context(), &self.channel.security_attributes).await
+    }
+
     /// Its participants, in the order of the channel.
     pub async fn members(&self) -> Vec<MemberView> {
         let mut members = Vec::with_capacity(self.channel.participants.len());
@@ -282,6 +288,7 @@ impl ChannelView {
             classification: self.channel.classification.clone(),
             language: self.channel.language.clone(),
             can_change: self.may_change().await,
+            can_retry: self.may_retry().await,
             members,
             former_members,
         }

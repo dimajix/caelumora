@@ -527,3 +527,14 @@ describe the events, the routes and what revoking does not do.
   failures `TurnFailed` tells, so a user interface words them itself and may react to each. It is
   written in `snake_case` (`not_its_answer`, `not_last`, `calls_ran`, `asked_again`, `elsewhere`);
   its `Display` stays for logs and the TUI.
+- **2026-10-06** — Step 6 done. `POST …/messages/{mid}/retry`; `can_retry` in the channel's
+  snapshot (`ChannelView::may_retry`, the same `RetryMessage` question). The web UI offers a retry
+  icon on the last message of the chat when it is an agent's, nothing is being generated and
+  `can_retry` allows it; `RetryAccepted` shows the agent as answering, `RetryRejected` a notice "Not
+  answered again" worded by the UI for each `RetryRefused`, gone on reload. The TUI asks it of the
+  last answer of an agent it showed, with `/retry` - the one action the TUI can offer, since it
+  knows that message's id. Verified in the browser with `gemma4:26b` in a channel answering on
+  mentions: Sassy's answer "Crimson." retried from its icon, taken back in place, and answered
+  anew; the context of the new answer gives the model the question alone; after a message of
+  alice, the icon is gone, and a retry asked over REST is rejected with `not_last`, shown as the
+  notice. *From here on retry works - the issue's "done when".*

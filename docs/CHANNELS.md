@@ -229,7 +229,10 @@ without forking. It is a request to the agent, not an operation of the channel: 
     given, and nothing here takes the answer back from it.
 
 `RetryAccepted` and `RetryRejected` go to the users and are never written to the history. A request
-waits for the end of a turn under way, as everything an agent hears does.
+waits for the end of a turn under way, as everything an agent hears does. Whether a viewer may ask
+is part of the channel's snapshot (`ChannelSnapshot::can_retry`, `ChannelView::may_retry`), so
+that a client offers it only where it is permitted. The TUI asks it of the last answer of an agent
+it showed, with `/retry`.
 
 ## Participants
 

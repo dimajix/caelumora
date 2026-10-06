@@ -277,6 +277,24 @@ pub async fn modify_message(
     Ok(StatusCode::OK)
 }
 
+/// Asks the agent that said message `mid` to answer again instead of it
+/// (issue 234). Answered once the request is on its way: whether the agent
+/// does is its own to decide, and the channel's stream shows its answer as
+/// `RetryAccepted` - followed by the message taken back and the new answer -
+/// or `RetryRejected` with the reason.
+pub async fn retry_message(
+    State(state): State<Arc<AppState>>,
+    Path((id, cid, mid)): Path<(Uuid, Uuid, Uuid)>,
+    user: AuthenticatedUser,
+) -> Result<StatusCode, ApiError> {
+    let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let user_actor = user_actor_of(&channel, &user)?;
+    let span_id = user_actor.request_retry(MessageId(mid)).await
+        .map_err(|e| ApiError::from_runtime(e, Subject::Session, "asking for another answer"))?;
+    tracing::Span::current().record("span_id", tracing::field::display(span_id));
+    Ok(StatusCode::OK)
+}
+
 /// Takes the authenticated user's message `mid` back (issue 234): it stays
 /// in its place without what it said, and the agents are no longer given
 /// it - not a deletion. Shown on the channel's stream as `MessageRevoked`.

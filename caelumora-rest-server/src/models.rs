@@ -356,6 +356,10 @@ pub struct ChannelResponse {
     /// Whether the requesting user may rename the channel and add or remove
     /// its participants (issue 46).
     pub can_change: bool,
+    /// Whether the requesting user may ask an agent of the channel to
+    /// answer again instead of one of its messages (issue 234); whether it
+    /// does is the agent's to decide.
+    pub can_retry: bool,
     /// Who took part and left (issue 164), in the order they left, each
     /// with `left`: who removed them and when.
     pub former_members: Vec<ChannelMemberResponse>,
@@ -373,6 +377,7 @@ impl From<snapshot::ChannelSnapshot> for ChannelResponse {
             classification: view.classification,
             language: view.language,
             can_change: view.can_change,
+            can_retry: view.can_retry,
             former_members: view.former_members.into_iter().filter_map(ChannelMemberResponse::of).collect(),
         }
     }
@@ -722,13 +727,14 @@ mod tests {
             classification: Classification::CHANNEL_DEFAULT,
             language: None,
             can_change: true,
+            can_retry: true,
             members: vec![member(alice, None), member(approver, Some("Approver")), member(ActorId::System, Some("system"))],
             former_members: Vec::new(),
         };
 
         let response = ChannelResponse::from(view);
 
-        assert!(response.can_change);
+        assert!(response.can_change && response.can_retry);
         let kinds: Vec<_> = response.members.iter().map(|m| (m.kind, m.name.as_str())).collect();
         assert_eq!(kinds, [(ParticipantKind::User, UNKNOWN), (ParticipantKind::Approver, "Approver")], "the system is no participant");
     }
@@ -758,6 +764,7 @@ mod tests {
             classification: Classification::CHANNEL_DEFAULT,
             language: None,
             can_change: false,
+            can_retry: false,
             members: vec![member(alice, "alice", Vec::new()), member(helper, "Helper", vec![note])],
             former_members: Vec::new(),
         };
@@ -797,6 +804,7 @@ mod tests {
             classification: Classification::CHANNEL_DEFAULT,
             language: None,
             can_change: true,
+            can_retry: true,
             members: vec![member(alice, None)],
             former_members: vec![member(helper, Some(left.clone()))],
         };

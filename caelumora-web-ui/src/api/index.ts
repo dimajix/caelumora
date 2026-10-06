@@ -249,6 +249,15 @@ export const api = {
     await ensureOk(res, 'Failed to take the message back');
   },
 
+  /**
+   * Asks the agent that said `messageId` to answer again instead of it
+   * (issue 234); it answers on the stream with `RetryAccepted` or `RetryRejected`.
+   */
+  async retryMessage(sessionId: string, channelId: string, messageId: string): Promise<void> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/messages/${messageId}/retry`, { method: 'POST' });
+    await ensureOk(res, 'Failed to ask for another answer');
+  },
+
   /** What actor `actorUuid` saw when it produced message `messageId`. */
   async getMessageContext(sessionId: string, channelId: string, actorUuid: string, messageId: string): Promise<MessageContextResponse> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/actors/${actorUuid}/messages/${messageId}/context`);
