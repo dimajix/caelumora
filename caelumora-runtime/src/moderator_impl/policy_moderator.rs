@@ -141,7 +141,9 @@ impl Moderator for PolicyModerator {
             }
             // How an answer comes about - streamed, step by step - is for
             // the users watching (issue 220); the agents hear the answer.
+            // So is where an agent stands (issue 243).
             ActorEvent::ResponseStarted { .. } |
+            ActorEvent::StateChanged(_) |
             ActorEvent::PartialMessageGenerated(_) |
             ActorEvent::CompleteMessageGenerated(_) |
             ActorEvent::IntermediatePartialGenerated(_) |

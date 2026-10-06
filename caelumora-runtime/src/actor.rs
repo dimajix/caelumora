@@ -107,6 +107,13 @@ impl Answering {
         Self { event_context: request.context.next(id, name), security_context: request.security.next(id) }
     }
 
+    /// The contexts of the actor `id`, called `name`, speaking of itself
+    /// rather than answering - nobody asked: those of its channel, in its
+    /// own `security` context.
+    pub(crate) fn own(id: ActorId, name: String, security: &SecurityContext) -> Self {
+        Self { event_context: EventContext::new(security.session_id, security.channel_id, id, name), security_context: security.clone() }
+    }
+
     /// Sends `event` as the actor publishes it: without what only its
     /// owner sees (issues 54, 133); an event with nothing left to show is
     /// not sent.

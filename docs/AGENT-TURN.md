@@ -85,6 +85,17 @@ An error in one of the turn's states ends the turn, not the agent: the agent log
 up (`Turn::give_up`), emits `TurnFailed` and returns to `Idle` (see
 [CODING-GUIDELINES.md](CODING-GUIDELINES.md)).
 
+**Where it stands is announced** (issue 243): the agent tells the users its state as it changes,
+with `StateChanged` - once as its run starts, and at the top of every step what the steps before
+moved it to (`RunControl::unannounced`), so that each state is told once - `Planning` right after
+the turn's `ResponseStarted`, which the step that takes the request in sends. It speaks in its own
+contexts (`Answering::own`), not a turn's: its state is the agent's, not part of an answer. One move
+is not the run loop's: the channel wakes a sleeping agent itself, synchronously, because the
+moderator, deciding right after whom to ask, leaves the sleeping out (`RunControl::wakeup`). So
+`wakeup` also notifies the run loop, which waits between turns for the next message *or* that
+notice, and on the notice announces `Idle` and waits on - after `/wakeup`, no message follows. An
+external agent announces `Planning` and `Idle` as its answer begins and ends.
+
 ## The `Turn`
 
 The agent's state in its channel is its `AgentChannelState`: its `MessageHistory`, its `Transcript`,

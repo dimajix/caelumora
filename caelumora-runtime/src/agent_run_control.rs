@@ -4,6 +4,7 @@
 use caelumora_model::actor::{ActorState, ProcessingStateHolder};
 use caelumora_model::work::TurnId;
 use std::sync::atomic::{AtomicU8, Ordering};
+use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 /// What `cancel`, `retry` or `stop` asked of the run loop, which takes it
@@ -33,6 +34,11 @@ const NO_INTERRUPT: u8 = 0;
 #[derive(Debug)]
 pub(crate) struct RunControl {
     state: ProcessingStateHolder,
+    /// The state the run loop last announced (issue 243).
+    announced: ProcessingStateHolder,
+    /// Tells the run loop, waiting between turns, that `wakeup` woke it:
+    /// the channel moves the state itself, and the run loop announces it.
+    woken: Notify,
     /// The turn that runs or ran last, by its id (issue 235), and its
     /// token, both replaced when the next one begins. The token is cancelled
     /// by `cancel` and `stop` while the turn runs: the streaming loop waits
@@ -52,6 +58,8 @@ impl RunControl {
     pub(crate) fn new(state: ActorState, turn: Option<TurnId>) -> Self {
         Self {
             state: ProcessingStateHolder::new(state),
+            announced: ProcessingStateHolder::new(state),
+            woken: Notify::new(),
             turn: std::sync::Mutex::new((turn, CancellationToken::new())),
             interrupt: AtomicU8::new(NO_INTERRUPT),
         }
@@ -69,8 +77,24 @@ impl RunControl {
 
     /// Ends a sleep. Only a sleeping agent is woken; forcing `Idle` from
     /// any other state (e.g. mid-`Planning`) would corrupt a turn under way.
+    /// The run loop is told (`woken`), so that it announces it.
     pub(crate) fn wakeup(&self) {
-        self.state.replace(ActorState::Sleeping, ActorState::Idle);
+        if self.state.replace(ActorState::Sleeping, ActorState::Idle) {
+            self.woken.notify_one();
+        }
+    }
+
+    /// Returns once `wakeup` woke the agent - at once if it did since this
+    /// was last waited for.
+    pub(crate) async fn woken(&self) {
+        self.woken.notified().await;
+    }
+
+    /// The state the run loop stands at, if it has not announced it yet
+    /// (issue 243); it counts as announced from now.
+    pub(crate) fn unannounced(&self) -> Option<ActorState> {
+        let state = self.state();
+        (self.announced.swap(state) != state).then_some(state)
     }
 
     /// The turn `turn` begins: it gets a token of its own, and a cancel or
@@ -91,7 +115,7 @@ impl RunControl {
 
     /// Whether the run loop is in a turn that an interrupt can still end.
     fn interruptible(&self) -> bool {
-        matches!(self.state(), ActorState::WaitingForApproval | ActorState::ExecutingTools | ActorState::Planning)
+        self.state().interruptible()
     }
 
     /// The token of the current turn, cancelled by `cancel` and `stop`.
@@ -271,5 +295,23 @@ mod tests {
         let control = RunControl::new(ActorState::Planning, None);
         control.wakeup();
         assert_eq!(control.state(), ActorState::Planning);
+    }
+
+    /// The run loop is told of a wakeup only if it woke the agent (issue
+    /// 243), and finds the state unannounced.
+    #[tokio::test]
+    async fn a_wakeup_tells_the_run_loop_and_is_announced_once() {
+        let control = RunControl::new(ActorState::Sleeping, None);
+        assert_eq!(control.unannounced(), None, "it starts at what it stood at");
+        control.wakeup();
+        tokio::time::timeout(std::time::Duration::from_secs(1), control.woken()).await.expect("told, though nobody waited yet");
+        assert_eq!(control.unannounced(), Some(ActorState::Idle));
+        assert_eq!(control.unannounced(), None, "announced once");
+
+        control.wakeup();
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(50), control.woken()).await.is_err(), "awake already: nothing to tell");
+        control.go_to(ActorState::Planning);
+        control.go_to(ActorState::Idle);
+        assert_eq!(control.unannounced(), None, "back where it was announced");
     }
 }

@@ -141,7 +141,8 @@ asked:
 The questions are `may_read_channel`, `may_change_channel`, `may_change_session`,
 `may_channel_read`, `may_read_agent_context`, `may_read_agent_tools`, `may_approve`,
 `may_delete_agent`, `may_call_tool`, `may_publish`, `may_modify_message`, `may_revoke_message`,
-`may_reclassify`, `may_retry_message`, `may_see_channel`, `may_restore` and `may_purge`.
+`may_reclassify`, `may_retry_message`, `may_cancel_channel`, `may_see_channel`, `may_restore` and
+`may_purge`.
 
 `AccessQuestions` is an extension trait on every `SecurityManager`, by blanket implementation. Each
 question gets a name and one place, but only translates into an `ActionType`. The decision stays

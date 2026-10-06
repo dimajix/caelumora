@@ -220,6 +220,24 @@ impl AgentActor {
         }
     }
 
+    /// Tells the users where the actor stands, if it moved since it last
+    /// told them (issue 243).
+    async fn announce_state(&self, output: &dyn EventSender) {
+        if let Some(now) = self.control.unannounced() {
+            self.announce(now, output).await;
+        }
+    }
+
+    /// Tells the users that the actor stands at `state` (issue 243) - in
+    /// its own contexts: the state is the agent's, not a turn's. Not sent is
+    /// only logged.
+    async fn announce(&self, state: ActorState, output: &dyn EventSender) {
+        let own = Answering::own(self.id(), self.name(), &self.security_context);
+        if let Err(e) = own.send(ActorEvent::StateChanged(state), output).await {
+            warn!("{:#}", e);
+        }
+    }
+
     /// Moves the actor to `next` and stores its state in the channel.
     async fn settle(&self, state: &mut AgentChannelState, next: ActorState) {
         self.control.go_to(next);
@@ -280,7 +298,15 @@ impl AgentActor {
         given_up_for: &mut Option<TurnId>,
         output: &dyn EventSender,
     ) -> Result<Option<ActorState>> {
-        let Some(received) = rx.recv().await else { return Ok(None) };
+        // Woken by the channel without a message - `/wakeup` - it says so
+        // and waits on (issue 243).
+        let received = loop {
+            tokio::select! {
+                received = rx.recv() => break received,
+                () = self.control.woken() => self.announce_state(output).await,
+            }
+        };
+        let Some(received) = received else { return Ok(None) };
         let (request, mut retries) = take_in(state, received, rx, &self.perceive_in_processors, &self.security_context).await;
         // Read once taken in, not before waiting: the channel wakes an agent
         // before it delivers the message that asks it, and the request comes
@@ -818,6 +844,8 @@ impl Actor for AgentActor {
             .map_err(|_| anyhow!("AgentActor {} already running", self.id()))?;
 
         info!("AgentActor {} is starting", self.id());
+        // Whoever watches already learns where it starts.
+        self.announce(self.control.state(), &*output).await;
         if self.control.state().in_turn() {
             info!("AgentActor {} resumes a turn in state {:?}", self.id(), self.control.state());
         }
@@ -836,6 +864,8 @@ impl Actor for AgentActor {
         // it so.
         let mut given_up_for: Option<TurnId> = None;
         loop {
+            // Every step announces what the steps before moved it to.
+            self.announce_state(&*output).await;
             let current_state = self.control.state();
 
             // Idle/WaitingForApproval/Sleep may consume no event before the actor's

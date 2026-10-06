@@ -419,6 +419,11 @@ pub trait AccessQuestions {
     /// channel as it admits the request.
     async fn may_retry_message(&self, context: &SecurityContext, channel: &SecurityAttributes) -> bool;
 
+    /// Whether `context` may end the answers under way in the channel with
+    /// `channel` attributes, or one agent's (`CancelChannel`, issues 235,
+    /// 243) - asked by the channel as it cancels.
+    async fn may_cancel_channel(&self, context: &SecurityContext, channel: &SecurityAttributes) -> bool;
+
     /// Whether the user `context` acts for, with `roles`, is cleared for
     /// `channel` (`JoinChannel`, issue 133) - what decides, besides
     /// `GetChannel`, which channels they are shown.
@@ -496,6 +501,10 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
 
     async fn may_retry_message(&self, context: &SecurityContext, channel: &SecurityAttributes) -> bool {
         self.check(context, ActionType::RetryMessage(channel)).await
+    }
+
+    async fn may_cancel_channel(&self, context: &SecurityContext, channel: &SecurityAttributes) -> bool {
+        self.check(context, ActionType::CancelChannel(channel)).await
     }
 
     async fn may_see_channel(&self, context: &SecurityContext, roles: &[String], channel: &Classification) -> bool {

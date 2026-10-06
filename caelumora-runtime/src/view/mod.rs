@@ -684,11 +684,15 @@ mod tests {
                 let agent = main.member(ActorId::Agent(helper.id)).await.expect("the agent is a member");
                 assert_eq!(agent.handle().as_deref(), Some("helper"), "{state}");
                 assert!(agent.may_read_context().await, "{state}: alice made the agent");
+                assert!(agent.may_cancel().await, "{state}: she may end its answer (issue 243)");
+                assert_eq!(agent.state().is_some(), state == "running", "{state}: where it stands, only while it runs");
                 let main = &for_bob.channels().await[0];
                 assert!(!main.may_change().await, "{state}: a participant does not change it");
                 for member in main.members().await {
                     assert!(!member.may_read_context().await, "{state}: bob reads no agent's context");
                     assert_eq!(member.may_retry().await, member.id() == ActorId::Agent(helper.id), "{state}: a participant asks an agent to answer again, nobody else");
+                    assert_eq!(member.may_cancel().await, member.id() == ActorId::Agent(helper.id), "{state}: and ends its answer, nobody else's");
+                    assert!(member.id() == ActorId::Agent(helper.id) || member.state().is_none(), "{state}: only an agent stands somewhere");
                 }
 
                 let hidden = for_bob.channel(hers).await.expect_err("not bob's to read");

@@ -87,6 +87,11 @@ pub enum ActorEvent {
     /// not streamed is known as under way, and which turn it is, before it
     /// ends.
     ResponseStarted { turn_id: TurnId },
+    /// The sender now stands at this state (issue 243): announced by an
+    /// agent as it changes, so that the users see who works, sleeps or
+    /// waits for an approval. Sent in the agent's own contexts, not a
+    /// turn's: the state is the agent's, not part of an answer.
+    StateChanged(ActorState),
     PartialMessageGenerated(Message),
     CompleteMessageGenerated(Message),
     FullResponseGenerated(Vec<Message>),
@@ -281,6 +286,7 @@ impl ActorEvent {
             ActorEvent::ApprovalRequestWithdrawn { .. } => "ApprovalRequestWithdrawn",
             ActorEvent::ResponseRequested => "ResponseRequested",
             ActorEvent::ResponseStarted { .. } => "ResponseStarted",
+            ActorEvent::StateChanged(_) => "StateChanged",
             ActorEvent::PartialMessageGenerated(_) => "PartialMessageGenerated",
             ActorEvent::CompleteMessageGenerated(_) => "CompleteMessageGenerated",
             ActorEvent::FullResponseGenerated(_) => "FullResponseGenerated",
@@ -488,6 +494,12 @@ impl ActorState {
         !matches!(self, ActorState::Idle | ActorState::Sleeping)
     }
 
+    /// Whether a cancel can still end the turn in this state (issues 235,
+    /// 243): not one ending already, nor none.
+    pub fn interruptible(self) -> bool {
+        matches!(self, ActorState::Planning | ActorState::ExecutingTools | ActorState::WaitingForApproval)
+    }
+
     fn from_raw(v: u8) -> Self {
         Self::ALL.get(usize::from(v)).copied().unwrap_or_default()
     }
@@ -517,6 +529,11 @@ impl ProcessingStateHolder {
 
     pub fn store(&self, state: ActorState) {
         self.state.store(state.raw(), Ordering::SeqCst);
+    }
+
+    /// Sets the state to `state` and returns the one before.
+    pub fn swap(&self, state: ActorState) -> ActorState {
+        ActorState::from_raw(self.state.swap(state.raw(), Ordering::SeqCst))
     }
 
     /// Moves the state from `from` to `to` if it is `from`; whether it was.

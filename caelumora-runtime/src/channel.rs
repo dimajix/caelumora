@@ -2653,6 +2653,69 @@ mod tests {
         running.abort();
     }
 
+    /// An agent tells the users where it stands as it starts and moves
+    /// (issue 243): through its turn into its sleep - and woken by `/wakeup`,
+    /// which sends it no message, it tells them so too.
+    #[tokio::test]
+    async fn an_agent_tells_the_users_where_it_stands_and_that_it_was_woken() {
+        use caelumora_model::approval::ApprovalResponse;
+        use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+        use caelumora_model::message::MessageRole;
+        use caelumora_model::tool::{ToolCall, ToolVisibility};
+
+        let bye = Message {
+            role: MessageRole::Assistant,
+            content: Some("Good bye.".to_string()),
+            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "stop".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN }],
+            ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
+        };
+        let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
+            id: "stop".to_string(),
+            kind: crate::tool_impl::stop_tool::STOP_TOOL_KIND.to_string(),
+            params: serde_json::Value::Null,
+            tags: vec![],
+            fail_policy: ComponentFailPolicy::FailClosed,
+        }] };
+        let Stuck { channel, context, agent, helper, mut events, running } =
+            with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([bye].into()))), components).await;
+        // What it sends, watched since before it ran.
+        assert_eq!(told_states(&mut events, agent, ActorState::Idle).await, [ActorState::Idle], "where it starts, before it is asked");
+        assert_eq!(told_states(&mut events, agent, ActorState::WaitingForApproval).await, [ActorState::Planning, ActorState::ExecutingTools, ActorState::WaitingForApproval], "it works, then waits for alice");
+        // What reaches alice, from here on.
+        let alice = alice_of(&context);
+        let mut shown = channel.user_actor(alice).unwrap().watch().events;
+
+        let request = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let ActorEvent::ApprovalRequested(request) = events.recv().await.expect("the channel is running").event {
+                    break request;
+                }
+            }
+        }).await.expect("the call is put up for approval");
+        channel.user_actor(alice).unwrap().send_approval(ApprovalResponse { id: request.id, agent_id: agent }, true).await.unwrap();
+        assert_eq!(told_states(&mut shown, agent, ActorState::Sleeping).await, [ActorState::ExecutingTools, ActorState::Reflecting, ActorState::Sleeping], "each step it moves to, once");
+
+        let woken = channel.wakeup(&context).await.expect("alice may wake it");
+        assert_eq!(woken, ["helper"]);
+        assert_eq!(told_states(&mut shown, agent, ActorState::Idle).await, [ActorState::Idle], "woken without a message, it tells so itself");
+        assert_eq!(helper.state(), ActorState::Idle);
+        running.abort();
+    }
+
+    /// The states `agent` told the users of through `shown`, up to `until`.
+    async fn told_states(shown: &mut broadcast::Receiver<Envelope>, agent: caelumora_model::agent::AgentId, until: ActorState) -> Vec<ActorState> {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let mut states = Vec::new();
+            loop {
+                let envelope = shown.recv().await.expect("the channel is running");
+                if let (ActorEvent::StateChanged(state), true) = (envelope.event, envelope.context.sender_id == ActorId::Agent(agent)) {
+                    states.push(state);
+                    if state == until { break states }
+                }
+            }
+        }).await.unwrap_or_else(|_| panic!("the agent tells of {until:?}"))
+    }
+
     #[tokio::test]
     async fn a_plan_runs_its_steps_as_intermediate_messages_and_ends_with_the_final_answer() {
         use caelumora_model::approval::ApprovalResponse;
@@ -3918,6 +3981,38 @@ mod tests {
         // The context of each answer is what was given in its call (issue 205).
         assert_eq!(given_for(&state, agent, &first[0]), ["@alice: hello"], "as it was given, marked");
         assert_eq!(given_for(&state, agent, &second[0]), ["@alice: How are you?"], "not what it was given before");
+        running.abort();
+    }
+
+    /// An external agent tells where it stands as an agent run here does
+    /// (issue 243): working from before its answer starts until after it
+    /// ends.
+    #[tokio::test]
+    async fn an_external_agent_tells_that_it_works_while_it_answers() {
+        use crate::external::ExternalEvent;
+        let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![vec![
+            Ok(ExternalEvent::Started(task("t-1"))),
+            Ok(ExternalEvent::Message("Hello, alice.".to_string())),
+            Ok(ExternalEvent::Completed),
+        ]]));
+        let Stuck { mut events, agent, running, .. } = with_an_external_agent(Arc::clone(&remote)).await;
+        let told = tokio::time::timeout(Duration::from_secs(5), async {
+            let mut told = Vec::new();
+            loop {
+                let envelope = events.recv().await.expect("the channel is running");
+                if envelope.context.sender_id != ActorId::Agent(agent) { continue }
+                match envelope.event {
+                    // Where it starts, before anything was asked of it.
+                    ActorEvent::StateChanged(ActorState::Idle) if told.is_empty() => {}
+                    ActorEvent::StateChanged(ActorState::Idle) => { told.push("Idle"); break told }
+                    ActorEvent::StateChanged(state) => told.push(if state == ActorState::Planning { "Planning" } else { "other" }),
+                    ActorEvent::ResponseStarted { .. } => told.push("ResponseStarted"),
+                    ActorEvent::FullResponseGenerated(_) => told.push("FullResponseGenerated"),
+                    _ => {}
+                }
+            }
+        }).await.expect("it answers and is idle again");
+        assert_eq!(told, ["Planning", "ResponseStarted", "FullResponseGenerated", "Idle"]);
         running.abort();
     }
 

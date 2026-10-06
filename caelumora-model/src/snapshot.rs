@@ -16,7 +16,7 @@
 //! a member's details read - its usage, notes and pending approvals - comes
 //! from its agent's state, read once for all of them.
 
-use crate::actor::ActorId;
+use crate::actor::{ActorId, ActorState};
 use crate::approval::ApprovalRequest;
 use crate::confidentiality::Classification;
 use crate::language::Language;
@@ -135,6 +135,10 @@ pub struct MemberSnapshot {
     /// again, not for one that runs elsewhere. Whether it does is the
     /// agent's own to decide.
     pub can_retry: bool,
+    /// Whether the viewer may end this participant's answer under way
+    /// (`CancelChannel`, issues 235, 243) - only ever for agents taking
+    /// part, of either kind.
+    pub can_cancel: bool,
     /// The turn of the answer the member is giving now (issue 240), read
     /// from the running channel: only an agent run here in a turn that can
     /// still be ended has one - not an external agent, whose answers are its
@@ -142,6 +146,10 @@ pub struct MemberSnapshot {
     /// channel's stream is kept up by the events that follow it; elsewhere
     /// it says how things stood when it was taken.
     pub turn_under_way: Option<TurnId>,
+    /// Where the member stands now (issue 243), read from the running
+    /// channel - only ever for agents taking part; `None` in a channel that
+    /// does not run. Kept up by `ActorEvent::StateChanged`.
+    pub state: Option<ActorState>,
     /// What an agent member's model calls in the channel used (issue 209)
     /// - with `Detail::USAGE`; `None` also for a member whose calls report
     /// no tokens (an external agent, a user), before its first call, and if

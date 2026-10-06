@@ -1,4 +1,4 @@
-use caelumora_model::actor::ActorId;
+use caelumora_model::actor::{ActorId, ActorState};
 use caelumora_model::confidentiality::{Classification, Compartment};
 use caelumora_model::message::{Message, TokenUsage};
 use caelumora_model::language::Language;
@@ -403,6 +403,10 @@ pub struct ChannelMemberResponse {
     /// not one that runs elsewhere. Whether it does is the agent's to
     /// decide.
     pub can_retry: bool,
+    /// Whether the requesting user may end this participant's answer under
+    /// way (`POST …/participants/{aid}/cancel`, issues 235, 243) - only ever
+    /// an agent taking part.
+    pub can_cancel: bool,
     /// What the participant's model calls in the channel used (issue 209):
     /// given by the snapshot of the channel's stream and for a participant
     /// asked for alone, not where channels are listed.
@@ -420,6 +424,13 @@ pub struct ChannelMemberResponse {
     /// agent, which answers without a turn here.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub turn_under_way: Option<TurnId>,
+    /// Where the participant stands now (issue 243), an agent's: `Idle`,
+    /// `Sleeping`, `Planning`, `ExecutingTools`, `WaitingForApproval`,
+    /// `Reflecting`, `Cancelling`. Kept up by `StateChanged` on the
+    /// channel's stream. Absent for a user or an approver, and in a channel
+    /// that does not run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state: Option<ActorState>,
 }
 
 impl ChannelMemberResponse {
@@ -434,10 +445,12 @@ impl ChannelMemberResponse {
             can_read_tools: view.can_read_tools,
             can_approve: view.can_approve,
             can_retry: view.can_retry,
+            can_cancel: view.can_cancel,
             usage: view.usage,
             left: view.left,
             can_delete: view.can_delete,
             turn_under_way: view.turn_under_way,
+            state: view.state,
         })
     }
 }
@@ -735,7 +748,7 @@ mod tests {
     #[test]
     fn a_channel_view_is_answered_with_kinds_and_a_name_for_the_deleted() {
         let (alice, approver) = (ActorId::User(UserId::new()), ActorId::Approver(ApproverId(Uuid::new_v4())));
-        let member = |id, name: Option<&str>| snapshot::MemberSnapshot { id, name: name.map(str::to_string), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, can_retry: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), left: None, can_delete: false, turn_under_way: None };
+        let member = |id, name: Option<&str>| snapshot::MemberSnapshot { id, name: name.map(str::to_string), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None };
         let view = snapshot::ChannelSnapshot {
             id: ChannelId::new(),
             name: "main".to_string(),
@@ -769,8 +782,8 @@ mod tests {
             written_at: chrono::Utc::now(),
         };
         let member = |id, name: &str, notes: Vec<Note>| snapshot::MemberSnapshot {
-            id, name: Some(name.to_string()), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, can_retry: false, usage: None, notes, pending_approvals: Vec::new(),
-            left: None, can_delete: false, turn_under_way: None,
+            id, name: Some(name.to_string()), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes, pending_approvals: Vec::new(),
+            left: None, can_delete: false, turn_under_way: None, state: None,
         };
         let channel = snapshot::ChannelSnapshot {
             id: ChannelId::new(),
@@ -810,7 +823,7 @@ mod tests {
     fn a_former_member_is_answered_apart_with_who_removed_it_and_when() {
         let (alice, helper) = (ActorId::User(UserId::new()), ActorId::Agent(caelumora_model::agent::AgentId::new()));
         let left = caelumora_model::removal::Removal::now(alice);
-        let member = |id, left| snapshot::MemberSnapshot { id, name: Some("x".to_string()), handle: None, can_read_context: true, can_read_tools: false, can_approve: false, can_retry: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), left, can_delete: false, turn_under_way: None };
+        let member = |id, left| snapshot::MemberSnapshot { id, name: Some("x".to_string()), handle: None, can_read_context: true, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), left, can_delete: false, turn_under_way: None, state: None };
         let view = snapshot::ChannelSnapshot {
             id: ChannelId::new(),
             name: "main".to_string(),
@@ -832,7 +845,7 @@ mod tests {
     #[test]
     fn what_a_participant_used_is_answered_only_where_it_was_read() {
         let usage = TokenUsage { calls: 2, prompt_tokens: 300, completion_tokens: 20, last_call_tokens: 170, context_size: Some(8192) };
-        let member = |usage| snapshot::MemberSnapshot { id: ActorId::User(UserId::new()), name: Some("alice".to_string()), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, can_retry: false, usage, notes: Vec::new(), pending_approvals: Vec::new(), left: None, can_delete: false, turn_under_way: None };
+        let member = |usage| snapshot::MemberSnapshot { id: ActorId::User(UserId::new()), name: Some("alice".to_string()), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage, notes: Vec::new(), pending_approvals: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None };
 
         let json = serde_json::to_value(ChannelMemberResponse::of(member(Some(usage))).unwrap()).unwrap();
         assert_eq!(json["usage"], serde_json::json!({ "calls": 2, "prompt_tokens": 300, "completion_tokens": 20, "last_call_tokens": 170, "context_size": 8192 }));
@@ -842,6 +855,9 @@ mod tests {
         let turn = caelumora_model::work::TurnId::new();
         let json = serde_json::to_value(ChannelMemberResponse::of(snapshot::MemberSnapshot { turn_under_way: Some(turn), ..member(None) }).unwrap()).unwrap();
         assert_eq!(json["turn_under_way"], serde_json::json!(turn.to_string()), "the turn its messages carry");
+        assert!(json.get("state").is_none(), "where nothing runs, no state");
+        let json = serde_json::to_value(ChannelMemberResponse::of(snapshot::MemberSnapshot { state: Some(ActorState::WaitingForApproval), ..member(None) }).unwrap()).unwrap();
+        assert_eq!(json["state"], serde_json::json!("WaitingForApproval"), "named as `StateChanged` names it (issue 243)");
     }
 
     #[test]

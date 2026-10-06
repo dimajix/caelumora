@@ -2,6 +2,16 @@
 
 @plugin '@tailwindcss/typography';
 
+/* The dot of an agent that works (issue 243): green, pulsing in colour and size. */
+@theme {
+  --animate-working: working 1.2s ease-in-out infinite;
+
+  @keyframes working {
+    0%, 100% { transform: scale(1); background-color: var(--color-green-600); }
+    50% { transform: scale(1.5); background-color: var(--color-green-300); }
+  }
+}
+
 /*
   The default border color has changed to `currentcolor` in Tailwind CSS v4,
   so we've added these compatibility styles to make sure everything still

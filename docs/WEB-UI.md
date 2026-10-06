@@ -254,6 +254,15 @@ scrolling member list and chat do not cut it off, and closes when what holds its
 not when the chat beside it receives messages. It is placed by `useFloating` (`floating.ts`), like
 the menus, and placed again when its size changes.
 
+Each agent has a dot for where it stands (issue 243), its state as the dot's title: green when
+idle, green pulsing in colour and size while it works (`Planning`, `ExecutingTools`, `Reflecting`,
+`Cancelling`), amber while it waits for an approval, a still blue while it sleeps, and grey where
+nothing runs - the channel does not run, or the agent is gone. Users and approvers have none. The
+dot starts from the member's `state` in the snapshot and follows `StateChanged`. An agent whose
+answer a cancel can still end - working or waiting for an approval - has a stop icon where its
+member's `can_cancel` allows it (`POST …/participants/{aid}/cancel`); so has its answer under way in
+the chat, offered to everybody before.
+
 The member list is sorted by name and uses the members' handles for `@` completion and for
 highlighting mentions; participants that cannot be mentioned, such as approvers, have none. Who
 answers - the channel's `responder_policy` (issue 174) - is shown above it as its moderator, and for

@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import type {
   ActorId,
+  ActorState,
   RetryRefused,
   ApprovalRequest,
   ChannelMember,
@@ -99,6 +100,33 @@ function cn(...inputs: ClassValue[]) {
 }
 
 type MentionableMember = ChannelMember & {handle: string};
+
+/** What an agent works at, in the states that count as working (issue 243). */
+const WORKING: Partial<Record<ActorState, string>> = {
+  Planning: 'Working: thinking',
+  ExecutingTools: 'Working: running tools',
+  Reflecting: 'Working: finishing its answer',
+  Cancelling: 'Working: stopping',
+};
+
+/** The states in which a cancel still ends an agent's answer (`ActorState::interruptible`). */
+const INTERRUPTIBLE: ActorState[] = ['Planning', 'ExecutingTools', 'WaitingForApproval'];
+
+/**
+ * The dot that shows where a member stands (issue 243): an agent's state as
+ * a colour, the state itself as its title. A user or an approver has none.
+ */
+function stateDot(member: ChannelMember): {className: string; title: string} | null {
+  if (member.kind !== 'agent') return null;
+  const working = member.state && WORKING[member.state];
+  if (working) return {className: 'bg-green-500 animate-working', title: working};
+  switch (member.state) {
+    case 'Idle': return {className: 'bg-green-500', title: 'Idle'};
+    case 'WaitingForApproval': return {className: 'bg-amber-500', title: 'Waiting for an approval'};
+    case 'Sleeping': return {className: 'bg-indigo-500', title: 'Asleep'};
+    default: return {className: 'bg-gray-400 dark:bg-gray-500', title: 'Not running'};
+  }
+}
 
 /** An entry of the completion list: a member to mention or a command to run. */
 type Suggestion =
@@ -456,6 +484,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           // A new answer begins after those under way, as the turn it names.
           const turnId = actorEvent.ResponseStarted.turn_id;
           setAnswers(prev => withAnswer(prev.filter(a => a.sender !== answerer), answerer, answererName, a => ({...a, turnId})));
+        } else if (actorEvent.StateChanged) {
+          // Where an agent stands now (issue 243), shown by its dot.
+          const state = actorEvent.StateChanged;
+          setChannel(prev => prev && {...prev, members: prev.members.map(m => actorKey(m.id) === answerer ? {...m, state} : m)});
         } else if (actorEvent.PartialMessageGenerated) {
           const partial = actorEvent.PartialMessageGenerated;
           setAnswers(prev => withAnswer(prev, answerer, answererName, a => ({
@@ -785,12 +817,15 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
     }
   };
 
-  /** The id the REST API addresses the sender of `answer` by. */
-  const answererUuid = (answer: Answer) => actorUuid(members.find(m => actorKey(m.id) === answer.sender)?.id);
+  /** The id the REST API addresses the member `sender` (an `actorKey`) by. */
+  const memberUuid = (sender: string) => actorUuid(members.find(m => actorKey(m.id) === sender)?.id);
 
-  /** Stops the answer of one agent alone (issue 235); the others go on. */
-  const stopAnswer = async (answer: Answer) => {
-    const uuid = answererUuid(answer);
+  /** Whether the user may end the answer of `sender`: a member whose `can_cancel` allows it (issues 235, 243). */
+  const mayCancelOf = (sender: string) => members.some(m => actorKey(m.id) === sender && m.can_cancel);
+
+  /** Stops the answer of the agent `sender` alone (issue 235); the others go on. */
+  const stopAnswer = async (sender: string) => {
+    const uuid = memberUuid(sender);
     if (!uuid) return;
     try {
       await api.cancelParticipant(sessionId, channelId, uuid);
@@ -806,7 +841,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
    * meanwhile; the retry icon on its last message is then the way.
    */
   const retryAnswer = async (answer: Answer) => {
-    const uuid = answererUuid(answer);
+    const uuid = memberUuid(answer.sender);
     if (!uuid || !answer.turnId) return;
     try {
       await api.retryAnswer(sessionId, channelId, uuid, answer.turnId);
@@ -1024,15 +1059,17 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
                       <RotateCcw size={12} />
                     </button>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => void stopAnswer(answer)}
-                    className="p-0.5 rounded-sm text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
-                    title="Stop this answer alone"
-                    aria-label="Stop this answer alone"
-                  >
-                    <Square size={12} fill="currentColor" />
-                  </button>
+                  {mayCancelOf(answer.sender) && (
+                    <button
+                      type="button"
+                      onClick={() => void stopAnswer(answer.sender)}
+                      className="p-0.5 rounded-sm text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
+                      title="Stop this answer alone"
+                      aria-label="Stop this answer alone"
+                    >
+                      <Square size={12} fill="currentColor" />
+                    </button>
+                  )}
                 </span>
               </div>
               {answer.reasoning && <Reasoning text={answer.reasoning} thinking={!answer.content} />}
@@ -1359,23 +1396,40 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
             </HoverCard>
           )}
           <div className="space-y-2">
-            {members.map(member => (
-              <div key={actorKey(member.id)} className="group flex items-center space-x-2 p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
-                <div className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center space-x-2">
-                    <span className="text-sm text-gray-700 dark:text-gray-300 truncate">{member.name}</span>
-                    {member.handle && <span className="text-xs font-mono text-gray-400 dark:text-gray-500 truncate">@{member.handle}</span>}
+            {members.map(member => {
+              const dot = stateDot(member);
+              const stoppable = member.can_cancel && member.state !== undefined && INTERRUPTIBLE.includes(member.state);
+              return (
+                <div key={actorKey(member.id)} className="group flex items-center space-x-2 p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+                  {dot
+                    ? <div className={cn("w-2 h-2 rounded-full shrink-0", dot.className)} title={dot.title} role="img" aria-label={dot.title} />
+                    : <div className="w-2 h-2 shrink-0" />}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center space-x-2">
+                      <span className="text-sm text-gray-700 dark:text-gray-300 truncate">{member.name}</span>
+                      {member.handle && <span className="text-xs font-mono text-gray-400 dark:text-gray-500 truncate">@{member.handle}</span>}
+                    </div>
+                    {usage[actorKey(member.id)] && <TokenGauge usage={usage[actorKey(member.id)]} />}
                   </div>
-                  {usage[actorKey(member.id)] && <TokenGauge usage={usage[actorKey(member.id)]} />}
+                  {stoppable && (
+                    <button
+                      type="button"
+                      onClick={() => void stopAnswer(actorKey(member.id))}
+                      className="p-0.5 rounded-sm text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
+                      title={`Stop ${member.name}`}
+                      aria-label={`Stop ${member.name}`}
+                    >
+                      <Square size={12} fill="currentColor" />
+                    </button>
+                  )}
+                  <ActionMenu
+                    label={`Options of ${member.name}`}
+                    className={ROW_MENU}
+                    actions={memberActions(member)}
+                  />
                 </div>
-                <ActionMenu
-                  label={`Options of ${member.name}`}
-                  className={ROW_MENU}
-                  actions={memberActions(member)}
-                />
-              </div>
-            ))}
+              );
+            })}
           </div>
           {channel?.can_change && (
             <button

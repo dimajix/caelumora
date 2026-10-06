@@ -5,7 +5,7 @@ use super::{AgentContextView, SessionView, ViewError, ViewResult, Views};
 use crate::channel::{visible_part, ChannelLoop, VisibleHistory};
 use crate::moderator::Moderator;
 use crate::moderator_impl::ResponderPolicy;
-use caelumora_model::actor::ActorId;
+use caelumora_model::actor::{ActorId, ActorState};
 use caelumora_model::approval::ApprovalRequest;
 use caelumora_model::channel::{Channel, ChannelState, Participant};
 use caelumora_model::confidentiality::Classification;
@@ -416,6 +416,24 @@ impl MemberView {
         }
     }
 
+    /// Whether the viewer may end the member's answer under way
+    /// (`CancelChannel`, issues 235, 243) - only ever an agent taking part,
+    /// of either kind.
+    pub async fn may_cancel(&self) -> bool {
+        match self.state.agent() {
+            Some(_) if !self.former => self.views().security().may_cancel_channel(self.views().context(), &self.channel.channel.security_attributes).await,
+            _ => false,
+        }
+    }
+
+    /// Where the member stands now (issue 243) - only ever an agent taking
+    /// part, read from the running channel; none in a channel that does not
+    /// run.
+    pub fn state(&self) -> Option<ActorState> {
+        self.state.agent()?;
+        self.channel.running().filter(|_| !self.former)?.actor_by_id(self.id()).map(|actor| actor.state())
+    }
+
     /// The tools the member has now, in their tool sets (issue 194), as it
     /// would offer them at the start of its next turn - read from its
     /// actor, since an agent's tools are built for each of its channels.
@@ -565,8 +583,10 @@ impl MemberView {
             can_read_tools: self.may_read_tools().await,
             can_approve: self.may_approve().await,
             can_retry: self.may_retry().await,
+            can_cancel: self.may_cancel().await,
             can_delete: self.may_delete().await,
             turn_under_way: self.turn_under_way(),
+            state: self.state(),
             usage,
             notes,
             pending_approvals,

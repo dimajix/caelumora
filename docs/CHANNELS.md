@@ -411,20 +411,23 @@ Afterwards the channel is *quiet* until it is woken. What is said is still deliv
 agent's transcript keeps up with the history, but nobody is asked to respond to it.
 
 `ChannelLoop::cancel_actor` ends the turn of one actor alone (issue 235) - the stop icon on an
-answer under way in the web UI. It is cancelling, under the same permission (`CancelChannel`),
-asked before the actor is looked up, so that who may not learns nothing of who is in the channel;
-an actor that is not there is `ChannelError::NotAParticipant`, as for `wakeup_actor`. The turn ends
-as on a cancel of the channel, but the channel does not become quiet: being quiet is the channel's
-state, not one actor's. The others go on answering and are asked to respond as before, and the
-answer the cancelled turn is taken over with reaches everyone as any answer does - another agent
-may respond to it.
+answer under way, or on a working agent in the members panel, in the web UI; who may is part of each
+member's snapshot (`MemberSnapshot::can_cancel`, `MemberView::may_cancel`, issue 243). It is
+cancelling, under the same permission (`CancelChannel`), asked before the actor is looked up, so
+that who may not learns nothing of who is in the channel; an actor that is not there is
+`ChannelError::NotAParticipant`, as for `wakeup_actor`. The turn ends as on a cancel of the channel,
+but the channel does not become quiet: being quiet is the channel's state, not one actor's. The
+others go on answering and are asked to respond as before, and the answer the cancelled turn is
+taken over with reaches everyone as any answer does - another agent may respond to it.
 
 ### Waking
 
 A quiet channel is woken in one of two ways:
 
 *   **Deliberately**: `ChannelLoop::wakeup` (`ActionType::WakeChannel`), as the command `/wakeup`
-    does; `wakeup_actor` wakes a single actor under the same permission.
+    does; `wakeup_actor` wakes a single actor under the same permission. The channel moves a
+    sleeping agent to `Idle` itself; the agent announces it (`StateChanged`, see
+    [AGENT-TURN.md](AGENT-TURN.md#the-cognitive-cycle), issue 243).
 *   **Because something is on its way**: a `WakeupRequested` that a user's actor sends ahead of its
     next message. This happens as the channel routes it (`wake_for_delivery`) and asks nothing. It
     follows from an action that was already permitted, and a user allowed to write but not to wake
@@ -591,7 +594,8 @@ The built-in moderator, `policy_moderator` (the default), routes the way every c
     something to hear in it (`Message::is_heard`, issue 224) - each agent takes in its words
     itself;
 *   how an answer comes about - `ResponseStarted`, partial and complete messages, intermediate
-    ones, plan steps - goes to the users, not to the agents, which hear the answer (issue 220);
+    ones, plan steps - goes to the users, not to the agents, which hear the answer (issue 220); so
+    does where an agent stands, `StateChanged` (issue 243);
 *   approvals, failed turns and announced commands go to whom they concern;
 *   every agent a message `@`-mentions is asked to respond;
 *   a chain between agents ends at a limit (see below).

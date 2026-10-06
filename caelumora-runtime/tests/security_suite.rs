@@ -524,11 +524,14 @@ async fn shown(watch: &mut caelumora_runtime::actor_impl::user::ChannelWatch, wa
 /// `CancelChannel` of the channel: whoever may stop the channel may stop
 /// one of its actors - bob as a participant - and who may not is refused
 /// before anything of the actor is looked at, so that he does not learn who
-/// is in the channel.
+/// is in the channel. It is offered of an agent by the same question (issue
+/// 243).
 #[tokio::test]
 async fn cancelling_one_actor_is_for_whoever_may_cancel_the_channel() {
     let world = World::new().await;
-    let session = world.shared_session(&[], &[]).await;
+    let global = world.personality("global", None, &[]).await;
+    let helper = world.agent("helper", world.alice, &global).await;
+    let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
     let (bob, carol) = (World::as_user(world.bob), World::as_user(world.carol));
     world.manager.open_session(&bob, session.id()).await.expect("he opens it");
@@ -541,6 +544,12 @@ async fn cancelling_one_actor_is_for_whoever_may_cancel_the_channel() {
     let (refused, asked) = world.asked(main.cancel_actor(&carol, nobody)).await;
     assert!(denied(&refused.expect_err("not hers to cancel")), "refused, not told that nobody of that id is there");
     assert_eq!(asked, checks(&["carol: CancelChannel(alice's) no"]));
+
+    let view = world.manager.views(Viewer::new(bob)).session(session.id()).await.unwrap().channel(main.id()).await.unwrap();
+    let member = view.member(ActorId::Agent(helper)).await.expect("the agent is a member");
+    let (offered, asked) = world.asked(member.may_cancel()).await;
+    assert!(offered, "offered to him, of the agent");
+    assert_eq!(asked, checks(&["bob: CancelChannel(alice's) yes"]), "by the same question");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

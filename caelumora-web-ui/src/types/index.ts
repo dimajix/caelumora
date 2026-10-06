@@ -46,6 +46,9 @@ export type ActorId = string | Record<string, string>;
 /** What kind of participant an actor is. */
 export type ParticipantKind = 'user' | 'agent' | 'approver';
 
+/** Where an agent stands (issue 243), as `StateChanged` and a member's `state` name it. */
+export type ActorState = 'Idle' | 'Sleeping' | 'Planning' | 'ExecutingTools' | 'WaitingForApproval' | 'Reflecting' | 'Cancelling';
+
 /** A participant of a channel. */
 /**
  * What an agent's model calls in a channel used (issue 209): the tokens of
@@ -85,6 +88,13 @@ export interface ChannelMember {
    * the agent's to decide.
    */
   can_retry: boolean;
+  /** Whether you may end its answer under way - only ever an agent taking part (issues 235, 243). */
+  can_cancel: boolean;
+  /**
+   * Where it stands now (issue 243), kept up by `StateChanged`; absent for a
+   * user or an approver, and in a channel that does not run.
+   */
+  state?: ActorState;
   /**
    * The turn of the answer it is giving now (issue 240), as `ResponseStarted`
    * named it; absent if none - also for an external agent.
@@ -329,6 +339,8 @@ export interface ActorEvent {
    * carry the same `turn_id`.
    */
   ResponseStarted?: { turn_id: string };
+  /** The sender, an agent, now stands at this state (issue 243). */
+  StateChanged?: ActorState;
   PartialMessageGenerated?: Message;
   CompleteMessageGenerated?: Message;
   ApprovalRequested?: ApprovalRequest;

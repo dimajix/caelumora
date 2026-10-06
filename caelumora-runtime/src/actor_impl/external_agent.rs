@@ -40,7 +40,7 @@ use crate::view::ViewsFactory;
 use crate::work::AgentWork;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
+use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, ProcessingStateHolder};
 use caelumora_model::agent::{AgentId, Personality};
 use caelumora_model::channel::Channel;
 use caelumora_model::confidentiality::Classification;
@@ -91,9 +91,9 @@ pub struct ExternalAgentActor {
     /// Its state in this channel, held by the run loop for as long as it
     /// runs.
     state: Mutex<AgentChannelState>,
-    /// `Planning` while the remote agent works on an answer, else `Idle`.
-    /// A plain lock, never held across an await.
-    processing: std::sync::Mutex<ActorState>,
+    /// `Planning` while the remote agent works on an answer, else `Idle`,
+    /// as `go_to` moved it.
+    processing: ProcessingStateHolder,
     /// Cancelled to end the answer under way (`cancel`, `stop`); replaced
     /// for every answer.
     current: std::sync::Mutex<CancellationToken>,
@@ -180,7 +180,7 @@ impl ExternalAgentActor {
             agent_state,
             views,
             state: Mutex::new(state),
-            processing: std::sync::Mutex::new(ActorState::Idle),
+            processing: ProcessingStateHolder::new(ActorState::Idle),
             current: std::sync::Mutex::new(CancellationToken::new()),
             ended: CancellationToken::new(),
         })
@@ -221,15 +221,27 @@ impl ExternalAgentActor {
         self.pending_prompts.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    fn set_processing(&self, state: ActorState) {
-        *self.processing.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = state;
+    /// Moves it to `state` and tells the users, if that is a move (issue
+    /// 243).
+    async fn go_to(&self, state: ActorState, output: &dyn EventSender) {
+        if self.processing.swap(state) != state {
+            self.announce(state, output).await;
+        }
+    }
+
+    /// Tells the users that it stands at `state` (issue 243), in its own
+    /// contexts, as an agent run here does. Not sent is only logged.
+    async fn announce(&self, state: ActorState, output: &dyn EventSender) {
+        let own = Answering::own(self.id(), self.name(), &self.security_context);
+        if let Err(e) = own.send(ActorEvent::StateChanged(state), output).await {
+            warn!("{:#}", e);
+        }
     }
 
     /// A fresh token for the answer that begins, which `cancel` reaches.
     fn begin(&self) -> CancellationToken {
         let token = self.ended.child_token();
         *self.current.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = token.clone();
-        self.set_processing(ActorState::Planning);
         token
     }
 
@@ -257,6 +269,7 @@ impl ExternalAgentActor {
     async fn respond(&self, state: &mut AgentChannelState, request: &Envelope, output: &dyn EventSender) {
         let answering = Answering::to(request, self.id(), self.name());
         let token = self.begin();
+        self.go_to(ActorState::Planning, output).await;
         let ending = self.exchange(state, &answering, &token, output).await;
         if let Err(e) = self.actor_runtime.store_channel_state(state).await {
             warn!("External agent {} cannot store its state in its channel: {:#}", self.id(), e);
@@ -279,7 +292,7 @@ impl ExternalAgentActor {
             }
         };
         answering.send_all(events, output).await;
-        self.set_processing(ActorState::Idle);
+        self.go_to(ActorState::Idle, output).await;
     }
 
     /// Gives the remote agent what it has not heard yet and collects what
@@ -530,10 +543,7 @@ impl ExternalAgentActor {
         let (speaking, label) = match &work {
             Some(work) => (self.speaking_for(work), work.label()),
             None => (
-                Answering {
-                    event_context: EventContext::new(self.security_context.session_id, self.security_context.channel_id, self.id(), self.name()),
-                    security_context: self.security_context.clone(),
-                },
+                Answering::own(self.id(), self.name(), &self.security_context),
                 self.remote.classification().unwrap_or_else(|| channel.classification()),
             ),
         };
@@ -776,6 +786,8 @@ impl Actor for ExternalAgentActor {
         let mut state = self.state.try_lock()
             .map_err(|_| anyhow!("ExternalAgentActor {} already running", self.id()))?;
         info!("ExternalAgentActor {} is starting", self.id());
+        // Whoever watches already learns where it starts.
+        self.announce(self.processing.load(), &*output).await;
         // The open tasks it follows between requests, and what came of them
         // so far. While it answers a request, what they send waits.
         let mut followed = Followed::new();
@@ -818,7 +830,7 @@ impl Actor for ExternalAgentActor {
     }
 
     fn state(&self) -> ActorState {
-        *self.processing.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.processing.load()
     }
 
     fn cancel(&self) {
