@@ -110,7 +110,7 @@ argues against it, and what came out of the last attempt.
 | [222](222-queued-requests-answered-one-by-one.md) | done | An agent - run here or external - asked while it answers works through every queued request afterwards, one answer each, to a conversation that has moved on. |
 | [223](223-full-inbox-drops-events.md) | open | An actor whose inbox is full - an agent in a long turn in a busy channel - loses what was said, requests and approvals without anyone learning of it. |
 | [234](234-modify-revoke-and-retry-messages.md) | done | A message once said can be neither changed nor taken back by its author, and an agent cannot be asked to answer again, so a mistake keeps influencing every later turn. |
-| [235](235-retry-of-an-answer-under-way.md) | in progress | An answer still being generated cannot be asked for again; only stopping every agent of the channel gets there. |
+| [235](235-retry-of-an-answer-under-way.md) | done | An answer still being generated cannot be asked for again; only stopping every agent of the channel gets there. |
 | [238](238-retry-of-an-older-answer.md) | open | Only an agent's last answer can be asked for again, and the alternatives of an answer are not kept. |
 | [239](239-reclassified-message-not-in-agents-state.md) | done | A reclassified message keeps its old classification in every agent's state, so a released message still raises the label of later answers. |
 
@@ -212,6 +212,7 @@ argues against it, and what came out of the last attempt.
 | [231](231-resizable-panels.md) | done | The panels of the web UI - sidebar, channel members, an agent's context and history - have a fixed width that cannot be changed. |
 | [232](232-empty-trash-shown.md) | done | The sections of deleted sessions and channels are shown in the sidebar even where they hold nothing the user may see, so every unfolded session carries an empty line. |
 | [233](233-private-notes-panel.md) | done | An agent's private notes can be read only inside the context of one of its messages, as they stood then, not on their own, current and for every channel of the session. |
+| [240](240-answers-under-way-not-in-snapshot.md) | open | A page loaded while an agent answers does not know the answer is under way, so it offers neither stop nor retry for it until its next message. |
 
 ## Context and knowledge
 
@@ -311,6 +312,7 @@ argues against it, and what came out of the last attempt.
 | [211](211-turn-and-agent-work-structure.md) | done | `Turn` is the agent's handle on its state between turns, the components' API and the turn's logic at once, the two kinds of agent publish and catch up through code written twice, and an `OpenTask` keeps less of its contexts than a `TurnState`. |
 | [214](214-prompt-logic-in-the-context-provider.md) | done | What an agent is given besides the conversation is decided in a component, a free function and, for an external agent, its actor - and the component's facet writes into the turn instead of answering. |
 | [229](229-services-fetched-through-the-runtime.md) | done | Central services - the `SecurityManager`, the stores, the event bus - are fetched through the runtime at every use, often through long chains, so no type says what it depends on. |
+| [241](241-turn-membership-recorded-twice.md) | open | Which messages belong to a turn is recorded twice - as the turn's id on each message and as a count in its `ContextRef` - and read by different rules. |
 
 ## Integrations
 

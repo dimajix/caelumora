@@ -31,7 +31,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [173](173-message-inspection.md) | open | Nothing examines what a message says before the channel routes it, so content that should be classified stricter, redacted or refused reaches every participant. |
 | [221](221-adding-session-participants.md) | open | A session's participants are fixed when it is created: nobody - neither a user nor an agent, existing or created from a personality - can be added to it later. |
 | [223](223-full-inbox-drops-events.md) | open | An actor whose inbox is full - an agent in a long turn in a busy channel - loses what was said, requests and approvals without anyone learning of it. |
-| [235](235-retry-of-an-answer-under-way.md) | in progress | An answer still being generated cannot be asked for again; only stopping every agent of the channel gets there. |
 | [238](238-retry-of-an-older-answer.md) | open | Only an agent's last answer can be asked for again, and the alternatives of an answer are not kept. |
 
 ## Identity and access management
@@ -70,6 +69,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [208](208-generated-artifacts.md) | open | Files and data an agent generates - an external agent's artifacts, a tool's images - are dropped; only their text is kept, and nothing can be stored or downloaded. |
 | [218](218-paged-histories.md) | open | A channel's history and an agent's history are returned whole over REST, though both grow without a limit and only their end is shown first. |
 | [227](227-agent-management.md) | open | Agents cannot be seen or managed on their own, only as members of channels: no list, no renaming, no trash in the web UI, nothing of what an agent has across channels. |
+| [240](240-answers-under-way-not-in-snapshot.md) | open | A page loaded while an agent answers does not know the answer is under way, so it offers neither stop nor retry for it until its next message. |
 
 ## Context and knowledge
 
@@ -86,6 +86,12 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [22](22-skill-management.md) | open | Skills do not exist: there is no unit of procedural knowledge below a personality, and no rule for who may load one into a turn. |
 | [166](166-memory-as-topic-documents.md) | open | Agent memory is a flat list of one-line entries, all of them in every prompt, with nothing to group, revise or fetch them by topic. |
 | [237](237-erasing-a-message.md) | open | A message written by mistake can be taken back but not erased: it stays in every participant's record and in the contexts built on it. |
+
+## Code structure
+
+| No. | Status | Issue |
+|---|---|---|
+| [241](241-turn-membership-recorded-twice.md) | open | Which messages belong to a turn is recorded twice - as the turn's id on each message and as a count in its `ContextRef` - and read by different rules. |
 
 ## Integrations
 

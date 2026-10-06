@@ -1,6 +1,6 @@
 # 235 — An answer still being generated cannot be asked for again
 
-**Status:** in progress
+**Status:** done
 **Area:** Sessions & channels
 
 ## The problem
@@ -448,3 +448,14 @@ ended, and its answer is replaced as a completed one is.
   over REST, and once it ended the notice "did not answer again: more was said or done since that
   answer" followed. *From here on the issue's "done when" holds.* REST-SERVER.md, WEB-UI.md,
   CHANNELS.md.
+- **2026-10-06** — Step 5, and the issue done. The open questions of the plan:
+  1. `cancel_actor` does not make the channel quiet, as proposed and decided with the maintainer
+     (step 2).
+  2. The snapshot does not say who is answering:
+     [240](240-answers-under-way-not-in-snapshot.md).
+  3. Whether `ContextRef::turn_entries` can be read from `Message::turn_id`:
+     [241](241-turn-membership-recorded-twice.md).
+  4. The web UI's stop icon per answer came with step 2.
+
+  ARCHITECTURE.md, which has no section *Terms* as the plan said, has the turn's id and the stop
+  and retry of an answer under way in *How a message travels*.

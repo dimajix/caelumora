@@ -87,12 +87,15 @@ The path of one message shows how the parts fit together:
     entities are announced on the event bus, which the web UI follows.
 
 A turn that fails ends the turn, not the agent: it is reported as `TurnFailed` and the agent returns
-to idle. A turn cut off by a crash is resumed when the agent is loaded again.
+to idle. A turn cut off by a crash is resumed when the agent is loaded again. Every turn has an id,
+which `ResponseStarted` announces and every message of the turn carries (issue 235).
 
 What was said can be changed afterwards, but never rewritten (issue 234): its author modifies or
 takes back a message, and every store that holds it records the change after it, so that what an
 agent saw for an earlier answer can still be told as it was. An agent can be asked to answer again
-instead of its last answer; whether it does is its own to decide. Nothing forks.
+instead of its last answer; whether it does is its own to decide. Nothing forks. An answer still
+under way can be stopped alone, or asked for again: its turn is then given up before any of it
+reaches the channel's history, and the agent answers anew (issue 235).
 
 Details: [AGENT-TURN.md](AGENT-TURN.md), [CHANNELS.md](CHANNELS.md), [EVENTS.md](EVENTS.md),
 [REST-SERVER.md](REST-SERVER.md#streams).
