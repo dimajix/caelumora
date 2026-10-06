@@ -210,7 +210,11 @@ export const api = {
     return res.json();
   },
 
-  /** Reclassifies message `messageId` of the channel (issue 133). */
+  /**
+   * Reclassifies message `messageId` of the channel (issues 133, 239) - one's
+   * own, or any in a channel one owns, as a participant; the stream shows it
+   * as `MessageReclassified`.
+   */
   async reclassifyMessage(sessionId: string, channelId: string, messageId: string, classification: Classification): Promise<void> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/messages/${messageId}/classification`, {
       method: 'PUT',

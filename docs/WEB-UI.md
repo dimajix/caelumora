@@ -214,9 +214,9 @@ Messages whose classification differs from the channel's carry a `released` badg
 Who may reclassify - the channel's owner the channel, the author or the owner a message - changes it
 with `ClassificationDialog`: from the pencil next to the channel's classification, or the shield
 among a message's actions. A change that releases something says what it releases before it is made.
-Reclassifications follow the global stream: a message takes its new classification from
-`MessageReclassified`, and a reclassified channel fetches its messages again, which lowering it may
-have changed.
+A message takes its new classification from `MessageReclassified` on the channel's stream, as
+every change to a message (issue 239); a reclassified channel follows the global stream and fetches
+its messages again, which lowering it may have changed.
 
 ### Language
 

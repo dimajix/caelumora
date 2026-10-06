@@ -1,6 +1,6 @@
 # 239 — A reclassified message keeps its old classification in every agent's state
 
-**Status:** in progress
+**Status:** done
 **Area:** Sessions & channels
 
 ## The problem
@@ -144,3 +144,11 @@ follow from the message as it stands.
   then shows a reclassification only once the channel is loaded again. The stand-in model of the
   channel's tests gave every answer the same id - unlike every model client - which a
   reclassification of one of them showed; it gives each its own now.
+- **2026-10-06** — Step 3, done: the web UI takes a message's classification from
+  `MessageReclassified` on the channel's stream; the route is described in REST-SERVER.md, the
+  web UI in WEB-UI.md. Verified in the browser and over REST with a model (Ollama): the channel's
+  owner released another's answer, shown at once as released and recorded in the agent's history;
+  in a fresh channel, once the earlier question and answers were released, the agent's next answer
+  to a public question was labelled public - before, its transcript would have kept it internal. A
+  message taken back is refused with `409 message_revoked`, a classification above the channel with
+  `403`.

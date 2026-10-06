@@ -351,6 +351,11 @@ export interface ActorEvent {
   MessageModified?: Message;
   /** Its author took the message `message` back at `at` (issue 234). */
   MessageRevoked?: { message: string; at: string };
+  /**
+   * The message `message` is classified `classification` from now on
+   * (issues 133, 239): reclassified by its author or the channel's owner.
+   */
+  MessageReclassified?: { message: string; classification: Classification };
   /** The sender answers again instead of its message `message` (issue 234). */
   RetryAccepted?: { message: string };
   /** The sender does not answer again instead of its message `message`, for `reason` (issue 234). */

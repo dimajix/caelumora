@@ -54,7 +54,7 @@ import {ClassificationDialog} from './ClassificationDialog';
 import {MessageEditor} from './MessageEditor';
 import {LanguageDialog} from './LanguageDialog';
 import {languageLabel} from '../language';
-import {changedChannel, languageChangedChannel, membershipChangedChannel, onGlobalEvent, reclassifiedChannel, reclassifiedMessage} from '../globalEvents';
+import {changedChannel, languageChangedChannel, membershipChangedChannel, onGlobalEvent, reclassifiedChannel} from '../globalEvents';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
 import {type ClassValue, clsx} from 'clsx';
@@ -284,16 +284,12 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
     });
   }, [sessionId, channelId]);
 
-  // Reclassifications follow the global stream (issue 133): a message's
-  // classification is taken from the event; a reclassified channel may have
-  // changed its messages too, which are fetched again.
+  // A reclassified channel follows the global stream (issue 133): it may
+  // have changed its messages too, which are fetched again. A reclassified
+  // message comes with the channel's stream, as every change to one (issue
+  // 239).
   useEffect(() => {
     return onGlobalEvent(event => {
-      const message = reclassifiedMessage(event);
-      if (message && message.channelId === channelId) {
-        setMessages(prev => prev.map(m => m.id === message.messageId ? {...m, classification: message.classification} : m));
-        return;
-      }
       const language = languageChangedChannel(event);
       if (language) {
         if (language.channelId === channelId) setChannel(prev => prev && {...prev, language: language.language});
@@ -485,6 +481,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           setMessages(prev => prev.map(m => m.id === message
             ? {...m, content: null, reasoning: undefined, tool_calls: [], tool_results: [], mentions: [], revoked: at}
             : m));
+        } else if (actorEvent.MessageReclassified) {
+          // In its place, classified anew (`Message::reclassify`, issue 239).
+          const {message, classification} = actorEvent.MessageReclassified;
+          setMessages(prev => prev.map(m => m.id === message ? {...m, classification} : m));
         } else if (actorEvent.RetryAccepted) {
           // Its answer is taken back next and a new one begins: shown as
           // under way from now on.

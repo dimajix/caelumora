@@ -33,7 +33,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [223](223-full-inbox-drops-events.md) | open | An actor whose inbox is full - an agent in a long turn in a busy channel - loses what was said, requests and approvals without anyone learning of it. |
 | [235](235-retry-of-an-answer-under-way.md) | open | An answer still being generated cannot be asked for again; only stopping every agent of the channel gets there. |
 | [238](238-retry-of-an-older-answer.md) | open | Only an agent's last answer can be asked for again, and the alternatives of an answer are not kept. |
-| [239](239-reclassified-message-not-in-agents-state.md) | in progress | A reclassified message keeps its old classification in every agent's state, so a released message still raises the label of later answers. |
 
 ## Identity and access management
 
