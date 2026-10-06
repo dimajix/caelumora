@@ -5,6 +5,7 @@ import {
   ChevronRight,
   Gauge,
   History,
+  IdCard,
   Languages,
   Lock,
   NotebookPen,
@@ -76,6 +77,7 @@ import {ContextPanel} from './ContextPanel';
 import {HistoryPanel} from './HistoryPanel';
 import {ToolsPanel} from './ToolsPanel';
 import {PrivateNotesPanel} from './PrivateNotesPanel';
+import {ProfilePanel} from './ProfilePanel';
 import {AddParticipantDialog} from './AddParticipantDialog';
 import {ApprovalRuleOffer} from './ApprovalRuleOffer';
 import {approveEverything, approvingEverything, initialChoice, ruleOf, type RuleChoice} from '../approvalRules';
@@ -234,12 +236,12 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   // The agent whose history is shown, with the channel it belongs to (issue
   // 207); a context opened from it is shown on top and returns to it.
   const [historyOf, setHistoryOf] = useState<{channelId: string; member: ChannelMember; givenUp?: boolean} | null>(null);
-  const [toolsOf, setToolsOf] = useState<{channelId: string; member: ChannelMember} | null>(null);
-  // The agent whose private notes are shown (issue 233).
-  const [privateNotesOf, setPrivateNotesOf] = useState<{channelId: string; member: ChannelMember} | null>(null);
+  // What is shown of one member: its tools (issue 194), its private notes
+  // (issue 233) or who it is (issue 244) - one at a time.
+  const [memberPanel, setMemberPanel] = useState<{channelId: string; member: ChannelMember; shows: 'tools' | 'privateNotes' | 'profile'} | null>(null);
   // Whether one of them takes the place of the members panel.
   const detailShown = contextOf?.channelId === channelId || historyOf?.channelId === channelId
-    || toolsOf?.channelId === channelId || privateNotesOf?.channelId === channelId;
+    || memberPanel?.channelId === channelId;
   // Whether the former members of the channel are unfolded (issue 164).
   const [showFormer, setShowFormer] = useState(false);
   // The commands this user may run here, for `/` completion (issue 28).
@@ -440,12 +442,23 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
     }
   };
 
+  /** Shows `shows` of `member` in place of the members panel, closing its history. */
+  const showOf = (member: ChannelMember, shows: 'tools' | 'privateNotes' | 'profile') => {
+    setHistoryOf(null);
+    setMemberPanel({channelId, member, shows});
+  };
+
   /** What can be done with `member` of the channel: what it offers (issue 230). */
   const memberActions = (member: ChannelMember): MenuAction[] => [
+    // Who it is is public (issue 244); an approver is nobody to introduce.
+    ...(member.kind !== 'approver' ? [{
+      label: 'Show profile', icon: IdCard, title: `Show who ${member.name} is`,
+      onSelect: () => showOf(member, 'profile'),
+    }] : []),
     ...contextActions(member),
     ...(member.can_read_tools ? [{
       label: 'Show tools', icon: Wrench, title: `Show the tools of ${member.name}`,
-      onSelect: () => { setHistoryOf(null); setPrivateNotesOf(null); setToolsOf({channelId, member}); },
+      onSelect: () => showOf(member, 'tools'),
     }] : []),
     // The approver belongs to every channel and cannot be removed.
     ...(channel?.can_change && member.kind !== 'approver' ? [{
@@ -465,7 +478,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
     onSelect: () => setHistoryOf({channelId, member}),
   }, {
     label: 'Show private notes', icon: Lock, title: `Show what ${member.name} noted for itself in this session`,
-    onSelect: () => { setHistoryOf(null); setToolsOf(null); setPrivateNotesOf({channelId, member}); },
+    onSelect: () => showOf(member, 'privateNotes'),
   }] : [];
 
   const removeParticipant = async (member: ChannelMember) => {
@@ -1398,21 +1411,29 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           onShowContext={message => setContextOf({channelId, message})}
           onClose={() => setHistoryOf(null)}
         />
-      ) : toolsOf && toolsOf.channelId === channelId ? (
+      ) : memberPanel && memberPanel.channelId === channelId && memberPanel.shows === 'tools' ? (
         <ToolsPanel
-          key={actorKey(toolsOf.member.id)}
+          key={actorKey(memberPanel.member.id)}
           sessionId={sessionId}
           channelId={channelId}
-          member={toolsOf.member}
-          onClose={() => setToolsOf(null)}
+          member={memberPanel.member}
+          onClose={() => setMemberPanel(null)}
         />
-      ) : privateNotesOf && privateNotesOf.channelId === channelId ? (
+      ) : memberPanel && memberPanel.channelId === channelId && memberPanel.shows === 'privateNotes' ? (
         <PrivateNotesPanel
-          key={actorKey(privateNotesOf.member.id)}
+          key={actorKey(memberPanel.member.id)}
           sessionId={sessionId}
           channelId={channelId}
-          member={privateNotesOf.member}
-          onClose={() => setPrivateNotesOf(null)}
+          member={memberPanel.member}
+          onClose={() => setMemberPanel(null)}
+        />
+      ) : memberPanel && memberPanel.channelId === channelId && memberPanel.shows === 'profile' ? (
+        <ProfilePanel
+          key={actorKey(memberPanel.member.id)}
+          sessionId={sessionId}
+          channelId={channelId}
+          member={memberPanel.member}
+          onClose={() => setMemberPanel(null)}
         />
         ) : null}
         </div>

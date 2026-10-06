@@ -216,7 +216,7 @@ argues against it, and what came out of the last attempt.
 | [240](240-answers-under-way-not-in-snapshot.md) | done | A page loaded while an agent answers does not know the answer is under way, so it offers neither stop nor retry for it until its next message. |
 | [242](242-retry-offered-for-external-agents.md) | done | The web UI offers to ask an external agent for another answer - of a message and while it answers - which it never gives. |
 | [243](243-member-state-in-member-list.md) | done | The members panel does not show what an agent is doing - idle, asleep, working, waiting - nor offers to stop one that works. |
-| [244](244-member-profile.md) | open | The web UI shows no participant's introduction, so a user learns of an agent in a channel only its name. |
+| [244](244-member-profile.md) | done | The web UI shows no participant's introduction, so a user learns of an agent in a channel only its name. |
 
 ## Context and knowledge
 

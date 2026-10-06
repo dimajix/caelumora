@@ -1,6 +1,6 @@
 # 244 — A participant's introduction cannot be seen in the web UI
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -123,3 +123,18 @@ first.
   agent, its kind, its owner and the name of its personality. Planned as above; whether the owner's
   name may be shown to those who do not share a session with them is still to be confirmed.
 - **2026-10-06** — The maintainer confirmed the plan, the owner's name included.
+- **2026-10-06** — Implemented as planned, in two steps. First, without a change of behaviour:
+  `MemberState::personality` hands out an agent's personality, read once, in place of
+  `MemberState::can_retry`; `MemberView::may_retry` asks its kind. Then: `Detail::PROFILE`;
+  `MemberView::personality` (name and kind) and `MemberView::owner`; `Views::name_of` takes an
+  `ActorId` now, so that it names an owner too - the system included; `MemberSnapshot` and
+  `ChannelMemberResponse` carry `introduction`, `personality`, `personality_kind`, `owner` and
+  `owner_name`, which `GET …/participants/{aid}` asks for. The web UI's `ProfilePanel`, opened by
+  "Show profile" on every member but the approver; the tools, private notes and profile panels
+  share one state in `ChatView` instead of each clearing the others. Tests: a member's profile only
+  with `PROFILE`, a user's introduction, an external agent's personality, kind and owner - named
+  although the owner is not in the session -, nothing of an approver, the same for a member asked
+  for alone; the API leaves out what was not read. SECURITY.md, REST-SERVER.md, WEB-UI.md.
+- **2026-10-06** — Verified in the browser (`external-session`): Hermes shows its personality
+  `hermes-remote`, "elsewhere", its owner and its introduction; Jonathan `jonathan-assistant`,
+  "here"; kaya that they have not introduced themselves; the approver offers no menu.

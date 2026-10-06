@@ -48,6 +48,9 @@ export type ActorId = string | Record<string, string>;
 /** What kind of participant an actor is. */
 export type ParticipantKind = 'user' | 'agent' | 'approver';
 
+/** Whether an agent runs here or elsewhere (issues 179, 244). */
+export type PersonalityKind = 'internal' | 'external';
+
 /** Where an agent stands (issue 243), as `StateChanged` and a member's `state` name it. */
 export type ActorState = 'Idle' | 'Sleeping' | 'Planning' | 'ExecutingTools' | 'WaitingForApproval' | 'Reflecting' | 'Cancelling';
 
@@ -112,6 +115,19 @@ export interface ChannelMember {
   left?: Removal;
   /** Whether you may delete it - only ever an agent of yours (issue 164). */
   can_delete: boolean;
+  /**
+   * How it is introduced (issues 176, 244): an agent by its personality, a
+   * user in their own words. Sent by `getParticipant` only, absent if none.
+   */
+  introduction?: string;
+  /** The name of an agent's personality (issue 244) - by `getParticipant` only. */
+  personality?: string;
+  /** Whether an agent runs here or elsewhere (issue 244) - by `getParticipant` only. */
+  personality_kind?: PersonalityKind;
+  /** Who owns an agent: whose authority it acts with (issue 244) - by `getParticipant` only. */
+  owner?: ActorId;
+  /** The owner's name. */
+  owner_name?: string;
 }
 
 /** That something was deleted, or someone left: by whom and when (issue 164). */

@@ -1,4 +1,5 @@
 use caelumora_model::actor::{ActorId, ActorState};
+use caelumora_model::agent::PersonalityKind;
 use chrono::{DateTime, Utc};
 use caelumora_model::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
 use caelumora_model::confidentiality::{Classification, Compartment};
@@ -460,6 +461,26 @@ pub struct ChannelMemberResponse {
     /// that does not run.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state: Option<ActorState>,
+    /// How the participant is introduced (issues 176, 244): an agent by its
+    /// personality, a user by themselves. Given for a participant asked for
+    /// alone, not where channels are listed; absent if there is none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub introduction: Option<String>,
+    /// The name of an agent's personality (issue 244) - for a participant
+    /// asked for alone.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub personality: Option<String>,
+    /// Whether an agent runs here (`internal`) or elsewhere (`external`,
+    /// issue 244) - for a participant asked for alone.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub personality_kind: Option<PersonalityKind>,
+    /// Who owns an agent: whose authority it acts with and who answers for
+    /// its tool calls (issue 244) - for a participant asked for alone.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner: Option<ActorId>,
+    /// The owner's name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_name: Option<String>,
 }
 
 impl ChannelMemberResponse {
@@ -480,6 +501,11 @@ impl ChannelMemberResponse {
             can_delete: view.can_delete,
             turn_under_way: view.turn_under_way,
             state: view.state,
+            introduction: view.introduction,
+            personality: view.personality,
+            personality_kind: view.personality_kind,
+            owner: view.owner,
+            owner_name: view.owner_name,
         })
     }
 }
@@ -777,7 +803,7 @@ mod tests {
     #[test]
     fn a_channel_view_is_answered_with_kinds_and_a_name_for_the_deleted() {
         let (alice, approver) = (ActorId::User(UserId::new()), ActorId::Approver(ApproverId(Uuid::new_v4())));
-        let member = |id, name: Option<&str>| snapshot::MemberSnapshot { id, name: name.map(str::to_string), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None };
+        let member = |id, name: Option<&str>| snapshot::MemberSnapshot { id, name: name.map(str::to_string), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None, introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
         let view = snapshot::ChannelSnapshot { approval_rules: Vec::new(),
             id: ChannelId::new(),
             name: "main".to_string(),
@@ -813,6 +839,7 @@ mod tests {
         let member = |id, name: &str, notes: Vec<Note>| snapshot::MemberSnapshot {
             id, name: Some(name.to_string()), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes, pending_approvals: Vec::new(),
             left: None, can_delete: false, turn_under_way: None, state: None,
+            introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None,
         };
         let channel = snapshot::ChannelSnapshot { approval_rules: Vec::new(),
             id: ChannelId::new(),
@@ -852,7 +879,7 @@ mod tests {
     fn a_former_member_is_answered_apart_with_who_removed_it_and_when() {
         let (alice, helper) = (ActorId::User(UserId::new()), ActorId::Agent(caelumora_model::agent::AgentId::new()));
         let left = caelumora_model::removal::Removal::now(alice);
-        let member = |id, left| snapshot::MemberSnapshot { id, name: Some("x".to_string()), handle: None, can_read_context: true, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), left, can_delete: false, turn_under_way: None, state: None };
+        let member = |id, left| snapshot::MemberSnapshot { id, name: Some("x".to_string()), handle: None, can_read_context: true, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), left, can_delete: false, turn_under_way: None, state: None, introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
         let view = snapshot::ChannelSnapshot { approval_rules: Vec::new(),
             id: ChannelId::new(),
             name: "main".to_string(),
@@ -874,7 +901,7 @@ mod tests {
     #[test]
     fn what_a_participant_used_is_answered_only_where_it_was_read() {
         let usage = TokenUsage { calls: 2, prompt_tokens: 300, completion_tokens: 20, last_call_tokens: 170, context_size: Some(8192) };
-        let member = |usage| snapshot::MemberSnapshot { id: ActorId::User(UserId::new()), name: Some("alice".to_string()), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage, notes: Vec::new(), pending_approvals: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None };
+        let member = |usage| snapshot::MemberSnapshot { id: ActorId::User(UserId::new()), name: Some("alice".to_string()), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage, notes: Vec::new(), pending_approvals: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None, introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
 
         let json = serde_json::to_value(ChannelMemberResponse::of(member(Some(usage))).unwrap()).unwrap();
         assert_eq!(json["usage"], serde_json::json!({ "calls": 2, "prompt_tokens": 300, "completion_tokens": 20, "last_call_tokens": 170, "context_size": 8192 }));
@@ -887,6 +914,26 @@ mod tests {
         assert!(json.get("state").is_none(), "where nothing runs, no state");
         let json = serde_json::to_value(ChannelMemberResponse::of(snapshot::MemberSnapshot { state: Some(ActorState::WaitingForApproval), ..member(None) }).unwrap()).unwrap();
         assert_eq!(json["state"], serde_json::json!("WaitingForApproval"), "named as `StateChanged` names it (issue 243)");
+    }
+
+    #[test]
+    fn a_participants_profile_is_answered_only_where_it_was_read() {
+        let carol = UserId::new();
+        let member = snapshot::MemberSnapshot { id: ActorId::Agent(caelumora_model::agent::AgentId::new()), name: Some("Helper".to_string()), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None, introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
+
+        let json = serde_json::to_value(ChannelMemberResponse::of(member.clone()).unwrap()).unwrap();
+        for field in ["introduction", "personality", "personality_kind", "owner", "owner_name"] {
+            assert!(json.get(field).is_none(), "{field}: not read, not said");
+        }
+        let profiled = snapshot::MemberSnapshot {
+            introduction: Some("Answers questions.".to_string()), personality: Some("plain".to_string()), personality_kind: Some(PersonalityKind::External),
+            owner: Some(ActorId::User(carol)), owner_name: Some("carol".to_string()), ..member
+        };
+        let json = serde_json::to_value(ChannelMemberResponse::of(profiled).unwrap()).unwrap();
+        assert_eq!(json["introduction"], "Answers questions.");
+        assert_eq!((&json["personality"], &json["personality_kind"]), (&serde_json::json!("plain"), &serde_json::json!("external")));
+        assert_eq!(json["owner"], serde_json::to_value(ActorId::User(carol)).unwrap(), "as every actor is named");
+        assert_eq!(json["owner_name"], "carol");
     }
 
     #[test]

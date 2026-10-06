@@ -39,7 +39,6 @@ use crate::session::{Found, SessionLoop, SessionManager};
 use crate::tool::ToolError;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId};
-use caelumora_model::channel::Participant;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::removal::Removal;
@@ -369,18 +368,20 @@ impl Views {
         self.security.may_channel_read(self.viewer.context(), from, source).await
     }
 
-    /// The name of `participant`; `None` for a user or agent that no
-    /// longer exists. Read in the runtime's name: taking part in a session
-    /// makes a name known to everybody in it - it stands at every message -
-    /// even where the record itself is not theirs to read (issue 120).
-    async fn name_of(&self, participant: &Participant) -> Option<String> {
-        match participant {
-            Participant::User(id) => self.entities.get_user(&SecurityContext::system(), *id).await.ok().map(|user| user.username),
-            Participant::Agent(id) => match self.agent_of(*id).await {
+    /// The name of `actor`; `None` for a user or agent that no longer
+    /// exists. Read in the runtime's name: taking part in a session makes a
+    /// name known to everybody in it - it stands at every message - even
+    /// where the record itself is not theirs to read (issue 120); so does
+    /// owning an agent there, which acts with its owner's authority (issue
+    /// 244).
+    async fn name_of(&self, actor: ActorId) -> Option<String> {
+        match actor {
+            ActorId::User(id) => self.entities.get_user(&SecurityContext::system(), id).await.ok().map(|user| user.username),
+            ActorId::Agent(id) => match self.agent_of(id).await {
                 Some(agent) => Some(agent.name.to_string()),
-                None => self.deleted_agent_name(*id).await,
+                None => self.deleted_agent_name(id).await,
             },
-            Participant::Approver(_) => participant.actor_id().fixed_name().map(str::to_string),
+            other => other.fixed_name().map(str::to_string),
         }
     }
 
@@ -508,7 +509,7 @@ mod tests {
     use caelumora_model::name::{Name, ScopedName};
     use crate::runtime::RuntimeManager;
     use caelumora_model::agent::{Agent, Personality, PersonalityId};
-    use caelumora_model::channel::Channel;
+    use caelumora_model::channel::{Channel, Participant};
     use caelumora_model::command::default_commands;
     use caelumora_model::confidentiality::{Classification, Visibility};
     use caelumora_model::scope::Scope;
@@ -736,6 +737,50 @@ mod tests {
         assert_eq!((gone.name.as_deref(), gone.handle.as_deref()), (None, None), "a deleted user is listed, but cannot be mentioned");
         assert!(approver.handle.is_none(), "an approver cannot be mentioned");
         assert!(view.members.iter().all(|m| !m.can_read_context), "no member is an agent");
+    }
+
+    #[tokio::test]
+    async fn a_members_profile_says_who_it_is_to_everybody_in_the_channel() {
+        use caelumora_model::agent::PersonalityKind;
+        use caelumora_model::approval::{ApprovalStrategy, Approver, ApproverId};
+        use caelumora_model::user::UserProfile;
+
+        let (store, manager) = owned_runtime();
+        let system = SecurityContext::system();
+        let (alice, bob, carol) = (user("alice"), user("bob"), user("carol"));
+        // Carol owns the agent but takes no part in the session.
+        store.create_user(&system, &carol).await.unwrap();
+        let remote = an_agent_of_kind(&store, ActorId::User(carol.id), PersonalityKind::External).await;
+        let mut personality = store.get_personality(&system, remote.personality_id).await.unwrap();
+        personality.introduction = Some("Answers questions about the weather.".to_string());
+        store.update_personality(&system, &personality).await.unwrap();
+        let approver = Approver { id: ApproverId(uuid::Uuid::new_v4()), strategy: ApprovalStrategy::Any };
+
+        let mut session = make_session("hers", ActorId::User(alice.id), vec![ActorId::User(bob.id), ActorId::Agent(remote.id)]);
+        session.participants = record_users(&store, &[&alice, &bob]).await;
+        session.participants.push(Participant::Agent(remote.id));
+        let mut channel = main_channel(&session);
+        channel.participants.push(Participant::Approver(approver));
+        store.create_user_profile(&system, &UserProfile::introducing(alice.id, Some("I run the project.")).unwrap()).await.unwrap();
+        store.create_session(&system, &session).await.unwrap();
+        store.create_channel(&system, &channel).await.unwrap();
+
+        let for_bob = manager.views(as_user(bob.id)).session(session.id).await.unwrap().channel(channel.id).await.unwrap();
+        let plain = for_bob.snapshot(Detail::MEMBERS).await;
+        assert!(plain.members.iter().all(|m| m.introduction.is_none() && m.personality.is_none() && m.owner.is_none()), "only with PROFILE: {plain:?}");
+
+        let view = for_bob.snapshot(Detail::MEMBERS | Detail::PROFILE).await;
+        let [alice_seen, bob_seen, agent, approver_seen] = view.members.as_slice() else { panic!("four members, in order: {view:?}") };
+        assert_eq!(alice_seen.introduction.as_deref(), Some("I run the project."), "as she introduces herself");
+        assert_eq!((alice_seen.personality.as_deref(), alice_seen.owner), (None, None), "a user has neither personality nor owner");
+        assert_eq!(bob_seen.introduction, None, "bob did not introduce himself");
+        assert_eq!(agent.introduction.as_deref(), Some("Answers questions about the weather."), "as its personality introduces it");
+        assert_eq!((agent.personality.as_deref(), agent.personality_kind), (Some("plain"), Some(PersonalityKind::External)), "public, though bob may not read the personality");
+        assert_eq!((agent.owner, agent.owner_name.as_deref()), (Some(ActorId::User(carol.id)), Some("carol")), "named although carol is not in the session");
+        assert_eq!((&approver_seen.introduction, &approver_seen.personality, approver_seen.owner), (&None, &None, None), "an approver is nobody to introduce");
+
+        let alone = for_bob.member(ActorId::Agent(remote.id)).await.unwrap().snapshot(Detail::PROFILE).await;
+        assert_eq!(&alone, agent, "a member asked for alone is shown as in the list");
     }
 
     #[tokio::test]

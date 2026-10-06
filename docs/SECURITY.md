@@ -56,6 +56,12 @@ This is the one place ownership is recorded.
     written by whoever may change the personality, like its system prompt; a user's by the user.
     The rest of a profile is read by its user alone - their rules on tool calls (issue 13) among
     it, which the runtime evaluates in their name, as their own answer.
+*   Of an agent, whoever reads a channel it takes part in also learns, besides its introduction,
+    the name of its personality - not its scope, not the personality itself, which stays its
+    readers' (`GetPersonality`) -, whether it runs here or elsewhere, and who owns it, by name
+    (issue 244). The owner is named also to those who share no session with them: the agent acts
+    with its owner's authority, and who talks to it should know whose. All of it is read in the
+    runtime's name, like the names of members (`MemberView::snapshot` with `Detail::PROFILE`).
 *   Entities stored before owners were recorded have an empty owner and count as the system's.
 
 ### The ownership policy
@@ -234,13 +240,14 @@ and offers: `SessionView::snapshot` with the participants and `can_change`; `Cha
 with `can_change`; `MemberView::snapshot` with the handle and `can_read_context`. What else a
 snapshot holds the caller chooses as `Detail` flags (issue 209) - a session's channels, a channel's
 members, and of an agent member its token usage, its notes and the approvals its turn waits for -
-all three read from its state at once (`MemberView::snapshot`) - so that what reads every agent's
-state is paid only where it is shown. The flags are combined freely, none implies another: a detail
-whose part is not asked for is not there (`USAGE` without `MEMBERS` gives no usage), a list not
-asked for is empty. A detail that cannot be read is left out, and the rest is answered. The REST
-server only maps snapshots to responses (`From<snapshot::ChannelSnapshot> for ChannelResponse` and
-the like, in `models.rs`) and asks the `SecurityManager` nothing. A frontend never asks the access
-questions itself.
+all three read from its state at once (`MemberView::snapshot`) - and of a member who it is
+(`PROFILE`, issue 244), read from its personality, its owner or a user's profile - so that what
+reads every agent's state is paid only where it is shown. The flags are combined freely, none
+implies another: a detail whose part is not asked for is not there (`USAGE` without `MEMBERS` gives
+no usage), a list not asked for is empty. A detail that cannot be read is left out, and the rest is
+answered. The REST server only maps snapshots to responses (`From<snapshot::ChannelSnapshot> for
+ChannelResponse` and the like, in `models.rs`) and asks the `SecurityManager` nothing. A frontend
+never asks the access questions itself.
 
 A node is data the viewer was allowed to reach; it decides nothing. An operation never relies on it:
 it checks its own permission when it acts.

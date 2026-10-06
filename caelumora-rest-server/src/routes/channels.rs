@@ -226,7 +226,7 @@ pub async fn get_participant(
     user: AuthenticatedUser,
 ) -> Result<Json<ChannelMemberResponse>, ApiError> {
     let channel = crate::routes::channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let member = member_of(&channel, aid).await?.snapshot(Detail::USAGE).await;
+    let member = member_of(&channel, aid).await?.snapshot(Detail::USAGE | Detail::PROFILE).await;
     ChannelMemberResponse::of(member).map(Json)
         .ok_or_else(|| ApiError::not_found("actor_not_found", format!("Actor {} is not in channel {}", aid, cid)))
 }

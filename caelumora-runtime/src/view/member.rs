@@ -9,8 +9,9 @@
 //! hands out if it is an agent, so that no other kind has to answer for
 //! what it does not have. Both kinds of agent keep the same state (issue
 //! 206): which kind it is does not matter here. Its personality is read
-//! for its introduction and for whether it answers again (issue 242), when
-//! either is first asked for, not for every member looked at (issue 189).
+//! for its introduction, whether it answers again (issue 242) and what
+//! its profile shows (issue 244), when first asked for, not for every
+//! member looked at (issue 189).
 
 use super::context::AgentContextView;
 use super::{ViewError, ViewResult, Views};
@@ -61,14 +62,15 @@ pub(super) trait MemberState: Send + Sync + Debug {
         None
     }
 
-    /// Whether it can be asked to answer again instead of one of its
-    /// messages (issue 242): an agent whose kind does
-    /// (`PersonalityKind::can_retry`).
+    /// An agent's personality, read once when first asked for: what it is
+    /// introduced as, what kind of agent it is (issues 176, 242, 244).
+    /// `None` for a member that is no agent, and for an agent whose
+    /// personality is gone.
     ///
     /// # Errors
     /// `Failed` if it cannot be read.
-    async fn can_retry(&self) -> ViewResult<bool> {
-        Ok(false)
+    async fn personality(&self) -> ViewResult<Option<&Personality>> {
+        Ok(None)
     }
 }
 
@@ -191,17 +193,6 @@ struct AgentMemberState {
     personality: OnceCell<Option<Personality>>,
 }
 
-impl AgentMemberState {
-    /// Its personality, read when first asked for; `None` if it is gone.
-    async fn personality(&self) -> ViewResult<Option<&Personality>> {
-        let personality = self.personality.get_or_try_init(|| async {
-            self.store.get_personality(&SecurityContext::system(), self.agent.personality_id).await.optional()
-                .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context(format!("reading the personality of agent {}", self.agent.id))))
-        }).await?;
-        Ok(personality.as_ref())
-    }
-}
-
 #[async_trait]
 impl MemberState for AgentMemberState {
     fn name(&self) -> Option<&str> {
@@ -214,10 +205,12 @@ impl MemberState for AgentMemberState {
         Ok(self.personality().await?.and_then(|personality| personality.introduction.clone()))
     }
 
-    /// As its personality's kind says; not if the personality is gone: then
-    /// it is not run (issue 189).
-    async fn can_retry(&self) -> ViewResult<bool> {
-        Ok(self.personality().await?.is_some_and(|personality| personality.kind.can_retry()))
+    async fn personality(&self) -> ViewResult<Option<&Personality>> {
+        let personality = self.personality.get_or_try_init(|| async {
+            self.store.get_personality(&SecurityContext::system(), self.agent.personality_id).await.optional()
+                .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context(format!("reading the personality of agent {}", self.agent.id))))
+        }).await?;
+        Ok(personality.as_ref())
     }
 
     fn attributes(&self) -> Option<&SecurityAttributes> {

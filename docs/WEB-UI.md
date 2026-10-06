@@ -298,6 +298,12 @@ Where `can_change` is set, the member list offers adding a participant of the se
 much of the history they may see (`AddParticipantDialog`, issue 46) - and the menu removing one.
 The channel is fetched again when the global stream announces a join or leave for it.
 
+Every member but the approver has "Show profile" in its menu (issue 244). It opens the profile
+panel (`ProfilePanel`), filled once by `GET …/participants/{aid}`: name and handle; of an agent the
+name of its personality, whether it runs here or elsewhere - where what it is given leaves the
+system - and who owns it; and its introduction, a user's as "in their own words", or that there is
+none.
+
 An agent whose tools the user may see (`can_read_tools`, issue 194) has "Show tools" in its menu.
 It opens the tools panel (`ToolsPanel`): what the agent can call in this channel now
 (`GET …/actors/{aid}/tools`), by the tool set the tools come from, with each set's description and,

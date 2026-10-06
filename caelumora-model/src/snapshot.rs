@@ -14,9 +14,11 @@
 //! there, and nothing else: `USAGE` without `MEMBERS` gives no usage, since
 //! there are no members to carry it. A list not asked for is empty. What
 //! a member's details read - its usage, notes and pending approvals - comes
-//! from its agent's state, read once for all of them.
+//! from its agent's state, read once for all of them; who it is
+//! (`PROFILE`) from its personality, its owner and a user's profile.
 
 use crate::actor::{ActorId, ActorState};
+use crate::agent::PersonalityKind;
 use crate::approval::{ApprovalRequest, ApprovalRule};
 use crate::confidentiality::Classification;
 use crate::language::Language;
@@ -42,6 +44,9 @@ bitflags::bitflags! {
         const NOTES = 1 << 3;
         /// Of a member: the approvals its turn waits for (issue 172).
         const APPROVALS = 1 << 4;
+        /// Of a member: who it is - its introduction, and of an agent its
+        /// personality and owner (issue 244).
+        const PROFILE = 1 << 5;
     }
 }
 
@@ -175,6 +180,25 @@ pub struct MemberSnapshot {
     /// Whether the viewer may delete this member - only ever an agent, its
     /// owner (`DeleteAgent`, issue 164).
     pub can_delete: bool,
+    /// How the member is introduced (issue 176) - an agent by its
+    /// personality, a user by themselves - with `Detail::PROFILE`. Public,
+    /// like the name; `None` also for an approver, a member that no longer
+    /// exists, and one whose introduction could not be read.
+    pub introduction: Option<String>,
+    /// The name of an agent member's personality, without its scope (issue
+    /// 244) - with `Detail::PROFILE`. Public, like the introduction; not
+    /// the personality itself, which stays its readers'.
+    pub personality: Option<String>,
+    /// Whether an agent member runs here or elsewhere (issue 244) - with
+    /// `Detail::PROFILE`: what an external agent is given leaves the
+    /// system.
+    pub personality_kind: Option<PersonalityKind>,
+    /// Who owns an agent member (issue 244): whose authority it acts with
+    /// and who answers for its tool calls - with `Detail::PROFILE`.
+    pub owner: Option<ActorId>,
+    /// The owner's name - also where they share no session with the
+    /// viewer: who talks to the agent talks to them.
+    pub owner_name: Option<String>,
 }
 
 /// Something deleted - a session, a channel - as the trash shows it to the

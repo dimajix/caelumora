@@ -11,7 +11,7 @@ use caelumora_model::channel::{Channel, ChannelState, Participant};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::language::Language;
 use caelumora_model::digest::Digest;
-use caelumora_model::agent::AgentChannelState;
+use caelumora_model::agent::{AgentChannelState, PersonalityKind};
 use caelumora_model::name::Name;
 use caelumora_model::note::Note;
 use caelumora_model::removal::Removal;
@@ -369,6 +369,25 @@ impl MemberView {
         self.state.introduction().await
     }
 
+    /// The name of an agent member's personality, without its scope, and
+    /// whether the agent runs here or elsewhere (issue 244). Public, like
+    /// its introduction - not the personality itself, which stays its
+    /// readers'. `None` for a member that is no agent and for an agent
+    /// whose personality is gone.
+    ///
+    /// # Errors
+    /// `Failed` if it cannot be read.
+    pub async fn personality(&self) -> ViewResult<Option<(String, PersonalityKind)>> {
+        Ok(self.state.personality().await?.map(|personality| (personality.name.to_string(), personality.kind)))
+    }
+
+    /// Who owns an agent member (issue 244): whose authority it acts with
+    /// and who answers for its tool calls. `None` for a member that is no
+    /// agent or no longer exists.
+    pub fn owner(&self) -> Option<ActorId> {
+        self.state.attributes().map(|attributes| attributes.owner_id)
+    }
+
     /// Whether the viewer may see what this member saw when it produced a
     /// message (`ReadAgentContext`, issue 41) - only ever for agents.
     pub async fn may_read_context(&self) -> bool {
@@ -402,14 +421,17 @@ impl MemberView {
     /// of its messages (`RetryMessage`, issues 234, 242) - only ever an
     /// agent taking part that answers again, not one that runs elsewhere.
     /// Whether it does is the agent's to decide. If its kind cannot be
-    /// read, it is not offered.
+    /// read, it is not offered; nor if its personality is gone: then it is
+    /// not run (issue 189).
     pub async fn may_retry(&self) -> bool {
         if self.former {
             return false;
         }
-        match self.state.can_retry().await {
-            Ok(true) => self.views().security().may_retry_message(self.views().context(), &self.channel.channel.security_attributes).await,
-            Ok(false) => false,
+        match self.state.personality().await {
+            Ok(Some(personality)) if personality.kind.can_retry() => {
+                self.views().security().may_retry_message(self.views().context(), &self.channel.channel.security_attributes).await
+            }
+            Ok(_) => false,
             Err(e) => {
                 warn!("Reading whether {} can retry failed: {:#}", self.id(), e);
                 false
@@ -551,7 +573,8 @@ impl MemberView {
 
     /// The member as the viewer sees it at this moment (issue 80), with
     /// the details `detail` asks for - those of an agent taken from its
-    /// state, read once for all of them. If it cannot be read, they are
+    /// state, read once for all of them; who it is (`PROFILE`) from its
+    /// personality, its owner and a user's profile. What cannot be read is
     /// left out.
     pub async fn snapshot(&self, detail: Detail) -> MemberSnapshot {
         let mut wanted = detail & (Detail::USAGE | Detail::NOTES | Detail::APPROVALS);
@@ -564,6 +587,20 @@ impl MemberView {
                 .ok(),
             _ => None,
         };
+        let (mut introduction, mut personality, mut owner, mut owner_name) = (None, None, None, None);
+        if detail.contains(Detail::PROFILE) {
+            introduction = self.introduction().await
+                .inspect_err(|e| warn!("Reading the introduction of {} failed: {:#}", self.id(), e))
+                .ok().flatten();
+            personality = self.personality().await
+                .inspect_err(|e| warn!("Reading the personality of {} failed: {:#}", self.id(), e))
+                .ok().flatten();
+            owner = self.owner();
+            if let Some(owner) = owner {
+                owner_name = self.views().name_of(owner).await;
+            }
+        }
+        let (personality, personality_kind) = personality.unzip();
         let (mut usage, mut notes, mut pending_approvals) = (None, Vec::new(), Vec::new());
         if let Some(state) = &state {
             if wanted.contains(Detail::USAGE) {
@@ -592,6 +629,11 @@ impl MemberView {
             notes,
             pending_approvals,
             left: self.left.clone(),
+            introduction,
+            personality,
+            personality_kind,
+            owner,
+            owner_name,
         }
     }
 }
