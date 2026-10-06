@@ -357,10 +357,6 @@ pub struct ChannelResponse {
     /// Whether the requesting user may rename the channel and add or remove
     /// its participants (issue 46).
     pub can_change: bool,
-    /// Whether the requesting user may ask an agent of the channel to
-    /// answer again instead of one of its messages (issue 234); whether it
-    /// does is the agent's to decide.
-    pub can_retry: bool,
     /// Who took part and left (issue 164), in the order they left, each
     /// with `left`: who removed them and when.
     pub former_members: Vec<ChannelMemberResponse>,
@@ -378,7 +374,6 @@ impl From<snapshot::ChannelSnapshot> for ChannelResponse {
             classification: view.classification,
             language: view.language,
             can_change: view.can_change,
-            can_retry: view.can_retry,
             former_members: view.former_members.into_iter().filter_map(ChannelMemberResponse::of).collect(),
         }
     }
@@ -402,6 +397,12 @@ pub struct ChannelMemberResponse {
     /// calls (issue 14) - only ever for agents taking part. Everybody sees
     /// a pending approval; only who may approve is asked.
     pub can_approve: bool,
+    /// Whether the requesting user may ask this participant to answer again
+    /// instead of one of its messages or of its answer under way (issues
+    /// 234, 235, 242) - only ever an agent taking part that answers again,
+    /// not one that runs elsewhere. Whether it does is the agent's to
+    /// decide.
+    pub can_retry: bool,
     /// What the participant's model calls in the channel used (issue 209):
     /// given by the snapshot of the channel's stream and for a participant
     /// asked for alone, not where channels are listed.
@@ -432,6 +433,7 @@ impl ChannelMemberResponse {
             can_read_context: view.can_read_context,
             can_read_tools: view.can_read_tools,
             can_approve: view.can_approve,
+            can_retry: view.can_retry,
             usage: view.usage,
             left: view.left,
             can_delete: view.can_delete,
@@ -733,7 +735,7 @@ mod tests {
     #[test]
     fn a_channel_view_is_answered_with_kinds_and_a_name_for_the_deleted() {
         let (alice, approver) = (ActorId::User(UserId::new()), ActorId::Approver(ApproverId(Uuid::new_v4())));
-        let member = |id, name: Option<&str>| snapshot::MemberSnapshot { id, name: name.map(str::to_string), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), left: None, can_delete: false, turn_under_way: None };
+        let member = |id, name: Option<&str>| snapshot::MemberSnapshot { id, name: name.map(str::to_string), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, can_retry: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), left: None, can_delete: false, turn_under_way: None };
         let view = snapshot::ChannelSnapshot {
             id: ChannelId::new(),
             name: "main".to_string(),
@@ -742,14 +744,13 @@ mod tests {
             classification: Classification::CHANNEL_DEFAULT,
             language: None,
             can_change: true,
-            can_retry: true,
             members: vec![member(alice, None), member(approver, Some("Approver")), member(ActorId::System, Some("system"))],
             former_members: Vec::new(),
         };
 
         let response = ChannelResponse::from(view);
 
-        assert!(response.can_change && response.can_retry);
+        assert!(response.can_change);
         let kinds: Vec<_> = response.members.iter().map(|m| (m.kind, m.name.as_str())).collect();
         assert_eq!(kinds, [(ParticipantKind::User, UNKNOWN), (ParticipantKind::Approver, "Approver")], "the system is no participant");
     }
@@ -768,7 +769,7 @@ mod tests {
             written_at: chrono::Utc::now(),
         };
         let member = |id, name: &str, notes: Vec<Note>| snapshot::MemberSnapshot {
-            id, name: Some(name.to_string()), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, usage: None, notes, pending_approvals: Vec::new(),
+            id, name: Some(name.to_string()), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, can_retry: false, usage: None, notes, pending_approvals: Vec::new(),
             left: None, can_delete: false, turn_under_way: None,
         };
         let channel = snapshot::ChannelSnapshot {
@@ -779,7 +780,6 @@ mod tests {
             classification: Classification::CHANNEL_DEFAULT,
             language: None,
             can_change: false,
-            can_retry: false,
             members: vec![member(alice, "alice", Vec::new()), member(helper, "Helper", vec![note])],
             former_members: Vec::new(),
         };
@@ -810,7 +810,7 @@ mod tests {
     fn a_former_member_is_answered_apart_with_who_removed_it_and_when() {
         let (alice, helper) = (ActorId::User(UserId::new()), ActorId::Agent(caelumora_model::agent::AgentId::new()));
         let left = caelumora_model::removal::Removal::now(alice);
-        let member = |id, left| snapshot::MemberSnapshot { id, name: Some("x".to_string()), handle: None, can_read_context: true, can_read_tools: false, can_approve: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), left, can_delete: false, turn_under_way: None };
+        let member = |id, left| snapshot::MemberSnapshot { id, name: Some("x".to_string()), handle: None, can_read_context: true, can_read_tools: false, can_approve: false, can_retry: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), left, can_delete: false, turn_under_way: None };
         let view = snapshot::ChannelSnapshot {
             id: ChannelId::new(),
             name: "main".to_string(),
@@ -819,7 +819,6 @@ mod tests {
             classification: Classification::CHANNEL_DEFAULT,
             language: None,
             can_change: true,
-            can_retry: true,
             members: vec![member(alice, None)],
             former_members: vec![member(helper, Some(left.clone()))],
         };
@@ -833,7 +832,7 @@ mod tests {
     #[test]
     fn what_a_participant_used_is_answered_only_where_it_was_read() {
         let usage = TokenUsage { calls: 2, prompt_tokens: 300, completion_tokens: 20, last_call_tokens: 170, context_size: Some(8192) };
-        let member = |usage| snapshot::MemberSnapshot { id: ActorId::User(UserId::new()), name: Some("alice".to_string()), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, usage, notes: Vec::new(), pending_approvals: Vec::new(), left: None, can_delete: false, turn_under_way: None };
+        let member = |usage| snapshot::MemberSnapshot { id: ActorId::User(UserId::new()), name: Some("alice".to_string()), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, can_retry: false, usage, notes: Vec::new(), pending_approvals: Vec::new(), left: None, can_delete: false, turn_under_way: None };
 
         let json = serde_json::to_value(ChannelMemberResponse::of(member(Some(usage))).unwrap()).unwrap();
         assert_eq!(json["usage"], serde_json::json!({ "calls": 2, "prompt_tokens": 300, "completion_tokens": 20, "last_call_tokens": 170, "context_size": 8192 }));

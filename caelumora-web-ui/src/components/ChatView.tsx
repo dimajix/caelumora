@@ -335,14 +335,17 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
     }
   };
 
+  /** Whether the user may ask `sender` to answer again: a member whose `can_retry` allows it (issue 242). */
+  const mayRetryOf = (sender: string) => members.some(m => actorKey(m.id) === sender && m.can_retry);
+
   /**
    * Whether the user may ask the agent that said `msg` to answer again (issue
-   * 234): the last message of the chat, an agent's, while nothing is being
-   * generated. The agent has the last word; this is an offer, not a promise.
+   * 234): the last message of the chat, of an agent that may be asked, while
+   * nothing is being generated. The agent has the last word; this is an
+   * offer, not a promise.
    */
   const mayRetry = (msg: Message) => {
-    if (!participant || !channel?.can_retry || answers.length > 0 || !msg.id) return false;
-    if (typeof msg.sender_id !== 'object' || msg.sender_id === null || !('Agent' in msg.sender_id)) return false;
+    if (!participant || answers.length > 0 || !msg.id || !msg.sender_id || !mayRetryOf(actorKey(msg.sender_id))) return false;
     const last = [...messages].reverse().find(m => m.id && !m.revoked);
     return last?.id === msg.id;
   };
@@ -798,9 +801,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
 
   /**
    * Asks for another answer instead of `answer`, still under way (issue
-   * 235): offered once its turn is known and where `can_retry` allows it.
-   * Refused if the answer ended meanwhile; the retry icon on its last
-   * message is then the way.
+   * 235): offered once its turn is known and where its answerer's
+   * `can_retry` allows it (issue 242). Refused if the answer ended
+   * meanwhile; the retry icon on its last message is then the way.
    */
   const retryAnswer = async (answer: Answer) => {
     const uuid = answererUuid(answer);
@@ -1010,7 +1013,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
                   generating…
                 </span>
                 <span className="ml-auto inline-flex items-center gap-1">
-                  {channel?.can_retry && answer.turnId && (
+                  {answer.turnId && mayRetryOf(answer.sender) && (
                     <button
                       type="button"
                       onClick={() => void retryAnswer(answer)}

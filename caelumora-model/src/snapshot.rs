@@ -92,10 +92,6 @@ pub struct ChannelSnapshot {
     /// Whether the viewer may rename the channel and add or remove its
     /// participants (`UpdateChannel`, issue 46).
     pub can_change: bool,
-    /// Whether the viewer may ask an agent of the channel to answer again
-    /// instead of one of its messages (`RetryMessage`, issue 234) - whether
-    /// the agent does is its own to decide.
-    pub can_retry: bool,
     /// Its participants, in the order of the channel - with
     /// `Detail::MEMBERS`.
     pub members: Vec<MemberSnapshot>,
@@ -133,6 +129,12 @@ pub struct MemberSnapshot {
     /// Whether the viewer may approve this participant's tool calls
     /// (`ApproveToolCall`, issue 14) - only ever for agents taking part.
     pub can_approve: bool,
+    /// Whether the viewer may ask this participant to answer again instead
+    /// of one of its messages or of its answer under way (`RetryMessage`,
+    /// issues 234, 242) - only ever for agents taking part that answer
+    /// again, not for one that runs elsewhere. Whether it does is the
+    /// agent's own to decide.
+    pub can_retry: bool,
     /// The turn of the answer the member is giving now (issue 240), read
     /// from the running channel: only an agent run here in a turn that can
     /// still be ended has one - not an external agent, whose answers are its

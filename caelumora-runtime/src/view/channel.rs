@@ -126,12 +126,6 @@ impl ChannelView {
         self.views().security().may_change_channel(self.views().context(), &self.channel.security_attributes).await
     }
 
-    /// Whether the viewer may ask an agent of the channel to answer again
-    /// instead of one of its messages (`RetryMessage`, issue 234).
-    pub async fn may_retry(&self) -> bool {
-        self.views().security().may_retry_message(self.views().context(), &self.channel.security_attributes).await
-    }
-
     /// Its participants, in the order of the channel.
     pub async fn members(&self) -> Vec<MemberView> {
         let mut members = Vec::with_capacity(self.channel.participants.len());
@@ -289,7 +283,6 @@ impl ChannelView {
             classification: self.channel.classification.clone(),
             language: self.channel.language.clone(),
             can_change: self.may_change().await,
-            can_retry: self.may_retry().await,
             members,
             former_members,
         }
@@ -401,6 +394,25 @@ impl MemberView {
         match self.state.attributes() {
             Some(attributes) if !self.former => self.views().security().may_approve(self.views().context(), attributes, &self.channel.channel.security_attributes).await,
             _ => false,
+        }
+    }
+
+    /// Whether the viewer may ask the member to answer again instead of one
+    /// of its messages (`RetryMessage`, issues 234, 242) - only ever an
+    /// agent taking part that answers again, not one that runs elsewhere.
+    /// Whether it does is the agent's to decide. If its kind cannot be
+    /// read, it is not offered.
+    pub async fn may_retry(&self) -> bool {
+        if self.former {
+            return false;
+        }
+        match self.state.can_retry().await {
+            Ok(true) => self.views().security().may_retry_message(self.views().context(), &self.channel.channel.security_attributes).await,
+            Ok(false) => false,
+            Err(e) => {
+                warn!("Reading whether {} can retry failed: {:#}", self.id(), e);
+                false
+            }
         }
     }
 
@@ -552,6 +564,7 @@ impl MemberView {
             can_read_context: self.may_read_context().await,
             can_read_tools: self.may_read_tools().await,
             can_approve: self.may_approve().await,
+            can_retry: self.may_retry().await,
             can_delete: self.may_delete().await,
             turn_under_way: self.turn_under_way(),
             usage,

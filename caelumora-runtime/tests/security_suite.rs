@@ -641,11 +641,14 @@ async fn a_message_is_reclassified_by_its_author_or_the_channels_owner() {
 /// again is its own to decide; a message no agent said is refused after
 /// the question. An answer under way (issue 235) is asked for again under
 /// the same question, asked before anything of the agent is looked at.
+/// It is offered of an agent by the same question (issue 242).
 #[tokio::test]
 async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
     use caelumora_model::actor::ActorEvent;
     let world = World::new().await;
-    let session = world.shared_session(&[], &[]).await;
+    let global = world.personality("global", None, &[]).await;
+    let helper = world.agent("helper", world.alice, &global).await;
+    let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
     world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
@@ -660,8 +663,9 @@ async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
     assert!(matches!(refused.expect_err("no agent answers").downcast_ref::<ChannelError>(), Some(ChannelError::NotAParticipant { .. })));
     assert_eq!(asked, checks(&["bob: RetryMessage(alice's) yes"]), "an answer under way by the same question");
     let view = world.manager.views(Viewer::new(World::as_user(world.bob))).session(session.id()).await.unwrap().channel(main.id()).await.unwrap();
-    let (offered, asked) = world.asked(view.may_retry()).await;
-    assert!(offered, "and offered to him");
+    let member = view.member(ActorId::Agent(helper)).await.expect("the agent is a member");
+    let (offered, asked) = world.asked(member.may_retry()).await;
+    assert!(offered, "and offered to him, of the agent (issue 242)");
     assert_eq!(asked, checks(&["bob: RetryMessage(alice's) yes"]), "by the same question");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }

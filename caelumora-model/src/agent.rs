@@ -46,6 +46,18 @@ pub enum PersonalityKind {
     External,
 }
 
+impl PersonalityKind {
+    /// Whether an agent of this kind can be asked to answer again instead
+    /// of one of its messages (issue 234): not one that runs elsewhere,
+    /// whose remote side keeps what it was given (`RetryRefused::Elsewhere`).
+    pub fn can_retry(self) -> bool {
+        match self {
+            Self::Internal => true,
+            Self::External => false,
+        }
+    }
+}
+
 /// An agent's traits: its components and how confidential its reasoning is.
 /// Written by hand, too (a seed file, issue 105): the fields with a default
 /// may be left out there (issue 108).
@@ -591,6 +603,12 @@ pub(crate) mod tests {
         let external: Personality = serde_json::from_value(written("external")).unwrap();
         assert_eq!(external.kind, PersonalityKind::External);
         assert!(serde_json::from_value::<Personality>(written("remote")).is_err(), "no other kind");
+    }
+
+    #[test]
+    fn only_an_agent_run_here_can_retry() {
+        assert!(PersonalityKind::Internal.can_retry());
+        assert!(!PersonalityKind::External.can_retry(), "its remote side keeps what it was given");
     }
 
     #[test]

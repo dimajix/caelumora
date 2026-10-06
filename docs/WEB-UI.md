@@ -184,15 +184,16 @@ else who may read it - the session's owner, say - is shown its history and no in
     classification of a modified message stays as it is; it is changed as before, with the shield
     icon.
 *   **Asking for another answer** (issue 234). The last message of the chat, if an agent's, has a
-    retry icon while nothing is being generated and the channel's `can_retry` allows it (`POST
-    …/messages/{mid}/retry`). The agent decides: on `RetryAccepted` it is shown as answering, its
-    message turns into a placeholder as it takes it back, and its new answer follows; on
-    `RetryRejected` a notice "Not answered again" says why, in this page's words for each `reason`,
-    and is gone on reload like a failed turn. An answer still under way has a retry icon of its own
-    once its turn is known (issue 235): `POST …/participants/{aid}/retry` with the turn. Refused
-    if the answer ended meanwhile - its last message then has the icon. On `RetryAccepted` of a
-    turn, the messages of that turn shown so far leave the chat: they never reached the history,
-    so a reload agrees.
+    retry icon while nothing is being generated and its member's `can_retry` allows it (`POST
+    …/messages/{mid}/retry`) - not of an external agent, which never answers again (issue 242). The
+    agent decides: on `RetryAccepted` it is shown as answering, its message turns into a placeholder
+    as it takes it back, and its new answer follows; on `RetryRejected` a notice "Not answered
+    again" says why, in this page's words for each `reason`, and is gone on reload like a failed
+    turn. An answer still under way has a retry icon of its own once its turn is known and its
+    member's `can_retry` allows it (issue 235): `POST …/participants/{aid}/retry` with the turn.
+    Refused if the answer ended meanwhile - its last message then has the icon. On `RetryAccepted`
+    of a turn, the messages of that turn shown so far leave the chat: they never reached the
+    history, so a reload agrees.
 *   **Approvals.** A tool call that needs approval is shown to everybody, with approve and deny only
     for who may approve the agent's calls (`can_approve` of the member, issue 14); everybody else is
     told that it waits for whoever is responsible for the agent. Once this user answered, it waits

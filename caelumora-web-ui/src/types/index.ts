@@ -79,6 +79,13 @@ export interface ChannelMember {
    */
   can_approve: boolean;
   /**
+   * Whether you may ask it to answer again instead of one of its messages or
+   * of its answer under way (issues 234, 235, 242) - only ever an agent taking
+   * part that answers again, not one that runs elsewhere. Whether it does is
+   * the agent's to decide.
+   */
+  can_retry: boolean;
+  /**
    * The turn of the answer it is giving now (issue 240), as `ResponseStarted`
    * named it; absent if none - also for an external agent.
    */
@@ -128,11 +135,6 @@ export interface ChannelResponse {
   language: string | null;
   /** Whether you may rename it and add or remove participants (issue 46). */
   can_change: boolean;
-  /**
-   * Whether you may ask an agent in it to answer again instead of one of its
-   * messages (issue 234); whether it does is the agent's to decide.
-   */
-  can_retry: boolean;
   /** Who took part and left (issue 164), in the order they left, each with `left`. */
   former_members: ChannelMember[];
 }

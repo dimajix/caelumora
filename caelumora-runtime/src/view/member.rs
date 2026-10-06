@@ -9,14 +9,14 @@
 //! hands out if it is an agent, so that no other kind has to answer for
 //! what it does not have. Both kinds of agent keep the same state (issue
 //! 206): which kind it is does not matter here. Its personality is read
-//! for its introduction alone, when that is first asked for, not for every
-//! member looked at (issue 189).
+//! for its introduction and for whether it answers again (issue 242), when
+//! either is first asked for, not for every member looked at (issue 189).
 
 use super::context::AgentContextView;
 use super::{ViewError, ViewResult, Views};
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
-use caelumora_model::agent::{Agent, AgentChannelState, AgentId};
+use caelumora_model::agent::{Agent, AgentChannelState, AgentId, Personality};
 use caelumora_model::channel::Participant;
 use caelumora_model::digest::Digest;
 use caelumora_model::mention::handle_of;
@@ -60,6 +60,16 @@ pub(super) trait MemberState: Send + Sync + Debug {
     fn agent(&self) -> Option<&AgentMember> {
         None
     }
+
+    /// Whether it can be asked to answer again instead of one of its
+    /// messages (issue 242): an agent whose kind does
+    /// (`PersonalityKind::can_retry`).
+    ///
+    /// # Errors
+    /// `Failed` if it cannot be read.
+    async fn can_retry(&self) -> ViewResult<bool> {
+        Ok(false)
+    }
 }
 
 /// The member `participant` of channel `channel`, as `views` read it: its
@@ -84,7 +94,7 @@ pub(super) async fn member_state(views: &Views, participant: &Participant, chann
                 member: AgentMember(StateRef { agent: agent.id, channel, store: Arc::clone(views.states()) }),
                 agent,
                 store: Arc::clone(views.entities()),
-                introduction: OnceCell::new(),
+                personality: OnceCell::new(),
             }),
             // A deleted agent keeps its name (issue 164), nothing else.
             None => Arc::new(GoneMember { name: views.deleted_agent_name(*id).await }),
@@ -171,14 +181,25 @@ impl StateRef {
 
 /// An agent, of either kind: its name and attributes from its document at
 /// once, its state in the channel when it is asked for; its personality,
-/// which says how it is introduced, read once, when that is first needed
-/// (issue 189).
+/// which says how it is introduced and whether it answers again, read once,
+/// when that is first needed (issue 189) - `None` if it is gone.
 #[derive(Debug)]
 struct AgentMemberState {
     agent: Agent,
     member: AgentMember,
     store: Arc<dyn EntityStore>,
-    introduction: OnceCell<Option<String>>,
+    personality: OnceCell<Option<Personality>>,
+}
+
+impl AgentMemberState {
+    /// Its personality, read when first asked for; `None` if it is gone.
+    async fn personality(&self) -> ViewResult<Option<&Personality>> {
+        let personality = self.personality.get_or_try_init(|| async {
+            self.store.get_personality(&SecurityContext::system(), self.agent.personality_id).await.optional()
+                .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context(format!("reading the personality of agent {}", self.agent.id))))
+        }).await?;
+        Ok(personality.as_ref())
+    }
 }
 
 #[async_trait]
@@ -190,12 +211,13 @@ impl MemberState for AgentMemberState {
     /// How its personality introduces it; nothing if the personality is
     /// gone.
     async fn introduction(&self) -> ViewResult<Option<String>> {
-        let introduction = self.introduction.get_or_try_init(|| async {
-            let personality = self.store.get_personality(&SecurityContext::system(), self.agent.personality_id).await.optional()
-                .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context(format!("reading the personality of agent {}", self.agent.id))))?;
-            Ok::<_, ViewError>(personality.and_then(|personality| personality.introduction))
-        }).await?;
-        Ok(introduction.clone())
+        Ok(self.personality().await?.and_then(|personality| personality.introduction.clone()))
+    }
+
+    /// As its personality's kind says; not if the personality is gone: then
+    /// it is not run (issue 189).
+    async fn can_retry(&self) -> ViewResult<bool> {
+        Ok(self.personality().await?.is_some_and(|personality| personality.kind.can_retry()))
     }
 
     fn attributes(&self) -> Option<&SecurityAttributes> {

@@ -649,6 +649,8 @@ mod tests {
         assert_eq!(member.private_notes().await.unwrap(), (Vec::new(), None));
         assert!(member.notes().await.unwrap().expect("an agent").notes.is_empty(), "it writes none");
         assert!(for_alice.notes().await.unwrap().iter().all(|published| published.notes.is_empty()));
+        assert!(!member.may_retry().await, "it runs elsewhere and does not answer again (issue 242)");
+        assert!(!member.snapshot(Detail::empty()).await.can_retry);
     }
 
     #[tokio::test]
@@ -686,6 +688,7 @@ mod tests {
                 assert!(!main.may_change().await, "{state}: a participant does not change it");
                 for member in main.members().await {
                     assert!(!member.may_read_context().await, "{state}: bob reads no agent's context");
+                    assert_eq!(member.may_retry().await, member.id() == ActorId::Agent(helper.id), "{state}: a participant asks an agent to answer again, nobody else");
                 }
 
                 let hidden = for_bob.channel(hers).await.expect_err("not bob's to read");
