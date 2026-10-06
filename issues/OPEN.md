@@ -87,6 +87,12 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [166](166-memory-as-topic-documents.md) | open | Agent memory is a flat list of one-line entries, all of them in every prompt, with nothing to group, revise or fetch them by topic. |
 | [237](237-erasing-a-message.md) | open | A message written by mistake can be taken back but not erased: it stays in every participant's record and in the contexts built on it. |
 
+## Integrations
+
+| No. | Status | Issue |
+|---|---|---|
+| [236](236-external-agent-not-told-of-changes.md) | open | A remote agent is not told when a message it was given is modified or taken back, so it goes on answering the old version. |
+
 ## Open architecture questions
 
 | No. | Status | Issue |

@@ -192,7 +192,7 @@ message, and what they said in reply stays.
     An agent that never held the message records nothing. An external agent's transcript holds only
     what the remote agent has not been given yet, so a change reaches the remote agent only if the
     message did not: A2A has no way to change what was sent, and the remote agent is not told
-    either ([236](../issues/236-external-agent-not-told-of-changes.md), rejected).
+    either yet ([236](../issues/236-external-agent-not-told-of-changes.md)).
 *   **Reclassifying** a message goes the same way
     ([239](../issues/239-reclassified-message-not-in-agents-state.md)):
     `UserActor::reclassify_message(message, classification)` asks `Reclassify` - its author, or the
