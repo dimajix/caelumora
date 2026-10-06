@@ -157,7 +157,7 @@ async fn take_in(
 async fn reject_retries(retries: Vec<Envelope>, reason: RetryRefused, own: ActorId, name: &str, output: &dyn EventSender) {
     for retry in retries {
         let ActorEvent::RetryRequested { message, .. } = retry.event else { continue };
-        let rejected = ActorEvent::RetryRejected { message, reason: reason.to_string() };
+        let rejected = ActorEvent::RetryRejected { message, reason };
         if let Err(e) = Answering::to(&retry, own, name.to_string()).send(rejected, output).await {
             warn!("Agent {} cannot reject a request to answer again: {:#}", own, e);
         }

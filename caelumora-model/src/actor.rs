@@ -1,4 +1,4 @@
-use crate::agent::AgentId;
+use crate::agent::{AgentId, RetryRefused};
 use crate::approval::{ApprovalId, ApprovalRequest, ApprovalResponse, ApproverId};
 use crate::channel::ChannelId;
 use crate::message::{Message, MessageId};
@@ -186,12 +186,12 @@ pub enum ActorEvent {
     RetryAccepted {
         message: MessageId,
     },
-    /// The agent does not answer again instead of `message` (issue 234);
-    /// `reason` is meant for users, as `TurnFailed::message` is. Shown to
-    /// users and never written to the history.
+    /// The agent does not answer again instead of `message`, for `reason`
+    /// (issue 234) - one of a known few, which a user interface words
+    /// itself. Shown to users and never written to the history.
     RetryRejected {
         message: MessageId,
-        reason: String,
+        reason: RetryRefused,
     },
 }
 
@@ -395,7 +395,7 @@ impl Envelope {
                 format!("RetryAccepted(sender_id={}, mid={})", ctx.sender_id, message)
             }
             ActorEvent::RetryRejected { message, reason } => {
-                format!("RetryRejected(sender_id={}, mid={}, reason={})", ctx.sender_id, message, reason)
+                format!("RetryRejected(sender_id={}, mid={}, reason={:?})", ctx.sender_id, message, reason)
             }
             _ => {
                 format!("{:?}", self.event)

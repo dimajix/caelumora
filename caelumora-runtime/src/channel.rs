@@ -2076,7 +2076,7 @@ mod tests {
         alice.request_retry(first.id).await.expect("asked");
         let ActorEvent::RetryRejected { message, reason } = shown_by(&mut events, agent, "RetryRejected").await else { unreachable!() };
         assert_eq!(message, first.id);
-        assert_eq!(reason, caelumora_model::agent::RetryRefused::NotLast.to_string());
+        assert_eq!(reason, caelumora_model::agent::RetryRefused::NotLast);
         assert!(channel.message(first.id).await.is_some_and(|m| m.revoked.is_none()), "nothing taken back");
         assert_eq!(model.seen.lock().unwrap().len(), 2, "and no model asked again");
         running.abort();
@@ -3437,7 +3437,7 @@ mod tests {
 
         channel.user_actor(alice_of(&context)).unwrap().request_retry(answer.id).await.expect("asked");
         let ActorEvent::RetryRejected { message, reason } = shown_by(&mut events, agent, "RetryRejected").await else { unreachable!() };
-        assert_eq!((message, reason), (answer.id, caelumora_model::agent::RetryRefused::Elsewhere.to_string()), "the remote agent keeps what it was given");
+        assert_eq!((message, reason), (answer.id, caelumora_model::agent::RetryRefused::Elsewhere), "the remote agent keeps what it was given");
         running.abort();
     }
 

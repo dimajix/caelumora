@@ -331,7 +331,7 @@ impl AgentActor {
         let taken_back = match state.retried(message, self.id()) {
             Ok(taken_back) => taken_back,
             Err(refused) => {
-                answering.send(ActorEvent::RetryRejected { message, reason: refused.to_string() }, output).await?;
+                answering.send(ActorEvent::RetryRejected { message, reason: refused }, output).await?;
                 return Ok(false);
             }
         };

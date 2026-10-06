@@ -522,3 +522,8 @@ describe the events, the routes and what revoking does not do.
   answer replaced, the model given the conversation without it; a request rejected once more was
   said; an external agent's rejection - and the security suite. CHANNELS.md (*Answering again*),
   AGENT-TURN.md, SECURITY.md.
+- **2026-10-06** — On the maintainer's proposal, `RetryRejected::reason` is the `RetryRefused`
+  itself, not its text - which answers open question 8: the reasons are a closed set, unlike the
+  failures `TurnFailed` tells, so a user interface words them itself and may react to each. It is
+  written in `snake_case` (`not_its_answer`, `not_last`, `calls_ran`, `asked_again`, `elsewhere`);
+  its `Display` stays for logs and the TUI.

@@ -222,8 +222,9 @@ without forking. It is a request to the agent, not an operation of the channel: 
     own state, and with `MessageRevoked` for what the channel holds - and begins a turn in the
     request's contexts, as it does for `ResponseRequested`: its model is given the conversation as
     it stood before the message, as it stands now. What it then says is routed as any answer.
-    Otherwise it says why with `RetryRejected` (`RetryRefused`): not its answer, more was said or
-    done since, calls of tools that ran would be taken back, or it was asked again since.
+    Otherwise it says why with `RetryRejected`, whose `reason` is a `RetryRefused` - not its answer,
+    more was said or done since, calls of tools that ran would be taken back, asked again since, or
+    an external agent - one of a known few, which a user interface words itself.
 *   **An external agent** rejects every request to answer again: its remote agent keeps what it was
     given, and nothing here takes the answer back from it.
 
