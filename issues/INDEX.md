@@ -109,7 +109,10 @@ argues against it, and what came out of the last attempt.
 | [221](221-adding-session-participants.md) | open | A session's participants are fixed when it is created: nobody - neither a user nor an agent, existing or created from a personality - can be added to it later. |
 | [222](222-queued-requests-answered-one-by-one.md) | done | An agent - run here or external - asked while it answers works through every queued request afterwards, one answer each, to a conversation that has moved on. |
 | [223](223-full-inbox-drops-events.md) | open | An actor whose inbox is full - an agent in a long turn in a busy channel - loses what was said, requests and approvals without anyone learning of it. |
-| [234](234-modify-revoke-and-retry-messages.md) | in progress | A message once said can be neither changed nor taken back by its author, and an agent cannot be asked to answer again, so a mistake keeps influencing every later turn. |
+| [234](234-modify-revoke-and-retry-messages.md) | done | A message once said can be neither changed nor taken back by its author, and an agent cannot be asked to answer again, so a mistake keeps influencing every later turn. |
+| [235](235-retry-of-an-answer-under-way.md) | open | An answer still being generated cannot be asked for again; only stopping every agent of the channel gets there. |
+| [238](238-retry-of-an-older-answer.md) | open | Only an agent's last answer can be asked for again, and the alternatives of an answer are not kept. |
+| [239](239-reclassified-message-not-in-agents-state.md) | open | A reclassified message keeps its old classification in every agent's state, so a released message still raises the label of later answers. |
 
 ## Identity and access management
 
@@ -248,6 +251,7 @@ argues against it, and what came out of the last attempt.
 | [137](137-tools-in-recorded-context.md) | done | Which tools a model was offered, and how they were described to it, is recorded nowhere, so what an agent saw cannot be told in full. |
 | [176](176-participants-in-system-prompt.md) | done | An agent is told neither its own name nor who else is in its channel, and neither agents nor users have a description that says who they are. |
 | [224](224-what-agents-hear-of-others.md) | done | What an agent hears of others is shaped by the moderator and again by the external agent, and an agent run here that joins takes others' answers from the history unshaped, as if they were its own. |
+| [237](237-erasing-a-message.md) | open | A message written by mistake can be taken back but not erased: it stays in every participant's record and in the contexts built on it. |
 
 ## Maintenance
 
@@ -324,6 +328,7 @@ argues against it, and what came out of the last attempt.
 | [212](212-external-task-during-reclassification.md) | done | An external agent's task that began before its channel's classification was lowered is answered into the lowered channel, where a turn of an agent run here is given up. |
 | [213](213-external-task-taken-up-keeps-old-work.md) | done | An external agent's task taken up again by a later call keeps the work of the call that began it - its authority, envelope, bound and context - unless the remote agent tells the task as begun again. |
 | [217](217-external-agent-reasoning.md) | rejected | What an external agent reports while it works is dropped, so its messages carry no reasoning and the chat shows nothing until it answers. |
+| [236](236-external-agent-not-told-of-changes.md) | open | A remote agent is not told when a message it was given is modified or taken back, so it goes on answering the old version. |
 
 ## Open architecture questions
 

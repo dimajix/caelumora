@@ -31,7 +31,9 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [173](173-message-inspection.md) | open | Nothing examines what a message says before the channel routes it, so content that should be classified stricter, redacted or refused reaches every participant. |
 | [221](221-adding-session-participants.md) | open | A session's participants are fixed when it is created: nobody - neither a user nor an agent, existing or created from a personality - can be added to it later. |
 | [223](223-full-inbox-drops-events.md) | open | An actor whose inbox is full - an agent in a long turn in a busy channel - loses what was said, requests and approvals without anyone learning of it. |
-| [234](234-modify-revoke-and-retry-messages.md) | in progress | A message once said can be neither changed nor taken back by its author, and an agent cannot be asked to answer again, so a mistake keeps influencing every later turn. |
+| [235](235-retry-of-an-answer-under-way.md) | open | An answer still being generated cannot be asked for again; only stopping every agent of the channel gets there. |
+| [238](238-retry-of-an-older-answer.md) | open | Only an agent's last answer can be asked for again, and the alternatives of an answer are not kept. |
+| [239](239-reclassified-message-not-in-agents-state.md) | open | A reclassified message keeps its old classification in every agent's state, so a released message still raises the label of later answers. |
 
 ## Identity and access management
 
@@ -84,6 +86,13 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [65](65-generic-component-state.md) | open | The state of notes is hard-wired into the agent state, the turn, the stores and REST, so every further kind of component state needs changes to the core and branching must be taught each one. |
 | [22](22-skill-management.md) | open | Skills do not exist: there is no unit of procedural knowledge below a personality, and no rule for who may load one into a turn. |
 | [166](166-memory-as-topic-documents.md) | open | Agent memory is a flat list of one-line entries, all of them in every prompt, with nothing to group, revise or fetch them by topic. |
+| [237](237-erasing-a-message.md) | open | A message written by mistake can be taken back but not erased: it stays in every participant's record and in the contexts built on it. |
+
+## Integrations
+
+| No. | Status | Issue |
+|---|---|---|
+| [236](236-external-agent-not-told-of-changes.md) | open | A remote agent is not told when a message it was given is modified or taken back, so it goes on answering the old version. |
 
 ## Open architecture questions
 

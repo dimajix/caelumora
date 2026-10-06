@@ -1,6 +1,6 @@
 # 234 — A message once said can be neither changed nor taken back, and an answer not asked for again
 
-**Status:** in progress
+**Status:** done
 **Area:** Sessions & channels
 
 ## The problem
@@ -538,3 +538,24 @@ describe the events, the routes and what revoking does not do.
   anew; the context of the new answer gives the model the question alone; after a message of
   alice, the icon is gone, and a retry asked over REST is rejected with `not_last`, shown as the
   notice. *From here on retry works - the issue's "done when".*
+- **2026-10-06** — Step 7, and the issue done. The open questions of the plan:
+  1. Only the author modifies and takes back, as proposed (`ModifyMessage`, `RevokeMessage`).
+     Moderation by a channel's owner would be a policy's to allow - the actions carry the channel's
+     attributes for it - and for an agent's message a request to the agent; nobody asked for it.
+  2. A modified message is not marked for the model, as proposed.
+  3. A modification asks nobody to respond, as proposed.
+  4. A modification takes over content, reasoning, classification and mentions, never tool calls
+     or results (step 2).
+  5. Retry of an answer under way: [235](235-retry-of-an-answer-under-way.md).
+  6. External agents: changes are not told to the remote agent -
+     [236](236-external-agent-not-told-of-changes.md); retry is rejected (`Elsewhere`).
+  7. Missed changes: left to [223](223-full-inbox-drops-events.md), whose History says so.
+  8. `RetryRejected::reason` is a `RetryRefused` (above).
+  9. The original of a message taken back is shown to nobody on purpose; it stays where it was
+     recorded, which taking back says. Erasing it is [237](237-erasing-a-message.md).
+  10. Retry of an older answer, and keeping alternatives: [238](238-retry-of-an-older-answer.md),
+     which takes up what is left of [08](08-retry-and-edit-past-answers.md)'s branching.
+
+  The reclassification of a message, named under *Things to watch*, reaches no agent:
+  [239](239-reclassified-message-not-in-agents-state.md). ARCHITECTURE.md has the change of what
+  was said in *How a message travels*.

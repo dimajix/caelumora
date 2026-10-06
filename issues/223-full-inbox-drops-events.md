@@ -64,3 +64,8 @@ included, but an agent's turn is what holds a queue up for minutes.
 - **2026-10-04** — Issue created while resolving [222](222-queued-requests-answered-one-by-one.md):
   taking in everything queued at once makes a backlog harmless, but the queue a backlog waits in
   drops what does not fit.
+- **2026-10-06** — Since [234](234-modify-revoke-and-retry-messages.md), what a full inbox drops may
+  also be a change to a message - `MessageModified`, `MessageRevoked` - or a request to answer
+  again. A dropped change is lost for good: catching up (`MessageHistory::missing_from`) finds
+  messages an actor lacks, not changes it missed, so its store keeps the old version while the
+  channel's shows the new. Whatever this issue decides for messages has to hold for changes as well.
