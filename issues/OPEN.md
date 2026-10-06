@@ -48,7 +48,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [140](140-audit-log.md) | open | Acts that change who may see what - releases, participants, approvals, deletions - leave no record of who did them and when. |
 | [142](142-roles.md) | in progress | Users carry roles as strings, but nothing says which roles exist or what they grant - clearances among them. |
 | [181](181-where-roles-decide.md) | open | Nobody has reviewed where a user's roles - and soon an agent's - enter a permission check; today only the clearance at a channel's door asks for them. |
-| [150](150-impersonation-towards-the-agent.md) | in progress | A participant can write another participant's sender marker into their own message, and models believe it, so the agent may act on a consent nobody gave. |
 | [169](169-changing-classified-content.md) | open | Nothing says who may change something classified once it is written, or that what the writer has seen must fit into its classification. |
 
 ## Tools and approvals

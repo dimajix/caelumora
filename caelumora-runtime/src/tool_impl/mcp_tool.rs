@@ -46,7 +46,9 @@ struct McpToolConfig {
     /// or the discovery of them, may take.
     pub endpoint: RemoteEndpoint,
     /// Whether calls to this MCP server's tools require human approval.
-    #[serde(default)]
+    /// Left out, they do: a server may act outside, and what makes an agent
+    /// call it may be a consent nobody gave (issue 150).
+    #[serde(default = "approval_required")]
     pub requires_approval: bool,
     /// How the results of this server's tools are classified (issue 133):
     /// a result that may not flow into the agent's channel is withheld
@@ -74,6 +76,10 @@ impl McpError {
             McpError::Secret(_) => "its credentials are not available",
         }.to_string()
     }
+}
+
+fn approval_required() -> bool {
+    true
 }
 
 impl McpToolConfig {
@@ -374,7 +380,7 @@ mod tests {
         let config: McpToolConfig = serde_json::from_value(value).unwrap();
         assert!(config.endpoint.auth.is_none());
         assert_eq!(config.timeout(), Duration::from_secs(10));
-        assert!(!config.requires_approval);
+        assert!(config.requires_approval, "approval unless configured otherwise");
         assert!(serde_json::from_value::<McpToolConfig>(json!({ "endpoint": { "url": "x" }, "requires_aproval": true })).is_err(), "nothing unknown");
     }
 

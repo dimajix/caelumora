@@ -149,8 +149,9 @@ over the Streamable HTTP transport:
 *   **Credentials.** `auth.secret` names a secret, resolved through the secret chain (see
     [SECURITY.md](SECURITY.md)); it is never a literal credential.
 *   **Parameters.** `url` (required), `auth` (optional; only `bearer` so far), `timeout_secs`
-    (default 10, for discovery and for every call), `requires_approval` (default `false`, for
-    every tool of the server), `classification` and `description`.
+    (default 10, for discovery and for every call), `requires_approval` (default `true`, for every
+    tool of the server; see [What needs approval](#what-needs-approval)), `classification` and
+    `description`.
 *   **Calls.** Each call opens a connection of its own. The remote structured content is the result
     if there is one, else the joined text; a remote error is a failed call.
 *   **Interrupted calls.** An interrupted call (issue 161) drops its connection. rmcp then closes
@@ -196,6 +197,33 @@ pending - in `WaitingForApproval`, or stored right after asking - asks again, wi
 (`TurnState::pending_approvals`). The approver takes a request it does not know up as new, with a
 new timeout; one it still holds it only announces again, keeping the answers given so far. Answers
 given before a restart are lost with the approver's memory: the users are asked again.
+
+### What needs approval
+
+What the model believes about who said what is no ground for a consequence (issue
+[150](../issues/150-impersonation-towards-the-agent.md)): a participant can write another's sender
+marker into their own message, and models believe it. A call runs under the agent's permissions
+(`ActionType::CallTool`), never under those of whom the model takes for the speaker, so a faked
+marker gains the agent nothing it could not do anyway - but it can make the agent do it. What needs
+approval follows from that:
+
+*   **A tool that acts outside** needs it. `mcp_tool` requires approval unless its configuration
+    says `requires_approval: false`, which fits a server that only reads.
+*   **Releasing** a note, a private note or something remembered to a wider circle needs it
+    (`reclassify_…`, issue 133).
+*   **What stays in the conversation** needs none: reading (`read_notes`, `read_history`), within
+    what the agent may read and its channel may take in; the tools without an effect; and ending
+    the turn (`stop`, `bye`, `silence`) - an agent put to sleep on someone's word is woken with
+    `/wakeup`.
+*   **Notes and memory** need none either, although what the agent writes there may rest on a
+    faked word and from then on stands in the agent's name: a note before everyone in the channel
+    and in what other channels read of it, something remembered in the agent's other channels, seen
+    by nobody but the person responsible for it. That is accepted: an approval for every note would
+    leave notes unused, a note is shown to every member, and every entry records where it was made
+    (see [MEMORY.md](MEMORY.md)).
+
+Whoever approves decides on what the call does, not on the agent's account of why; what was said,
+and by whom, the context panel shows.
 
 ### Who may approve
 
@@ -336,11 +364,11 @@ A command answers the issuer alone (`/help`) or the whole channel (`/wakeup`).
 | `echo` | `echo_tool` | `message` | no | `SHOWN` | Returns its arguments unchanged. |
 | `sleep` | `sleep_tool` | `seconds` (optional, at most 60) | as configured, no by default | `SHOWN` | Waits, then says so; for testing a cancel or a stop while a tool runs. |
 | `calculate` | `calculator_tool` | `expression` | no | `SHOWN` | Evaluates a mathematical expression. |
-| `stop` | `stop_tool` | - | yes | `SHOWN` | Ends the turn: the agent has finished its task and goes to sleep. |
-| `bye` | `stop_tool` | - | yes | `SHOWN` | Ends the turn: the agent says good-bye and goes to sleep. |
-| `silence` | `stop_tool` | - | yes | `SHOWN` | Ends the turn without an answer; the agent stays idle. |
+| `stop` | `stop_tool` | - | no | `SHOWN` | Ends the turn: the agent has finished its task and goes to sleep. |
+| `bye` | `stop_tool` | - | no | `SHOWN` | Ends the turn: the agent says good-bye and goes to sleep. |
+| `silence` | `stop_tool` | - | no | `SHOWN` | Ends the turn without an answer; the agent stays idle. |
 | `create_plan` | `create_plan_tool` | `summary`, `steps` (each with `description`) | yes | `SHOWN` | Submits a multi-step plan; a plan in progress is extended, not replaced. |
-| `{id}__{name}` | `mcp_tool` | as the server declares | per `requires_approval` | `SHOWN` | A tool of a remote MCP server. |
+| `{id}__{name}` | `mcp_tool` | as the server declares | per `requires_approval`, yes by default | `SHOWN` | A tool of a remote MCP server. |
 | `note` | `notes` | `text` | no | `SHOWN` | Notes something in the channel, visible to every participant. |
 | `revoke_note` | `notes` | `id` | no | `SHOWN` | Revokes one of the agent's own notes. |
 | `read_notes` | `notes` | `channel` (optional) | no | `SHOWN` | Reads the notes of another channel, or of every readable channel. |

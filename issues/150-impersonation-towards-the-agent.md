@@ -1,6 +1,6 @@
 # 150 — A participant can pass themselves off as another to the agent
 
-**Status:** in progress
+**Status:** done
 **Area:** Identity and access management
 
 ## The problem
@@ -89,3 +89,21 @@ not verified by the model.
   - `xml` stays a choice for a model where it helps; it does not protect against a faked marker by
     itself (0 of 20).
   The issue stays in progress for the review of the tools and the mark in the web UI.
+- **2026-10-06** — The mark in the web UI (D) dropped: the people in the channel see every message
+  under its real sender anyway, so a faked marker deceives the model, not them; it would only come
+  a message earlier than the agent's answer that shows what it believed, and it rests on a guess of
+  each agent's sender format that a quote or a pasted chat log trips and prose escapes. Since
+  [236](236-external-agent-not-told-of-changes.md) a participant can also fake a notice of a change
+  to an earlier message; it is the same case.
+- **2026-10-06** — Done: the tools were reviewed (A). A call runs under the agent's permissions, not
+  under those of whom the model believes, so a faked marker can only make an agent do what it may
+  anyway. Decided with the maintainer:
+  - `mcp_tool` requires approval by default (`requires_approval: true`): a server may act outside.
+    One that only reads is configured with `false`.
+  - `stop`, `bye` and `silence` no longer require approval: ending the turn stays in the
+    conversation, and an agent put to sleep is woken with `/wakeup`.
+  - Notes, private notes and memory stay without approval: what the agent writes there may rest on
+    a faked word and stands in its name from then on, which is accepted - a note is shown to every
+    member and every entry records where it was made. Releasing one stays under approval.
+  - Reading and the tools without an effect need none.
+  TOOLS-AND-COMMANDS.md (*What needs approval*) and MEMORY.md record it.

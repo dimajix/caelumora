@@ -2565,7 +2565,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_sleeping_agent_woken_by_a_mention_answers_it() {
-        use caelumora_model::approval::ApprovalResponse;
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         use caelumora_model::message::MessageRole;
         use caelumora_model::tool::{ToolCall, ToolVisibility};
@@ -2586,16 +2585,8 @@ mod tests {
         }] };
         let model = Scripted(std::sync::Mutex::new([answer("Good bye.", stop), answer("I am back.", Vec::new())].into()));
         let Stuck { channel, context, agent, helper, mut events, running } = with_an_agent(Arc::new(model), components).await;
-        let request = tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                if let ActorEvent::ApprovalRequested(request) = events.recv().await.expect("the channel is running").event {
-                    break request;
-                }
-            }
-        }).await.expect("the call is put up for approval");
-        let alice = alice_of(&context);
-        channel.user_actor(alice).unwrap().send_approval(ApprovalResponse { id: request.id, agent_id: agent }, true).await.unwrap();
         settled(&helper, ActorState::Sleeping).await;
+        let alice = alice_of(&context);
 
         // The message and the request reach it together, and it was woken
         // before either: it answers (issue 222).
@@ -2611,7 +2602,6 @@ mod tests {
 
     #[tokio::test]
     async fn an_agent_that_calls_stop_ends_its_turn_with_the_call_and_sleeps() {
-        use caelumora_model::approval::ApprovalResponse;
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         use caelumora_model::message::MessageRole;
         use caelumora_model::tool::{ToolCall, ToolVisibility};
@@ -2630,19 +2620,8 @@ mod tests {
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
         }] };
-        let Stuck { channel, context, agent, helper, mut events, running } =
+        let Stuck { channel, agent, helper, running, .. } =
             with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([bye].into()))), components).await;
-
-        // `stop` needs approval; alice gives it.
-        let request = tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                if let ActorEvent::ApprovalRequested(request) = events.recv().await.expect("the channel is running").event {
-                    break request;
-                }
-            }
-        }).await.expect("the call is put up for approval");
-        let ActorId::User(alice) = context.initiator_id else { panic!("alice acts") };
-        channel.user_actor(alice).unwrap().send_approval(ApprovalResponse { id: request.id, agent_id: agent }, true).await.unwrap();
 
         // The turn ends with the call - the model is not asked again - and
         // the agent sleeps, as the tool asked; no turn is left behind.
@@ -2658,7 +2637,6 @@ mod tests {
     /// which sends it no message, it tells them so too.
     #[tokio::test]
     async fn an_agent_tells_the_users_where_it_stands_and_that_it_was_woken() {
-        use caelumora_model::approval::ApprovalResponse;
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         use caelumora_model::message::MessageRole;
         use caelumora_model::tool::{ToolCall, ToolVisibility};
@@ -2676,24 +2654,16 @@ mod tests {
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
         }] };
-        let Stuck { channel, context, agent, helper, mut events, running } =
-            with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([bye].into()))), components).await;
+        let (channel, context, agent, alice) = agent_channel(Arc::new(DummySecurityManager::new()), Arc::new(Scripted(std::sync::Mutex::new([bye].into()))), components).await;
         // What it sends, watched since before it ran.
+        let mut events = channel.observe();
+        let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
         assert_eq!(told_states(&mut events, agent, ActorState::Idle).await, [ActorState::Idle], "where it starts, before it is asked");
-        assert_eq!(told_states(&mut events, agent, ActorState::WaitingForApproval).await, [ActorState::Planning, ActorState::ExecutingTools, ActorState::WaitingForApproval], "it works, then waits for alice");
-        // What reaches alice, from here on.
-        let alice = alice_of(&context);
+        // What reaches alice, from before she asks.
         let mut shown = channel.user_actor(alice).unwrap().watch().events;
-
-        let request = tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                if let ActorEvent::ApprovalRequested(request) = events.recv().await.expect("the channel is running").event {
-                    break request;
-                }
-            }
-        }).await.expect("the call is put up for approval");
-        channel.user_actor(alice).unwrap().send_approval(ApprovalResponse { id: request.id, agent_id: agent }, true).await.unwrap();
-        assert_eq!(told_states(&mut shown, agent, ActorState::Sleeping).await, [ActorState::ExecutingTools, ActorState::Reflecting, ActorState::Sleeping], "each step it moves to, once");
+        channel.user_actor(alice).unwrap().send_message("hello".to_string(), None).await.unwrap();
+        let helper = channel.actor_by_id(ActorId::Agent(agent)).unwrap();
+        assert_eq!(told_states(&mut shown, agent, ActorState::Sleeping).await, [ActorState::Planning, ActorState::ExecutingTools, ActorState::Reflecting, ActorState::Sleeping], "each step it moves to, once");
 
         let woken = channel.wakeup(&context).await.expect("alice may wake it");
         assert_eq!(woken, ["helper"]);
@@ -3108,26 +3078,12 @@ mod tests {
 
     #[tokio::test]
     async fn lowering_the_channel_ends_a_turn_waiting_for_approval_at_once() {
-        use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         use caelumora_model::confidentiality::Confidentiality;
-        use caelumora_model::message::MessageRole;
-        use caelumora_model::tool::{ToolCall, ToolVisibility};
 
-        // `stop` needs approval, which nobody gives.
-        let bye = Message {
-            role: MessageRole::Assistant,
-            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "stop".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN }],
-            ..Message::new(Classification::CHANNEL_DEFAULT)
-        };
-        let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
-            id: "stop".to_string(),
-            kind: crate::tool_impl::stop_tool::STOP_TOOL_KIND.to_string(),
-            params: serde_json::Value::Null,
-            tags: vec![],
-            fail_policy: ComponentFailPolicy::FailClosed,
-        }] };
+        // Nobody approves the call.
+        let (call, components) = a_call_needing_approval();
         let Stuck { channel, context, agent, helper, mut events, running } =
-            with_an_agent_under(Arc::new(FlowRule), Arc::new(Scripted(std::sync::Mutex::new([bye].into()))), components).await;
+            with_an_agent_under(Arc::new(FlowRule), Arc::new(Scripted(std::sync::Mutex::new([call].into()))), components).await;
         settled(&helper, ActorState::WaitingForApproval).await;
 
         channel.reclassify(&context, Classification::general(Confidentiality::Public)).await.expect("permitted");
@@ -3152,24 +3108,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_cancel_ends_a_turn_waiting_for_approval_at_once() {
-        use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-        use caelumora_model::message::MessageRole;
-        use caelumora_model::tool::{ToolCall, ToolVisibility};
 
-        let bye = Message {
-            role: MessageRole::Assistant,
-            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "stop".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN }],
-            ..Message::new(Classification::CHANNEL_DEFAULT)
-        };
-        let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
-            id: "stop".to_string(),
-            kind: crate::tool_impl::stop_tool::STOP_TOOL_KIND.to_string(),
-            params: serde_json::Value::Null,
-            tags: vec![],
-            fail_policy: ComponentFailPolicy::FailClosed,
-        }] };
+        let (call, components) = a_call_needing_approval();
         let Stuck { channel, context, agent, helper, mut events, running } =
-            with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([bye].into()))), components).await;
+            with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([call].into()))), components).await;
         settled(&helper, ActorState::WaitingForApproval).await;
 
         channel.cancel(&context).await.expect("permitted");
@@ -3200,6 +3142,28 @@ mod tests {
         assert_eq!(answered, [caelumora_model::tool::ToolResultStatus::NotExecuted]);
     }
 
+    /// A call of `sleep` that needs approval, and the component that gives
+    /// it, for an agent to wait for its approval.
+    fn a_call_needing_approval() -> (Message, caelumora_model::component::ComponentConfig) {
+        use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+        use caelumora_model::message::MessageRole;
+        use caelumora_model::tool::{ToolCall, ToolVisibility};
+
+        let call = Message {
+            role: MessageRole::Assistant,
+            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "sleep".to_string(), arguments: serde_json::json!({ "seconds": 0 }), visibility: ToolVisibility::SHOWN }],
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        };
+        let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
+            id: "sleep".to_string(),
+            kind: crate::tool_impl::sleep_tool::SLEEP_TOOL_KIND.to_string(),
+            params: serde_json::json!({ "requires_approval": true }),
+            tags: vec![],
+            fail_policy: ComponentFailPolicy::FailClosed,
+        }] };
+        (call, components)
+    }
+
     /// The approval the approver asks the users for, from `events`.
     async fn approval_requested(events: &mut broadcast::Receiver<Envelope>) -> caelumora_model::approval::ApprovalRequest {
         tokio::time::timeout(Duration::from_secs(5), async {
@@ -3216,24 +3180,12 @@ mod tests {
 
     #[tokio::test]
     async fn a_turn_waiting_for_approval_can_be_decided_after_a_restart() {
-        use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         use caelumora_model::message::MessageRole;
-        use caelumora_model::tool::{ToolCall, ToolVisibility};
 
-        let bye = Message {
-            role: MessageRole::Assistant,
-            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "stop".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN }],
-            ..Message::new(Classification::CHANNEL_DEFAULT)
-        };
-        let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
-            id: "stop".to_string(),
-            kind: crate::tool_impl::stop_tool::STOP_TOOL_KIND.to_string(),
-            params: serde_json::Value::Null,
-            tags: vec![],
-            fail_policy: ComponentFailPolicy::FailClosed,
-        }] };
+        let (call, components) = a_call_needing_approval();
+        let done = Message { role: MessageRole::Assistant, content: Some("Done.".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
         let Stuck { channel, agent, helper, mut events, running, .. } =
-            with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([bye].into()))), components).await;
+            with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([call, done].into()))), components).await;
         settled(&helper, ActorState::WaitingForApproval).await;
         let asked = approval_requested(&mut events).await;
 
@@ -3260,7 +3212,9 @@ mod tests {
         let alice = document.participants.iter().find_map(|p| match p { Participant::User(id) => Some(*id), _ => None }).expect("alice");
         let response = caelumora_model::approval::ApprovalResponse { id: asked.id, agent_id: agent };
         restarted.user_actor(alice).unwrap().send_approval(response, true).await.unwrap();
-        settled(&helper, ActorState::Sleeping).await;
+        let said: Vec<_> = answered(&mut events, agent).await.iter().filter_map(|m| m.content.clone()).collect();
+        assert_eq!(said, ["Done."], "the call runs and the turn goes on");
+        settled(&helper, ActorState::Idle).await;
         running.abort();
     }
 
@@ -3424,25 +3378,11 @@ mod tests {
 
     #[tokio::test]
     async fn an_agent_removed_while_waiting_for_approval_gives_up_its_turn() {
-        use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-        use caelumora_model::message::MessageRole;
-        use caelumora_model::tool::{ToolCall, ToolVisibility};
         use caelumora_model::transcript::GivenUpReason;
 
-        let bye = Message {
-            role: MessageRole::Assistant,
-            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "stop".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN }],
-            ..Message::new(Classification::CHANNEL_DEFAULT)
-        };
-        let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
-            id: "stop".to_string(),
-            kind: crate::tool_impl::stop_tool::STOP_TOOL_KIND.to_string(),
-            params: serde_json::Value::Null,
-            tags: vec![],
-            fail_policy: ComponentFailPolicy::FailClosed,
-        }] };
+        let (call, components) = a_call_needing_approval();
         let Stuck { channel, context, agent, helper, running, .. } =
-            with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([bye].into()))), components).await;
+            with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([call].into()))), components).await;
         settled(&helper, ActorState::WaitingForApproval).await;
 
         channel.remove_participant(&context, ActorId::Agent(agent)).await.expect("permitted");

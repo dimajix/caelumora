@@ -811,33 +811,35 @@ async fn a_tool_call_is_approved_by_who_is_responsible_for_the_agent() {
     use caelumora_model::message::{Message, MessageRole};
     use caelumora_model::tool::{ToolCall, ToolVisibility};
 
-    let stop = Message {
+    let call = Message {
         role: MessageRole::Assistant,
-        content: Some("Good bye.".to_string()),
-        tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "stop".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN }],
+        tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "sleep".to_string(), arguments: serde_json::json!({ "seconds": 0 }), visibility: ToolVisibility::SHOWN }],
         ..Message::new(Classification::general(Confidentiality::Internal))
     };
-    let model = Arc::new(Once(Mutex::new(Some(stop))));
+    let model = Arc::new(Once(Mutex::new(Some(call))));
     let world = World::with_kinds(|registry| registry.register(ComponentKind::new("once").provides::<dyn caelumora_runtime::llm::LLMClient>(), move |_, _| {
         let mut facets = ComponentFacets::empty();
         facets.insert::<dyn caelumora_runtime::llm::LLMClient>(Arc::<Once>::clone(&model));
         Ok(facets)
     })).await;
-    let stopping = Personality {
+    let asking = Personality {
         components: ComponentConfig { component_nodes: vec![
             ComponentDescriptor::new("model", "once"),
-            ComponentDescriptor::new("stop", caelumora_runtime::tool_impl::stop_tool::STOP_TOOL_KIND),
+            ComponentDescriptor {
+                params: serde_json::json!({ "requires_approval": true }),
+                ..ComponentDescriptor::new("sleep", caelumora_runtime::tool_impl::sleep_tool::SLEEP_TOOL_KIND)
+            },
         ] },
-        ..world.personality("stopping", None, &[]).await
+        ..world.personality("asking", None, &[]).await
     };
-    world.store.update_personality(&World::system(), &stopping).await.unwrap();
-    let helper = world.agent("helper", world.alice, &stopping).await;
+    world.store.update_personality(&World::system(), &asking).await.unwrap();
+    let helper = world.agent("helper", world.alice, &asking).await;
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
     world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let mut watch = main.user_actor(world.alice).expect("she takes part").watch();
 
-    main.user_actor(world.alice).unwrap().send_message("@helper stop".to_string(), None).await.expect("sent");
+    main.user_actor(world.alice).unwrap().send_message("@helper wait".to_string(), None).await.expect("sent");
     let request = tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
             if let ActorEvent::ApprovalRequested(request) = watch.events.recv().await.expect("the channel runs").event {

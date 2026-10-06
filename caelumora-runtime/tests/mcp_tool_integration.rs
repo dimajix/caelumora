@@ -101,7 +101,7 @@ async fn discovers_and_calls_echo_tool_over_streamable_http() {
     let tools = provider.tools();
     assert_eq!(tools.len(), 1);
     assert_eq!(tools[0].name, "test-echo__echo");
-    assert!(!tools[0].requires_approval, "no approval unless configured");
+    assert!(tools[0].requires_approval, "approval unless configured otherwise");
     assert_eq!(provider.description(), "Echo messages back, for testing.", "what the server says of itself");
     assert!(provider.unavailable().is_none());
 
@@ -124,14 +124,14 @@ async fn a_configured_approval_and_classification_reach_every_discovered_tool() 
 
     let container = build_container(json!({
         "endpoint": { "url": url },
-        "requires_approval": true,
+        "requires_approval": false,
         "classification": { "level": "confidential" },
     })).await;
     let provider = Arc::clone(&container.get_all::<dyn ToolProvider>(None)[0].facet);
 
     let tools = provider.tools();
     assert!(!tools.is_empty(), "the server's tools are discovered");
-    assert!(tools.iter().all(|t| t.requires_approval), "every tool of this server needs approval: {tools:?}");
+    assert!(tools.iter().all(|t| !t.requires_approval), "no tool of this server needs approval: {tools:?}");
     let confidential = caelumora_model::confidentiality::Classification::general(caelumora_model::confidentiality::Confidentiality::Confidential);
     assert!(tools.iter().all(|t| t.classification.as_ref() == Some(&confidential)), "and so does the classification: {tools:?}");
 }

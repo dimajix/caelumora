@@ -25,6 +25,9 @@ All three kinds of memory work alike:
     them.
 *   **Every read is recorded** as knowledge (see [Recording what was
     read](#recording-what-was-read)).
+*   **Written without approval.** What an entry says may rest on a claim the model did not verify -
+    a participant's message posing as another's (issue 150) - and stands in the agent's name from
+    then on; see [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md#what-needs-approval).
 
 ## Notes
 
