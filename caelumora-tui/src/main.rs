@@ -136,6 +136,9 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                         pending_approvals.insert(request.id.0, request.agent_id);
                         println!("\r--- Approval requested (id: {}) ---", request.id.0);
                         println!("{}", request.description);
+                        if request.explicit {
+                            println!("A rule of this session or channel asks for this call to be decided by a person.");
+                        }
                         println!("Type '/approve {}' or '/deny {}' to respond.", request.id.0, request.id.0);
                     }
                     // The approval is over: decided, or no longer asked for.
@@ -303,6 +306,7 @@ async fn main() -> anyhow::Result<()> {
         Arc::clone(&security_manager),
         config.commands.clone(),
         config.component_defaults.clone(),
+        config.approvals.rules.clone(),
         ComponentRegistry::built_in(component_store),
     )?);
     caelumora_runtime::seed::load(entity_store.as_ref(), &config.seed).await?;

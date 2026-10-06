@@ -1,4 +1,5 @@
 use arc_swap::ArcSwap;
+use caelumora_model::approval::ApprovalRule;
 use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::privacy::PrivacyConfig;
@@ -6,6 +7,7 @@ use caelumora_model::session::{ChannelId, Session, SessionId, SessionUpdateEvent
 use caelumora_model::store::{EntityStore, StoreError, StoreResult};
 use chrono::Utc;
 use std::sync::Arc;
+use super::check_restricting;
 
 /// The one writer of a session's document.
 #[derive(Debug)]
@@ -57,6 +59,19 @@ impl SessionController {
     /// See [`Self::update`].
     pub async fn update_privacy(&self, ctx: &SecurityContext, privacy: PrivacyConfig) -> StoreResult<()> {
         self.update(ctx, SessionUpdateEvent::PrivacyChanged(privacy)).await
+    }
+
+    /// Sets what the session restricts of the tool calls made in any of its
+    /// channels (issue 13) on behalf of `ctx` (`UpdateSession`), as
+    /// [`Self::update`] does: `rules` replace those it had. They apply to
+    /// the next call of any agent in it.
+    ///
+    /// # Errors
+    /// `StoreError::Validation` if a rule does not only ask or deny
+    /// (`ApprovalRule::check_restricting`), otherwise see [`Self::update`].
+    pub async fn update_approval_rules(&self, ctx: &SecurityContext, rules: Vec<ApprovalRule>) -> StoreResult<()> {
+        check_restricting(&rules)?;
+        self.update(ctx, SessionUpdateEvent::ApprovalRulesChanged(rules)).await
     }
 
     /// Applies `event` on behalf of `ctx`: stored first - which is where the
@@ -131,6 +146,7 @@ impl SessionController {
         match event {
             SessionUpdateEvent::NameChanged(name) => session.name = name.clone(),
             SessionUpdateEvent::PrivacyChanged(privacy) => session.privacy = *privacy,
+            SessionUpdateEvent::ApprovalRulesChanged(rules) => session.approval_rules = rules.clone(),
         }
         session
     }
@@ -145,6 +161,7 @@ mod tests {
     #[tokio::test]
     async fn a_renamed_session_is_stored_first() {
         let session = Session {
+            approval_rules: Vec::new(),
             commands: Default::default(),
             privacy: Default::default(),
             id: SessionId::new(),

@@ -1,6 +1,7 @@
 import type {
   AddParticipantRequest,
   AgentToolsResponse,
+  ApprovalRule,
   ChannelMember,
   ChannelResponse,
   Command,
@@ -200,6 +201,17 @@ export const api = {
   },
 
   /** Has the channel held in `language` - none in particular if `null` (issue 56); answers with the channel as it is now. */
+  /** Sets what the channel restricts of the tool calls made in it (issue 13): rules that ask or deny, replacing those it had. */
+  async setChannelApprovalRules(sessionId: string, channelId: string, rules: ApprovalRule[]): Promise<ChannelResponse> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/approval-rules`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(rules),
+    });
+    await ensureOk(res, 'Failed to change the approval rules');
+    return res.json();
+  },
+
   async setChannelLanguage(sessionId: string, channelId: string, language: string | null): Promise<ChannelResponse> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/language`, {
       method: 'PUT',
@@ -408,6 +420,17 @@ export const api = {
   },
 
   /** Changes whom the session lets read what was said in it (issue 134); only its owner may. */
+  /** Sets what the session restricts of tool calls in any of its channels (issue 13): rules that ask or deny, replacing those it had. */
+  async setSessionApprovalRules(sessionId: string, rules: ApprovalRule[]): Promise<SessionSnapshot> {
+    const res = await request(`/sessions/${sessionId}/approval-rules`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(rules),
+    });
+    await ensureOk(res, 'Failed to change the approval rules');
+    return res.json();
+  },
+
   async setSessionPrivacy(sessionId: string, privacy: PrivacyPolicy): Promise<SessionSnapshot> {
     const res = await request(`/sessions/${sessionId}/privacy`, {
       method: 'PUT',

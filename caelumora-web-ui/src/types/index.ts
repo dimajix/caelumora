@@ -143,7 +143,9 @@ export interface ChannelResponse {
   classification: Classification;
   /** The language its conversation is held in, a BCP 47 tag (issue 56); `null` for none in particular. */
   language: string | null;
-  /** Whether you may rename it and add or remove participants (issue 46). */
+  /** What it restricts of the tool calls made in it (issue 13): rules that ask or deny. */
+  approval_rules: ApprovalRule[];
+  /** Whether you may rename it, add or remove participants (issue 46) and set its approval rules. */
   can_change: boolean;
   /** Who took part and left (issue 164), in the order they left, each with `left`. */
   former_members: ChannelMember[];
@@ -235,7 +237,9 @@ export interface SessionSnapshot {
   name: string;
   /** Whom the session lets read what was said in it (issue 134). */
   privacy: PrivacyPolicy;
-  /** Whether you may change it - rename it, change its privacy. */
+  /** What it restricts of the tool calls made in any of its channels (issue 13): rules that ask or deny. */
+  approval_rules: ApprovalRule[];
+  /** Whether you may change it - rename it, change its privacy, set its approval rules. */
   can_change: boolean;
   channels: ChannelResponse[];
   /** Everyone who takes part in the session - whom a new channel can be made of (issue 09). */
@@ -491,6 +495,28 @@ export interface ApprovalRequest {
   agent_id: string;
   tool_call: ToolCall;
   description: string;
+  /** A rule of the session or channel asked for this very call to be decided by a person (issue 13); left out when not. */
+  explicit?: boolean;
+}
+
+/** What a rule decides of the calls it is about (issue 13). A session or channel only asks or denies. */
+export type RuleDecision = 'allow' | 'ask' | 'deny';
+
+/** Where a rule applies within the place it is kept; `everywhere` when left out. */
+export type Reach = 'everywhere' | {session: string} | {channel: string};
+
+/**
+ * A standing decision on tool calls (issue 13): the tool by name - `*` for every tool - and, per
+ * argument, a regular expression its whole value must match.
+ */
+export interface ApprovalRule {
+  /** Made by the server when left out. */
+  id?: string;
+  matcher: {tool: string; arguments?: Record<string, string>};
+  decision: RuleDecision;
+  reach?: Reach;
+  /** When it stops applying, an RFC 3339 time; never when left out. */
+  expires_at?: string;
 }
 
 export interface ApprovalResponse {

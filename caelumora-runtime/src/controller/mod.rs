@@ -31,11 +31,12 @@ pub use user::UserController;
 use crate::event::EventBus;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
+use caelumora_model::approval::ApprovalRule;
 use caelumora_model::channel::Channel;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::Session;
-use caelumora_model::store::{EntityStore, StoreResult, StoreResultExt};
+use caelumora_model::store::{EntityStore, StoreError, StoreResult, StoreResultExt};
 use caelumora_model::user::UserId;
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -174,6 +175,18 @@ impl ControllerManager {
             });
         });
     }
+}
+
+/// Nothing if a place may keep every one of `rules` (issue 13): a
+/// session's or a channel's rules only ask or deny, everywhere within it.
+///
+/// # Errors
+/// `StoreError::Validation` naming the first rule that does not, and why.
+fn check_restricting(rules: &[ApprovalRule]) -> StoreResult<()> {
+    for rule in rules {
+        rule.check_restricting().map_err(|e| StoreError::Validation(format!("the rule for `{}`: {e}", rule.matcher.tool)))?;
+    }
+    Ok(())
 }
 
 /// Registers `controller` under `id`, dropping the entries of controllers

@@ -1,4 +1,5 @@
 use caelumora_model::actor::{ActorId, ActorState};
+use caelumora_model::approval::ApprovalRule;
 use caelumora_model::confidentiality::{Classification, Compartment};
 use caelumora_model::message::{Message, TokenUsage};
 use caelumora_model::language::Language;
@@ -250,7 +251,11 @@ pub struct SessionSnapshot {
     pub name: String,
     /// Whom the session lets read what was said in it (issue 134).
     pub privacy: PrivacyConfig,
-    /// Whether you may change it - rename it, change its privacy.
+    /// What it restricts of the tool calls made in any of its channels
+    /// (issue 13): rules that ask or deny.
+    pub approval_rules: Vec<ApprovalRule>,
+    /// Whether you may change it - rename it, change its privacy, set its
+    /// approval rules.
     pub can_change: bool,
     pub channels: Vec<ChannelResponse>,
     /// Everyone who takes part in the session - whom a new channel can be
@@ -264,6 +269,7 @@ impl From<snapshot::SessionSnapshot> for SessionSnapshot {
             id: view.id,
             name: view.name,
             privacy: view.privacy,
+            approval_rules: view.approval_rules,
             can_change: view.can_change,
             channels: view.channels.into_iter().map(Into::into).collect(),
             // Every participant is a user, an agent or an approver.
@@ -354,8 +360,11 @@ pub struct ChannelResponse {
     /// The language its conversation is held in (issue 56); `null` for none
     /// in particular.
     pub language: Option<Language>,
-    /// Whether the requesting user may rename the channel and add or remove
-    /// its participants (issue 46).
+    /// What it restricts of the tool calls made in it (issue 13): rules that
+    /// ask or deny.
+    pub approval_rules: Vec<ApprovalRule>,
+    /// Whether the requesting user may rename the channel, add or remove
+    /// its participants (issue 46) and set its approval rules.
     pub can_change: bool,
     /// Who took part and left (issue 164), in the order they left, each
     /// with `left`: who removed them and when.
@@ -373,6 +382,7 @@ impl From<snapshot::ChannelSnapshot> for ChannelResponse {
             responder_policy: view.responder_policy,
             classification: view.classification,
             language: view.language,
+            approval_rules: view.approval_rules,
             can_change: view.can_change,
             former_members: view.former_members.into_iter().filter_map(ChannelMemberResponse::of).collect(),
         }
@@ -749,7 +759,7 @@ mod tests {
     fn a_channel_view_is_answered_with_kinds_and_a_name_for_the_deleted() {
         let (alice, approver) = (ActorId::User(UserId::new()), ActorId::Approver(ApproverId(Uuid::new_v4())));
         let member = |id, name: Option<&str>| snapshot::MemberSnapshot { id, name: name.map(str::to_string), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None };
-        let view = snapshot::ChannelSnapshot {
+        let view = snapshot::ChannelSnapshot { approval_rules: Vec::new(),
             id: ChannelId::new(),
             name: "main".to_string(),
             moderator: Some("policy_moderator".to_string()),
@@ -785,7 +795,7 @@ mod tests {
             id, name: Some(name.to_string()), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes, pending_approvals: Vec::new(),
             left: None, can_delete: false, turn_under_way: None, state: None,
         };
-        let channel = snapshot::ChannelSnapshot {
+        let channel = snapshot::ChannelSnapshot { approval_rules: Vec::new(),
             id: ChannelId::new(),
             name: "main".to_string(),
             moderator: None,
@@ -824,7 +834,7 @@ mod tests {
         let (alice, helper) = (ActorId::User(UserId::new()), ActorId::Agent(caelumora_model::agent::AgentId::new()));
         let left = caelumora_model::removal::Removal::now(alice);
         let member = |id, left| snapshot::MemberSnapshot { id, name: Some("x".to_string()), handle: None, can_read_context: true, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), left, can_delete: false, turn_under_way: None, state: None };
-        let view = snapshot::ChannelSnapshot {
+        let view = snapshot::ChannelSnapshot { approval_rules: Vec::new(),
             id: ChannelId::new(),
             name: "main".to_string(),
             moderator: None,

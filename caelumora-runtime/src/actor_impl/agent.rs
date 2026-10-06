@@ -17,9 +17,8 @@ use crate::agent_state::AgentStateHandle;
 use caelumora_model::agent::{AgentChannelState, AgentId, Personality, RetryRefused};
 use caelumora_model::turn::TurnState;
 use caelumora_model::work::TurnId;
-use crate::controller::AgentController;
+use crate::controller::{AgentController, ChannelController};
 use caelumora_model::approval::ApprovalStatus;
-use caelumora_model::channel::Channel;
 use caelumora_model::confidentiality::{Classification, Visibility};
 use caelumora_model::message::{Message, MessageEvent};
 use caelumora_model::transcript::GivenUpReason;
@@ -71,13 +70,14 @@ impl AgentActor {
     /// The actor of the agent `agent_controller` holds - the session's
     /// controller of it, shared with its actors in the session's other
     /// channels (issue 120) - built from its `personality`, as the channel
-    /// read it for the agent.
+    /// read it for the agent, in the channel `channel_controller` holds.
     pub async fn new(
-        channel: &Channel,
+        channel_controller: Arc<ChannelController>,
         agent_controller: Arc<AgentController>,
         personality: Personality,
         actor_runtime: ActorRuntime,
     ) -> Result<Self> {
+        let channel = Arc::clone(&channel_controller.load());
         let agent = agent_controller.load();
         // The agent acts on behalf of its owner, in this channel (issue 87).
         let security_context = agent.security_context(channel.session_id, channel.id);
@@ -97,7 +97,13 @@ impl AgentActor {
         let llm_client = components.one::<dyn LLMClient>().await?;
         let perceive_in_processors = components.get_all::<dyn PerceiveInProcessor>(None);
         let emit_out_processors = components.get_all::<dyn EmitOutProcessor>(None);
-        let tool_executor = GuardedToolExecutor::new(Arc::clone(actor_runtime.security_manager()), components.one::<dyn ToolExecutor>().await?);
+        let tool_executor = GuardedToolExecutor::new(
+            Arc::clone(actor_runtime.security_manager()),
+            components.one::<dyn ToolExecutor>().await?,
+            Arc::clone(actor_runtime.approval_rules()),
+            Arc::clone(actor_runtime.session_controller()),
+            channel_controller,
+        );
 
         let mut agent_channel_state = actor_runtime.load_channel_state().await?;
         let not_executed = prepare_resume(&mut agent_channel_state);
@@ -1101,7 +1107,7 @@ mod tests {
         let call = |status: ApprovalStatus, result: Option<&str>| {
             let tool_call = ToolCall { id: None, function_name: "note".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN };
             match (status, result) {
-                (ApprovalStatus::Pending, _) => ToolCallState::pending(tool_call, String::new()),
+                (ApprovalStatus::Pending, _) => ToolCallState::pending(tool_call, String::new(), false),
                 (_, Some(r)) => {
                     let result = ToolCallResult::of(&tool_call, ToolResultStatus::Ok, r.to_string(), caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT);
                     ToolCallState::answered(tool_call, result)

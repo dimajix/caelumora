@@ -274,6 +274,10 @@ pub struct ToolCallState {
     pub status: ApprovalStatus,
     pub tool_call: ToolCall,
     pub description: String,
+    /// Whether a rule of a place asked for this very call to be decided by
+    /// a person (issue 13): no rule of a person answers it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub explicit: bool,
     /// How the call ended - its one result, from the executor or from a
     /// decision that settled it (issue 100) - once it has.
     pub result: Option<ToolCallResult>,
@@ -281,14 +285,14 @@ pub struct ToolCallState {
 
 impl ToolCallState {
     /// `tool_call`, waiting for a user's decision, who is shown
-    /// `description`.
-    pub fn pending(tool_call: ToolCall, description: String) -> Self {
-        Self { id: ApprovalId::new(), status: ApprovalStatus::Pending, tool_call, description, result: None }
+    /// `description` - a decision of their own if `explicit` (issue 13).
+    pub fn pending(tool_call: ToolCall, description: String, explicit: bool) -> Self {
+        Self { id: ApprovalId::new(), status: ApprovalStatus::Pending, tool_call, description, explicit, result: None }
     }
 
     /// `tool_call`, to be run as it is.
     pub fn approved(tool_call: ToolCall) -> Self {
-        Self { id: ApprovalId::new(), status: ApprovalStatus::Approved, tool_call, description: String::new(), result: None }
+        Self { id: ApprovalId::new(), status: ApprovalStatus::Approved, tool_call, description: String::new(), explicit: false, result: None }
     }
 
     /// `tool_call`, answered with `result` before it ran: it is not run.

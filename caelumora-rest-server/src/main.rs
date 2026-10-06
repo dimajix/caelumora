@@ -63,6 +63,7 @@ async fn main() -> anyhow::Result<()> {
         Arc::clone(&security_manager),
         config.commands.clone(),
         config.component_defaults.clone(),
+        config.approvals.rules.clone(),
         ComponentRegistry::built_in(component_store),
     )?);
     let session_manager = Arc::new(SessionManager::new(Arc::clone(&runtime_manager)));

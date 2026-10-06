@@ -1,0 +1,196 @@
+// The approval rules of a session or a channel (issue 13): what it restricts
+// of the tool calls its agents make - a rule asks a person to decide the call
+// themselves, or denies it outright. A place never allows; that is a
+// person's to say. Whether the rules may be changed, and whether a pattern
+// is one, is the server's to decide.
+
+import React, {useState} from 'react';
+import {Plus, Trash2, X} from 'lucide-react';
+import type {ApprovalRule, RuleDecision} from '../types';
+import {ApiRequestError, reportError} from '../errors';
+
+interface ApprovalRulesDialogProps {
+  title: string;
+  /** What the place is called in the explanation: "session" or "channel". */
+  place: string;
+  current: ApprovalRule[];
+  canChange: boolean;
+  onSubmit: (rules: ApprovalRule[]) => Promise<void>;
+  onClose: () => void;
+}
+
+/** A rule as it is edited: the patterns as rows, so that one can be added before it is named. */
+interface Draft {
+  id?: string;
+  tool: string;
+  decision: RuleDecision;
+  arguments: {name: string; pattern: string}[];
+}
+
+const DECISIONS: {value: RuleDecision; label: string}[] = [
+  {value: 'ask', label: 'Ask - a person decides each call'},
+  {value: 'deny', label: 'Deny - never run'},
+];
+
+function draftOf(rule: ApprovalRule): Draft {
+  return {
+    id: rule.id,
+    tool: rule.matcher.tool,
+    decision: rule.decision,
+    arguments: Object.entries(rule.matcher.arguments ?? {}).map(([name, pattern]) => ({name, pattern})),
+  };
+}
+
+function ruleOf(draft: Draft): ApprovalRule {
+  const named = draft.arguments.filter(a => a.name.trim() !== '');
+  return {
+    id: draft.id,
+    matcher: {tool: draft.tool.trim(), arguments: Object.fromEntries(named.map(a => [a.name.trim(), a.pattern]))},
+    decision: draft.decision,
+  };
+}
+
+export const ApprovalRulesDialog: React.FC<ApprovalRulesDialogProps> = ({title, place, current, canChange, onSubmit, onClose}) => {
+  const [drafts, setDrafts] = useState<Draft[]>(() => current.map(draftOf));
+  const [problem, setProblem] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const complete = drafts.every(d => d.tool.trim() !== '');
+
+  const change = (index: number, update: (draft: Draft) => Draft) =>
+    setDrafts(prev => prev.map((d, i) => i === index ? update(d) : d));
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canChange || !complete || isSaving) return;
+    setIsSaving(true);
+    setProblem(null);
+    try {
+      await onSubmit(drafts.map(ruleOf));
+      onClose();
+    } catch (error) {
+      // What the server says about the rules - a pattern that is none, say -
+      // is shown here; anything else as usual.
+      if (error instanceof ApiRequestError && error.status < 500 && error.status !== 401) {
+        setProblem(error.message);
+      } else {
+        reportError('Failed to change the approval rules', error);
+      }
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const field = 'rounded-md border border-gray-700 bg-gray-800 px-2 py-1 text-sm disabled:opacity-60';
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={onClose}
+      onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
+    >
+      <form
+        onSubmit={submit}
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="approval-rules-title"
+        className="flex max-h-full w-full max-w-lg flex-col rounded-lg border border-gray-700 bg-gray-900 text-gray-100 shadow-xl"
+      >
+        <div className="flex items-center gap-2 border-b border-gray-800 p-4">
+          <h2 id="approval-rules-title" className="flex-1 font-semibold text-sm truncate">{title}</h2>
+          <button type="button" onClick={onClose} className="p-1 hover:bg-gray-800 rounded-md" title="Close">
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="space-y-4 overflow-y-auto p-4 text-sm">
+          <p className="text-xs text-gray-400">
+            What the {place} restricts of the tool calls its agents make, whatever the tool or anyone's own rules
+            say. A tool is named as the agent calls it, <code>*</code> for every tool; a pattern is a regular
+            expression the whole value of the argument must match.
+          </p>
+          {drafts.length === 0 && <p className="text-xs text-gray-500">No rules: each tool decides whether it asks.</p>}
+          {drafts.map((draft, index) => (
+            <fieldset key={index} disabled={!canChange} className="space-y-2 rounded-md border border-gray-800 p-3">
+              <div className="flex items-center gap-2">
+                <input
+                  aria-label="Tool"
+                  placeholder="tool, or *"
+                  value={draft.tool}
+                  onChange={(e) => change(index, d => ({...d, tool: e.target.value}))}
+                  className={`${field} min-w-0 flex-1 font-mono`}
+                />
+                <select
+                  aria-label="Decision"
+                  value={draft.decision}
+                  onChange={(e) => change(index, d => ({...d, decision: e.target.value as RuleDecision}))}
+                  className={field}
+                >
+                  {DECISIONS.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
+                </select>
+                {canChange && (
+                  <button type="button" onClick={() => setDrafts(prev => prev.filter((_, i) => i !== index))} className="p-1 hover:bg-gray-800 rounded-md" title="Remove the rule">
+                    <Trash2 size={14} />
+                  </button>
+                )}
+              </div>
+              {draft.arguments.map((argument, a) => (
+                <div key={a} className="flex items-center gap-2 pl-4">
+                  <input
+                    aria-label="Argument"
+                    placeholder="argument"
+                    value={argument.name}
+                    onChange={(e) => change(index, d => ({...d, arguments: d.arguments.map((x, i) => i === a ? {...x, name: e.target.value} : x)}))}
+                    className={`${field} w-32 font-mono`}
+                  />
+                  <input
+                    aria-label="Pattern"
+                    placeholder="pattern"
+                    value={argument.pattern}
+                    onChange={(e) => change(index, d => ({...d, arguments: d.arguments.map((x, i) => i === a ? {...x, pattern: e.target.value} : x)}))}
+                    className={`${field} min-w-0 flex-1 font-mono`}
+                  />
+                  {canChange && (
+                    <button type="button" onClick={() => change(index, d => ({...d, arguments: d.arguments.filter((_, i) => i !== a)}))} className="p-1 hover:bg-gray-800 rounded-md" title="Remove the pattern">
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+              ))}
+              {canChange && (
+                <button type="button" onClick={() => change(index, d => ({...d, arguments: [...d.arguments, {name: '', pattern: ''}]}))} className="ml-4 text-xs text-blue-400 hover:underline">
+                  Only when an argument matches…
+                </button>
+              )}
+            </fieldset>
+          ))}
+          {canChange && (
+            <button
+              type="button"
+              onClick={() => setDrafts(prev => [...prev, {tool: '', decision: 'ask', arguments: []}])}
+              className="flex items-center gap-1 text-xs text-blue-400 hover:underline"
+            >
+              <Plus size={14} /> Add a rule
+            </button>
+          )}
+          {problem && <div role="alert" className="text-xs text-red-400">{problem}</div>}
+        </div>
+
+        <div className="flex justify-end gap-2 border-t border-gray-800 p-4">
+          <button type="button" onClick={onClose} className="rounded-md px-3 py-1 text-sm hover:bg-gray-800">
+            {canChange ? 'Cancel' : 'Close'}
+          </button>
+          {canChange && (
+            <button
+              type="submit"
+              disabled={!complete || isSaving}
+              className="rounded-md bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {isSaving ? 'Saving…' : 'Save'}
+            </button>
+          )}
+        </div>
+      </form>
+    </div>
+  );
+};

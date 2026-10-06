@@ -151,6 +151,7 @@ mod tests {
 
     fn call(name: &str, status: ApprovalStatus) -> ToolCallState {
         ToolCallState {
+            explicit: false,
             id: ApprovalId::new(),
             status,
             tool_call: ToolCall { id: Some(name.to_string()), function_name: name.to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN },

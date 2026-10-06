@@ -5,7 +5,7 @@
 //! create_from_template`, issue 88), so nothing here touches a store.
 
 use crate::agent::PersonalityId;
-use crate::approval::{ApprovalStrategy, Approver, ApproverId};
+use crate::approval::{ApprovalRule, ApprovalStrategy, Approver, ApproverId};
 use crate::channel::{participant_attributes, Channel, Participant};
 use crate::component::ComponentConfig;
 use crate::confidentiality::Classification;
@@ -85,6 +85,10 @@ pub struct ChannelTemplate {
     /// the template. A channel that names no approver gets one anyway
     /// (`Channel::build`).
     pub participants: Vec<String>,
+    /// What the channel restricts of tool calls (issue 13): rules that ask
+    /// or deny. None unless named.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub approval_rules: Vec<ApprovalRule>,
 }
 
 impl ChannelTemplate {
@@ -101,7 +105,8 @@ impl ChannelTemplate {
                 .map(|(_, participant)| participant.clone())
                 .ok_or_else(|| TemplateError::ParticipantNotFound(name.clone())))
             .collect::<TemplateResult<Vec<_>>>()?;
-        Ok(Channel::build(session_id, ActorId::User(owner), self.name.clone(), self.components.clone(), self.classification.clone(), language.cloned(), participants))
+        let channel = Channel::build(session_id, ActorId::User(owner), self.name.clone(), self.components.clone(), self.classification.clone(), language.cloned(), participants);
+        Ok(Channel { approval_rules: self.approval_rules.clone(), ..channel })
     }
 }
 
@@ -134,6 +139,10 @@ pub struct SessionTemplate {
     /// The privacy policy of sessions made from this template (issue 134).
     #[serde(default)]
     pub privacy: PrivacyConfig,
+    /// What sessions made from this template restrict of tool calls (issue
+    /// 13): rules that ask or deny. None unless named.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub approval_rules: Vec<ApprovalRule>,
     /// Set when it was deleted (issue 164): it stays stored, hidden from
     /// every read but those for what was deleted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -171,6 +180,7 @@ impl SessionTemplate {
             channels: channels.iter().map(|c: &Channel| c.id).collect(),
             commands: self.commands.clone(),
             privacy: self.privacy,
+            approval_rules: self.approval_rules.clone(),
             created_at: now,
             updated_at: now,
             security_attributes,
@@ -254,6 +264,7 @@ mod tests {
 
     fn template() -> SessionTemplate {
         SessionTemplate {
+            approval_rules: Vec::new(),
             security_attributes: Default::default(),
             id: SessionTemplateId(Uuid::new_v4()),
             name: ScopedName::new("pairing", Scope::GlobalScope).unwrap(),
@@ -265,12 +276,14 @@ mod tests {
             ],
             channels: vec![
                 ChannelTemplate {
+                    approval_rules: Vec::new(),
                     name: Name::new("main").unwrap(),
                     components: crate::component::ComponentConfig::default(),
                     classification: Classification::CHANNEL_DEFAULT,
                     participants: vec!["user".to_string(), "helper".to_string(), "approval".to_string()],
                 },
                 ChannelTemplate {
+                    approval_rules: Vec::new(),
                     name: Name::new("side").unwrap(),
                     components: crate::component::ComponentConfig::default(),
                     classification: Classification::CHANNEL_DEFAULT,

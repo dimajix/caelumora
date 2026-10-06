@@ -127,3 +127,16 @@ roles:
     clearances:
       - { level: confidential, compartment: management }
       - { level: confidential }
+
+# What the system restricts of tool calls everywhere (issue 13): a rule asks
+# a person to decide each matching call, or denies it - the system never
+# allows. A tool is named as the model calls it, `*` for every tool; a
+# pattern is a regular expression the whole value of the argument must
+# match. Sessions and channels can add rules of their own. Without this
+# section there are none.
+#approvals:
+#  rules:
+#    - matcher: { tool: "*" , arguments: { path: "/etc/.*" } }
+#      decision: deny
+#    - matcher: { tool: fetch }
+#      decision: ask

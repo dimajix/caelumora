@@ -18,6 +18,7 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId, PersonalityKind};
+use caelumora_model::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
 use caelumora_model::channel::{moderation_components, Channel, HistoryAccess, Participant};
 use caelumora_model::command::default_commands;
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
@@ -135,7 +136,7 @@ impl World {
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
         let mut registry = ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
         register(&mut registry);
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), Vec::new(), registry).unwrap());
         let manager = Arc::new(SessionManager::new(runtime));
         let mut world = Self { policy: recorder, store, manager, alice: UserId::new(), bob: UserId::new(), carol: UserId::new() };
         world.alice = world.user("alice").await;
@@ -204,6 +205,7 @@ impl World {
     /// the owner's scope, in one channel.
     async fn template(&self, owner: Option<UserId>, contributors: &[UserId], agent: &str, personality: PersonalityId) -> SessionTemplateId {
         let template = SessionTemplate {
+            approval_rules: Vec::new(),
             id: SessionTemplateId::new(),
             name: ScopedName::new(format!("with-{agent}"), Scope::GlobalScope).unwrap(),
             description: String::new(),
@@ -212,6 +214,7 @@ impl World {
                 ParticipantTemplate::Agent { name: Name::new(agent).unwrap(), scope: ScopeTemplate::UserScope, personality_id: personality },
             ],
             channels: vec![ChannelTemplate {
+                approval_rules: Vec::new(),
                 name: Name::new("main").unwrap(),
                 components: quiet(),
                 classification: Classification::general(Confidentiality::Internal),
@@ -244,6 +247,7 @@ impl World {
         let in_session: Vec<Participant> = in_channel.iter().cloned().chain(waiting.iter().map(|a| Participant::Agent(*a))).collect();
         let channel = Channel::build(SessionId::new(), alice, Name::new("main").unwrap(), quiet(), Classification::general(Confidentiality::Internal), None, in_channel);
         let session = Session {
+            approval_rules: Vec::new(),
             id: channel.session_id,
             name: "shared".to_string(),
             commands: Default::default(),
@@ -483,6 +487,8 @@ async fn a_participant_takes_part_but_changes_nothing() {
     assert!(main.remove_participant(&bob, ActorId::User(world.alice)).await.is_err(), "nor to remove others");
     assert!(main.reclassify(&bob, Classification::general(Confidentiality::Public)).await.is_err(), "nor to reclassify the channel");
     assert!(denied(&main.update_language(&bob, Some(Language::parse("fr").unwrap())).await.expect_err("nor to change its language")));
+    assert!(denied(&session.update_approval_rules(&bob, vec![]).await.expect_err("nor what it restricts of tool calls")));
+    assert!(denied(&main.update_approval_rules(&bob, vec![]).await.expect_err("in any of its channels")));
     assert!(denied(&world.manager.stop_session(&bob, session.id()).await.expect_err("nor to stop it for everyone")));
     assert!(denied(&world.manager.delete_session(&bob, session.id()).await.expect_err("nor to delete it")));
     assert_eq!(session.name(), "shared", "nothing changed");
@@ -499,6 +505,10 @@ async fn the_owner_changes_and_ends_the_session() {
     session.update_name(&alice, "renamed".to_string()).await.expect("hers to rename");
     let main = Arc::clone(&session.channels()[0]);
     main.update_language(&alice, Some(Language::parse("de").unwrap())).await.expect("and to choose the language of its channels");
+    let shell = |decision| ApprovalRule::new(ToolMatcher { tool: "shell".to_string(), arguments: Default::default() }, decision, Reach::Everywhere, None).unwrap();
+    session.update_approval_rules(&alice, vec![shell(RuleDecision::Deny)]).await.expect("and what it restricts of tool calls");
+    main.update_approval_rules(&alice, vec![shell(RuleDecision::Ask)]).await.expect("in it or in one of its channels");
+    assert!(main.update_approval_rules(&alice, vec![shell(RuleDecision::Allow)]).await.is_err(), "but not to allow them: a place only restricts");
     let side = session.create_channel(&alice, ChannelSpec { name: Name::new("side").unwrap(), components: quiet(), participants: vec![], classification: None, language: None }).await.expect("and to add channels");
     side.add_participant(&alice, ActorId::User(world.bob), HistoryAccess::All).await.expect("and people to them");
     session.delete_channel(&alice, side.id()).await.expect("and to delete them");

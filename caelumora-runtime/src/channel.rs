@@ -17,7 +17,7 @@ use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventCon
 use caelumora_model::channel::{Channel, ChannelId, ChannelState, HistoryAccess, HistoryStart, Participant};
 use crate::controller::{AgentController, ChannelController, ControllerManager, UserController};
 use caelumora_model::agent::{Personality, PersonalityKind};
-use caelumora_model::approval::Approver;
+use caelumora_model::approval::{ApprovalRule, Approver};
 use caelumora_model::language::Language;
 use caelumora_model::confidentiality::{user_roles, Classification};
 use caelumora_model::mention::{handle_of, MentionDirectory};
@@ -512,6 +512,22 @@ impl ChannelLoop {
         Ok(())
     }
 
+    /// Sets what the channel restricts of the tool calls made in it (issue
+    /// 13) on behalf of `context`: stored first, which is where the
+    /// permission is checked (`UpdateChannel`). Its agents' next calls are
+    /// decided by them.
+    ///
+    /// # Errors
+    /// `StoreError::Validation` if a rule does not only ask or deny,
+    /// `StoreError::PermissionDenied` if `context` may not change the
+    /// channel, or whatever else storing it reports.
+    pub async fn update_approval_rules(&self, context: &SecurityContext, rules: Vec<ApprovalRule>) -> Result<()> {
+        let count = rules.len();
+        self.channel.update_approval_rules(context, rules).await?;
+        info!(channel = %self.id, rules = count, by = %context.caller_id, "Channel approval rules changed");
+        Ok(())
+    }
+
     /// Reclassifies the channel as `classification` on behalf of `context`
     /// (issue 133): asked as `ActionType::Reclassify`, then stored
     /// (`UpdateChannel`) and announced. Lowering it releases what is in it:
@@ -887,7 +903,7 @@ impl ChannelLoop {
         let actor_runtime = runtime.new_actor_runtime(member.actor_id(), session_id, channel_id);
         Ok(match member.clone() {
             Member::User(user) => Box::new(UserActor::new(&channel.load(), user, actor_runtime).await?),
-            Member::Agent(agent, personality) => Box::new(AgentActor::new(&channel.load(), agent, personality, actor_runtime).await?),
+            Member::Agent(agent, personality) => Box::new(AgentActor::new(Arc::clone(&channel), agent, personality, actor_runtime).await?),
             Member::ExternalAgent(agent, personality) => Box::new(ExternalAgentActor::new(&channel.load(), agent, personality, actor_runtime).await?),
             Member::Approver(approver) => Box::new(ApproverActor::new(channel, approver, actor_runtime)),
         })
@@ -1395,8 +1411,9 @@ mod tests {
     /// A channel of `participants` with `components`, built by `registry`.
     async fn channel_built(store: Arc<MemoryStore>, participants: Vec<Participant>, security: Arc<dyn SecurityManager>, registry: crate::component::ComponentRegistry, components: caelumora_model::component::ComponentConfig) -> Arc<ChannelLoop> {
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&security)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, security, default_commands(), Default::default(), registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, security, default_commands(), Default::default(), Vec::new(), registry).unwrap());
         let channel = Channel {
+            approval_rules: Vec::new(),
             id: ChannelId::new(),
             session_id: SessionId::new(),
             name: Name::new("main").unwrap(),
@@ -1414,7 +1431,8 @@ mod tests {
             Arc::clone(runtime.security_manager()),
             vec![builtin("help", Arc::new(HelpCommandProvider)), builtin("wakeup", Arc::new(WakeupCommandProvider))],
         ).unwrap();
-        ChannelLoop::new(channel, ChannelRuntime::new(runtime, Arc::new(executor))).await.unwrap()
+        let session_id = channel.session_id;
+        ChannelLoop::new(channel, ChannelRuntime::outside_a_session(runtime, Arc::new(executor), session_id)).await.unwrap()
     }
 
     #[tokio::test]
@@ -2399,8 +2417,9 @@ mod tests {
                 fail_policy: Default::default(),
             }],
         };
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store, secrets, security, default_commands(), defaults, registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store, secrets, security, default_commands(), defaults, Vec::new(), registry).unwrap());
         let channel = Channel {
+            approval_rules: Vec::new(),
             id: ChannelId::new(),
             session_id: SessionId::new(),
             name: Name::new("main").unwrap(),
@@ -2420,7 +2439,8 @@ mod tests {
         // Stored, so that leaving it can be stored too.
         runtime.entity_store().create_channel(&SecurityContext::system(), &channel).await.unwrap();
         let executor = CommandExecutor::empty(Arc::clone(runtime.security_manager()));
-        let channel = ChannelLoop::new(channel, ChannelRuntime::new(runtime, Arc::new(executor))).await.unwrap();
+        let session_id = channel.session_id;
+        let channel = ChannelLoop::new(channel, ChannelRuntime::outside_a_session(runtime, Arc::new(executor), session_id)).await.unwrap();
         (channel, context, agent_id, alice.id)
     }
 
@@ -3164,6 +3184,23 @@ mod tests {
         (call, components)
     }
 
+    #[tokio::test]
+    async fn a_rule_of_the_channel_asks_for_a_call_its_tool_would_run() {
+        use caelumora_model::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
+
+        let (call, mut components) = a_call_needing_approval();
+        components.component_nodes[0].params = serde_json::json!({ "requires_approval": false });
+        let built = agent_channel(Arc::new(DummySecurityManager::new()), Arc::new(Scripted(std::sync::Mutex::new([call].into()))), components).await;
+        let ask = ApprovalRule::new(ToolMatcher { tool: "sleep".to_string(), arguments: Default::default() }, RuleDecision::Ask, Reach::Everywhere, None).unwrap();
+        built.0.update_approval_rules(&SecurityContext::system(), vec![ask]).await.expect("the system may");
+
+        let Stuck { helper, mut events, running, .. } = start(built).await;
+        let request = approval_requested(&mut events).await;
+        assert!(request.explicit, "for a decision of a person's own");
+        settled(&helper, ActorState::WaitingForApproval).await;
+        running.abort();
+    }
+
     /// The approval the approver asks the users for, from `events`.
     async fn approval_requested(events: &mut broadcast::Receiver<Envelope>) -> caelumora_model::approval::ApprovalRequest {
         tokio::time::timeout(Duration::from_secs(5), async {
@@ -3201,7 +3238,7 @@ mod tests {
         let document = Channel::clone(&channel.channel());
         let manager = Arc::clone(channel.runtime.new_actor_runtime(ActorId::System, document.session_id, document.id).runtime_manager());
         let executor = CommandExecutor::empty(Arc::clone(manager.security_manager()));
-        let restarted = ChannelLoop::new(document.clone(), ChannelRuntime::new(manager, Arc::new(executor))).await.unwrap();
+        let restarted = ChannelLoop::new(document.clone(), ChannelRuntime::outside_a_session(manager, Arc::new(executor), document.session_id)).await.unwrap();
         let mut events = restarted.observe();
         let running = tokio::spawn({ let restarted = Arc::clone(&restarted); async move { restarted.run().await } });
         let helper = restarted.actor_by_id(ActorId::Agent(agent)).unwrap();
@@ -3608,8 +3645,9 @@ mod tests {
         );
         register_no_secrets(&mut registry);
         register_heard(&mut registry);
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store, secrets, security, default_commands(), Default::default(), registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store, secrets, security, default_commands(), Default::default(), Vec::new(), registry).unwrap());
         let channel = Channel {
+            approval_rules: Vec::new(),
             id: ChannelId::new(),
             session_id: SessionId::new(),
             name: Name::new("main").unwrap(),
@@ -3627,7 +3665,8 @@ mod tests {
             runtime.state_store().put_agent_channel_state(agent_id, channel.id, &mut stored).await.unwrap();
         }
         let executor = CommandExecutor::empty(Arc::clone(runtime.security_manager()));
-        let channel = ChannelLoop::new(channel, ChannelRuntime::new(runtime, Arc::new(executor))).await?;
+        let session_id = channel.session_id;
+        let channel = ChannelLoop::new(channel, ChannelRuntime::outside_a_session(runtime, Arc::new(executor), session_id)).await?;
         Ok((channel, context, agent_id, alice.id))
     }
 

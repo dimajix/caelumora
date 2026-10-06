@@ -225,6 +225,32 @@ approval follows from that:
 Whoever approves decides on what the call does, not on the agent's account of why; what was said,
 and by whom, the context panel shows.
 
+### Rules of a place
+
+Beside what a tool says of itself, the places an agent works in restrict its calls (issue
+[13](../issues/13-approval-modes.md)): the system (`AppConfig::approvals`, see
+[CONFIGURATION.md](CONFIGURATION.md)), its session and its channel (`approval_rules` of the
+document, set by whoever may change it - `UpdateSession`, `UpdateChannel`). A rule
+(`caelumora_model::approval::ApprovalRule`) names the tool as the model calls it, `*` for every
+tool, and optionally a regular expression per argument that its whole value must match - a string
+as it is, any other value as its compact JSON; it may expire. It decides one of two things:
+
+*   **`deny`** - the call never runs. It is answered `forbidden`, as a refusal of the policy is,
+    before anyone is asked, and again if the rule was set while the call waited for its approval.
+*   **`ask`** - a person decides this very call, whatever the tool says: the request is *explicit*
+    (`ApprovalRequest::explicit`), which the web UI and the TUI show. Rules a person sets for
+    themselves will not answer an explicit request.
+
+A place cannot allow: there is nobody at a place who would stand for an approval
+(`ApprovalRule::check_restricting` refuses an `allow` and a reach narrower than the place, and so
+do the configuration and the controllers). Of the rules of all three places that apply to a call,
+the strongest decides - `deny` before `ask` (`ApprovalRule::decide`). The `GuardedToolExecutor`
+reads them as they stand at every call, from the controllers of its session and channel; the
+approver is not involved. Patterns are matched with the `regex` crate, which has no backtracking,
+and are bounded in length and compiled size; a rule whose pattern cannot be matched - one written
+into a document by hand - restricts and never allows. A pattern is reliable for arguments with a
+structure of their own, not for one that is a language, such as a shell command.
+
 ### Who may approve
 
 Who may approve a call is the `SecurityManager`'s to decide, and the approver enforces it (issue

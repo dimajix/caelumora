@@ -1,12 +1,13 @@
 use crate::channel::ChannelLoop;
 use crate::command::{CommandExecutor, CommandProvider};
 use crate::component::{ComponentContainer, ComponentContext, ComponentRegistry, ComponentResult};
-use crate::controller::ControllerManager;
+use crate::controller::{ControllerManager, SessionController};
 use crate::event::EventBus;
 use crate::recorder::Recorder;
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{AgentChannelState, AgentId};
+use caelumora_model::approval::ApprovalRule;
 use caelumora_model::channel::ChannelId;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::SecurityAttributes;
@@ -32,19 +33,26 @@ pub struct RuntimeManager {
     event_bus: Arc<EventBus>,
     controller_manager: Arc<ControllerManager>,
     commands: ComponentConfig,
+    /// What the system restricts of tool calls everywhere
+    /// (`AppConfig::approvals`, issue 13).
+    approval_rules: Arc<[ApprovalRule]>,
     /// One owner of every running agent's `AgentState` (issue 62).
     agent_states: Arc<crate::agent_state::AgentStates>,
 }
 
 /// What a channel runs with: the process-wide services of the
 /// `RuntimeManager` - among them the controllers of its users and agents
-/// (issue 121) - the user commands of its session (issue 28) and a handle
-/// to the channel itself. It is the only source of `ActorRuntime`s, so every actor lives in
-/// exactly one channel and shares its commands and handle.
+/// (issue 121) - the user commands of its session (issue 28), the
+/// session's controller (issue 13) and a handle to the channel itself. It
+/// is the only source of `ActorRuntime`s, so every actor lives in exactly
+/// one channel and shares its commands and handle.
 #[derive(Debug, Clone)]
 pub struct ChannelRuntime {
     runtime_manager: Arc<RuntimeManager>,
     command_executor: Arc<CommandExecutor>,
+    /// The session the channel belongs to, live: what its agents' tool
+    /// calls are guarded by (`GuardedToolExecutor`).
+    session: Arc<SessionController>,
     // Set once the channel exists (see `attach`). Weak, because the channel
     // owns its actors and they hold this runtime: a strong reference would
     // keep a stopped channel alive forever.
@@ -52,9 +60,10 @@ pub struct ChannelRuntime {
 }
 
 impl ChannelRuntime {
-    /// A runtime for a channel of a session whose user commands are `commands`.
-    pub fn new(runtime_manager: Arc<RuntimeManager>, command_executor: Arc<CommandExecutor>) -> Self {
-        Self { runtime_manager, command_executor, channel: Arc::new(OnceLock::new()) }
+    /// A runtime for a channel of the session `session` holds, whose user
+    /// commands are `commands`.
+    pub fn new(runtime_manager: Arc<RuntimeManager>, command_executor: Arc<CommandExecutor>, session: Arc<SessionController>) -> Self {
+        Self { runtime_manager, command_executor, session, channel: Arc::new(OnceLock::new()) }
     }
 
     /// The runtime of `actor` in the channel `channel_id` of session
@@ -87,6 +96,9 @@ impl ChannelRuntime {
     pub fn entity_store(&self) -> &Arc<dyn EntityStore> { self.runtime_manager.entity_store() }
 
     pub fn new_recorder(&self) -> Result<Box<dyn Recorder>> { self.runtime_manager.new_recorder() }
+
+    /// The controller of the channel's session.
+    pub(crate) fn session_controller(&self) -> &Arc<SessionController> { &self.session }
 }
 
 /// What an actor runs with (issue 69): the services every actor needs, and
@@ -118,6 +130,17 @@ impl ActorRuntime {
 
     pub fn component_registry(&self) -> &Arc<ComponentRegistry> {
         self.runtime.runtime_manager.component_registry()
+    }
+
+    /// What the system restricts of tool calls everywhere (issue 13).
+    pub fn approval_rules(&self) -> &Arc<[ApprovalRule]> {
+        self.runtime.runtime_manager.approval_rules()
+    }
+
+    /// The controller of the actor's session: what its agent's tool calls
+    /// are guarded by, beside the channel's (issue 13).
+    pub(crate) fn session_controller(&self) -> &Arc<SessionController> {
+        self.runtime.session_controller()
     }
 
     /// The user commands of the actor's session. Only a `UserActor` runs
@@ -200,6 +223,36 @@ impl ActorRuntime {
     }
 }
 
+/// A session that holds nothing but its id `session_id` - in tests.
+#[cfg(test)]
+pub(crate) fn bare_session(session_id: SessionId) -> Session {
+    let now = chrono::Utc::now();
+    Session {
+        id: session_id,
+        name: String::new(),
+        participants: Vec::new(),
+        channels: Vec::new(),
+        commands: Default::default(),
+        privacy: Default::default(),
+        approval_rules: Vec::new(),
+        created_at: now,
+        updated_at: now,
+        security_attributes: Default::default(),
+        deleted: None,
+    }
+}
+
+#[cfg(test)]
+impl ChannelRuntime {
+    /// A runtime for a channel of the session `session_id` that is not
+    /// running - in tests: its session holds nothing but its id, and no
+    /// rules.
+    pub(crate) fn outside_a_session(runtime_manager: Arc<RuntimeManager>, command_executor: Arc<CommandExecutor>, session_id: SessionId) -> Self {
+        let session = runtime_manager.controller_manager().new_session_controller(bare_session(session_id));
+        Self::new(runtime_manager, command_executor, session)
+    }
+}
+
 impl RuntimeManager {
     /// The runtime everything in a process shares. `security_manager` is the
     /// one the whole process was configured with: it decides tool calls and
@@ -209,7 +262,8 @@ impl RuntimeManager {
     /// argument, so that a binary cannot drop the configured ones for a
     /// default. `component_defaults` replace built-in defaults of facets of
     /// which an agent has one (`AppConfig::component_defaults`, issue 99),
-    /// an argument for the same reason. `component_registry` holds the
+    /// an argument for the same reason, and so are `approval_rules`, what
+    /// the system restricts of tool calls (`AppConfig::approvals`, issue 13). `component_registry` holds the
     /// component kinds agents and sessions are built from -
     /// `ComponentRegistry::built_in`, to which a test may add stand-ins,
     /// such as a model of its own (issue 130); it is checked here.
@@ -227,6 +281,7 @@ impl RuntimeManager {
         security_manager: Arc<dyn SecurityManager>,
         commands: ComponentConfig,
         component_defaults: ComponentConfig,
+        approval_rules: Vec<ApprovalRule>,
         mut component_registry: ComponentRegistry,
     ) -> ComponentResult<Self> {
         component_registry.set_defaults(&component_defaults)?;
@@ -244,6 +299,7 @@ impl RuntimeManager {
             event_bus,
             controller_manager,
             commands,
+            approval_rules: approval_rules.into(),
             agent_states,
         })
     }
@@ -289,6 +345,11 @@ impl RuntimeManager {
         &self.controller_manager
     }
 
+    /// What the system restricts of tool calls everywhere (issue 13).
+    pub fn approval_rules(&self) -> &Arc<[ApprovalRule]> {
+        &self.approval_rules
+    }
+
     /// The owner of every running agent's `AgentState` (issue 62).
     pub fn agent_states(&self) -> &Arc<crate::agent_state::AgentStates> {
         &self.agent_states
@@ -311,9 +372,9 @@ mod tests {
     fn channel_runtime() -> ChannelRuntime {
         let store = Arc::new(MemoryStore::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-        let manager = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let manager = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), Vec::new(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let commands = Arc::new(CommandExecutor::empty(Arc::clone(manager.security_manager())));
-        ChannelRuntime::new(manager, commands)
+        ChannelRuntime::outside_a_session(manager, commands, SessionId::new())
     }
 
     #[tokio::test]
@@ -335,7 +396,7 @@ mod tests {
             let store = Arc::new(MemoryStore::new());
             let secrets = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
             let defaults: ComponentConfig = serde_json::from_value(defaults).unwrap();
-            RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(DummySecurityManager::new()), default_commands(), defaults, crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store)))
+            RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(DummySecurityManager::new()), default_commands(), defaults, Vec::new(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store)))
         };
         // As in `examples/config.yaml`.
         assert!(manager(serde_json::json!([{"id": "context", "kind": "turn_context_provider"}])).is_ok());

@@ -12,6 +12,7 @@ import {
   RotateCcw,
   Scale,
   Shield,
+  ShieldAlert,
   ScrollText,
   Send,
   Square,
@@ -54,6 +55,7 @@ import {ClassificationPicker} from './ClassificationPicker';
 import {ClassificationDialog} from './ClassificationDialog';
 import {MessageEditor} from './MessageEditor';
 import {LanguageDialog} from './LanguageDialog';
+import {ApprovalRulesDialog} from './ApprovalRulesDialog';
 import {languageLabel} from '../language';
 import {changedChannel, languageChangedChannel, membershipChangedChannel, onGlobalEvent, reclassifiedChannel} from '../globalEvents';
 import {api} from '../api';
@@ -236,6 +238,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   const [isAddingParticipant, setIsAddingParticipant] = useState(false);
   // What is being reclassified (issue 133): the channel, or one message.
   const [isChangingLanguage, setIsChangingLanguage] = useState(false);
+  // The channel's approval rules (issue 13), shown - and changed by who may.
+  const [isShowingRules, setIsShowingRules] = useState(false);
   const [reclassifying, setReclassifying] = useState<{kind: 'channel'} | {kind: 'message'; message: Message} | null>(null);
 
   // The server returns members in no particular order.
@@ -1094,6 +1098,12 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
                 <pre className="text-xs font-mono bg-gray-50 dark:bg-gray-900 p-2 rounded-sm mb-4 overflow-x-auto">
                   {formatArguments(approval.tool_call.arguments)}
                 </pre>
+                {approval.explicit && (
+                  <p className="text-xs text-yellow-800 dark:text-yellow-200 mb-3 flex items-center gap-1">
+                    <ShieldAlert size={12} />
+                    A rule of this session or channel asks for this call to be decided by a person, each time.
+                  </p>
+                )}
                 {answeredApprovals.includes(approval.id) ? (
                   <p className="text-sm text-gray-500 dark:text-gray-400 text-center">Answered - waiting for the decision.</p>
                 ) : !mayApprove(approval) ? (
@@ -1238,6 +1248,16 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           onClose={() => setIsChangingLanguage(false)}
         />
       )}
+      {isShowingRules && channel && (
+        <ApprovalRulesDialog
+          title={`Approval rules of ${channel.name}`}
+          place="channel"
+          current={channel.approval_rules}
+          canChange={channel.can_change}
+          onSubmit={async (rules) => setChannel(await api.setChannelApprovalRules(sessionId, channelId, rules))}
+          onClose={() => setIsShowingRules(false)}
+        />
+      )}
       {reclassifying && channel && (reclassifying.kind === 'channel' ? (
         <ClassificationDialog
           title={`Classification of ${channel.name}`}
@@ -1377,6 +1397,22 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
                   <Pencil size={12} />
                 </button>
               )}
+            </div>
+          )}
+          {channel && (channel.can_change || channel.approval_rules.length > 0) && (
+            <div
+              className="flex items-center gap-2 mb-4 -mt-2 text-xs text-gray-500 dark:text-gray-400"
+              title="What the channel restricts of its agents' tool calls: asked for or denied, whatever the tool says."
+            >
+              <ShieldAlert size={14} />
+              <span>Approval rules:</span>
+              <button
+                onClick={() => setIsShowingRules(true)}
+                className="text-gray-700 dark:text-gray-300 hover:underline"
+                aria-label={channel.can_change ? 'Change the approval rules of the channel' : 'Show the approval rules of the channel'}
+              >
+                {channel.approval_rules.length === 0 ? 'none' : `${channel.approval_rules.length}`}
+              </button>
             </div>
           )}
           {channelUsage && (

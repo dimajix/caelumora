@@ -49,7 +49,7 @@ The UI shows what the server says and repeats no rule of its own:
 | `src/panelWidth.ts` | The widths of the panels beside the chat, kept in browser storage |
 | `src/moderator.ts`, `src/confidentiality.ts` | Labels and explanations of responder policies and classifications |
 | `src/App.tsx` | Login state, keep-alive, the error banner, the layout |
-| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `MarkdownMessage`, `ContextPanel`, `HistoryPanel`, `ToolsPanel`, `PrivateNotesPanel`, `ToolSetList`, `DeletedList`, `NotesList`, `TokenGauge`, `HoverCard`, `ActionMenu`, `ResizeHandle`, `UsageStats`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ErrorBanner` |
+| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `MarkdownMessage`, `ContextPanel`, `HistoryPanel`, `ToolsPanel`, `PrivateNotesPanel`, `ToolSetList`, `DeletedList`, `NotesList`, `TokenGauge`, `HoverCard`, `ActionMenu`, `ResizeHandle`, `UsageStats`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ApprovalRulesDialog`, `ErrorBanner` |
 
 ## Talking to the server
 
@@ -122,7 +122,8 @@ more ("Delete session?", "Delete channel?"), though it only goes to the trash.
 A session's privacy (issue 134, `privacy.ts`) is shown to everyone in it: a session other sessions
 may read is marked in the list, and its menu opens `PrivacyDialog`, where its owner (`can_change`)
 changes it. Choosing a policy that lets other sessions read says that it holds for what is said from
-then on.
+then on. The menu's "Approval rules" opens `ApprovalRulesDialog` (issue 13): the session's rules,
+which its owner changes.
 
 The user's name at the foot of the sidebar opens `ProfileDialog` (issue 176), where they write how
 they introduce themselves to the agents (`GET`/`PUT /profile`). It counts the characters against the
@@ -232,6 +233,15 @@ The channel's language is shown below its classification (issue 56). Who may cha
 (`can_change`) changes it or takes it back with `LanguageDialog`, from the pencil next to it; the
 dialog says that nothing said before is translated. A change made elsewhere arrives as
 `ChannelUpdated` with `LanguageChanged`.
+
+### Approval rules
+
+Below the language, the channel's approval rules are counted (issue 13), for whoever may change the
+channel and, once there are some, for everyone; the count opens `ApprovalRulesDialog`, the same
+dialog as the session's. A rule names a tool - `*` for every one - and optionally a pattern per
+argument, and asks or denies; the dialog offers nothing that allows, since a place cannot. The
+rules are saved as a whole, and what the server refuses of them is shown in the dialog. An
+approval asked for by such a rule says so on its card (`explicit`).
 
 ### Members, moderator and notes
 

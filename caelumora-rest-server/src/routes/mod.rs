@@ -7,6 +7,8 @@ use axum::{
     Router,
 };
 use caelumora_model::snapshot::Detail;
+use caelumora_model::store::StoreError;
+use axum::http::StatusCode;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::session::SessionLoop;
@@ -69,6 +71,16 @@ pub fn views(state: &Arc<AppState>, user: &AuthenticatedUser) -> Views {
     state.session_manager.views(Viewer::new(user.security_context()))
 }
 
+/// What changing the approval rules of a place failed with (issue 13), as
+/// the API answers it: `400 invalid_rule` for a rule the place may not keep,
+/// with why; otherwise as `from_runtime` answers.
+pub fn approval_rules_error(error: anyhow::Error, subject: Subject, action: &str) -> ApiError {
+    match error.downcast_ref::<StoreError>() {
+        Some(StoreError::Validation(reason)) => ApiError::new(StatusCode::BAD_REQUEST, "invalid_rule", reason.clone()),
+        _ => ApiError::from_runtime(error, subject, action),
+    }
+}
+
 /// All routes. Everything except `/auth/login` and `/auth/logout` requires a
 /// session (see `crate::auth`).
 pub fn create_router(state: Arc<AppState>) -> Router {
@@ -86,6 +98,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(sessions::get_session).delete(sessions::delete_session).patch(sessions::rename_session),
         )
         .route("/sessions/{id}/privacy", axum::routing::put(sessions::update_session_privacy))
+        .route("/sessions/{id}/approval-rules", axum::routing::put(sessions::update_session_approval_rules))
         .route("/sessions/{id}/restore", post(sessions::restore_session))
         .route("/sessions/{id}/purge", post(sessions::purge_session))
         .route("/sessions/{id}/actors/{aid}/private_notes", get(sessions::agent_private_notes))
@@ -97,6 +110,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         )
         .route("/sessions/{id}/channels/{cid}/classification", axum::routing::put(channels::reclassify_channel))
         .route("/sessions/{id}/channels/{cid}/language", axum::routing::put(channels::set_channel_language))
+        .route("/sessions/{id}/channels/{cid}/approval-rules", axum::routing::put(channels::update_channel_approval_rules))
         .route("/sessions/{id}/channels/{cid}/restore", post(channels::restore_channel))
         .route(
             "/sessions/{id}/channels/{cid}/messages/{mid}",

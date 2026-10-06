@@ -1,6 +1,6 @@
 use crate::actor::ActorId;
 use crate::agent::AgentId;
-use crate::approval::{ApprovalStrategy, Approver, ApproverId};
+use crate::approval::{ApprovalRule, ApprovalStrategy, Approver, ApproverId};
 use crate::chain::Stored;
 use crate::component::{ComponentConfig, ComponentDescriptor};
 use crate::confidentiality::Classification;
@@ -23,6 +23,8 @@ pub enum ChannelUpdateEvent {
     /// Its conversation is to be held in another language, or in none in
     /// particular (issue 56).
     LanguageChanged(Option<Language>),
+    /// Its rules on tool calls changed (issue 13), as they now stand.
+    ApprovalRulesChanged(Vec<ApprovalRule>),
 }
 
 define_id!(ChannelId);
@@ -66,6 +68,10 @@ pub struct Channel {
     /// part now; one added again is taken out of here.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub former: Vec<FormerParticipant>,
+    /// What the channel restricts of the tool calls made in it (issue 13):
+    /// rules that ask or deny, set by whoever may change the channel.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub approval_rules: Vec<ApprovalRule>,
     /// Set when it was deleted (issue 164): it stays stored, hidden from
     /// every read but those for what was deleted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -136,6 +142,7 @@ impl Channel {
             language,
             history_limits: Vec::new(),
             former: Vec::new(),
+            approval_rules: Vec::new(),
             deleted: None,
         }
     }

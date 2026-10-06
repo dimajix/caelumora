@@ -22,6 +22,9 @@ tracing = "0.1.44"
 # uses the npm package of the same name. Both pinned to one version, so that
 # their tables agree.
 any_ascii = "=0.3.3"
+# The patterns of approval rules (issue 13): no backtracking, so that a
+# pattern takes linear time whatever it is matched against.
+regex = "1.12"
 # The JSON store reads and writes files asynchronously.
 tokio = { version = "1.53.1", features = ["fs", "io-util"] }
 

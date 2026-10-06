@@ -283,6 +283,7 @@ mod tests {
     #[tokio::test]
     async fn list_sessions_works() {
         let session1 = Session {
+            approval_rules: Vec::new(),
             commands: Default::default(),
             privacy: Default::default(),
             id: SessionId(Uuid::new_v4()),
@@ -295,6 +296,7 @@ mod tests {
             deleted: None,
         };
         let session2 = Session {
+            approval_rules: Vec::new(),
             commands: Default::default(),
             privacy: Default::default(),
             id: SessionId(Uuid::new_v4()),

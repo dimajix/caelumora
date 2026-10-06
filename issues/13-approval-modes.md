@@ -339,3 +339,18 @@ A session's and a channel's rules: a dialog of the owner's, like `LanguageDialog
   `GlobalEvent::UserProfileUpdated(UserId, UserProfile)` - a profile is read by its user alone, and
   the bus delivers by `GetUserProfile`, so the event can carry it after all; *The design in detail*
   thought it could not. `GET /profile` still reads the store, as every other reader does.
+- **2026-10-06** — Step 1 done: rules of a place. `ApprovalRule`, `ToolMatcher`, `RuleDecision`,
+  `Reach` and `ApprovalRule::decide` in `caelumora-model::approval`; the section `approvals` of the
+  configuration; `approval_rules` of `Session`, `Channel` and both templates, with their update
+  events and controller methods, `ChannelLoop`/`SessionLoop::update_approval_rules`, and `PUT
+  …/approval-rules` for both; the `GuardedToolExecutor` applies them in `admit` and again in
+  `check`, so that a `deny` set while a call waits refuses it when it would run;
+  `ApprovalRequest::explicit`; `ApprovalRulesDialog` in the web UI, a line on an explicit card, and
+  one in the TUI. The `GuardedToolExecutor` reads the rules live from the controllers of its
+  session and channel: the session's controller is made before its channels and handed to their
+  `ChannelRuntime`, as its commands are, and an `AgentActor` is given its channel's controller, as
+  the approver is. Deviating from *The design in detail*: `ToolMatcher` is a struct, not an enum of
+  one variant - a later variant can make it an untagged enum without changing what is stored;
+  `ApprovalRule` has no `created_at`; and a rule whose pattern cannot be matched - only one written
+  into a document by hand - restricts and never allows, rather than refusing the document.
+

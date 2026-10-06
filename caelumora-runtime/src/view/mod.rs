@@ -527,7 +527,7 @@ mod tests {
     fn owned_runtime_under(policy: Arc<dyn SecurityManager>) -> (Arc<MemoryStore>, Arc<SessionManager>) {
         let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), Vec::new(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         (store, Arc::new(SessionManager::new(runtime)))
     }
 
@@ -550,6 +550,7 @@ mod tests {
 
     fn make_session(name: &str, owner: ActorId, contributors: Vec<ActorId>) -> Session {
         Session {
+            approval_rules: Vec::new(),
             commands: Default::default(),
             privacy: Default::default(),
             id: SessionId::new(),
@@ -565,6 +566,7 @@ mod tests {
 
     fn main_channel(session: &Session) -> Channel {
         Channel {
+            approval_rules: Vec::new(),
             id: session.channels[0],
             session_id: session.id,
             name: Name::new("main").unwrap(),
@@ -895,7 +897,7 @@ use caelumora_model::turn::TurnState;
 
         // The agent's turn waits for one call, the other was approved.
         let call = |name: &str| ToolCall { id: Some(name.to_string()), function_name: name.to_string(), arguments: serde_json::json!({}), visibility: Default::default() };
-        let waiting = ToolCallState::pending(call("delete"), "Delete it?".to_string());
+        let waiting = ToolCallState::pending(call("delete"), "Delete it?".to_string(), false);
         let mut turn = TurnState::default();
         turn.work.event_context.session_id = session.id;
         turn.work.event_context.channel_id = channel.id;
@@ -946,7 +948,7 @@ use caelumora_model::turn::TurnState;
         let mut turn = TurnState::default();
         turn.work.event_context.sender_id = ActorId::Agent(helper.id);
         let call = ToolCall { id: Some("delete".to_string()), function_name: "delete".to_string(), arguments: serde_json::json!({}), visibility: Default::default() };
-        turn.tool_calls = vec![ToolCallState::pending(call, "Delete it?".to_string())];
+        turn.tool_calls = vec![ToolCallState::pending(call, "Delete it?".to_string(), false)];
         state.turn = Some(turn);
         store.put_agent_channel_state(helper.id, channel.id, &mut state).await.unwrap();
 

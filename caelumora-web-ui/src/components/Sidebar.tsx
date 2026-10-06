@@ -7,6 +7,7 @@ import {
   MessageSquare,
   Plus,
   Shield,
+  ShieldAlert,
   Trash2,
   User,
   Users
@@ -23,6 +24,7 @@ import {usePanelWidth} from '../panelWidth';
 import {DeletedList} from './DeletedList';
 import {NewChannelDialog} from './NewChannelDialog';
 import {PrivacyDialog} from './PrivacyDialog';
+import {ApprovalRulesDialog} from './ApprovalRulesDialog';
 import {ProfileDialog} from './ProfileDialog';
 import {privacyInfo} from '../privacy';
 import {type ClassValue, clsx} from 'clsx';
@@ -107,6 +109,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // dialog follows changes to it.
   const [privacyOf, setPrivacyOf] = useState<string | null>(null);
   const privacySession = sessions.find(s => s.id === privacyOf) ?? null;
+  // The session whose approval rules are shown (issue 13), likewise by id.
+  const [rulesOf, setRulesOf] = useState<string | null>(null);
+  const rulesSession = sessions.find(s => s.id === rulesOf) ?? null;
   // Changes whenever something may have been deleted or restored, so that
   // the trash is loaded again (issue 164).
   const [trashVersion, setTrashVersion] = useState(0);
@@ -362,6 +367,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   actions={[
                     {label: 'Rename', icon: Edit2, onSelect: () => handleRenameSession(session.id, session.name)},
                     {label: 'Privacy', icon: Shield, onSelect: () => handleShowPrivacy(session.id)},
+                    {label: 'Approval rules', icon: ShieldAlert, onSelect: () => setRulesOf(session.id)},
                     {label: 'Delete', icon: Trash2, danger: true, confirm: 'Delete session?', onSelect: () => void handleDeleteSession(session.id)},
                   ]}
                 />
@@ -440,6 +446,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
             setSessions(prev => upsert(prev, updated));
           }}
           onClose={() => setPrivacyOf(null)}
+        />
+      )}
+
+      {rulesSession && (
+        <ApprovalRulesDialog
+          title={`Approval rules of ${rulesSession.name}`}
+          place="session"
+          current={rulesSession.approval_rules ?? []}
+          canChange={rulesSession.can_change}
+          onSubmit={async (rules) => {
+            const updated = await api.setSessionApprovalRules(rulesSession.id, rules);
+            setSessions(prev => upsert(prev, updated));
+          }}
+          onClose={() => setRulesOf(null)}
         />
       )}
 

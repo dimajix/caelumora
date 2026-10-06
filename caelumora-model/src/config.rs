@@ -1,3 +1,4 @@
+use crate::approval::ApprovalRule;
 use crate::command::default_commands;
 use crate::confidentiality::{Compartments, ConfidentialityRules, Roles};
 use std::collections::BTreeMap;
@@ -253,6 +254,17 @@ pub struct AppConfig {
     pub seed: Vec<PathBuf>,
     /// Where the REST server listens.
     pub server: ServerConfig,
+    /// What the system restricts of tool calls everywhere (issue 13).
+    /// Checked when the configuration is read. None unless configured.
+    pub approvals: ApprovalsConfig,
+}
+
+/// The system's rules on tool calls (issue 13): each asks or denies - the
+/// system is a place, and a place only restricts.
+#[derive(Debug, Deserialize, Clone, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct ApprovalsConfig {
+    pub rules: Vec<ApprovalRule>,
 }
 
 // Not derived: the commands default to the built-in ones, not to none.
@@ -271,6 +283,7 @@ impl Default for AppConfig {
             roles: None,
             seed: Vec::new(),
             server: ServerConfig::default(),
+            approvals: ApprovalsConfig::default(),
         }
     }
 }
@@ -319,6 +332,9 @@ impl AppConfig {
         let invalid = |e: crate::confidentiality::RoleError| ConfigError::Invalid(e.to_string());
         if let Some(roles) = &self.roles {
             roles.check(&self.compartments).map_err(invalid)?;
+        }
+        for rule in &self.approvals.rules {
+            rule.check_restricting().map_err(|e| ConfigError::Invalid(format!("an approval rule for `{}`: {e}", rule.matcher.tool)))?;
         }
         for provider in &self.users.providers {
             let UserProviderConfig::AcceptAny { roles: assigned, default_roles } = provider;
@@ -601,6 +617,16 @@ users:
         assert_eq!(AppConfig::default().compartments.names().count(), 0, "none unless configured");
         assert!(AppConfig::from_yaml("compartments:\n  - name: hr\n    reads: [payroll]\n").is_err(), "reads what is not configured");
         assert!(AppConfig::from_yaml("compartments:\n  - name: hr\n    read: [finance]\n").is_err(), "a misspelt key");
+    }
+
+    #[test]
+    fn approval_rules_are_checked_when_the_configuration_is_read() {
+        let config = AppConfig::from_yaml("approvals:\n  rules:\n    - matcher: { tool: shell, arguments: { command: 'rm .*' } }\n      decision: deny\n    - matcher: { tool: '*' }\n      decision: ask\n").unwrap();
+        assert_eq!(config.approvals.rules.len(), 2);
+        assert!(AppConfig::default().approvals.rules.is_empty(), "none unless configured");
+        assert!(matches!(AppConfig::from_yaml("approvals:\n  rules:\n    - matcher: { tool: shell }\n      decision: allow\n"), Err(ConfigError::Invalid(_))), "the system does not allow");
+        assert!(matches!(AppConfig::from_yaml("approvals:\n  rules:\n    - matcher: { tool: shell, arguments: { command: '(' } }\n      decision: deny\n"), Err(ConfigError::Invalid(_))), "a pattern that cannot be matched");
+        assert!(AppConfig::from_yaml("approvals:\n  rule: []\n").is_err(), "a misspelt key");
     }
 
     #[test]

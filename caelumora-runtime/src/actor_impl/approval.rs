@@ -501,11 +501,12 @@ mod tests {
         let security: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&security)));
         let registry = crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, security, default_commands(), Default::default(), registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, security, default_commands(), Default::default(), Vec::new(), registry).unwrap());
         let approver = Approver { id: ApproverId::new(), strategy };
         let mut participants: Vec<Participant> = ids.iter().map(|id| Participant::User(*id)).collect();
         participants.push(Participant::Approver(approver.clone()));
         let channel = Channel {
+            approval_rules: Vec::new(),
             id: ChannelId::new(),
             session_id: SessionId::new(),
             name: Name::new("test").unwrap(),
@@ -520,7 +521,8 @@ mod tests {
         };
         store.create_channel(&system, &channel).await.unwrap();
         let executor = CommandExecutor::empty(Arc::clone(runtime.security_manager()));
-        let channel = ChannelLoop::new(channel, ChannelRuntime::new(Arc::clone(&runtime), Arc::new(executor))).await.unwrap();
+        let session_id = channel.session_id;
+        let channel = ChannelLoop::new(channel, ChannelRuntime::outside_a_session(Arc::clone(&runtime), Arc::new(executor), session_id)).await.unwrap();
         let actor: Arc<dyn Any + Send + Sync> = channel.actor_by_id(ActorId::Approver(approver.id)).unwrap();
         let approver = Arc::downcast::<ApproverActor>(actor).unwrap();
 
@@ -536,6 +538,7 @@ mod tests {
     impl Approving {
         fn request(&self) -> ApprovalRequest {
             ApprovalRequest {
+                explicit: false,
                 id: ApprovalId::new(),
                 session_id: self.channel.session_id(),
                 channel_id: self.channel.id(),

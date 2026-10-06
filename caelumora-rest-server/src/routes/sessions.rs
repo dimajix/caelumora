@@ -6,6 +6,7 @@ use axum::response::{IntoResponse, Response};
 use axum::{extract::{Query, State}, http::StatusCode};
 use crate::error::{Json, Path};
 use caelumora_model::agent::AgentId;
+use caelumora_model::approval::ApprovalRule;
 use caelumora_model::snapshot::Detail;
 use caelumora_model::session::SessionId;
 use caelumora_model::template::SessionTemplateId;
@@ -137,6 +138,28 @@ pub async fn update_session_privacy(
 
     session_loop.update_privacy(&user.security_context(), payload.privacy).await
         .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("changing the privacy of session {session_id}")))?;
+
+    let session = crate::routes::views(&state, &user).session(session_id).await
+        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Session, &format!("loading session {session_id}")))?;
+    Ok(Json(session.snapshot(Detail::CHANNELS | Detail::MEMBERS).await.into()))
+}
+
+/// Sets what the session restricts of the tool calls made in any of its
+/// channels (issue 13): rules that ask or deny, replacing those it had -
+/// whoever may change the session. Answers `400 invalid_rule` for a rule
+/// that would allow, is narrower than the session or cannot be matched, and
+/// otherwise the session as the user sees it now.
+pub async fn update_session_approval_rules(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    user: AuthenticatedUser,
+    Json(rules): Json<Vec<ApprovalRule>>,
+) -> Result<Json<SessionSnapshot>, ApiError> {
+    let session_id = SessionId(id);
+    let session_loop = crate::routes::ensure_session(&state, &user, session_id).await?;
+
+    session_loop.update_approval_rules(&user.security_context(), rules).await
+        .map_err(|e| crate::routes::approval_rules_error(e, Subject::Session, &format!("changing the approval rules of session {session_id}")))?;
 
     let session = crate::routes::views(&state, &user).session(session_id).await
         .map_err(|e| ApiError::from_runtime(e.into(), Subject::Session, &format!("loading session {session_id}")))?;

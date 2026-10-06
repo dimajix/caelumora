@@ -76,6 +76,7 @@ fn personality() -> Personality {
 
 fn session_template() -> SessionTemplate {
     SessionTemplate {
+        approval_rules: Vec::new(),
         security_attributes: Default::default(),
         commands: Default::default(),
         privacy: Default::default(),
@@ -84,6 +85,7 @@ fn session_template() -> SessionTemplate {
         description: String::new(),
         participants: vec![ParticipantTemplate::User { name: "user".to_string() }],
         channels: vec![ChannelTemplate {
+            approval_rules: Vec::new(),
             name: Name::new("general").unwrap(),
             components: crate::channel::moderation_components(None, Some("broadcast_policy")),
             classification: Classification::CHANNEL_DEFAULT,
@@ -95,6 +97,7 @@ fn session_template() -> SessionTemplate {
 
 fn session() -> Session {
     Session {
+        approval_rules: Vec::new(),
         commands: Default::default(),
         privacy: Default::default(),
         id: SessionId(Uuid::new_v4()),
@@ -110,6 +113,7 @@ fn session() -> Session {
 
 fn channel() -> Channel {
     Channel {
+        approval_rules: Vec::new(),
         id: ChannelId(Uuid::new_v4()),
         session_id: SessionId(Uuid::new_v4()),
         name: Name::new("general").unwrap(),

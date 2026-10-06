@@ -352,6 +352,7 @@ mod tests {
 
     fn approval_request() -> ApprovalRequest {
         ApprovalRequest {
+            explicit: false,
             id: Default::default(),
             session_id: Default::default(),
             channel_id: Default::default(),

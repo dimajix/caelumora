@@ -275,6 +275,7 @@ mod tests {
 
     fn session(owner: ActorId, contributors: Vec<ActorId>) -> Session {
         Session {
+            approval_rules: Vec::new(),
             id: SessionId::new(),
             name: String::new(),
             participants: Vec::new(),

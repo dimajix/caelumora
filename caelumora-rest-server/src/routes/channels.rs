@@ -13,7 +13,7 @@ use caelumora_runtime::actor_impl::user::UserActor;
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::session::ChannelSpec;
 use caelumora_runtime::view::{AgentContextView, ChannelView, MemberView, Viewer};
-use caelumora_model::approval::{ApprovalId, ApprovalResponse};
+use caelumora_model::approval::{ApprovalId, ApprovalResponse, ApprovalRule};
 use caelumora_model::channel::moderation_components;
 use caelumora_model::command::{Command, CommandVisibility};
 use caelumora_model::confidentiality::Classification;
@@ -420,6 +420,23 @@ pub async fn set_channel_language(
     let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     channel.update_language(&user.security_context(), language).await
         .map_err(|e| ApiError::from_runtime(e, Subject::Session, "changing the language of the channel"))?;
+    Ok(Json(crate::routes::channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?))
+}
+
+/// Sets what the channel restricts of the tool calls made in it (issue 13):
+/// rules that ask or deny, replacing those it had - whoever may change the
+/// channel. Answers `400 invalid_rule` for a rule that would allow, is
+/// narrower than the channel or cannot be matched, and otherwise the
+/// channel as the user sees it now.
+pub async fn update_channel_approval_rules(
+    State(state): State<Arc<AppState>>,
+    Path((id, cid)): Path<(Uuid, Uuid)>,
+    user: AuthenticatedUser,
+    Json(rules): Json<Vec<ApprovalRule>>,
+) -> Result<Json<ChannelResponse>, ApiError> {
+    let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    channel.update_approval_rules(&user.security_context(), rules).await
+        .map_err(|e| crate::routes::approval_rules_error(e, Subject::Session, "changing the approval rules of the channel"))?;
     Ok(Json(crate::routes::channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?))
 }
 

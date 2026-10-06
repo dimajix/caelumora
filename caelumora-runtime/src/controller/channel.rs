@@ -3,6 +3,7 @@ use arc_swap::ArcSwap;
 use caelumora_model::language::Language;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::actor::ActorId;
+use caelumora_model::approval::ApprovalRule;
 use caelumora_model::channel::{participant_attributes, Channel, ChannelId, ChannelUpdateEvent, FormerParticipant, HistoryLimit, HistoryStart, Participant};
 use caelumora_model::removal::Removal;
 use caelumora_model::event::{EventPublisher, GlobalEvent};
@@ -10,6 +11,7 @@ use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::{EntityStore, StoreError, StoreResult};
 use std::sync::Arc;
+use super::check_restricting;
 
 /// The one writer of a channel's document (issue 70): changes are stored
 /// first - where the permission is checked, on the channel's own attributes
@@ -83,6 +85,19 @@ impl ChannelController {
     pub async fn update_language(&self, ctx: &SecurityContext, language: Option<Language>) -> StoreResult<()> {
         let event = ChannelUpdateEvent::LanguageChanged(language);
         self.update(ctx, &event).await
+    }
+
+    /// Sets what the channel restricts of the tool calls made in it (issue
+    /// 13) on behalf of `ctx` (`UpdateChannel`): `rules` replace those it
+    /// had. They apply to the next call of any agent in it.
+    ///
+    /// # Errors
+    /// `StoreError::Validation` if a rule does not only ask or deny
+    /// (`ApprovalRule::check_restricting`), otherwise whatever the store
+    /// reports; the channel is then unchanged.
+    pub async fn update_approval_rules(&self, ctx: &SecurityContext, rules: Vec<ApprovalRule>) -> StoreResult<()> {
+        check_restricting(&rules)?;
+        self.update(ctx, &ChannelUpdateEvent::ApprovalRulesChanged(rules)).await
     }
 
     /// Adds `participant` to the channel on behalf of `ctx` (issue 46), seeing
@@ -168,6 +183,7 @@ impl ChannelController {
             ChannelUpdateEvent::NameChanged(name) => channel.name = name.clone(),
             ChannelUpdateEvent::ClassificationChanged(classification) => channel.classification = classification.clone(),
             ChannelUpdateEvent::LanguageChanged(language) => channel.language = language.clone(),
+            ChannelUpdateEvent::ApprovalRulesChanged(rules) => channel.approval_rules = rules.clone(),
         }
         self.store(ctx, &channel).await?;
         let attributes = channel.security_attributes.clone();

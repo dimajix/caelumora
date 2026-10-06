@@ -82,6 +82,7 @@ impl TurnState {
                 agent_id: agent,
                 tool_call: c.tool_call.clone(),
                 description: c.description.clone(),
+                explicit: c.explicit,
             })
             .collect()
     }

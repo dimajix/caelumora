@@ -265,6 +265,7 @@ impl SessionView {
             id: self.session.id,
             name: self.session.name.clone(),
             privacy: self.session.privacy,
+            approval_rules: self.session.approval_rules.clone(),
             can_change: self.may_change().await,
             participants,
             channels,

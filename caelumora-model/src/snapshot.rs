@@ -17,7 +17,7 @@
 //! from its agent's state, read once for all of them.
 
 use crate::actor::{ActorId, ActorState};
-use crate::approval::ApprovalRequest;
+use crate::approval::{ApprovalRequest, ApprovalRule};
 use crate::confidentiality::Classification;
 use crate::language::Language;
 use crate::digest::Digest;
@@ -53,6 +53,9 @@ pub struct SessionSnapshot {
     /// Whom the session lets read what was said in it (issue 134) - shown
     /// to everyone who takes part.
     pub privacy: PrivacyConfig,
+    /// What the session restricts of tool calls (issue 13) - shown to
+    /// everyone who takes part, whose agents it binds.
+    pub approval_rules: Vec<ApprovalRule>,
     /// Whether the viewer may change the session - rename it, change its
     /// privacy (`UpdateSession`).
     pub can_change: bool,
@@ -89,6 +92,9 @@ pub struct ChannelSnapshot {
     pub classification: Classification,
     /// The language its conversation is held in (issue 56), if any.
     pub language: Option<Language>,
+    /// What the channel restricts of tool calls (issue 13) - shown to
+    /// everyone who reads it, whose agents it binds.
+    pub approval_rules: Vec<ApprovalRule>,
     /// Whether the viewer may rename the channel and add or remove its
     /// participants (`UpdateChannel`, issue 46).
     pub can_change: bool,
