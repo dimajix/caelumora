@@ -154,6 +154,22 @@ pub enum ActorEvent {
         max_agent_hops: u32,
         not_asked: Vec<ActorId>,
     },
+    /// The message `0.id` reads as `0` from now on (issue 234): sent by its
+    /// author alone, with the id, sender and role of the message it
+    /// modifies and the time it was modified as its `timestamp`. The channel
+    /// admits it only for a message of its history that its sender wrote
+    /// and that was not taken back, records it in its history, and every
+    /// participant that holds the message records it too
+    /// (`Message::modify`). It asks nobody to respond.
+    MessageModified(Message),
+    /// The message `message` was taken back by its author at `at` (issue
+    /// 234), sent and admitted as `MessageModified`: recorded wherever the
+    /// message is held (`Message::revoke`), never removed. It asks nobody to
+    /// respond.
+    MessageRevoked {
+        message: MessageId,
+        at: DateTime<Utc>,
+    },
 }
 
 impl ActorEvent {
@@ -169,6 +185,7 @@ impl ActorEvent {
             ActorEvent::CompleteMessageGenerated(m) => publish(m, ActorEvent::CompleteMessageGenerated),
             ActorEvent::IntermediatePartialGenerated(m) => publish(m, ActorEvent::IntermediatePartialGenerated),
             ActorEvent::IntermediateMessageGenerated(m) => publish(m, ActorEvent::IntermediateMessageGenerated),
+            ActorEvent::MessageModified(m) => publish(m, ActorEvent::MessageModified),
             ActorEvent::FullResponseGenerated(messages) => Some(ActorEvent::FullResponseGenerated(
                 messages.iter().filter_map(Message::published).collect(),
             )),
@@ -183,7 +200,8 @@ impl ActorEvent {
             ActorEvent::PartialMessageGenerated(m)
             | ActorEvent::CompleteMessageGenerated(m)
             | ActorEvent::IntermediatePartialGenerated(m)
-            | ActorEvent::IntermediateMessageGenerated(m) => vec![m],
+            | ActorEvent::IntermediateMessageGenerated(m)
+            | ActorEvent::MessageModified(m) => vec![m],
             ActorEvent::FullResponseGenerated(messages) => messages.iter().collect(),
             _ => Vec::new(),
         }
@@ -212,6 +230,8 @@ impl ActorEvent {
             ActorEvent::CommandExecuted { .. } => "CommandExecuted",
             ActorEvent::ParticipantRemoved { .. } => "ParticipantRemoved",
             ActorEvent::ChainCutOff { .. } => "ChainCutOff",
+            ActorEvent::MessageModified(_) => "MessageModified",
+            ActorEvent::MessageRevoked { .. } => "MessageRevoked",
         }
     }
 }
@@ -335,6 +355,12 @@ impl Envelope {
             }
             ActorEvent::ChainCutOff { message, max_agent_hops, not_asked } => {
                 format!("ChainCutOff(sender_id={}, message={}, max_agent_hops={}, not_asked={})", ctx.sender_id, message, max_agent_hops, not_asked.len())
+            }
+            ActorEvent::MessageModified(m) => {
+                format!("MessageModified(sender_id={}, sender_name={}, mid={})", ctx.sender_id, ctx.sender_name, m.id)
+            }
+            ActorEvent::MessageRevoked { message, .. } => {
+                format!("MessageRevoked(sender_id={}, sender_name={}, mid={})", ctx.sender_id, ctx.sender_name, message)
             }
             _ => {
                 format!("{:?}", self.event)

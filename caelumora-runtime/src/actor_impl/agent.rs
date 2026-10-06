@@ -273,7 +273,7 @@ impl AgentActor {
         output: &dyn EventSender,
     ) -> Result<Option<ActorState>> {
         let Some(received) = rx.recv().await else { return Ok(None) };
-        let request = take_in(state, received, rx, self.id(), &self.perceive_in_processors, &self.security_context).await;
+        let request = take_in(state, received, rx, &self.perceive_in_processors, &self.security_context).await;
         // Read once taken in, not before waiting: the channel wakes an agent
         // before it delivers the message that asks it, and the request comes
         // in the same batch.
@@ -715,6 +715,8 @@ impl Actor for AgentActor {
                     | ActorEvent::ApprovalDenied(_)
                     | ActorEvent::ApprovalTimedOut(_)
                     | ActorEvent::FullResponseGenerated(_)
+                    | ActorEvent::MessageModified(_)
+                    | ActorEvent::MessageRevoked { .. }
                     | ActorEvent::ResponseRequested
             )
         }

@@ -67,6 +67,9 @@ The `OwnershipSecurityManager` decides by those attributes and the context's ini
     (`Restore`). Removing it for good (`Purge`) is the system's alone - the retention policy's
     ([07](../issues/07-session-deletion-audit.md)) - until there is an administrator
     ([125](../issues/125-invisible-admin.md)).
+*   A message is its author's to modify and to take back (`ModifyMessage`, `RevokeMessage`, issue
+    [234](../issues/234-modify-revoke-and-retry-messages.md)): whoever said it - the context's
+    caller, an agent for its own message even when it acts for its owner - not the channel's owner.
 *   Deleting an agent is its owner's (`DeleteAgent`). That it leaves channels owned by others is
     done in the runtime's name: it is a consequence of the deletion, not a change of those channels
     by the owner.
@@ -136,8 +139,8 @@ asked:
 
 The questions are `may_read_channel`, `may_change_channel`, `may_change_session`,
 `may_channel_read`, `may_read_agent_context`, `may_read_agent_tools`, `may_approve`,
-`may_delete_agent`, `may_call_tool`, `may_publish`, `may_see_channel`, `may_restore` and
-`may_purge`.
+`may_delete_agent`, `may_call_tool`, `may_publish`, `may_modify_message`, `may_revoke_message`,
+`may_see_channel`, `may_restore` and `may_purge`.
 
 `AccessQuestions` is an extension trait on every `SecurityManager`, by blanket implementation. Each
 question gets a name and one place, but only translates into an `ActionType`. The decision stays

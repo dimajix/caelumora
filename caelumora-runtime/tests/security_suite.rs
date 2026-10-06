@@ -65,6 +65,7 @@ impl Recorder {
         let kind = action.describe().split('(').next().unwrap_or_default().to_string();
         match action {
             ActionType::JoinChannel { participant, .. } => format!("{kind}({})", self.name(*participant)),
+            ActionType::ModifyMessage { author, .. } | ActionType::RevokeMessage { author, .. } => format!("{kind}({}'s)", self.name(*author)),
             _ => match attributes_of(action) {
                 Some(attributes) => format!("{kind}({}'s)", self.name(attributes.owner_id)),
                 None => kind,
@@ -501,6 +502,62 @@ async fn the_owner_changes_and_ends_the_session() {
     session.delete_channel(&alice, side.id()).await.expect("and to delete them");
     assert!(world.manager.delete_session(&alice, session.id()).await.unwrap(), "and to delete it");
     assert!(not_found(&world.manager.open_session(&alice, session.id()).await.expect_err("gone")));
+}
+
+// --- Messages ----------------------------------------------------------------
+
+/// What `watch` is shown next of the kind `wanted`.
+async fn shown(watch: &mut caelumora_runtime::actor_impl::user::ChannelWatch, wanted: &str) -> caelumora_model::actor::ActorEvent {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let envelope = watch.events.recv().await.expect("the channel runs");
+            if envelope.event.kind() == wanted {
+                break envelope.event;
+            }
+        }
+    }).await.unwrap_or_else(|_| panic!("{wanted} is shown"))
+}
+
+/// M1: a message is its author's to modify and to take back (issue 234) -
+/// not another participant's. Asked by the author's actor before it sends
+/// the change, and again by the channel as it admits it, with whether the
+/// modified message may enter the channel as classified.
+#[tokio::test]
+async fn a_message_is_modified_and_taken_back_by_its_author_alone() {
+    use caelumora_model::actor::ActorEvent;
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
+    let mut watch = bob.watch();
+    alice.send_message("helo".to_string(), None).await.expect("sent");
+    let ActorEvent::FullResponseGenerated(said) = shown(&mut watch, "FullResponseGenerated").await else { unreachable!() };
+    let said = said[0].id;
+
+    let (refused, asked) = world.asked(bob.modify_message(said, "bob's".to_string(), None)).await;
+    assert!(denied(&refused.expect_err("not his")));
+    assert_eq!(asked, checks(&["bob: ModifyMessage(alice's) no"]), "refused before anything else is asked");
+    let (refused, asked) = world.asked(bob.revoke_message(said)).await;
+    assert!(denied(&refused.expect_err("not his to take back")));
+    assert_eq!(asked, checks(&["bob: RevokeMessage(alice's) no"]));
+
+    let (_, asked) = world.asked(async {
+        alice.modify_message(said, "hello".to_string(), None).await.expect("hers");
+        shown(&mut watch, "MessageModified").await;
+    }).await;
+    assert_eq!(asked, checks(&[
+        // Her actor, before it sends.
+        "alice: ModifyMessage(alice's) yes", "alice: Publish yes",
+        // The channel, as it admits it.
+        "alice: Publish yes", "alice: ModifyMessage(alice's) yes",
+    ]));
+    let (_, asked) = world.asked(async {
+        alice.revoke_message(said).await.expect("hers");
+        shown(&mut watch, "MessageRevoked").await;
+    }).await;
+    assert_eq!(asked, checks(&["alice: RevokeMessage(alice's) yes", "alice: RevokeMessage(alice's) yes"]));
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 // --- What an agent saw --------------------------------------------------------

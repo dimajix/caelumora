@@ -161,6 +161,44 @@ every message, in the message's span. Neither a frontend nor the channel decides
 User commands (`/help`, `/wakeup`) are run by the user's actor in the same way; see
 [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md).
 
+## Changing what was said
+
+What was said can be changed by its author, but never rewritten
+([234](../issues/234-modify-revoke-and-retry-messages.md)): a message is *modified* - it reads
+differently from now on, at the place it has - or *taken back*. Nothing forks: the others saw the
+message, and what they said in reply stays.
+
+*   **A user** changes their message through their actor, as they write:
+    `UserActor::modify_message(message, content, classification)` and `revoke_message(message)`. The
+    actor looks the message up in the channel's history and asks before it sends - whether the user
+    may change it (`ModifyMessage`, `RevokeMessage`; a message is its author's), then for a
+    modification whether it may enter the channel so classified (`Publish`) - so that the user
+    learns of a refusal: `ChannelError::MessageNotFound`, `Forbidden`, `MessageRevoked` for one
+    taken back already, `ClassificationRefused`. It then sends `ActorEvent::MessageModified`, the
+    message as it reads from now on, or `MessageRevoked { message, at }` through its transport, as
+    every actor's output.
+*   **The channel admits it** as it admits a message (`ChannelLoop::admits_change`), in the
+    sender's name: the message is in its history, its author may change it, and it can be changed
+    so as it stands - not taken back, and modified by its own sender in its own role. Anything else
+    is dropped and logged. It records the change in its history (`MessageHistory::modify`,
+    `revoke`), which then shows the message as it stands: modified, with when (`Message::modified`),
+    or without what it said (`Message::revoked`).
+*   **Everyone who heard it follows.** The moderator routes the change to every user and agent but
+    its sender (`route_to_participants`) and asks nobody to respond. An agent of either kind takes
+    it in between turns, in order with what it hears (`actor_impl::take_in`): into its history if
+    that holds the message, into its transcript if the message is on its active path - a
+    modification as it hears it, through its perceive processors; where nothing of it passes, the
+    message is no longer given. A turn under way ends as it began; the next is given what stands.
+    An agent that never held the message records nothing. An external agent's transcript holds only
+    what the remote agent has not been given yet, so a change reaches the remote agent only if the
+    message did not.
+*   **Taking back is not erasing.** The message stays in every participant's record, in the
+    contexts of what was answered to it, and with a remote agent that was given it (see
+    [CONFIDENTIALITY.md](CONFIDENTIALITY.md#messages)).
+
+How the chains record a change is described in
+[AGENT-TURN.md](AGENT-TURN.md#changes-to-a-message).
+
 ## Participants
 
 Participants of the session can be added to and removed from a running channel (issue 46). Changing

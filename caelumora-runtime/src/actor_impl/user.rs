@@ -10,7 +10,7 @@ use caelumora_model::channel::{Channel, ChannelId};
 use caelumora_model::command::{Command, CommandVisibility};
 use caelumora_model::message::{Message, MessageId, MessageRole};
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::security::{ActionType, Enforcement, SecurityContext};
+use caelumora_model::security::{ActionType, Enforcement, SecurityAttributes, SecurityContext};
 use caelumora_model::session::SessionId;
 use crate::controller::UserController;
 use chrono::Utc;
@@ -135,6 +135,83 @@ impl UserActor {
         self.send(self.envelope(ActorEvent::CompleteMessageGenerated(msg.clone()), span_id)).await?;
         self.send(self.envelope(ActorEvent::FullResponseGenerated(vec![msg]), span_id)).await?;
         Ok(span_id)
+    }
+
+    /// Modifies this user's message `message` to read `content` from now on
+    /// (issue 234), classified `classification` - as it is classified now
+    /// if `None`. Asked here, so that the user learns of a refusal - whether
+    /// they may modify it (`ModifyMessage`), then whether it may enter the
+    /// channel so classified (`Publish`) - and asked again by the channel as
+    /// it admits the modification. The message keeps its place; nobody is
+    /// asked to respond to it.
+    ///
+    /// Returns the `span_id` of the envelope, as `send_message` does.
+    ///
+    /// # Errors
+    /// `ChannelError::MessageNotFound` if the channel has no such message,
+    /// `Forbidden` if it is not this user's to modify, `MessageRevoked` if
+    /// it was taken back, `ClassificationRefused` as for `send_message`; an
+    /// error if the channel is gone.
+    pub async fn modify_message(&self, message: MessageId, content: String, classification: Option<Classification>) -> anyhow::Result<Uuid> {
+        let channel_loop = self.actor_runtime.channel_loop()
+            .ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))?;
+        let original = self.message_to_change(&channel_loop, message, |author, channel| ActionType::ModifyMessage { author, channel }, "modifying a message of").await?;
+        let channel = channel_loop.classification();
+        let classification = classification.unwrap_or_else(|| original.classification.clone());
+        let action = ActionType::Publish { classification: &classification, actor: self.id(), channel: &channel };
+        self.actor_runtime.security_manager()
+            .require(&self.security_context, action, || crate::channel::ChannelError::ClassificationRefused { classification: classification.clone(), channel: self.channel_id })
+            .await?;
+        let modified = Message {
+            mentions: channel_loop.mentions_in(&content),
+            content: Some(content),
+            classification,
+            timestamp: Utc::now(),
+            ..original
+        };
+        let span_id = Uuid::new_v4();
+        self.send(self.envelope(ActorEvent::MessageModified(modified), span_id)).await?;
+        Ok(span_id)
+    }
+
+    /// Takes this user's message `message` back (issue 234): it keeps its
+    /// place, without what it said, and the agents are no longer given it.
+    /// Asked here (`RevokeMessage`) and again by the channel, as
+    /// `modify_message`. Not a deletion: what was said stays in the record
+    /// of every participant that heard it.
+    ///
+    /// # Errors
+    /// As `modify_message`, but for the classification.
+    pub async fn revoke_message(&self, message: MessageId) -> anyhow::Result<Uuid> {
+        let channel_loop = self.actor_runtime.channel_loop()
+            .ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))?;
+        self.message_to_change(&channel_loop, message, |author, channel| ActionType::RevokeMessage { author, channel }, "taking back a message of").await?;
+        let span_id = Uuid::new_v4();
+        self.send(self.envelope(ActorEvent::MessageRevoked { message, at: Utc::now() }, span_id)).await?;
+        Ok(span_id)
+    }
+
+    /// The message `id` of `channel` as it stands, if this user may change
+    /// it - `action`, asked as `what` - and it can still be changed: not
+    /// taken back.
+    async fn message_to_change(
+        &self,
+        channel: &crate::channel::ChannelLoop,
+        id: MessageId,
+        action: for<'a> fn(caelumora_model::actor::ActorId, &'a SecurityAttributes) -> ActionType<'a>,
+        what: &'static str,
+    ) -> anyhow::Result<Message> {
+        use crate::channel::ChannelError;
+        let message = channel.message(id).await
+            .ok_or(ChannelError::MessageNotFound { message: id, channel: self.channel_id })?;
+        let attributes = channel.security_attributes();
+        self.actor_runtime.security_manager()
+            .require(&self.security_context, action(message.sender_id, &attributes), || ChannelError::Forbidden { action: what, channel: self.channel_id })
+            .await?;
+        if message.revoked.is_some() {
+            return Err(ChannelError::MessageRevoked { message: id, channel: self.channel_id }.into());
+        }
+        Ok(message)
     }
 
     /// Hands `envelope` to `run`, which forwards it into the channel, and

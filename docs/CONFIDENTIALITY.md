@@ -97,6 +97,17 @@ code path can leave a message classified by accident.
     `Publish` before it sends, so that a refusal reaches the user as
     `ChannelError::ClassificationRefused`). Changing a classification afterwards is
     [reclassifying](#reclassification) it.
+*   **Modified, admitted again.** A message its author modifies
+    ([234](../issues/234-modify-revoke-and-retry-messages.md)) carries a classification of its own,
+    the one it had unless the author chooses another, and enters the channel as a message does:
+    `ActorEvent::MessageModified` carries the message, so `ChannelLoop::admits` asks `Publish` for
+    it, and `UserActor::modify_message` asks before it sends.
+*   **Taken back, not erased.** A message its author takes back keeps its place without what it
+    said, and the agents are no longer given it. What it said is still recorded: in the chains of
+    every participant that heard it, in the contexts of the answers produced from it - readable by
+    whoever may read the agent's context - in what was noted or remembered of it, and with a remote
+    agent that was given it. Taking a message back changes what the conversation says from now on,
+    not what was disclosed; a secret written by mistake is not removed by it.
 
 ### Reclassification
 

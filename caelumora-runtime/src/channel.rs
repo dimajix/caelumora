@@ -99,6 +99,9 @@ pub enum ChannelError {
     ClassificationRefused { classification: Classification, channel: ChannelId },
     #[error("channel {channel} has no message {message}")]
     MessageNotFound { message: MessageId, channel: ChannelId },
+    /// A message taken back cannot be changed any more (issue 234).
+    #[error("message {message} of channel {channel} was taken back")]
+    MessageRevoked { message: MessageId, channel: ChannelId },
     /// A participant not cleared for the channel's classification - to
     /// join it, or for the classification it would be raised to (issue
     /// 133).
@@ -452,6 +455,12 @@ impl ChannelLoop {
     /// participant sees is `visible_history`.
     pub(crate) async fn history(&self) -> Vec<Message> {
         self.state.lock().await.history.messages()
+    }
+
+    /// The message `id` of the history as it stands - on whichever branch -
+    /// or `None` if it was never said here.
+    pub(crate) async fn message(&self, id: MessageId) -> Option<Message> {
+        self.state.lock().await.history.message(id)
     }
 
 
@@ -996,7 +1005,7 @@ impl ChannelLoop {
         }
         // The full envelope carries message content: trace level only.
         trace!("Envelope: {:?}", event);
-        if !self.admits(&event).await {
+        if !self.admits(&event).await || !self.admits_change(&event).await {
             return;
         }
         let event = self.resolve_mentions(event);
@@ -1060,6 +1069,32 @@ impl ChannelLoop {
         true
     }
 
+    /// Whether the change to a message that `event` carries, if any, may
+    /// enter the channel (issue 234): the message is in its history, its
+    /// author - the sender the history names - may change it, as the policy
+    /// says in the envelope's context, and it can be changed so as it stands
+    /// (`Message::modify`, `Message::revoke`): not taken back, and modified
+    /// by its own sender in its own role. The gate for every actor, whatever
+    /// it checked itself; anything else is dropped, and logged.
+    async fn admits_change(&self, event: &Envelope) -> bool {
+        let channel = self.security_attributes();
+        let admitted = match &event.event {
+            ActorEvent::MessageModified(modified) => match self.message(modified.id).await {
+                Some(mut message) => self.security.may_modify_message(&event.security, message.sender_id, &channel).await && message.modify(modified),
+                None => false,
+            },
+            ActorEvent::MessageRevoked { message, at } => match self.message(*message).await {
+                Some(mut message) => self.security.may_revoke_message(&event.security, message.sender_id, &channel).await && message.revoke(*at),
+                None => false,
+            },
+            _ => return true,
+        };
+        if !admitted {
+            warn!("Dropped {}: the message is not one of channel {} its sender may change so", event.describe(), self.id);
+        }
+        admitted
+    }
+
     /// The participants `text` mentions by their `@`-handles, as the channel
     /// resolves them when a message enters it (issue 29) - for an actor
     /// that shows its own message before (issue 220).
@@ -1078,7 +1113,7 @@ impl ChannelLoop {
             }
         };
         match &mut event.event {
-            ActorEvent::CompleteMessageGenerated(m) | ActorEvent::IntermediateMessageGenerated(m) => resolve(m),
+            ActorEvent::CompleteMessageGenerated(m) | ActorEvent::IntermediateMessageGenerated(m) | ActorEvent::MessageModified(m) => resolve(m),
             ActorEvent::FullResponseGenerated(msgs) => msgs.iter_mut().for_each(resolve),
             _ => {}
         }
@@ -1166,15 +1201,16 @@ impl ChannelLoop {
 
     async fn append_history(&self, envelope: &Envelope) {
         let mut state = self.state.lock().await;
-        let mut changed = false;
-        match &envelope.event {
+        let changed = match &envelope.event {
             ActorEvent::FullResponseGenerated(msgs) => {
                 state.history.extend(msgs.clone());
-                changed = true;
+                true
             }
-            // Handle other event types as needed
-            _ => {}
-        }
+            // Admitted, so they apply (`admits_change`, issue 234).
+            ActorEvent::MessageModified(modified) => state.history.modify(modified.clone()),
+            ActorEvent::MessageRevoked { message, at } => state.history.revoke(*message, *at),
+            _ => false,
+        };
 
         if changed {
             if let Err(e) = self.state_store.put_channel_state(self.id, &mut state).await {
@@ -1844,6 +1880,125 @@ mod tests {
         }
         channel.process_envelope(with_result, &actors).await;
         assert_eq!(channel.history().await.len(), 1, "nor with a result above the channel");
+    }
+
+    #[tokio::test]
+    async fn a_change_to_a_message_enters_the_channel_only_from_its_author_as_it_stands() {
+        use caelumora_model::actor::EventContext;
+        use caelumora_model::security::OwnershipSecurityManager;
+        let alice = user("alice");
+        let channel = channel_with(&[&alice], Arc::new(OwnershipSecurityManager::new())).await;
+        let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(UserId::new()));
+        let from = |sender: ActorId, event| Envelope::new(
+            SecurityContext::new(sender, Default::default(), Default::default()),
+            EventContext { sender_id: sender, ..EventContext::default() },
+            event,
+        );
+        let said = Message { id: MessageId::new(), sender_id: alice_id, role: caelumora_model::message::MessageRole::User, content: Some("helo".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+        let modified = |sender: ActorId, content: &str| Message { sender_id: sender, content: Some(content.to_string()), timestamp: chrono::Utc::now(), ..said.clone() };
+        let revoked = || ActorEvent::MessageRevoked { message: said.id, at: chrono::Utc::now() };
+        let actors = HashMap::new();
+        channel.process_envelope(from(alice_id, ActorEvent::FullResponseGenerated(vec![said.clone()])), &actors).await;
+        let entries = || async { channel.state.lock().await.history.all_entries().len() };
+
+        channel.process_envelope(from(bob_id, ActorEvent::MessageModified(modified(bob_id, "bob's"))), &actors).await;
+        channel.process_envelope(from(bob_id, revoked()), &actors).await;
+        channel.process_envelope(from(alice_id, ActorEvent::MessageModified(Message { id: MessageId::new(), ..modified(alice_id, "nothing said") })), &actors).await;
+        assert_eq!(entries().await, 1, "neither by another nor of what was never said");
+
+        channel.process_envelope(from(alice_id, ActorEvent::MessageModified(modified(alice_id, "hello"))), &actors).await;
+        let standing = channel.message(said.id).await.expect("said");
+        assert_eq!((standing.content.as_deref(), standing.modified.is_some()), (Some("hello"), true), "its author modifies it");
+        channel.process_envelope(from(alice_id, revoked()), &actors).await;
+        assert!(channel.message(said.id).await.is_some_and(|m| m.revoked.is_some() && m.content.is_none()), "and takes it back");
+        channel.process_envelope(from(alice_id, revoked()), &actors).await;
+        channel.process_envelope(from(alice_id, ActorEvent::MessageModified(modified(alice_id, "again"))), &actors).await;
+        assert_eq!(entries().await, 3, "nothing changes it once taken back");
+        assert_eq!(channel.history().await.len(), 1, "it stays in its place");
+    }
+
+    #[tokio::test]
+    async fn a_user_changes_only_their_own_message_and_learns_why_not() {
+        use caelumora_model::actor::EventContext;
+        use caelumora_model::security::OwnershipSecurityManager;
+        let (alice, bob) = (user("alice"), user("bob"));
+        let channel = channel_with(&[&alice, &bob], Arc::new(OwnershipSecurityManager::new())).await;
+        let alice_id = ActorId::User(alice.id);
+        let said = Message { id: MessageId::new(), sender_id: alice_id, role: caelumora_model::message::MessageRole::User, content: Some("helo".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+        let from_alice = |event| Envelope::new(SecurityContext::new(alice_id, Default::default(), Default::default()), EventContext { sender_id: alice_id, ..EventContext::default() }, event);
+        channel.process_envelope(from_alice(ActorEvent::FullResponseGenerated(vec![said.clone()])), &HashMap::new()).await;
+        let (hers, his) = (channel.user_actor(alice.id).unwrap(), channel.user_actor(bob.id).unwrap());
+        let error = |result: anyhow::Result<uuid::Uuid>| result.expect_err("refused").downcast::<ChannelError>().expect("a channel's error");
+
+        assert!(matches!(error(his.modify_message(said.id, "bob's".to_string(), None).await), ChannelError::Forbidden { .. }), "not his");
+        assert!(matches!(error(his.revoke_message(said.id).await), ChannelError::Forbidden { .. }), "not his to take back");
+        assert!(matches!(error(hers.revoke_message(MessageId::new()).await), ChannelError::MessageNotFound { .. }), "never said");
+        let above = Classification::general(caelumora_model::confidentiality::Confidentiality::Confidential);
+        assert!(matches!(error(hers.modify_message(said.id, "hello".to_string(), Some(above)).await), ChannelError::ClassificationRefused { .. }), "not above the channel");
+        hers.modify_message(said.id, "hello".to_string(), None).await.expect("hers to modify");
+        hers.revoke_message(said.id).await.expect("and to take back");
+
+        channel.process_envelope(from_alice(ActorEvent::MessageRevoked { message: said.id, at: chrono::Utc::now() }), &HashMap::new()).await;
+        assert!(matches!(error(hers.modify_message(said.id, "hello".to_string(), None).await), ChannelError::MessageRevoked { .. }), "taken back, it stays so");
+    }
+
+    #[tokio::test]
+    async fn an_agent_takes_a_change_in_after_its_turn_and_is_given_what_stands_from_then_on() {
+        let model = Arc::new(Gated {
+            answers: std::sync::Mutex::new(["first", "second"].into()),
+            gate: Arc::new(tokio::sync::Semaphore::new(0)),
+            seen: Default::default(),
+        });
+        let Stuck { channel, context, agent, mut events, running, .. } = with_an_agent(Arc::<Gated>::clone(&model), Default::default()).await;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while model.seen.lock().unwrap().is_empty() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await.expect("the agent asks its model about hello");
+        let alice = channel.user_actor(alice_of(&context)).unwrap();
+        let hello = channel.history().await[0].id;
+        let until = |what: &'static str, done: Box<dyn Fn(&caelumora_model::agent::AgentChannelState) -> bool + Send>| {
+            let channel = Arc::clone(&channel);
+            async move {
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    loop {
+                        if let Ok(state) = channel.state_store.get_agent_channel_state(agent, channel.id).await {
+                            if done(&state) { break }
+                        }
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                }).await.unwrap_or_else(|_| panic!("{what}"));
+            }
+        };
+
+        // Modified while the turn about it runs: the turn ends as it began.
+        alice.modify_message(hello, "good evening".to_string(), None).await.expect("hers");
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while channel.message(hello).await.and_then(|m| m.content).as_deref() != Some("good evening") {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await.expect("the channel takes it in");
+        model.gate.add_permits(1);
+        let said = |messages: Vec<Message>| messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
+        assert_eq!(said(answered(&mut events, agent).await), ["first"]);
+
+        alice.send_message("and now?".to_string(), None).await.unwrap();
+        model.gate.add_permits(1);
+        assert_eq!(said(answered(&mut events, agent).await), ["second"]);
+        let seen = model.seen.lock().unwrap().clone();
+        let heard = |call: &[String], text: &str| call.iter().any(|c| c.contains(text));
+        assert!(heard(&seen[0], "hello"), "the turn under way saw what was said then");
+        assert!(heard(&seen[1], "good evening") && !heard(&seen[1], "hello"), "the next is given what stands");
+        until("the agent's history holds the modification", Box::new(move |state| state.history.message(hello).is_some_and(|m| m.modified.is_some()))).await;
+
+        let question = channel.history().await.iter().find(|m| m.content.as_deref() == Some("and now?")).expect("said").id;
+        alice.revoke_message(question).await.expect("hers to take back");
+        until("the agent takes it back", Box::new(move |state| {
+            state.history.message(question).is_some_and(|m| m.revoked.is_some())
+                && !state.transcript.messages().iter().any(|m| m.id == question)
+        })).await;
+        assert!(channel.message(question).await.is_some_and(|m| m.revoked.is_some()), "so does the channel");
+        running.abort();
     }
 
     #[tokio::test]
@@ -3186,7 +3341,7 @@ mod tests {
         actor.catch_up(vec![two.clone()]).await.unwrap();
         assert_eq!(kept().await, ["two"], "what it may see");
         actor.catch_up(vec![one, two, own, three]).await.unwrap();
-        assert_eq!(kept().await, ["two", "mine", "three"], "what it missed, and nothing older");
+        assert_eq!(kept().await, ["two", "three"], "what it missed, and nothing older nor its own");
     }
 
     #[tokio::test]

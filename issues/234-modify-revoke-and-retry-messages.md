@@ -459,3 +459,31 @@ describe the events, the routes and what revoking does not do.
   through `AgentChannelState::modify_message(heard, perceived)` - a version its perceive processors
   dropped takes the message back in the transcript - and `revoke_message(id, at)`. AGENT-TURN.md has
   a section *Changes to a message*.
+- **2026-10-05** — Step 3 done. `ActorEvent::MessageModified(Message)` and `MessageRevoked {
+  message, at }` - the time in the event, so that every store records the same one;
+  `ActionType::ModifyMessage` and `RevokeMessage`, both `{ author, channel }`, asked through
+  `AccessQuestions::may_modify_message` and `may_revoke_message` in the channel's gate and with
+  `Enforcement::require` in the user's actor. `ChannelLoop::admits_change` admits a change only to
+  a message of the history whose author may change it and that can be changed so as it stands; a
+  revocation of a message taken back already is dropped like any other that does not apply, not
+  admitted again as the plan said - an agent that missed the first has missed it either way
+  (*Lost events*), and one that crashed after storing it has it already. The moderator routes both
+  to every user and agent but the sender (`route_to_participants`). Both kinds of agent take them in
+  through `take_in` (`take_in_modified`: a failing perceive stage, too, takes the message back in
+  the transcript, so that the old version does not stand). Against the plan, the agent stores the
+  change but does not announce `AgentChannelStateChanged`: it announces nothing for what it hears
+  either. `UserActor::modify_message` and `revoke_message`; `ChannelError::MessageRevoked`, which
+  the REST server maps to `409 message_revoked` already. Tests in `channel.rs` and the security
+  suite. CHANNELS.md (*Changing what was said*), SECURITY.md, CONFIDENTIALITY.md (*Taken back, not
+  erased*).
+- **2026-10-06** — On the maintainer's question, the agents no longer check whether what they hear
+  is their own: it never is. The channel delivers nothing back to its sender
+  (`ChannelLoop::route_event_impl`), and every message an envelope carries is its sender's
+  (`OriginEventSender`), so `perceive`, `take_in` and `take_in_modified` lose their `own` and the
+  dead branch for an agent's own modification. A filter on the receiving side, as
+  `OriginEventSender` is on the sending side, was weighed and not built: the channel cannot trust
+  its actors, but the actors can trust the one channel that routes, and the rule is in one place
+  there already. The one way in past the routing is `catch_up`, given the channel's history: it
+  leaves the agent's own messages out before perceiving - they are in its history already, unless
+  its state was lost, and then they are not what it heard. Against before, such messages no longer
+  land in its history; two tests that fed an agent its own message changed accordingly.

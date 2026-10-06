@@ -126,6 +126,11 @@ impl Moderator for PolicyModerator {
             ActorEvent::TurnFailed { .. } | ActorEvent::CommandExecuted { .. } | ActorEvent::ParticipantRemoved { .. } => {
                 self.actors().route_to_users(event)
             }
+            // A change to what was said reaches everyone who may hold the
+            // message (issue 234); each applies it if it does.
+            ActorEvent::MessageModified(_) | ActorEvent::MessageRevoked { .. } => {
+                self.actors().route_to_participants(event)
+            }
             // How an answer comes about - streamed, step by step - is for
             // the users watching (issue 220); the agents hear the answer.
             ActorEvent::ResponseStarted |
@@ -234,6 +239,17 @@ impl ModeratorActors {
     /// The users in the channel.
     fn user_ids(&self) -> Vec<ActorId> {
         self.user_actors.keys().copied().collect()
+    }
+
+    /// Forwards `event` to every user and every agent in the channel but its
+    /// sender, e.g. a change to a message said (issue 234), which everyone
+    /// who heard the message takes in.
+    fn route_to_participants(&self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
+        self.user_actors.keys()
+            .chain(self.agent_actors.keys())
+            .filter(|id| **id != event.context.sender_id)
+            .map(|id| (*id, event.clone()))
+            .collect()
     }
 
     /// Forwards `event` to every user in the channel, e.g. a `TurnFailed`

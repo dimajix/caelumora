@@ -109,6 +109,15 @@ pub enum ActionType<'a> {
     /// classification other than the channel's releases a message to a
     /// wider audience or a lower level.
     Publish { classification: &'a Classification, actor: ActorId, channel: &'a Classification },
+    /// Modifying a message of `author` in the channel with `channel`
+    /// attributes (issue 234): what it says from now on. Asked of the one
+    /// who sends the modification, before it is sent and as the channel
+    /// admits it; the channel's attributes are there for a policy that lets
+    /// someone moderate.
+    ModifyMessage { author: ActorId, channel: &'a SecurityAttributes },
+    /// Taking a message of `author` back in the channel with `channel`
+    /// attributes (issue 234), asked as `ModifyMessage`.
+    RevokeMessage { author: ActorId, channel: &'a SecurityAttributes },
     /// Giving something a classification - a channel when it is created
     /// (issue 133). Where a policy refuses compartments that are not
     /// configured.
@@ -205,6 +214,8 @@ impl ActionType<'_> {
                 format!("ReadChannel({} of {} from {})", source.classification, source.channel, reader.channel)
             }
             ActionType::Publish { classification, actor, channel } => format!("Publish({classification} by {actor} into {channel})"),
+            ActionType::ModifyMessage { author, .. } => format!("ModifyMessage(of {author})"),
+            ActionType::RevokeMessage { author, .. } => format!("RevokeMessage(of {author})"),
             ActionType::Classify(classification) => format!("Classify({classification})"),
             ActionType::Reclassify { target, current, new, channel } => format!("Reclassify({target:?} in {channel} from {current} to {new})"),
             ActionType::ShowCommand(name) => format!("ShowCommand(/{name})"),
@@ -380,6 +391,16 @@ pub trait AccessQuestions {
     /// under another classification of the channel going on in it.
     async fn may_publish(&self, context: &SecurityContext, actor: ActorId, classification: &Classification, channel: &Classification) -> bool;
 
+    /// Whether `context` may modify a message of `author` in the channel
+    /// with `channel` attributes (`ModifyMessage`, issue 234) - asked by the
+    /// channel as it admits the modification.
+    async fn may_modify_message(&self, context: &SecurityContext, author: ActorId, channel: &SecurityAttributes) -> bool;
+
+    /// Whether `context` may take a message of `author` back in the channel
+    /// with `channel` attributes (`RevokeMessage`, issue 234) - asked by the
+    /// channel as it admits the revocation.
+    async fn may_revoke_message(&self, context: &SecurityContext, author: ActorId, channel: &SecurityAttributes) -> bool;
+
     /// Whether the user `context` acts for, with `roles`, is cleared for
     /// `channel` (`JoinChannel`, issue 133) - what decides, besides
     /// `GetChannel`, which channels they are shown.
@@ -441,6 +462,14 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
 
     async fn may_publish(&self, context: &SecurityContext, actor: ActorId, classification: &Classification, channel: &Classification) -> bool {
         self.check(context, ActionType::Publish { classification, actor, channel }).await
+    }
+
+    async fn may_modify_message(&self, context: &SecurityContext, author: ActorId, channel: &SecurityAttributes) -> bool {
+        self.check(context, ActionType::ModifyMessage { author, channel }).await
+    }
+
+    async fn may_revoke_message(&self, context: &SecurityContext, author: ActorId, channel: &SecurityAttributes) -> bool {
+        self.check(context, ActionType::RevokeMessage { author, channel }).await
     }
 
     async fn may_see_channel(&self, context: &SecurityContext, roles: &[String], channel: &Classification) -> bool {
@@ -602,6 +631,9 @@ impl SecurityManager for OwnershipSecurityManager {
                 }
             }
             ActionType::Publish { classification, actor, channel } => actor == context.caller_id && self.rules.may_publish(classification, channel),
+            // A message is its author's to change: who said it, not whom
+            // they acted for.
+            ActionType::ModifyMessage { author, .. } | ActionType::RevokeMessage { author, .. } => author == context.caller_id && author != ActorId::None,
             ActionType::JoinChannel { roles, channel, .. } => self.rules.cleared(roles, channel),
             ActionType::CreatePersonality(a)
             | ActionType::CreateSessionTemplate(a)
@@ -667,6 +699,21 @@ mod tests {
 
     async fn allows(actor: ActorId, action: ActionType<'_>) -> bool {
         OwnershipSecurityManager::new().check(&context(actor), action).await
+    }
+
+    #[tokio::test]
+    async fn a_message_is_its_authors_to_modify_and_take_back() {
+        let (alice, bob) = (user(), user());
+        let bobs = SecurityAttributes { owner_id: bob, contributors: vec![alice] };
+        for (author, who, allowed) in [(alice, alice, true), (alice, bob, false)] {
+            assert_eq!(allows(who, ActionType::ModifyMessage { author, channel: &bobs }).await, allowed, "modified by {who}: the author's, not the channel owner's");
+            assert_eq!(allows(who, ActionType::RevokeMessage { author, channel: &bobs }).await, allowed, "taken back by {who}");
+        }
+        let agent = ActorId::Agent(crate::agent::AgentId::new());
+        let for_alice = context(alice).next(agent);
+        let policy = OwnershipSecurityManager::new();
+        assert!(policy.may_revoke_message(&for_alice, agent, &bobs).await, "an agent its own, acting for alice");
+        assert!(!policy.may_revoke_message(&for_alice, alice, &bobs).await, "but not alice's: who said it, not whom it acts for");
     }
 
     #[tokio::test]

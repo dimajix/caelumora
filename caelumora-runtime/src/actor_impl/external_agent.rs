@@ -240,7 +240,7 @@ impl ExternalAgentActor {
     /// that a restart loses none of it. Returns the last request to
     /// respond, if any.
     async fn hear(&self, state: &mut AgentChannelState, received: Envelope, rx: &mut Box<dyn EventReceiver>) -> Option<Envelope> {
-        let request = take_in(state, received, rx, self.id(), &self.perceive_in_processors, &self.security_context).await;
+        let request = take_in(state, received, rx, &self.perceive_in_processors, &self.security_context).await;
         if let Err(e) = self.actor_runtime.store_channel_state(state).await {
             warn!("External agent {} cannot store what it heard: {:#}", self.id(), e);
         }
@@ -758,7 +758,7 @@ impl Actor for ExternalAgentActor {
     }
 
     fn event_filter(&self) -> fn(&Envelope) -> bool {
-        |event| matches!(event.event, ActorEvent::ResponseRequested | ActorEvent::FullResponseGenerated(_))
+        |event| matches!(event.event, ActorEvent::ResponseRequested | ActorEvent::FullResponseGenerated(_) | ActorEvent::MessageModified(_) | ActorEvent::MessageRevoked { .. })
     }
 
     /// Takes in what it missed as what it hears (issues 190, 196, 206); the
@@ -848,10 +848,8 @@ mod tests {
 
     #[tokio::test]
     async fn all_it_hears_is_kept_and_what_others_said_with_text_is_given_once() {
-        let own = ActorId::Agent(AgentId::new());
         let alice = ActorId::User(caelumora_model::user::UserId::new());
         let first = said(alice, "alice", "hello");
-        let mine = Message { role: MessageRole::Assistant, ..said(own, "hermes", "hi") };
         let second = said(alice, "alice", "how are you?");
         let empty = Message { content: None, ..said(alice, "alice", "") };
         let step = Message { internal: true, ..said(alice, "alice", "thinking") };
@@ -859,11 +857,11 @@ mod tests {
         let security = SecurityContext::default();
 
         let mut state = AgentChannelState::default();
-        perceive(&mut state, vec![first.clone(), mine.clone()], own, &[], &security).await;
+        perceive(&mut state, vec![first.clone()], &[], &security).await;
         assert_eq!(ids(state.transcript.messages()), vec![first.id], "never sent anything: what others said");
         state.transcript.start_anew();
-        perceive(&mut state, vec![empty.clone(), step.clone(), second.clone()], own, &[], &security).await;
-        assert_eq!(ids(state.history.messages()), vec![first.id, mine.id, empty.id, step.id, second.id], "all it heard is kept");
+        perceive(&mut state, vec![empty.clone(), step.clone(), second.clone()], &[], &security).await;
+        assert_eq!(ids(state.history.messages()), vec![first.id, empty.id, step.id, second.id], "all it heard is kept");
         assert_eq!(ids(state.transcript.messages()), vec![second.id], "after what was sent, with text");
         state.transcript.start_anew();
         assert!(state.transcript.messages().is_empty(), "nothing new");

@@ -39,24 +39,27 @@ where
     Ok(input)
 }
 
-/// Takes what others said, `heard`, into the `state` of the agent `own`
-/// (issues 196, 206, 224), the same for both kinds of agent and every way
-/// in: all of it into its history, as it was said; what it hears of it -
-/// of what others said, `Message::as_heard` - as it passes its perceive
-/// `processors`, into its transcript. A failing stage is logged and leaves
-/// the transcript as it was: what was heard stays in the history, and is
-/// not offered again.
+/// Takes what others said, `heard`, into the `state` of an agent (issues
+/// 196, 206, 224), the same for both kinds of agent and every way in: all
+/// of it into its history, as it was said; what it hears of it -
+/// `Message::as_heard` - as it passes its perceive `processors`, into its
+/// transcript. A failing stage is logged and leaves the transcript as it
+/// was: what was heard stays in the history, and is not offered again.
+///
+/// What is heard is never the agent's own: the channel delivers nothing
+/// back to its sender (`ChannelLoop::route_event_impl`), every message an
+/// envelope carries is its sender's (`OriginEventSender`), and what an
+/// agent catches up with is rid of its own first (`catch_up`).
 async fn perceive(
     state: &mut AgentChannelState,
     heard: Vec<Message>,
-    own: ActorId,
     processors: &[ComponentImpl<dyn PerceiveInProcessor>],
     security: &SecurityContext,
 ) {
     if heard.is_empty() {
         return;
     }
-    let offered = heard.iter().filter(|m| m.sender_id != own).filter_map(Message::as_heard).collect();
+    let offered = heard.iter().filter_map(Message::as_heard).collect();
     let perceived = match apply_stage_processors(processors, offered, security).await {
         Ok(perceived) => perceived,
         Err(e) => {
@@ -67,11 +70,39 @@ async fn perceive(
     state.perceive(heard, perceived);
 }
 
+/// Takes in that a message of another reads as `modified` from now on
+/// (issue 234), the same for both kinds of agent - never its own, as
+/// nothing heard is (`perceive`): as it was modified into its history; as
+/// the agent hears it - `Message::as_heard`, through its perceive
+/// `processors`, as everything heard - into its transcript, as what its
+/// processors made of it under the message's id. Where nothing is left
+/// under it, or the stage fails, the message is no longer given there: the
+/// version given before does not stand any more.
+async fn take_in_modified(
+    state: &mut AgentChannelState,
+    modified: Message,
+    processors: &[ComponentImpl<dyn PerceiveInProcessor>],
+    security: &SecurityContext,
+) {
+    let perceived = match modified.as_heard() {
+        None => None,
+        Some(heard) => match apply_stage_processors(processors, vec![heard], security).await {
+            Ok(perceived) => perceived.into_iter().find(|m| m.id == modified.id),
+            Err(e) => {
+                warn!("The perceive stage failed on a modified message: {:#}", e);
+                None
+            }
+        },
+    };
+    state.modify_message(modified, perceived);
+}
+
 /// Takes in what an agent was told while it could not listen (issue 222),
 /// the same for both kinds of agent: `received`, and everything `rx` holds
 /// already behind it, in order. What others said is perceived as it comes
-/// (`perceive`, as the agent `own` with its `processors`); of the requests to respond
-/// the last is returned - one answer to the conversation as it stands, in
+/// (`perceive`, with the agent's `processors`), and so is a
+/// message modified or taken back since (issue 234); of the requests to
+/// respond the last is returned - one answer to the conversation as it stands, in
 /// the authority of the last who asked - and the others are dropped, as is
 /// every other event. Neither commits nor stores: when that happens is the
 /// actor's.
@@ -79,7 +110,6 @@ async fn take_in(
     state: &mut AgentChannelState,
     received: Envelope,
     rx: &mut Box<dyn EventReceiver>,
-    own: ActorId,
     processors: &[ComponentImpl<dyn PerceiveInProcessor>],
     security: &SecurityContext,
 ) -> Option<Envelope> {
@@ -92,7 +122,15 @@ async fn take_in(
             match event.event {
                 ActorEvent::FullResponseGenerated(messages) => {
                     trace!("Heard {:?}", messages.iter().map(|m| &m.content).collect::<Vec<_>>());
-                    perceive(state, messages, own, processors, security).await;
+                    perceive(state, messages, processors, security).await;
+                    None
+                }
+                ActorEvent::MessageModified(modified) => {
+                    take_in_modified(state, modified, processors, security).await;
+                    None
+                }
+                ActorEvent::MessageRevoked { message, at } => {
+                    state.revoke_message(message, at);
                     None
                 }
                 ActorEvent::ResponseRequested => Some(event),
@@ -107,8 +145,11 @@ async fn take_in(
 
 /// Takes in what an actor of an agent missed of its channel as what it
 /// hears (issues 190, 196, 206): of `visible`, what its history does not
-/// have yet, through `perceive` - as the agent `own`, with its perceive
-/// `processors` - and stores its `state` with it in `runtime`.
+/// have yet, through `perceive` - with its perceive `processors` - and
+/// stores its `state` with it in `runtime`. The one way in that does not
+/// pass the channel's routing, so the agent `own`'s own messages are left
+/// out here: they are in its history already, unless its state was lost,
+/// and then they are not what it heard.
 async fn catch_up(
     state: &mut AgentChannelState,
     visible: Vec<Message>,
@@ -117,11 +158,11 @@ async fn catch_up(
     security: &SecurityContext,
     runtime: &ActorRuntime,
 ) -> Result<()> {
-    let missed = state.history.missing_from(visible);
+    let missed: Vec<Message> = state.history.missing_from(visible).into_iter().filter(|m| m.sender_id != own).collect();
     if missed.is_empty() {
         return Ok(());
     }
-    perceive(state, missed, own, processors, security).await;
+    perceive(state, missed, processors, security).await;
     runtime.store_channel_state(state).await
 }
 
@@ -201,12 +242,12 @@ mod tests {
             tx.try_send(event).expect("room");
         }
 
-        let request = take_in(&mut state, heard("one"), &mut rx, ActorId::System, &[], &security).await;
+        let request = take_in(&mut state, heard("one"), &mut rx, &[], &security).await;
         assert_eq!(texts(&state.transcript.messages()), ["one", "two", "three"], "all of it, in order, also what came after the last request");
         assert_eq!(request.map(|r| r.security.caller_id), Some(caelumora_model::actor::ActorId::System), "the last request");
         assert!(rx.try_recv().is_none(), "nothing left behind");
 
-        let request = take_in(&mut state, heard("four"), &mut rx, ActorId::System, &[], &security).await;
+        let request = take_in(&mut state, heard("four"), &mut rx, &[], &security).await;
         assert!(request.is_none(), "heard, but nobody asked");
         assert_eq!(texts(&state.transcript.messages()), ["one", "two", "three", "four"]);
     }

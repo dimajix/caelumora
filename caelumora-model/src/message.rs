@@ -155,8 +155,8 @@ impl Message {
     /// Whether a participant hears anything of the message when someone
     /// else said it (issue 224): whether it was said or answered in words -
     /// not a tool message, not an inner step of a plan, not a message
-    /// without text. Whether the listener said it itself is the listener's
-    /// to tell.
+    /// without text. That nobody hears their own message is the channel's
+    /// to see to: it delivers nothing back to its sender.
     pub fn is_heard(&self) -> bool {
         matches!(self.role, MessageRole::User | MessageRole::Assistant)
             && !self.internal

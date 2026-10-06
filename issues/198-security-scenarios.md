@@ -178,3 +178,9 @@ be given.
   alice, the task is followed, in his name (`bob as hermes: ReadSecret`), not in that of the agent's
   owner. The suite's `World` takes component kinds of a test (`World::with_kinds`). The rest of *Not
   covered yet* stays open.
+- **2026-10-05** — From [234](234-modify-revoke-and-retry-messages.md): modifying and taking back a
+  message, `a_message_is_modified_and_taken_back_by_its_author_alone`. Bob may change neither of
+  alice's messages, and is refused with the first question (`ModifyMessage`(alice's) no,
+  `RevokeMessage`(alice's) no). Alice's modification asks `ModifyMessage`(alice's) and `Publish` in
+  her actor, then `Publish` and `ModifyMessage`(alice's) in the channel as it admits it; her
+  revocation `RevokeMessage`(alice's) in both - all yes.
