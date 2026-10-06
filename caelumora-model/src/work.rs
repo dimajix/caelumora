@@ -21,9 +21,7 @@ pub struct Work {
     /// Which piece of work it is (issue 235): given when it begins and kept
     /// with it, so that a turn resumed after a restart is the same turn.
     /// Every message it produces carries it (`Message::turn_id`), and so
-    /// does `ResponseStarted`. Work stored before it was kept gets a new
-    /// one as it is loaded.
-    #[serde(default = "TurnId::new")]
+    /// does `ResponseStarted`.
     pub turn_id: TurnId,
     /// The envelope it answers, continued in the agent's name - its sender
     /// is the agent: carries the ids (`span_id`, `correlation_id`) that tie
@@ -136,16 +134,15 @@ mod tests {
         // An external agent's work, stored with `seen` always set and
         // `context` only once sent.
         let stored = serde_json::json!({
+            "turn_id": TurnId::new(),
             "event_context": EventContext::default(),
             "security_context": SecurityContext::default(),
             "classification": Classification::CHANNEL_DEFAULT,
             "seen": Classification::PUBLIC,
         });
-        let work: Work = serde_json::from_value(stored.clone()).unwrap();
+        let work: Work = serde_json::from_value(stored).unwrap();
         assert_eq!(work.label(), Classification::PUBLIC);
         assert_eq!(work.context, ContextRef::default());
-        let again: Work = serde_json::from_value(stored).unwrap();
-        assert_ne!(work.turn_id, again.turn_id, "work stored before its id was kept gets a new one");
     }
 
     #[test]

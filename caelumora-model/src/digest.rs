@@ -240,11 +240,11 @@ pub fn transcript_chain(previous: Option<&Digest>, entry: &TranscriptEntry) -> D
         TranscriptEntry::Revoked { message, .. } => message_revoked(previous, *message),
         TranscriptEntry::Reclassified { message, classification } => message_reclassified(previous, *message, classification),
         TranscriptEntry::GivenUp { end, given_up } => {
-            let mut e = Encoder::new("caelumora.transcript-given-up.v1");
+            let mut e = Encoder::new("caelumora.transcript-given-up.v2");
             e.opt_digest(previous);
             e.opt_digest(Some(end));
             e.json(&to_json(&given_up.reason));
-            e.bytes(&given_up.turn_entries.to_le_bytes());
+            e.bytes(given_up.turn_id.0.as_bytes());
             e.finish()
         }
     }

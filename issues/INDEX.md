@@ -312,7 +312,7 @@ argues against it, and what came out of the last attempt.
 | [211](211-turn-and-agent-work-structure.md) | done | `Turn` is the agent's handle on its state between turns, the components' API and the turn's logic at once, the two kinds of agent publish and catch up through code written twice, and an `OpenTask` keeps less of its contexts than a `TurnState`. |
 | [214](214-prompt-logic-in-the-context-provider.md) | done | What an agent is given besides the conversation is decided in a component, a free function and, for an external agent, its actor - and the component's facet writes into the turn instead of answering. |
 | [229](229-services-fetched-through-the-runtime.md) | done | Central services - the `SecurityManager`, the stores, the event bus - are fetched through the runtime at every use, often through long chains, so no type says what it depends on. |
-| [241](241-turn-membership-recorded-twice.md) | open | Which messages belong to a turn is recorded twice - as the turn's id on each message and as a count in its `ContextRef` - and read by different rules. |
+| [241](241-turn-membership-recorded-twice.md) | done | Which messages belong to a turn is recorded twice - as the turn's id on each message and as a count in its `ContextRef` - and read by different rules. |
 
 ## Integrations
 

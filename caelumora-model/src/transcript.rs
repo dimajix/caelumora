@@ -6,6 +6,7 @@ use crate::chain::{Chain, Node};
 use crate::confidentiality::Classification;
 use crate::digest::Digest;
 use crate::message::{Message, MessageId};
+use crate::work::TurnId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -41,8 +42,9 @@ pub enum TranscriptEntry {
 pub struct GivenUp {
     pub reason: GivenUpReason,
     pub at: DateTime<Utc>,
-    /// How many of the messages up to the end of its branch are the turn's.
-    pub turn_entries: usize,
+    /// The turn given up (issue 241): its messages, at the end of its
+    /// branch, carry its id.
+    pub turn_id: TurnId,
 }
 
 /// Why a turn was given up.
@@ -219,7 +221,8 @@ impl Chain<TranscriptEntry> {
             .filter_map(|node| {
                 let TranscriptEntry::GivenUp { end, given_up } = &node.entry else { return None };
                 let path: Vec<_> = as_they_stand(self.prefix(end)?).collect();
-                let start = path.len().saturating_sub(given_up.turn_entries);
+                let of_turn = |message: &Option<Message>| message.as_ref().is_some_and(|m| m.turn_id == Some(given_up.turn_id));
+                let start = path.iter().rposition(|(_, message)| !of_turn(message)).map_or(0, |last| last + 1);
                 let (before, turn) = path.split_at(start);
                 let messages = turn.iter().filter_map(|(_, message)| message.clone()).collect();
                 let after = before.iter().rev().filter_map(|(_, message)| message.as_ref()).find(|m| !m.internal).map(|m| m.id);
@@ -353,15 +356,21 @@ mod tests {
         assert!(loaded.prefix(&recorded).is_some(), "and references to it resolve");
     }
 
+    /// The message `n` of the turn `turn`.
+    fn of_turn(turn: TurnId, n: u128) -> Message {
+        Message { turn_id: Some(turn), ..make_message(id(n)) }
+    }
+
     /// A transcript of one message, a turn of two given up, and a message
     /// after: `(transcript, the record)`.
     fn with_a_turn_given_up() -> (Transcript, GivenUp) {
+        let turn = TurnId::new();
         let mut transcript = Transcript::default();
         transcript.push(make_message(id(1)));
         let before = transcript.digest();
-        transcript.extend(vec![make_message(id(2)), make_message(id(3))]);
+        transcript.extend(vec![of_turn(turn, 2), of_turn(turn, 3)]);
         let end = transcript.digest().unwrap();
-        let given_up = GivenUp { reason: GivenUpReason::Failed { message: "boom".to_string() }, at: Utc::now(), turn_entries: 2 };
+        let given_up = GivenUp { reason: GivenUpReason::Failed { message: "boom".to_string() }, at: Utc::now(), turn_id: turn };
         transcript.move_head(before.as_ref());
         assert!(transcript.give_up(end, given_up.clone()));
         transcript.push(make_message(id(4)));
@@ -376,29 +385,32 @@ mod tests {
         assert_eq!(turns.len(), 1);
         assert_eq!(turns[0].given_up, given_up);
         assert_eq!(turns[0].messages.iter().map(|m| m.id).collect::<Vec<_>>(), [id(2), id(3)], "the turn's, not what came before");
+        assert!(!transcript.give_up(crate::digest::prompt("elsewhere"), given_up.clone()), "no such branch");
         assert_eq!(turns[0].after, Some(id(1)), "where it branched off");
         assert_eq!(loaded.messages().iter().map(|m| m.id).collect::<Vec<_>>(), [id(1), id(4)], "the model is given the messages");
         assert_eq!(loaded.entries().len(), 3, "the record is on the active path");
-        assert!(!transcript.give_up(crate::digest::prompt("elsewhere"), given_up), "no such branch");
     }
 
     #[test]
     fn a_turn_given_up_branched_off_after_the_last_message_that_is_not_internal() {
+        let turn = TurnId::new();
         let mut transcript = Transcript::default();
         transcript.push(make_message(id(1)));
-        transcript.push(Message { internal: true, ..make_message(id(2)) });
+        // An internal step of an earlier turn.
+        transcript.push(Message { internal: true, turn_id: Some(TurnId::new()), ..make_message(id(2)) });
         let before = transcript.digest();
-        transcript.push(make_message(id(3)));
+        transcript.push(of_turn(turn, 3));
         let end = transcript.digest().unwrap();
         transcript.move_head(before.as_ref());
-        transcript.give_up(end, GivenUp { reason: GivenUpReason::Stopped, at: Utc::now(), turn_entries: 1 });
+        transcript.give_up(end, GivenUp { reason: GivenUpReason::Stopped, at: Utc::now(), turn_id: turn });
+        assert_eq!(transcript.given_up_turns()[0].messages.iter().map(|m| m.id).collect::<Vec<_>>(), [id(3)], "the turn's alone, not the earlier one's");
         assert_eq!(transcript.given_up_turns()[0].after, Some(id(1)), "an internal message is not in the history");
 
         let mut first = Transcript::default();
-        first.push(make_message(id(1)));
+        first.push(of_turn(turn, 1));
         let end = first.digest().unwrap();
         first.move_head(None);
-        first.give_up(end, GivenUp { reason: GivenUpReason::Stopped, at: Utc::now(), turn_entries: 1 });
+        first.give_up(end, GivenUp { reason: GivenUpReason::Stopped, at: Utc::now(), turn_id: turn });
         assert_eq!(first.given_up_turns()[0].after, None, "nothing before it");
     }
 
@@ -416,8 +428,11 @@ mod tests {
         assert_eq!(other.digest(), transcript.digest(), "the same record at another time");
 
         other.move_head(before.as_ref());
-        other.give_up(end, GivenUp { reason: GivenUpReason::Stopped, ..given_up });
+        other.give_up(end, GivenUp { reason: GivenUpReason::Stopped, ..given_up.clone() });
         assert_ne!(other.digest(), transcript.digest(), "another reason");
+        other.move_head(before.as_ref());
+        other.give_up(end, GivenUp { turn_id: TurnId::new(), ..given_up });
+        assert_ne!(other.digest(), transcript.digest(), "another turn");
     }
 
     #[test]
@@ -427,11 +442,12 @@ mod tests {
         let mut stored: Transcript = serde_json::from_value(serde_json::to_value(&transcript).unwrap()).unwrap();
         transcript.mark_stored();
 
+        let turn = TurnId::new();
         let before = transcript.digest();
-        transcript.extend(vec![make_message(id(2)), make_message(id(3))]);
+        transcript.extend(vec![of_turn(turn, 2), of_turn(turn, 3)]);
         let end = transcript.digest().unwrap();
         transcript.move_head(before.as_ref());
-        transcript.give_up(end, GivenUp { reason: GivenUpReason::Stopped, at: Utc::now(), turn_entries: 2 });
+        transcript.give_up(end, GivenUp { reason: GivenUpReason::Stopped, at: Utc::now(), turn_id: turn });
         transcript.push(make_message(id(4)));
 
         stored.apply(transcript.changes().expect("changed")).unwrap();

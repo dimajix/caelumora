@@ -98,7 +98,6 @@ impl TurnState {
         let context = self.work.context.clone();
         let digest = crate::digest::message_chain(context.transcript.as_ref(), &message);
         self.work.context.transcript = Some(digest);
-        self.work.context.turn_entries += 1;
         self.entries.push(TurnEntry { node: Node::new(digest, context.transcript, TranscriptEntry::Message(message)), context });
     }
 

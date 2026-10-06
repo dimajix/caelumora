@@ -87,12 +87,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [166](166-memory-as-topic-documents.md) | open | Agent memory is a flat list of one-line entries, all of them in every prompt, with nothing to group, revise or fetch them by topic. |
 | [237](237-erasing-a-message.md) | open | A message written by mistake can be taken back but not erased: it stays in every participant's record and in the contexts built on it. |
 
-## Code structure
-
-| No. | Status | Issue |
-|---|---|---|
-| [241](241-turn-membership-recorded-twice.md) | open | Which messages belong to a turn is recorded twice - as the turn's id on each message and as a count in its `ContextRef` - and read by different rules. |
-
 ## Integrations
 
 | No. | Status | Issue |

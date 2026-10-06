@@ -22,7 +22,7 @@ impl Turn<'_> {
     /// so the two cannot diverge.
     pub(crate) fn full_context(&self) -> Result<(Vec<Message>, Vec<Tool>)> {
         let resolved = ContextResolver::of(self.agent_channel_state)
-            .resolve(&self.current().work.context, ActorId::Agent(self.agent_id))
+            .resolve(&self.current().work.context, self.turn_id(), ActorId::Agent(self.agent_id))
             .context("the context of the turn names what the agent's state does not hold")?;
         let messages = resolved.items.into_iter()
             .map(|item| match item {
@@ -187,7 +187,7 @@ mod tests {
             turn.push_message(after.clone());
             turn.commit(false).await;
         }
-        let knowledge_of = |id| state.recorded_context_of(id).unwrap().knowledge;
+        let knowledge_of = |id| state.recorded_context_of(id).unwrap().0.knowledge;
         assert!(knowledge_of(before.id).is_empty(), "produced before the read");
         assert_eq!(knowledge_of(after.id), vec![read], "produced after it, recorded once");
 
@@ -230,7 +230,7 @@ mod tests {
         // The same tools, treated otherwise: offered so then.
         take_turn(&mut state, vec![tool("echo", true), tool("notes", false)], &[&fourth]);
 
-        let offered = |id| ContextResolver::of(&state).resolve(&state.recorded_context_of(id).unwrap(), ActorId::Agent(agent))
+        let offered = |id| { let (reference, turn) = state.recorded_context_of(id).unwrap(); ContextResolver::of(&state).resolve(&reference, turn, ActorId::Agent(agent)) }
             .expect("everything it names is here").tool_sets.into_iter().flat_map(|set| set.tools).map(|t| (t.name, t.requires_approval)).collect::<Vec<_>>();
         let named = |offer: Vec<(String, bool)>| offer.into_iter().map(|(name, asks)| format!("{name}{}", if asks { "?" } else { "" })).collect::<Vec<_>>();
         assert_eq!(named(offered(first.id)), ["echo", "notes?"]);

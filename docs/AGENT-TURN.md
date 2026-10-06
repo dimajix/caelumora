@@ -41,7 +41,7 @@ issue 222), then commits once:
     234, 235, see [CHANNELS.md](CHANNELS.md#answering-again)). The one of the turn the agent gave up
     for it is accepted: its answer is gone already. Otherwise the last one of a message is judged:
     if the message is the agent's last answer (`AgentChannelState::retried`), it is taken back with
-    the internal steps after it; otherwise the agent rejects it. Every other request to answer again
+    the rest of its turn; otherwise the agent rejects it. Every other request to answer again
     in the batch is rejected. A retry accepted begins a turn as above, given the transcript as it
     stands - one turn together with a request to respond in the same batch, in the request's
     contexts.
@@ -171,7 +171,8 @@ reads nothing.
     *   the transcript records the turn as given up, as an entry after the head went back
         (`TranscriptEntry::GivenUp`, issue 197): the branch it ends, the reason (failed, with what
         its users were told; lowered, with the channel's new classification; stopped; retried), the
-        time and how many messages were the turn's. The model is given messages only; the digest
+        time and which turn it was (`GivenUp::turn_id`), whose messages at the end of the branch
+        are the turn's (issue 241). The model is given messages only; the digest
         covers the record, so the transcript's digest changes when a turn is given up, though the
         model saw nothing new - a digest names a prefix of the record, not only what the model was
         given;
@@ -355,15 +356,19 @@ reached the transcript at all - reads `all_entries` instead.
 *   the tools the model was offered, as the digest of the set (`ContextRef::tools`, see [Tools
     offered](#tools-offered)),
 *   the knowledge read before the message (`ContextRef::knowledge`, see [MEMORY.md](MEMORY.md)),
-*   how the model was given its context: its profile (`ContextRef::profile`), and how many of the
-    transcript's last entries the turn itself had produced before the message
-    (`ContextRef::turn_entries`) - see [Reasoning given back](#reasoning-given-back).
+*   how the model was given its context: its profile (`ContextRef::profile`) - see [Reasoning
+    given back](#reasoning-given-back).
 
-`AgentChannelState::recorded_context_of(message)` finds such a reference, and the `ContextResolver`
-resolves it (see [The turn's context and the resolver](#the-turns-context-and-the-resolver)) to a
-`ResolvedContext`: the messages and prompt parts the model saw, in the order it was given them, each
-message with its reasoning only where the model was given it, and the tools it was offered. The
-channel's history identifies the agent by the message's sender.
+Which of the transcript's messages were the turn's own is not part of the reference: they carry the
+turn's id (`Message::turn_id`), and the turn is that of the message the reference is recorded with
+(issue 241).
+
+`AgentChannelState::recorded_context_of(message)` finds such a reference, with the message's turn,
+and the `ContextResolver` resolves it (see [The turn's context and the
+resolver](#the-turns-context-and-the-resolver)) to a `ResolvedContext`: the messages and prompt
+parts the model saw, in the order it was given them, each message with its reasoning only where the
+model was given it, and the tools it was offered. The channel's history identifies the agent by the
+message's sender.
 
 ### Tools offered
 
@@ -411,8 +416,8 @@ backend therefore gets only what its model may see and implements no rule of its
 transcript keeps all reasoning; only the model's input leaves it out.
 
 Since what the model was given is less than the transcript holds, the `ContextRef` records the
-profile and the turn's share of the transcript, and resolving it applies the same rule again. The
-digests are unchanged: they name the stored transcript, not a filtered copy of it.
+profile, the turn's messages carry its id, and resolving it applies the same rule again. The digests
+are unchanged: they name the stored transcript, not a filtered copy of it.
 
 ### Who said what
 
@@ -675,7 +680,8 @@ What the model is given is not stored; it is resolved from what is (issues 49, 1
     in `AgentChannelState::prompts`, once per digest, and the reference goes into the turn's
     context, where it counts for the messages produced from then on - like knowledge read.
 *   **Resolving.** The `ContextResolver` resolves a `ContextRef` against the view, the prompt texts
-    and the tool sets: the transcript it names, of which the last `turn_entries` are the turn's own,
+    and the tool sets, for a turn the caller names - the turn under way, or the turn of the message
+    recorded with the reference: the transcript it names, whose messages of that turn are its own,
     with every part after its entry, each as the profile gives it, and the tools offered.
     `Turn::full_context` resolves the turn's context and gives the model the result, a prompt part
     as a message in its role.

@@ -249,9 +249,10 @@ announced and every message of the turn carries).
         unless the request of a turn was accepted, which answers anew anyway - and the others are
         rejected as asked again. It answers again only if the message is its last answer, as its
         own transcript says (`AgentChannelState::retried`): an answer of its own on the
-        transcript's active path, after which only its own internal steps and changes to what was
-        said follow. It then says so with `RetryAccepted` and takes back the message and those
-        steps - in its own state, and with `MessageRevoked` for what the channel holds. Otherwise
+        transcript's active path, after which only the rest of its turn (`Message::turn_id`) and
+        changes to what was said follow. It then says so with `RetryAccepted` and takes back the
+        message and the rest of its turn - in its own state, and with `MessageRevoked` for what the
+        channel holds. Otherwise
         it says why with `RetryRejected`, whose `reason` is a `RetryRefused` - not its answer, more
         was said or done since, calls of tools that ran would be taken back, asked again since, its
         answer had ended, or an external agent - one of a known few, which a user interface words

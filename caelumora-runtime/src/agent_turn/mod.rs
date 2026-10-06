@@ -325,8 +325,8 @@ mod tests {
 
     /// What `state` says its agent `agent` saw when it produced message `id`.
     pub(super) fn seen(state: &AgentChannelState, agent: AgentId, id: MessageId) -> Option<Vec<ContextItem>> {
-        let reference = state.recorded_context_of(id)?;
-        Some(ContextResolver::of(state).resolve(&reference, ActorId::Agent(agent))?.items)
+        let (reference, turn) = state.recorded_context_of(id)?;
+        Some(ContextResolver::of(state).resolve(&reference, turn, ActorId::Agent(agent))?.items)
     }
 
     #[test]

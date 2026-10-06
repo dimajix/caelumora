@@ -621,7 +621,7 @@ mod tests {
         store.create_channel(&system, &channel).await.unwrap();
 
         let said = |t: &str| Message { id: MessageId::new(), content: Some(t.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
-        let (question, answer) = (said("question"), said("answer"));
+        let (question, answer) = (said("question"), Message { turn_id: Some(caelumora_model::work::TurnId::new()), ..said("answer") });
         let mut state = AgentChannelState::default();
         // One call: the question was given, the transcript started anew,
         // and the answer came of it.

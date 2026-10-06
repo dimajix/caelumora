@@ -59,9 +59,9 @@ impl AgentContextView {
     /// saw is not known here; `Unavailable` if what was recorded cannot be
     /// resolved any more.
     pub fn context_of(&self, message: MessageId) -> Result<ResolvedContext, ContextError> {
-        let reference = self.state.recorded_context_of(message)
+        let (reference, turn) = self.state.recorded_context_of(message)
             .ok_or(ContextError::NotRecorded { actor: self.actor, message })?;
-        ContextResolver::of(&self.state).resolve(&reference, self.actor).ok_or(ContextError::Unavailable { actor: self.actor, message })
+        ContextResolver::of(&self.state).resolve(&reference, turn, self.actor).ok_or(ContextError::Unavailable { actor: self.actor, message })
     }
 
     /// The classification of the message `message` the agent produced, as
@@ -123,13 +123,15 @@ mod tests {
     fn a_message_context_is_found_only_for_what_the_agent_produced_and_can_still_be_resolved() {
         let actor = ActorId::Agent(AgentId::new());
         let text = |t: &str| Message { id: MessageId::new(), role: MessageRole::User, content: Some(t.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+        // What the agent produced, in a turn of its own.
+        let produced = |t: &str| Message { turn_id: Some(caelumora_model::work::TurnId::new()), ..text(t) };
         let mut state = AgentChannelState::default();
         let question = text("question");
         state.transcript.push(question.clone());
         state.history.extend(vec![question.clone()]);
-        let answer = text("answer");
+        let answer = produced("answer");
         let before = state.transcript.push(answer.clone());
-        state.history.push(answer.clone(), Some(ContextRef { transcript: before, prompts: Vec::new(), tools: None, knowledge: Vec::new(), profile: Default::default(), turn_entries: 0 }));
+        state.history.push(answer.clone(), Some(ContextRef { transcript: before, prompts: Vec::new(), tools: None, knowledge: Vec::new(), profile: Default::default() }));
         let view = AgentContextView::of(actor, state.clone());
 
         let seen = view.context_of(answer.id).expect("the agent produced it");
@@ -158,15 +160,15 @@ mod tests {
         let confidential = Classification::general(caelumora_model::confidentiality::Confidentiality::Confidential);
         let system = PromptRef { text: prompt("system"), role: MessageRole::System, after: None, classification: Some(confidential.clone()) };
         state.prompts.keep(system.text, || "system".to_string());
-        let told = text("told");
-        state.history.push(told.clone(), Some(ContextRef { transcript: before, prompts: vec![system], tools: None, knowledge: Vec::new(), profile: Default::default(), turn_entries: 0 }));
+        let told = produced("told");
+        state.history.push(told.clone(), Some(ContextRef { transcript: before, prompts: vec![system], tools: None, knowledge: Vec::new(), profile: Default::default() }));
         let seen = AgentContextView::of(actor, state.clone()).context_of(told.id).expect("resolved");
         assert!(matches!(&seen.items[0], ContextItem::Prompt { classification: Some(c), .. } if *c == confidential));
 
         // A reference to a prompt that was never kept cannot be resolved.
-        let lost = text("lost");
+        let lost = produced("lost");
         let gone = PromptRef { text: prompt("gone"), role: MessageRole::System, after: None, classification: None };
-        state.history.push(lost.clone(), Some(ContextRef { transcript: before, prompts: vec![gone], tools: None, knowledge: Vec::new(), profile: Default::default(), turn_entries: 0 }));
+        state.history.push(lost.clone(), Some(ContextRef { transcript: before, prompts: vec![gone], tools: None, knowledge: Vec::new(), profile: Default::default() }));
         let view = AgentContextView::of(actor, state);
         assert!(matches!(view.context_of(lost.id), Err(ContextError::Unavailable { .. })));
     }

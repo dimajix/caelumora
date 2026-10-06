@@ -28,6 +28,7 @@ use crate::kept::Kept;
 use crate::message::{Message, MessageRole, TokenUsage};
 use crate::transcript::{as_they_stand, Transcript, TranscriptEntry};
 use crate::tool::ToolSet;
+use crate::work::TurnId;
 use serde::{Deserialize, Serialize};
 
 /// A prompt part an agent's model was given besides the conversation - the
@@ -349,9 +350,6 @@ pub struct ContextRef {
     pub knowledge: Vec<KnowledgeRef>,
     /// The rules the model was given its context by.
     pub profile: ModelProfile,
-    /// How many of the transcript's last entries the turn that produced the
-    /// message had produced before it: the ones given as the turn's own.
-    pub turn_entries: usize,
 }
 
 /// A context resolved (issues 06, 47): what the model of an agent was given
@@ -424,17 +422,20 @@ impl<'a> ContextResolver<'a> {
     }
 
     /// What the model of `agent` is given, or was given, for the message
-    /// `reference` is for - the next one of the turn under way (`Work::context`
-    /// of its `TurnState`) or one recorded in the history: the transcript it
-    /// names, of which the last `turn_entries` are the turn's
-    /// own, with the prompt parts where they were placed, and the tools it
-    /// was offered. `None` if what it names is not here - a transcript that
-    /// is not a prefix of this one, a prompt or a set of tools that was
-    /// never recorded, or a prompt whose entry is not in the prefix.
-    pub fn resolve(&self, reference: &ContextRef, agent: ActorId) -> Option<ResolvedContext> {
+    /// `reference` is for, produced in the turn `turn` - the next one of the
+    /// turn under way (`Work::context` of its `TurnState`) or one recorded in
+    /// the history: the transcript it names, whose messages of `turn` are
+    /// the turn's own (`Message::turn_id`, issue 241), with the prompt parts
+    /// where they were placed, and the tools it was offered. `None` if what
+    /// it names is not here - a transcript that is not a prefix of this
+    /// one, a prompt or a set of tools that was never recorded, or a prompt
+    /// whose entry is not in the prefix.
+    pub fn resolve(&self, reference: &ContextRef, turn: TurnId, agent: ActorId) -> Option<ResolvedContext> {
         let path = self.transcript.prefix(reference.transcript.as_ref())?;
-        let turn_start = path.len().checked_sub(reference.turn_entries)?;
-        let entries = as_they_stand(path).enumerate().map(|(i, (node, message))| (node, message, i >= turn_start));
+        let entries = as_they_stand(path).map(|(node, message)| {
+            let own = message.as_ref().is_some_and(|m| m.turn_id == Some(turn));
+            (node, message, own)
+        });
         let items = self.assemble(&reference.prompts, &reference.profile, agent, entries)?;
         let tool_sets = match &reference.tools {
             Some(digest) => self.offered_tools.get(digest)?.clone(),
@@ -562,10 +563,10 @@ mod tests {
         let reference = |sender_format| ContextRef { transcript: state.transcript.digest(), profile: ModelProfile { sender_format, ..ModelProfile::default() }, ..ContextRef::default() };
 
         let resolver = ContextResolver::of(&state);
-        let seen = resolver.resolve(&reference(SenderFormat::Prefix), agent).expect("resolved");
+        let seen = resolver.resolve(&reference(SenderFormat::Prefix), TurnId::new(), agent).expect("resolved");
         assert_eq!(contents(&seen.items), ["@alice: question", "answer"], "what the model is given, and the context panel shows");
         assert_eq!(state.transcript.messages()[0].content, alice.content, "the transcript keeps it as received");
-        let seen = resolver.resolve(&reference(SenderFormat::None), agent).expect("resolved");
+        let seen = resolver.resolve(&reference(SenderFormat::None), TurnId::new(), agent).expect("resolved");
         assert_eq!(contents(&seen.items), ["question", "answer"]);
     }
 
@@ -589,25 +590,26 @@ mod tests {
             tools: None,
             knowledge: Vec::new(),
             profile: ModelProfile::default(),
-            turn_entries: 0,
         };
 
         let resolver = ContextResolver::of(&state);
-        let seen = resolver.resolve(&reference, ActorId::None).expect("everything it names is here");
+        let turn = TurnId::new();
+        let seen = resolver.resolve(&reference, turn, ActorId::None).expect("everything it names is here");
         assert_eq!(contents(&seen.items), ["prompt:system", "earlier", "prompt:notes", "question"]);
 
         let mut elsewhere = reference.clone();
         elsewhere.prompts[1].after = Some(prompt("not an entry"));
-        assert!(resolver.resolve(&elsewhere, ActorId::None).is_none(), "a part after an entry that is not in the prefix");
+        assert!(resolver.resolve(&elsewhere, turn, ActorId::None).is_none(), "a part after an entry that is not in the prefix");
         let mut forgotten = reference;
         forgotten.prompts[0].text = prompt("never recorded");
-        assert!(resolver.resolve(&forgotten, ActorId::None).is_none(), "a part whose text was not kept");
+        assert!(resolver.resolve(&forgotten, turn, ActorId::None).is_none(), "a part whose text was not kept");
     }
 
     /// A turn of `state` begun on its transcript as it stands.
     fn begin(state: &mut AgentChannelState, profile: ModelProfile) {
         let context = ContextRef { transcript: state.transcript.digest(), profile, ..ContextRef::default() };
-        state.turn = Some(TurnState { work: crate::work::Work { context, ..Default::default() }, ..TurnState::default() });
+        let work = crate::work::Work { turn_id: TurnId::new(), context, ..Default::default() };
+        state.turn = Some(TurnState { work, ..TurnState::default() });
     }
 
     /// A prompt part `text` in `role` after the end of `state`'s turn so
@@ -634,8 +636,8 @@ mod tests {
         place(&mut state, MessageRole::User, "step 2");
         state.turn.as_mut().unwrap().push(own("second"));
 
-        let next = state.turn.as_ref().unwrap().work.context.clone();
-        let current = ContextResolver::of(&state).resolve(&next, agent).expect("the view holds the turn's messages");
+        let (next, turn_id) = state.turn.as_ref().map(|t| (t.work.context.clone(), t.work.turn_id)).unwrap();
+        let current = ContextResolver::of(&state).resolve(&next, turn_id, agent).expect("the view holds the turn's messages");
         assert_eq!(contents(&current.items), ["earlier", "question", "prompt:step 1", "first", "prompt:step 2", "second"]);
         let reasoning = current.items.iter().map(|item| matches!(item, ContextItem::Conversation { message } if message.reasoning.is_some())).collect::<Vec<_>>();
         assert_eq!(reasoning, [false, false, false, true, false, true], "the turn's own reasoning, not an earlier turn's");
@@ -644,7 +646,7 @@ mod tests {
         // and once the turn is in the transcript - to what the model was
         // given for it.
         let turn = state.turn.take().unwrap();
-        let seen = |state: &AgentChannelState, index: usize| contents(&ContextResolver::of(state).resolve(&turn.entries[index].context, agent).expect("everything it names is here").items);
+        let seen = |state: &AgentChannelState, index: usize| contents(&ContextResolver::of(state).resolve(&turn.entries[index].context, turn_id, agent).expect("everything it names is here").items);
         let mut under_way = state.clone();
         under_way.turn = Some(turn.clone());
         assert_eq!(seen(&under_way, 1), ["earlier", "question", "prompt:step 1", "first", "prompt:step 2"]);
@@ -674,7 +676,7 @@ mod tests {
         state.transcript.push(call(agent, 200, 20, Some(4096)));
         let lost = state.transcript.digest().unwrap();
         state.transcript.move_head(before_lost.as_ref());
-        state.transcript.give_up(lost, GivenUp { reason: GivenUpReason::Stopped, at: chrono::Utc::now(), turn_entries: 1 });
+        state.transcript.give_up(lost, GivenUp { reason: GivenUpReason::Stopped, at: chrono::Utc::now(), turn_id: TurnId::new() });
         begin(&mut state, ModelProfile::default());
         state.turn.as_mut().unwrap().push(call(agent, 300, 30, None));
 
@@ -698,9 +700,9 @@ mod tests {
 
         let resolver = ContextResolver::of(&state);
         let with = |tools| ContextRef { tools, ..ContextRef::default() };
-        assert_eq!(resolver.resolve(&with(Some(digest)), ActorId::None).expect("the set is kept").tool_sets, offered);
-        assert!(resolver.resolve(&with(None), ActorId::None).expect("no tools offered").tool_sets.is_empty());
-        assert!(resolver.resolve(&with(Some(prompt("never recorded"))), ActorId::None).is_none(), "a set that was not kept");
+        assert_eq!(resolver.resolve(&with(Some(digest)), TurnId::new(), ActorId::None).expect("the set is kept").tool_sets, offered);
+        assert!(resolver.resolve(&with(None), TurnId::new(), ActorId::None).expect("no tools offered").tool_sets.is_empty());
+        assert!(resolver.resolve(&with(Some(prompt("never recorded"))), TurnId::new(), ActorId::None).is_none(), "a set that was not kept");
     }
 
     #[test]
@@ -716,7 +718,7 @@ mod tests {
             state.turn.as_mut().unwrap().work.context.prompts.push(PromptRef { text: prompt("system prompt"), role: MessageRole::System, after: None, classification: None });
             place(&mut state, MessageRole::System, "instruction");
             let next = state.turn.as_ref().unwrap().work.context.clone();
-            ContextResolver::of(&state).resolve(&next, ActorId::None).expect("everything it names is here")
+            ContextResolver::of(&state).resolve(&next, TurnId::new(), ActorId::None).expect("everything it names is here")
                 .items.iter().map(ContextItem::role).collect::<Vec<_>>()
         };
         use MessageRole::{System, User};
@@ -745,7 +747,7 @@ mod tests {
         let now = ContextRef { transcript: state.transcript.digest(), prompts: vec![notes], ..ContextRef::default() };
 
         let resolver = ContextResolver::of(&state);
-        assert_eq!(contents(&resolver.resolve(&then, ActorId::None).expect("resolved").items), ["question", "aside"], "what the model saw then");
-        assert_eq!(contents(&resolver.resolve(&now, ActorId::None).expect("resolved").items), ["question, corrected", "prompt:notes"], "what stands now");
+        assert_eq!(contents(&resolver.resolve(&then, TurnId::new(), ActorId::None).expect("resolved").items), ["question", "aside"], "what the model saw then");
+        assert_eq!(contents(&resolver.resolve(&now, TurnId::new(), ActorId::None).expect("resolved").items), ["question, corrected", "prompt:notes"], "what stands now");
     }
 }

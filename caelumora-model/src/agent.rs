@@ -274,11 +274,12 @@ impl AgentChannelState {
 
     /// What answering again instead of the message `id` of the agent `own`
     /// takes back (issue 234): the message, and what follows it on the
-    /// active path of the transcript - which may only be its own internal
-    /// steps, besides changes to what was said. So the message is its last
-    /// answer, and the model is given the transcript as it stood before it,
-    /// in what stands of it now. Of the ids returned, those its history
-    /// holds are what it announces as taken back.
+    /// active path of the transcript - which may only be the rest of its
+    /// turn (`Message::turn_id`, issue 241), besides changes to what was
+    /// said. So the message is its last answer, and the model is given the
+    /// transcript as it stood before it, in what stands of it now. Of the
+    /// ids returned, those its history holds are what it announces as taken
+    /// back.
     ///
     /// # Errors
     /// Why it does not answer again: the message is not an answer of its
@@ -288,16 +289,16 @@ impl AgentChannelState {
     pub fn retried(&self, id: MessageId, own: ActorId) -> Result<Vec<MessageId>, RetryRefused> {
         let mut path = as_they_stand(self.transcript.entries()).skip_while(|(_, m)| m.as_ref().is_none_or(|m| m.id != id));
         let Some((_, Some(message))) = path.next() else { return Err(RetryRefused::NotItsAnswer) };
-        if message.sender_id != own || message.role != MessageRole::Assistant {
+        let Some(turn) = message.turn_id.filter(|_| message.sender_id == own && message.role == MessageRole::Assistant) else {
             return Err(RetryRefused::NotItsAnswer);
-        }
+        };
         let mut taken_back = vec![message.id];
         for (node, standing) in path {
             match (&node.entry, standing) {
                 (TranscriptEntry::Modified { .. } | TranscriptEntry::Revoked { .. } | TranscriptEntry::Reclassified { .. }, _) => {}
                 // Taken back already.
                 (TranscriptEntry::Message(_), None) => {}
-                (TranscriptEntry::Message(_), Some(step)) if step.sender_id == own && step.internal => {
+                (TranscriptEntry::Message(_), Some(step)) if step.turn_id == Some(turn) => {
                     if !crate::message::executed_calls(&[&step]).is_empty() {
                         return Err(RetryRefused::CallsRan);
                     }
@@ -388,15 +389,14 @@ impl AgentChannelState {
         changed
     }
 
-    /// Keeps what a turn given up for `reason` produced, its `entries`, as a
-    /// branch that is no longer active (issue 145): recorded as when taken
-    /// over (`record_turn`), each with what it was produced from, then both
-    /// heads moved back to where the turn began, and the transcript records
-    /// the turn as given up, naming the branch. A turn that produced
-    /// nothing leaves nothing.
-    pub fn give_up_turn(&mut self, entries: Vec<TurnEntry>, reason: GivenUpReason) {
-        let turn_entries = entries.len();
-        if turn_entries == 0 {
+    /// Keeps what the turn `turn_id` given up for `reason` produced, its
+    /// `entries`, as a branch that is no longer active (issue 145): recorded
+    /// as when taken over (`record_turn`), each with what it was produced
+    /// from, then both heads moved back to where the turn began, and the
+    /// transcript records the turn as given up, naming the branch. A turn
+    /// that produced nothing leaves nothing.
+    pub fn give_up_turn(&mut self, turn_id: TurnId, entries: Vec<TurnEntry>, reason: GivenUpReason) {
+        if entries.is_empty() {
             return;
         }
         let transcript = self.transcript.digest();
@@ -406,15 +406,15 @@ impl AgentChannelState {
         self.transcript.move_head(transcript.as_ref());
         self.history.move_head(history.as_ref());
         if let Some(end) = end {
-            self.transcript.give_up(end, GivenUp { reason, at: chrono::Utc::now(), turn_entries });
+            self.transcript.give_up(end, GivenUp { reason, at: chrono::Utc::now(), turn_id });
         }
     }
 
     /// What the history recorded the message `id` - on whichever branch -
-    /// was produced from, or `None` if this agent did not produce it (or it
-    /// was before references were recorded).
-    pub fn recorded_context_of(&self, id: MessageId) -> Option<ContextRef> {
-        self.history.all_entries().find_map(|e| e.entry.context_of(id)).cloned()
+    /// was produced from, and in which turn, what `ContextResolver::resolve`
+    /// takes; `None` if this agent did not produce it.
+    pub fn recorded_context_of(&self, id: MessageId) -> Option<(ContextRef, TurnId)> {
+        self.history.all_entries().find_map(|e| e.entry.context_of(id)).map(|(context, turn)| (context.clone(), turn))
     }
 
     /// The approvals its turn waits for (issue 172); none without a turn.
@@ -690,7 +690,7 @@ pub(crate) mod tests {
         let turns: Vec<_> = state.transcript.messages().iter().map(|m| m.turn_id).collect();
         assert_eq!(turns, [None, Some(turn_id), Some(turn_id)], "what the turn keeps is the turn's, what was heard no turn's");
         assert_eq!(state.history.messages().last().and_then(|m| m.turn_id), Some(turn_id));
-        assert_eq!(state.recorded_context_of(answer.id), Some(produced_from), "with what it was produced from");
+        assert_eq!(state.recorded_context_of(answer.id), Some((produced_from, turn_id)), "with what it was produced from, and in which turn");
         assert_eq!(state.notes.current().len(), 1);
     }
 
@@ -702,16 +702,17 @@ pub(crate) mod tests {
         let mut turn = state.turn.take().expect("a turn was begun");
         turn.push(said("mailing", Classification::CHANNEL_DEFAULT));
 
-        state.give_up_turn(turn.entries, GivenUpReason::Stopped);
+        let turn_id = turn.work.turn_id;
+        state.give_up_turn(turn_id, turn.entries, GivenUpReason::Stopped);
         assert_eq!(state.history.digest(), history, "the history is back where it began");
         let active: Vec<String> = state.transcript.entries().filter_map(|e| e.entry.message()).map(|m| m.content.clone().unwrap_or_default()).collect();
         assert_eq!(active, ["mail bob"], "and so is the transcript, followed by the record");
         let given_up = state.transcript.given_up_turns();
         assert_eq!(given_up.len(), 1);
-        assert_eq!(given_up[0].given_up.turn_entries, 1);
+        assert_eq!(given_up[0].given_up.turn_id, turn_id);
         assert_eq!(given_up[0].messages.iter().map(|m| m.content.clone().unwrap_or_default()).collect::<Vec<_>>(), ["mailing"]);
 
-        state.give_up_turn(Vec::new(), GivenUpReason::Stopped);
+        state.give_up_turn(TurnId::new(), Vec::new(), GivenUpReason::Stopped);
         assert_eq!(state.transcript.given_up_turns().len(), 1, "a turn that produced nothing leaves nothing");
     }
 
@@ -895,7 +896,7 @@ pub(crate) mod tests {
         assert_eq!(state.turn.as_ref().unwrap().work.label(), Classification::PUBLIC, "released, it no longer raises the label");
 
         let agent = ActorId::Agent(AgentId::new());
-        let answer = Message { sender_id: agent, role: MessageRole::Assistant, ..said("hi", Classification::CHANNEL_DEFAULT) };
+        let answer = Message { sender_id: agent, role: MessageRole::Assistant, turn_id: Some(TurnId::new()), ..said("hi", Classification::CHANNEL_DEFAULT) };
         state.transcript.push(answer.clone());
         state.reclassify_message(answer.id, Classification::PUBLIC);
         assert_eq!(state.retried(answer.id, agent), Ok(vec![answer.id]), "a change, not something said");
@@ -905,7 +906,8 @@ pub(crate) mod tests {
     fn only_an_agents_last_answer_is_answered_again() {
         use crate::tool::{ToolCall, ToolCallResult, ToolResultStatus, ToolVisibility};
         let agent = ActorId::Agent(AgentId::new());
-        let answer = |content: &str| Message { sender_id: agent, role: MessageRole::Assistant, ..said(content, Classification::CHANNEL_DEFAULT) };
+        let turn = TurnId::new();
+        let answer = |content: &str| Message { sender_id: agent, role: MessageRole::Assistant, turn_id: Some(turn), ..said(content, Classification::CHANNEL_DEFAULT) };
         let mut state = a_state_that_heard("hello", Classification::CHANNEL_DEFAULT);
         let question = state.history.messages()[0].clone();
         let first = answer("hi");
@@ -920,7 +922,12 @@ pub(crate) mod tests {
         state.modify_message(Message { content: Some("hello there".to_string()), ..question.clone() }, Some(question.clone()));
         assert_eq!(state.retried(first.id, agent), Ok(vec![first.id]), "still its last answer");
 
-        // An internal step after it is taken back with it; one whose call ran is not.
+        // What its turn did after it is taken back with it - not a step of
+        // a later turn, nor a call that ran.
+        let later_turn = Message { internal: true, turn_id: Some(TurnId::new()), ..answer("later") };
+        let mut later = state.clone();
+        later.transcript.push(later_turn);
+        assert_eq!(later.retried(first.id, agent), Err(RetryRefused::NotLast), "a later turn followed");
         let call = ToolCall { id: Some("1".to_string()), function_name: "f".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN };
         let mut result = ToolCallResult::of(&call, ToolResultStatus::Ok, "done".to_string(), Classification::CHANNEL_DEFAULT);
         let step = Message { internal: true, ..answer("thinking") };

@@ -133,7 +133,7 @@ impl Turn<'_> {
             turn_id: Some(turn_id),
             ..Message::new(names_only.unwrap_or(label))
         });
-        self.agent_channel_state.give_up_turn(entries, reason);
+        self.agent_channel_state.give_up_turn(turn_id, entries, reason);
 
         if let Some(message) = told {
             self.agent_channel_state.transcript.push(message);

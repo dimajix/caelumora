@@ -6,6 +6,7 @@
 use crate::chain::Chain;
 use crate::confidentiality::Classification;
 use crate::context::ContextRef;
+use crate::work::TurnId;
 use crate::message::{Message, MessageId};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -193,11 +194,11 @@ impl HistoryEntry {
         }
     }
 
-    /// What message `id` was produced from, if this is it and that is
-    /// known.
-    pub fn context_of(&self, id: MessageId) -> Option<&ContextRef> {
+    /// What message `id` was produced from, and in which turn (issue 241),
+    /// if this is it and both are known.
+    pub fn context_of(&self, id: MessageId) -> Option<(&ContextRef, TurnId)> {
         match self {
-            HistoryEntry::Said { message, context } if message.id == id => context.as_ref(),
+            HistoryEntry::Said { message, context } if message.id == id => Some((context.as_ref()?, message.turn_id?)),
             _ => None,
         }
     }
@@ -236,15 +237,16 @@ mod tests {
 
     #[test]
     fn a_history_keeps_what_its_messages_were_produced_from() {
-        let reference = ContextRef { transcript: Some(message_chain(None, &make_message(id(9)))), prompts: Vec::new(), tools: None, knowledge: Vec::new(), profile: Default::default(), turn_entries: 0 };
+        let reference = ContextRef { transcript: Some(message_chain(None, &make_message(id(9)))), prompts: Vec::new(), tools: None, knowledge: Vec::new(), profile: Default::default() };
+        let turn = TurnId::new();
         let mut history = MessageHistory::default();
         history.extend(vec![make_message(id(1))]);
-        history.push(make_message(id(2)), Some(reference.clone()));
+        history.push(Message { turn_id: Some(turn), ..make_message(id(2)) }, Some(reference.clone()));
 
         let loaded: MessageHistory = serde_json::from_value(serde_json::to_value(&history).unwrap()).unwrap();
         let entries: Vec<_> = loaded.all_entries().collect();
         assert_eq!(entries[0].entry.context_of(id(1)), None, "said by someone else");
-        assert_eq!(entries[1].entry.context_of(id(2)), Some(&reference));
+        assert_eq!(entries[1].entry.context_of(id(2)), Some((&reference, turn)), "with the turn it was produced in");
         assert_eq!(entries[1].entry.context_of(id(1)), None, "another message");
         assert_eq!(loaded.digest(), history.digest());
     }
