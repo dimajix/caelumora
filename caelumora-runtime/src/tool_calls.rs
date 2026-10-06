@@ -151,6 +151,7 @@ mod tests {
 
     fn call(name: &str, status: ApprovalStatus) -> ToolCallState {
         ToolCallState {
+            suggested: None,
             explicit: false,
             id: ApprovalId::new(),
             status,

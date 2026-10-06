@@ -240,7 +240,7 @@ mod tests {
         let calls = vec![call("1", "send_mail"), call("2", "delete")];
         turn.push_message(Message { id: MessageId::new(), role: MessageRole::Assistant, tool_calls: calls.clone(), ..Message::new(Classification::CHANNEL_DEFAULT) });
         let states: Vec<ToolCallState> = calls.into_iter().zip([ApprovalStatus::Approved, ApprovalStatus::Pending])
-            .map(|(tool_call, status)| ToolCallState { id: ApprovalId::new(), status, tool_call, description: String::new(), explicit: false, result: None })
+            .map(|(tool_call, status)| ToolCallState { id: ApprovalId::new(), status, tool_call, description: String::new(), explicit: false, suggested: None, result: None })
             .collect();
         turn.tool_calls().register(states);
         let (id, ran) = turn.tool_calls().to_run().remove(0);

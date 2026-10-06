@@ -86,6 +86,23 @@ export const api = {
     return res.json();
   },
 
+  /** Adds a rule to the logged-in user's answers to tool calls given in advance (issue 13); answered with its id. */
+  async addApprovalRule(rule: ApprovalRule): Promise<ApprovalRule> {
+    const res = await request('/profile/approval-rules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({matcher: rule.matcher, decision: rule.decision, reach: rule.reach, expires_at: rule.expires_at}),
+    });
+    await ensureOk(res, 'Failed to add the rule');
+    return res.json();
+  },
+
+  /** Takes one of the logged-in user's rules back (issue 13). */
+  async removeApprovalRule(id: string): Promise<void> {
+    const res = await request(`/profile/approval-rules/${id}`, {method: 'DELETE'});
+    await ensureOk(res, 'Failed to remove the rule');
+  },
+
   /** Sets the logged-in user's profile: their introduction and the language they prefer. */
   async updateProfile(profile: ProfileRequest): Promise<ProfileResponse> {
     const res = await request('/profile', {

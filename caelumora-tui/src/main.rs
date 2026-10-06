@@ -141,6 +141,12 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                         }
                         println!("Type '/approve {}' or '/deny {}' to respond.", request.id.0, request.id.0);
                     }
+                    // The user's own answer, given by a rule of theirs (issue 13).
+                    Some(ActorEvent::ApprovalGranted(response)) | Some(ActorEvent::ApprovalDenied(response)) if !matches!(sender_id, Some(ActorId::Approver(_))) => {
+                        if response.by_rule.is_some() {
+                            println!("\r--- Approval {} answered by your rule ---", response.id.0);
+                        }
+                    }
                     // The approval is over: decided, or no longer asked for.
                     Some(ActorEvent::ApprovalGranted(response)) | Some(ActorEvent::ApprovalDenied(response)) | Some(ActorEvent::ApprovalTimedOut(response)) => {
                         pending_approvals.remove(&response.id.0);
@@ -171,7 +177,7 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                                 Ok(id) => {
                                     match pending_approvals.remove(&id) {
                                         Some(agent_id) => {
-                                            let response = ApprovalResponse { id: ApprovalId(id), agent_id };
+                                            let response = ApprovalResponse::new(ApprovalId(id), agent_id);
                                             user_actor.send_approval(response, approved).await?;
                                         }
                                         None => println!("No pending approval with id {}", id),

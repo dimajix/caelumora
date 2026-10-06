@@ -15,7 +15,8 @@ The `EntityStore` trait (in `caelumora-model`) stores the long-lived domain enti
 *   **Templates**: `SessionTemplate`s, which sessions are made from.
 *   **Identities**: `Agent`, `Session`, `Channel` and `User` records. A channel is a document of its
     own, which its session lists by id (issue 70).
-*   **User profiles**: what a user says about themselves - so far their introduction (issue 176).
+*   **User profiles**: what a user says about themselves - their introduction (issue 176), the
+    language they prefer (issue 56) and their answers to tool calls given in advance (issue 13).
     One `UserProfile` per user, stored under the user's id; see [SECURITY.md](SECURITY.md#ownership)
     for why it is not part of the `User` record.
 

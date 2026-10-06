@@ -2,7 +2,7 @@ use crate::agent_turn::Turn;
 use crate::component::ComponentImpl;
 use crate::controller::{ChannelController, SessionController};
 use async_trait::async_trait;
-use caelumora_model::approval::{ApprovalRule, RuleDecision};
+use caelumora_model::approval::{ApprovalRule, RuleDecision, ToolMatcher};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityManager};
 use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolCallState, ToolSet, ToolVisibility, ToolResultStatus};
@@ -243,6 +243,13 @@ pub trait ToolProvider: Send + Sync + Debug {
 
     /// Executes a specific tool by name.
     async fn execute(&self, name: &str, params: &Value, turn: &mut Turn) -> ToolResult<ToolOutput>;
+    /// What other calls are like the call of tool `name` with `params`
+    /// (issue 13): the matcher a rule derived from it is offered with. By
+    /// default the calls exactly like it; a tool whose argument is a
+    /// language says better what makes two calls alike.
+    fn matcher(&self, name: &str, params: &Value) -> ToolMatcher {
+        ToolMatcher::exact(&ToolCall { id: None, function_name: name.to_string(), arguments: params.clone(), visibility: ToolVisibility::SHOWN })
+    }
     /// Provides a textual description for a specific tool call
     fn describe(&self,  name: &str, _params: &Value) -> ToolResult<String> {
         let tools = self.tools();
@@ -271,6 +278,11 @@ pub trait ToolExecutor: Send + Sync + Debug {
     /// Called only for calls the policy permits.
     async fn execute(&self, call: &ToolCall, turn: &mut Turn) -> ToolResult<ToolOutput>;
     fn describe(&self, call: &ToolCall) -> ToolResult<String>;
+    /// What other calls are like `call`, as its tool says (issue 13); by
+    /// default the calls exactly like it.
+    fn matcher(&self, call: &ToolCall) -> ToolMatcher {
+        ToolMatcher::exact(call)
+    }
     /// The tools there are now, in the sets of the providers they come from
     /// (issue 194), for the model and for labelling its calls. Asked of the
     /// providers each time: a provider's tools may change while the agent
@@ -285,7 +297,8 @@ pub trait ToolExecutor: Send + Sync + Debug {
 pub enum Admission {
     /// A user decides first; they are shown `description`. `explicit` if a
     /// rule of a place asked for it: a decision of their own (issue 13).
-    Ask { description: String, explicit: bool },
+    /// `suggested` is what a rule derived from the call would match.
+    Ask { description: String, explicit: bool, suggested: ToolMatcher },
     /// It runs as it is.
     Run,
     /// It cannot succeed and is answered at once, without asking anyone.
@@ -296,7 +309,7 @@ impl Admission {
     /// The state `call` starts with, admitted so.
     pub fn state(self, call: ToolCall) -> ToolCallState {
         match self {
-            Admission::Ask { description, explicit } => ToolCallState::pending(call, description, explicit),
+            Admission::Ask { description, explicit, suggested } => ToolCallState::pending(call, description, explicit, suggested),
             Admission::Run => ToolCallState::approved(call),
             Admission::Answered(result) => ToolCallState::answered(call, result),
         }
@@ -448,7 +461,7 @@ impl GuardedToolExecutor {
         };
         let explicit = rule.is_some_and(|r| r.decision == RuleDecision::Ask);
         let asks = explicit || turn.tools().iter().any(|t| t.name == call.function_name && t.requires_approval);
-        if asks { Admission::Ask { description, explicit } } else { Admission::Run }
+        if asks { Admission::Ask { description, explicit, suggested: self.executor.matcher(call) } } else { Admission::Run }
     }
 
     pub fn tool_sets(&self) -> Vec<ToolSet> {
@@ -697,7 +710,7 @@ mod tests {
         let asking = executor(Arc::new(DummySecurityManager::new()));
         let mut agent_channel_state = agent_turn(&asking);
         let turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached()).expect("a turn is under way");
-        assert!(matches!(asking.admit(&call("test_tool"), &turn).await, Admission::Ask { description, explicit: false } if description == "desc"), "its tool requires approval");
+        assert!(matches!(asking.admit(&call("test_tool"), &turn).await, Admission::Ask { description, explicit: false, .. } if description == "desc"), "its tool requires approval");
         match asking.admit(&call("does_not_exist"), &turn).await {
             Admission::Answered(result) => {
                 assert_eq!(result.status, ToolResultStatus::UnknownTool);

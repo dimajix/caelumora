@@ -131,7 +131,8 @@ limit the server names, and says that every agent in every channel they take par
 There, too, they choose the language they prefer (issue 56), which the channels they create are held
 in. A language is typed as a tag or picked from suggestions (`LanguageField`, `src/language.ts`),
 and shown by the name the browser knows for it (`Intl.DisplayNames`); whether it is a tag is the
-server's to decide.
+server's to decide. Below, they see their rules on tool calls (issue 13), each with where it reaches
+and until when, and take them back.
 
 What the user deleted stays in the trash until it is purged (issue 164, `DeletedList`): below the
 sessions a folded "Deleted sessions", and in every unfolded session a folded "Deleted channels",
@@ -202,7 +203,16 @@ else who may read it - the session's owner, say - is shown its history and no in
     withdrawn by an agent whose turn ended (issue 148). The pending approvals come with the stream's
     snapshot, so a reload shows them again; a request that arrives again - asked anew by an agent
     after a restart - is shown once (issue 172). Whether this user answered is known only to this
-    page: after a reload, an answered approval is offered again.
+    page: after a reload, an answered approval is offered again. Unless a rule of the session or
+    channel asked for it (`explicit`), a card offers "and from now on" (`ApprovalRuleOffer`, issue
+    13): a rule derived from the call - its patterns from `suggested`, editable - for this
+    channel, this session or everywhere, until taken back or for an hour or a day; it is added
+    after the answer, with the answer's decision. A request a rule of this user's answered says so
+    ("Answered by your rule"), from their own answer as their actor shows it.
+*   **Brave mode.** "Approve everything in this session for an hour" adds a rule that allows every
+    tool call there for an hour (`approvalRules.ts`); while one of this user's rules allows
+    everything in the channel, a bar says so, until when, and stops it. The user's rules follow
+    the global stream (`UserProfileUpdated`).
 *   **Stop.** The stop button ends the current turn of every agent (`POST …/cancel`). The stop
     icon on an answer under way ends that agent's turn alone (`POST …/participants/{aid}/cancel`,
     issue 235); the other answers go on.

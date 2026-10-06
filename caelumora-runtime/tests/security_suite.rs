@@ -114,6 +114,7 @@ fn attributes_of<'a>(action: &ActionType<'a>) -> Option<&'a SecurityAttributes> 
 struct World {
     policy: Arc<Recorder>,
     store: Arc<MemoryStore>,
+    runtime: Arc<RuntimeManager>,
     manager: Arc<SessionManager>,
     alice: UserId,
     bob: UserId,
@@ -137,8 +138,8 @@ impl World {
         let mut registry = ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
         register(&mut registry);
         let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), Vec::new(), registry).unwrap());
-        let manager = Arc::new(SessionManager::new(runtime));
-        let mut world = Self { policy: recorder, store, manager, alice: UserId::new(), bob: UserId::new(), carol: UserId::new() };
+        let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
+        let mut world = Self { policy: recorder, store, runtime, manager, alice: UserId::new(), bob: UserId::new(), carol: UserId::new() };
         world.alice = world.user("alice").await;
         world.bob = world.user("bob").await;
         world.carol = world.user("carol").await;
@@ -809,15 +810,10 @@ async fn asked_for(world: &World, line: &str) {
     }).await.expect("asked");
 }
 
-/// Approving a tool call (issue 14) is for who is responsible for the
-/// agent - its owner and contributors: alice's answer counts, bob's, who
-/// only takes part, is left out. The approver asks in the context each
-/// answer comes with, and of everybody taking part to know whom to wait
-/// for; the view offers it to alice alone.
-#[tokio::test]
-async fn a_tool_call_is_approved_by_who_is_responsible_for_the_agent() {
-    use caelumora_model::actor::ActorEvent;
-    use caelumora_model::approval::ApprovalResponse;
+/// alice's agent `helper`, which calls `sleep` - a call that needs approval
+/// - once it is asked, in a session alice shares with bob and he opened;
+/// with the session's main channel.
+async fn with_a_call_to_approve() -> (World, Arc<SessionLoop>, Arc<caelumora_runtime::channel::ChannelLoop>, AgentId) {
     use caelumora_model::message::{Message, MessageRole};
     use caelumora_model::tool::{ToolCall, ToolVisibility};
 
@@ -847,6 +843,131 @@ async fn a_tool_call_is_approved_by_who_is_responsible_for_the_agent() {
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
     world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    (world, session, main, helper)
+}
+
+/// What came of asking `helper` in `main`, as `user` follows it: the
+/// request the approver put up - `None` if none within a while, as for a
+/// call refused before anyone is asked - the rule `user`'s actor answered it
+/// by, if one did, and the approver's decision, if it decided within a
+/// while.
+struct Asked {
+    request: Option<caelumora_model::approval::ApprovalRequest>,
+    by_rule: Option<caelumora_model::approval::ApprovalRuleId>,
+    approved: Option<bool>,
+}
+
+async fn ask_helper(world: &World, main: &caelumora_runtime::channel::ChannelLoop, user: UserId) -> Asked {
+    use caelumora_model::actor::ActorEvent;
+    let mut watch = main.user_actor(user).expect("they take part").watch();
+    main.user_actor(world.alice).unwrap().send_message("@helper wait".to_string(), None).await.expect("sent");
+    let mut asked = Asked { request: None, by_rule: None, approved: None };
+    let _ = tokio::time::timeout(std::time::Duration::from_millis(1500), async {
+        loop {
+            let envelope = watch.events.recv().await.expect("the channel runs");
+            let from_approver = matches!(envelope.context.sender_id, ActorId::Approver(_));
+            match envelope.event {
+                ActorEvent::ApprovalRequested(request) if from_approver => asked.request = Some(request),
+                ActorEvent::ApprovalGranted(answer) | ActorEvent::ApprovalDenied(answer) if envelope.context.sender_id == ActorId::User(user) => asked.by_rule = answer.by_rule,
+                ActorEvent::ApprovalGranted(_) if from_approver => { asked.approved = Some(true); break }
+                ActorEvent::ApprovalDenied(_) if from_approver => { asked.approved = Some(false); break }
+                _ => {}
+            }
+        }
+    }).await;
+    asked
+}
+
+fn sleeping(decision: RuleDecision, reach: Reach) -> ApprovalRule {
+    ApprovalRule::new(ToolMatcher { tool: "sleep".to_string(), arguments: Default::default() }, decision, reach, None).unwrap()
+}
+
+/// A person's rule (issue 13) is their answer given in advance: it answers
+/// a request for them, through their actor, as their click would, and the
+/// approver decides on it as on any answer of theirs. Only they set it.
+#[tokio::test]
+async fn a_persons_rule_answers_for_them_as_they_would() {
+    let (world, session, main, _) = with_a_call_to_approve().await;
+    let hers = world.runtime.controller_manager().user_controller(world.alice).await.unwrap();
+    let rule = sleeping(RuleDecision::Allow, Reach::Session(session.id()));
+    assert!(denied(&anyhow::Error::new(hers.add_approval_rule(&World::as_user(world.bob), rule.clone()).await.expect_err("not his to set"))));
+    hers.add_approval_rule(&World::as_user(world.alice), rule.clone()).await.expect("hers");
+
+    let asked = ask_helper(&world, &main, world.alice).await;
+    assert!(asked.request.is_some_and(|r| !r.explicit), "the call is put up for approval");
+    assert_eq!(asked.by_rule, Some(rule.id), "her actor answers by her rule, and shows her so");
+    assert_eq!(asked.approved, Some(true), "and the approver decides on it");
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// A rule answers only where its person's own answer would count: bob's
+/// rule does not answer for alice's agent, whose calls he may not approve.
+#[tokio::test]
+async fn a_rule_answers_only_where_its_person_may_approve() {
+    let (world, session, main, _) = with_a_call_to_approve().await;
+    let his = world.runtime.controller_manager().user_controller(world.bob).await.unwrap();
+    his.add_approval_rule(&World::as_user(world.bob), sleeping(RuleDecision::Allow, Reach::Everywhere)).await.expect("his");
+
+    let asked = ask_helper(&world, &main, world.bob).await;
+    assert!(asked.request.is_some(), "the call is put up for approval");
+    assert_eq!((asked.by_rule, asked.approved), (None, None), "his rule does not answer, and nothing is decided");
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// A rule answers only within its reach: one for another session or
+/// another channel does not.
+#[tokio::test]
+async fn a_rule_out_of_its_reach_does_not_answer() {
+    let (world, session, main, _) = with_a_call_to_approve().await;
+    let hers = world.runtime.controller_manager().user_controller(world.alice).await.unwrap();
+    let alice = World::as_user(world.alice);
+    hers.add_approval_rule(&alice, sleeping(RuleDecision::Allow, Reach::Session(SessionId::new()))).await.unwrap();
+    hers.add_approval_rule(&alice, sleeping(RuleDecision::Allow, Reach::Channel(ChannelId::new()))).await.unwrap();
+
+    let asked = ask_helper(&world, &main, world.alice).await;
+    assert!(asked.request.is_some());
+    assert_eq!((asked.by_rule, asked.approved), (None, None), "neither answers");
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// What a place restricts outweighs what a person allows: a channel's
+/// `ask` leaves the call to her own decision, and a session's `deny`
+/// refuses it before anyone is asked.
+#[tokio::test]
+async fn a_rule_of_a_place_outweighs_a_persons_rule() {
+    let (world, session, main, _) = with_a_call_to_approve().await;
+    let alice = World::as_user(world.alice);
+    let hers = world.runtime.controller_manager().user_controller(world.alice).await.unwrap();
+    hers.add_approval_rule(&alice, sleeping(RuleDecision::Allow, Reach::Everywhere)).await.unwrap();
+    main.update_approval_rules(&alice, vec![sleeping(RuleDecision::Ask, Reach::Everywhere)]).await.expect("her channel");
+
+    let asked = ask_helper(&world, &main, world.alice).await;
+    assert!(asked.request.as_ref().is_some_and(|r| r.explicit), "asked for explicitly");
+    assert_eq!((asked.by_rule, asked.approved), (None, None), "her rule does not answer");
+    world.manager.stop_session(&alice, session.id()).await.unwrap();
+
+    let (world, session, main, _) = with_a_call_to_approve().await;
+    let alice = World::as_user(world.alice);
+    let hers = world.runtime.controller_manager().user_controller(world.alice).await.unwrap();
+    hers.add_approval_rule(&alice, sleeping(RuleDecision::Allow, Reach::Everywhere)).await.unwrap();
+    session.update_approval_rules(&alice, vec![sleeping(RuleDecision::Deny, Reach::Everywhere)]).await.expect("her session");
+
+    let asked = ask_helper(&world, &main, world.alice).await;
+    assert!(asked.request.is_none(), "nobody is asked");
+    world.manager.stop_session(&alice, session.id()).await.unwrap();
+}
+
+/// Approving a tool call (issue 14) is for who is responsible for the
+/// agent - its owner and contributors: alice's answer counts, bob's, who
+/// only takes part, is left out. The approver asks in the context each
+/// answer comes with, and of everybody taking part to know whom to wait
+/// for; the view offers it to alice alone.
+#[tokio::test]
+async fn a_tool_call_is_approved_by_who_is_responsible_for_the_agent() {
+    use caelumora_model::actor::ActorEvent;
+    use caelumora_model::approval::ApprovalResponse;
+
+    let (world, session, main, helper) = with_a_call_to_approve().await;
     let mut watch = main.user_actor(world.alice).expect("she takes part").watch();
 
     main.user_actor(world.alice).unwrap().send_message("@helper wait".to_string(), None).await.expect("sent");
@@ -872,7 +993,7 @@ async fn a_tool_call_is_approved_by_who_is_responsible_for_the_agent() {
     let approving: Vec<&String> = asked.iter().filter(|line| line.contains("ApproveToolCall")).collect();
     assert_eq!(approving, ["alice: ApproveToolCall(alice's) yes", "bob: ApproveToolCall(alice's) no"]);
 
-    let response = ApprovalResponse { id: request.id, agent_id: helper };
+    let response = ApprovalResponse::new(request.id, helper);
     let (_, asked) = world.asked(async {
         main.user_actor(world.bob).unwrap().send_approval(response.clone(), false).await.expect("sent");
         asked_for(&world, "bob: ApproveToolCall(alice's) no").await;

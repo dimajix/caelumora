@@ -1,4 +1,6 @@
 use crate::actor::ActorId;
+use crate::approval::{ApprovalRule, ApprovalRuleId, RuleError, MAX_PERSONAL_RULES};
+use chrono::{DateTime, Utc};
 use crate::language::Language;
 use crate::security::{SecurityAttributes, Secured};
 use serde::{Deserialize, Serialize};
@@ -59,6 +61,12 @@ pub struct UserProfile {
     /// they create to be held in (issue 56); `None` if they did not say.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preferred_language: Option<Language>,
+    /// The user's answers to tool calls given in advance (issue 13): rules
+    /// that allow or deny, each within a reach. Read by nobody but the user
+    /// and the runtime, unlike the introduction. Changed only through
+    /// `add_approval_rule` and `remove_approval_rule`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    approval_rules: Vec<ApprovalRule>,
     /// Set when it was deleted (issue 164): it stays stored, hidden from
     /// every read but those for what was deleted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -116,12 +124,45 @@ impl UserProfile {
     /// The profile of user `user_id`, owned by them.
     pub fn new(user_id: UserId, introduction: Option<String>) -> Self {
         let security_attributes = SecurityAttributes { owner_id: ActorId::User(user_id), contributors: Vec::new() };
-        Self { user_id, introduction, preferred_language: None, deleted: None, security_attributes }
+        Self { user_id, introduction, preferred_language: None, approval_rules: Vec::new(), deleted: None, security_attributes }
     }
 
     /// The user whose profile it is - also its id in the store.
     pub fn user_id(&self) -> UserId {
         self.user_id
+    }
+
+    /// The user's rules on tool calls (issue 13), in the order they were
+    /// added.
+    pub fn approval_rules(&self) -> &[ApprovalRule] {
+        &self.approval_rules
+    }
+
+    /// Adds `rule` to the user's answers given in advance.
+    ///
+    /// # Errors
+    /// `RuleError` if a person may not keep it (`check_personal`) or the
+    /// user keeps `MAX_PERSONAL_RULES` already; the profile is then
+    /// unchanged.
+    pub fn add_approval_rule(&mut self, rule: ApprovalRule) -> Result<(), RuleError> {
+        rule.check_personal()?;
+        if self.approval_rules.len() >= MAX_PERSONAL_RULES {
+            return Err(RuleError::TooMany);
+        }
+        self.approval_rules.push(rule);
+        Ok(())
+    }
+
+    /// Takes the rule `id` back; whether there was one.
+    pub fn remove_approval_rule(&mut self, id: ApprovalRuleId) -> bool {
+        let before = self.approval_rules.len();
+        self.approval_rules.retain(|rule| rule.id != id);
+        self.approval_rules.len() < before
+    }
+
+    /// Drops the rules that expired by `now`: they apply nowhere any more.
+    pub fn prune_approval_rules(&mut self, now: DateTime<Utc>) {
+        self.approval_rules.retain(|rule| !rule.is_expired(now));
     }
 }
 
@@ -141,12 +182,14 @@ struct UserProfileFields {
     #[serde(default)]
     preferred_language: Option<Language>,
     #[serde(default)]
+    approval_rules: Vec<ApprovalRule>,
+    #[serde(default)]
     deleted: Option<crate::removal::Removal>,
 }
 
 impl From<UserProfileFields> for UserProfile {
     fn from(fields: UserProfileFields) -> Self {
-        UserProfile { preferred_language: fields.preferred_language, deleted: fields.deleted, ..UserProfile::new(fields.user_id, fields.introduction) }
+        UserProfile { preferred_language: fields.preferred_language, approval_rules: fields.approval_rules, deleted: fields.deleted, ..UserProfile::new(fields.user_id, fields.introduction) }
     }
 }
 
@@ -193,6 +236,29 @@ mod tests {
         assert_eq!(introduced.introduction, profile.introduction, "unchanged by what is refused");
         introduced.introduce(None).unwrap();
         assert_eq!(introduced.introduction, None);
+    }
+
+    #[test]
+    fn a_profile_keeps_the_rules_a_person_may_keep() {
+        use crate::approval::{Reach, RuleDecision, ToolMatcher};
+        let mut profile = UserProfile::new(UserId::new(), None);
+        let shell = |decision, expires_at| ApprovalRule::new(ToolMatcher { tool: "shell".to_string(), arguments: Default::default() }, decision, Reach::Everywhere, expires_at).unwrap();
+        let allow = shell(RuleDecision::Allow, None);
+        profile.add_approval_rule(allow.clone()).unwrap();
+        assert_eq!(profile.add_approval_rule(shell(RuleDecision::Ask, None)), Err(RuleError::NotAnAnswer), "asking is no answer");
+        let now = Utc::now();
+        profile.add_approval_rule(shell(RuleDecision::Deny, Some(now))).unwrap();
+        profile.prune_approval_rules(now);
+        assert_eq!(profile.approval_rules(), [allow.clone()], "what expired is dropped");
+
+        let stored: UserProfile = serde_json::from_value(serde_json::to_value(&profile).unwrap()).unwrap();
+        assert_eq!(stored.approval_rules(), [allow.clone()], "kept with the profile");
+        assert!(profile.remove_approval_rule(allow.id));
+        assert!(!profile.remove_approval_rule(allow.id), "once");
+        for _ in 0..MAX_PERSONAL_RULES {
+            profile.add_approval_rule(shell(RuleDecision::Allow, None)).unwrap();
+        }
+        assert_eq!(profile.add_approval_rule(shell(RuleDecision::Allow, None)), Err(RuleError::TooMany));
     }
 
     #[tokio::test]

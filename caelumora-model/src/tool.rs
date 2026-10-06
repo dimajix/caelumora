@@ -1,4 +1,4 @@
-use crate::approval::{ApprovalId, ApprovalStatus};
+use crate::approval::{ApprovalId, ApprovalStatus, ToolMatcher};
 use crate::confidentiality::{Classification, Visibility};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -278,6 +278,9 @@ pub struct ToolCallState {
     /// a person (issue 13): no rule of a person answers it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub explicit: bool,
+    /// What other calls are like this one, as its tool says (issue 13).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested: Option<ToolMatcher>,
     /// How the call ended - its one result, from the executor or from a
     /// decision that settled it (issue 100) - once it has.
     pub result: Option<ToolCallResult>,
@@ -285,14 +288,15 @@ pub struct ToolCallState {
 
 impl ToolCallState {
     /// `tool_call`, waiting for a user's decision, who is shown
-    /// `description` - a decision of their own if `explicit` (issue 13).
-    pub fn pending(tool_call: ToolCall, description: String, explicit: bool) -> Self {
-        Self { id: ApprovalId::new(), status: ApprovalStatus::Pending, tool_call, description, explicit, result: None }
+    /// `description` - a decision of their own if `explicit` (issue 13) -
+    /// and offered a rule for the calls `suggested` matches.
+    pub fn pending(tool_call: ToolCall, description: String, explicit: bool, suggested: ToolMatcher) -> Self {
+        Self { id: ApprovalId::new(), status: ApprovalStatus::Pending, tool_call, description, explicit, suggested: Some(suggested), result: None }
     }
 
     /// `tool_call`, to be run as it is.
     pub fn approved(tool_call: ToolCall) -> Self {
-        Self { id: ApprovalId::new(), status: ApprovalStatus::Approved, tool_call, description: String::new(), explicit: false, result: None }
+        Self { id: ApprovalId::new(), status: ApprovalStatus::Approved, tool_call, description: String::new(), explicit: false, suggested: None, result: None }
     }
 
     /// `tool_call`, answered with `result` before it ran: it is not run.

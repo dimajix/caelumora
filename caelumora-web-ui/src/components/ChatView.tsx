@@ -29,6 +29,7 @@ import type {
   ActorState,
   RetryRefused,
   ApprovalRequest,
+  ApprovalRule,
   ChannelMember,
   ChannelResponse,
   ChannelSnapshot,
@@ -57,7 +58,7 @@ import {MessageEditor} from './MessageEditor';
 import {LanguageDialog} from './LanguageDialog';
 import {ApprovalRulesDialog} from './ApprovalRulesDialog';
 import {languageLabel} from '../language';
-import {changedChannel, languageChangedChannel, membershipChangedChannel, onGlobalEvent, reclassifiedChannel} from '../globalEvents';
+import {approvalRulesChangedChannel, changedChannel, languageChangedChannel, membershipChangedChannel, onGlobalEvent, profileApprovalRules, reclassifiedChannel} from '../globalEvents';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
 import {type ClassValue, clsx} from 'clsx';
@@ -76,6 +77,8 @@ import {HistoryPanel} from './HistoryPanel';
 import {ToolsPanel} from './ToolsPanel';
 import {PrivateNotesPanel} from './PrivateNotesPanel';
 import {AddParticipantDialog} from './AddParticipantDialog';
+import {ApprovalRuleOffer} from './ApprovalRuleOffer';
+import {approveEverything, approvingEverything, initialChoice, ruleOf, type RuleChoice} from '../approvalRules';
 import {actorKey, actorUuid, handleOf, mentionQueryAt} from '../mention';
 import {commandQueryAt, parseInput} from '../command';
 import {openEventStream} from '../stream';
@@ -204,6 +207,13 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>([]);
   // The pending approvals this user answered, still waiting for the decision.
   const [answeredApprovals, setAnsweredApprovals] = useState<string[]>([]);
+  // Of those, the ones a rule of this user's answered (issue 13), by id.
+  const [answeredByRule, setAnsweredByRule] = useState<Record<string, string>>({});
+  // The rule each card is to add with its answer, by request id.
+  const [ruleChoices, setRuleChoices] = useState<Record<string, RuleChoice | null>>({});
+  // This user's own rules (issue 13) - for the brave mode, shown while it
+  // lasts; they follow the global stream.
+  const [myRules, setMyRules] = useState<ApprovalRule[]>([]);
   // The snapshot holds the end of the history; older messages on request.
   const [hasMore, setHasMore] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
@@ -294,6 +304,21 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
         reportError('Failed to load the commands', error);
       });
   }, [sessionId, channelId]);
+
+  // The user's rules, and the channel's, follow the global stream (issue 13).
+  useEffect(() => {
+    let cancelled = false;
+    api.getProfile()
+      .then(profile => { if (!cancelled) setMyRules(profile.approval_rules ?? []); })
+      .catch(error => reportError('Failed to fetch the profile', error));
+    const stop = onGlobalEvent(event => {
+      const mine = profileApprovalRules(event);
+      if (mine) { setMyRules(mine); return; }
+      const changed = approvalRulesChangedChannel(event);
+      if (changed && changed.channelId === channelId) setChannel(prev => prev && {...prev, approval_rules: changed.rules});
+    });
+    return () => { cancelled = true; stop(); };
+  }, [channelId]);
 
   // The notes follow the global stream: a changed state of an agent in this
   // channel is announced without content, and the notes are fetched again
@@ -567,6 +592,13 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           // asked for (issue 148); a user's answer alone may not decide it.
           const sender = envelope.context.sender_id;
           const ended = (actorEvent.ApprovalGranted ?? actorEvent.ApprovalDenied ?? actorEvent.ApprovalTimedOut ?? actorEvent.ApprovalRequestWithdrawn)!.id;
+          // This user's own answer, as their actor shows it: given by a rule
+          // of theirs (issue 13).
+          const byRule = (actorEvent.ApprovalGranted ?? actorEvent.ApprovalDenied)?.by_rule;
+          if (byRule && typeof sender === 'object' && 'User' in sender && sender.User === user.id) {
+            setAnsweredApprovals(prev => prev.includes(ended) ? prev : [...prev, ended]);
+            setAnsweredByRule(prev => ({...prev, [ended]: byRule}));
+          }
           if (typeof sender === 'object' && 'Approver' in sender) {
             setPendingApprovals(prev => prev.filter(req => req.id !== ended));
             setAnsweredApprovals(prev => prev.filter(id => id !== ended));
@@ -662,7 +694,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
       onSnapshot: handleSnapshot,
       onEvent: handleMessage,
     });
-  }, [sessionId, channelId, participant]);
+  }, [sessionId, channelId, participant, user.id]);
 
 
   useEffect(() => {
@@ -859,12 +891,43 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   const mayApprove = (approval: ApprovalRequest) =>
     members.some(m => actorKey(m.id) === actorKey({Agent: approval.agent_id}) && m.can_approve);
 
+  // The answer first - the person decides this call now - then the rule
+  // they chose to derive from it (issue 13); if the rule fails, the answer
+  // stands.
   const handleApproval = async (approval: ApprovalRequest, approved: boolean) => {
     try {
       await api.respondToApproval(sessionId, channelId, approval.id, approval.agent_id, approved);
       setAnsweredApprovals(prev => [...prev, approval.id]);
     } catch (e) {
       reportError('Failed to respond to approval', e);
+      return;
+    }
+    const choice = ruleChoices[approval.id];
+    if (choice) {
+      try {
+        const added = await api.addApprovalRule(ruleOf(choice, approved, approval));
+        setMyRules(prev => prev.some(r => r.id === added.id) ? prev : [...prev, added]);
+      } catch (e) {
+        reportError('The call was answered, but the rule could not be added', e);
+      }
+    }
+  };
+
+  const braveMode = approvingEverything(myRules, sessionId, channelId);
+  const startBraveMode = async () => {
+    try {
+      const added = await api.addApprovalRule(approveEverything(sessionId, 60));
+      setMyRules(prev => [...prev, added]);
+    } catch (e) {
+      reportError('Failed to approve everything in this session', e);
+    }
+  };
+  const stopBraveMode = async (rule: ApprovalRule) => {
+    try {
+      if (rule.id) await api.removeApprovalRule(rule.id);
+      setMyRules(prev => prev.filter(r => r.id !== rule.id));
+    } catch (e) {
+      reportError('Failed to stop approving everything', e);
     }
   };
 
@@ -1083,11 +1146,31 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           <div ref={messagesEndRef} />
         </div>
 
+        {braveMode && (
+          <div role="status" className="px-4 py-2 bg-amber-100 dark:bg-amber-900/30 border-t border-amber-300 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200 flex items-center gap-2">
+            <ShieldAlert size={14} />
+            <span className="flex-1">
+              Your rule approves every tool call here{braveMode.expires_at ? ` until ${new Date(braveMode.expires_at).toLocaleTimeString()}` : ''} - except where a rule of the session or channel asks.
+            </span>
+            <button onClick={() => void stopBraveMode(braveMode)} className="rounded-sm border border-amber-400 px-2 py-0.5 hover:bg-amber-200 dark:hover:bg-amber-800">
+              Stop
+            </button>
+          </div>
+        )}
         {pendingApprovals.length > 0 && (
           <div className="p-4 bg-yellow-50 dark:bg-yellow-900/20 border-t border-yellow-200 dark:border-yellow-900/50 space-y-4">
             <h4 className="text-sm font-semibold text-yellow-800 dark:text-yellow-200 flex items-center gap-2">
               <Wrench size={16} />
-              Tool Execution Approval Required
+              <span className="flex-1">Tool Execution Approval Required</span>
+              {!braveMode && pendingApprovals.some(mayApprove) && (
+                <button
+                  onClick={() => void startBraveMode()}
+                  className="text-xs font-normal text-yellow-800 dark:text-yellow-200 hover:underline"
+                  title="A rule of yours that approves every tool call of the agents you are responsible for, in this session, for an hour - shown for as long as it lasts"
+                >
+                  Approve everything in this session for an hour
+                </button>
+              )}
             </h4>
             {pendingApprovals.map(approval => (
               <div key={approval.id} className="bg-white dark:bg-gray-800 rounded-lg border border-yellow-200 dark:border-yellow-900/50 shadow-xs p-4">
@@ -1105,10 +1188,20 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
                   </p>
                 )}
                 {answeredApprovals.includes(approval.id) ? (
-                  <p className="text-sm text-gray-500 dark:text-gray-400 text-center">Answered - waiting for the decision.</p>
+                  <p className="text-sm text-gray-500 dark:text-gray-400 text-center">
+                    {answeredByRule[approval.id] ? 'Answered by your rule' : 'Answered'} - waiting for the decision.
+                  </p>
                 ) : !mayApprove(approval) ? (
                   <p className="text-sm text-gray-500 dark:text-gray-400 text-center">Waiting for whoever is responsible for the agent.</p>
                 ) : (
+                <>
+                {!approval.explicit && (
+                  <ApprovalRuleOffer
+                    choice={ruleChoices[approval.id] ?? null}
+                    initial={initialChoice(approval)}
+                    onChange={(choice) => setRuleChoices(prev => ({...prev, [approval.id]: choice}))}
+                  />
+                )}
                 <div className="flex gap-2">
                   <button
                     onClick={() => handleApproval(approval, true)}
@@ -1123,6 +1216,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
                     Deny
                   </button>
                 </div>
+                </>
                 )}
               </div>
             ))}

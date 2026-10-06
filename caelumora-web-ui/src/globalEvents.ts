@@ -6,7 +6,7 @@
 // form the snapshot uses. Events that do not change what the list shows are
 // ignored.
 
-import type {GlobalEvent} from './types';
+import type {ApprovalRule, GlobalEvent} from './types';
 import type {Classification} from './confidentiality';
 
 export type SessionChange =
@@ -131,3 +131,27 @@ export function languageChangedChannel(event: GlobalEvent): {channelId: string; 
   return {channelId: value[1], language: (update as {LanguageChanged: string | null}).LanguageChanged ?? null};
 }
 
+
+/**
+ * The channel whose approval rules changed and its rules now, for
+ * `ChannelUpdated` with `ApprovalRulesChanged` (issue 13); `null` for any
+ * other event.
+ */
+export function approvalRulesChangedChannel(event: GlobalEvent): {channelId: string; rules: ApprovalRule[]} | null {
+  const value = event.ChannelUpdated;
+  if (!Array.isArray(value) || typeof value[1] !== 'string') return null;
+  const update = value[2];
+  if (typeof update !== 'object' || update === null || !('ApprovalRulesChanged' in update)) return null;
+  return {channelId: value[1], rules: (update as {ApprovalRulesChanged: ApprovalRule[]}).ApprovalRulesChanged ?? []};
+}
+
+/**
+ * The rules of the logged-in user now, for `UserProfileUpdated` (issue 13) -
+ * which reaches only the user whose profile it is; `null` for any other
+ * event.
+ */
+export function profileApprovalRules(event: GlobalEvent): ApprovalRule[] | null {
+  const value = event.UserProfileUpdated;
+  if (!Array.isArray(value) || typeof value[1] !== 'object' || value[1] === null) return null;
+  return (value[1] as {approval_rules?: ApprovalRule[]}).approval_rules ?? [];
+}

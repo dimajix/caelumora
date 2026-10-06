@@ -6,14 +6,14 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, RetryTarget};
 use caelumora_model::work::TurnId;
-use caelumora_model::approval::ApprovalResponse;
-use caelumora_model::channel::{Channel, ChannelId};
+use caelumora_model::approval::{ApprovalRequest, ApprovalResponse, ApprovalRule, RuleDecision};
+use caelumora_model::channel::ChannelId;
 use caelumora_model::command::{Command, CommandVisibility};
 use caelumora_model::message::{Message, MessageId, MessageRole};
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::security::{ActionType, Enforcement, Reclassified, SecurityAttributes, SecurityContext};
+use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Reclassified, SecurityAttributes, SecurityContext, SecurityManager};
 use caelumora_model::session::SessionId;
-use crate::controller::UserController;
+use crate::controller::{ChannelController, ControllerManager, UserController};
 use chrono::Utc;
 use tracing::{debug, info, warn};
 use std::sync::Arc;
@@ -35,6 +35,12 @@ pub struct UserActor {
     security_context: SecurityContext,
     user: Arc<UserController>,
     actor_runtime: ActorRuntime,
+    /// What the user's rules answer with (issue 13): whether they may
+    /// approve the calls of an agent in this channel is asked first.
+    security: Arc<dyn SecurityManager>,
+    /// Where the attributes of the agents that ask are read.
+    controllers: Arc<ControllerManager>,
+    channel: Arc<ChannelController>,
     // Envelopes built by `send_message` / `send_approval`, forwarded into the
     // channel by `run`.
     user_rx: Mutex<Receiver<Envelope>>,
@@ -58,8 +64,10 @@ pub struct ChannelWatch {
 
 impl UserActor {
     /// The actor of the user `user` - the session's controller of them,
-    /// shared with their actors in its other channels (issue 120).
-    pub async fn new(channel: &Channel, user: Arc<UserController>, actor_runtime: ActorRuntime) -> Result<Self> {
+    /// shared with their actors in its other channels (issue 120) - in the
+    /// channel `channel_controller` holds.
+    pub async fn new(channel_controller: Arc<ChannelController>, user: Arc<UserController>, actor_runtime: ActorRuntime) -> Result<Self> {
+        let channel = Arc::clone(&channel_controller.load());
         let user_id = user.id();
         // The user acts on their own behalf, in this channel (issue 87).
         let security_context = SecurityContext::new(ActorId::User(user_id), channel.session_id, channel.id);
@@ -72,7 +80,10 @@ impl UserActor {
             channel_id: channel.id,
             security_context,
             user,
+            security: Arc::clone(actor_runtime.security_manager()),
+            controllers: Arc::clone(actor_runtime.runtime_manager().controller_manager()),
             actor_runtime,
+            channel: channel_controller,
             user_rx: Mutex::new(urx),
             user_tx: utx,
             received: broadcast::channel(SUBSCRIBER_CAPACITY).0,
@@ -348,16 +359,49 @@ impl UserActor {
     }
 
     /// Sends this user's decision on an approval. Returns the `span_id`, as
-    /// `send_message` does.
+    /// `send_message` does. A decision sent so is the user's own, never one
+    /// of their rules (`ApprovalResponse::by_rule`).
     pub async fn send_approval(&self, response: ApprovalResponse, approved: bool) -> anyhow::Result<Uuid> {
-        let event = if approved {
-            ActorEvent::ApprovalGranted(response)
-        } else {
-            ActorEvent::ApprovalDenied(response)
-        };
+        let response = ApprovalResponse { by_rule: None, ..response };
         let span_id = Uuid::new_v4();
-        self.send(self.envelope(event, span_id)).await?;
+        self.send(self.envelope(Self::answer(response, approved), span_id)).await?;
         Ok(span_id)
+    }
+
+    fn answer(response: ApprovalResponse, approved: bool) -> ActorEvent {
+        if approved { ActorEvent::ApprovalGranted(response) } else { ActorEvent::ApprovalDenied(response) }
+    }
+
+    /// The answer the user's rules give to `request`, which `envelope`
+    /// carries (issue 13), as an envelope of this user's - the way a click
+    /// would be sent, carrying the rule. `None` if the approver did not ask,
+    /// a rule of a place asked for the user's own decision (`explicit`), no
+    /// rule of theirs applies, or they may not approve the agent's calls
+    /// here - the approver would leave their answer out.
+    async fn answer_by_rule(&self, envelope: &Envelope, request: &ApprovalRequest) -> Option<Envelope> {
+        if request.explicit || !matches!(envelope.context.sender_id, ActorId::Approver(_)) {
+            return None;
+        }
+        let rule = {
+            let profile = self.user.profile();
+            ApprovalRule::decide(profile.approval_rules(), &request.tool_call, request.session_id, request.channel_id, Utc::now())?.clone()
+        };
+        let agent = match self.controllers.agent_controller(request.agent_id).await {
+            Ok(controller) => controller.load().security_attributes.clone(),
+            Err(e) => {
+                warn!("UserActor {} cannot read agent {}: {}", self.id(), request.agent_id, e);
+                return None;
+            }
+        };
+        let channel = self.channel.load().security_attributes.clone();
+        if !self.security.may_approve(&self.security_context, &agent, &channel).await {
+            debug!(rule = %rule.id, "UserActor {} may not approve the calls of agent {}; its rule does not answer", self.id(), request.agent_id);
+            return None;
+        }
+        let approved = rule.decision == RuleDecision::Allow;
+        info!(rule = %rule.id, approved, "UserActor {} answers approval {} by a rule", self.id(), request.id);
+        let response = ApprovalResponse { by_rule: Some(rule.id), ..ApprovalResponse::new(request.id, request.agent_id) };
+        Some(self.envelope(Self::answer(response, approved), envelope.context.span_id))
     }
 
     /// Runs the user command `name` with `args` on behalf of this user
@@ -401,15 +445,25 @@ impl UserActor {
         ChannelWatch { events: self.received.subscribe(), ended: self.ended.child_token() }
     }
 
-    fn handle_actor_envelope(&self, maybe_event: Option<Envelope>) -> bool {
-        match maybe_event {
-            Some(event) => {
-                debug!("UserActor {} received {}", self.id(), event.describe());
-                // An error only says that nobody listens.
-                let _ = self.received.send(event);
-                false
+    /// Hands `maybe_event` to whoever watches, and answers a request for
+    /// approval that a rule of the user's answers (issue 13): sent as the
+    /// user's own answer would be, and shown to the user as theirs. `true`
+    /// once the actor is to end - its inbox closed, or the channel is gone.
+    async fn handle_actor_envelope(&self, maybe_event: Option<Envelope>, tx: &dyn EventSender) -> bool {
+        let Some(event) = maybe_event else { return true };
+        debug!("UserActor {} received {}", self.id(), event.describe());
+        let answer = match &event.event {
+            ActorEvent::ApprovalRequested(request) => self.answer_by_rule(&event, request).await,
+            _ => None,
+        };
+        // An error only says that nobody listens.
+        let _ = self.received.send(event);
+        match answer {
+            Some(answer) => {
+                let _ = self.received.send(answer.clone());
+                !self.forward(answer, tx).await
             }
-            None => true,
+            None => false,
         }
     }
 
@@ -491,7 +545,7 @@ impl Actor for UserActor {
         loop {
             tokio::select! {
                 maybe_event = rx.recv() => {
-                    if self.handle_actor_envelope(maybe_event) { break }
+                    if self.handle_actor_envelope(maybe_event, &*tx).await { break }
                 }
                 Some(envelope) = run.queue.recv() => {
                     if !self.forward(envelope, &*tx).await { break }
@@ -523,7 +577,7 @@ mod tests {
         let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), Vec::new(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let session_id = SessionId::new();
         let channel_runtime = ChannelRuntime::outside_a_session(Arc::clone(&runtime), Arc::new(CommandExecutor::empty(Arc::clone(runtime.security_manager()))), session_id);
-        let channel = Channel {
+        let channel = caelumora_model::channel::Channel {
             approval_rules: Vec::new(),
             id: ChannelId::new(),
             session_id,
@@ -547,7 +601,7 @@ mod tests {
         let channel_loop = crate::channel::ChannelLoop::new(channel.clone(), channel_runtime.clone()).await.unwrap();
         let actor_runtime = channel_runtime.new_actor_runtime(ActorId::User(user.id), channel.session_id, channel.id);
         runtime.entity_store().create_user(&SecurityContext::system(), &user).await.unwrap();
-        let actor = UserActor::new(&channel, runtime.controller_manager().user_controller(user.id).await.unwrap(), actor_runtime).await.unwrap();
+        let actor = UserActor::new(runtime.controller_manager().new_channel_controller(channel.clone()), runtime.controller_manager().user_controller(user.id).await.unwrap(), actor_runtime).await.unwrap();
         (actor, channel_loop)
     }
 
@@ -587,7 +641,7 @@ mod tests {
         let shown: Vec<&str> = std::iter::from_fn(|| following.try_recv().ok()).map(|e| e.event.kind()).collect();
         assert_eq!(shown, ["CompleteMessageGenerated", "FullResponseGenerated"], "what it said, not the request to wake the channel (issue 220)");
 
-        actor.send_approval(ApprovalResponse { id: Default::default(), agent_id: Default::default() }, true).await.unwrap();
+        actor.send_approval(ApprovalResponse::new(Default::default(), Default::default()), true).await.unwrap();
         assert_eq!(following.try_recv().map(|e| e.event.kind()).ok(), Some("ApprovalGranted"), "everything it sends");
     }
 
@@ -607,15 +661,20 @@ mod tests {
         assert!(ended.is_ok(), "a channel that is gone is an end, not an error: {ended:?}");
     }
 
+    /// Where what the actor sends goes when nothing is to come of it.
+    fn nowhere() -> crate::transport_impl::memory::InMemoryEventSender {
+        crate::transport_impl::memory::InMemoryEventSender::new(mpsc::channel(1).0)
+    }
+
     #[tokio::test]
     async fn envelopes_without_a_subscriber_are_dropped_without_blocking() {
         let (actor, _channel) = user_actor().await;
         let agent = ActorId::Agent(Default::default());
         // More than any queue would hold: must neither block nor fail.
         for _ in 0..(SUBSCRIBER_CAPACITY * 2) {
-            assert!(!actor.handle_actor_envelope(Some(envelope_from(agent))));
+            assert!(!actor.handle_actor_envelope(Some(envelope_from(agent)), &nowhere()).await);
         }
-        assert!(actor.handle_actor_envelope(None), "a closed input ends the actor");
+        assert!(actor.handle_actor_envelope(None, &nowhere()).await, "a closed input ends the actor");
     }
 
     #[tokio::test]
@@ -624,11 +683,11 @@ mod tests {
         let agent = ActorId::Agent(Default::default());
         let (mut first, mut second) = (actor.watch().events, actor.watch().events);
 
-        assert!(!actor.handle_actor_envelope(Some(envelope_from(agent))));
+        assert!(!actor.handle_actor_envelope(Some(envelope_from(agent)), &nowhere()).await);
         assert!(first.try_recv().is_ok() && second.try_recv().is_ok(), "two tabs, both are told");
 
         for _ in 0..(SUBSCRIBER_CAPACITY + 10) {
-            assert!(!actor.handle_actor_envelope(Some(envelope_from(agent))));
+            assert!(!actor.handle_actor_envelope(Some(envelope_from(agent)), &nowhere()).await);
         }
         assert!(matches!(first.try_recv(), Err(broadcast::error::TryRecvError::Lagged(10))), "the oldest are lost, and it learns how many");
         let mut received = 0;

@@ -1,5 +1,6 @@
 use caelumora_model::actor::{ActorId, ActorState};
-use caelumora_model::approval::ApprovalRule;
+use chrono::{DateTime, Utc};
+use caelumora_model::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
 use caelumora_model::confidentiality::{Classification, Compartment};
 use caelumora_model::message::{Message, TokenUsage};
 use caelumora_model::language::Language;
@@ -69,14 +70,32 @@ pub struct ProfileResponse {
     pub max_introduction_chars: usize,
     /// The language the user prefers (issue 56), a BCP 47 tag such as `de`.
     pub preferred_language: Option<Language>,
+    /// The user's answers to tool calls given in advance (issue 13): rules
+    /// that allow or deny, each within a reach.
+    pub approval_rules: Vec<ApprovalRule>,
 }
 
 impl ProfileResponse {
     /// `profile` as answered; one without anything in it if there is none.
     pub(crate) fn of(profile: Option<UserProfile>) -> Self {
+        let approval_rules = profile.as_ref().map_or_else(Vec::new, |profile| profile.approval_rules().to_vec());
         let (introduction, preferred_language) = profile.map_or((None, None), |profile| (profile.introduction, profile.preferred_language));
-        Self { introduction, max_introduction_chars: MAX_INTRODUCTION_CHARS, preferred_language }
+        Self { introduction, max_introduction_chars: MAX_INTRODUCTION_CHARS, preferred_language, approval_rules }
     }
+}
+
+/// A rule a user adds to their answers given in advance (issue 13): what
+/// calls it is about, whether it allows or denies them, where - everywhere
+/// unless named - and until when. Its id is made by the server.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApprovalRuleRequest {
+    pub matcher: ToolMatcher,
+    pub decision: RuleDecision,
+    #[serde(default)]
+    pub reach: Reach,
+    #[serde(default)]
+    pub expires_at: Option<DateTime<Utc>>,
 }
 
 /// The logged-in user's profile as it is to be: their introduction, `null`

@@ -88,6 +88,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/templates", get(templates::list_templates))
         .route("/compartments", get(compartments::list_compartments))
         .route("/profile", get(profile::get_profile).put(profile::update_profile))
+        .route("/profile/approval-rules", post(profile::add_approval_rule))
+        .route("/profile/approval-rules/{id}", axum::routing::delete(profile::remove_approval_rule))
         .route("/agents", get(agents::list_agents))
         .route("/agents/{id}", axum::routing::delete(agents::delete_agent))
         .route("/agents/{id}/restore", post(agents::restore_agent))

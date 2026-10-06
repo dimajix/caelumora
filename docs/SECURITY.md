@@ -54,6 +54,8 @@ This is the one place ownership is recorded.
 *   Introductions - a personality's, a user's profile's - are public: they are given to every agent
     in every channel their agents or their user take part in. A personality's introduction is
     written by whoever may change the personality, like its system prompt; a user's by the user.
+    The rest of a profile is read by its user alone - their rules on tool calls (issue 13) among
+    it, which the runtime evaluates in their name, as their own answer.
 *   Entities stored before owners were recorded have an empty owner and count as the system's.
 
 ### The ownership policy

@@ -902,7 +902,7 @@ impl ChannelLoop {
         let (session_id, channel_id) = { let c = channel.load(); (c.session_id, c.id) };
         let actor_runtime = runtime.new_actor_runtime(member.actor_id(), session_id, channel_id);
         Ok(match member.clone() {
-            Member::User(user) => Box::new(UserActor::new(&channel.load(), user, actor_runtime).await?),
+            Member::User(user) => Box::new(UserActor::new(Arc::clone(&channel), user, actor_runtime).await?),
             Member::Agent(agent, personality) => Box::new(AgentActor::new(Arc::clone(&channel), agent, personality, actor_runtime).await?),
             Member::ExternalAgent(agent, personality) => Box::new(ExternalAgentActor::new(&channel.load(), agent, personality, actor_runtime).await?),
             Member::Approver(approver) => Box::new(ApproverActor::new(channel, approver, actor_runtime)),
@@ -2745,7 +2745,7 @@ mod tests {
             }
         }).await.expect("the plan is put up for approval");
         let ActorId::User(alice) = context.initiator_id else { panic!("alice acts") };
-        channel.user_actor(alice).unwrap().send_approval(ApprovalResponse { id: request.id, agent_id: agent }, true).await.unwrap();
+        channel.user_actor(alice).unwrap().send_approval(ApprovalResponse::new(request.id, agent), true).await.unwrap();
 
         let final_messages = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
@@ -2819,7 +2819,7 @@ mod tests {
             }
         }).await.expect("the plan is put up for approval");
         let ActorId::User(alice) = context.initiator_id else { panic!("alice acts") };
-        channel.user_actor(alice).unwrap().send_approval(ApprovalResponse { id: request.id, agent_id: agent }, true).await.unwrap();
+        channel.user_actor(alice).unwrap().send_approval(ApprovalResponse::new(request.id, agent), true).await.unwrap();
 
         let final_messages = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
@@ -3247,7 +3247,7 @@ mod tests {
         let asked_again = approval_requested(&mut events).await;
         assert_eq!(asked_again.id, asked.id);
         let alice = document.participants.iter().find_map(|p| match p { Participant::User(id) => Some(*id), _ => None }).expect("alice");
-        let response = caelumora_model::approval::ApprovalResponse { id: asked.id, agent_id: agent };
+        let response = caelumora_model::approval::ApprovalResponse::new(asked.id, agent);
         restarted.user_actor(alice).unwrap().send_approval(response, true).await.unwrap();
         let said: Vec<_> = answered(&mut events, agent).await.iter().filter_map(|m| m.content.clone()).collect();
         assert_eq!(said, ["Done."], "the call runs and the turn goes on");

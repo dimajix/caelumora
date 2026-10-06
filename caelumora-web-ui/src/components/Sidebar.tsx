@@ -473,7 +473,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       )}
 
       {showProfile && (
-        <ProfileDialog username={user.username} onClose={() => setShowProfile(false)} />
+        <ProfileDialog username={user.username} sessions={sessions} onClose={() => setShowProfile(false)} />
       )}
 
       <div className="p-3 border-t border-gray-800 flex items-center gap-2 text-sm">

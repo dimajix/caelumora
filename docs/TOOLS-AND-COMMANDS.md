@@ -19,6 +19,10 @@ The trait has these methods:
 *   `execute(name, params, turn)` - runs one of them.
 *   `describe(name, params)` - the text approvers are shown for a call; by default the tool's
     description.
+*   `matcher(name, params)` - what other calls are like this one (issue 13): the matcher a rule
+    derived from the call is offered with (`ApprovalRequest::suggested`); by default the calls
+    exactly like it (`ToolMatcher::exact`). A tool whose argument is a language says better what
+    makes two calls alike.
 
 A `Tool` declares its `name`, `description` and `parameters`, whether it `requires_approval`, its
 `visibility`, and optionally the `classification` of its results. Approval and classification are
@@ -175,7 +179,8 @@ suspends its turn while it waits, and nothing blocks.
     approve is denied at once instead.
 3.  **Answers.** A user approves or denies over REST (`POST …/approvals`) or in the TUI.
     `UserActor::send_approval` sends `ApprovalGranted` or `ApprovalDenied` with the same id, which
-    the moderator again routes to the approver only.
+    the moderator again routes to the approver only. A rule of the user's may answer for them,
+    the same way (see [Rules of a person](#rules-of-a-person)).
 4.  **Decision.** The approver collects the answers of those who may approve and decides by its
     `ApprovalStrategy` (`Any`, `Majority`, `All`, `DenyOnFirst`), counted among them alone. It
     decides again when users join or leave. A request nobody decides times out after ten minutes.
@@ -250,6 +255,36 @@ approver is not involved. Patterns are matched with the `regex` crate, which has
 and are bounded in length and compiled size; a rule whose pattern cannot be matched - one written
 into a document by hand - restricts and never allows. A pattern is reliable for arguments with a
 structure of their own, not for one that is a language, such as a shell command.
+
+### Rules of a person
+
+A person can give their answer in advance (issue 13): "for my part, `ls` is always fine". Such a
+rule has the same shape as a rule of a place, but it allows or denies - asking is what happens
+without one - and has a reach of its own: everywhere, one session or one channel. The rules are the
+person's, kept in their `UserProfile`, which nobody else reads; others in the same channel may have
+other rules.
+
+A rule is not evaluated by the approver, which has no right to approve anything of its own, but by
+the person's `UserActor`, when a request reaches it from the approver: if a rule of theirs applies
+(`ApprovalRule::decide`), and they may approve the agent's calls in the channel (`may_approve`,
+asked first), the actor sends `ApprovalGranted` or `ApprovalDenied` as their click would, and shows
+it to them. To the approver it is an answer of theirs like any other; `ApprovalResponse::by_rule`
+names the rule, for the record and their own view - only their actor sets it, `send_approval`
+clears it. The approver's `ApprovalStrategy` decides between people with opposite rules as between
+people who clicked: under `Any` an `allow` wins whoever answered first, under `All` and
+`DenyOnFirst` a `deny` does.
+
+*   **Explicit requests** - those a rule of a place asks for - are answered by no rule.
+*   **Answers come at once.** Under `Any`, a person's `allow` decides before anyone read the
+    request: a rule weighs as much as the button.
+*   **The brave mode** is a rule like any other: every tool (`*`, no patterns), allowed in one
+    session, for a while. The web UI offers it for an hour and shows it for as long as it lasts.
+*   **A rule is derived from a call**: the approval card offers "and from now on", with the
+    matcher the call's tool suggests, a reach and an expiry. The person answers the call first; the
+    rule is added after (`POST /profile/approval-rules`).
+*   Rules are added and taken back through the user's controller, which stores them first and
+    announces the profile (`UserProfileUpdated`), and drops those that expired with every change. A
+    person keeps at most `MAX_PERSONAL_RULES`. A rule is bound to no agent: `may_approve` bounds it.
 
 ### Who may approve
 

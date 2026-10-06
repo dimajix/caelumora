@@ -595,10 +595,7 @@ pub async fn send_approval(
 ) -> Result<StatusCode, ApiError> {
     let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let user_actor = user_actor_of(&channel, &user)?;
-    let response = ApprovalResponse {
-        id: ApprovalId(payload.approval_id),
-        agent_id: AgentId(payload.agent_id),
-    };
+    let response = ApprovalResponse::new(ApprovalId(payload.approval_id), AgentId(payload.agent_id));
     let span_id = user_actor.send_approval(response, payload.approved).await
         .map_err(|e| ApiError::internal("approval_not_sent", "sending the approval", &e))?;
     tracing::Span::current().record("span_id", tracing::field::display(span_id));

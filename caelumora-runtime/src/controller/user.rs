@@ -1,4 +1,5 @@
 use arc_swap::ArcSwap;
+use caelumora_model::approval::{ApprovalRule, ApprovalRuleId};
 use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::language::Language;
 use caelumora_model::security::{Secured, SecurityContext};
@@ -69,15 +70,56 @@ impl UserController {
     /// contains control characters (`UserProfile::introduce`), otherwise
     /// whatever the store reports; the profile is then unchanged.
     pub async fn update_profile(&self, ctx: &SecurityContext, introduction: Option<&str>, preferred_language: Option<Language>) -> StoreResult<UserProfile> {
+        self.change(ctx, |profile| {
+            profile.introduce(introduction).map_err(|e| StoreError::Validation(e.to_string()))?;
+            profile.preferred_language = preferred_language;
+            Ok(())
+        }).await.map(|(_, profile)| profile)
+    }
+
+    /// Adds `rule` to the user's answers to tool calls given in advance
+    /// (issue 13), on behalf of `ctx`, as `update_profile` changes the
+    /// profile. They answer from the next request on, in every channel of
+    /// the user's in this instance.
+    ///
+    /// # Errors
+    /// `StoreError::Validation` for a rule a person may not keep, or one too
+    /// many (`UserProfile::add_approval_rule`), otherwise whatever the store
+    /// reports; the profile is then unchanged.
+    pub async fn add_approval_rule(&self, ctx: &SecurityContext, rule: ApprovalRule) -> StoreResult<()> {
+        self.change(ctx, |profile| profile.add_approval_rule(rule).map_err(|e| StoreError::Validation(e.to_string()))).await.map(|_| ())
+    }
+
+    /// Takes the user's rule `id` back (issue 13), on behalf of `ctx`, as
+    /// `update_profile` changes the profile.
+    ///
+    /// # Errors
+    /// `StoreError::NotFound` if the user has no such rule, otherwise
+    /// whatever the store reports; the profile is then unchanged.
+    pub async fn remove_approval_rule(&self, ctx: &SecurityContext, id: ApprovalRuleId) -> StoreResult<()> {
+        self.change(ctx, |profile| match profile.remove_approval_rule(id) {
+            true => Ok(()),
+            false => Err(StoreError::NotFound { entity: "approval_rule", id: id.to_string() }),
+        }).await.map(|_| ())
+    }
+
+    /// Changes the profile as `change` says, on behalf of `ctx`: stored
+    /// first - which is where the permission is checked - and only then
+    /// taken over live and announced, as it now stands. Rules that expired
+    /// are dropped with every change.
+    ///
+    /// # Errors
+    /// What `change` reports, or the store; the profile is then unchanged.
+    async fn change<T>(&self, ctx: &SecurityContext, change: impl FnOnce(&mut UserProfile) -> StoreResult<T>) -> StoreResult<(T, UserProfile)> {
         let _guard = self.write_lock.lock().await;
         let mut profile = (**self.profile.load()).clone();
-        profile.introduce(introduction).map_err(|e| StoreError::Validation(e.to_string()))?;
-        profile.preferred_language = preferred_language;
+        let changed = change(&mut profile)?;
+        profile.prune_approval_rules(chrono::Utc::now());
         self.save(ctx, &profile).await?;
         self.profile.store(Arc::new(profile.clone()));
         let attributes = profile.security_attributes().clone();
         self.event_publisher.publish(GlobalEvent::UserProfileUpdated(self.id, profile.clone()), attributes);
-        Ok(profile)
+        Ok((changed, profile))
     }
 
     /// Stores `profile` as `ctx`, whether the user has one already or not:
@@ -177,6 +219,31 @@ mod tests {
 
         assert_eq!(controller.profile().introduction, None);
         assert!(announced.0.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_rule_is_added_and_taken_back_by_the_user_alone() {
+        use caelumora_model::approval::{Reach, RuleDecision, ToolMatcher};
+        let store = Arc::new(MemoryStore::with_security_manager(Arc::new(OwnershipSecurityManager::new())));
+        let user = alice();
+        let controller = UserController::new(user.clone(), None, Arc::new(()), Arc::<MemoryStore>::clone(&store));
+        let hers = as_user(user.id);
+        controller.update_profile(&hers, Some("I run the budget."), None).await.unwrap();
+        let rule = ApprovalRule::new(ToolMatcher { tool: "shell".to_string(), arguments: Default::default() }, RuleDecision::Allow, Reach::Everywhere, None).unwrap();
+
+        assert!(matches!(controller.add_approval_rule(&as_user(UserId::new()), rule.clone()).await, Err(StoreError::PermissionDenied)), "not by someone else");
+        controller.add_approval_rule(&hers, rule.clone()).await.expect("hers");
+        assert_eq!(controller.profile().approval_rules(), [rule.clone()], "live");
+        assert_eq!(store.get_user_profile(&hers, user.id).await.unwrap().approval_rules(), [rule.clone()], "stored");
+        assert_eq!(controller.profile().introduction.as_deref(), Some("I run the budget."), "the rest stays");
+        controller.update_profile(&hers, None, None).await.unwrap();
+        assert_eq!(controller.profile().approval_rules(), [rule.clone()], "and stays through a change of the rest");
+
+        let asking = ApprovalRule { decision: RuleDecision::Ask, ..rule.clone() };
+        assert!(matches!(controller.add_approval_rule(&hers, asking).await, Err(StoreError::Validation(_))), "a person allows or denies");
+        controller.remove_approval_rule(&hers, rule.id).await.expect("taken back");
+        assert!(matches!(controller.remove_approval_rule(&hers, rule.id).await, Err(StoreError::NotFound { .. })), "once");
+        assert!(controller.profile().approval_rules().is_empty());
     }
 
     #[tokio::test]

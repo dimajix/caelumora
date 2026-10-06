@@ -37,12 +37,30 @@ pub struct ApprovalRequest {
     /// a person (issue 13): no rule of a person answers it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub explicit: bool,
+    /// What other calls are like this one, as its tool says (issue 13): the
+    /// matcher a rule derived from it is offered with. `None` for a request
+    /// asked before there were any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested: Option<ToolMatcher>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApprovalResponse {
     pub id: ApprovalId,
     pub agent_id: AgentId,
+    /// The rule of the person answering that gave the answer (issue 13),
+    /// for the record and their own view; `None` for an answer they gave
+    /// themselves, and for a decision. Set only by their actor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by_rule: Option<ApprovalRuleId>,
+}
+
+impl ApprovalResponse {
+    /// An answer to the request `id` of agent `agent_id`, given by the
+    /// person themselves.
+    pub fn new(id: ApprovalId, agent_id: AgentId) -> Self {
+        Self { id, agent_id, by_rule: None }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -148,12 +166,41 @@ pub enum RuleError {
     InvalidPattern { argument: String, reason: String },
     #[error("a session, a channel or the system may only ask or deny, everywhere within it")]
     NotRestricting,
+    #[error("a rule of a person allows or denies; asking is what happens without one")]
+    NotAnAnswer,
+    #[error("a person may keep at most {MAX_PERSONAL_RULES} rules")]
+    TooMany,
 }
+
+/// The most rules a person may keep: they are matched against every call
+/// they are asked to approve.
+pub const MAX_PERSONAL_RULES: usize = 200;
 
 impl ToolMatcher {
     /// Every call of every tool.
     pub fn everything() -> Self {
         Self { tool: "*".to_string(), arguments: BTreeMap::new() }
+    }
+
+    /// The calls exactly like `call`: its tool, and every argument as it is
+    /// - what a rule derived from a call is offered with unless its tool
+    /// knows better, for the person to widen.
+    pub fn exact(call: &ToolCall) -> Self {
+        let arguments = match &call.arguments {
+            Value::Object(arguments) => arguments.iter()
+                .map(|(name, value)| {
+                    let text = match value { Value::String(text) => text.clone(), other => other.to_string() };
+                    (name.clone(), regex::escape(&text))
+                })
+                .collect(),
+            _ => BTreeMap::new(),
+        };
+        Self { tool: call.function_name.clone(), arguments }
+    }
+
+    /// Whether it is about every call of every tool.
+    pub fn is_everything(&self) -> bool {
+        self.tool == "*" && self.arguments.is_empty()
     }
 
     /// Nothing if every pattern is one that can be matched.
@@ -230,13 +277,31 @@ impl ApprovalRule {
         self.matcher.check()
     }
 
+    /// Nothing if a person may keep the rule (issue 13): one that allows or
+    /// denies - their answer given in advance - with a matcher that can be
+    /// matched, within any reach.
+    ///
+    /// # Errors
+    /// `RuleError::NotAnAnswer`, or what `ToolMatcher::check` reports.
+    pub fn check_personal(&self) -> Result<(), RuleError> {
+        if self.decision == RuleDecision::Ask {
+            return Err(RuleError::NotAnAnswer);
+        }
+        self.matcher.check()
+    }
+
+    /// Whether it no longer applies anywhere at `now`.
+    pub fn is_expired(&self, now: DateTime<Utc>) -> bool {
+        self.expires_at.is_some_and(|at| at <= now)
+    }
+
     /// Whether the rule applies to `call`, made in the channel `channel_id`
     /// of session `session_id` at `now`: within its reach, not expired, and
     /// about the call. A rule whose matcher cannot be matched applies if it
     /// restricts and does not if it allows: a broken rule never opens
     /// anything.
     pub fn applies(&self, call: &ToolCall, session_id: SessionId, channel_id: ChannelId, now: DateTime<Utc>) -> bool {
-        if !self.reach.covers(session_id, channel_id) || self.expires_at.is_some_and(|at| at <= now) {
+        if !self.reach.covers(session_id, channel_id) || self.is_expired(now) {
             return false;
         }
         self.matcher.matches(call).unwrap_or(self.decision != RuleDecision::Allow)
@@ -338,6 +403,27 @@ mod tests {
         assert!(broken(RuleDecision::Deny).applies(&ls, session, channel, Utc::now()));
         assert!(!broken(RuleDecision::Allow).applies(&ls, session, channel, Utc::now()));
         assert!(!broken(RuleDecision::Deny).applies(&call("note", json!({})), session, channel, Utc::now()), "only for its tool");
+    }
+
+    #[test]
+    fn a_call_proposes_the_rule_for_the_calls_exactly_like_it() {
+        let ls = call("shell", json!({ "command": "ls -l *.rs", "depth": 2 }));
+        let exact = ToolMatcher::exact(&ls);
+        assert!(exact.check().is_ok());
+        assert!(exact.matches(&ls).unwrap(), "itself");
+        assert!(!exact.matches(&call("shell", json!({ "command": "ls -l main.rs", "depth": 2 }))).unwrap(), "a `*` is no wildcard in it");
+        assert!(!exact.matches(&call("shell", json!({ "command": "ls -l *.rs", "depth": 3 }))).unwrap(), "every argument counts");
+        assert_eq!(ToolMatcher::exact(&call("stop", Value::Null)), matcher("stop", &[]), "a call without arguments: its tool");
+        assert!(ToolMatcher::everything().is_everything() && !exact.is_everything());
+    }
+
+    #[test]
+    fn a_person_allows_or_denies_within_any_reach() {
+        assert!(rule(matcher("shell", &[]), RuleDecision::Allow).check_personal().is_ok());
+        assert!(rule(matcher("shell", &[]), RuleDecision::Deny).check_personal().is_ok());
+        assert_eq!(rule(matcher("shell", &[]), RuleDecision::Ask).check_personal(), Err(RuleError::NotAnAnswer));
+        let narrower = ApprovalRule::new(matcher("shell", &[]), RuleDecision::Allow, Reach::Channel(ChannelId::new()), None).unwrap();
+        assert!(narrower.check_personal().is_ok());
     }
 
     #[test]

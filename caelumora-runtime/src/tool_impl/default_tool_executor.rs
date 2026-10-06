@@ -8,6 +8,7 @@ use crate::agent_turn::Turn;
 use crate::component::{ComponentError, ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry, ComponentResult};
 use crate::tool::{ToolError, ToolExecutor, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
+use caelumora_model::approval::ToolMatcher;
 use caelumora_model::tool::{ToolCall, ToolSet};
 use std::sync::Arc;
 
@@ -61,6 +62,13 @@ impl ToolExecutor for DefaultToolExecutor {
 
     fn describe(&self, call: &ToolCall) -> ToolResult<String> {
         self.provider_of(&call.function_name)?.describe(&call.function_name, &call.arguments)
+    }
+
+    fn matcher(&self, call: &ToolCall) -> ToolMatcher {
+        match self.provider_of(&call.function_name) {
+            Ok(provider) => provider.matcher(&call.function_name, &call.arguments),
+            Err(_) => ToolMatcher::exact(call),
+        }
     }
 
     fn tool_sets(&self) -> Vec<ToolSet> {

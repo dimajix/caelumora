@@ -25,6 +25,8 @@ export interface ProfileResponse {
   max_introduction_chars: number;
   /** The language you prefer, a BCP 47 tag such as `de` (issue 56); your new channels are held in it. */
   preferred_language: string | null;
+  /** Your answers to tool calls given in advance (issue 13): rules that allow or deny, each within a reach. */
+  approval_rules: ApprovalRule[];
 }
 
 /** Your profile as it is to be: both fields are replaced, `null` for none. */
@@ -497,6 +499,14 @@ export interface ApprovalRequest {
   description: string;
   /** A rule of the session or channel asked for this very call to be decided by a person (issue 13); left out when not. */
   explicit?: boolean;
+  /** What other calls are like this one, as its tool says (issue 13): what a rule derived from it is offered with. */
+  suggested?: ToolMatcher;
+}
+
+/** What calls a rule is about: the tool by name - `*` for every tool - and, per argument, a pattern its whole value must match. */
+export interface ToolMatcher {
+  tool: string;
+  arguments?: Record<string, string>;
 }
 
 /** What a rule decides of the calls it is about (issue 13). A session or channel only asks or denies. */
@@ -512,7 +522,7 @@ export type Reach = 'everywhere' | {session: string} | {channel: string};
 export interface ApprovalRule {
   /** Made by the server when left out. */
   id?: string;
-  matcher: {tool: string; arguments?: Record<string, string>};
+  matcher: ToolMatcher;
   decision: RuleDecision;
   reach?: Reach;
   /** When it stops applying, an RFC 3339 time; never when left out. */
@@ -522,6 +532,8 @@ export interface ApprovalRule {
 export interface ApprovalResponse {
   id: string;
   agent_id: string;
+  /** The rule of yours that gave the answer (issue 13); only on your own answers, as your actor shows them to you. */
+  by_rule?: string;
 }
 
 /** A prompt part the model was given besides the conversation (issue 47). */

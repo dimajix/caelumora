@@ -1107,7 +1107,7 @@ mod tests {
         let call = |status: ApprovalStatus, result: Option<&str>| {
             let tool_call = ToolCall { id: None, function_name: "note".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN };
             match (status, result) {
-                (ApprovalStatus::Pending, _) => ToolCallState::pending(tool_call, String::new(), false),
+                (ApprovalStatus::Pending, _) => ToolCallState::pending(tool_call.clone(), String::new(), false, caelumora_model::approval::ToolMatcher::exact(&tool_call)),
                 (_, Some(r)) => {
                     let result = ToolCallResult::of(&tool_call, ToolResultStatus::Ok, r.to_string(), caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT);
                     ToolCallState::answered(tool_call, result)

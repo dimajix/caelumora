@@ -353,4 +353,17 @@ A session's and a channel's rules: a dialog of the owner's, like `LanguageDialog
   one variant - a later variant can make it an untagged enum without changing what is stored;
   `ApprovalRule` has no `created_at`; and a rule whose pattern cannot be matched - only one written
   into a document by hand - restricts and never allows, rather than refusing the document.
+- **2026-10-06** — Step 2 done: rules of a person. `UserProfile` keeps them (`add_approval_rule`,
+  `remove_approval_rule`, at most `MAX_PERSONAL_RULES`, pruned when expired), the `UserController`
+  changes them as it changes the rest; `POST`/`DELETE /profile/approval-rules`, and `GET /profile`
+  answers them. The `UserActor` answers a request from the approver that is not explicit by the
+  strongest rule of its user's that applies, if they may approve the agent's calls there, through
+  the same path as a click, and shows its user the answer with `ApprovalResponse::by_rule`;
+  `send_approval` clears `by_rule`. `ToolProvider::matcher` and `ToolExecutor::matcher`, by
+  default `ToolMatcher::exact`, give `ApprovalRequest::suggested`. In the web UI the approval card
+  offers "and from now on" (`ApprovalRuleOffer`), says when a rule answered, the brave mode is
+  offered for an hour and shown while it lasts, and `ProfileDialog` lists the rules; the TUI says
+  when a rule answered. As decided in step 0, `UserProfileUpdated` carries the profile. A decision
+  of the approver carries no `by_rule`: it is the approver's, and the answer it rests on is
+  recorded with the rule.
 

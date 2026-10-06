@@ -305,10 +305,7 @@ impl ApproverActor {
     }
 
     async fn send_decision(&self, p: PendingApproval, status: ApprovalStatus, output: &dyn EventSender) -> Result<()> {
-        let response = ApprovalResponse {
-            id: p.id,
-            agent_id: p.agent_id,
-        };
+        let response = ApprovalResponse::new(p.id, p.agent_id);
 
         let event = match status {
             ApprovalStatus::Approved => ActorEvent::ApprovalGranted(response),
@@ -538,6 +535,7 @@ mod tests {
     impl Approving {
         fn request(&self) -> ApprovalRequest {
             ApprovalRequest {
+                suggested: None,
                 explicit: false,
                 id: ApprovalId::new(),
                 session_id: self.channel.session_id(),
@@ -564,7 +562,7 @@ mod tests {
 
         /// The `n`th user answers `request`.
         async fn answer(&self, n: usize, request: &ApprovalRequest, approved: bool) {
-            let response = ApprovalResponse { id: request.id, agent_id: self.agent };
+            let response = ApprovalResponse::new(request.id, self.agent);
             let event = if approved { ActorEvent::ApprovalGranted(response) } else { ActorEvent::ApprovalDenied(response) };
             self.input.send(self.from(ActorId::User(self.users[n]), event)).await.unwrap();
         }

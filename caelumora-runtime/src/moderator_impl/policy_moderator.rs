@@ -352,6 +352,7 @@ mod tests {
 
     fn approval_request() -> ApprovalRequest {
         ApprovalRequest {
+            suggested: None,
             explicit: false,
             id: Default::default(),
             session_id: Default::default(),
@@ -780,14 +781,14 @@ mod tests {
     #[test]
     fn a_users_answer_goes_to_the_approver() {
         let (actors, agent, _, approver) = approval_parties();
-        let response = ApprovalResponse { id: Default::default(), agent_id: agent };
+        let response = ApprovalResponse::new(Default::default(), agent);
         assert_eq!(routed_to(&actors, ActorId::User(UserId::new()), ActorEvent::ApprovalGranted(response)), HashSet::from([approver]));
     }
 
     #[test]
     fn a_decision_of_the_approver_reaches_the_agent_and_the_users() {
         let (actors, agent, user, approver) = approval_parties();
-        let response = ApprovalResponse { id: Default::default(), agent_id: agent };
+        let response = ApprovalResponse::new(Default::default(), agent);
         for decided in [ActorEvent::ApprovalGranted(response.clone()), ActorEvent::ApprovalDenied(response.clone()), ActorEvent::ApprovalTimedOut(response.clone())] {
             let kind = decided.kind();
             assert_eq!(routed_to(&actors, approver, decided), HashSet::from([user, ActorId::Agent(agent)]), "{kind} ends the approval for the users");
