@@ -71,7 +71,7 @@ impl Chain<HistoryEntry> {
                 }
                 HistoryEntry::Reclassified { message, classification } => {
                     if let Some(&i) = at.get(message) {
-                        messages[i].classification = classification.clone();
+                        messages[i].reclassify(classification);
                     }
                 }
                 HistoryEntry::Modified { message } => {
@@ -136,9 +136,10 @@ impl Chain<HistoryEntry> {
 
     /// Records that message `id` - on whichever branch - is classified
     /// `classification` from now on (issue 133). `false`, and nothing is
-    /// recorded, if there is no such message.
+    /// recorded, if there is no such message or it was taken back
+    /// (`Message::reclassify`).
     pub fn reclassify(&mut self, id: MessageId, classification: Classification) -> bool {
-        if !self.all_entries().filter_map(|n| n.entry.said()).any(|m| m.id == id) {
+        if !self.message(id).is_some_and(|mut m| m.reclassify(&classification)) {
             return false;
         }
         self.record(HistoryEntry::Reclassified { message: id, classification });
@@ -263,6 +264,9 @@ mod tests {
 
         assert!(history.reclassify(id(2), public.clone()), "on the branch no longer active");
         assert!(!history.reclassify(id(9), public.clone()), "never said here");
+        let mut revoked = history.clone();
+        revoked.revoke(id(1), chrono::Utc::now());
+        assert!(!revoked.reclassify(id(1), public.clone()), "taken back: nothing left to release");
         assert_ne!(history.digest(), before, "recorded: the digest covers it");
         assert_eq!(history.all_entries().len(), 4, "one entry");
         assert_eq!(history.message(id(2)).map(|m| m.classification), Some(public.clone()), "read as it stands, on whichever branch");

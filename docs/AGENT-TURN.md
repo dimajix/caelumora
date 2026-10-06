@@ -246,8 +246,8 @@ on its chain ([197](../issues/197-one-chain-one-model-of-change.md)); what stand
 the entries:
 
 *   `Transcript` is `Chain<TranscriptEntry>`: a `Message` the model was given or produced, a
-    message `Modified` or `Revoked`, or the record of a turn `GivenUp`. `messages` is the messages
-    of the active path as they stand, what the model is given.
+    message `Modified`, `Revoked` or `Reclassified`, or the record of a turn `GivenUp`. `messages`
+    is the messages of the active path as they stand, what the model is given.
 *   `MessageHistory` is `Chain<HistoryEntry>`: a message `Said`, with what it was produced from
     for the agent's own, a message `Reclassified`, `Modified` or `Revoked`, the channel's
     classification `Fitted`. `messages` and `message(id)` fold every branch in the order things
@@ -256,8 +256,9 @@ the entries:
 *   Notes and memory are `Chain<LedgerEntry<K>>`, a ledger of changes to numbered items (see
     [MEMORY.md](MEMORY.md)).
 
-Messages share the `message_chain` digest; the other entries have schemes of their own
-(`crate::digest`), so that every digest recorded before names what it named.
+Messages share the `message_chain` digest, and a change to a message the same scheme in both chains
+(`message_modified`, `message_revoked`, `message_reclassified`); the other entries have schemes of
+their own (`crate::digest`), so that every digest recorded before names what it named.
 
 A chain is a tree with a head ([08](../issues/08-retry-and-edit-past-answers.md)):
 
@@ -298,8 +299,14 @@ through `AgentChannelState::modify_message` and `revoke_message`). A chain that 
 message records nothing, and so does one where the message as it stands cannot be changed so: taken
 back already, or modified by another sender or in another role.
 
+A message reclassified ([133](../issues/133-classification-model.md),
+[239](../issues/239-reclassified-message-not-in-agents-state.md)) is recorded so as well:
+`Reclassified` in both chains, through `AgentChannelState::reclassify_message`. A turn begun
+afterwards has seen the message as it stands (`begin_turn`), so a message released no longer raises
+the label of what follows.
+
 What stands is read from the entries, by one rule, kept with the message (`Message::modify`,
-`Message::revoke`):
+`Message::revoke`, `Message::reclassify`):
 
 *   a modified message keeps its place, its id and the time it was said, and takes over what the
     change says - content, reasoning, classification, mentions - and when it was made
@@ -307,7 +314,9 @@ What stands is read from the entries, by one rule, kept with the message (`Messa
     and its result cannot come apart;
 *   a message taken back keeps its place and loses what it said - content, reasoning, tool calls
     and results (`Message::revoked`). The history keeps it so, for whatever names it by id; the
-    model is no longer given it.
+    model is no longer given it;
+*   a message reclassified takes over the classification and nothing else; one taken back is not
+    reclassified, since it says nothing that could be released.
 
 The transcript's messages are read in one place, `transcript::as_they_stand`: every entry of a path
 with its message as it stands at the end of that path. `messages`, the `ContextResolver` and

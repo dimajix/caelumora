@@ -6,6 +6,7 @@
 //! one place, with a version tag in front of it, so that the scheme can
 //! change without old and new digests ever being mistaken for each other.
 
+use crate::confidentiality::Classification;
 use crate::message::{Message, MessageId};
 use crate::message_history::HistoryEntry;
 use crate::transcript::TranscriptEntry;
@@ -212,18 +213,32 @@ pub fn message_revoked(previous: Option<&Digest>, message: MessageId) -> Digest 
     e.finish()
 }
 
+/// The digest of a chain of messages ending in the reclassification of
+/// `message` as `classification` (issue 133) - the same in a history and a
+/// transcript (issue 239) - whose predecessor chain has the digest
+/// `previous`: in the scheme the history's entry had first, so that every
+/// digest recorded names what it named.
+pub fn message_reclassified(previous: Option<&Digest>, message: MessageId, classification: &Classification) -> Digest {
+    let mut e = Encoder::new("caelumora.history-reclassified.v1");
+    e.opt_digest(previous);
+    e.bytes(message.0.as_bytes());
+    e.json(&to_json(classification));
+    e.finish()
+}
+
 /// The digest of a transcript (issue 50) ending in `entry`, whose
 /// predecessor chain has the digest `previous`: a message as
 /// `message_chain`, so that every digest recorded before issue 197 names
 /// what it named; a turn given up (issue 145) by what it says - the branch
 /// it ends, the reason and the count, not the time - in a scheme of its own;
-/// a message modified or taken back as `message_modified` and
-/// `message_revoked`.
+/// a message modified, taken back or reclassified as `message_modified`,
+/// `message_revoked` and `message_reclassified`.
 pub fn transcript_chain(previous: Option<&Digest>, entry: &TranscriptEntry) -> Digest {
     match entry {
         TranscriptEntry::Message(message) => message_chain(previous, message),
         TranscriptEntry::Modified { message } => message_modified(previous, message),
         TranscriptEntry::Revoked { message, .. } => message_revoked(previous, *message),
+        TranscriptEntry::Reclassified { message, classification } => message_reclassified(previous, *message, classification),
         TranscriptEntry::GivenUp { end, given_up } => {
             let mut e = Encoder::new("caelumora.transcript-given-up.v1");
             e.opt_digest(previous);
@@ -237,22 +252,16 @@ pub fn transcript_chain(previous: Option<&Digest>, entry: &TranscriptEntry) -> D
 
 /// The digest of a history (issue 06) ending in `entry`, whose predecessor
 /// chain has the digest `previous`: a message said as `message_chain`, so
-/// that every digest recorded before issue 197 names what it named; a
-/// reclassification (issue 133) by what it says - the message and the
-/// classification, or the channel - in a scheme of its own; a message
-/// modified or taken back as `message_modified` and `message_revoked`.
+/// that every digest recorded before issue 197 names what it named; the
+/// channel's classification fitted into (issue 133) in a scheme of its own;
+/// a message modified, taken back or reclassified as `message_modified`,
+/// `message_revoked` and `message_reclassified`.
 pub fn history_chain(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest {
     match entry {
         HistoryEntry::Said { message, .. } => message_chain(previous, message),
         HistoryEntry::Modified { message } => message_modified(previous, message),
         HistoryEntry::Revoked { message, .. } => message_revoked(previous, *message),
-        HistoryEntry::Reclassified { message, classification } => {
-            let mut e = Encoder::new("caelumora.history-reclassified.v1");
-            e.opt_digest(previous);
-            e.bytes(message.0.as_bytes());
-            e.json(&to_json(classification));
-            e.finish()
-        }
+        HistoryEntry::Reclassified { message, classification } => message_reclassified(previous, *message, classification),
         HistoryEntry::Fitted { channel } => {
             let mut e = Encoder::new("caelumora.history-fitted.v1");
             e.opt_digest(previous);

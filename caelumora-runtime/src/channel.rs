@@ -568,7 +568,8 @@ impl ChannelLoop {
     /// # Errors
     /// `ChannelError::MessageNotFound` if the history has no such message,
     /// `ChannelError::Forbidden` if `context` may not reclassify it as
-    /// asked; whatever storing it reports.
+    /// asked, `ChannelError::MessageRevoked` if it was taken back (issue
+    /// 239); whatever storing it reports.
     pub async fn reclassify_message(&self, context: &SecurityContext, message: MessageId, classification: Classification) -> Result<()> {
         let channel = self.classification();
         let attributes = self.security_attributes();
@@ -584,7 +585,9 @@ impl ChannelLoop {
             channel: &channel,
         };
         self.require(context, action, "reclassifying a message of").await?;
-        state.history.reclassify(message, classification.clone());
+        if !state.history.reclassify(message, classification.clone()) {
+            return Err(ChannelError::MessageRevoked { message, channel: self.id }.into());
+        }
         self.state_store.put_channel_state(self.id, &mut state).await?;
         drop(state);
         self.events.publish(GlobalEvent::MessageReclassified(self.session_id, self.id, message, classification), attributes);

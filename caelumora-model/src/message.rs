@@ -192,6 +192,17 @@ impl Message {
         applies
     }
 
+    /// Classifies the message as it stands `classification` from now on
+    /// (issue 133), and returns whether it did: only one not taken back,
+    /// which says nothing any more that could be released (issue 239).
+    pub fn reclassify(&mut self, classification: &Classification) -> bool {
+        let applies = self.revoked.is_none();
+        if applies {
+            self.classification = classification.clone();
+        }
+        applies
+    }
+
     /// Takes the message as it stands back, as of `at` (issue 234), and
     /// returns whether it did: only one not taken back already. It keeps its
     /// place and its id, and loses what it said - content, reasoning, tool
@@ -414,12 +425,17 @@ pub(crate) mod tests {
         assert!(!other.modify(&Message { id: id(2), ..modified.clone() }), "another message");
         assert_eq!(other.content, said.content, "left as it was");
 
+        let released = crate::confidentiality::Classification::PUBLIC;
+        let mut other = said.clone();
+        assert!(other.reclassify(&released));
+        assert_eq!((other.classification, other.modified), (released.clone(), None), "reclassified, not modified");
+
         assert!(message.revoke(when));
         assert_eq!(message.revoked, Some(when));
         assert!(message.content.is_none() && message.tool_calls.is_empty(), "nothing of what it said");
         assert!(!message.is_heard(), "nobody hears it");
         let before = serde_json::to_value(&message).unwrap();
-        assert!(!message.modify(&modified) && !message.revoke(when), "nothing changes it any more");
+        assert!(!message.modify(&modified) && !message.revoke(when) && !message.reclassify(&released), "nothing changes it any more");
         assert_eq!(serde_json::to_value(&message).unwrap(), before);
     }
 }

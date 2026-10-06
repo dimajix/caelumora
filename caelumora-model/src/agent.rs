@@ -262,6 +262,16 @@ impl AgentChannelState {
         history || transcript
     }
 
+    /// Takes in that the message `id` is classified `classification` from
+    /// now on (issue 239), into its history and its transcript where they
+    /// hold it: a turn begun afterwards is labelled by the message as it
+    /// stands. Between turns only. Returns whether either changed.
+    pub fn reclassify_message(&mut self, id: MessageId, classification: Classification) -> bool {
+        let history = self.history.reclassify(id, classification.clone());
+        let transcript = self.transcript.reclassify(id, classification);
+        history || transcript
+    }
+
     /// What answering again instead of the message `id` of the agent `own`
     /// takes back (issue 234): the message, and what follows it on the
     /// active path of the transcript - which may only be its own internal
@@ -284,7 +294,7 @@ impl AgentChannelState {
         let mut taken_back = vec![message.id];
         for (node, standing) in path {
             match (&node.entry, standing) {
-                (TranscriptEntry::Modified { .. } | TranscriptEntry::Revoked { .. }, _) => {}
+                (TranscriptEntry::Modified { .. } | TranscriptEntry::Revoked { .. } | TranscriptEntry::Reclassified { .. }, _) => {}
                 // Taken back already.
                 (TranscriptEntry::Message(_), None) => {}
                 (TranscriptEntry::Message(_), Some(step)) if step.sender_id == own && step.internal => {
@@ -855,6 +865,28 @@ pub(crate) mod tests {
 
         begin(&mut state, Vec::new());
         assert_eq!(state.turn.as_ref().unwrap().work.context.transcript, state.transcript.digest(), "a turn begins on the transcript as it stands");
+    }
+
+    #[test]
+    fn a_turn_begun_after_a_release_is_labelled_by_the_message_as_it_stands() {
+        let mut state = a_state_that_heard("the numbers", Classification::CHANNEL_DEFAULT);
+        let heard = state.history.messages()[0].id;
+        let dropped = said("spam", Classification::CHANNEL_DEFAULT);
+        state.perceive(vec![dropped.clone()], Vec::new());
+
+        assert!(state.reclassify_message(heard, Classification::PUBLIC));
+        assert!(state.reclassify_message(dropped.id, Classification::PUBLIC), "the history holds it");
+        assert!(!state.reclassify_message(MessageId::new(), Classification::PUBLIC), "neither holds it");
+        assert!(state.history.messages().iter().all(|m| m.classification == Classification::PUBLIC));
+
+        begin(&mut state, Vec::new());
+        assert_eq!(state.turn.as_ref().unwrap().work.label(), Classification::PUBLIC, "released, it no longer raises the label");
+
+        let agent = ActorId::Agent(AgentId::new());
+        let answer = Message { sender_id: agent, role: MessageRole::Assistant, ..said("hi", Classification::CHANNEL_DEFAULT) };
+        state.transcript.push(answer.clone());
+        state.reclassify_message(answer.id, Classification::PUBLIC);
+        assert_eq!(state.retried(answer.id, agent), Ok(vec![answer.id]), "a change, not something said");
     }
 
     #[test]

@@ -3,6 +3,7 @@
 //! turns it gave up (issue 145), as what happened (issue 197).
 
 use crate::chain::{Chain, Node};
+use crate::confidentiality::Classification;
 use crate::digest::Digest;
 use crate::message::{Message, MessageId};
 use chrono::{DateTime, Utc};
@@ -25,6 +26,10 @@ pub enum TranscriptEntry {
     /// The message `message`, before it on the path, was taken back at `at`
     /// (issue 234, `Message::revoke`), and is no longer given.
     Revoked { message: MessageId, at: DateTime<Utc> },
+    /// The message `message`, before it on the path, is classified
+    /// `classification` from here on (issues 133, 239,
+    /// `Message::reclassify`).
+    Reclassified { message: MessageId, classification: Classification },
     /// A turn was given up (issue 145): its messages stay as a branch no
     /// longer active, ending in the entry `end` names, and the transcript
     /// goes on from here without them.
@@ -49,7 +54,7 @@ pub enum GivenUpReason {
     /// The channel's classification was lowered to `channel` while the
     /// turn ran (issue 141): what the turn saw may not flow into it any
     /// more.
-    Lowered { channel: crate::confidentiality::Classification },
+    Lowered { channel: Classification },
     /// The agent was stopped, leaving the channel: removed from it, or the
     /// channel deleted. Who did that is a matter of that act, not of its
     /// consequence - the audit log's (issue 140).
@@ -174,6 +179,19 @@ impl Chain<TranscriptEntry> {
         true
     }
 
+    /// Records that the message `id` of the active path is classified
+    /// `classification` from now on (issue 239): what a turn begun
+    /// afterwards has seen of it (issue 168). `false`, and nothing is
+    /// recorded, if it is not on the active path as it stands, as for
+    /// `modify`.
+    pub fn reclassify(&mut self, id: MessageId, classification: Classification) -> bool {
+        if self.standing(id).is_none() {
+            return false;
+        }
+        self.push_with(TranscriptEntry::Reclassified { message: id, classification }, crate::digest::transcript_chain);
+        true
+    }
+
     /// The message `id` of the active path as it stands, `None` if it is
     /// not on it or was taken back.
     fn standing(&self, id: MessageId) -> Option<Message> {
@@ -213,15 +231,15 @@ impl TranscriptEntry {
     pub fn message(&self) -> Option<&Message> {
         match self {
             TranscriptEntry::Message(message) => Some(message),
-            TranscriptEntry::Modified { .. } | TranscriptEntry::Revoked { .. } | TranscriptEntry::GivenUp { .. } => None,
+            TranscriptEntry::Modified { .. } | TranscriptEntry::Revoked { .. } | TranscriptEntry::Reclassified { .. } | TranscriptEntry::GivenUp { .. } => None,
         }
     }
 
-    /// The message it modifies or takes back, if it does.
+    /// The message it modifies, takes back or reclassifies, if it does.
     fn changed(&self) -> Option<MessageId> {
         match self {
             TranscriptEntry::Modified { message } => Some(message.id),
-            TranscriptEntry::Revoked { message, .. } => Some(*message),
+            TranscriptEntry::Revoked { message, .. } | TranscriptEntry::Reclassified { message, .. } => Some(*message),
             TranscriptEntry::Message(_) | TranscriptEntry::GivenUp { .. } => None,
         }
     }
@@ -234,6 +252,9 @@ impl TranscriptEntry {
             }
             TranscriptEntry::Revoked { at, .. } => {
                 message.revoke(*at);
+            }
+            TranscriptEntry::Reclassified { classification, .. } => {
+                message.reclassify(classification);
             }
             TranscriptEntry::Message(_) | TranscriptEntry::GivenUp { .. } => {}
         }
@@ -441,6 +462,32 @@ mod tests {
         let loaded: Transcript = serde_json::from_value(serde_json::to_value(&transcript).unwrap()).unwrap();
         assert_eq!(texts(loaded.messages()), ["corrected", "hello"]);
         assert_eq!(loaded.digest(), transcript.digest());
+    }
+
+    #[test]
+    fn a_reclassification_is_given_from_where_it_was_recorded_and_reaches_the_stored_transcript() {
+        let public = Classification::PUBLIC;
+        let classifications = |messages: Vec<Message>| messages.into_iter().map(|m| m.classification).collect::<Vec<_>>();
+        let mut transcript = Transcript::default();
+        transcript.extend(vec![make_message(id(1)), make_message(id(2))]);
+        let mut stored: Transcript = serde_json::from_value(serde_json::to_value(&transcript).unwrap()).unwrap();
+        transcript.mark_stored();
+        let before = transcript.digest().unwrap();
+
+        assert!(transcript.reclassify(id(1), public.clone()));
+        assert_ne!(transcript.digest(), Some(before), "recorded: the digest covers it");
+        transcript.revoke(id(2), Utc::now());
+        assert!(!transcript.reclassify(id(2), public.clone()), "taken back");
+        assert!(!transcript.reclassify(id(9), public.clone()), "never given");
+
+        let internal = make_message(id(1)).classification;
+        assert_eq!(classifications(transcript.messages()), [public.clone()], "as it stands");
+        let then: Vec<Message> = as_they_stand(transcript.prefix(&before).unwrap()).filter_map(|(_, m)| m).collect();
+        assert_eq!(classifications(then), [internal.clone(), internal], "a digest taken before names what was given then");
+
+        stored.apply(transcript.changes().expect("changed")).unwrap();
+        assert_eq!(stored.digest(), transcript.digest());
+        assert_eq!(classifications(stored.messages()), [public]);
     }
 
     #[test]
