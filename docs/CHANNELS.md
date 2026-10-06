@@ -190,9 +190,12 @@ message, and what they said in reply stays.
     modification as it hears it, through its perceive processors; where nothing of it passes, the
     message is no longer given. A turn under way ends as it began; the next is given what stands.
     An agent that never held the message records nothing. An external agent's transcript holds only
-    what the remote agent has not been given yet, so a change reaches the remote agent only if the
-    message did not: A2A has no way to change what was sent, and the remote agent is not told
-    either yet ([236](../issues/236-external-agent-not-told-of-changes.md)).
+    what the remote agent has not been given yet, and A2A has no way to change what was sent: a
+    change of a message the remote agent was given is told to it with its next call instead, by a
+    notice at its place among what was said since, in the name of its author - modified to what, or
+    taken back ([236](../issues/236-external-agent-not-told-of-changes.md), see
+    [AGENT-TURN.md](AGENT-TURN.md#changes-to-a-message)). That only asks: the remote agent decides
+    whether the old version stops acting.
 *   **Reclassifying** a message goes the same way
     ([239](../issues/239-reclassified-message-not-in-agents-state.md)):
     `UserActor::reclassify_message(message, classification)` asks `Reclassify` - its author, or the

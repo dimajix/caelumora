@@ -358,6 +358,25 @@ taken after to what stands. A prompt part placed after a message taken back stay
 entry is still there. What is about every entry ever added - the tokens used, whether a message
 reached the transcript at all - reads `all_entries` instead.
 
+An external agent's transcript starts anew with every call (issue 205), so a message its remote
+agent was given is on a branch off the active path, where `modify` and `revoke` record nothing. The
+external agent tells its remote agent of the change instead
+([236](../issues/236-external-agent-not-told-of-changes.md)): `take_in` hands every change to the
+actor where it takes it in - so in order with what was said - and the external agent, for a message
+its transcript holds only off the active path and while it keeps a remote conversation, appends a
+*notice* to its transcript, given with the next call as any message is. An agent run here tells
+nobody. A notice is a message of its own (`Message::notice_of` names the one it tells of), in the
+name and role of the message's sender, so that it is marked as every message is; it names the
+message by what it said as it was first given (`Transcript::message`), shortened, and says what
+became of it: `[changed an earlier message "..."; it now reads:] ...` or `[took back an earlier
+message "..."; it no longer stands.]`. A notice not given yet is modified rather than followed by a
+second one, so the remote agent is told once, of the message as it stands. A notice is never in a
+history, and a reader that takes a message not internal for one the history holds as well passes it
+over (`given_up_turns`). The transcript records it word for word, so what a call was given is
+resolved as it was. A reclassification is not told; the remote agent knows no labels. A notice only
+tells: the remote agent decides what to make of it, and nothing in its wording asks it to disregard
+something, which a filter of the remote side may take for an injection.
+
 ### What is recorded
 
 `Turn::commit` records a `ContextRef` with every message it appends to the history:

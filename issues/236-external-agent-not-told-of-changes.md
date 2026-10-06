@@ -1,6 +1,6 @@
 # 236 — A remote agent is not told when a message it was given is modified or taken back
 
-**Status:** open
+**Status:** done
 **Area:** Integrations
 
 ## The problem
@@ -50,12 +50,14 @@ same correction works for one and not for the other.
 
 ## Plan
 
-The remote agent is told of a change to a message it was given as something said of its own, with
-its next call, at its place among what was said since: "alice changed an earlier message ...",
-"alice took back an earlier message ...". It is recorded in the external agent's transcript like
-every change, so that what the remote agent was given can still be reconstructed
-([205](205-external-agent-message-context.md)). A notice only asks: the remote agent - Hermes takes
-it as untrusted input of a peer - decides whether the old version stops acting.
+The remote agent is told of a change to a message it was given by a *notice*: a message made here,
+in the name of the change's author, that says what became of the earlier one - "[changed an earlier
+message "..."; it now reads:] ...", "[took back an earlier message "..."; it no longer stands.]". It
+is appended to the external agent's transcript as any message is, so it is given with the next
+call, at its place among what was said since, and the transcript records it word for word: what a
+call was given can be reconstructed as it was ([205](205-external-agent-message-context.md)). A
+notice only asks: the remote agent - Hermes takes it as untrusted input of a peer - decides whether
+the old version stops acting.
 
 ### What was weighed and not chosen
 
@@ -67,71 +69,86 @@ it as untrusted input of a peer - decides whether the old version stops acting.
   was given.
 - **An extension of A2A, or `metadata`:** only a remote agent that speaks it would understand it;
   Hermes reads nothing but the text.
-- **The transcript deciding alone** that a branch off its active path was given: it cannot tell a
-  branch given to a remote agent from a turn given up or an answer asked for again.
+- **Recording the change as an entry** (`Modified`, `Revoked`) on the active path, and wording the
+  notice whenever the path is given or resolved - the first plan, built on a branch that was
+  abandoned. The transcript would record what happened rather than what was given, and its digest
+  would cover the change but not the text: once the wording changed, the context of an earlier
+  answer would show a notice its call was never given. It would also have needed a second rule
+  beside `as_they_stand` for what is given, used by the call and by the `ContextResolver`.
 
 ### The model (`caelumora-model`)
 
-- **`Transcript::tell(change)`** records a change - `TranscriptEntry::Modified` or `Revoked` - on
-  the active path for a message that is not on it but stands on a branch off it, as the remote
-  agent knows it: with every change recorded since, on whichever branch. `false`, and nothing is
-  recorded, if no branch holds the message, or holds it taken back already. `modify` and `revoke`
-  keep their rule.
-- **`AgentChannelState::modify_message` and `revoke_message`** tell a change the transcript did not
-  take on its active path, if the state keeps a remote conversation (`remote.conversation` is set):
-  only then was the message given into a conversation that still holds it. A state of an agent run
-  here never has one, so nothing changes for it. A modification of which nothing passes the
-  perceive processors is told as taken back, as it is recorded today.
-- **What is given next** comes from the transcript in order, as it stands: each message, and for
-  each change told, the message as it was given before and as it stands now - a pair of messages,
-  no type of its own (`Transcript::to_give() -> Vec<(Option<Message>, Message)>`, the first `None`
-  for a message given for the first time). Several changes to one message before the next call are
-  told once, as it stands then: modified twice, the last text; modified and taken back, taken back.
-- **Reclassifying** is not told: the remote agent knows no labels.
+Only what the notice needs, none of the decision: whether and how a change is told is the external
+agent's alone, and `AgentChannelState::modify_message` and `revoke_message` stay as they are.
+
+- **`Message::notice_of: Option<MessageId>`** marks a notice and names the message it tells of. A
+  notice has an id of its own - with the id of the message, every later change of that message
+  would apply to the notice too - is said by nobody, and is never in a history: a reader of the
+  transcript that takes a message not internal for one the history holds as well
+  (`given_up_turns`) passes it over. Not covered by the digest of the message chain: the content
+  already says what was given.
+- **`Transcript::message(id)`** finds a message on whichever branch holds it, as it stands there -
+  a query, as `MessageHistory::message` is: where `messages` gives only the active path.
+- **`TranscriptEntry::classification`** says how an entry classifies what it records of a message,
+  for the label of a call (below).
 
 ### The external agent (`caelumora-runtime`)
 
-- **`exchange`** gives the remote agent `to_give` instead of `messages`: a notice is a `Said` of the
-  author of the change, worded in one place of the external agent's actor, independent of the
-  protocol, in English, before its sender is marked as the profile says (`sender_format`):
-  - `[alice changed an earlier message "<as it was given>"; it now reads:] <as it stands>`
-  - `[alice took back an earlier message "<as it was given>"; it no longer stands.]`
-
-  The text as it was given is cut to some 200 characters: it names the message, and was given
-  already. No pronoun, and nothing a filter takes for an injection - Hermes's turns `disregard the
-  previous` into `[filtered]`.
-- **A notice is something given:** a request to respond after which only a notice is new still
-  makes a call. A notice alone makes none; it waits for the next request.
-- **The label of the call** sees what is given: the classification of a message as it stands, its
-  modification and its reclassification included - today only the messages as they were first
-  recorded are seen, so a message raised by a modification before it was given labels the answer
-  too low. Seeing every change only raises the label, as the remote agent may have used either
-  version.
+- **`take_in`** hands every modification or revocation, once taken in, to a function of the actor -
+  where it takes it in, so in order with what was said - as an entry of what became of the message
+  as the agent hears it, a modification of which nothing passes its perceive processors as taken
+  back. An agent run here passes one that does nothing.
+- **`tell`**, the external agent's: while it keeps a remote conversation, of a message its
+  transcript holds only off its active path - given already (`Transcript::message`) - and that was
+  not taken back where it was given, it appends a notice to the transcript - or, if a notice of the
+  message was not given yet, modifies that one, so that several changes before the next call are
+  told once, as the message stands then. On the active path the change was recorded where the
+  message stands, and there is nothing to tell.
+- **`notice(was, now, at)`** words it, in one place, in English: the message as it was first given
+  (`was`), named by what it said, cut to some 200 characters, and what became of it (`now`:
+  modified to it, or `None`: taken back). Its sender and role are the message's, so that it is
+  marked as every message is (`sender_format`) and names nobody itself; it is classified as the join
+  of what it quotes and what it says, without the quote where the two have no audience in common.
+  No instruction to disregard anything, which a filter takes for an injection - Hermes's turns
+  `disregard the previous` into `[filtered]`.
+- **`exchange`** stays as it is: a notice is a message of the transcript, given with `messages`, and
+  a request to respond after which only a notice is new still makes a call. A notice alone makes
+  none; it waits for the next request.
+- **The label of the call** sees every entry's classification (`TranscriptEntry::classification`):
+  a message's, a modification's and a reclassification's - today only the messages as they were
+  first recorded are seen, so a message raised by a modification before it was given labels the
+  answer too low. Seeing every change only raises the label, as the remote agent may have used
+  either version.
 - No new action acts in anyone's name: the notice is given in the call, under the request's
   security context, as what was said is.
+- **Reclassifying** is not told: the remote agent knows no labels.
 
 ### Documentation
 
-CHANNELS.md (*Changing what was said*) and the passage on external agents in ARCHITECTURE.md say
-that a remote agent is told of a change to a message it was given, as a notice with its next call,
-and that it is asked, not made, to follow it.
+AGENT-TURN.md (*Changes to a message*), CHANNELS.md (*Changing what was said*) and the passage on
+external agents in ARCHITECTURE.md say that a remote agent is told of a change to a message it was
+given, by a notice with its next call, and that it is asked, not made, to follow it.
 
 ### What is left out
 
 - **Reclassifying** and **lowering a channel** are not told (see above).
 - **Retry** stays rejected (`RetryRefused::Elsewhere`).
 - **A remote agent that opened no conversation** is given the conversation anew each time and is
-  told nothing.
+  told nothing; **one that opens another conversation** than the one it had is still told of a
+  message given in the old one.
+- **A notice is text:** a participant can write the same into a message of their own. The sender
+  marker names who wrote it, but a forged notice can claim to change "an earlier message" - a case
+  of [150](150-impersonation-towards-the-agent.md).
+- **The quote** is the message as it was first given: after a change told already, a second notice
+  names it by its first version.
 - **Hermes's limit of calls per context** (`A2A_MAX_PINGPONG_TURNS`) is not dealt with here.
 
 ### Steps
 
-1. **The model:** `Transcript::tell` and `to_give`, `AgentChannelState` telling a change of a given
-   message, with tests: a change told on the active path, as it stands after several changes, not
-   for a message no branch holds, not for a state without a remote conversation.
-2. **The external agent:** `exchange` gives `to_give` with the notices worded, a notice counts as
-   given, the label sees every change; tests in `external_agent.rs` and a channel test of a
-   modification and a revocation reaching the remote agent; documentation; status done.
+One step: the model's pieces, `take_in` handing changes over, the external agent's `tell` and
+`notice`, the label; tests of the notice, of `tell`, of `take_in` handing over in order, and a
+channel test of a modification and a revocation reaching the remote agent and the context of its
+answer; documentation; status done.
 
 ## Done when
 
@@ -152,3 +169,14 @@ was given, and the documentation says what that can and cannot achieve.
   next call.
 - **2026-10-06** — Planned (see *Plan*): a notice, said in the name of the change's author, recorded
   in the external agent's transcript and given with the next call.
+- **2026-10-06** — Plan revised (see *Plan*, *What was weighed and not chosen*): the notice is a
+  message of its own (`Message::notice_of`) appended to the transcript, so that it is recorded as it
+  was given. The first plan was built on the branch `issue-236-external-agent-told-of-changes` and
+  abandoned there; this one is built afresh from main.
+- **2026-10-06** — Plan revised again, before anything was committed: the decision to tell a change
+  is the external agent's alone, so the model keeps only what a notice needs (`Message::notice_of`,
+  `Transcript::message`) and `AgentChannelState` stays as it was. `take_in` hands every change over
+  where it takes it in rather than returning it: returned, a notice came after what was said in the
+  same batch after the change. Whether the change is one to tell - of a message given already - is
+  for `tell` to see. Done in one step: the external agent's `tell` and `notice`, the label
+  seeing every entry's classification, tests, AGENT-TURN.md, CHANNELS.md and ARCHITECTURE.md.

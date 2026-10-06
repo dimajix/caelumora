@@ -50,6 +50,7 @@ use caelumora_model::agent::AgentChannelState;
 use caelumora_model::external_agent::{OpenTaskState, TaskId};
 use caelumora_model::work::{TurnId, Work};
 use caelumora_model::message::{Message, MessageId, MessageRole};
+use caelumora_model::transcript::TranscriptEntry;
 use caelumora_model::security::{AccessQuestions, SecurityContext, SecurityManager};
 use chrono::Utc;
 use futures::stream::{BoxStream, SelectAll};
@@ -252,9 +253,10 @@ impl ExternalAgentActor {
     /// that a restart loses none of it. Returns the last request to
     /// respond, if any. A request to answer again is rejected (issue 234):
     /// the remote agent keeps what it was given, and nothing here can take
-    /// its answer back from it.
+    /// its answer back from it. A message it was given that was modified
+    /// or taken back since is told to it by a notice (`tell`, issue 236).
     async fn hear(&self, state: &mut AgentChannelState, received: Envelope, rx: &mut Box<dyn EventReceiver>, output: &dyn EventSender) -> Option<Envelope> {
-        let (request, retries) = take_in(state, received, rx, &self.perceive_in_processors, &self.security_context).await;
+        let (request, retries) = take_in(state, received, rx, &self.perceive_in_processors, &self.security_context, tell).await;
         if let Err(e) = self.actor_runtime.store_channel_state(state).await {
             warn!("External agent {} cannot store what it heard: {:#}", self.id(), e);
         }
@@ -321,8 +323,9 @@ impl ExternalAgentActor {
         }
         work.see(&brought);
         // All it was ever given: the calls before, each a branch of the
-        // transcript, and what it is given now.
-        state.transcript.all_entries().filter_map(|e| e.entry.message()).for_each(|m| work.see(&m.classification));
+        // transcript, and what it is given now - every message, and every
+        // change of one, as it may have used either version (issue 236).
+        state.transcript.all_entries().filter_map(|e| e.entry.classification()).for_each(|c| work.see(c));
         let given = state.transcript.messages();
         // A task that asked back before the channel was lowered is not
         // taken up: it is cancelled, and the request begins a new one.
@@ -740,6 +743,82 @@ impl Answer {
     }
 }
 
+/// Tells the remote agent of `change` to a message (issue 236, handed over
+/// by `take_in` where it was taken in) that it was given already: one the
+/// transcript of `state` holds on a branch off its active path, in the
+/// conversation it keeps - on the path, the change was recorded where the
+/// message stands, and the remote agent is given it as it stands. By a
+/// notice (`notice`) appended to the transcript, to be given with the next
+/// call as any message is; or, if a notice of the message was not given
+/// yet, by modifying that one, so that it is told once, of the message as
+/// it stands then. Nothing for a message taken back where it was given, or
+/// while the remote agent keeps no conversation: then it is given
+/// everything anew.
+fn tell(state: &mut AgentChannelState, change: TranscriptEntry) {
+    if state.remote.conversation.is_none() {
+        return;
+    }
+    let (id, now, at) = match change {
+        TranscriptEntry::Modified { message } => (message.id, Some(message.clone()), message.timestamp),
+        TranscriptEntry::Revoked { message, at } => (message, None, at),
+        _ => return,
+    };
+    if state.transcript.entries().any(|node| node.entry.message().is_some_and(|m| m.id == id)) {
+        return;
+    }
+    let Some(was) = state.transcript.message(id).filter(|was| was.revoked.is_none()) else { return };
+    let mut told = notice(&was, now.as_ref(), at);
+    match state.transcript.messages().into_iter().find(|m| m.notice_of == Some(id)) {
+        Some(pending) => {
+            told.id = pending.id;
+            state.transcript.modify(told);
+        }
+        None => {
+            state.transcript.push(told);
+        }
+    }
+}
+
+/// How much of the message it tells of a notice names it by (issue 236).
+const NOTICE_QUOTE: usize = 200;
+
+/// The notice to the remote agent that the message it was given as `was`
+/// reads as `now` from `at` on - `None`: was taken back then (issue 236). A
+/// message of its own (`Message::notice_of`), in the name and role of the
+/// message's sender, so that it is marked as every message is and names
+/// nobody itself; it names the message by what it said, shortened, and is
+/// classified as what it quotes and what it says together - without the
+/// quote where the two have no audience in common. Worded so that it only
+/// tells: the remote agent decides what to make of it, and a filter may
+/// take an instruction to disregard something for an injection.
+fn notice(was: &Message, now: Option<&Message>, at: chrono::DateTime<Utc>) -> Message {
+    let said = was.content.as_deref().unwrap_or_default();
+    let mut quoted: String = said.chars().take(NOTICE_QUOTE).collect();
+    if quoted.len() < said.len() {
+        quoted.push('…');
+    }
+    let (content, classification) = match now {
+        Some(now) => {
+            let reads = now.content.as_deref().unwrap_or_default();
+            match was.classification.join(&now.classification) {
+                Some(both) => (format!("[changed an earlier message \"{quoted}\"; it now reads:] {reads}"), both),
+                None => (format!("[changed an earlier message; it now reads:] {reads}"), now.classification.clone()),
+            }
+        }
+        None => (format!("[took back an earlier message \"{quoted}\"; it no longer stands.]"), was.classification.clone()),
+    };
+    Message {
+        id: MessageId::new(),
+        timestamp: at,
+        sender_id: was.sender_id,
+        sender_name: was.sender_name.clone(),
+        role: was.role,
+        content: Some(content),
+        notice_of: Some(was.id),
+        ..Message::new(classification)
+    }
+}
+
 /// The events that publish an answer: the message, if there is one, and
 /// the end of the response.
 fn answered(message: Option<Message>) -> Vec<ActorEvent> {
@@ -881,6 +960,70 @@ mod tests {
         assert_eq!(ids(state.transcript.messages()), vec![second.id], "after what was sent, with text");
         state.transcript.start_anew();
         assert!(state.transcript.messages().is_empty(), "nothing new");
+    }
+
+    #[test]
+    fn a_change_of_a_message_given_is_told_by_a_notice_once_until_it_is_given() {
+        use caelumora_model::external_agent::ConversationId;
+        let alice = ActorId::User(caelumora_model::user::UserId::new());
+        let (first, second) = (said(alice, "alice", "first"), said(alice, "alice", "second"));
+        let at = Utc::now();
+        let modified = |text: &str| TranscriptEntry::Modified { message: Message { content: Some(text.to_string()), timestamp: at, ..first.clone() } };
+        let told = |state: &AgentChannelState| state.transcript.messages().into_iter().map(|m| (m.notice_of, m.content.unwrap_or_default())).collect::<Vec<_>>();
+        let mut state = AgentChannelState::default();
+        state.transcript.extend(vec![first.clone(), second.clone()]);
+        state.transcript.start_anew();
+
+        tell(&mut state, modified("first, corrected"));
+        assert!(state.transcript.messages().is_empty(), "no conversation that holds it: nothing to tell");
+
+        state.remote.conversation = Some(ConversationId("c-1".to_string()));
+        for change in [modified("first, corrected"), TranscriptEntry::Revoked { message: second.id, at }, modified("first, corrected again"), TranscriptEntry::Revoked { message: MessageId::new(), at }] {
+            tell(&mut state, change);
+        }
+        assert_eq!(told(&state), [
+            (Some(first.id), "[changed an earlier message \"first\"; it now reads:] first, corrected again".to_string()),
+            (Some(second.id), "[took back an earlier message \"second\"; it no longer stands.]".to_string()),
+        ], "each once, where it was first told, as it stands; nothing of what it never held");
+        let notice = &state.transcript.messages()[0];
+        assert_ne!(notice.id, first.id, "an id of its own");
+        assert_eq!((notice.sender_id, notice.role, notice.sender_name.as_str()), (alice, MessageRole::User, "alice"), "in the name of the message's sender");
+
+        state.transcript.start_anew();
+        tell(&mut state, modified("once more"));
+        assert_eq!(told(&state), [(Some(first.id), "[changed an earlier message \"first\"; it now reads:] once more".to_string())], "after a call, a notice of its own, naming it as it was first given");
+
+        state.transcript.push(second.clone());
+        let before = state.transcript.messages().len();
+        tell(&mut state, TranscriptEntry::Revoked { message: second.id, at });
+        assert_eq!(state.transcript.messages().len(), before, "on the path: recorded where it stands, nothing to tell");
+
+        let mut revoked = AgentChannelState::default();
+        revoked.remote.conversation = Some(ConversationId("c-1".to_string()));
+        revoked.transcript.push(first.clone());
+        revoked.transcript.revoke(first.id, at);
+        revoked.transcript.start_anew();
+        tell(&mut revoked, modified("again"));
+        assert!(revoked.transcript.messages().is_empty(), "taken back where it was given");
+    }
+
+    #[test]
+    fn a_notice_names_the_message_by_what_it_said_shortened_and_is_classified_as_both() {
+        use caelumora_model::confidentiality::{Compartment, Confidentiality};
+        let alice = ActorId::User(caelumora_model::user::UserId::new());
+        let at = Utc::now();
+        let long = said(alice, "alice", &"ä".repeat(NOTICE_QUOTE + 1));
+        let told = notice(&long, None, at).content.unwrap_or_default();
+        assert!(told.contains(&format!("\"{}…\"", "ä".repeat(NOTICE_QUOTE))), "{told}");
+
+        let hello = said(alice, "alice", "hello");
+        let confidential = Classification::general(Confidentiality::Confidential);
+        let raised = Message { classification: confidential.clone(), ..hello.clone() };
+        assert_eq!(notice(&hello, Some(&raised), at).classification, confidential, "what it says and what it quotes");
+        let of = |compartment: &str| Classification::new(Confidentiality::Internal, [Compartment::new(compartment)]).expect("a classification");
+        let (was, now) = (Message { classification: of("hr"), ..hello.clone() }, Message { classification: of("sales"), ..hello });
+        let apart = notice(&was, Some(&now), at);
+        assert_eq!((apart.content.as_deref(), apart.classification), (Some("[changed an earlier message; it now reads:] hello"), of("sales")), "no audience in common: without the quote");
     }
 
     #[test]

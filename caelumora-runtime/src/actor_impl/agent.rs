@@ -307,7 +307,9 @@ impl AgentActor {
             }
         };
         let Some(received) = received else { return Ok(None) };
-        let (request, mut retries) = take_in(state, received, rx, &self.perceive_in_processors, &self.security_context).await;
+        // It gives its transcript nowhere else: of a change it does not hold on
+        // its path there is nobody to tell.
+        let (request, mut retries) = take_in(state, received, rx, &self.perceive_in_processors, &self.security_context, |_, _| {}).await;
         // Read once taken in, not before waiting: the channel wakes an agent
         // before it delivers the message that asks it, and the request comes
         // in the same batch.

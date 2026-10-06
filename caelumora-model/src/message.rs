@@ -97,6 +97,14 @@ pub struct Message {
     /// content, reasoning, tool calls or results. Set like `modified`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revoked: Option<DateTime<Utc>>,
+    /// The message this one tells of, if it is a notice (issue 236): made
+    /// by an external agent, in the name of that message's sender, to tell
+    /// its remote agent that a message it was given was modified or taken
+    /// back. Said by nobody, so never in a history - only in the transcript
+    /// of the external agent that gave it. Not covered by the digest: its
+    /// content says what was given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notice_of: Option<MessageId>,
 }
 
 // No `Default`: a message has no classification that would be right
@@ -129,6 +137,7 @@ impl Message {
             context_size: None,
             modified: None,
             revoked: None,
+            notice_of: None,
         }
     }
 }

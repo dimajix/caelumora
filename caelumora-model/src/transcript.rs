@@ -127,6 +127,15 @@ where
     })
 }
 
+/// The message `id` as `nodes` hold it: as it was first recorded, with
+/// every change of it since, in the order they were. `None` if they do not
+/// hold it.
+fn known<'a>(mut nodes: impl Iterator<Item = &'a Node<TranscriptEntry>>, id: MessageId) -> Option<Message> {
+    let mut message = nodes.by_ref().find_map(|node| node.entry.message().filter(|m| m.id == id)).cloned()?;
+    nodes.filter(|node| node.entry.changed() == Some(id)).for_each(|node| node.entry.apply_to(&mut message));
+    Some(message)
+}
+
 impl Chain<TranscriptEntry> {
     /// The messages of the active path as they stand: what the model is
     /// given.
@@ -197,6 +206,14 @@ impl Chain<TranscriptEntry> {
         true
     }
 
+    /// The message `id` as the transcript holds it, on whichever branch:
+    /// as it was first recorded, with every change of it recorded since.
+    /// `None` if it holds none. What a receiver given a branch holding it
+    /// knows of it (issue 236), where `messages` gives only the active path.
+    pub fn message(&self, id: MessageId) -> Option<Message> {
+        known(self.all_entries(), id)
+    }
+
     /// The message `id` of the active path as it stands, `None` if it is
     /// not on it or was taken back.
     fn standing(&self, id: MessageId) -> Option<Message> {
@@ -225,7 +242,7 @@ impl Chain<TranscriptEntry> {
                 let start = path.iter().rposition(|(_, message)| !of_turn(message)).map_or(0, |last| last + 1);
                 let (before, turn) = path.split_at(start);
                 let messages = turn.iter().filter_map(|(_, message)| message.clone()).collect();
-                let after = before.iter().rev().filter_map(|(_, message)| message.as_ref()).find(|m| !m.internal).map(|m| m.id);
+                let after = before.iter().rev().filter_map(|(_, message)| message.as_ref()).find(|m| !m.internal && m.notice_of.is_none()).map(|m| m.id);
                 Some(GivenUpTurn { given_up: given_up.clone(), messages, after })
             })
             .collect()
@@ -238,6 +255,17 @@ impl TranscriptEntry {
         match self {
             TranscriptEntry::Message(message) => Some(message),
             TranscriptEntry::Modified { .. } | TranscriptEntry::Revoked { .. } | TranscriptEntry::Reclassified { .. } | TranscriptEntry::GivenUp { .. } => None,
+        }
+    }
+
+    /// How what it records of a message is classified: a message's, a
+    /// modification's or a reclassification's classification. Who was
+    /// given every entry has seen all of them (issue 236): they only add.
+    pub fn classification(&self) -> Option<&Classification> {
+        match self {
+            TranscriptEntry::Message(message) | TranscriptEntry::Modified { message } => Some(&message.classification),
+            TranscriptEntry::Reclassified { classification, .. } => Some(classification),
+            TranscriptEntry::Revoked { .. } | TranscriptEntry::GivenUp { .. } => None,
         }
     }
 
@@ -406,6 +434,16 @@ mod tests {
         assert_eq!(transcript.given_up_turns()[0].messages.iter().map(|m| m.id).collect::<Vec<_>>(), [id(3)], "the turn's alone, not the earlier one's");
         assert_eq!(transcript.given_up_turns()[0].after, Some(id(1)), "an internal message is not in the history");
 
+        let mut told = Transcript::default();
+        told.push(make_message(id(1)));
+        told.push(Message { notice_of: Some(id(7)), ..make_message(id(2)) });
+        let before = told.digest();
+        told.push(of_turn(turn, 3));
+        let end = told.digest().unwrap();
+        told.move_head(before.as_ref());
+        told.give_up(end, GivenUp { reason: GivenUpReason::Stopped, at: Utc::now(), turn_id: turn });
+        assert_eq!(told.given_up_turns()[0].after, Some(id(1)), "nor is a notice");
+
         let mut first = Transcript::default();
         first.push(of_turn(turn, 1));
         let end = first.digest().unwrap();
@@ -507,6 +545,32 @@ mod tests {
         stored.apply(transcript.changes().expect("changed")).unwrap();
         assert_eq!(stored.digest(), transcript.digest());
         assert_eq!(classifications(stored.messages()), [public]);
+    }
+
+    #[test]
+    fn a_message_is_found_on_whichever_branch_holds_it_as_it_stands_there() {
+        let at = Utc::now();
+        let mut transcript = Transcript::default();
+        transcript.extend(vec![make_message(id(1)), make_message(id(2))]);
+        assert!(transcript.modify(Message { content: Some("corrected".to_string()), timestamp: at, ..make_message(id(1)) }));
+        transcript.revoke(id(2), at);
+        transcript.start_anew();
+        transcript.push(make_message(id(3)));
+
+        assert_eq!(transcript.message(id(1)).and_then(|m| m.content).as_deref(), Some("corrected"), "off the active path, with its change");
+        assert!(transcript.message(id(2)).is_some_and(|m| m.revoked.is_some()), "taken back");
+        assert_eq!(transcript.message(id(3)).map(|m| m.id), Some(id(3)), "on the active path");
+        assert!(transcript.message(id(9)).is_none(), "never held");
+    }
+
+    #[test]
+    fn what_an_entry_records_of_a_message_says_how_it_is_classified() {
+        let confidential = Classification::general(crate::confidentiality::Confidentiality::Confidential);
+        let modified = TranscriptEntry::Modified { message: Message { classification: confidential.clone(), ..make_message(id(1)) } };
+        assert_eq!(modified.classification(), Some(&confidential), "a modification may raise it");
+        let released = TranscriptEntry::Reclassified { message: id(1), classification: Classification::PUBLIC };
+        assert_eq!(released.classification(), Some(&Classification::PUBLIC));
+        assert_eq!(TranscriptEntry::Revoked { message: id(1), at: Utc::now() }.classification(), None, "says nothing");
     }
 
     #[test]

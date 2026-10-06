@@ -3984,6 +3984,42 @@ mod tests {
         running.abort();
     }
 
+    /// A message the remote agent was given that is modified or taken back
+    /// is told to it with its next call, at its place, in the name of its
+    /// author (issue 236) - and is part of what that call's answer was given.
+    #[tokio::test]
+    async fn an_external_agent_tells_its_remote_agent_of_a_message_it_was_given_that_was_modified_or_taken_back() {
+        use crate::external::{ExternalEvent, Said};
+        use caelumora_model::context::{ModelProfile, SenderFormat};
+        use caelumora_model::external_agent::ConversationId;
+
+        let marking = ModelProfile { sender_format: SenderFormat::Prefix, ..ModelProfile::default() };
+        let answer = |text: &str| vec![Ok(ExternalEvent::Message(text.to_string())), Ok(ExternalEvent::Completed)];
+        let mut first = vec![Ok(ExternalEvent::Conversation(ConversationId("c-1".to_string())))];
+        first.extend(answer("Hello."));
+        let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![first, answer("Fine."), answer("Bye.")]).marking(marking));
+        let Stuck { channel, context, agent, mut events, running, .. } = with_an_external_agent(Arc::clone(&remote)).await;
+        answered(&mut events, agent).await;
+        let alice = channel.user_actor(alice_of(&context)).unwrap();
+        let id_of = |history: Vec<Message>, text: &str| history.into_iter().find(|m| m.content.as_deref() == Some(text)).map(|m| m.id).expect("said");
+
+        alice.modify_message(id_of(channel.history().await, "hello"), "hello, corrected".to_string(), None).await.unwrap();
+        alice.send_message("And?".to_string(), None).await.unwrap();
+        let second = answered(&mut events, agent).await;
+        alice.revoke_message(id_of(channel.history().await, "And?")).await.unwrap();
+        alice.send_message("Well?".to_string(), None).await.unwrap();
+        answered(&mut events, agent).await;
+
+        let sent = remote.sent.lock().unwrap().clone();
+        let said = |text: &str| Said { sender: "alice".to_string(), text: text.to_string() };
+        assert_eq!(sent[1].1.said, vec![said("@alice: [changed an earlier message \"hello\"; it now reads:] hello, corrected"), said("@alice: And?")], "told before what was said since");
+        assert_eq!(sent[2].1.said, vec![said("@alice: [took back an earlier message \"And?\"; it no longer stands.]"), said("@alice: Well?")]);
+        let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+        assert_eq!(given_for(&state, agent, &second[0]), ["@alice: [changed an earlier message \"hello\"; it now reads:] hello, corrected", "@alice: And?"], "what its answer was given, word for word");
+        assert!(state.history.messages().iter().all(|m| m.notice_of.is_none()), "a notice is never in the history");
+        running.abort();
+    }
+
     /// An external agent tells where it stands as an agent run here does
     /// (issue 243): working from before its answer starts until after it
     /// ends.

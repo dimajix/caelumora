@@ -123,6 +123,8 @@ personality that provides `ExternalAgent` - `a2a_agent` speaks the Agent2Agent p
 it has not heard yet when it is asked, and says what comes back, also on its own when a task of the
 remote agent ends later. What leaves the system is decided at the door: the roles its personality
 names limit what it is cleared for, and an external agent that names none sees only what is public.
+What the remote agent was given cannot be changed there; a message changed or taken back afterwards
+is told to it with its next call, by a notice in the name of its author (issue 236).
 
 Details: [CHANNELS.md](CHANNELS.md#actors-and-envelopes),
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md#personalities-limit-their-agents).

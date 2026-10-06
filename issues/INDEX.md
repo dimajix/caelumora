@@ -332,7 +332,7 @@ argues against it, and what came out of the last attempt.
 | [212](212-external-task-during-reclassification.md) | done | An external agent's task that began before its channel's classification was lowered is answered into the lowered channel, where a turn of an agent run here is given up. |
 | [213](213-external-task-taken-up-keeps-old-work.md) | done | An external agent's task taken up again by a later call keeps the work of the call that began it - its authority, envelope, bound and context - unless the remote agent tells the task as begun again. |
 | [217](217-external-agent-reasoning.md) | rejected | What an external agent reports while it works is dropped, so its messages carry no reasoning and the chat shows nothing until it answers. |
-| [236](236-external-agent-not-told-of-changes.md) | open | A remote agent is not told when a message it was given is modified or taken back, so it goes on answering the old version. |
+| [236](236-external-agent-not-told-of-changes.md) | done | A remote agent is not told when a message it was given is modified or taken back, so it goes on answering the old version. |
 
 ## Open architecture questions
 

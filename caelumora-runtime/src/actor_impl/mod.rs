@@ -13,6 +13,7 @@ use caelumora_model::actor::{ActorEvent, ActorId, Envelope, RetryTarget};
 use caelumora_model::agent::{AgentChannelState, RetryRefused};
 use caelumora_model::component::ComponentFailPolicy;
 use caelumora_model::message::Message;
+use caelumora_model::transcript::TranscriptEntry;
 use caelumora_model::security::SecurityContext;
 use tracing::{debug, trace, warn, Instrument};
 
@@ -78,13 +79,14 @@ async fn perceive(
 /// `processors`, as everything heard - into its transcript, as what its
 /// processors made of it under the message's id. Where nothing is left
 /// under it, or the stage fails, the message is no longer given there: the
-/// version given before does not stand any more.
+/// version given before does not stand any more. Returns what its
+/// processors made of it, `None` if nothing.
 async fn take_in_modified(
     state: &mut AgentChannelState,
     modified: Message,
     processors: &[ComponentImpl<dyn PerceiveInProcessor>],
     security: &SecurityContext,
-) {
+) -> Option<Message> {
     let perceived = match modified.as_heard() {
         None => None,
         Some(heard) => match apply_stage_processors(processors, vec![heard], security).await {
@@ -95,8 +97,10 @@ async fn take_in_modified(
             }
         },
     };
-    state.modify_message(modified, perceived);
+    state.modify_message(modified, perceived.clone());
+    perceived
 }
+
 
 /// Takes in what an agent was told while it could not listen (issue 222),
 /// the same for both kinds of agent: `received`, and everything `rx` holds
@@ -107,14 +111,20 @@ async fn take_in_modified(
 /// one answer to the conversation as it stands, in the authority of the
 /// last who asked - and the others are dropped, as is
 /// every other event but the requests to answer again (issue 234), which
-/// are returned in order, each to be answered. Neither commits nor stores:
-/// when that happens is the actor's.
+/// are returned in order, each to be answered. Every modification and
+/// revocation is handed, once taken in, to `elsewhere` (issue 236) - so in
+/// order with what was said - as an entry of what became of the message as
+/// the agent hears it, a modification of which nothing passes as taken
+/// back: for an actor that gave its transcript elsewhere to tell what the
+/// transcript could not take. Neither commits nor stores: when that happens
+/// is the actor's.
 async fn take_in(
     state: &mut AgentChannelState,
     received: Envelope,
     rx: &mut Box<dyn EventReceiver>,
     processors: &[ComponentImpl<dyn PerceiveInProcessor>],
     security: &SecurityContext,
+    elsewhere: fn(&mut AgentChannelState, TranscriptEntry),
 ) -> (Option<Envelope>, Vec<Envelope>) {
     let mut request = None;
     let mut retries = Vec::new();
@@ -130,11 +140,17 @@ async fn take_in(
                     None
                 }
                 ActorEvent::MessageModified(modified) => {
-                    take_in_modified(state, modified, processors, security).await;
+                    let (id, at) = (modified.id, modified.timestamp);
+                    let change = match take_in_modified(state, modified, processors, security).await {
+                        Some(message) => TranscriptEntry::Modified { message },
+                        None => TranscriptEntry::Revoked { message: id, at },
+                    };
+                    elsewhere(state, change);
                     None
                 }
                 ActorEvent::MessageRevoked { message, at } => {
                     state.revoke_message(message, at);
+                    elsewhere(state, TranscriptEntry::Revoked { message, at });
                     None
                 }
                 ActorEvent::MessageReclassified { message, classification } => {
@@ -232,6 +248,7 @@ fn event_for(message: Message, partial: bool) -> ActorEvent {
 mod tests {
     use super::*;
     use async_trait::async_trait;
+    use caelumora_model::message::MessageId;
     use caelumora_model::confidentiality::Classification;
     use std::sync::Arc;
 
@@ -277,14 +294,46 @@ mod tests {
             tx.try_send(event).expect("room");
         }
 
-        let (request, _) = take_in(&mut state, heard("one"), &mut rx, &[], &security).await;
+        let (request, _) = take_in(&mut state, heard("one"), &mut rx, &[], &security, |_, _| {}).await;
         assert_eq!(texts(&state.transcript.messages()), ["one", "two", "three"], "all of it, in order, also what came after the last request");
         assert_eq!(request.map(|r| r.security.caller_id), Some(caelumora_model::actor::ActorId::System), "the last request");
         assert!(rx.try_recv().is_none(), "nothing left behind");
 
-        let (request, _) = take_in(&mut state, heard("four"), &mut rx, &[], &security).await;
+        let (request, _) = take_in(&mut state, heard("four"), &mut rx, &[], &security, |_, _| {}).await;
         assert!(request.is_none(), "heard, but nobody asked");
         assert_eq!(texts(&state.transcript.messages()), ["one", "two", "three", "four"]);
+    }
+
+    #[tokio::test]
+    async fn every_change_is_handed_over_where_it_was_taken_in() {
+        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        let mut rx: Box<dyn EventReceiver> = Box::new(crate::transport_impl::memory::InMemoryEventReceiver::new(rx));
+        let mut state = AgentChannelState::default();
+        let security = SecurityContext::default();
+        let (given, kept) = (Message { id: MessageId::new(), ..said("given") }, Message { id: MessageId::new(), ..said("kept") });
+        state.perceive(vec![given.clone()], vec![given.clone()]);
+        state.transcript.start_anew();
+        state.perceive(vec![kept.clone()], vec![kept.clone()]);
+        let modified = |message: &Message, text: &str| envelope(ActorEvent::MessageModified(Message { content: Some(text.to_string()), ..message.clone() }));
+
+        // Writes down what it is handed, where it is handed it.
+        fn noted(state: &mut AgentChannelState, change: TranscriptEntry) {
+            let text = match change {
+                TranscriptEntry::Modified { message } => format!("modified: {}", message.content.unwrap_or_default()),
+                TranscriptEntry::Revoked { .. } => "taken back".to_string(),
+                _ => "something else".to_string(),
+            };
+            state.transcript.push(Message { id: MessageId::new(), ..said(&text) });
+        }
+        let heard = |text: &str| envelope(ActorEvent::FullResponseGenerated(vec![Message { id: MessageId::new(), ..said(text) }]));
+        tx.try_send(modified(&given, "given, corrected")).expect("room");
+        tx.try_send(heard("and then")).expect("room");
+        tx.try_send(envelope(ActorEvent::MessageRevoked { message: given.id, at: chrono::Utc::now() })).expect("room");
+        take_in(&mut state, modified(&kept, "kept, corrected"), &mut rx, &[], &security, noted).await;
+
+        assert_eq!(texts(&state.transcript.messages()), ["kept, corrected", "modified: kept, corrected", "modified: given, corrected", "and then", "taken back"],
+            "recorded where the transcript holds it, and handed over where it came, as the agent hears it");
+        assert!(state.history.message(given.id).is_some_and(|m| m.revoked.is_some()), "the history holds it as it stands");
     }
 
     #[tokio::test]
