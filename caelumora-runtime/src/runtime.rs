@@ -228,6 +228,7 @@ impl ActorRuntime {
 pub(crate) fn bare_session(session_id: SessionId) -> Session {
     let now = chrono::Utc::now();
     Session {
+        summary: None, briefing: None,
         id: session_id,
         name: String::new(),
         participants: Vec::new(),

@@ -28,19 +28,22 @@ pub struct CreateSessionRequest {
 pub struct SessionResponse {
     pub id: SessionId,
     pub name: String,
+    /// What it is for, in a line (issue 245); absent if nobody said.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
     /// Whom the session lets read what was said in it (issue 134).
     pub privacy: PrivacyConfig,
 }
 
 impl From<&caelumora_model::session::Session> for SessionResponse {
     fn from(session: &caelumora_model::session::Session) -> Self {
-        Self { id: session.id, name: session.name.clone(), privacy: session.privacy }
+        Self { id: session.id, name: session.name.clone(), summary: session.summary.clone(), privacy: session.privacy }
     }
 }
 
 impl From<snapshot::SessionSnapshot> for SessionResponse {
     fn from(view: snapshot::SessionSnapshot) -> Self {
-        Self { id: view.id, name: view.name, privacy: view.privacy }
+        Self { id: view.id, name: view.name, summary: view.summary, privacy: view.privacy }
     }
 }
 
@@ -269,6 +272,14 @@ pub struct GlobalSnapshot {
 pub struct SessionSnapshot {
     pub id: SessionId,
     pub name: String,
+    /// What it is for, in a line (issue 245); absent if nobody said.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    /// What an agent should know before it works here (issue 245): given
+    /// where one session or channel is asked for, not where they are
+    /// listed; absent if nobody wrote one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub briefing: Option<String>,
     /// Whom the session lets read what was said in it (issue 134).
     pub privacy: PrivacyConfig,
     /// What it restricts of the tool calls made in any of its channels
@@ -288,6 +299,8 @@ impl From<snapshot::SessionSnapshot> for SessionSnapshot {
         Self {
             id: view.id,
             name: view.name,
+            summary: view.summary,
+            briefing: view.briefing,
             privacy: view.privacy,
             approval_rules: view.approval_rules,
             can_change: view.can_change,
@@ -316,6 +329,16 @@ impl ParticipantResponse {
 #[derive(Debug, Deserialize)]
 pub struct RenameSessionRequest {
     pub name: String,
+}
+
+/// What a session or channel is for (issue 245), replacing what it said:
+/// `null` or blank removes one.
+#[derive(Debug, Deserialize)]
+pub struct DescriptionRequest {
+    #[serde(default)]
+    pub summary: Option<String>,
+    #[serde(default)]
+    pub briefing: Option<String>,
 }
 
 /// A session's new privacy policy (issue 134).
@@ -364,6 +387,14 @@ pub struct CreateChannelRequest {
 pub struct ChannelResponse {
     pub id: ChannelId,
     pub name: String,
+    /// What it is for, in a line (issue 245); absent if nobody said.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    /// What an agent should know before it works here (issue 245): given
+    /// where one session or channel is asked for, not where they are
+    /// listed; absent if nobody wrote one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub briefing: Option<String>,
     /// All participants, in no particular order, with the handles they are
     /// `@`-mentioned by - used by the web UI for the member list, completion
     /// and to render the `mentions` of a message.
@@ -396,6 +427,8 @@ impl From<snapshot::ChannelSnapshot> for ChannelResponse {
         Self {
             id: view.id,
             name: view.name,
+            summary: view.summary,
+            briefing: view.briefing,
             // Every member is a user, an agent or an approver.
             members: view.members.into_iter().filter_map(ChannelMemberResponse::of).collect(),
             moderator: view.moderator,
@@ -804,7 +837,7 @@ mod tests {
     fn a_channel_view_is_answered_with_kinds_and_a_name_for_the_deleted() {
         let (alice, approver) = (ActorId::User(UserId::new()), ActorId::Approver(ApproverId(Uuid::new_v4())));
         let member = |id, name: Option<&str>| snapshot::MemberSnapshot { id, name: name.map(str::to_string), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None, introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
-        let view = snapshot::ChannelSnapshot { approval_rules: Vec::new(),
+        let view = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(),
             id: ChannelId::new(),
             name: "main".to_string(),
             moderator: Some("policy_moderator".to_string()),
@@ -821,6 +854,19 @@ mod tests {
         assert!(response.can_change);
         let kinds: Vec<_> = response.members.iter().map(|m| (m.kind, m.name.as_str())).collect();
         assert_eq!(kinds, [(ParticipantKind::User, UNKNOWN), (ParticipantKind::Approver, "Approver")], "the system is no participant");
+    }
+
+    #[test]
+    fn what_a_place_is_for_is_left_out_where_nothing_was_said_or_read() {
+        let view = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(), id: ChannelId::new(), name: "main".to_string(),
+            moderator: None, responder_policy: None, classification: Classification::CHANNEL_DEFAULT, language: None, can_change: false, members: Vec::new(), former_members: Vec::new() };
+        let json = serde_json::to_value(ChannelResponse::from(view.clone())).unwrap();
+        assert!(json.get("summary").is_none() && json.get("briefing").is_none(), "{json}");
+        let described = snapshot::ChannelSnapshot { summary: Some("Planning".to_string()), briefing: Some("Dates in UTC.".to_string()), ..view };
+        let json = serde_json::to_value(ChannelResponse::from(described)).unwrap();
+        assert_eq!((&json["summary"], &json["briefing"]), (&serde_json::json!("Planning"), &serde_json::json!("Dates in UTC.")));
+        let request: DescriptionRequest = serde_json::from_value(serde_json::json!({ "summary": "Planning" })).unwrap();
+        assert_eq!((request.summary.as_deref(), request.briefing), (Some("Planning"), None), "one left out is none: removed");
     }
 
     #[test]
@@ -841,7 +887,7 @@ mod tests {
             left: None, can_delete: false, turn_under_way: None, state: None,
             introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None,
         };
-        let channel = snapshot::ChannelSnapshot { approval_rules: Vec::new(),
+        let channel = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(),
             id: ChannelId::new(),
             name: "main".to_string(),
             moderator: None,
@@ -880,7 +926,7 @@ mod tests {
         let (alice, helper) = (ActorId::User(UserId::new()), ActorId::Agent(caelumora_model::agent::AgentId::new()));
         let left = caelumora_model::removal::Removal::now(alice);
         let member = |id, left| snapshot::MemberSnapshot { id, name: Some("x".to_string()), handle: None, can_read_context: true, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), left, can_delete: false, turn_under_way: None, state: None, introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
-        let view = snapshot::ChannelSnapshot { approval_rules: Vec::new(),
+        let view = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(),
             id: ChannelId::new(),
             name: "main".to_string(),
             moderator: None,

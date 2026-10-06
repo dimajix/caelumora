@@ -232,6 +232,21 @@ impl SessionLoop {
         Ok(())
     }
 
+    /// Says what the session is for (issue 245) on behalf of `context`:
+    /// stored first, which is where the permission is checked
+    /// (`UpdateSession`). The agents of all its channels are told from their
+    /// next turn on.
+    ///
+    /// # Errors
+    /// `StoreError::Validation` if `summary` or `briefing` is too long or
+    /// holds what it may not, `StoreError::PermissionDenied` if `context`
+    /// may not change the session, or whatever else storing it reports.
+    pub async fn update_description(&self, context: &SecurityContext, summary: Option<&str>, briefing: Option<&str>) -> Result<()> {
+        self.session_controller.update_description(context, summary, briefing).await?;
+        info!(session = %self.id, by = %context.caller_id, "Session description changed");
+        Ok(())
+    }
+
     /// The running channels, in the order of the session: those from its
     /// template first, then those created later, oldest first.
     pub fn channels(&self) -> Vec<Arc<ChannelLoop>> {
@@ -982,6 +997,7 @@ mod tests {
 
     fn make_session(name: &str) -> Session {
         Session {
+            summary: None, briefing: None,
             approval_rules: Vec::new(),
             commands: Default::default(),
             privacy: Default::default(),
@@ -1000,6 +1016,7 @@ mod tests {
     /// "main", belonging to whom the session belongs to.
     fn main_channel(session: &Session) -> Channel {
         Channel {
+            summary: None, briefing: None,
             approval_rules: Vec::new(),
             id: session.channels[0],
             session_id: session.id,
@@ -1295,6 +1312,7 @@ mod tests {
         let owner = UserId::new();
         store.create_user(&SecurityContext::system(), &User { id: owner, username: "alice".to_string(), email: String::new(), roles: Vec::new(), deleted: None }).await.unwrap();
         let template = SessionTemplate {
+            summary: None, briefing: None,
             approval_rules: Vec::new(),
             id: SessionTemplateId::new(),
             name: ScopedName::new("pairing", Default::default()).unwrap(),
@@ -1304,6 +1322,7 @@ mod tests {
                 ParticipantTemplate::Approver { name: "approval".to_string(), strategy: ApprovalStrategy::All },
             ],
             channels: vec![ChannelTemplate {
+                summary: None, briefing: None,
                 approval_rules: Vec::new(),
                 name: Name::new("main").unwrap(),
                 components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),

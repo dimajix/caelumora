@@ -512,6 +512,21 @@ impl ChannelLoop {
         Ok(())
     }
 
+    /// Says what the channel is for (issue 245) on behalf of `context`:
+    /// stored first, which is where the permission is checked
+    /// (`UpdateChannel`), like a new name. Its agents are told from their
+    /// next turn on.
+    ///
+    /// # Errors
+    /// `StoreError::Validation` if `summary` or `briefing` is too long or
+    /// holds what it may not, `StoreError::PermissionDenied` if `context`
+    /// may not change the channel, or whatever else storing it reports.
+    pub async fn update_description(&self, context: &SecurityContext, summary: Option<&str>, briefing: Option<&str>) -> Result<()> {
+        self.channel.update_description(context, summary, briefing).await?;
+        info!(channel = %self.id, by = %context.caller_id, "Channel description changed");
+        Ok(())
+    }
+
     /// Sets what the channel restricts of the tool calls made in it (issue
     /// 13) on behalf of `context`: stored first, which is where the
     /// permission is checked (`UpdateChannel`). Its agents' next calls are
@@ -1413,6 +1428,7 @@ mod tests {
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&security)));
         let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, security, default_commands(), Default::default(), Vec::new(), registry).unwrap());
         let channel = Channel {
+            summary: None, briefing: None,
             approval_rules: Vec::new(),
             id: ChannelId::new(),
             session_id: SessionId::new(),
@@ -2419,6 +2435,7 @@ mod tests {
         };
         let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store, secrets, security, default_commands(), defaults, Vec::new(), registry).unwrap());
         let channel = Channel {
+            summary: None, briefing: None,
             approval_rules: Vec::new(),
             id: ChannelId::new(),
             session_id: SessionId::new(),
@@ -3647,6 +3664,7 @@ mod tests {
         register_heard(&mut registry);
         let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store, secrets, security, default_commands(), Default::default(), Vec::new(), registry).unwrap());
         let channel = Channel {
+            summary: None, briefing: None,
             approval_rules: Vec::new(),
             id: ChannelId::new(),
             session_id: SessionId::new(),

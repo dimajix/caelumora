@@ -237,6 +237,21 @@ A message takes its new classification from `MessageReclassified` on the channel
 every change to a message (issue 239); a reclassified channel follows the global stream and fetches
 its messages again, which lowering it may have changed.
 
+### What the channel is for
+
+The panel beside the chat is the channel panel - its tab is called "Channel" (issue 245). At its
+top stands the channel's summary and, behind "Briefing", its briefing rendered as Markdown
+(`ChannelDescription`). Who may change the channel changes both with `DescriptionDialog`, from the
+pencil next to the summary, or from "Say what this channel is for" where it says nothing yet; the
+dialog says who reads it. A change made elsewhere arrives as `ChannelUpdated` with
+`DescriptionChanged`, which carries both.
+
+A session's description is opened from its menu in the sidebar ("Description"), with the same
+dialog - read-only for whoever may not change the session - which says there that everybody in the
+session and every agent in its channels reads it, external ones too. The session is fetched first:
+the list holds no briefing, and saving without it would remove it. The summaries of sessions and
+channels are their tooltips in the sidebar.
+
 ### Language
 
 The channel's language is shown below its classification (issue 56). Who may change the channel

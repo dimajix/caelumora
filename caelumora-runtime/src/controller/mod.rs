@@ -189,6 +189,16 @@ fn check_restricting(rules: &[ApprovalRule]) -> StoreResult<()> {
     Ok(())
 }
 
+/// What a session or channel is for (issue 245), as it keeps it
+/// (`Session::described`).
+///
+/// # Errors
+/// `StoreError::Validation` saying what is wrong with the first that does
+/// not fit.
+fn checked_description(summary: Option<&str>, briefing: Option<&str>) -> StoreResult<(Option<String>, Option<String>)> {
+    Session::described(summary, briefing).map_err(|e| StoreError::Validation(e.to_string()))
+}
+
 /// Registers `controller` under `id`, dropping the entries of controllers
 /// nobody holds any more.
 fn remember<K: Eq + Hash, C>(registry: &mut HashMap<K, Weak<C>>, id: K, controller: &Arc<C>) {

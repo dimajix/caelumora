@@ -92,6 +92,17 @@ impl ChannelView {
         self.channel.language.as_ref()
     }
 
+    /// What the channel is for, in a line (issue 245); `None` if nobody said.
+    pub fn summary(&self) -> Option<&str> {
+        self.channel.summary.as_deref()
+    }
+
+    /// What an agent should know before it works in the channel (issue 245);
+    /// `None` if nobody wrote it.
+    pub fn briefing(&self) -> Option<&str> {
+        self.channel.briefing.as_deref()
+    }
+
     /// What the channel holds classified `classification`: one side of the
     /// question whether it may be read from elsewhere.
     pub fn place(&self, classification: &Classification) -> Place {
@@ -278,6 +289,8 @@ impl ChannelView {
         ChannelSnapshot {
             id: self.channel.id,
             name: self.channel.name.to_string(),
+            summary: self.channel.summary.clone(),
+            briefing: self.channel.briefing.clone().filter(|_| detail.contains(Detail::BRIEFING)),
             moderator: self.moderator(),
             responder_policy: self.responder_policy(),
             classification: self.channel.classification.clone(),

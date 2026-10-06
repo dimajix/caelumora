@@ -56,6 +56,11 @@ This is the one place ownership is recorded.
     written by whoever may change the personality, like its system prompt; a user's by the user.
     The rest of a profile is read by its user alone - their rules on tool calls (issue 13) among
     it, which the runtime evaluates in their name, as their own answer.
+*   What a session or channel is for - its summary and briefing (issue 245) - is written by whoever
+    may change the place and given to every agent there whose personality wires it in, also to
+    agents owned by others. It steers what they say with the weight of the system prompt, never
+    what they may do; the prompt part names it as the owner's. A session's descriptions are public
+    to everybody in it, external agents included; a channel's are classified as the channel.
 *   Of an agent, whoever reads a channel it takes part in also learns, besides its introduction,
     the name of its personality - not its scope, not the personality itself, which stays its
     readers' (`GetPersonality`) -, whether it runs here or elsewhere, and who owns it, by name

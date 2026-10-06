@@ -1,5 +1,5 @@
 use crate::auth::AuthenticatedUser;
-use crate::models::{AddParticipantRequest, AgentToolsResponse, DeletedResponse, ListOptions, ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CreateChannelRequest, KnowledgeRefResponse, CommandReplyResponse, ExecuteCommandRequest, GivenUpTurnResponse, HistoryMessageResponse, LabelCauses, MessageContextResponse, SeenItemResponse, PublishedNotesResponse, MessageRequest, RetryTurnRequest, SendApprovalRequest, StreamOptions};
+use crate::models::{AddParticipantRequest, DescriptionRequest, AgentToolsResponse, DeletedResponse, ListOptions, ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CreateChannelRequest, KnowledgeRefResponse, CommandReplyResponse, ExecuteCommandRequest, GivenUpTurnResponse, HistoryMessageResponse, LabelCauses, MessageContextResponse, SeenItemResponse, PublishedNotesResponse, MessageRequest, RetryTurnRequest, SendApprovalRequest, StreamOptions};
 use crate::state::AppState;
 use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response, Sse};
@@ -165,7 +165,7 @@ async fn channel_snapshot(state: &AppState, channel: &ChannelLoop, viewer: &Secu
     };
     let (messages, has_more) = recent_messages(history.messages);
     // The conversation can be shown without what of it cannot be read.
-    let channel = view.snapshot(Detail::MEMBERS | Detail::USAGE | Detail::NOTES | Detail::APPROVALS).await;
+    let channel = view.snapshot(Detail::MEMBERS | Detail::USAGE | Detail::NOTES | Detail::APPROVALS | Detail::BRIEFING).await;
     Some(ChannelSnapshot::of(channel, messages, has_more))
 }
 
@@ -436,7 +436,24 @@ pub async fn update_channel_approval_rules(
 ) -> Result<Json<ChannelResponse>, ApiError> {
     let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     channel.update_approval_rules(&user.security_context(), rules).await
-        .map_err(|e| crate::routes::approval_rules_error(e, Subject::Session, "changing the approval rules of the channel"))?;
+        .map_err(|e| crate::routes::change_error(e, "invalid_rule", Subject::Session, "changing the approval rules of the channel"))?;
+    Ok(Json(crate::routes::channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?))
+}
+
+/// Says what the channel is for (issue 245): its summary and briefing,
+/// `null` or blank to remove one - whoever may change the channel. Its
+/// agents are told from their next turn on. Answers `400
+/// invalid_description` for one that is too long or holds what it may not,
+/// and otherwise the channel as the user sees it now.
+pub async fn update_channel_description(
+    State(state): State<Arc<AppState>>,
+    Path((id, cid)): Path<(Uuid, Uuid)>,
+    user: AuthenticatedUser,
+    Json(payload): Json<DescriptionRequest>,
+) -> Result<Json<ChannelResponse>, ApiError> {
+    let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    channel.update_description(&user.security_context(), payload.summary.as_deref(), payload.briefing.as_deref()).await
+        .map_err(|e| crate::routes::change_error(e, "invalid_description", Subject::Session, "changing the description of the channel"))?;
     Ok(Json(crate::routes::channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?))
 }
 

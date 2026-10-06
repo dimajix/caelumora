@@ -32,7 +32,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [221](221-adding-session-participants.md) | open | A session's participants are fixed when it is created: nobody - neither a user nor an agent, existing or created from a personality - can be added to it later. |
 | [223](223-full-inbox-drops-events.md) | open | An actor whose inbox is full - an agent in a long turn in a busy channel - loses what was said, requests and approvals without anyone learning of it. |
 | [238](238-retry-of-an-older-answer.md) | open | Only an agent's last answer can be asked for again, and the alternatives of an answer are not kept. |
-| [245](245-session-and-channel-descriptions.md) | open | Sessions and channels have no description, so neither the users nor the agents in them learn what they are for. |
 
 ## Identity and access management
 
@@ -86,6 +85,12 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [22](22-skill-management.md) | open | Skills do not exist: there is no unit of procedural knowledge below a personality, and no rule for who may load one into a turn. |
 | [166](166-memory-as-topic-documents.md) | open | Agent memory is a flat list of one-line entries, all of them in every prompt, with nothing to group, revise or fetch them by topic. |
 | [237](237-erasing-a-message.md) | open | A message written by mistake can be taken back but not erased: it stays in every participant's record and in the contexts built on it. |
+
+## Code structure
+
+| No. | Status | Issue |
+|---|---|---|
+| [248](248-validated-text-fields.md) | open | Text fields are `String`s checked by whoever writes them, if at all, so a field can hold what its rules forbid and a new writer has to remember the check. |
 
 ## Open architecture questions
 

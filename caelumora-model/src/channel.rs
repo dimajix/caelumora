@@ -25,6 +25,8 @@ pub enum ChannelUpdateEvent {
     LanguageChanged(Option<Language>),
     /// Its rules on tool calls changed (issue 13), as they now stand.
     ApprovalRulesChanged(Vec<ApprovalRule>),
+    /// What it is for changed (issue 245), as it now stands.
+    DescriptionChanged { summary: Option<String>, briefing: Option<String> },
 }
 
 define_id!(ChannelId);
@@ -45,6 +47,14 @@ pub struct Channel {
     pub session_id: SessionId,
     /// What it is found by in its session (issue 177).
     pub name: Name,
+    /// What it is for, in a line (issue 245); `None` if nobody said.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    /// What an agent should know before it works here (issue 245), given to
+    /// the agents whose personality wires in the
+    /// `channel_briefing_prompt_provider`; `None` if nobody wrote one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub briefing: Option<String>,
     /// The channel's components (issue 174): its moderator and the policy
     /// that fills the moderator's slot. A facet nobody here provides is
     /// built from its default.
@@ -135,6 +145,8 @@ impl Channel {
             id: ChannelId::new(),
             session_id,
             name,
+            summary: None,
+            briefing: None,
             components,
             participants,
             security_attributes,

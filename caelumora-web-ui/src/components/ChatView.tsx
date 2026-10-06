@@ -8,6 +8,7 @@ import {
   IdCard,
   Languages,
   Lock,
+  MessageSquare,
   NotebookPen,
   Pencil,
   RotateCcw,
@@ -22,7 +23,6 @@ import {
   UserMinus,
   Unlink,
   UserPlus,
-  Users,
   Wrench,
 } from 'lucide-react';
 import type {
@@ -59,7 +59,7 @@ import {MessageEditor} from './MessageEditor';
 import {LanguageDialog} from './LanguageDialog';
 import {ApprovalRulesDialog} from './ApprovalRulesDialog';
 import {languageLabel} from '../language';
-import {approvalRulesChangedChannel, changedChannel, languageChangedChannel, membershipChangedChannel, onGlobalEvent, profileApprovalRules, reclassifiedChannel} from '../globalEvents';
+import {approvalRulesChangedChannel, changedChannel, descriptionChangedChannel, languageChangedChannel, membershipChangedChannel, onGlobalEvent, profileApprovalRules, reclassifiedChannel} from '../globalEvents';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
 import {type ClassValue, clsx} from 'clsx';
@@ -78,6 +78,8 @@ import {HistoryPanel} from './HistoryPanel';
 import {ToolsPanel} from './ToolsPanel';
 import {PrivateNotesPanel} from './PrivateNotesPanel';
 import {ProfilePanel} from './ProfilePanel';
+import {ChannelDescription} from './ChannelDescription';
+import {DescriptionDialog} from './DescriptionDialog';
 import {AddParticipantDialog} from './AddParticipantDialog';
 import {ApprovalRuleOffer} from './ApprovalRuleOffer';
 import {approveEverything, approvingEverything, initialChoice, ruleOf, type RuleChoice} from '../approvalRules';
@@ -182,10 +184,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   const [messages, setMessages] = useState<Message[]>([]);
   const [channel, setChannel] = useState<ChannelResponse | null>(null);
   const [notes, setNotes] = useState<PublishedNotes[]>([]);
-  const [sideTab, setSideTab] = useState<'members' | 'notes'>('members');
-  // The widths of the members panel and of the panel showing an agent's
-  // context, history or tools (issue 231).
-  const membersPanel = usePanelWidth('members');
+  const [sideTab, setSideTab] = useState<'channel' | 'notes'>('channel');
+  // The widths of the channel panel and of the panel showing an agent's
+  // context, history or tools (issue 231). The channel panel keeps the key
+  // it had as the members panel (issue 245), so that its width stays.
+  const channelPanel = usePanelWidth('members');
   const detailPanel = usePanelWidth('detail');
   // Restored from session storage, so a forced re-login does not lose it.
   const [inputText, setInputText] = useState(() => loadDraft(channelId));
@@ -250,6 +253,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   const [isAddingParticipant, setIsAddingParticipant] = useState(false);
   // What is being reclassified (issue 133): the channel, or one message.
   const [isChangingLanguage, setIsChangingLanguage] = useState(false);
+  // Whether what the channel is for is being changed (issue 245).
+  const [isDescribing, setIsDescribing] = useState(false);
   // The channel's approval rules (issue 13), shown - and changed by who may.
   const [isShowingRules, setIsShowingRules] = useState(false);
   const [reclassifying, setReclassifying] = useState<{kind: 'channel'} | {kind: 'message'; message: Message} | null>(null);
@@ -355,6 +360,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   // 239).
   useEffect(() => {
     return onGlobalEvent(event => {
+      const description = descriptionChangedChannel(event);
+      if (description) {
+        if (description.channelId === channelId) setChannel(prev => prev && {...prev, summary: description.summary, briefing: description.briefing});
+        return;
+      }
       const language = languageChangedChannel(event);
       if (language) {
         if (language.channelId === channelId) setChannel(prev => prev && {...prev, language: language.language});
@@ -1347,6 +1357,17 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           onClose={() => setIsAddingParticipant(false)}
         />
       )}
+      {isDescribing && channel && (
+        <DescriptionDialog
+          title={`What ${channel.name} is for`}
+          place="channel"
+          summary={channel.summary}
+          briefing={channel.briefing}
+          canChange={channel.can_change}
+          onSubmit={async (description) => setChannel(await api.setChannelDescription(sessionId, channelId, description))}
+          onClose={() => setIsDescribing(false)}
+        />
+      )}
       {isChangingLanguage && channel && (
         <LanguageDialog
           title={`Language of ${channel.name}`}
@@ -1440,18 +1461,18 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
         </>
       ) : (
       <>
-      <ResizeHandle panel={membersPanel} panelSide="right" label="Resize the members panel" className="hidden md:block" />
-      <div className="shrink-0 border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 overflow-y-auto hidden md:block" style={{width: membersPanel.width}}>
+      <ResizeHandle panel={channelPanel} panelSide="right" label="Resize the channel panel" className="hidden md:block" />
+      <div className="shrink-0 border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 overflow-y-auto hidden md:block" style={{width: channelPanel.width}}>
         <div className="p-4">
           <div className="flex items-center gap-1 mb-4 text-gray-500 dark:text-gray-400" role="tablist">
             <button
               role="tab"
-              aria-selected={sideTab === 'members'}
-              onClick={() => setSideTab('members')}
-              className={cn("flex items-center gap-1.5 px-2 py-1 rounded-md", sideTab === 'members' && "bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-100")}
+              aria-selected={sideTab === 'channel'}
+              onClick={() => setSideTab('channel')}
+              className={cn("flex items-center gap-1.5 px-2 py-1 rounded-md", sideTab === 'channel' && "bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-100")}
             >
-              <Users size={16} />
-              <h3 className="font-semibold uppercase text-xs tracking-wider">Members</h3>
+              <MessageSquare size={16} />
+              <h3 className="font-semibold uppercase text-xs tracking-wider">Channel</h3>
             </button>
             <button
               role="tab"
@@ -1464,6 +1485,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
             </button>
           </div>
           {sideTab === 'notes' ? <NotesList notes={notes} /> : (<>
+          {channel && (
+            <ChannelDescription channel={channel} onEdit={() => setIsDescribing(true)} />
+          )}
           {channel && (
             <div
               className="flex items-center gap-2 mb-4 text-xs text-gray-500 dark:text-gray-400"

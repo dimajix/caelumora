@@ -503,6 +503,7 @@ mod tests {
         let mut participants: Vec<Participant> = ids.iter().map(|id| Participant::User(*id)).collect();
         participants.push(Participant::Approver(approver.clone()));
         let channel = Channel {
+            summary: None, briefing: None,
             approval_rules: Vec::new(),
             id: ChannelId::new(),
             session_id: SessionId::new(),

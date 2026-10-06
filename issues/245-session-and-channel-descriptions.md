@@ -1,6 +1,6 @@
 # 245 — Sessions and channels say nothing about what they are for
 
-**Status:** open
+**Status:** done
 **Area:** Sessions and channels
 
 ## The problem
@@ -112,6 +112,90 @@ personality's own instructions.
 - A session's descriptions where the session's settings are - privacy, rules - which today has no
   panel of its own.
 
+## Plan
+
+Decided with the maintainer on 2026-10-06.
+
+### Decisions
+
+- **Names:** `summary` - the short one, one line - and `briefing` - the long one, what an agent
+  should know before it works here. Not `description`, which is the catalogue line of a template or
+  a personality.
+- **Confidentiality:** a session's descriptions count as public - the session's document is read by
+  everybody in it, as its name is - and the editor says so: everybody in the session and every
+  agent in each of its channels reads them, external ones too. A channel's are part of the channel
+  and carry its classification as it is now.
+- **Wiring:** the personality wires the provider in, as it does the roster and the language;
+  `examples/seed.yaml` wires it into every personality. Whether the runtime should give prompt parts
+  to every agent regardless is a question for all three providers, not for this issue.
+- **Trust:** the prompt part names itself as the description of the session or channel, written by
+  whoever may change it, and comes after the personality's own instructions - by the order of the
+  components. What an agent may do is unchanged by it.
+
+### The model
+
+- `Session`, `Channel`, `SessionTemplate` and `ChannelTemplate` gain `summary` and `briefing`,
+  `Option<String>`, serde default, left out when `None`. A template's are copied into the session
+  and channels it makes; `SessionTemplate::description` stays the catalogue line.
+- **Limits:** a summary at most `MAX_SUMMARY_CHARS` (300), on one line; a briefing at most
+  `MAX_BRIEFING_CHARS` (16 000) - it is in the context of every agent on every turn.
+- **Checked in one place.** `UserProfile::introduce` checks a text today - trimmed, `None` if
+  blank, a length, no control character that is no whitespace. That check becomes a function of the
+  model that `introduce`, the summary and the briefing use alike, the summary also refusing line
+  breaks. A step of its own, without a change of behaviour.
+
+### Changing them
+
+- `SessionUpdateEvent::DescriptionChanged { summary, briefing }` and the same on
+  `ChannelUpdateEvent`, as they now stand.
+- `SessionController::update_description(ctx, summary, briefing)` and the same on the
+  `ChannelController`, behind `SessionLoop` and `ChannelLoop` as `update_language` is; checked as
+  `UpdateSession` and `UpdateChannel`, before anything else.
+- `PUT /sessions/{id}/description` and `PUT /sessions/{id}/channels/{cid}/description` with
+  `{summary, briefing}` - both in one request, as the dialog edits them; `null` or blank removes
+  one. `400 invalid_description` for a text that is too long or holds what it may not, `403` for
+  who may not change the place.
+
+### Reading them
+
+- `SessionSnapshot` and `ChannelSnapshot` carry `summary` always and `briefing` with a new
+  `Detail::BRIEFING`: the first snapshot of a channel's stream and `GET` of one session or channel
+  ask for it, lists of sessions and channels do not. The REST responses likewise.
+- `SessionView` and `ChannelView` offer `summary()` and `briefing()`.
+
+### The prompt provider
+
+`channel_briefing_prompt_provider`, a component providing `PromptProvider` like
+`channel_language_prompt_provider`: at the start of every turn it reads the session's and the
+channel's descriptions through the agent's views and renders them as one part - the session's
+first, each under a heading of its own that says whose description it is and who wrote it. Nothing
+if neither has any. Classified as the channel, if the channel's descriptions are in it, else
+public. `position` as the others, `start` by default; `changes_only` for an external agent, which
+is told once and then only when something changed.
+
+### The web UI
+
+- The members panel becomes the **channel panel**: its tab is called "Channel". At the top the
+  channel's summary, the briefing behind a click, rendered as Markdown; for whoever may change the
+  channel an edit button opening a dialog with both (`DescriptionDialog`).
+- The session's descriptions are edited from the session's menu in the sidebar with the same
+  dialog, which says there that everybody in the session reads them. The summaries are the tooltips
+  of sessions and channels in the sidebar.
+
+### Tests
+
+The check of a text; the template's descriptions copied; the controllers' changes stored and
+announced, refused for a text that is too long; the provider's part for session and channel, its
+classification, and `changes_only`; the API's shapes; in the security suite, that only who may
+change a place changes its descriptions.
+
+### Steps
+
+1. **Restructure:** the check of a text out of `UserProfile::introduce` into a function of its own.
+2. **Model, controllers, REST, templates**, with the snapshots and `Detail::BRIEFING`.
+3. **The prompt provider**, wired into `examples/seed.yaml`.
+4. **The web UI.**
+
 ## Done when
 
 - Sessions and channels have a short and a long description, set in the session template, read and
@@ -127,3 +211,24 @@ personality's own instructions.
 - **2026-10-06** — Opened on the maintainer's request. Open: the names of the two descriptions,
   how a session's descriptions are classified, and whether the prompt provider is wired in by the
   personality or given to every agent.
+- **2026-10-06** — Planned with the maintainer (see *Plan*): `summary` and `briefing`; a session's
+  public, a channel's classified as the channel; the provider wired in by the personality; the
+  prompt part named as the place's description, after the personality's instructions.
+- **2026-10-06** — Done, in the four steps planned. Deviating from the plan: the check of a text is
+  `TextRule` in `caelumora-model::text` - a field's name, length and whether it is one line - whose
+  rules the field's owner keeps as constants (`UserProfile::INTRODUCTION`, `Session::SUMMARY`,
+  `Session::BRIEFING`; a channel is described as its session is), not a kind of text the module
+  knows; `TextError` names the field. `Session::described` checks both for the controllers and the
+  templates, a template's when a session is made from it (`TemplateError::Description`). That the
+  fields could be types that check themselves is issue [248](248-validated-text-fields.md). On the
+  way: `routes::change_error` answers `400` with the code it is given, for `invalid_rule` and
+  `invalid_description` alike, where `approval_rules_error` answered only the first; and
+  `routes::session_view` answers what `GET` of a session and every change of one answer, read in
+  four handlers before. Tests: the rule; a template's descriptions copied and checked; the views
+  give the briefing only with `Detail::BRIEFING`; the provider's part - the session's first,
+  classified as the channel where it holds the channel's, read anew at every turn, `changes_only`;
+  the API's shapes; in the security suite, that a participant changes neither description and the
+  owner both. Seen in the browser: the session's dialog from the sidebar, its summary as the
+  tooltip, the channel panel's "Channel" tab with the summary and "Briefing" after "Say what this
+  channel is for". Not seen: the part in an agent's context - the personalities in the local store
+  were seeded before they wired the provider in, and the seed does not change stored documents.

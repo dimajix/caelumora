@@ -3,6 +3,7 @@ use crate::approval::{ApprovalRule, ApprovalRuleId, RuleError, MAX_PERSONAL_RULE
 use chrono::{DateTime, Utc};
 use crate::language::Language;
 use crate::security::{SecurityAttributes, Secured};
+use crate::text::{TextError, TextRule};
 use serde::{Deserialize, Serialize};
 
 define_id!(UserId);
@@ -79,24 +80,19 @@ pub struct UserProfile {
 /// system prompt of every agent in every channel the user takes part in.
 pub const MAX_INTRODUCTION_CHARS: usize = 1000;
 
-/// Why a text is no introduction. The messages are meant for users.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum IntroductionError {
-    #[error("an introduction must not be longer than {MAX_INTRODUCTION_CHARS} characters")]
-    TooLong,
-    #[error("an introduction must not contain control characters other than line breaks and tabs")]
-    ControlCharacter,
-}
-
 impl UserProfile {
+    /// What an introduction may be: it goes into the system prompt of every
+    /// agent in every channel the user takes part in.
+    pub const INTRODUCTION: TextRule = TextRule::lines("introduction", MAX_INTRODUCTION_CHARS);
+
     /// The profile of user `user_id`, introducing them as `introduction`
     /// says, trimmed - none if nothing is left of it. What a user writes
     /// about themselves is checked so, wherever it comes from.
     ///
     /// # Errors
-    /// `IntroductionError` if it is longer than `MAX_INTRODUCTION_CHARS` or
+    /// `TextError` if it is longer than `MAX_INTRODUCTION_CHARS` or
     /// contains a control character that is no whitespace.
-    pub fn introducing(user_id: UserId, introduction: Option<&str>) -> Result<Self, IntroductionError> {
+    pub fn introducing(user_id: UserId, introduction: Option<&str>) -> Result<Self, TextError> {
         let mut profile = Self::new(user_id, None);
         profile.introduce(introduction)?;
         Ok(profile)
@@ -106,18 +102,9 @@ impl UserProfile {
     /// nothing is left of it - checked as `introducing` checks it.
     ///
     /// # Errors
-    /// `IntroductionError`, as `introducing`; the profile is then unchanged.
-    pub fn introduce(&mut self, introduction: Option<&str>) -> Result<(), IntroductionError> {
-        let introduction = introduction.map(str::trim).filter(|text| !text.is_empty());
-        if let Some(text) = introduction {
-            if text.chars().count() > MAX_INTRODUCTION_CHARS {
-                return Err(IntroductionError::TooLong);
-            }
-            if text.chars().any(|c| c.is_control() && !c.is_whitespace()) {
-                return Err(IntroductionError::ControlCharacter);
-            }
-        }
-        self.introduction = introduction.map(str::to_string);
+    /// `TextError`, as `introducing`; the profile is then unchanged.
+    pub fn introduce(&mut self, introduction: Option<&str>) -> Result<(), TextError> {
+        self.introduction = Self::INTRODUCTION.check(introduction)?;
         Ok(())
     }
 
@@ -228,8 +215,8 @@ mod tests {
         let profile = UserProfile::introducing(user, Some("  I run the budget.\nAsk me.  ")).unwrap();
         assert_eq!(profile.introduction.as_deref(), Some("I run the budget.\nAsk me."));
         assert_eq!(UserProfile::introducing(user, Some(" \n ")).unwrap().introduction, None, "nothing in it is none");
-        assert_eq!(UserProfile::introducing(user, Some(&"x".repeat(MAX_INTRODUCTION_CHARS + 1))).unwrap_err(), IntroductionError::TooLong);
-        assert_eq!(UserProfile::introducing(user, Some("a\u{1b}[2Jb")).unwrap_err(), IntroductionError::ControlCharacter);
+        assert_eq!(UserProfile::introducing(user, Some(&"x".repeat(MAX_INTRODUCTION_CHARS + 1))).unwrap_err(), TextError::TooLong { field: "introduction", max_chars: MAX_INTRODUCTION_CHARS });
+        assert_eq!(UserProfile::introducing(user, Some("a\u{1b}[2Jb")).unwrap_err(), TextError::ControlCharacter { field: "introduction" });
 
         let mut introduced = profile.clone();
         assert!(introduced.introduce(Some("a\u{1b}[2Jb")).is_err());

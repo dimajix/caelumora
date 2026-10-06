@@ -308,12 +308,14 @@ mod tests {
         let participants = vec![Participant::User(kaya.id), Participant::Agent(jonathan.id), Participant::Approver(approver), Participant::Agent(sassy.id), Participant::Agent(gone.id), Participant::User(bob.id)];
         let now = chrono::Utc::now();
         let session = Session {
+            summary: None, briefing: None,
             approval_rules: Vec::new(),
             id: SessionId::new(), name: String::new(), participants: participants.clone(), channels: vec![ChannelId::new()],
             commands: Default::default(), privacy: Default::default(), created_at: now, updated_at: now, security_attributes: Default::default(),
             deleted: None,
         };
         let channel = Channel {
+            summary: None, briefing: None,
             approval_rules: Vec::new(),
             id: session.channels[0], session_id: session.id, name: Name::new("main").unwrap(), components: Default::default(),
             classification: Classification::CHANNEL_DEFAULT, language: None, history_limits: Vec::new(), participants, security_attributes: Default::default(),

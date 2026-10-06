@@ -3,6 +3,7 @@ import {
   ChevronDown,
   ChevronRight,
   Edit2,
+  FileText,
   LogOut,
   MessageSquare,
   Plus,
@@ -25,6 +26,7 @@ import {DeletedList} from './DeletedList';
 import {NewChannelDialog} from './NewChannelDialog';
 import {PrivacyDialog} from './PrivacyDialog';
 import {ApprovalRulesDialog} from './ApprovalRulesDialog';
+import {DescriptionDialog} from './DescriptionDialog';
 import {ProfileDialog} from './ProfileDialog';
 import {privacyInfo} from '../privacy';
 import {type ClassValue, clsx} from 'clsx';
@@ -112,6 +114,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // The session whose approval rules are shown (issue 13), likewise by id.
   const [rulesOf, setRulesOf] = useState<string | null>(null);
   const rulesSession = sessions.find(s => s.id === rulesOf) ?? null;
+  // The session whose description is shown (issue 245), likewise by id -
+  // fetched before, since the list's sessions come without their briefing.
+  const [descriptionOf, setDescriptionOf] = useState<string | null>(null);
+  const descriptionSession = sessions.find(s => s.id === descriptionOf) ?? null;
   // Changes whenever something may have been deleted or restored, so that
   // the trash is loaded again (issue 164).
   const [trashVersion, setTrashVersion] = useState(0);
@@ -334,6 +340,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <button
                   onClick={() => toggleSession(session.id)}
                   className="flex-1 flex items-center p-2 truncate"
+                  title={session.summary}
                 >
                   {expandedSessions[session.id] ? (
                     <ChevronDown size={16} className="mr-2 shrink-0" />
@@ -366,6 +373,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   className="p-2 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-white transition-opacity"
                   actions={[
                     {label: 'Rename', icon: Edit2, onSelect: () => handleRenameSession(session.id, session.name)},
+                    // Fetched first: the list holds no briefing, and saving without it would remove it.
+                    {label: 'Description', icon: FileText, onSelect: () => void refreshSession(session.id).then(() => setDescriptionOf(session.id))},
                     {label: 'Privacy', icon: Shield, onSelect: () => handleShowPrivacy(session.id)},
                     {label: 'Approval rules', icon: ShieldAlert, onSelect: () => setRulesOf(session.id)},
                     {label: 'Delete', icon: Trash2, danger: true, confirm: 'Delete session?', onSelect: () => void handleDeleteSession(session.id)},
@@ -387,6 +396,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         <button
                           onClick={() => onSelectChannel(session.id, channel.id)}
                           className="flex-1 min-w-0 flex items-center p-2"
+                          title={channel.summary}
                         >
                           <MessageSquare size={14} className="mr-2 shrink-0" />
                           <span className="truncate">{channelName(channel)}</span>
@@ -446,6 +456,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
             setSessions(prev => upsert(prev, updated));
           }}
           onClose={() => setPrivacyOf(null)}
+        />
+      )}
+
+      {descriptionSession && (
+        <DescriptionDialog
+          title={`What ${descriptionSession.name} is for`}
+          place="session"
+          summary={descriptionSession.summary}
+          briefing={descriptionSession.briefing}
+          canChange={descriptionSession.can_change}
+          onSubmit={async (description) => {
+            const updated = await api.setSessionDescription(descriptionSession.id, description);
+            setSessions(prev => upsert(prev, updated));
+          }}
+          onClose={() => setDescriptionOf(null)}
         />
       )}
 

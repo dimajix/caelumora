@@ -55,6 +55,17 @@ impl SessionView {
         &self.session.name
     }
 
+    /// What the session is for, in a line (issue 245); `None` if nobody said.
+    pub fn summary(&self) -> Option<&str> {
+        self.session.summary.as_deref()
+    }
+
+    /// What an agent should know before it works in the session (issue 245);
+    /// `None` if nobody wrote it.
+    pub fn briefing(&self) -> Option<&str> {
+        self.session.briefing.as_deref()
+    }
+
     /// The session as privacy sees it now (issue 134).
     pub fn privacy(&self) -> SessionPrivacy {
         match &self.running {
@@ -264,6 +275,8 @@ impl SessionView {
         SessionSnapshot {
             id: self.session.id,
             name: self.session.name.clone(),
+            summary: self.session.summary.clone(),
+            briefing: self.session.briefing.clone().filter(|_| detail.contains(Detail::BRIEFING)),
             privacy: self.session.privacy,
             approval_rules: self.session.approval_rules.clone(),
             can_change: self.may_change().await,

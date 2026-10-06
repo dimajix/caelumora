@@ -47,6 +47,9 @@ bitflags::bitflags! {
         /// Of a member: who it is - its introduction, and of an agent its
         /// personality and owner (issue 244).
         const PROFILE = 1 << 5;
+        /// Of a session or channel: its briefing (issue 245), which may be
+        /// long - not where they are listed.
+        const BRIEFING = 1 << 6;
     }
 }
 
@@ -55,6 +58,11 @@ bitflags::bitflags! {
 pub struct SessionSnapshot {
     pub id: SessionId,
     pub name: String,
+    /// What it is for, in a line (issue 245); `None` if nobody said.
+    pub summary: Option<String>,
+    /// What an agent should know before it works here (issue 245) - with
+    /// `Detail::BRIEFING`.
+    pub briefing: Option<String>,
     /// Whom the session lets read what was said in it (issue 134) - shown
     /// to everyone who takes part.
     pub privacy: PrivacyConfig,
@@ -85,6 +93,11 @@ pub struct ParticipantSnapshot {
 pub struct ChannelSnapshot {
     pub id: ChannelId,
     pub name: String,
+    /// What it is for, in a line (issue 245); `None` if nobody said.
+    pub summary: Option<String>,
+    /// What an agent should know before it works here (issue 245) - with
+    /// `Detail::BRIEFING`.
+    pub briefing: Option<String>,
     /// The kind of the channel's moderator, e.g. `policy_moderator` (issue
     /// 174); `None` if it is a preconfigured component, whose kind is not
     /// known without reading it.

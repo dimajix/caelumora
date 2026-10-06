@@ -10,6 +10,7 @@ use crate::component::ComponentRegistry;
 
 pub mod agent_memory;
 pub mod channel_history;
+pub mod channel_briefing_prompt_provider;
 pub mod channel_language_prompt_provider;
 pub mod channel_members_prompt_provider;
 pub mod create_plan_tool;
@@ -28,6 +29,7 @@ pub fn register_all(registry: &mut ComponentRegistry) {
 
     agent_memory::register(registry);
     channel_history::register(registry);
+    channel_briefing_prompt_provider::register(registry);
     channel_language_prompt_provider::register(registry);
     channel_members_prompt_provider::register(registry);
     create_plan_tool::register(registry);

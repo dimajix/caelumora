@@ -1,6 +1,6 @@
 use crate::auth::AuthenticatedUser;
 use crate::error::{ApiError, Subject};
-use crate::models::{CreateSessionRequest, DeletedResponse, ListOptions, PrivateNotesResponse, RenameSessionRequest, SessionPrivacyRequest, SessionResponse, SessionSnapshot};
+use crate::models::{CreateSessionRequest, DeletedResponse, DescriptionRequest, ListOptions, PrivateNotesResponse, RenameSessionRequest, SessionPrivacyRequest, SessionResponse, SessionSnapshot};
 use crate::state::AppState;
 use axum::response::{IntoResponse, Response};
 use axum::{extract::{Query, State}, http::StatusCode};
@@ -53,9 +53,7 @@ pub async fn get_session(
     user: AuthenticatedUser,
 ) -> Result<Json<SessionSnapshot>, ApiError> {
     let session_id = SessionId(id);
-    let session = crate::routes::views(&state, &user).session(session_id).await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Session, &format!("loading session {session_id}")))?;
-    Ok(Json(session.snapshot(Detail::CHANNELS | Detail::MEMBERS).await.into()))
+    Ok(Json(crate::routes::session_view(&state, &user, session_id).await?))
 }
 
 /// The private notes agent `aid` wrote in the channels of session `id` the
@@ -85,9 +83,7 @@ pub async fn restore_session(State(state): State<Arc<AppState>>, Path(id): Path<
     let session_id = SessionId(id);
     state.session_manager.restore_session(&user.security_context(), session_id).await
         .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("restoring session {session_id}")))?;
-    let session = crate::routes::views(&state, &user).session(session_id).await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Session, &format!("loading session {session_id}")))?;
-    Ok(Json(session.snapshot(Detail::CHANNELS | Detail::MEMBERS).await.into()))
+    Ok(Json(crate::routes::session_view(&state, &user, session_id).await?))
 }
 
 /// Removes the deleted session `id` for good, with its channels and their
@@ -139,9 +135,7 @@ pub async fn update_session_privacy(
     session_loop.update_privacy(&user.security_context(), payload.privacy).await
         .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("changing the privacy of session {session_id}")))?;
 
-    let session = crate::routes::views(&state, &user).session(session_id).await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Session, &format!("loading session {session_id}")))?;
-    Ok(Json(session.snapshot(Detail::CHANNELS | Detail::MEMBERS).await.into()))
+    Ok(Json(crate::routes::session_view(&state, &user, session_id).await?))
 }
 
 /// Sets what the session restricts of the tool calls made in any of its
@@ -159,9 +153,27 @@ pub async fn update_session_approval_rules(
     let session_loop = crate::routes::ensure_session(&state, &user, session_id).await?;
 
     session_loop.update_approval_rules(&user.security_context(), rules).await
-        .map_err(|e| crate::routes::approval_rules_error(e, Subject::Session, &format!("changing the approval rules of session {session_id}")))?;
+        .map_err(|e| crate::routes::change_error(e, "invalid_rule", Subject::Session, &format!("changing the approval rules of session {session_id}")))?;
 
-    let session = crate::routes::views(&state, &user).session(session_id).await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Session, &format!("loading session {session_id}")))?;
-    Ok(Json(session.snapshot(Detail::CHANNELS | Detail::MEMBERS).await.into()))
+    Ok(Json(crate::routes::session_view(&state, &user, session_id).await?))
+}
+
+/// Says what session `id` is for (issue 245): its summary and briefing,
+/// `null` or blank to remove one - whoever may change the session. They are
+/// public to everybody in it. Answers `400 invalid_description` for one that
+/// is too long or holds what it may not, and otherwise the session as the
+/// user sees it now.
+pub async fn update_session_description(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    user: AuthenticatedUser,
+    Json(payload): Json<DescriptionRequest>,
+) -> Result<Json<SessionSnapshot>, ApiError> {
+    let session_id = SessionId(id);
+    let session_loop = crate::routes::ensure_session(&state, &user, session_id).await?;
+
+    session_loop.update_description(&user.security_context(), payload.summary.as_deref(), payload.briefing.as_deref()).await
+        .map_err(|e| crate::routes::change_error(e, "invalid_description", Subject::Session, &format!("changing the description of session {session_id}")))?;
+
+    Ok(Json(crate::routes::session_view(&state, &user, session_id).await?))
 }

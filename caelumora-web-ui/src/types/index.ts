@@ -38,8 +38,16 @@ export interface ProfileRequest {
 export interface SessionResponse {
   id: string;
   name: string;
+  /** What it is for, in a line (issue 245); absent if nobody said. */
+  summary?: string;
   /** Whom the session lets read what was said in it (issue 134). */
   privacy: PrivacyPolicy;
+}
+
+/** What a session or channel is for (issue 245), as it is set: `null` removes one. */
+export interface Description {
+  summary: string | null;
+  briefing: string | null;
 }
 
 /** Serialized `ActorId`: `"None"` or an object like `{ "Agent": "<uuid>" }`. */
@@ -151,6 +159,14 @@ export interface Deleted {
 export interface ChannelResponse {
   id: string;
   name: string;
+  /** What it is for, in a line (issue 245); absent if nobody said. */
+  summary?: string;
+  /**
+   * What an agent should know before it works here (issue 245), Markdown:
+   * sent where one session or channel is fetched, not where they are listed;
+   * absent if nobody wrote one.
+   */
+  briefing?: string;
   /** All participants, in no particular order. */
   members: ChannelMember[];
   /** The kind of the moderator, e.g. `policy_moderator`; `null` if preconfigured (issue 174). */
@@ -253,6 +269,14 @@ export interface PublishedNotes {
 export interface SessionSnapshot {
   id: string;
   name: string;
+  /** What it is for, in a line (issue 245); absent if nobody said. */
+  summary?: string;
+  /**
+   * What an agent should know before it works here (issue 245), Markdown:
+   * sent where one session or channel is fetched, not where they are listed;
+   * absent if nobody wrote one.
+   */
+  briefing?: string;
   /** Whom the session lets read what was said in it (issue 134). */
   privacy: PrivacyPolicy;
   /** What it restricts of the tool calls made in any of its channels (issue 13): rules that ask or deny. */

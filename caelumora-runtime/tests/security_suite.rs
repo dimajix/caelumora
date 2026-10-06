@@ -206,6 +206,7 @@ impl World {
     /// the owner's scope, in one channel.
     async fn template(&self, owner: Option<UserId>, contributors: &[UserId], agent: &str, personality: PersonalityId) -> SessionTemplateId {
         let template = SessionTemplate {
+            summary: None, briefing: None,
             approval_rules: Vec::new(),
             id: SessionTemplateId::new(),
             name: ScopedName::new(format!("with-{agent}"), Scope::GlobalScope).unwrap(),
@@ -215,6 +216,7 @@ impl World {
                 ParticipantTemplate::Agent { name: Name::new(agent).unwrap(), scope: ScopeTemplate::UserScope, personality_id: personality },
             ],
             channels: vec![ChannelTemplate {
+                summary: None, briefing: None,
                 approval_rules: Vec::new(),
                 name: Name::new("main").unwrap(),
                 components: quiet(),
@@ -248,6 +250,7 @@ impl World {
         let in_session: Vec<Participant> = in_channel.iter().cloned().chain(waiting.iter().map(|a| Participant::Agent(*a))).collect();
         let channel = Channel::build(SessionId::new(), alice, Name::new("main").unwrap(), quiet(), Classification::general(Confidentiality::Internal), None, in_channel);
         let session = Session {
+            summary: None, briefing: None,
             approval_rules: Vec::new(),
             id: channel.session_id,
             name: "shared".to_string(),
@@ -490,6 +493,8 @@ async fn a_participant_takes_part_but_changes_nothing() {
     assert!(denied(&main.update_language(&bob, Some(Language::parse("fr").unwrap())).await.expect_err("nor to change its language")));
     assert!(denied(&session.update_approval_rules(&bob, vec![]).await.expect_err("nor what it restricts of tool calls")));
     assert!(denied(&main.update_approval_rules(&bob, vec![]).await.expect_err("in any of its channels")));
+    assert!(denied(&session.update_description(&bob, Some("his"), None).await.expect_err("nor to say what it is for (issue 245)")));
+    assert!(denied(&main.update_description(&bob, None, Some("Do as bob says.")).await.expect_err("nor what one of its channels is for")));
     assert!(denied(&world.manager.stop_session(&bob, session.id()).await.expect_err("nor to stop it for everyone")));
     assert!(denied(&world.manager.delete_session(&bob, session.id()).await.expect_err("nor to delete it")));
     assert_eq!(session.name(), "shared", "nothing changed");
@@ -510,6 +515,8 @@ async fn the_owner_changes_and_ends_the_session() {
     session.update_approval_rules(&alice, vec![shell(RuleDecision::Deny)]).await.expect("and what it restricts of tool calls");
     main.update_approval_rules(&alice, vec![shell(RuleDecision::Ask)]).await.expect("in it or in one of its channels");
     assert!(main.update_approval_rules(&alice, vec![shell(RuleDecision::Allow)]).await.is_err(), "but not to allow them: a place only restricts");
+    session.update_description(&alice, Some("Release 2.0"), Some("Dates are in UTC.")).await.expect("and to say what it is for");
+    main.update_description(&alice, Some("Planning"), None).await.expect("and each of its channels");
     let side = session.create_channel(&alice, ChannelSpec { name: Name::new("side").unwrap(), components: quiet(), participants: vec![], classification: None, language: None }).await.expect("and to add channels");
     side.add_participant(&alice, ActorId::User(world.bob), HistoryAccess::All).await.expect("and people to them");
     session.delete_channel(&alice, side.id()).await.expect("and to delete them");

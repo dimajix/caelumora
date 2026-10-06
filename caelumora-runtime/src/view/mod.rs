@@ -551,6 +551,7 @@ mod tests {
 
     fn make_session(name: &str, owner: ActorId, contributors: Vec<ActorId>) -> Session {
         Session {
+            summary: None, briefing: None,
             approval_rules: Vec::new(),
             commands: Default::default(),
             privacy: Default::default(),
@@ -567,6 +568,7 @@ mod tests {
 
     fn main_channel(session: &Session) -> Channel {
         Channel {
+            summary: None, briefing: None,
             approval_rules: Vec::new(),
             id: session.channels[0],
             session_id: session.id,
@@ -737,6 +739,26 @@ mod tests {
         assert_eq!((gone.name.as_deref(), gone.handle.as_deref()), (None, None), "a deleted user is listed, but cannot be mentioned");
         assert!(approver.handle.is_none(), "an approver cannot be mentioned");
         assert!(view.members.iter().all(|m| !m.can_read_context), "no member is an agent");
+    }
+
+    #[tokio::test]
+    async fn what_a_place_is_for_is_shown_its_briefing_only_where_asked_for() {
+        let (store, manager) = owned_runtime();
+        let alice = user("alice");
+        let mut session = make_session("hers", ActorId::User(alice.id), vec![]);
+        session.participants = record_users(&store, &[&alice]).await;
+        (session.summary, session.briefing) = (Some("Release 2.0".to_string()), Some("Dates are in UTC.".to_string()));
+        let mut channel = main_channel(&session);
+        (channel.summary, channel.briefing) = (Some("Planning".to_string()), Some("Be brief.".to_string()));
+        store.create_session(&SecurityContext::system(), &session).await.unwrap();
+        store.create_channel(&SecurityContext::system(), &channel).await.unwrap();
+
+        let view = manager.views(as_user(alice.id)).session(session.id).await.unwrap();
+        let listed = view.snapshot(Detail::CHANNELS).await;
+        assert_eq!((listed.summary.as_deref(), listed.briefing.as_deref()), (Some("Release 2.0"), None), "the summary always, the briefing not where listed");
+        assert_eq!((listed.channels[0].summary.as_deref(), listed.channels[0].briefing.as_deref()), (Some("Planning"), None));
+        let read = view.snapshot(Detail::CHANNELS | Detail::BRIEFING).await;
+        assert_eq!((read.briefing.as_deref(), read.channels[0].briefing.as_deref()), (Some("Dates are in UTC."), Some("Be brief.")));
     }
 
     #[tokio::test]

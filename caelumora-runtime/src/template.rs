@@ -87,6 +87,7 @@ mod tests {
 
     fn template(participants: Vec<ParticipantTemplate>) -> SessionTemplate {
         SessionTemplate {
+            summary: None, briefing: None,
             approval_rules: Vec::new(),
             id: SessionTemplateId::new(),
             name: ScopedName::new("pairing", Default::default()).unwrap(),

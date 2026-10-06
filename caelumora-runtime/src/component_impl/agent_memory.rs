@@ -300,6 +300,7 @@ mod tests {
     fn session_with(id: SessionId, privacy: &SessionPrivacy) -> Session {
         let now = chrono::Utc::now();
         Session {
+            summary: None, briefing: None,
             approval_rules: Vec::new(),
             id,
             name: String::new(),

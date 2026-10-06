@@ -634,6 +634,24 @@ nothing. The part is public, and goes into the system prompt by default (`positi
 changes rarely. With `changes_only`, for an external agent, it is told once and then only when it
 changed, taking back is told too ("no longer held in a particular language").
 
+### What the session and channel are for
+
+A session and a channel may say what they are for - a summary and a briefing (issue 245, see
+[CHANNELS.md](CHANNELS.md#what-it-is-for)). Their agents are told by the component
+`channel_briefing_prompt_provider`, which a personality wires in like the roster and the language;
+where it comes in the personality's list decides where the part stands, and it belongs after the
+personality's own instructions.
+
+The part reads both through the turn's views (`SessionView`, `ChannelView`: `summary`, `briefing`)
+at the start of every turn, so a change reaches the agent with its next turn - the session's first,
+each under a heading of its own ("[About this channel]") that says it is what the place is for, as
+its owner describes it: written by whoever may change the place, not by whom the agent talks with.
+It steers what the agent says, never what it may do - permissions, approvals and the rules of a
+place are untouched by it. A place that says nothing adds nothing. The part is public if it holds
+only the session's descriptions, and classified as the channel if it holds the channel's. It goes
+into the system prompt by default (`position`); with `changes_only`, for an external agent, it is
+told once and then only when something changed, the whole of it again, taking back included.
+
 ### Instructions within a turn
 
 The runtime steers the model within a turn, too: while a plan is executed, it tells the model which

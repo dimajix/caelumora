@@ -1,5 +1,6 @@
 import type {
   AddParticipantRequest,
+  Description,
   AgentToolsResponse,
   ApprovalRule,
   ChannelMember,
@@ -229,6 +230,17 @@ export const api = {
     return res.json();
   },
 
+  /** Says what the channel is for (issue 245): `null` or blank removes one. */
+  async setChannelDescription(sessionId: string, channelId: string, description: Description): Promise<ChannelResponse> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/description`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(description),
+    });
+    await ensureOk(res, 'Failed to change the description');
+    return res.json();
+  },
+
   async setChannelLanguage(sessionId: string, channelId: string, language: string | null): Promise<ChannelResponse> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/language`, {
       method: 'PUT',
@@ -438,6 +450,17 @@ export const api = {
 
   /** Changes whom the session lets read what was said in it (issue 134); only its owner may. */
   /** Sets what the session restricts of tool calls in any of its channels (issue 13): rules that ask or deny, replacing those it had. */
+  /** Says what the session is for (issue 245): `null` or blank removes one. */
+  async setSessionDescription(sessionId: string, description: Description): Promise<SessionSnapshot> {
+    const res = await request(`/sessions/${sessionId}/description`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(description),
+    });
+    await ensureOk(res, 'Failed to change the description');
+    return res.json();
+  },
+
   async setSessionApprovalRules(sessionId: string, rules: ApprovalRule[]): Promise<SessionSnapshot> {
     const res = await request(`/sessions/${sessionId}/approval-rules`, {
       method: 'PUT',

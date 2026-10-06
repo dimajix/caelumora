@@ -133,6 +133,20 @@ export function languageChangedChannel(event: GlobalEvent): {channelId: string; 
 
 
 /**
+ * The channel whose description changed and what it says now, for
+ * `ChannelUpdated` with `DescriptionChanged` (issue 245); `null` for any
+ * other event.
+ */
+export function descriptionChangedChannel(event: GlobalEvent): {channelId: string; summary?: string; briefing?: string} | null {
+  const value = event.ChannelUpdated;
+  if (!Array.isArray(value) || typeof value[1] !== 'string') return null;
+  const update = value[2];
+  if (typeof update !== 'object' || update === null || !('DescriptionChanged' in update)) return null;
+  const {summary, briefing} = (update as {DescriptionChanged: {summary: string | null; briefing: string | null}}).DescriptionChanged;
+  return {channelId: value[1], summary: summary ?? undefined, briefing: briefing ?? undefined};
+}
+
+/**
  * The channel whose approval rules changed and its rules now, for
  * `ChannelUpdated` with `ApprovalRulesChanged` (issue 13); `null` for any
  * other event.

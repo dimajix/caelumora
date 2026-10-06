@@ -804,6 +804,7 @@ mod tests {
         let store = store(dir.path());
         let system = SecurityContext::system();
         let session = Session {
+            summary: None, briefing: None,
             approval_rules: Vec::new(),
             id: SessionId(Uuid::new_v4()), name: "old".to_string(), participants: Vec::new(), channels: Vec::new(),
             commands: Default::default(), privacy: Default::default(), created_at: Utc::now(), updated_at: Utc::now(),
@@ -861,6 +862,7 @@ mod tests {
 
         let session_id = SessionId(Uuid::new_v4());
         let channel = Channel {
+            summary: None, briefing: None,
             approval_rules: Vec::new(),
             id: ChannelId(Uuid::new_v4()),
             session_id,
@@ -876,6 +878,7 @@ mod tests {
         };
         let channel_id = channel.id;
         let session = Session {
+            summary: None, briefing: None,
             approval_rules: Vec::new(),
             commands: Default::default(),
             privacy: Default::default(),
@@ -927,6 +930,7 @@ mod tests {
         let ctx = SecurityContext::default();
 
         let s1 = Session {
+            summary: None, briefing: None,
             approval_rules: Vec::new(),
             commands: Default::default(),
             privacy: Default::default(),

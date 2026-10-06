@@ -578,6 +578,7 @@ mod tests {
         let session_id = SessionId::new();
         let channel_runtime = ChannelRuntime::outside_a_session(Arc::clone(&runtime), Arc::new(CommandExecutor::empty(Arc::clone(runtime.security_manager()))), session_id);
         let channel = caelumora_model::channel::Channel {
+            summary: None, briefing: None,
             approval_rules: Vec::new(),
             id: ChannelId::new(),
             session_id,

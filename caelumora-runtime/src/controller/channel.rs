@@ -11,7 +11,7 @@ use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::{EntityStore, StoreError, StoreResult};
 use std::sync::Arc;
-use super::check_restricting;
+use super::{check_restricting, checked_description};
 
 /// The one writer of a channel's document (issue 70): changes are stored
 /// first - where the permission is checked, on the channel's own attributes
@@ -159,6 +159,20 @@ impl ChannelController {
         Ok(removed)
     }
 
+    /// Says what the channel is for (issue 245) on behalf of `ctx`
+    /// (`UpdateChannel`): `summary` and `briefing` replace what it said,
+    /// trimmed - a blank one removes it. They reach its agents with their
+    /// next turn.
+    ///
+    /// # Errors
+    /// `StoreError::Validation` if one is too long or holds what it may not
+    /// (`Session::described`), otherwise whatever the store reports; the
+    /// channel is then unchanged.
+    pub async fn update_description(&self, ctx: &SecurityContext, summary: Option<&str>, briefing: Option<&str>) -> StoreResult<()> {
+        let (summary, briefing) = checked_description(summary, briefing)?;
+        self.update(ctx, &ChannelUpdateEvent::DescriptionChanged { summary, briefing }).await
+    }
+
     /// The event announcing that `participant` joined or left.
     fn membership_event(&self, participant: ActorId, joined: bool) -> Option<GlobalEvent> {
         match (participant, joined) {
@@ -184,6 +198,10 @@ impl ChannelController {
             ChannelUpdateEvent::ClassificationChanged(classification) => channel.classification = classification.clone(),
             ChannelUpdateEvent::LanguageChanged(language) => channel.language = language.clone(),
             ChannelUpdateEvent::ApprovalRulesChanged(rules) => channel.approval_rules = rules.clone(),
+            ChannelUpdateEvent::DescriptionChanged { summary, briefing } => {
+                channel.summary = summary.clone();
+                channel.briefing = briefing.clone();
+            }
         }
         self.store(ctx, &channel).await?;
         let attributes = channel.security_attributes.clone();

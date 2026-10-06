@@ -190,6 +190,7 @@ mod tests {
         let channel = Channel::build(session_id, ActorId::None, Name::new("main").unwrap(), Default::default(), Classification::CHANNEL_DEFAULT, language("de"), vec![Participant::Agent(agent.id)]);
         let now = chrono::Utc::now();
         let session = Session {
+            summary: None, briefing: None,
             approval_rules: Vec::new(),
             id: session_id, name: String::new(), participants: channel.participants.clone(), channels: vec![channel.id],
             commands: Default::default(), privacy: Default::default(), created_at: now, updated_at: now, security_attributes: Default::default(),

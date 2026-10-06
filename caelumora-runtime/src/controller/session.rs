@@ -7,7 +7,7 @@ use caelumora_model::session::{ChannelId, Session, SessionId, SessionUpdateEvent
 use caelumora_model::store::{EntityStore, StoreError, StoreResult};
 use chrono::Utc;
 use std::sync::Arc;
-use super::check_restricting;
+use super::{check_restricting, checked_description};
 
 /// The one writer of a session's document.
 #[derive(Debug)]
@@ -72,6 +72,18 @@ impl SessionController {
     pub async fn update_approval_rules(&self, ctx: &SecurityContext, rules: Vec<ApprovalRule>) -> StoreResult<()> {
         check_restricting(&rules)?;
         self.update(ctx, SessionUpdateEvent::ApprovalRulesChanged(rules)).await
+    }
+
+    /// Says what the session is for (issue 245) on behalf of `ctx`
+    /// (`UpdateSession`), as [`Self::update`] does: `summary` and `briefing`
+    /// replace what it said, trimmed - a blank one removes it.
+    ///
+    /// # Errors
+    /// `StoreError::Validation` if one is too long or holds what it may not
+    /// (`Session::described`), otherwise see [`Self::update`].
+    pub async fn update_description(&self, ctx: &SecurityContext, summary: Option<&str>, briefing: Option<&str>) -> StoreResult<()> {
+        let (summary, briefing) = checked_description(summary, briefing)?;
+        self.update(ctx, SessionUpdateEvent::DescriptionChanged { summary, briefing }).await
     }
 
     /// Applies `event` on behalf of `ctx`: stored first - which is where the
@@ -147,6 +159,10 @@ impl SessionController {
             SessionUpdateEvent::NameChanged(name) => session.name = name.clone(),
             SessionUpdateEvent::PrivacyChanged(privacy) => session.privacy = *privacy,
             SessionUpdateEvent::ApprovalRulesChanged(rules) => session.approval_rules = rules.clone(),
+            SessionUpdateEvent::DescriptionChanged { summary, briefing } => {
+                session.summary = summary.clone();
+                session.briefing = briefing.clone();
+            }
         }
         session
     }
@@ -161,6 +177,7 @@ mod tests {
     #[tokio::test]
     async fn a_renamed_session_is_stored_first() {
         let session = Session {
+            summary: None, briefing: None,
             approval_rules: Vec::new(),
             commands: Default::default(),
             privacy: Default::default(),

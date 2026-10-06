@@ -1,6 +1,6 @@
 use crate::auth::{require_auth, require_stream_auth, AuthenticatedUser};
 use crate::error::{ApiError, Subject};
-use crate::models::ChannelResponse;
+use crate::models::{ChannelResponse, SessionSnapshot};
 use crate::state::AppState;
 use axum::{
     routing::{get, post},
@@ -52,7 +52,16 @@ pub async fn open_channel(state: &Arc<AppState>, user: &AuthenticatedUser, sessi
 /// 80) - what a handler answers with a channel. Described by the runtime,
 /// which decides what the user may read and do; does not start the session.
 pub async fn channel_view(state: &Arc<AppState>, user: &AuthenticatedUser, session_id: SessionId, channel_id: ChannelId) -> Result<ChannelResponse, ApiError> {
-    Ok(channel_of(state, user, session_id, channel_id).await?.snapshot(Detail::MEMBERS).await.into())
+    Ok(channel_of(state, user, session_id, channel_id).await?.snapshot(Detail::MEMBERS | Detail::BRIEFING).await.into())
+}
+
+/// Session `session_id` as `user` sees it now, with its channels and their
+/// members and the briefings (issue 245) - what `GET` of one session and
+/// every change of one answer.
+pub async fn session_view(state: &Arc<AppState>, user: &AuthenticatedUser, session_id: SessionId) -> Result<SessionSnapshot, ApiError> {
+    let session = views(state, user).session(session_id).await
+        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Session, &format!("loading session {session_id}")))?;
+    Ok(session.snapshot(Detail::CHANNELS | Detail::MEMBERS | Detail::BRIEFING).await.into())
 }
 
 /// Channel `channel_id` of session `session_id` as `user` reaches it
@@ -71,12 +80,14 @@ pub fn views(state: &Arc<AppState>, user: &AuthenticatedUser) -> Views {
     state.session_manager.views(Viewer::new(user.security_context()))
 }
 
-/// What changing the approval rules of a place failed with (issue 13), as
-/// the API answers it: `400 invalid_rule` for a rule the place may not keep,
-/// with why; otherwise as `from_runtime` answers.
-pub fn approval_rules_error(error: anyhow::Error, subject: Subject, action: &str) -> ApiError {
+/// What changing a place failed with, as the API answers it: `400` with
+/// `code` - `invalid_rule` for an approval rule the place may not keep
+/// (issue 13), `invalid_description` for a summary or briefing (issue 245) -
+/// and why, for what the place refused to keep; otherwise as `from_runtime`
+/// answers.
+pub fn change_error(error: anyhow::Error, code: &'static str, subject: Subject, action: &str) -> ApiError {
     match error.downcast_ref::<StoreError>() {
-        Some(StoreError::Validation(reason)) => ApiError::new(StatusCode::BAD_REQUEST, "invalid_rule", reason.clone()),
+        Some(StoreError::Validation(reason)) => ApiError::new(StatusCode::BAD_REQUEST, code, reason.clone()),
         _ => ApiError::from_runtime(error, subject, action),
     }
 }
@@ -101,6 +112,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         )
         .route("/sessions/{id}/privacy", axum::routing::put(sessions::update_session_privacy))
         .route("/sessions/{id}/approval-rules", axum::routing::put(sessions::update_session_approval_rules))
+        .route("/sessions/{id}/description", axum::routing::put(sessions::update_session_description))
         .route("/sessions/{id}/restore", post(sessions::restore_session))
         .route("/sessions/{id}/purge", post(sessions::purge_session))
         .route("/sessions/{id}/actors/{aid}/private_notes", get(sessions::agent_private_notes))
@@ -113,6 +125,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/sessions/{id}/channels/{cid}/classification", axum::routing::put(channels::reclassify_channel))
         .route("/sessions/{id}/channels/{cid}/language", axum::routing::put(channels::set_channel_language))
         .route("/sessions/{id}/channels/{cid}/approval-rules", axum::routing::put(channels::update_channel_approval_rules))
+        .route("/sessions/{id}/channels/{cid}/description", axum::routing::put(channels::update_channel_description))
         .route("/sessions/{id}/channels/{cid}/restore", post(channels::restore_channel))
         .route(
             "/sessions/{id}/channels/{cid}/messages/{mid}",

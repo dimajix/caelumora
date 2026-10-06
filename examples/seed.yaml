@@ -30,6 +30,9 @@ personalities:
   - id: channel-language
     kind: channel_language_prompt_provider
     fail_policy: FailClosed
+  - id: channel-briefing
+    kind: channel_briefing_prompt_provider
+    fail_policy: FailClosed
   - id: create-plan-tool
     kind: create_plan_tool
     fail_policy: FailClosed
@@ -63,6 +66,9 @@ personalities:
     fail_policy: FailClosed
   - id: channel-language
     kind: channel_language_prompt_provider
+    fail_policy: FailClosed
+  - id: channel-briefing
+    kind: channel_briefing_prompt_provider
     fail_policy: FailClosed
   - id: create-plan-tool
     kind: create_plan_tool
@@ -106,6 +112,11 @@ personalities:
     params:
       changes_only: true
     fail_policy: FailClosed
+  - id: channel-briefing
+    kind: channel_briefing_prompt_provider
+    params:
+      changes_only: true
+    fail_policy: FailClosed
   - id: remote
     kind: a2a_agent
     params:
@@ -119,6 +130,10 @@ session_templates:
 - id: 94a2df67-0bde-4906-adb1-40e936b463e9
   name: simple-session
   description: Simple user+assistant session
+  summary: A quiz with Jonathan
+  briefing: |-
+    The user came to be quizzed. Ask one question at a time and wait for the answer before the
+    next; keep the score and tell it after every answer.
   participants:
   - User:
       name: user
