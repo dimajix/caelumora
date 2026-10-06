@@ -45,6 +45,7 @@ fn render(sets: &[ToolSet]) -> String {
         .filter_map(|set| set.unavailable.as_deref().map(|why| format!("{} ({}): {}", set.name, one_line(&set.description), one_line(why))))
         .collect();
     render_sections(
+        "Unavailable tools",
         "Some of your tools are unavailable right now, so you cannot call them. If a request needs them, \
          say that they are unavailable at the moment rather than that you cannot do it.",
         &[Section::lines(lines)],

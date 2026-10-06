@@ -20,7 +20,7 @@
 //! `changes_only`), as the roster and the language are.
 
 use crate::component::{flag_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::context::{Prompt, PromptPosition, PromptProvider};
+use crate::context::{titled, Prompt, PromptPosition, PromptProvider};
 use crate::work::AgentWork;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -63,7 +63,7 @@ impl ChannelBriefingPromptProvider {
             }
             Some(_) if text.is_empty() => {
                 *told = Some(text);
-                "[About this session and channel]\nWhat you were told of them before no longer holds: neither says anything about itself now.\n".to_string()
+                titled("About this session and channel", "What you were told of them before no longer holds: neither says anything about itself now.")
             }
             _ => {
                 *told = Some(text.clone());
@@ -98,14 +98,14 @@ fn described(place: &str, summary: Option<&str>, briefing: Option<&str>) -> Stri
     if summary.is_none() && briefing.is_none() {
         return String::new();
     }
-    let mut text = format!("[About this {place}]\nWhat this {place} is for, as its owner describes it.\n");
+    let mut text = format!("What this {place} is for, as its owner describes it.\n");
     if let Some(summary) = summary {
         text.push_str(&format!("In short: {summary}\n"));
     }
     if let Some(briefing) = briefing {
         text.push_str(&format!("\n{briefing}\n"));
     }
-    text
+    titled(&format!("About this {place}"), &text)
 }
 
 pub fn register(registry: &mut ComponentRegistry) {

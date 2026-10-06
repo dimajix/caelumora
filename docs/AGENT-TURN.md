@@ -531,6 +531,14 @@ What the model is given besides the conversation - the system prompt, notes, wha
 remembers - is a *prompt part* (issue 47). The `ContextProvider` decides where the parts go; the
 `Turn` records what it was handed.
 
+Every part the runtime writes has one form (issue 249): a short title in brackets on a line of its
+own - `[Who is in this channel]`, `[Your private notes]`, `[Planning]` - then what needs explaining
+as plain text, then the content. `context::titled` makes it, and `render_sections` for a part that
+lists entries; a part that says nothing is no part. The parts are joined by a blank line, and an
+external agent is given each on its own, so the titles keep them apart either way. The text of
+`static_system_prompt_provider` is the personality's and stays as written, under the title its
+parameter `title` names, if any.
+
 ### The `ContextProvider`
 
 An agent has exactly one `ContextProvider` (issue 98), a facet registered with

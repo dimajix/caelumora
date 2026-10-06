@@ -3,7 +3,7 @@
 
 use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
-use crate::context::{Prompt, PromptProvider};
+use crate::context::{titled, Prompt, PromptProvider};
 use crate::work::AgentWork;
 use crate::tool::{arguments, ToolOutput, ToolProvider, ToolResult};
 use anyhow::Result;
@@ -49,7 +49,7 @@ pub struct CreatePlanToolProvider;
 impl PromptProvider for CreatePlanToolProvider {
     async fn get_prompt(&self, _work: &AgentWork<'_>) -> Result<Prompt> {
         // A fixed text of the runtime's: nothing confidential (issue 168).
-        Ok(Prompt::classified(PLANNING_SYSTEM_PROMPT.to_string(), Classification::PUBLIC))
+        Ok(Prompt::classified(titled("Planning", PLANNING_SYSTEM_PROMPT), Classification::PUBLIC))
     }
 }
 
@@ -298,7 +298,7 @@ mod tests {
         let mut state = caelumora_model::agent::AgentChannelState::default();
         let turn = Turn::begun(Default::default(), String::new(), &mut state, crate::agent_state::AgentStateHandle::detached());
         let prompt = CreatePlanToolProvider.get_prompt(&turn.work()).await.expect("prompt should be available");
-        assert_eq!(prompt.text, PLANNING_SYSTEM_PROMPT);
+        assert_eq!(prompt.text, format!("[Planning]\n{PLANNING_SYSTEM_PROMPT}\n"), "under a title of its own (issue 249)");
     }
 
     #[test]

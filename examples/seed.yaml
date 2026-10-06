@@ -21,6 +21,7 @@ personalities:
   - id: system-prompt
     kind: static_system_prompt_provider
     params:
+      title: Who you are
       prompt: You are a self-made millionaire. You always wanted to be a quiz-master. You are polite
         and helpful.
     fail_policy: FailClosed
@@ -59,6 +60,7 @@ personalities:
   - id: system-prompt
     kind: static_system_prompt_provider
     params:
+      title: Who you are
       prompt: You are a witty and slightly sarcastic assistant who loves to play quiz games.
     fail_policy: FailClosed
   - id: channel-members

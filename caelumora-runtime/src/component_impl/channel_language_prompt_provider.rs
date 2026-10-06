@@ -18,7 +18,7 @@
 //! (`channel_members_prompt_provider`).
 
 use crate::component::{flag_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::context::{Prompt, PromptPosition, PromptProvider};
+use crate::context::{titled, Prompt, PromptPosition, PromptProvider};
 use crate::work::AgentWork;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -27,6 +27,9 @@ use caelumora_model::language::Language;
 use std::sync::{Arc, Mutex};
 
 pub const CHANNEL_LANGUAGE_PROMPT_PROVIDER_KIND: &str = "channel_language_prompt_provider";
+
+/// The title of its part.
+const TITLE: &str = "Language of this channel";
 
 #[derive(Debug)]
 pub struct ChannelLanguagePromptProvider {
@@ -61,7 +64,7 @@ impl ChannelLanguagePromptProvider {
             }
             Some(Some(_)) if language.is_none() => {
                 *told = Some(None);
-                "[Language of this channel]\nThis channel's conversation is no longer held in a particular language.\n".to_string()
+                titled(TITLE, "This channel's conversation is no longer held in a particular language.")
             }
             _ => {
                 let text = render(language.as_ref());
@@ -99,10 +102,9 @@ fn render(language: Option<&Language>) -> String {
         Some((english, native)) => (format!("{english} - {native}, BCP 47 tag \"{language}\""), english.to_string()),
         None => (format!("the language with the BCP 47 tag \"{language}\""), "it".to_string()),
     };
-    format!("[Language of this channel]\n\
-        This channel's conversation is held in {held_in}. \
+    titled(TITLE, &format!("This channel's conversation is held in {held_in}. \
         Write everything in {write_in} - your answers, your messages to the others and what you note down - \
-        whatever language your instructions, your tools or earlier messages are in.\n")
+        whatever language your instructions, your tools or earlier messages are in."))
 }
 
 pub fn register(registry: &mut ComponentRegistry) {

@@ -246,7 +246,7 @@ fn render<'a>(own: &[Note], others: impl Iterator<Item = (&'a str, &'a [Note])>)
     let numbered = |notes: &[Note]| notes.iter().map(|n| format!("#{}: {}", n.id, n.text)).collect();
     let mut sections = vec![Section::new(format!("Your notes (change them with `{NOTE_TOOL_NAME}` and `{REVOKE_NOTE_TOOL_NAME}`):"), numbered(own))];
     sections.extend(others.map(|(name, notes)| Section::new(format!("Notes of {name}:"), numbered(notes))));
-    render_sections("[Notes in this channel - what its participants noted to remember.]", &sections)
+    render_sections("Notes in this channel", "What its participants noted to remember.", &sections)
 }
 
 pub fn register(registry: &mut ComponentRegistry) {

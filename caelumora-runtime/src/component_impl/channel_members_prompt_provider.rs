@@ -17,7 +17,7 @@
 //! actor, so for each channel - and tells all of it again after a restart.
 
 use crate::component::{flag_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::context::{Prompt, PromptPosition, PromptProvider};
+use crate::context::{titled, Prompt, PromptPosition, PromptProvider};
 use crate::work::AgentWork;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -122,7 +122,7 @@ impl PromptProvider for ChannelMembersPromptProvider {
 /// the others' messages are marked is told with them, `explanation`, as
 /// the agent's model profile words it (issue 135).
 fn render(me: Option<&Member>, others: &[Member], explanation: Option<&str>) -> String {
-    let mut text = "[Who is in this channel]\n".to_string();
+    let mut text = String::new();
     if let Some(me) = me {
         text.push_str(&format!("You are {}.\n", named(me)));
         if let Some(introduction) = &me.introduction {
@@ -131,7 +131,7 @@ fn render(me: Option<&Member>, others: &[Member], explanation: Option<&str>) -> 
     }
     if others.is_empty() {
         text.push_str("Nobody else is in this channel.\n");
-        return text;
+        return titled("Who is in this channel", &text);
     }
     if others.iter().any(|m| m.handle.is_some()) {
         text.push_str("The others - mention one by their @handle to address them:\n");
@@ -149,7 +149,7 @@ fn render(me: Option<&Member>, others: &[Member], explanation: Option<&str>) -> 
     if let Some(explanation) = explanation {
         text.push_str(&format!("{explanation}\n"));
     }
-    text
+    titled("Who is in this channel", &text)
 }
 
 /// Who of the others joined and who left since `before` was told, as an

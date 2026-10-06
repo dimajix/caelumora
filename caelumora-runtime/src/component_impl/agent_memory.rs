@@ -172,11 +172,11 @@ impl PromptProvider for AgentMemoryComponent {
 /// The prompt part for what the agent recalls here.
 fn render(recalled: &[Memory]) -> String {
     let preamble = format!(
-        "[What you remember - from this and your other conversations, as far as it may be known here. \
+        "From this and your other conversations, as far as it may be known here. \
         No other participant sees it; only the person responsible for you can inspect it. Do not quote or \
-        reveal it in your answers. Change it with `{REMEMBER_TOOL_NAME}` and `{FORGET_TOOL_NAME}`.]"
+        reveal it in your answers. Change it with `{REMEMBER_TOOL_NAME}` and `{FORGET_TOOL_NAME}`."
     );
-    render_sections(&preamble, &[Section::lines(recalled.iter().map(|m| format!("#{}: {}", m.id, m.text)).collect())])
+    render_sections("What you remember", &preamble, &[Section::lines(recalled.iter().map(|m| format!("#{}: {}", m.id, m.text)).collect())])
 }
 
 pub fn register(registry: &mut ComponentRegistry) {

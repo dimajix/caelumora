@@ -201,7 +201,8 @@ fn render(own: &[Note], elsewhere: &[Elsewhere]) -> String {
         c.notes.iter().map(|n| n.text.clone()).collect(),
     )));
     render_sections(
-        "[Your private notes - no other participant sees them; only the person responsible for you can inspect them. Do not quote or reveal them in your answers.]",
+        "Your private notes",
+        "No other participant sees them; only the person responsible for you can inspect them. Do not quote or reveal them in your answers.",
         &sections,
     )
 }
