@@ -9,7 +9,7 @@ use crate::actor::Answering;
 use crate::runtime::ActorRuntime;
 use crate::transport::{EventReceiver, EventSender};
 use anyhow::Result;
-use caelumora_model::actor::{ActorEvent, ActorId, Envelope};
+use caelumora_model::actor::{ActorEvent, ActorId, Envelope, RetryTarget};
 use caelumora_model::agent::{AgentChannelState, RetryRefused};
 use caelumora_model::component::ComponentFailPolicy;
 use caelumora_model::message::Message;
@@ -161,11 +161,20 @@ async fn take_in(
 /// logged.
 async fn reject_retries(retries: Vec<Envelope>, reason: RetryRefused, own: ActorId, name: &str, output: &dyn EventSender) {
     for retry in retries {
-        let ActorEvent::RetryRequested { message, .. } = retry.event else { continue };
-        let rejected = ActorEvent::RetryRejected { message, reason };
+        let Some(target) = retry_target(&retry) else { continue };
+        let rejected = ActorEvent::RetryRejected { target, reason };
         if let Err(e) = Answering::to(&retry, own, name.to_string()).send(rejected, output).await {
             warn!("Agent {} cannot reject a request to answer again: {:#}", own, e);
         }
+    }
+}
+
+/// What the request to answer again in `retry` is about (issue 235);
+/// `None` for any other event.
+fn retry_target(retry: &Envelope) -> Option<RetryTarget> {
+    match retry.event {
+        ActorEvent::RetryRequested { target, .. } => Some(target),
+        _ => None,
     }
 }
 

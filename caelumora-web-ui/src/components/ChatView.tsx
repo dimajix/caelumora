@@ -89,6 +89,7 @@ function retryRefusedText(reason: RetryRefused): string {
     case 'calls_ran': return 'tools that already ran would be taken back with it';
     case 'asked_again': return 'it was asked again in the meantime';
     case 'elsewhere': return 'it runs elsewhere and cannot take back what it was given';
+    case 'ended': return 'its answer had already ended';
     default: return 'for a reason this page does not know';
   }
 }

@@ -94,8 +94,9 @@ pub enum ActionType<'a> {
     /// them by sending them something.
     WakeChannel(&'a SecurityAttributes),
     /// Asking an agent of a channel to answer again instead of one of its
-    /// messages (issue 234), carrying the channel's attributes: an act on the
-    /// conversation, like cancelling or waking it, not on the agent.
+    /// messages, or of its answer under way (issues 234, 235), carrying the
+    /// channel's attributes: an act on the conversation, like cancelling or
+    /// waking it, not on the agent.
     RetryMessage(&'a SecurityAttributes),
     /// Reading something of the channel `source` - a message, a note, a
     /// memory entry, classified as `source` says - from another channel,
@@ -413,9 +414,9 @@ pub trait AccessQuestions {
     async fn may_reclassify(&self, context: &SecurityContext, target: Reclassified<'_>, current: &Classification, new: &Classification, channel: &Classification) -> bool;
 
     /// Whether `context` may ask an agent of the channel with `channel`
-    /// attributes to answer again instead of one of its messages
-    /// (`RetryMessage`, issue 234) - asked by the channel as it admits the
-    /// request.
+    /// attributes to answer again instead of one of its messages, or of its
+    /// answer under way (`RetryMessage`, issues 234, 235) - asked by the
+    /// channel as it admits the request.
     async fn may_retry_message(&self, context: &SecurityContext, channel: &SecurityAttributes) -> bool;
 
     /// Whether the user `context` acts for, with `roles`, is cleared for

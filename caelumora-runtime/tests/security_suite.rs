@@ -34,6 +34,7 @@ use caelumora_model::store::{EntityStore, StateStore, StoreError};
 use caelumora_model::store_impl::memory::MemoryStore;
 use caelumora_model::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
 use caelumora_model::user::{User, UserId, UserProfile};
+use caelumora_model::work::TurnId;
 use caelumora_runtime::channel::ChannelError;
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use caelumora_runtime::external::{ExternalAgent, ExternalAgentResult, ExternalEvent, ExternalStream, OutboundMessage};
@@ -638,7 +639,8 @@ async fn a_message_is_reclassified_by_its_author_or_the_channels_owner() {
 /// as alice - asked as `RetryMessage` of the channel before anything of the
 /// message is looked at but that it is there. Whether the agent answers
 /// again is its own to decide; a message no agent said is refused after
-/// the question.
+/// the question. An answer under way (issue 235) is asked for again under
+/// the same question, asked before anything of the agent is looked at.
 #[tokio::test]
 async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
     use caelumora_model::actor::ActorEvent;
@@ -654,6 +656,9 @@ async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
     let (refused, asked) = world.asked(bob.request_retry(said[0].id)).await;
     assert!(matches!(refused.expect_err("no agent said it").downcast_ref::<ChannelError>(), Some(ChannelError::NotAnAgentsMessage { .. })));
     assert_eq!(asked, checks(&["bob: RetryMessage(alice's) yes"]), "his to ask, as a participant");
+    let (refused, asked) = world.asked(bob.request_retry_of_turn(ActorId::User(world.alice), TurnId::new())).await;
+    assert!(matches!(refused.expect_err("no agent answers").downcast_ref::<ChannelError>(), Some(ChannelError::NotAParticipant { .. })));
+    assert_eq!(asked, checks(&["bob: RetryMessage(alice's) yes"]), "an answer under way by the same question");
     let view = world.manager.views(Viewer::new(World::as_user(world.bob))).session(session.id()).await.unwrap().channel(main.id()).await.unwrap();
     let (offered, asked) = world.asked(view.may_retry()).await;
     assert!(offered, "and offered to him");

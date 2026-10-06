@@ -9,6 +9,7 @@ use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventCon
 use caelumora_model::message::Message;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::tool::ToolSet;
+use caelumora_model::work::TurnId;
 
 #[async_trait]
 pub(crate) trait Actor: Any + Debug + Send + Sync {
@@ -59,6 +60,23 @@ pub(crate) trait Actor: Any + Debug + Send + Sync {
     /// purpose: a cancel comes from another task and must reach a running
     /// model call without waiting for anything.
     fn cancel(&self) {}
+
+    /// Its turn under way (issue 235), if it is in one that can still be
+    /// ended. None for an actor without such turns - a user, an approver,
+    /// an external agent, whose answers are its remote side's.
+    fn turn_under_way(&self) -> Option<TurnId> {
+        None
+    }
+
+    /// Gives its turn `turn` up because the answer is asked for again
+    /// (issue 235), if that is the turn under way, and returns whether it
+    /// was: nothing else is ended. Synchronous like `cancel`, and like it
+    /// the consequence of an act that was checked - the channel admitted the
+    /// request. An actor that cannot answer anew keeps the default: it was
+    /// in no such turn.
+    fn retry_turn(&self, _turn: TurnId) -> bool {
+        false
+    }
 
     /// Ends the actor for good, because it left the channel (issue 75) -
     /// removed from it, or the channel deleted: a turn under way is given

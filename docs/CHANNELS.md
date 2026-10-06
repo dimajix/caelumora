@@ -211,36 +211,65 @@ How the chains record a change is described in
 
 Whoever takes part may ask an agent to answer again instead of one of its messages - its last
 answer, and nothing else, since a new answer cannot be placed above what answered the old one
-without forking. It is a request to the agent, not an operation of the channel: the agent decides.
+without forking - or instead of its answer still under way (issue 235). It is a request to the
+agent, not an operation of the channel: `ActorEvent::RetryRequested { target, author }`, whose
+`RetryTarget` is a message (`Message(id)`) or a turn (`Turn(id)`, the id `ResponseStarted`
+announced and every message of the turn carries).
 
-*   **A user** asks through their actor: `UserActor::request_retry(message)` asks `RetryMessage`
-    of the channel - as cancelling and waking, whoever may read the channel - and sends a
-    `WakeupRequested`, then `ActorEvent::RetryRequested { message, author }`.
+*   **A user** asks through their actor: `UserActor::request_retry(message)` or
+    `request_retry_of_turn(author, turn)` asks `RetryMessage` of the channel first - as cancelling
+    and waking, whoever may read the channel - and sends a `WakeupRequested`, then the request.
     `ChannelError::MessageNotFound`, `Forbidden`, `MessageRevoked` and `NotAnAgentsMessage` tell
-    the user why not.
+    the user why not for a message; for a turn, `NotAParticipant` if `author` is no agent of the
+    channel and `NotUnderWay` if the turn is not its turn under way (`ChannelLoop::turn_under_way`):
+    it ended, or never was. So a request about an answer that is over is refused at once, without
+    an event.
 *   **The channel** admits it as it admits a change (`admits_change`): its sender may ask it, and
-    `author` is the agent that said the message, which was not taken back. The moderator routes it
-    to `author` alone, whom the channel wakes first, as it wakes whom it asks to respond.
-*   **The agent** takes it in between turns, with what it hears (`actor_impl::take_in`). A request
-    to respond that came with it outweighs it; of several requests to answer again, the last is
-    answered and the others are rejected. It answers again only if the message is its last answer,
-    as its own transcript says (`AgentChannelState::retried`): an answer of its own on the
-    transcript's active path, after which only its own internal steps and changes to what was said
-    follow. It then says so with `RetryAccepted`, takes back the message and those steps - in its
-    own state, and with `MessageRevoked` for what the channel holds - and begins a turn in the
-    request's contexts, as it does for `ResponseRequested`: its model is given the conversation as
-    it stood before the message, as it stands now. What it then says is routed as any answer.
-    Otherwise it says why with `RetryRejected`, whose `reason` is a `RetryRefused` - not its answer,
-    more was said or done since, calls of tools that ran would be taken back, asked again since, or
-    an external agent - one of a known few, which a user interface words itself.
-*   **An external agent** rejects every request to answer again: its remote agent keeps what it was
-    given, and nothing here takes the answer back from it.
+    `author` is the agent that said the message, which was not taken back - or, for a turn, an
+    agent of the channel. The moderator routes it to `author` alone, whom the channel wakes first,
+    as it wakes whom it asks to respond. A turn is ended as the request is delivered:
+    `Actor::retry_turn(turn)` gives it up if it is still the agent's turn under way, decided in one
+    step under the turn's lock in its `RunControl`; if it is not - it ended between the user's
+    actor asking and the delivery - the request is dropped and logged, and its users see the answer
+    end. Whether a retry is possible is decided before anything is interrupted: a request about an
+    older message never ends the answer under way, it waits for it like everything the agent hears.
+*   **The agent**, its turn under way asked for again, ends the step under way at once - the model
+    call is dropped, a running tool interrupted, a wait for an approval ended, as on a cancel - and
+    gives the turn up (`GivenUpReason::Retried`, issue 145): its messages stay on a branch no longer
+    active, its calls that ran are told to its model on the active path, its approval requests are
+    withdrawn. Nothing of it reached the channel's history or another agent, which hear an answer
+    only with its `FullResponseGenerated`, so nothing has to be taken back. A cancel asked before
+    wins: the turn is taken over instead.
+*   **The agent** takes requests in between turns, with what it hears (`actor_impl::take_in`):
+    *   the request of the turn it gave up for it is accepted, whatever came with it - its answer is
+        gone already - and answered with `RetryAccepted`;
+    *   a request of a turn it did not give up for it - a cancel came first, or the turn failed -
+        is rejected as `Ended`;
+    *   of the requests of a message, the last is judged against the conversation as it stands -
+        unless the request of a turn was accepted, which answers anew anyway - and the others are
+        rejected as asked again. It answers again only if the message is its last answer, as its
+        own transcript says (`AgentChannelState::retried`): an answer of its own on the
+        transcript's active path, after which only its own internal steps and changes to what was
+        said follow. It then says so with `RetryAccepted` and takes back the message and those
+        steps - in its own state, and with `MessageRevoked` for what the channel holds. Otherwise
+        it says why with `RetryRejected`, whose `reason` is a `RetryRefused` - not its answer, more
+        was said or done since, calls of tools that ran would be taken back, asked again since, its
+        answer had ended, or an external agent - one of a known few, which a user interface words
+        itself.
 
-`RetryAccepted` and `RetryRejected` go to the users and are never written to the history. A request
-waits for the end of a turn under way, as everything an agent hears does. Whether a viewer may ask
-is part of the channel's snapshot (`ChannelSnapshot::can_retry`, `ChannelView::may_retry`), so
-that a client offers it only where it is permitted. The TUI asks it of the last answer of an agent
-it showed, with `/retry`.
+    A retry accepted and a request to respond in the same batch are one turn, in the request's
+    contexts - what was said during the turn given up is answered with it; a retry alone begins
+    one in its own. Its model is given the conversation as it stands, without what was replaced.
+    What it then says is routed as any answer.
+*   **An external agent** rejects every request to answer again: its remote agent keeps what it was
+    given, and nothing here takes the answer back from it. It has no turn under way here
+    (`Actor::turn_under_way` is `None`), so a request of its answer under way is refused by the
+    user's actor.
+
+`RetryAccepted` and `RetryRejected` go to the users and are never written to the history. Whether a
+viewer may ask is part of the channel's snapshot (`ChannelSnapshot::can_retry`,
+`ChannelView::may_retry`), so that a client offers it only where it is permitted. The TUI asks it of
+the last answer of an agent it showed, with `/retry`.
 
 ## Participants
 

@@ -366,17 +366,23 @@ export interface ActorEvent {
    * (issues 133, 239): reclassified by its author or the channel's owner.
    */
   MessageReclassified?: { message: string; classification: Classification };
-  /** The sender answers again instead of its message `message` (issue 234). */
-  RetryAccepted?: { message: string };
-  /** The sender does not answer again instead of its message `message`, for `reason` (issue 234). */
-  RetryRejected?: { message: string; reason: RetryRefused };
+  /** The sender answers again instead of `target` (issues 234, 235). */
+  RetryAccepted?: { target: RetryTarget };
+  /** The sender does not answer again instead of `target`, for `reason` (issues 234, 235). */
+  RetryRejected?: { target: RetryTarget; reason: RetryRefused };
 }
 
 /**
- * Why an agent does not answer again (issue 234): a known few, which the UI
- * words itself; one it does not know is shown as such.
+ * What a request to answer again is about (issue 235): a message of the
+ * agent's, or its answer under way, by its turn.
  */
-export type RetryRefused = 'not_its_answer' | 'not_last' | 'calls_ran' | 'asked_again' | 'elsewhere';
+export type RetryTarget = { message: string } | { turn: string };
+
+/**
+ * Why an agent does not answer again (issues 234, 235): a known few, which
+ * the UI words itself; one it does not know is shown as such.
+ */
+export type RetryRefused = 'not_its_answer' | 'not_last' | 'calls_ran' | 'asked_again' | 'elsewhere' | 'ended';
 
 /** A user command, as `/help` and completion show it (issue 28). */
 export interface Command {
@@ -507,7 +513,8 @@ export interface HistoryMessage {
 export type GivenUpReason =
   | {kind: 'failed'; message: string}
   | {kind: 'lowered'; channel: Classification}
-  | {kind: 'stopped'};
+  | {kind: 'stopped'}
+  | {kind: 'retried'};
 
 /**
  * A turn an agent gave up (issues 145, 146): why and when, the message of

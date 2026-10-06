@@ -38,6 +38,7 @@ fn because(reason: &GivenUpReason) -> &'static str {
         GivenUpReason::Failed { .. } => "it failed",
         GivenUpReason::Lowered { .. } => "the channel's classification was lowered",
         GivenUpReason::Stopped => "you were stopped",
+        GivenUpReason::Retried => "your answer was asked for again",
     }
 }
 

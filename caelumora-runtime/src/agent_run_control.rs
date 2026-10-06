@@ -1,14 +1,14 @@
 //! The run control of an `AgentActor`: what its run loop shares with
-//! `cancel`, `stop` and `wakeup` (see `RunControl`).
+//! `cancel`, `retry`, `stop` and `wakeup` (see `RunControl`).
 
 use caelumora_model::actor::{ActorState, ProcessingStateHolder};
 use caelumora_model::work::TurnId;
 use std::sync::atomic::{AtomicU8, Ordering};
 use tokio_util::sync::CancellationToken;
 
-/// What `cancel` or `stop` asked of the run loop, which takes it after every
-/// step and alone decides what follows (issue 152). A stop wins over a
-/// cancel.
+/// What `cancel`, `retry` or `stop` asked of the run loop, which takes it
+/// after every step and alone decides what follows (issue 152). A stop wins
+/// over everything; of a cancel and a retry, the first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub(crate) enum Interrupt {
@@ -17,6 +17,9 @@ pub(crate) enum Interrupt {
     /// Give the turn under way up and end the run loop: the actor left the
     /// channel.
     Stop = 2,
+    /// Give the turn under way up, because its answer was asked for again
+    /// (issue 235): a turn of its own answers instead.
+    Retry = 3,
 }
 
 /// `RunControl::interrupt` when nothing was asked.
@@ -70,18 +73,25 @@ impl RunControl {
         self.state.replace(ActorState::Sleeping, ActorState::Idle);
     }
 
-    /// The turn `turn` begins: it gets a token of its own, and a cancel that
-    /// came as the turn before ended has nothing to end here; a stop still
-    /// has.
+    /// The turn `turn` begins: it gets a token of its own, and a cancel or
+    /// a retry that came as the turn before ended has nothing to end here;
+    /// a stop still has.
     pub(crate) fn begin_turn(&self, turn: TurnId) {
         *self.lock_turn() = (Some(turn), CancellationToken::new());
-        let _ = self.interrupt.compare_exchange(Interrupt::Cancel as u8, NO_INTERRUPT, Ordering::SeqCst, Ordering::SeqCst);
+        let _ = self.interrupt.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |asked| (asked != Interrupt::Stop as u8).then_some(NO_INTERRUPT));
     }
 
-    /// The turn under way, if the run loop is in one (issue 235).
+    /// The turn under way, if the run loop is in one that can still be
+    /// ended (issue 235) - not one ending already, which a cancel or a
+    /// retry would find over.
     pub(crate) fn turn_under_way(&self) -> Option<TurnId> {
         let (turn, _) = *self.lock_turn();
-        turn.filter(|_| self.state().in_turn())
+        turn.filter(|_| self.interruptible())
+    }
+
+    /// Whether the run loop is in a turn that an interrupt can still end.
+    fn interruptible(&self) -> bool {
+        matches!(self.state(), ActorState::WaitingForApproval | ActorState::ExecutingTools | ActorState::Planning)
     }
 
     /// The token of the current turn, cancelled by `cancel` and `stop`.
@@ -97,9 +107,25 @@ impl RunControl {
     /// there is nothing to cancel, and a turn already ending is ended
     /// anyway.
     pub(crate) fn cancel(&self) {
-        if matches!(self.state(), ActorState::WaitingForApproval | ActorState::ExecutingTools | ActorState::Planning) {
+        if self.interruptible() {
             self.interrupt(Interrupt::Cancel);
         }
+    }
+
+    /// Asks for the turn `turn` to be given up, because its answer is asked
+    /// for again (issue 235), and returns whether `turn` is the turn under
+    /// way - decided under the turn's lock, so that no turn begins in
+    /// between. Only that turn is interrupted: a request about another, or
+    /// about one that ended, ends nothing. A cancel asked first wins - the
+    /// turn is taken over - but the turn was the one under way all the same.
+    pub(crate) fn retry(&self, turn: TurnId) -> bool {
+        let under_way = self.lock_turn();
+        if under_way.0 != Some(turn) || !self.interruptible() {
+            return false;
+        }
+        let _ = self.interrupt.compare_exchange(NO_INTERRUPT, Interrupt::Retry as u8, Ordering::SeqCst, Ordering::SeqCst);
+        under_way.1.cancel();
+        true
     }
 
     /// Asks the run loop to end: a model call in flight is interrupted, and
@@ -112,8 +138,8 @@ impl RunControl {
     /// a cancel - and interrupts the step under way.
     fn interrupt(&self, interrupt: Interrupt) {
         match interrupt {
-            Interrupt::Cancel => {
-                let _ = self.interrupt.compare_exchange(NO_INTERRUPT, Interrupt::Cancel as u8, Ordering::SeqCst, Ordering::SeqCst);
+            Interrupt::Cancel | Interrupt::Retry => {
+                let _ = self.interrupt.compare_exchange(NO_INTERRUPT, interrupt as u8, Ordering::SeqCst, Ordering::SeqCst);
             }
             Interrupt::Stop => self.interrupt.store(Interrupt::Stop as u8, Ordering::SeqCst),
         }
@@ -125,6 +151,7 @@ impl RunControl {
         match self.interrupt.swap(NO_INTERRUPT, Ordering::SeqCst) {
             v if v == Interrupt::Cancel as u8 => Some(Interrupt::Cancel),
             v if v == Interrupt::Stop as u8 => Some(Interrupt::Stop),
+            v if v == Interrupt::Retry as u8 => Some(Interrupt::Retry),
             _ => None,
         }
     }
@@ -189,8 +216,50 @@ mod tests {
         control.begin_turn(next);
         control.go_to(ActorState::Planning);
         assert_eq!(control.turn_under_way(), Some(next));
-        control.go_to(ActorState::Idle);
-        assert_eq!(control.turn_under_way(), None, "once it ended");
+        control.go_to(ActorState::Reflecting);
+        assert_eq!(control.turn_under_way(), None, "nor once it ends");
+    }
+
+    #[test]
+    fn a_retry_interrupts_only_the_turn_it_names_while_it_can_still_be_ended() {
+        let (turn, other) = (TurnId::new(), TurnId::new());
+        let control = RunControl::new(ActorState::Planning, Some(turn));
+        assert!(!control.retry(other), "another turn");
+        assert!(!control.token().is_cancelled() && control.take_interrupt().is_none(), "ends nothing");
+        assert!(control.retry(turn));
+        assert!(control.token().is_cancelled());
+        assert_eq!(control.take_interrupt(), Some(Interrupt::Retry));
+
+        for state in [ActorState::Idle, ActorState::Reflecting, ActorState::Cancelling] {
+            let control = RunControl::new(state, Some(turn));
+            assert!(!control.retry(turn), "not under way any more: {state:?}");
+            assert_eq!(control.take_interrupt(), None, "{state:?}");
+        }
+    }
+
+    #[test]
+    fn of_a_cancel_and_a_retry_the_first_wins_and_a_stop_over_both() {
+        let turn = TurnId::new();
+        let control = RunControl::new(ActorState::Planning, Some(turn));
+        control.cancel();
+        assert!(control.retry(turn), "the turn was the one under way");
+        assert_eq!(control.take_interrupt(), Some(Interrupt::Cancel), "but the cancel came first");
+
+        let control = RunControl::new(ActorState::Planning, Some(turn));
+        assert!(control.retry(turn));
+        control.cancel();
+        assert_eq!(control.take_interrupt(), Some(Interrupt::Retry));
+
+        let control = RunControl::new(ActorState::Planning, Some(turn));
+        assert!(control.retry(turn));
+        control.stop();
+        assert_eq!(control.take_interrupt(), Some(Interrupt::Stop));
+
+        // One that came as the turn ended has nothing to end in the next.
+        let control = RunControl::new(ActorState::Planning, Some(turn));
+        assert!(control.retry(turn));
+        control.begin_turn(TurnId::new());
+        assert_eq!(control.take_interrupt(), None);
     }
 
     #[test]

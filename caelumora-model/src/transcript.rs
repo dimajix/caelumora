@@ -59,6 +59,9 @@ pub enum GivenUpReason {
     /// channel deleted. Who did that is a matter of that act, not of its
     /// consequence - the audit log's (issue 140).
     Stopped,
+    /// Its answer was asked for again while it was under way (issue 235):
+    /// a turn of its own answers instead.
+    Retried,
 }
 
 /// A turn that was given up: the record, and the turn's messages.

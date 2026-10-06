@@ -77,6 +77,8 @@ function reasonText(reason: GivenUpReason): string {
       return `The channel was lowered to ${classificationLabel(reason.channel)} while it ran.`;
     case 'stopped':
       return 'The agent was stopped, leaving the channel.';
+    case 'retried':
+      return 'Its answer was asked for again while it was under way.';
   }
 }
 

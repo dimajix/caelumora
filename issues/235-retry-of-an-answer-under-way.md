@@ -401,3 +401,31 @@ ended, and its answer is replaced as a completed one is.
   (*Cancelling*), SECURITY.md, REST-SERVER.md, WEB-UI.md. Not verified in the browser: the stop
   icon calls the route that the tests cover, and step 4 verifies the answers under way with a
   model.
+- **2026-10-06** — Step 3 done. `RetryTarget { Message(id), Turn(id) }` in the three retry events,
+  `RetryRefused::Ended`, `GivenUpReason::Retried` ("your answer was asked for again", told with the
+  calls that ran). `RunControl::retry(turn)` compares the turn with the one under way under the
+  turn's lock and leaves `Interrupt::Retry`; `turn_under_way()` and `retry` count only a turn that
+  can still be ended (`Planning`, `ExecutingTools`, `WaitingForApproval`), as `cancel` already did,
+  and a new turn drops a leftover retry as it drops a leftover cancel. `Actor::turn_under_way` and
+  `retry_turn` (defaults `None` and `false`, the external agent keeps them). The run loop gives a
+  turn interrupted so up and remembers it until a turn begins; `give_up` withdraws the approval
+  requests of every turn that stays in the channel, not only of one that failed or was lowered.
+  `handle_waiting` follows the rules above, which changes 234's: a retry of a message beside a
+  request to respond is judged instead of rejected unseen. `UserActor::request_retry_of_turn`
+  (`RetryMessage` first, then `NotAParticipant`, then `NotUnderWay`) shares asking and sending with
+  `request_retry`; `ChannelLoop::turn_under_way`; the channel admits a turn's request for an agent
+  of the channel and ends the turn as it delivers it (`route_event_impl`), dropping it if the turn
+  is over. Against the plan: `AgentChannelState::retried` keeps taking a message - the turn is the
+  run loop's to decide - and `ChannelError::NotUnderWay` is mapped to `409 not_under_way` already,
+  since the mapping is exhaustive; the web UI's types follow the new shapes (`target`, `ended`,
+  `retried`), its behaviour stays for step 4. A cancel that came first and makes a request `Ended`
+  is covered by `RunControl`'s tests only: in a running channel the two cannot be ordered so. Nor
+  is a retry of a message beside a request without a message: no request without one reaches an
+  agent in the tests' channels. Tests: an answer under way asked for again is given up, nothing of
+  it reaches the channel, and a turn of its own answers, asked what the given-up one was; what was
+  said during it is answered in that one turn; an older answer asked for again leaves the answer
+  under way alone and is rejected `NotLast` beside the request that followed, which is answered; a
+  turn asked for again while a tool runs tells the next one of the call, recorded as the turn's;
+  one waiting for an approval withdraws the request; an external agent has no turn to ask for
+  again; the security suite (M2). CHANNELS.md (*Answering again*), AGENT-TURN.md, SECURITY.md,
+  REST-SERVER.md.

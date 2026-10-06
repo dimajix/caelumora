@@ -37,11 +37,14 @@ issue 222), then commits once:
     that has moved on. A sleeping agent ignores the request; only `wakeup` ends the sleep. Whether
     it sleeps is read once everything is taken in: the channel wakes an agent before it delivers
     the message that asks it, and the request may come in the same batch.
-*   **Answer again.** Without a request to respond, the last `RetryRequested` among what was taken
-    in is answered (issue 234, see [CHANNELS.md](CHANNELS.md#answering-again)): if the message is
-    the agent's last answer (`AgentChannelState::retried`), it is taken back with the internal
-    steps after it and a turn begins as above, given the transcript as it stands; otherwise the
-    agent rejects it. Every other request to answer again in the batch is rejected.
+*   **Answer again.** The requests to answer again among what was taken in are answered (issues
+    234, 235, see [CHANNELS.md](CHANNELS.md#answering-again)). The one of the turn the agent gave up
+    for it is accepted: its answer is gone already. Otherwise the last one of a message is judged:
+    if the message is the agent's last answer (`AgentChannelState::retried`), it is taken back with
+    the internal steps after it; otherwise the agent rejects it. Every other request to answer again
+    in the batch is rejected. A retry accepted begins a turn as above, given the transcript as it
+    stands - one turn together with a request to respond in the same batch, in the request's
+    contexts.
 
 **In a turn** the agent moves through these states:
 
@@ -158,8 +161,8 @@ reads nothing.
     It returns a `CommittedTurn`: the final messages for `FullResponseGenerated`, whether the
     channel state changed, the contexts the turn's last events are sent in, and the tool calls it
     abandoned.
-*   **`Turn::give_up`** gives up a turn that failed or was stopped (issue 145). No end of a
-    turn loses its messages:
+*   **`Turn::give_up`** gives up a turn that failed, was stopped or asked for again (issues 145,
+    235). No end of a turn loses its messages:
     *   its messages are appended to the transcript and the history as by `commit`, each with
         its `ContextRef`, and both heads go back to where the turn began: the messages stay as a
         branch no longer active (see [The transcript as a chain](#the-transcript-as-a-chain)). So
@@ -167,10 +170,10 @@ reads nothing.
         from can still be asked for;
     *   the transcript records the turn as given up, as an entry after the head went back
         (`TranscriptEntry::GivenUp`, issue 197): the branch it ends, the reason (failed, with what
-        its users were told; lowered, with the channel's new classification; stopped), the time
-        and how many messages were the turn's. The model is given messages only; the digest covers
-        the record, so the transcript's digest changes when a turn is given up, though the model
-        saw nothing new - a digest names a prefix of the record, not only what the model was
+        its users were told; lowered, with the channel's new classification; stopped; retried), the
+        time and how many messages were the turn's. The model is given messages only; the digest
+        covers the record, so the transcript's digest changes when a turn is given up, though the
+        model saw nothing new - a digest names a prefix of the record, not only what the model was
         given;
     *   nothing it staged is applied - no note, nothing remembered;
     *   what its tools did stays done. If a call ran (its result has a start), the agent is told on
@@ -183,7 +186,12 @@ reads nothing.
         not executed on the dead branch, and those that ran are told (issue 148).
 
     A turn that produced no message leaves nothing: there is nothing to keep. `cancel` does not give
-    a turn up; it takes it over - unless the turn no longer flows into its channel.
+    a turn up; it takes it over - unless the turn no longer flows into its channel. A turn whose
+    answer is asked for again while under way is given up (`Retried`, issue 235): the run loop
+    takes `Interrupt::Retry` after the step it cut short, as it takes a stop, gives the turn up and
+    goes idle, and the request on its way begins the next turn. Its approval requests are withdrawn
+    as for a turn that failed; only a stopped agent leaves them to the approvers, which discard
+    them as it leaves.
 
 Before every step of a turn, the agent asks whether the turn still flows into its channel as it is
 now (`ActionType::Publish` of the turn's classification, in the agent's name). Once the channel was

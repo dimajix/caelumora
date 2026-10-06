@@ -449,6 +449,10 @@ pub enum RetryRefused {
     /// An external agent's remote side keeps what it was given (issue 205).
     #[error("it runs elsewhere and cannot take back what it was given")]
     Elsewhere,
+    /// The answer asked for again while under way (issue 235) had ended
+    /// when the request came: a cancel came first, or it failed.
+    #[error("its answer had already ended")]
+    Ended,
 }
 
 /// A change to an [`AgentChannelState`] since it was last stored (issue

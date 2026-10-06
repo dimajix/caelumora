@@ -13,7 +13,7 @@ use crate::transport::{EventSender, TransportError};
 use crate::transport_impl::{FilteringEventSender, InMemoryEventReceiver, InMemoryEventSender, OriginEventSender};
 use anyhow::{anyhow, Result};
 use arc_swap::ArcSwap;
-use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
+use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, RetryTarget};
 use caelumora_model::channel::{Channel, ChannelId, ChannelState, HistoryAccess, HistoryStart, Participant};
 use crate::controller::{AgentController, ChannelController, ControllerManager, UserController};
 use caelumora_model::agent::{Personality, PersonalityKind};
@@ -22,6 +22,7 @@ use caelumora_model::language::Language;
 use caelumora_model::confidentiality::{user_roles, Classification};
 use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::message::{Message, MessageId};
+use caelumora_model::work::TurnId;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Reclassified, SecurityAttributes, SecurityContext, SecurityManager};
 use caelumora_model::session::SessionId;
 use caelumora_model::store::{EntityStore, StateStore, StoreError, StoreResultExt};
@@ -104,6 +105,10 @@ pub enum ChannelError {
     /// of its message (issue 234).
     #[error("message {message} of channel {channel} is not one of an agent in it")]
     NotAnAgentsMessage { message: MessageId, channel: ChannelId },
+    /// An answer is asked for again while under way only as long as its
+    /// turn is under way (issue 235).
+    #[error("turn {turn} is not under way in channel {channel}")]
+    NotUnderWay { turn: TurnId, channel: ChannelId },
     /// A participant not cleared for the channel's classification - to
     /// join it, or for the classification it would be raised to (issue
     /// 133).
@@ -857,6 +862,13 @@ impl ChannelLoop {
         self.actors.load().get(&actor_id).map(|a| Arc::clone(&a.actor))
     }
 
+    /// The turn under way of the participant `actor` (issue 235), if it is
+    /// in one that can still be ended - what a request to answer it again
+    /// names.
+    pub(crate) fn turn_under_way(&self, actor: ActorId) -> Option<TurnId> {
+        self.actor_by_id(actor)?.turn_under_way()
+    }
+
     /// The actor `user` acts through in this channel, or `None` if they are
     /// not a participant of it.
     ///
@@ -1091,11 +1103,17 @@ impl ChannelLoop {
                 }
                 None => false,
             },
-            ActorEvent::RetryRequested { message, author } => match self.message(*message).await {
+            ActorEvent::RetryRequested { target: RetryTarget::Message(message), author } => match self.message(*message).await {
                 Some(message) => self.security.may_retry_message(&event.security, &channel).await
                     && message.sender_id == *author && author.as_agent_id().is_some() && message.revoked.is_none(),
                 None => false,
             },
+            // Whether the turn is still under way is decided as the request
+            // is delivered, where the turn is ended (`route_event_impl`).
+            ActorEvent::RetryRequested { target: RetryTarget::Turn(_), author } => {
+                self.security.may_retry_message(&event.security, &channel).await
+                    && author.as_agent_id().is_some() && self.actor_by_id(*author).is_some()
+            }
             _ => return true,
         };
         if !admitted {
@@ -1191,6 +1209,18 @@ impl ChannelLoop {
             let mut target_event = route.1;
             let sender_id = target_event.context.sender_id;
             let event_desc = target_event.describe();
+            // An answer under way asked for again (issue 235): its turn is
+            // ended before the request is delivered, so that the agent finds
+            // it given up as it takes the request in - and only if it is
+            // still the turn under way. Otherwise there is nothing left to
+            // answer again, and the request is dropped: its sender asked
+            // before, and its users see the answer end.
+            if let ActorEvent::RetryRequested { target: RetryTarget::Turn(turn), .. } = &target_event.event {
+                if !self.actor_by_id(target_id).is_some_and(|actor| actor.retry_turn(*turn)) {
+                    warn!(to = %target_id, "Dropped {}: turn {} is not under way", event_desc, turn);
+                    continue;
+                }
+            }
             target_event.context.channel_id = self.id;
             target_event.context.session_id = self.session_id;
             target_event.context.span_id = span_id;
@@ -1981,9 +2011,12 @@ mod tests {
 
         // Only an agent is asked to answer again, and only for its own message.
         let mut routed = channel.observe();
-        channel.process_envelope(from(alice_id, ActorEvent::RetryRequested { message: said.id, author: alice_id }), &actors).await;
-        channel.process_envelope(from(alice_id, ActorEvent::RetryRequested { message: said.id, author: ActorId::Agent(caelumora_model::agent::AgentId::new()) }), &actors).await;
-        assert!(routed.try_recv().is_err(), "neither a user's message nor one another said");
+        channel.process_envelope(from(alice_id, ActorEvent::RetryRequested { target: RetryTarget::Message(said.id), author: alice_id }), &actors).await;
+        channel.process_envelope(from(alice_id, ActorEvent::RetryRequested { target: RetryTarget::Message(said.id), author: ActorId::Agent(caelumora_model::agent::AgentId::new()) }), &actors).await;
+        // An answer under way only of an agent of the channel.
+        channel.process_envelope(from(alice_id, ActorEvent::RetryRequested { target: RetryTarget::Turn(TurnId::new()), author: alice_id }), &actors).await;
+        channel.process_envelope(from(alice_id, ActorEvent::RetryRequested { target: RetryTarget::Turn(TurnId::new()), author: ActorId::Agent(caelumora_model::agent::AgentId::new()) }), &actors).await;
+        assert!(routed.try_recv().is_err(), "neither a user's message nor one another said, nor a turn of someone who is no agent here");
     }
 
     #[tokio::test]
@@ -2006,6 +2039,7 @@ mod tests {
         assert!(matches!(error(hers.modify_message(said.id, "hello".to_string(), Some(above.clone())).await), ChannelError::ClassificationRefused { .. }), "not above the channel");
         assert!(matches!(error(hers.request_retry(said.id).await), ChannelError::NotAnAgentsMessage { .. }), "no agent said it");
         assert!(matches!(error(his.request_retry(MessageId::new()).await), ChannelError::MessageNotFound { .. }));
+        assert!(matches!(error(his.request_retry_of_turn(alice_id, TurnId::new()).await), ChannelError::NotAParticipant { .. }), "no agent answers here");
         assert!(matches!(error(his.reclassify_message(said.id, Classification::PUBLIC).await), ChannelError::Forbidden { .. }), "not his to release");
         assert!(matches!(error(hers.reclassify_message(said.id, above.clone()).await), ChannelError::Forbidden { .. }), "never above the channel");
         assert!(matches!(error(hers.reclassify_message(MessageId::new(), Classification::PUBLIC).await), ChannelError::MessageNotFound { .. }));
@@ -2110,7 +2144,7 @@ mod tests {
         let alice = channel.user_actor(alice_of(&context)).unwrap();
 
         alice.request_retry(first.id).await.expect("asked");
-        assert!(matches!(shown_by(&mut events, agent, "RetryAccepted").await, ActorEvent::RetryAccepted { message } if message == first.id));
+        assert!(matches!(shown_by(&mut events, agent, "RetryAccepted").await, ActorEvent::RetryAccepted { target } if target == RetryTarget::Message(first.id)));
         assert!(matches!(shown_by(&mut events, agent, "MessageRevoked").await, ActorEvent::MessageRevoked { message, .. } if message == first.id));
         model.gate.add_permits(1);
         let said = |messages: Vec<Message>| messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
@@ -2139,11 +2173,114 @@ mod tests {
         answered(&mut events, agent).await;
 
         alice.request_retry(first.id).await.expect("asked");
-        let ActorEvent::RetryRejected { message, reason } = shown_by(&mut events, agent, "RetryRejected").await else { unreachable!() };
-        assert_eq!(message, first.id);
+        let ActorEvent::RetryRejected { target, reason } = shown_by(&mut events, agent, "RetryRejected").await else { unreachable!() };
+        assert_eq!(target, RetryTarget::Message(first.id));
         assert_eq!(reason, caelumora_model::agent::RetryRefused::NotLast);
         assert!(channel.message(first.id).await.is_some_and(|m| m.revoked.is_none()), "nothing taken back");
         assert_eq!(model.seen.lock().unwrap().len(), 2, "and no model asked again");
+        running.abort();
+    }
+
+    /// A gated model, its agent in a channel, and the agent's first turn
+    /// asking the model about "hello", its answers held back.
+    async fn asking_a_gated_model(answers: &[&'static str]) -> (Stuck, Arc<Gated>) {
+        let model = Arc::new(Gated {
+            answers: std::sync::Mutex::new(answers.iter().copied().collect()),
+            gate: Arc::new(tokio::sync::Semaphore::new(0)),
+            seen: Default::default(),
+        });
+        let stuck = with_an_agent(Arc::<Gated>::clone(&model), Default::default()).await;
+        asked(&model, 1).await;
+        (stuck, model)
+    }
+
+    /// Until `model` was asked `calls` times.
+    async fn asked(model: &Gated, calls: usize) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while model.seen.lock().unwrap().len() < calls {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await.unwrap_or_else(|_| panic!("the model is asked {calls} times"));
+    }
+
+    #[tokio::test]
+    async fn an_answer_under_way_asked_for_again_is_given_up_and_answered_anew() {
+        let (Stuck { channel, context, agent, mut events, running, .. }, model) = asking_a_gated_model(&["first", "second"]).await;
+        let ActorEvent::ResponseStarted { turn_id: turn } = shown_by(&mut events, agent, "ResponseStarted").await else { unreachable!() };
+        assert_eq!(channel.turn_under_way(ActorId::Agent(agent)), Some(turn), "the turn its start announced");
+        let alice = channel.user_actor(alice_of(&context)).unwrap();
+        let error = |result: anyhow::Result<uuid::Uuid>| result.expect_err("refused").downcast::<ChannelError>().expect("a channel's error");
+        assert!(matches!(error(alice.request_retry_of_turn(ActorId::Agent(agent), TurnId::new()).await), ChannelError::NotUnderWay { .. }), "not another turn");
+
+        alice.request_retry_of_turn(ActorId::Agent(agent), turn).await.expect("asked");
+        assert!(matches!(shown_by(&mut events, agent, "RetryAccepted").await, ActorEvent::RetryAccepted { target } if target == RetryTarget::Turn(turn)));
+        let ActorEvent::ResponseStarted { turn_id: next } = shown_by(&mut events, agent, "ResponseStarted").await else { unreachable!() };
+        assert_ne!(next, turn, "a turn of its own answers");
+        model.gate.add_permits(1);
+        let said = |messages: Vec<Message>| messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
+        assert_eq!(said(answered(&mut events, agent).await), ["second"], "the answer under way never came");
+
+        let seen = model.seen.lock().unwrap().clone();
+        assert!(seen[1].iter().any(|c| c.contains("hello")), "asked about what the given-up turn was asked: {:?}", seen[1]);
+        let history: Vec<_> = channel.history().await.into_iter().filter_map(|m| m.content).collect();
+        assert_eq!(history, ["hello", "second"], "nothing of the given-up turn reached the channel");
+        assert!(matches!(error(alice.request_retry_of_turn(ActorId::Agent(agent), turn).await), ChannelError::NotUnderWay { .. }), "and it is over");
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn what_was_said_during_a_turn_asked_for_again_is_answered_in_the_one_that_follows() {
+        let (Stuck { channel, context, agent, mut events, running, .. }, model) = asking_a_gated_model(&["first", "second", "third"]).await;
+        let ActorEvent::ResponseStarted { turn_id: turn } = shown_by(&mut events, agent, "ResponseStarted").await else { unreachable!() };
+        let alice_id = alice_of(&context);
+        let alice = channel.user_actor(alice_id).unwrap();
+        alice.send_message("and this too".to_string(), None).await.expect("taken during a turn");
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let envelope = events.recv().await.expect("the channel is running");
+                if envelope.context.sender_id == ActorId::User(alice_id) && matches!(envelope.event, ActorEvent::FullResponseGenerated(_)) {
+                    break;
+                }
+            }
+        }).await.expect("the message is said in the channel");
+
+        alice.request_retry_of_turn(ActorId::Agent(agent), turn).await.expect("asked");
+        assert!(matches!(shown_by(&mut events, agent, "RetryAccepted").await, ActorEvent::RetryAccepted { target } if target == RetryTarget::Turn(turn)));
+        model.gate.add_permits(3);
+        let said = |messages: Vec<Message>| messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
+        assert_eq!(said(answered(&mut events, agent).await), ["second"]);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let seen = model.seen.lock().unwrap().clone();
+        assert_eq!(seen.len(), 2, "one turn answers both, not one each: {seen:?}");
+        assert!(seen[1].iter().any(|c| c.contains("hello")) && seen[1].iter().any(|c| c.contains("and this too")), "{:?}", seen[1]);
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn an_older_answer_asked_for_again_leaves_the_answer_under_way_alone() {
+        let (Stuck { channel, context, agent, helper, mut events, running }, model) = asking_a_gated_model(&["first", "second", "third"]).await;
+        model.gate.add_permits(1);
+        let first = answered(&mut events, agent).await.pop().expect("an answer");
+        let alice = channel.user_actor(alice_of(&context)).unwrap();
+        alice.send_message("and now?".to_string(), None).await.unwrap();
+        asked(&model, 2).await;
+
+        // Asked while the next answer is under way: it waits for it, and
+        // so does what is said meanwhile.
+        alice.request_retry(first.id).await.expect("asked");
+        alice.send_message("one more".to_string(), None).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(helper.state(), ActorState::Planning, "the answer under way goes on");
+        model.gate.add_permits(2);
+        let said = |messages: Vec<Message>| messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
+        assert_eq!(said(answered(&mut events, agent).await), ["second"], "it ends as it began");
+
+        // Judged against what stands, beside the request to answer "one
+        // more": not its last answer any more.
+        let ActorEvent::RetryRejected { target, reason } = shown_by(&mut events, agent, "RetryRejected").await else { unreachable!() };
+        assert_eq!((target, reason), (RetryTarget::Message(first.id), caelumora_model::agent::RetryRefused::NotLast));
+        assert_eq!(said(answered(&mut events, agent).await), ["third"], "and the request is answered");
+        assert!(channel.message(first.id).await.is_some_and(|m| m.revoked.is_none()), "nothing taken back");
         running.abort();
     }
 
@@ -3091,6 +3228,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_turn_asked_for_again_while_it_waits_for_an_approval_withdraws_the_request() {
+        use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+        use caelumora_model::message::MessageRole;
+        use caelumora_model::tool::{ToolCall, ToolVisibility};
+
+        let plan = Message {
+            role: MessageRole::Assistant,
+            tool_calls: vec![ToolCall {
+                id: Some("1".to_string()),
+                function_name: "create_plan".to_string(),
+                arguments: serde_json::json!({ "summary": "one step", "steps": [{ "description": "first" }] }),
+                visibility: ToolVisibility::SHOWN,
+            }],
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        };
+        let instead = Message { role: MessageRole::Assistant, content: Some("no plan needed".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+        let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
+            id: "plan".to_string(),
+            kind: crate::component_impl::create_plan_tool::CREATE_PLAN_TOOL_KIND.to_string(),
+            params: serde_json::Value::Null,
+            tags: vec![],
+            fail_policy: ComponentFailPolicy::FailClosed,
+        }] };
+        let Stuck { channel, context, agent, helper, mut events, running } =
+            with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([plan, instead].into()))), components).await;
+        let ActorEvent::ApprovalRequested(request) = shown_by(&mut events, agent, "ApprovalRequested").await else { unreachable!() };
+        settled(&helper, ActorState::WaitingForApproval).await;
+
+        let turn = channel.turn_under_way(ActorId::Agent(agent)).expect("waiting is under way");
+        channel.user_actor(alice_of(&context)).unwrap().request_retry_of_turn(ActorId::Agent(agent), turn).await.expect("asked");
+        assert!(matches!(shown_by(&mut events, agent, "ApprovalRequestWithdrawn").await, ActorEvent::ApprovalRequestWithdrawn { id } if id == request.id),
+            "nobody is asked any longer");
+        assert!(matches!(shown_by(&mut events, agent, "RetryAccepted").await, ActorEvent::RetryAccepted { target } if target == RetryTarget::Turn(turn)));
+        let said = |messages: Vec<Message>| messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
+        assert_eq!(said(answered(&mut events, agent).await), ["no plan needed"]);
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn a_turn_asked_for_again_while_a_tool_runs_tells_the_next_one_of_the_call() {
+        let (Stuck { channel, context, agent, mut events, running, .. }, _) = with_an_agent_in_a_long_tool().await;
+        let turn = channel.turn_under_way(ActorId::Agent(agent)).expect("under way");
+        channel.user_actor(alice_of(&context)).unwrap().request_retry_of_turn(ActorId::Agent(agent), turn).await.expect("asked");
+
+        let said = |messages: Vec<Message>| messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
+        assert_eq!(said(answered(&mut events, agent).await), ["never given"], "the tool is interrupted, and the next turn answers");
+        let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+        let given_up = state.transcript.given_up_turns();
+        assert_eq!(given_up.len(), 1, "the turn is kept as given up");
+        assert_eq!(given_up[0].given_up.reason, caelumora_model::transcript::GivenUpReason::Retried);
+        let told = state.transcript.messages().into_iter()
+            .find(|m| m.internal && m.content.as_deref().is_some_and(|c| c.contains("sleep")))
+            .expect("the model is told of the call that ran");
+        assert!(told.content.unwrap().contains("asked for again"), "and why the turn was given up");
+        assert_eq!(told.turn_id, Some(turn), "as the record of that turn");
+        let history: Vec<_> = channel.history().await.into_iter().filter_map(|m| m.content).collect();
+        assert_eq!(history, ["hello", "never given"], "nothing of the given-up turn reached the channel");
+        running.abort();
+    }
+
+    #[tokio::test]
     async fn a_participant_is_added_again_only_once_its_old_actor_has_ended() {
         let (channel, _, agent, _) = agent_channel(Arc::new(DummySecurityManager::new()), Arc::new(NeverAnswers), Default::default()).await;
         let participant = ActorId::Agent(agent);
@@ -3578,8 +3776,18 @@ mod tests {
         let answer = answered(&mut events, agent).await.pop().expect("an answer");
 
         channel.user_actor(alice_of(&context)).unwrap().request_retry(answer.id).await.expect("asked");
-        let ActorEvent::RetryRejected { message, reason } = shown_by(&mut events, agent, "RetryRejected").await else { unreachable!() };
-        assert_eq!((message, reason), (answer.id, caelumora_model::agent::RetryRefused::Elsewhere), "the remote agent keeps what it was given");
+        let ActorEvent::RetryRejected { target, reason } = shown_by(&mut events, agent, "RetryRejected").await else { unreachable!() };
+        assert_eq!((target, reason), (RetryTarget::Message(answer.id), caelumora_model::agent::RetryRefused::Elsewhere), "the remote agent keeps what it was given");
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn an_external_agent_s_answer_under_way_is_not_asked_for_again() {
+        let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::default());
+        let Stuck { channel, context, agent, running, .. } = with_an_external_agent(Arc::clone(&remote)).await;
+        assert_eq!(channel.turn_under_way(ActorId::Agent(agent)), None, "it has no turn here to give up");
+        let refused = channel.user_actor(alice_of(&context)).unwrap().request_retry_of_turn(ActorId::Agent(agent), TurnId::new()).await;
+        assert!(matches!(refused.expect_err("refused").downcast_ref::<ChannelError>(), Some(ChannelError::NotUnderWay { .. })));
         running.abort();
     }
 

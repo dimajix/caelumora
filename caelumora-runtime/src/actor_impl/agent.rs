@@ -1,4 +1,4 @@
-use super::{apply_stage_processors, catch_up, event_for, failure_message, lowered_message, reject_retries, take_in};
+use super::{apply_stage_processors, catch_up, event_for, failure_message, lowered_message, reject_retries, retry_target, take_in};
 use crate::actor::{Actor, Answering};
 use crate::agent_run_control::{Interrupt, RunControl};
 use crate::agent_turn::{CommittedTurn, Turn, MAX_MODEL_CALLS};
@@ -12,10 +12,11 @@ use crate::tool::{GuardedToolExecutor, ToolExecutor};
 use crate::transport::{EventReceiver, EventSender};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
+use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, RetryTarget};
 use crate::agent_state::AgentStateHandle;
 use caelumora_model::agent::{AgentChannelState, AgentId, Personality, RetryRefused};
 use caelumora_model::turn::TurnState;
+use caelumora_model::work::TurnId;
 use crate::controller::AgentController;
 use caelumora_model::approval::ApprovalStatus;
 use caelumora_model::channel::Channel;
@@ -263,42 +264,79 @@ impl AgentActor {
     /// Idle and Sleeping wait for the next event alike, and take it in with
     /// everything queued behind it (`take_in`, issue 222): what others said
     /// is perceived - no turn, nothing asked of the policy (issues 85, 90) -
-    /// and one turn starts on the last request, unless the agent sleeps,
-    /// where only `wakeup()` ends the sleep. A request to respond outweighs
-    /// the requests to answer again that came with it, which are rejected:
-    /// the conversation went on. Of those alone, the last is answered
-    /// (`retry`) and the others rejected (issue 234); the channel woke the
-    /// agent for them. `None` once the actor's input is closed.
+    /// and at most one turn starts, unless the agent sleeps, where only
+    /// `wakeup()` ends the sleep. The channel woke the agent for the
+    /// requests to answer again (issues 234, 235):
+    /// - one whose turn was `given_up_for` it is accepted, whatever came
+    ///   with it: its answer is gone already;
+    /// - one of a turn not given up for it finds that turn over (`Ended`);
+    /// - of those of a message, the last is answered (`retry`) - unless one
+    ///   of a turn was accepted, which answers anew anyway - and the others
+    ///   are rejected (`AskedAgain`).
+    ///
+    /// A retry accepted and a request to respond in the same batch are one
+    /// turn, answering the conversation as it stands, in the contexts of the
+    /// request; a retry alone begins one in its own. `None` once the actor's
+    /// input is closed.
     async fn handle_waiting(
         &self,
         state: &mut AgentChannelState,
         rx: &mut Box<dyn EventReceiver>,
+        given_up_for: &mut Option<TurnId>,
         output: &dyn EventSender,
     ) -> Result<Option<ActorState>> {
         let Some(received) = rx.recv().await else { return Ok(None) };
-        let (request, mut retries) = take_in(state, received, rx, &self.perceive_in_processors, &self.security_context).await;
+        let (request, retries) = take_in(state, received, rx, &self.perceive_in_processors, &self.security_context).await;
         // Read once taken in, not before waiting: the channel wakes an agent
         // before it delivers the message that asks it, and the request comes
         // in the same batch.
         let asleep = self.control.state() == ActorState::Sleeping;
         let request = request.filter(|_| !asleep);
-        let retry = if request.is_some() { None } else { retries.pop() };
-        reject_retries(retries, RetryRefused::AskedAgain, self.id(), &self.agent_controller.name(), output).await;
-        let started = match (request, retry) {
-            (Some(request), _) => self.begin_answer(state, &request, output).await,
+        let name = self.agent_controller.name();
+
+        let mut of_given_up = None;
+        let mut of_messages = Vec::new();
+        let mut ended = Vec::new();
+        for retry in retries {
+            match retry_target(&retry) {
+                Some(RetryTarget::Turn(turn)) if Some(turn) == *given_up_for => of_given_up = Some(retry),
+                Some(RetryTarget::Turn(_)) => ended.push(retry),
+                _ => of_messages.push(retry),
+            }
+        }
+        reject_retries(ended, RetryRefused::Ended, self.id(), &name, output).await;
+        let candidate = if of_given_up.is_some() { None } else { of_messages.pop() };
+        reject_retries(of_messages, RetryRefused::AskedAgain, self.id(), &name, output).await;
+
+        let accepted = match (of_given_up, candidate) {
+            (Some(retry), _) => {
+                let target = retry_target(&retry);
+                let answering = Answering::to(&retry, self.id(), name.clone());
+                if let Some(target) = target {
+                    answering.send(ActorEvent::RetryAccepted { target }, output).await?;
+                }
+                Some(retry)
+            }
             (None, Some(retry)) => {
                 let span = crate::logging::envelope_span(&retry.context, retry.event.kind());
-                match self.retry(state, &retry, output).instrument(span.clone()).await {
-                    Ok(true) => self.begin_answer(state, &retry, output).await,
-                    Ok(false) => false,
+                match self.retry(state, &retry, output).instrument(span).await {
+                    Ok(true) => Some(retry),
+                    Ok(false) => None,
                     Err(e) => {
                         warn!("Agent {} cannot answer a request to answer again: {:#}", self.id(), e);
-                        false
+                        None
                     }
                 }
             }
-            (None, None) => false,
+            (None, None) => None,
         };
+        let started = match request.as_ref().or(accepted.as_ref()) {
+            Some(answered) => self.begin_answer(state, answered, output).await,
+            None => false,
+        };
+        if started {
+            *given_up_for = None;
+        }
         rx.commit().await?;
         Ok(Some(if started { ActorState::Planning } else { self.control.state() }))
     }
@@ -317,25 +355,25 @@ impl AgentActor {
         }
     }
 
-    /// Answers the `RetryRequested` in `request` (issue 234), in its
-    /// contexts continued in the agent's name. If the message is its last
-    /// answer (`AgentChannelState::retried`), it says so with
+    /// Answers the `RetryRequested` of a message in `request` (issue 234),
+    /// in its contexts continued in the agent's name. If the message is its
+    /// last answer (`AgentChannelState::retried`), it says so with
     /// `RetryAccepted`, takes back what the retry replaces - in its own
     /// state, and announced with `MessageRevoked` for what its history
     /// holds, the rest being internal steps nobody else saw - and returns
-    /// `true`: a turn is to begin in answer to the request, given the
-    /// transcript as it stands. Otherwise it says why with `RetryRejected`.
+    /// `true`: a turn is to begin, given the transcript as it stands.
+    /// Otherwise it says why with `RetryRejected`.
     async fn retry(&self, state: &mut AgentChannelState, request: &Envelope, output: &dyn EventSender) -> Result<bool> {
-        let ActorEvent::RetryRequested { message, .. } = request.event else { return Ok(false) };
+        let Some(target @ RetryTarget::Message(message)) = retry_target(request) else { return Ok(false) };
         let answering = Answering::to(request, self.id(), self.agent_controller.name());
         let taken_back = match state.retried(message, self.id()) {
             Ok(taken_back) => taken_back,
             Err(refused) => {
-                answering.send(ActorEvent::RetryRejected { message, reason: refused }, output).await?;
+                answering.send(ActorEvent::RetryRejected { target, reason: refused }, output).await?;
                 return Ok(false);
             }
         };
-        answering.send(ActorEvent::RetryAccepted { message }, output).await?;
+        answering.send(ActorEvent::RetryAccepted { target }, output).await?;
         let at = chrono::Utc::now();
         for id in taken_back {
             let said = state.history.message(id).is_some();
@@ -361,15 +399,17 @@ impl AgentActor {
     }
 
     /// Gives the turn under way in `state` up for `reason` (issue 145) -
-    /// failed, lowered, stopped: its messages stay as a branch no longer
-    /// active, and the calls of its tools that ran are told on the active
-    /// branch, in full while the turn still flows into the channel, else by
-    /// name, classified as the channel is now (issue 141). The approval
-    /// requests it still waited for are withdrawn (issue 148), and the
-    /// channel's users are told with `TurnFailed` - unless the agent was
-    /// stopped: it left the channel, which takes nothing from it any
-    /// longer, and the approvers discard its requests as it leaves. Between
-    /// turns there is nothing to give up.
+    /// failed, lowered, stopped, asked for again: its messages stay as a
+    /// branch no longer active, and the calls of its tools that ran are told
+    /// on the active branch, in full while the turn still flows into the
+    /// channel, else by name, classified as the channel is now (issue 141).
+    /// The approval requests it still waited for are withdrawn (issue 148) -
+    /// unless the agent was stopped: it left the channel, which takes
+    /// nothing from it any longer, and the approvers discard its requests as
+    /// it leaves. The channel's users are told with `TurnFailed` where it
+    /// failed or was lowered; a turn asked for again is followed by
+    /// `RetryAccepted` and the new answer (issue 235). Between turns there
+    /// is nothing to give up.
     async fn give_up(&self, state: &mut AgentChannelState, reason: GivenUpReason, output: &dyn EventSender) {
         let Some(under_way) = state.turn.as_ref() else { return };
         let names_only = match self.turn_flow(under_way).await {
@@ -381,14 +421,18 @@ impl AgentActor {
         let told = match &reason {
             GivenUpReason::Failed { message } => Some(message.clone()),
             GivenUpReason::Lowered { channel } => Some(lowered_message(&agent_name, channel)),
-            GivenUpReason::Stopped => None,
+            GivenUpReason::Stopped | GivenUpReason::Retried => None,
         };
+        let stays = reason != GivenUpReason::Stopped;
         let Some(turn) = self.turn(state) else { return };
         let (answering, abandoned_calls) = turn.give_up(reason, names_only);
-        let Some(message) = told else { return };
+        if !stays {
+            return;
+        }
         if let Err(e) = withdraw_approval_requests(&answering, &abandoned_calls, output).await {
             warn!("Agent {} {} cannot withdraw the approval requests of its given-up turn: {:#}", self.id(), agent_name, e);
         }
+        let Some(message) = told else { return };
         if let Err(e) = answering.send(ActorEvent::TurnFailed { message }, output).await {
             warn!("Agent {} {} cannot report its given-up turn: {:#}", self.id(), agent_name, e);
         }
@@ -809,6 +853,10 @@ impl Actor for AgentActor {
             }
         }
 
+        // The turn given up because its answer was asked for again (issue
+        // 235), until a turn begins: the request that is on its way finds
+        // it so.
+        let mut given_up_for: Option<TurnId> = None;
         loop {
             let current_state = self.control.state();
 
@@ -832,7 +880,7 @@ impl Actor for AgentActor {
             // Between turns the actor works on its state; a step of a turn
             // on the turn under way.
             let result = async { Ok::<_, anyhow::Error>(match current_state {
-                ActorState::Idle | ActorState::Sleeping => self.handle_waiting(&mut state, &mut rx, &*output).await?,
+                ActorState::Idle | ActorState::Sleeping => self.handle_waiting(&mut state, &mut rx, &mut given_up_for, &*output).await?,
                 ActorState::WaitingForApproval => {
                     self.handle_waiting_for_approval(&mut self.turn_under_way(&mut state)?, &mut rx).await?
                 }
@@ -848,7 +896,7 @@ impl Actor for AgentActor {
             let next_state = match result {
                 Ok(next) => next,
                 Err(e) if current_state.in_turn() => {
-                    self.fail_turn(&mut state, &e, &*output).instrument(span).await;
+                    self.fail_turn(&mut state, &e, &*output).instrument(span.clone()).await;
                     Some(ActorState::Idle)
                 }
                 Err(e) => return Err(e),
@@ -864,6 +912,17 @@ impl Actor for AgentActor {
                 self.give_up(&mut state, GivenUpReason::Stopped, &*output).await;
                 self.settle(&mut state, ActorState::Idle).await;
                 break;
+            }
+            // Its answer asked for again (issue 235): the turn is given up,
+            // nothing of it having reached the channel's history, and the
+            // request that is on its way begins the next one. One that came
+            // as the turn ended finds nothing left to give up; the request
+            // then finds its turn over.
+            if interrupt == Some(Interrupt::Retry) && next_state.is_some_and(|next| next.in_turn()) {
+                given_up_for = state.turn.as_ref().map(|t| t.work.turn_id);
+                self.give_up(&mut state, GivenUpReason::Retried, &*output).instrument(span.clone()).await;
+                self.settle(&mut state, ActorState::Idle).await;
+                continue;
             }
 
             // The state goes on first, then it is stored: what a crash leaves
@@ -905,6 +964,19 @@ impl Actor for AgentActor {
             self.agent_controller.name()
         );
         self.control.wakeup();
+    }
+
+    fn turn_under_way(&self) -> Option<TurnId> {
+        self.control.turn_under_way()
+    }
+
+    fn retry_turn(&self, turn: TurnId) -> bool {
+        let hit = self.control.retry(turn);
+        match hit {
+            true => info!("Agent {} {} gives its turn {} up: its answer is asked for again", self.id(), self.agent_controller.name(), turn),
+            false => debug!("Agent {} {}: turn {} is not under way, nothing to answer again", self.id(), self.agent_controller.name(), turn),
+        }
+        hit
     }
 
     fn cancel(&self) {

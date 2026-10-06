@@ -4,7 +4,8 @@ use crate::runtime::ActorRuntime;
 use crate::transport::{EventReceiver, EventSender, TransportError};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
+use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, RetryTarget};
+use caelumora_model::work::TurnId;
 use caelumora_model::approval::ApprovalResponse;
 use caelumora_model::channel::{Channel, ChannelId};
 use caelumora_model::command::{Command, CommandVisibility};
@@ -251,10 +252,7 @@ impl UserActor {
             .ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))?;
         let said = channel_loop.message(message).await
             .ok_or(ChannelError::MessageNotFound { message, channel: self.channel_id })?;
-        let attributes = channel_loop.security_attributes();
-        self.actor_runtime.security_manager()
-            .require(&self.security_context, ActionType::RetryMessage(&attributes), || ChannelError::Forbidden { action: "asking for another answer in", channel: self.channel_id })
-            .await?;
+        self.require_retry(&channel_loop).await?;
         if said.revoked.is_some() {
             return Err(ChannelError::MessageRevoked { message, channel: self.channel_id }.into());
         }
@@ -262,9 +260,52 @@ impl UserActor {
         if author.as_agent_id().is_none() || !channel_loop.actor_ids().contains(&author) {
             return Err(ChannelError::NotAnAgentsMessage { message, channel: self.channel_id }.into());
         }
+        self.send_retry(RetryTarget::Message(message), author).await
+    }
+
+    /// Asks the agent `author` to answer again instead of its answer under
+    /// way, its turn `turn` (issue 235). Asked here (`RetryMessage`, as for
+    /// a message), and the turn looked at: only the turn under way can be
+    /// asked for again, and the user learns at once if it is over. The
+    /// channel ends that turn as it delivers the request - if it is still
+    /// the one under way, else it drops it - and the agent answers anew
+    /// with `RetryAccepted`; this returns once the request is on its way,
+    /// with a `WakeupRequested` ahead of it, as `request_retry` sends.
+    ///
+    /// # Errors
+    /// `ChannelError::Forbidden` if this user may not ask it, before
+    /// anything else is looked at; `NotAParticipant` if `author` is no agent
+    /// of the channel; `NotUnderWay` if `turn` is not its turn under way;
+    /// an error if the channel is gone.
+    pub async fn request_retry_of_turn(&self, author: ActorId, turn: TurnId) -> anyhow::Result<Uuid> {
+        use crate::channel::ChannelError;
+        let channel_loop = self.actor_runtime.channel_loop()
+            .ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))?;
+        self.require_retry(&channel_loop).await?;
+        if author.as_agent_id().is_none() || !channel_loop.actor_ids().contains(&author) {
+            return Err(ChannelError::NotAParticipant { participant: author, channel: self.channel_id }.into());
+        }
+        if channel_loop.turn_under_way(author) != Some(turn) {
+            return Err(ChannelError::NotUnderWay { turn, channel: self.channel_id }.into());
+        }
+        self.send_retry(RetryTarget::Turn(turn), author).await
+    }
+
+    /// Whether this user may ask for another answer in `channel`
+    /// (`RetryMessage`), refused as `ChannelError::Forbidden`.
+    async fn require_retry(&self, channel: &crate::channel::ChannelLoop) -> anyhow::Result<()> {
+        let attributes = channel.security_attributes();
+        let refused = || crate::channel::ChannelError::Forbidden { action: "asking for another answer in", channel: self.channel_id };
+        Ok(self.actor_runtime.security_manager().require(&self.security_context, ActionType::RetryMessage(&attributes), refused).await?)
+    }
+
+    /// Sends the request to `author` to answer again instead of `target`,
+    /// with a `WakeupRequested` ahead of it, as of a message, so that a
+    /// quiet channel does not swallow it. Returns the envelopes' `span_id`.
+    async fn send_retry(&self, target: RetryTarget, author: ActorId) -> anyhow::Result<Uuid> {
         let span_id = Uuid::new_v4();
         self.send(self.envelope(ActorEvent::WakeupRequested, span_id)).await?;
-        self.send(self.envelope(ActorEvent::RetryRequested { message, author }, span_id)).await?;
+        self.send(self.envelope(ActorEvent::RetryRequested { target, author }, span_id)).await?;
         Ok(span_id)
     }
 

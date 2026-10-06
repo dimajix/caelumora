@@ -187,29 +187,52 @@ pub enum ActorEvent {
         message: MessageId,
         classification: Classification,
     },
-    /// `author`, an agent, is asked to answer again instead of its message
-    /// `message` (issue 234): sent by a user's actor, admitted by the
-    /// channel only for a message of its history that `author` said, and
-    /// routed to `author` alone. Whether it can is the agent's to decide, by
-    /// its own transcript; it answers `RetryAccepted` or `RetryRejected`.
+    /// `author`, an agent, is asked to answer again instead of `target`
+    /// (issues 234, 235): sent by a user's actor and routed to `author`
+    /// alone. A message is admitted by the channel only if it is one of its
+    /// history that `author` said, and whether the agent can is its own to
+    /// decide, by its own transcript. A turn is asked of the answer under
+    /// way: the channel ends that turn before it delivers the request - if
+    /// it is still the one under way, else it drops the request - and the
+    /// agent answers anew. It answers `RetryAccepted` or `RetryRejected`.
     RetryRequested {
-        message: MessageId,
+        target: RetryTarget,
         author: ActorId,
     },
-    /// The agent answers again instead of `message` (issue 234): it takes
-    /// what it replaces back (`MessageRevoked`) and answers in a turn of its
-    /// own, in the contexts of the request. Like `TurnFailed`, shown to
-    /// users and never written to the history.
+    /// The agent answers again instead of `target` (issues 234, 235): it
+    /// takes back what it replaces (`MessageRevoked`) - nothing of a turn
+    /// that was under way, which it gave up - and answers in a turn of its
+    /// own. Like `TurnFailed`, shown to users and never written to the
+    /// history.
     RetryAccepted {
-        message: MessageId,
+        target: RetryTarget,
     },
-    /// The agent does not answer again instead of `message`, for `reason`
+    /// The agent does not answer again instead of `target`, for `reason`
     /// (issue 234) - one of a known few, which a user interface words
     /// itself. Shown to users and never written to the history.
     RetryRejected {
-        message: MessageId,
+        target: RetryTarget,
         reason: RetryRefused,
     },
+}
+
+/// What a request to answer again is about (issue 235).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RetryTarget {
+    /// A message the agent said, in the channel's history (issue 234).
+    Message(MessageId),
+    /// The answer the agent gives in this turn, still under way.
+    Turn(TurnId),
+}
+
+impl std::fmt::Display for RetryTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RetryTarget::Message(message) => write!(f, "message {message}"),
+            RetryTarget::Turn(turn) => write!(f, "turn {turn}"),
+        }
+    }
 }
 
 impl ActorEvent {
@@ -409,14 +432,14 @@ impl Envelope {
             ActorEvent::MessageReclassified { message, classification } => {
                 format!("MessageReclassified(sender_id={}, sender_name={}, mid={}, classification={})", ctx.sender_id, ctx.sender_name, message, classification)
             }
-            ActorEvent::RetryRequested { message, author } => {
-                format!("RetryRequested(sender_id={}, mid={}, author={})", ctx.sender_id, message, author)
+            ActorEvent::RetryRequested { target, author } => {
+                format!("RetryRequested(sender_id={}, {}, author={})", ctx.sender_id, target, author)
             }
-            ActorEvent::RetryAccepted { message } => {
-                format!("RetryAccepted(sender_id={}, mid={})", ctx.sender_id, message)
+            ActorEvent::RetryAccepted { target } => {
+                format!("RetryAccepted(sender_id={}, {})", ctx.sender_id, target)
             }
-            ActorEvent::RetryRejected { message, reason } => {
-                format!("RetryRejected(sender_id={}, mid={}, reason={:?})", ctx.sender_id, message, reason)
+            ActorEvent::RetryRejected { target, reason } => {
+                format!("RetryRejected(sender_id={}, {}, reason={:?})", ctx.sender_id, target, reason)
             }
             _ => {
                 format!("{:?}", self.event)

@@ -166,10 +166,11 @@ not do it is refused before the rest is looked at, and learns nothing of the oth
 `create_channel` asks `UpdateSession` first, as `delete_channel` does; `add_participant` asks
 `UpdateChannel` first, as `remove_participant` does when the change is stored.
 
-**Actors are controlled only through such operations.** `Actor::cancel`, `wakeup` and `stop` check
-nothing: they are the consequence of an act that was checked - `ChannelLoop::cancel`,
-`cancel_actor`, `wakeup`, `wakeup_actor`, `remove_participant`, `SessionLoop::delete_channel` - and
-know no caller. So that this holds by structure rather than by discipline, the `Actor` trait, the
+**Actors are controlled only through such operations.** `Actor::cancel`, `retry_turn`, `wakeup` and
+`stop` check nothing: they are the consequence of an act that was checked - `ChannelLoop::cancel`,
+`cancel_actor`, `wakeup`, `wakeup_actor`, `remove_participant`, `SessionLoop::delete_channel`, a
+`RetryRequested` of a turn the channel admitted under `RetryMessage` (issue 235) - and know no
+caller. So that this holds by structure rather than by discipline, the `Actor` trait, the
 `Moderator` trait that is handed actors, and `ChannelLoop::actor_by_id` are crate-internal (issue
 147): a frontend reaches its user's actor through `ChannelLoop::user_actor`, but none of the
 control methods.
