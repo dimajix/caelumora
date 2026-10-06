@@ -184,3 +184,7 @@ be given.
   `RevokeMessage`(alice's) no). Alice's modification asks `ModifyMessage`(alice's) and `Publish` in
   her actor, then `Publish` and `ModifyMessage`(alice's) in the channel as it admits it; her
   revocation `RevokeMessage`(alice's) in both - all yes.
+- **2026-10-06** — From [234](234-modify-revoke-and-retry-messages.md): asking an agent to answer
+  again, `asking_an_agent_to_answer_again_is_for_whoever_takes_part`. Bob, who takes part, may ask
+  it of a message of alice's channel (`RetryMessage`(alice's) yes), as he may cancel; the request is
+  refused after that question because no agent said the message.

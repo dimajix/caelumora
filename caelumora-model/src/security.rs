@@ -93,6 +93,10 @@ pub enum ActionType<'a> {
     /// Waking a channel's sleeping agents deliberately, as opposed to waking
     /// them by sending them something.
     WakeChannel(&'a SecurityAttributes),
+    /// Asking an agent of a channel to answer again instead of one of its
+    /// messages (issue 234), carrying the channel's attributes: an act on the
+    /// conversation, like cancelling or waking it, not on the agent.
+    RetryMessage(&'a SecurityAttributes),
     /// Reading something of the channel `source` - a message, a note, a
     /// memory entry, classified as `source` says - from another channel,
     /// `reader` (issue 17). Decided per entry by how it and the reader are
@@ -210,6 +214,7 @@ impl ActionType<'_> {
             ActionType::DeleteUserProfile(_) => "DeleteUserProfile".into(),
             ActionType::CancelChannel(_) => "CancelChannel".into(),
             ActionType::WakeChannel(_) => "WakeChannel".into(),
+            ActionType::RetryMessage(_) => "RetryMessage".into(),
             ActionType::ReadChannel { reader, source } => {
                 format!("ReadChannel({} of {} from {})", source.classification, source.channel, reader.channel)
             }
@@ -401,6 +406,12 @@ pub trait AccessQuestions {
     /// channel as it admits the revocation.
     async fn may_revoke_message(&self, context: &SecurityContext, author: ActorId, channel: &SecurityAttributes) -> bool;
 
+    /// Whether `context` may ask an agent of the channel with `channel`
+    /// attributes to answer again instead of one of its messages
+    /// (`RetryMessage`, issue 234) - asked by the channel as it admits the
+    /// request.
+    async fn may_retry_message(&self, context: &SecurityContext, channel: &SecurityAttributes) -> bool;
+
     /// Whether the user `context` acts for, with `roles`, is cleared for
     /// `channel` (`JoinChannel`, issue 133) - what decides, besides
     /// `GetChannel`, which channels they are shown.
@@ -470,6 +481,10 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
 
     async fn may_revoke_message(&self, context: &SecurityContext, author: ActorId, channel: &SecurityAttributes) -> bool {
         self.check(context, ActionType::RevokeMessage { author, channel }).await
+    }
+
+    async fn may_retry_message(&self, context: &SecurityContext, channel: &SecurityAttributes) -> bool {
+        self.check(context, ActionType::RetryMessage(channel)).await
     }
 
     async fn may_see_channel(&self, context: &SecurityContext, roles: &[String], channel: &Classification) -> bool {
@@ -611,7 +626,8 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::GetUser(a)
             | ActionType::GetUserProfile(a)
             | ActionType::CancelChannel(a)
-            | ActionType::WakeChannel(a) => Self::may_read(a, me),
+            | ActionType::WakeChannel(a)
+            | ActionType::RetryMessage(a) => Self::may_read(a, me),
             // What an agent can do is read by whoever reads the agent, and by
             // every member of the channel it works in with them.
             ActionType::ReadAgentTools { agent, channel } => Self::may_read(agent, me) || Self::may_read(channel, me),

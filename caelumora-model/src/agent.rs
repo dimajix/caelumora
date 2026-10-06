@@ -11,7 +11,7 @@ use crate::ledger::LedgerEntry;
 use crate::message::{Message, MessageId, MessageRole, TokenUsage};
 use crate::memory::{Memories, MemoryChain};
 use crate::message_history::{HistoryEntry, MessageHistory};
-use crate::transcript::{GivenUp, GivenUpReason, Transcript, TranscriptEntry};
+use crate::transcript::{as_they_stand, GivenUp, GivenUpReason, Transcript, TranscriptEntry};
 use crate::turn::{TurnEntry, TurnState};
 use crate::work::Work;
 use crate::note::{NoteChain, NoteChange, NoteOrigin, Notes};
@@ -262,6 +262,43 @@ impl AgentChannelState {
         history || transcript
     }
 
+    /// What answering again instead of the message `id` of the agent `own`
+    /// takes back (issue 234): the message, and what follows it on the
+    /// active path of the transcript - which may only be its own internal
+    /// steps, besides changes to what was said. So the message is its last
+    /// answer, and the model is given the transcript as it stood before it,
+    /// in what stands of it now. Of the ids returned, those its history
+    /// holds are what it announces as taken back.
+    ///
+    /// # Errors
+    /// Why it does not answer again: the message is not an answer of its
+    /// own its model is still given, something else was said or recorded
+    /// since, or what would be taken back holds calls of tools that ran -
+    /// their effect stays, and the model would no longer know of it.
+    pub fn retried(&self, id: MessageId, own: ActorId) -> Result<Vec<MessageId>, RetryRefused> {
+        let mut path = as_they_stand(self.transcript.entries()).skip_while(|(_, m)| m.as_ref().is_none_or(|m| m.id != id));
+        let Some((_, Some(message))) = path.next() else { return Err(RetryRefused::NotItsAnswer) };
+        if message.sender_id != own || message.role != MessageRole::Assistant {
+            return Err(RetryRefused::NotItsAnswer);
+        }
+        let mut taken_back = vec![message.id];
+        for (node, standing) in path {
+            match (&node.entry, standing) {
+                (TranscriptEntry::Modified { .. } | TranscriptEntry::Revoked { .. }, _) => {}
+                // Taken back already.
+                (TranscriptEntry::Message(_), None) => {}
+                (TranscriptEntry::Message(_), Some(step)) if step.sender_id == own && step.internal => {
+                    if !crate::message::executed_calls(&[&step]).is_empty() {
+                        return Err(RetryRefused::CallsRan);
+                    }
+                    taken_back.push(step.id);
+                }
+                (TranscriptEntry::Message(_) | TranscriptEntry::GivenUp { .. }, _) => return Err(RetryRefused::NotLast),
+            }
+        }
+        Ok(taken_back)
+    }
+
     /// Keeps the text of a prompt part the agent was given once by digest
     /// (issue 47), and returns the reference to it: given in `role` after
     /// the entry `after` - `None`: before everything - its text classified
@@ -378,6 +415,25 @@ impl AgentChannelState {
     pub fn usage(&self, agent: ActorId) -> Option<TokenUsage> {
         TranscriptView::of(self).usage(agent)
     }
+}
+
+/// Why an agent does not answer again instead of one of its messages (issue
+/// 234): what it tells the users who asked, after "… cannot answer again:".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum RetryRefused {
+    #[error("it is not an answer of its own that it could give again")]
+    NotItsAnswer,
+    #[error("more was said or done since")]
+    NotLast,
+    #[error("calls of tools that ran would be taken back with it")]
+    CallsRan,
+    /// A later request, to respond or to answer again, came with it and is
+    /// answered instead.
+    #[error("it was asked again since")]
+    AskedAgain,
+    /// An external agent's remote side keeps what it was given (issue 205).
+    #[error("it runs elsewhere and cannot take back what it was given")]
+    Elsewhere,
 }
 
 /// A change to an [`AgentChannelState`] since it was last stored (issue
@@ -796,5 +852,46 @@ pub(crate) mod tests {
 
         begin(&mut state, Vec::new());
         assert_eq!(state.turn.as_ref().unwrap().work.context.transcript, state.transcript.digest(), "a turn begins on the transcript as it stands");
+    }
+
+    #[test]
+    fn only_an_agents_last_answer_is_answered_again() {
+        use crate::tool::{ToolCall, ToolCallResult, ToolResultStatus, ToolVisibility};
+        let agent = ActorId::Agent(AgentId::new());
+        let answer = |content: &str| Message { sender_id: agent, role: MessageRole::Assistant, ..said(content, Classification::CHANNEL_DEFAULT) };
+        let mut state = a_state_that_heard("hello", Classification::CHANNEL_DEFAULT);
+        let question = state.history.messages()[0].clone();
+        let first = answer("hi");
+        state.transcript.push(first.clone());
+        state.history.push(first.clone(), None);
+
+        assert_eq!(state.retried(first.id, agent), Ok(vec![first.id]), "its last answer");
+        assert_eq!(state.retried(question.id, agent), Err(RetryRefused::NotItsAnswer), "not its own");
+        assert_eq!(state.retried(first.id, ActorId::Agent(AgentId::new())), Err(RetryRefused::NotItsAnswer), "another agent's");
+
+        // The user corrects the question: a change, not something said.
+        state.modify_message(Message { content: Some("hello there".to_string()), ..question.clone() }, Some(question.clone()));
+        assert_eq!(state.retried(first.id, agent), Ok(vec![first.id]), "still its last answer");
+
+        // An internal step after it is taken back with it; one whose call ran is not.
+        let call = ToolCall { id: Some("1".to_string()), function_name: "f".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN };
+        let mut result = ToolCallResult::of(&call, ToolResultStatus::Ok, "done".to_string(), Classification::CHANNEL_DEFAULT);
+        let step = Message { internal: true, ..answer("thinking") };
+        state.transcript.push(step.clone());
+        assert_eq!(state.retried(first.id, agent), Ok(vec![first.id, step.id]));
+        result.started_at = Some(chrono::Utc::now());
+        state.transcript.push(Message { internal: true, role: MessageRole::Tool, tool_results: vec![result], ..answer("") });
+        assert_eq!(state.retried(first.id, agent), Err(RetryRefused::CallsRan));
+
+        let mut state = a_state_that_heard("hello", Classification::CHANNEL_DEFAULT);
+        state.transcript.push(first.clone());
+        let later = said("and now?", Classification::CHANNEL_DEFAULT);
+        state.perceive(vec![later.clone()], vec![later]);
+        assert_eq!(state.retried(first.id, agent), Err(RetryRefused::NotLast), "something was said since");
+
+        let mut state = a_state_that_heard("hello", Classification::CHANNEL_DEFAULT);
+        state.transcript.push(first.clone());
+        state.revoke_message(first.id, chrono::Utc::now());
+        assert_eq!(state.retried(first.id, agent), Err(RetryRefused::NotItsAnswer), "taken back already");
     }
 }

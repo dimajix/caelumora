@@ -131,6 +131,14 @@ impl Moderator for PolicyModerator {
             ActorEvent::MessageModified(_) | ActorEvent::MessageRevoked { .. } => {
                 self.actors().route_to_participants(event)
             }
+            // Whom a request to answer again names, and what it answers, to
+            // the users (issue 234).
+            ActorEvent::RetryRequested { author, .. } => {
+                self.actors().route_to_agent(*author, event)
+            }
+            ActorEvent::RetryAccepted { .. } | ActorEvent::RetryRejected { .. } => {
+                self.actors().route_to_users(event)
+            }
             // How an answer comes about - streamed, step by step - is for
             // the users watching (issue 220); the agents hear the answer.
             ActorEvent::ResponseStarted |
@@ -250,6 +258,12 @@ impl ModeratorActors {
             .filter(|id| **id != event.context.sender_id)
             .map(|id| (*id, event.clone()))
             .collect()
+    }
+
+    /// Forwards `event` to the agent `agent` alone, if it is in the channel:
+    /// e.g. a request to answer again instead of its message (issue 234).
+    fn route_to_agent(&self, agent: ActorId, event: &Envelope) -> Vec<(ActorId, Envelope)> {
+        self.agent_actors.contains_key(&agent).then(|| (agent, event.clone())).into_iter().collect()
     }
 
     /// Forwards `event` to every user in the channel, e.g. a `TurnFailed`

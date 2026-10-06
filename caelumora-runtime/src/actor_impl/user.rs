@@ -191,6 +191,45 @@ impl UserActor {
         Ok(span_id)
     }
 
+    /// Asks the agent that said `message` to answer again instead of it
+    /// (issue 234). Asked here (`RetryMessage`, whoever may read the
+    /// channel), and again by the channel as it admits the request, which
+    /// goes to that agent alone: whether it can answer again is the agent's
+    /// to decide, by its own transcript, and it says so with `RetryAccepted`
+    /// or `RetryRejected` - this returns once the request is on its way. A
+    /// `WakeupRequested` goes ahead of it, as of a message, so that a quiet
+    /// channel does not swallow it.
+    ///
+    /// Returns the `span_id` of the envelopes, as `send_message` does.
+    ///
+    /// # Errors
+    /// `ChannelError::MessageNotFound` if the channel has no such message,
+    /// `Forbidden` if this user may not ask it, `MessageRevoked` if it was
+    /// taken back, `NotAnAgentsMessage` if no agent of the channel said it;
+    /// an error if the channel is gone.
+    pub async fn request_retry(&self, message: MessageId) -> anyhow::Result<Uuid> {
+        use crate::channel::ChannelError;
+        let channel_loop = self.actor_runtime.channel_loop()
+            .ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))?;
+        let said = channel_loop.message(message).await
+            .ok_or(ChannelError::MessageNotFound { message, channel: self.channel_id })?;
+        let attributes = channel_loop.security_attributes();
+        self.actor_runtime.security_manager()
+            .require(&self.security_context, ActionType::RetryMessage(&attributes), || ChannelError::Forbidden { action: "asking for another answer in", channel: self.channel_id })
+            .await?;
+        if said.revoked.is_some() {
+            return Err(ChannelError::MessageRevoked { message, channel: self.channel_id }.into());
+        }
+        let author = said.sender_id;
+        if author.as_agent_id().is_none() || !channel_loop.actor_ids().contains(&author) {
+            return Err(ChannelError::NotAnAgentsMessage { message, channel: self.channel_id }.into());
+        }
+        let span_id = Uuid::new_v4();
+        self.send(self.envelope(ActorEvent::WakeupRequested, span_id)).await?;
+        self.send(self.envelope(ActorEvent::RetryRequested { message, author }, span_id)).await?;
+        Ok(span_id)
+    }
+
     /// The message `id` of `channel` as it stands, if this user may change
     /// it - `action`, asked as `what` - and it can still be changed: not
     /// taken back.

@@ -37,6 +37,11 @@ issue 222), then commits once:
     on. A sleeping agent ignores the request; only `wakeup` ends the sleep. Whether it sleeps is
     read once everything is taken in: the channel wakes an agent before it delivers the message
     that asks it, and the request may come in the same batch.
+*   **Answer again.** Without a request to respond, the last `RetryRequested` among what was taken
+    in is answered (issue 234, see [CHANNELS.md](CHANNELS.md#answering-again)): if the message is
+    the agent's last answer (`AgentChannelState::retried`), it is taken back with the internal
+    steps after it and a turn begins as above, given the transcript as it stands; otherwise the
+    agent rejects it. Every other request to answer again in the batch is rejected.
 
 **In a turn** the agent moves through these states:
 

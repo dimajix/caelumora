@@ -102,6 +102,10 @@ pub enum ChannelError {
     /// A message taken back cannot be changed any more (issue 234).
     #[error("message {message} of channel {channel} was taken back")]
     MessageRevoked { message: MessageId, channel: ChannelId },
+    /// Only an agent of the channel can be asked to answer again instead
+    /// of its message (issue 234).
+    #[error("message {message} of channel {channel} is not one of an agent in it")]
+    NotAnAgentsMessage { message: MessageId, channel: ChannelId },
     /// A participant not cleared for the channel's classification - to
     /// join it, or for the classification it would be raised to (issue
     /// 133).
@@ -1074,8 +1078,11 @@ impl ChannelLoop {
     /// author - the sender the history names - may change it, as the policy
     /// says in the envelope's context, and it can be changed so as it stands
     /// (`Message::modify`, `Message::revoke`): not taken back, and modified
-    /// by its own sender in its own role. The gate for every actor, whatever
-    /// it checked itself; anything else is dropped, and logged.
+    /// by its own sender in its own role. A request to answer again, too:
+    /// its sender may ask it (`may_retry_message`), and it names the agent
+    /// that said the message, not taken back, as its author. The gate for
+    /// every actor, whatever it checked itself; anything else is dropped,
+    /// and logged.
     async fn admits_change(&self, event: &Envelope) -> bool {
         let channel = self.security_attributes();
         let admitted = match &event.event {
@@ -1085,6 +1092,11 @@ impl ChannelLoop {
             },
             ActorEvent::MessageRevoked { message, at } => match self.message(*message).await {
                 Some(mut message) => self.security.may_revoke_message(&event.security, message.sender_id, &channel).await && message.revoke(*at),
+                None => false,
+            },
+            ActorEvent::RetryRequested { message, author } => match self.message(*message).await {
+                Some(message) => self.security.may_retry_message(&event.security, &channel).await
+                    && message.sender_id == *author && author.as_agent_id().is_some() && message.revoked.is_none(),
                 None => false,
             },
             _ => return true,
@@ -1153,7 +1165,7 @@ impl ChannelLoop {
         if !quiet {
             let actors = self.actors.load();
             let asked = decision.iter()
-                .filter(|(target_id, route)| *target_id != event.context.sender_id && matches!(route.event, ActorEvent::ResponseRequested));
+                .filter(|(target_id, route)| *target_id != event.context.sender_id && matches!(route.event, ActorEvent::ResponseRequested | ActorEvent::RetryRequested { .. }));
             for (target_id, _) in asked {
                 if let Some(ChannelActor { actor, .. }) = actors.get(target_id) {
                     actor.wakeup();
@@ -1915,6 +1927,12 @@ mod tests {
         channel.process_envelope(from(alice_id, ActorEvent::MessageModified(modified(alice_id, "again"))), &actors).await;
         assert_eq!(entries().await, 3, "nothing changes it once taken back");
         assert_eq!(channel.history().await.len(), 1, "it stays in its place");
+
+        // Only an agent is asked to answer again, and only for its own message.
+        let mut routed = channel.observe();
+        channel.process_envelope(from(alice_id, ActorEvent::RetryRequested { message: said.id, author: alice_id }), &actors).await;
+        channel.process_envelope(from(alice_id, ActorEvent::RetryRequested { message: said.id, author: ActorId::Agent(caelumora_model::agent::AgentId::new()) }), &actors).await;
+        assert!(routed.try_recv().is_err(), "neither a user's message nor one another said");
     }
 
     #[tokio::test]
@@ -1935,6 +1953,8 @@ mod tests {
         assert!(matches!(error(hers.revoke_message(MessageId::new()).await), ChannelError::MessageNotFound { .. }), "never said");
         let above = Classification::general(caelumora_model::confidentiality::Confidentiality::Confidential);
         assert!(matches!(error(hers.modify_message(said.id, "hello".to_string(), Some(above)).await), ChannelError::ClassificationRefused { .. }), "not above the channel");
+        assert!(matches!(error(hers.request_retry(said.id).await), ChannelError::NotAnAgentsMessage { .. }), "no agent said it");
+        assert!(matches!(error(his.request_retry(MessageId::new()).await), ChannelError::MessageNotFound { .. }));
         hers.modify_message(said.id, "hello".to_string(), None).await.expect("hers to modify");
         hers.revoke_message(said.id).await.expect("and to take back");
 
@@ -1998,6 +2018,67 @@ mod tests {
                 && !state.transcript.messages().iter().any(|m| m.id == question)
         })).await;
         assert!(channel.message(question).await.is_some_and(|m| m.revoked.is_some()), "so does the channel");
+        running.abort();
+    }
+
+    /// What the channel shows next of `wanted`'s kind from `agent`.
+    async fn shown_by(events: &mut tokio::sync::broadcast::Receiver<Envelope>, agent: caelumora_model::agent::AgentId, wanted: &str) -> ActorEvent {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let envelope = events.recv().await.expect("the channel is running");
+                if envelope.context.sender_id == ActorId::Agent(agent) && envelope.event.kind() == wanted {
+                    break envelope.event;
+                }
+            }
+        }).await.unwrap_or_else(|_| panic!("the agent sends {wanted}"))
+    }
+
+    #[tokio::test]
+    async fn an_agent_asked_to_answer_again_takes_its_answer_back_and_answers_without_it() {
+        let model = Arc::new(Gated {
+            answers: std::sync::Mutex::new(["first", "second"].into()),
+            gate: Arc::new(tokio::sync::Semaphore::new(1)),
+            seen: Default::default(),
+        });
+        let Stuck { channel, context, agent, mut events, running, .. } = with_an_agent(Arc::<Gated>::clone(&model), Default::default()).await;
+        let first = answered(&mut events, agent).await.pop().expect("an answer");
+        let alice = channel.user_actor(alice_of(&context)).unwrap();
+
+        alice.request_retry(first.id).await.expect("asked");
+        assert!(matches!(shown_by(&mut events, agent, "RetryAccepted").await, ActorEvent::RetryAccepted { message } if message == first.id));
+        assert!(matches!(shown_by(&mut events, agent, "MessageRevoked").await, ActorEvent::MessageRevoked { message, .. } if message == first.id));
+        model.gate.add_permits(1);
+        let said = |messages: Vec<Message>| messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
+        assert_eq!(said(answered(&mut events, agent).await), ["second"], "answered again");
+
+        let seen = model.seen.lock().unwrap().clone();
+        let given = |call: &[String], text: &str| call.iter().any(|c| c.contains(text));
+        assert!(given(&seen[1], "hello") && !given(&seen[1], "first"), "given what was said before it, not the answer replaced: {:?}", seen[1]);
+        assert!(channel.message(first.id).await.is_some_and(|m| m.revoked.is_some()), "the channel shows it taken back");
+        let history: Vec<_> = channel.history().await.into_iter().filter_map(|m| m.content).collect();
+        assert_eq!(history, ["hello", "second"], "in its place, the new answer at the end");
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn an_agent_does_not_answer_again_once_more_was_said() {
+        let model = Arc::new(Gated {
+            answers: std::sync::Mutex::new(["first", "second", "third"].into()),
+            gate: Arc::new(tokio::sync::Semaphore::new(2)),
+            seen: Default::default(),
+        });
+        let Stuck { channel, context, agent, mut events, running, .. } = with_an_agent(Arc::<Gated>::clone(&model), Default::default()).await;
+        let first = answered(&mut events, agent).await.pop().expect("an answer");
+        let alice = channel.user_actor(alice_of(&context)).unwrap();
+        alice.send_message("and now?".to_string(), None).await.unwrap();
+        answered(&mut events, agent).await;
+
+        alice.request_retry(first.id).await.expect("asked");
+        let ActorEvent::RetryRejected { message, reason } = shown_by(&mut events, agent, "RetryRejected").await else { unreachable!() };
+        assert_eq!(message, first.id);
+        assert_eq!(reason, caelumora_model::agent::RetryRefused::NotLast.to_string());
+        assert!(channel.message(first.id).await.is_some_and(|m| m.revoked.is_none()), "nothing taken back");
+        assert_eq!(model.seen.lock().unwrap().len(), 2, "and no model asked again");
         running.abort();
     }
 
@@ -3342,6 +3423,22 @@ mod tests {
         assert_eq!(kept().await, ["two"], "what it may see");
         actor.catch_up(vec![one, two, own, three]).await.unwrap();
         assert_eq!(kept().await, ["two", "three"], "what it missed, and nothing older nor its own");
+    }
+
+    #[tokio::test]
+    async fn an_external_agent_does_not_answer_again() {
+        use crate::external::ExternalEvent;
+        let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+            vec![Ok(ExternalEvent::Message("Hello, alice.".to_string())), Ok(ExternalEvent::Completed)],
+        ]));
+        let built = external_channel(Arc::clone(&remote), external_components(), |_| None).await.expect("the external agent can be run");
+        let Stuck { channel, context, agent, mut events, running, .. } = start(built).await;
+        let answer = answered(&mut events, agent).await.pop().expect("an answer");
+
+        channel.user_actor(alice_of(&context)).unwrap().request_retry(answer.id).await.expect("asked");
+        let ActorEvent::RetryRejected { message, reason } = shown_by(&mut events, agent, "RetryRejected").await else { unreachable!() };
+        assert_eq!((message, reason), (answer.id, caelumora_model::agent::RetryRefused::Elsewhere.to_string()), "the remote agent keeps what it was given");
+        running.abort();
     }
 
     #[tokio::test]

@@ -99,7 +99,7 @@ fn attributes_of<'a>(action: &ActionType<'a>) -> Option<&'a SecurityAttributes> 
         | GetChannel(a) | CreateChannel(a) | UpdateChannel(a) | DeleteChannel(a)
         | GetUser(a) | CreateUser(a) | UpdateUser(a) | DeleteUser(a)
         | GetUserProfile(a) | CreateUserProfile(a) | UpdateUserProfile(a) | DeleteUserProfile(a)
-        | CancelChannel(a) | WakeChannel(a)
+        | CancelChannel(a) | WakeChannel(a) | RetryMessage(a)
         | GetComponent(a) | CreateComponent(a) | UpdateComponent(a) | DeleteComponent(a)
         | ReadDeleted(_, a) | Restore(_, a) | Purge(_, a) => Some(a),
         _ => None,
@@ -557,6 +557,30 @@ async fn a_message_is_modified_and_taken_back_by_its_author_alone() {
         shown(&mut watch, "MessageRevoked").await;
     }).await;
     assert_eq!(asked, checks(&["alice: RevokeMessage(alice's) yes", "alice: RevokeMessage(alice's) yes"]));
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// M2: asking an agent to answer again (issue 234) is an act on the
+/// conversation, like cancelling it: whoever takes part may - bob as well
+/// as alice - asked as `RetryMessage` of the channel before anything of the
+/// message is looked at but that it is there. Whether the agent answers
+/// again is its own to decide; a message no agent said is refused after
+/// the question.
+#[tokio::test]
+async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
+    use caelumora_model::actor::ActorEvent;
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
+    let mut watch = bob.watch();
+    alice.send_message("hello".to_string(), None).await.expect("sent");
+    let ActorEvent::FullResponseGenerated(said) = shown(&mut watch, "FullResponseGenerated").await else { unreachable!() };
+
+    let (refused, asked) = world.asked(bob.request_retry(said[0].id)).await;
+    assert!(matches!(refused.expect_err("no agent said it").downcast_ref::<ChannelError>(), Some(ChannelError::NotAnAgentsMessage { .. })));
+    assert_eq!(asked, checks(&["bob: RetryMessage(alice's) yes"]), "his to ask, as a participant");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

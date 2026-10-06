@@ -5,11 +5,12 @@ pub mod external_agent;
 
 use crate::component::ComponentImpl;
 use crate::message::{MessageProcessor, PerceiveInProcessor};
+use crate::actor::Answering;
 use crate::runtime::ActorRuntime;
-use crate::transport::EventReceiver;
+use crate::transport::{EventReceiver, EventSender};
 use anyhow::Result;
 use caelumora_model::actor::{ActorEvent, ActorId, Envelope};
-use caelumora_model::agent::AgentChannelState;
+use caelumora_model::agent::{AgentChannelState, RetryRefused};
 use caelumora_model::component::ComponentFailPolicy;
 use caelumora_model::message::Message;
 use caelumora_model::security::SecurityContext;
@@ -104,16 +105,18 @@ async fn take_in_modified(
 /// message modified or taken back since (issue 234); of the requests to
 /// respond the last is returned - one answer to the conversation as it stands, in
 /// the authority of the last who asked - and the others are dropped, as is
-/// every other event. Neither commits nor stores: when that happens is the
-/// actor's.
+/// every other event but the requests to answer again (issue 234), which
+/// are returned in order, each to be answered. Neither commits nor stores:
+/// when that happens is the actor's.
 async fn take_in(
     state: &mut AgentChannelState,
     received: Envelope,
     rx: &mut Box<dyn EventReceiver>,
     processors: &[ComponentImpl<dyn PerceiveInProcessor>],
     security: &SecurityContext,
-) -> Option<Envelope> {
+) -> (Option<Envelope>, Vec<Envelope>) {
     let mut request = None;
+    let mut retries = Vec::new();
     let mut next = Some(received);
     while let Some(event) = next {
         let span = crate::logging::envelope_span(&event.context, event.event.kind());
@@ -134,13 +137,31 @@ async fn take_in(
                     None
                 }
                 ActorEvent::ResponseRequested => Some(event),
+                ActorEvent::RetryRequested { .. } => {
+                    retries.push(event);
+                    None
+                }
                 _ => None,
             }
         }.instrument(span).await;
         request = asked.or(request);
         next = rx.try_recv();
     }
-    request
+    (request, retries)
+}
+
+/// Tells whoever asked each of `retries` that the agent `own`, called
+/// `name`, does not answer again, for `reason` (issue 234) - in the
+/// contexts of each request, as an answer to it. One that cannot be sent is
+/// logged.
+async fn reject_retries(retries: Vec<Envelope>, reason: RetryRefused, own: ActorId, name: &str, output: &dyn EventSender) {
+    for retry in retries {
+        let ActorEvent::RetryRequested { message, .. } = retry.event else { continue };
+        let rejected = ActorEvent::RetryRejected { message, reason: reason.to_string() };
+        if let Err(e) = Answering::to(&retry, own, name.to_string()).send(rejected, output).await {
+            warn!("Agent {} cannot reject a request to answer again: {:#}", own, e);
+        }
+    }
 }
 
 /// Takes in what an actor of an agent missed of its channel as what it
@@ -242,12 +263,12 @@ mod tests {
             tx.try_send(event).expect("room");
         }
 
-        let request = take_in(&mut state, heard("one"), &mut rx, &[], &security).await;
+        let (request, _) = take_in(&mut state, heard("one"), &mut rx, &[], &security).await;
         assert_eq!(texts(&state.transcript.messages()), ["one", "two", "three"], "all of it, in order, also what came after the last request");
         assert_eq!(request.map(|r| r.security.caller_id), Some(caelumora_model::actor::ActorId::System), "the last request");
         assert!(rx.try_recv().is_none(), "nothing left behind");
 
-        let request = take_in(&mut state, heard("four"), &mut rx, &[], &security).await;
+        let (request, _) = take_in(&mut state, heard("four"), &mut rx, &[], &security).await;
         assert!(request.is_none(), "heard, but nobody asked");
         assert_eq!(texts(&state.transcript.messages()), ["one", "two", "three", "four"]);
     }

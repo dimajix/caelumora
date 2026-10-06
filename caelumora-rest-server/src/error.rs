@@ -210,6 +210,7 @@ impl ApiError {
                 ChannelError::ClassificationRefused { .. } => return bad_request("invalid_classification"),
                 ChannelError::MessageNotFound { .. } => return Self::not_found("message_not_found", detail),
                 ChannelError::MessageRevoked { .. } => return Self::conflict("message_revoked", detail),
+                ChannelError::NotAnAgentsMessage { .. } => return Self::conflict("not_an_agents_message", detail),
                 ChannelError::NotCleared { .. } => return Self::forbidden("not_cleared", detail),
                 ChannelError::Forbidden { .. } => {}
             }
@@ -394,6 +395,7 @@ mod tests {
         let message = caelumora_model::message::MessageId::new();
         assert_eq!(answer(anyhow::Error::new(ChannelError::MessageNotFound { message, channel }), Subject::Session), (404, "message_not_found"));
         assert_eq!(answer(anyhow::Error::new(ChannelError::MessageRevoked { message, channel }), Subject::Session), (409, "message_revoked"));
+        assert_eq!(answer(anyhow::Error::new(ChannelError::NotAnAgentsMessage { message, channel }), Subject::Session), (409, "not_an_agents_message"));
         assert_eq!(answer(anyhow::Error::new(ChannelError::NotCleared { participant: someone, channel }), Subject::Participant), (403, "not_cleared"));
         assert_eq!(answer(anyhow::Error::new(caelumora_model::template::TemplateError::UnsupportedScope("group")), Subject::Session), (400, "template_invalid"));
 

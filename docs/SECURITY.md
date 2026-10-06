@@ -61,7 +61,8 @@ This is the one place ownership is recorded.
 The `OwnershipSecurityManager` decides by those attributes and the context's initiator:
 
 *   The owner may do everything. Contributors may read and use - write into a session, cancel or
-    wake a channel. What belongs to the system, everybody may read and use.
+    wake a channel, ask an agent in it to answer again (`RetryMessage`, issue 234). What belongs to
+    the system, everybody may read and use.
 *   Creating is only allowed with oneself as owner; changing and deleting only for the owner.
 *   What was deleted (issue 164) is the owner's to read (`ReadDeleted`) and to restore
     (`Restore`). Removing it for good (`Purge`) is the system's alone - the retention policy's
@@ -140,7 +141,7 @@ asked:
 The questions are `may_read_channel`, `may_change_channel`, `may_change_session`,
 `may_channel_read`, `may_read_agent_context`, `may_read_agent_tools`, `may_approve`,
 `may_delete_agent`, `may_call_tool`, `may_publish`, `may_modify_message`, `may_revoke_message`,
-`may_see_channel`, `may_restore` and `may_purge`.
+`may_retry_message`, `may_see_channel`, `may_restore` and `may_purge`.
 
 `AccessQuestions` is an extension trait on every `SecurityManager`, by blanket implementation. Each
 question gets a name and one place, but only translates into an `ActionType`. The decision stays

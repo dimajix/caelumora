@@ -25,7 +25,7 @@
 //! when it began, its answer classified as what it has seen - and given up
 //! when the channel was lowered since.
 
-use super::{catch_up, failure_message, lowered_message, take_in};
+use super::{catch_up, failure_message, lowered_message, reject_retries, take_in};
 use crate::actor::{Actor, Answering};
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::agent_state::AgentStateHandle;
@@ -238,12 +238,15 @@ impl ExternalAgentActor {
     /// what others said, as it passes its perceive processors, for the
     /// remote agent to be given when it is next asked; stored at once, so
     /// that a restart loses none of it. Returns the last request to
-    /// respond, if any.
-    async fn hear(&self, state: &mut AgentChannelState, received: Envelope, rx: &mut Box<dyn EventReceiver>) -> Option<Envelope> {
-        let request = take_in(state, received, rx, &self.perceive_in_processors, &self.security_context).await;
+    /// respond, if any. A request to answer again is rejected (issue 234):
+    /// the remote agent keeps what it was given, and nothing here can take
+    /// its answer back from it.
+    async fn hear(&self, state: &mut AgentChannelState, received: Envelope, rx: &mut Box<dyn EventReceiver>, output: &dyn EventSender) -> Option<Envelope> {
+        let (request, retries) = take_in(state, received, rx, &self.perceive_in_processors, &self.security_context).await;
         if let Err(e) = self.actor_runtime.store_channel_state(state).await {
             warn!("External agent {} cannot store what it heard: {:#}", self.id(), e);
         }
+        reject_retries(retries, caelumora_model::agent::RetryRefused::Elsewhere, self.id(), &self.name(), output).await;
         request
     }
 
@@ -758,7 +761,7 @@ impl Actor for ExternalAgentActor {
     }
 
     fn event_filter(&self) -> fn(&Envelope) -> bool {
-        |event| matches!(event.event, ActorEvent::ResponseRequested | ActorEvent::FullResponseGenerated(_) | ActorEvent::MessageModified(_) | ActorEvent::MessageRevoked { .. })
+        |event| matches!(event.event, ActorEvent::ResponseRequested | ActorEvent::FullResponseGenerated(_) | ActorEvent::MessageModified(_) | ActorEvent::MessageRevoked { .. } | ActorEvent::RetryRequested { .. })
     }
 
     /// Takes in what it missed as what it hears (issues 190, 196, 206); the
@@ -785,7 +788,7 @@ impl Actor for ExternalAgentActor {
                 received = rx.recv() => {
                     let Some(received) = received else { break };
                     // One answer to all that was queued, to the last request.
-                    if let Some(request) = self.hear(&mut state, received, &mut rx).await {
+                    if let Some(request) = self.hear(&mut state, received, &mut rx, &*output).await {
                         let span = crate::logging::envelope_span(&request.context, request.event.kind());
                         self.respond(&mut state, &request, &*output).instrument(span).await;
                         self.follow_open_tasks(&mut state, &mut followed, &mut attempted, &*output).await;

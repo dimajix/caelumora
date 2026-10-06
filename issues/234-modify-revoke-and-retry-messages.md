@@ -501,3 +501,24 @@ describe the events, the routes and what revoking does not do.
   history and an agent's history over REST showing both, and `409 message_revoked` and `404
   message_not_found` for a change that cannot be made. *From here on a user can correct and take
   back their messages.*
+- **2026-10-06** — Step 5 done. `ActorEvent::RetryRequested { message, author }`, `RetryAccepted {
+  message }` and `RetryRejected { message, reason }`; `ActionType::RetryMessage` with the channel's
+  attributes, granted like `CancelChannel` - the agent's attributes, which the plan named, decide
+  nothing. `UserActor::request_retry` sends a `WakeupRequested` ahead; the channel admits the
+  request only for a message the named agent said and nobody took back, wakes the agent and the
+  moderator routes it to that agent alone. `ChannelError::NotAnAgentsMessage`, mapped to `409
+  not_an_agents_message` already. `take_in` returns the last request to respond and every request to
+  answer again, as a tuple: a request to respond outweighs them, and of them alone the last is
+  answered, the others rejected (`RetryRefused::AskedAgain`) - so a request to respond is never lost
+  to a retry that came after it. The decision is a rule of the agent's state,
+  `AgentChannelState::retried`: the message is an answer of the agent on the transcript's active
+  path, after which only its own internal steps and changes follow; it returns what to take back or
+  a `RetryRefused`, whose text is the `reason`. Against the plan, what would take back calls of
+  tools that ran is rejected (`CallsRan`) instead of told to the model as a turn given up is: by the
+  rule above it can only be internal steps after the last answer, which no turn that ended normally
+  leaves, and telling it would need 145's message on a path that is not given up. An external agent
+  rejects every request (`Elsewhere`), which answers open question 6 for now. Open question 5 stays
+  open: a request waits for the end of a turn under way. Tests in the model, in `channel.rs` - an
+  answer replaced, the model given the conversation without it; a request rejected once more was
+  said; an external agent's rejection - and the security suite. CHANNELS.md (*Answering again*),
+  AGENT-TURN.md, SECURITY.md.

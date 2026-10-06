@@ -1,4 +1,4 @@
-use super::{apply_stage_processors, catch_up, event_for, failure_message, lowered_message, take_in};
+use super::{apply_stage_processors, catch_up, event_for, failure_message, lowered_message, reject_retries, take_in};
 use crate::actor::{Actor, Answering};
 use crate::agent_run_control::{Interrupt, RunControl};
 use crate::agent_turn::{CommittedTurn, Turn, MAX_MODEL_CALLS};
@@ -14,7 +14,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use crate::agent_state::AgentStateHandle;
-use caelumora_model::agent::{AgentChannelState, AgentId, Personality};
+use caelumora_model::agent::{AgentChannelState, AgentId, Personality, RetryRefused};
 use caelumora_model::turn::TurnState;
 use crate::controller::AgentController;
 use caelumora_model::approval::ApprovalStatus;
@@ -264,8 +264,11 @@ impl AgentActor {
     /// everything queued behind it (`take_in`, issue 222): what others said
     /// is perceived - no turn, nothing asked of the policy (issues 85, 90) -
     /// and one turn starts on the last request, unless the agent sleeps,
-    /// where only `wakeup()` ends the sleep. `None` once the actor's input
-    /// is closed.
+    /// where only `wakeup()` ends the sleep. A request to respond outweighs
+    /// the requests to answer again that came with it, which are rejected:
+    /// the conversation went on. Of those alone, the last is answered
+    /// (`retry`) and the others rejected (issue 234); the channel woke the
+    /// agent for them. `None` once the actor's input is closed.
     async fn handle_waiting(
         &self,
         state: &mut AgentChannelState,
@@ -273,27 +276,75 @@ impl AgentActor {
         output: &dyn EventSender,
     ) -> Result<Option<ActorState>> {
         let Some(received) = rx.recv().await else { return Ok(None) };
-        let request = take_in(state, received, rx, &self.perceive_in_processors, &self.security_context).await;
+        let (request, mut retries) = take_in(state, received, rx, &self.perceive_in_processors, &self.security_context).await;
         // Read once taken in, not before waiting: the channel wakes an agent
         // before it delivers the message that asks it, and the request comes
         // in the same batch.
         let asleep = self.control.state() == ActorState::Sleeping;
-        let started = match request.filter(|_| !asleep) {
-            Some(request) => {
-                let span = crate::logging::envelope_span(&request.context, request.event.kind());
-                match self.request_response(state, &request, output).instrument(span.clone()).await {
-                    Ok(()) => true,
-                    // E.g. a fail-closed context provider: the turn never starts.
+        let request = request.filter(|_| !asleep);
+        let retry = if request.is_some() { None } else { retries.pop() };
+        reject_retries(retries, RetryRefused::AskedAgain, self.id(), &self.agent_controller.name(), output).await;
+        let started = match (request, retry) {
+            (Some(request), _) => self.begin_answer(state, &request, output).await,
+            (None, Some(retry)) => {
+                let span = crate::logging::envelope_span(&retry.context, retry.event.kind());
+                match self.retry(state, &retry, output).instrument(span.clone()).await {
+                    Ok(true) => self.begin_answer(state, &retry, output).await,
+                    Ok(false) => false,
                     Err(e) => {
-                        self.fail_turn(state, &e, output).instrument(span).await;
+                        warn!("Agent {} cannot answer a request to answer again: {:#}", self.id(), e);
                         false
                     }
                 }
             }
-            None => false,
+            (None, None) => false,
         };
         rx.commit().await?;
         Ok(Some(if started { ActorState::Planning } else { self.control.state() }))
+    }
+
+    /// Begins a turn in answer to `request` (`request_response`), and
+    /// whether it began: an error is the turn's, which then fails.
+    async fn begin_answer(&self, state: &mut AgentChannelState, request: &Envelope, output: &dyn EventSender) -> bool {
+        let span = crate::logging::envelope_span(&request.context, request.event.kind());
+        match self.request_response(state, request, output).instrument(span.clone()).await {
+            Ok(()) => true,
+            // E.g. a fail-closed context provider: the turn never starts.
+            Err(e) => {
+                self.fail_turn(state, &e, output).instrument(span).await;
+                false
+            }
+        }
+    }
+
+    /// Answers the `RetryRequested` in `request` (issue 234), in its
+    /// contexts continued in the agent's name. If the message is its last
+    /// answer (`AgentChannelState::retried`), it says so with
+    /// `RetryAccepted`, takes back what the retry replaces - in its own
+    /// state, and announced with `MessageRevoked` for what its history
+    /// holds, the rest being internal steps nobody else saw - and returns
+    /// `true`: a turn is to begin in answer to the request, given the
+    /// transcript as it stands. Otherwise it says why with `RetryRejected`.
+    async fn retry(&self, state: &mut AgentChannelState, request: &Envelope, output: &dyn EventSender) -> Result<bool> {
+        let ActorEvent::RetryRequested { message, .. } = request.event else { return Ok(false) };
+        let answering = Answering::to(request, self.id(), self.agent_controller.name());
+        let taken_back = match state.retried(message, self.id()) {
+            Ok(taken_back) => taken_back,
+            Err(refused) => {
+                answering.send(ActorEvent::RetryRejected { message, reason: refused.to_string() }, output).await?;
+                return Ok(false);
+            }
+        };
+        answering.send(ActorEvent::RetryAccepted { message }, output).await?;
+        let at = chrono::Utc::now();
+        for id in taken_back {
+            let said = state.history.message(id).is_some();
+            state.revoke_message(id, at);
+            if said {
+                answering.send(ActorEvent::MessageRevoked { message: id, at }, output).await?;
+            }
+        }
+        Ok(true)
     }
 
     /// Ends the turn under way in `state` after `error`: logs the full
@@ -717,6 +768,7 @@ impl Actor for AgentActor {
                     | ActorEvent::FullResponseGenerated(_)
                     | ActorEvent::MessageModified(_)
                     | ActorEvent::MessageRevoked { .. }
+                    | ActorEvent::RetryRequested { .. }
                     | ActorEvent::ResponseRequested
             )
         }

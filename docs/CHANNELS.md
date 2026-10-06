@@ -199,6 +199,37 @@ message, and what they said in reply stays.
 How the chains record a change is described in
 [AGENT-TURN.md](AGENT-TURN.md#changes-to-a-message).
 
+### Answering again
+
+Whoever takes part may ask an agent to answer again instead of one of its messages - its last
+answer, and nothing else, since a new answer cannot be placed above what answered the old one
+without forking. It is a request to the agent, not an operation of the channel: the agent decides.
+
+*   **A user** asks through their actor: `UserActor::request_retry(message)` asks `RetryMessage`
+    of the channel - as cancelling and waking, whoever may read the channel - and sends a
+    `WakeupRequested`, then `ActorEvent::RetryRequested { message, author }`.
+    `ChannelError::MessageNotFound`, `Forbidden`, `MessageRevoked` and `NotAnAgentsMessage` tell
+    the user why not.
+*   **The channel** admits it as it admits a change (`admits_change`): its sender may ask it, and
+    `author` is the agent that said the message, which was not taken back. The moderator routes it
+    to `author` alone, whom the channel wakes first, as it wakes whom it asks to respond.
+*   **The agent** takes it in between turns, with what it hears (`actor_impl::take_in`). A request
+    to respond that came with it outweighs it; of several requests to answer again, the last is
+    answered and the others are rejected. It answers again only if the message is its last answer,
+    as its own transcript says (`AgentChannelState::retried`): an answer of its own on the
+    transcript's active path, after which only its own internal steps and changes to what was said
+    follow. It then says so with `RetryAccepted`, takes back the message and those steps - in its
+    own state, and with `MessageRevoked` for what the channel holds - and begins a turn in the
+    request's contexts, as it does for `ResponseRequested`: its model is given the conversation as
+    it stood before the message, as it stands now. What it then says is routed as any answer.
+    Otherwise it says why with `RetryRejected` (`RetryRefused`): not its answer, more was said or
+    done since, calls of tools that ran would be taken back, or it was asked again since.
+*   **An external agent** rejects every request to answer again: its remote agent keeps what it was
+    given, and nothing here takes the answer back from it.
+
+`RetryAccepted` and `RetryRejected` go to the users and are never written to the history. A request
+waits for the end of a turn under way, as everything an agent hears does.
+
 ## Participants
 
 Participants of the session can be added to and removed from a running channel (issue 46). Changing

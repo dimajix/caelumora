@@ -170,6 +170,29 @@ pub enum ActorEvent {
         message: MessageId,
         at: DateTime<Utc>,
     },
+    /// `author`, an agent, is asked to answer again instead of its message
+    /// `message` (issue 234): sent by a user's actor, admitted by the
+    /// channel only for a message of its history that `author` said, and
+    /// routed to `author` alone. Whether it can is the agent's to decide, by
+    /// its own transcript; it answers `RetryAccepted` or `RetryRejected`.
+    RetryRequested {
+        message: MessageId,
+        author: ActorId,
+    },
+    /// The agent answers again instead of `message` (issue 234): it takes
+    /// what it replaces back (`MessageRevoked`) and answers in a turn of its
+    /// own, in the contexts of the request. Like `TurnFailed`, shown to
+    /// users and never written to the history.
+    RetryAccepted {
+        message: MessageId,
+    },
+    /// The agent does not answer again instead of `message` (issue 234);
+    /// `reason` is meant for users, as `TurnFailed::message` is. Shown to
+    /// users and never written to the history.
+    RetryRejected {
+        message: MessageId,
+        reason: String,
+    },
 }
 
 impl ActorEvent {
@@ -232,6 +255,9 @@ impl ActorEvent {
             ActorEvent::ChainCutOff { .. } => "ChainCutOff",
             ActorEvent::MessageModified(_) => "MessageModified",
             ActorEvent::MessageRevoked { .. } => "MessageRevoked",
+            ActorEvent::RetryRequested { .. } => "RetryRequested",
+            ActorEvent::RetryAccepted { .. } => "RetryAccepted",
+            ActorEvent::RetryRejected { .. } => "RetryRejected",
         }
     }
 }
@@ -361,6 +387,15 @@ impl Envelope {
             }
             ActorEvent::MessageRevoked { message, .. } => {
                 format!("MessageRevoked(sender_id={}, sender_name={}, mid={})", ctx.sender_id, ctx.sender_name, message)
+            }
+            ActorEvent::RetryRequested { message, author } => {
+                format!("RetryRequested(sender_id={}, mid={}, author={})", ctx.sender_id, message, author)
+            }
+            ActorEvent::RetryAccepted { message } => {
+                format!("RetryAccepted(sender_id={}, mid={})", ctx.sender_id, message)
+            }
+            ActorEvent::RetryRejected { message, reason } => {
+                format!("RetryRejected(sender_id={}, mid={}, reason={})", ctx.sender_id, message, reason)
             }
             _ => {
                 format!("{:?}", self.event)
