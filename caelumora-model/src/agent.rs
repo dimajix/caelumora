@@ -247,43 +247,6 @@ impl AgentChannelState {
         self.transcript.extend(perceived);
     }
 
-    /// Takes in that a message said reads differently from now on (issue
-    /// 234), the same for both kinds of agent and for its own messages:
-    /// `heard`, as it was modified, into its history, if that holds the
-    /// message; `perceived` - for what others said, what of it passed its
-    /// perceive processors - into its transcript, if the message is on its
-    /// active path. Where nothing passed, the message is taken back there:
-    /// the version it was given no longer stands. Between turns only, as
-    /// perceiving is. Returns whether either changed.
-    pub fn modify_message(&mut self, heard: Message, perceived: Option<Message>) -> bool {
-        let (id, at) = (heard.id, heard.timestamp);
-        let history = self.history.modify(heard);
-        let transcript = match perceived {
-            Some(perceived) => self.transcript.modify(perceived),
-            None => self.transcript.revoke(id, at),
-        };
-        history || transcript
-    }
-
-    /// Takes in that the message `id` was taken back at `at` (issue 234),
-    /// into its history and its transcript where they hold it. Between turns
-    /// only. Returns whether either changed.
-    pub fn revoke_message(&mut self, id: MessageId, at: chrono::DateTime<chrono::Utc>) -> bool {
-        let history = self.history.revoke(id, at);
-        let transcript = self.transcript.revoke(id, at);
-        history || transcript
-    }
-
-    /// Takes in that the message `id` is classified `classification` from
-    /// now on (issue 239), into its history and its transcript where they
-    /// hold it: a turn begun afterwards is labelled by the message as it
-    /// stands. Between turns only. Returns whether either changed.
-    pub fn reclassify_message(&mut self, id: MessageId, classification: Classification) -> bool {
-        let history = self.history.reclassify(id, classification.clone());
-        let transcript = self.transcript.reclassify(id, classification);
-        history || transcript
-    }
-
     /// What answering again instead of the message `id` of the agent `own`
     /// takes back (issue 234): the message, and what follows it on the
     /// active path of the transcript - which may only be the rest of its
@@ -872,43 +835,10 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_change_to_a_message_reaches_the_history_and_the_transcript_where_they_hold_it() {
-        let at = chrono::Utc::now();
-        let mut state = a_state_that_heard("hello", Classification::CHANNEL_DEFAULT);
-        let dropped = said("spam", Classification::CHANNEL_DEFAULT);
-        state.perceive(vec![dropped.clone()], Vec::new());
-        let hello = state.history.messages()[0].clone();
-
-        let corrected = Message { content: Some("hello, corrected".to_string()), timestamp: at, ..hello.clone() };
-        assert!(state.modify_message(corrected.clone(), Some(corrected.clone())));
-        assert_eq!(state.transcript.messages()[0].content.as_deref(), Some("hello, corrected"));
-        assert_eq!(state.history.messages()[0].content.as_deref(), Some("hello, corrected"));
-
-        assert!(state.revoke_message(dropped.id, at), "the history holds it");
-        assert_eq!(state.transcript.all_entries().len(), 2, "the transcript never held it: nothing recorded there");
-        assert!(state.history.message(dropped.id).is_some_and(|m| m.revoked.is_some()));
-        assert!(!state.revoke_message(MessageId::new(), at), "neither holds it");
-
-        let again = Message { content: Some("hello, spam".to_string()), ..corrected };
-        assert!(state.modify_message(again, None), "its processors dropped the new version");
-        assert!(state.transcript.messages().is_empty(), "so the model is no longer given the old one");
-        assert_eq!(state.history.messages()[0].content.as_deref(), Some("hello, spam"), "the history keeps what was said");
-
-        begin(&mut state, Vec::new());
-        assert_eq!(state.turn.as_ref().unwrap().work.context.transcript, state.transcript.digest(), "a turn begins on the transcript as it stands");
-    }
-
-    #[test]
     fn a_turn_begun_after_a_release_is_labelled_by_the_message_as_it_stands() {
         let mut state = a_state_that_heard("the numbers", Classification::CHANNEL_DEFAULT);
         let heard = state.history.messages()[0].id;
-        let dropped = said("spam", Classification::CHANNEL_DEFAULT);
-        state.perceive(vec![dropped.clone()], Vec::new());
-
-        assert!(state.reclassify_message(heard, Classification::PUBLIC));
-        assert!(state.reclassify_message(dropped.id, Classification::PUBLIC), "the history holds it");
-        assert!(!state.reclassify_message(MessageId::new(), Classification::PUBLIC), "neither holds it");
-        assert!(state.history.messages().iter().all(|m| m.classification == Classification::PUBLIC));
+        assert!(state.transcript.reclassify(heard, Classification::PUBLIC));
 
         begin(&mut state, Vec::new());
         assert_eq!(state.turn.as_ref().unwrap().work.label(), Classification::PUBLIC, "released, it no longer raises the label");
@@ -916,7 +846,7 @@ pub(crate) mod tests {
         let agent = ActorId::Agent(AgentId::new());
         let answer = Message { sender_id: agent, role: MessageRole::Assistant, turn_id: Some(TurnId::new()), ..said("hi", Classification::CHANNEL_DEFAULT) };
         state.transcript.push(answer.clone());
-        state.reclassify_message(answer.id, Classification::PUBLIC);
+        state.transcript.reclassify(answer.id, Classification::PUBLIC);
         assert_eq!(state.retried(answer.id, agent), Ok(vec![answer.id]), "a change, not something said");
     }
 
@@ -937,7 +867,7 @@ pub(crate) mod tests {
         assert_eq!(state.retried(first.id, ActorId::Agent(AgentId::new())), Err(RetryRefused::NotItsAnswer), "another agent's");
 
         // The user corrects the question: a change, not something said.
-        state.modify_message(Message { content: Some("hello there".to_string()), ..question.clone() }, Some(question.clone()));
+        state.transcript.modify(Message { content: Some("hello there".to_string()), ..question.clone() });
         assert_eq!(state.retried(first.id, agent), Ok(vec![first.id]), "still its last answer");
 
         // What its turn did after it is taken back with it - not a step of
@@ -963,7 +893,7 @@ pub(crate) mod tests {
 
         let mut state = a_state_that_heard("hello", Classification::CHANNEL_DEFAULT);
         state.transcript.push(first.clone());
-        state.revoke_message(first.id, chrono::Utc::now());
+        state.transcript.revoke(first.id, chrono::Utc::now());
         assert_eq!(state.retried(first.id, agent), Err(RetryRefused::NotItsAnswer), "taken back already");
         assert_eq!(serde_json::to_value(RetryRefused::NotLast).unwrap(), serde_json::json!("not_last"), "as a user interface reads it");
     }

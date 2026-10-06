@@ -743,17 +743,16 @@ impl Answer {
     }
 }
 
-/// Tells the remote agent of `change` to a message (issue 236, handed over
-/// by `take_in` where it was taken in) that it was given already: one the
-/// transcript of `state` holds on a branch off its active path, in the
-/// conversation it keeps - on the path, the change was recorded where the
-/// message stands, and the remote agent is given it as it stands. By a
-/// notice (`notice`) appended to the transcript, to be given with the next
-/// call as any message is; or, if a notice of the message was not given
-/// yet, by modifying that one, so that it is told once, of the message as
-/// it stands then. Nothing for a message taken back where it was given, or
-/// while the remote agent keeps no conversation: then it is given
-/// everything anew.
+/// Tells the remote agent of `change`, a modification or revocation the
+/// transcript of `state` did not take (issue 236, handed over by `take_in`
+/// where it came): of a message it was given - one the transcript holds on
+/// a branch off its active path, in the conversation the remote agent
+/// keeps - by a notice (`notice`) appended to the transcript, to be given
+/// with the next call as any message is; or, if a notice of the message
+/// was not given yet, by modifying that one, so that it is told once, of
+/// the message as it stands then. Nothing for a message never given or
+/// taken back where it was given, or while the remote agent keeps no
+/// conversation: then it is given everything anew.
 fn tell(state: &mut AgentChannelState, change: TranscriptEntry) {
     if state.remote.conversation.is_none() {
         return;
@@ -763,9 +762,6 @@ fn tell(state: &mut AgentChannelState, change: TranscriptEntry) {
         TranscriptEntry::Revoked { message, at } => (message, None, at),
         _ => return,
     };
-    if state.transcript.entries().any(|node| node.entry.message().is_some_and(|m| m.id == id)) {
-        return;
-    }
     let Some(was) = state.transcript.message(id).filter(|was| was.revoked.is_none()) else { return };
     let mut told = notice(&was, now.as_ref(), at);
     match state.transcript.messages().into_iter().find(|m| m.notice_of == Some(id)) {
@@ -992,11 +988,6 @@ mod tests {
         state.transcript.start_anew();
         tell(&mut state, modified("once more"));
         assert_eq!(told(&state), [(Some(first.id), "[changed an earlier message \"first\"; it now reads:] once more".to_string())], "after a call, a notice of its own, naming it as it was first given");
-
-        state.transcript.push(second.clone());
-        let before = state.transcript.messages().len();
-        tell(&mut state, TranscriptEntry::Revoked { message: second.id, at });
-        assert_eq!(state.transcript.messages().len(), before, "on the path: recorded where it stands, nothing to tell");
 
         let mut revoked = AgentChannelState::default();
         revoked.remote.conversation = Some(ConversationId("c-1".to_string()));

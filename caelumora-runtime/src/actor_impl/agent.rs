@@ -383,7 +383,8 @@ impl AgentActor {
         let at = chrono::Utc::now();
         for id in taken_back {
             let said = state.history.message(id).is_some();
-            state.revoke_message(id, at);
+            state.history.revoke(id, at);
+            state.transcript.revoke(id, at);
             if said {
                 answering.send(ActorEvent::MessageRevoked { message: id, at }, output).await?;
             }

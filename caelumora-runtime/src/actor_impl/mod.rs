@@ -74,19 +74,22 @@ async fn perceive(
 
 /// Takes in that a message of another reads as `modified` from now on
 /// (issue 234), the same for both kinds of agent - never its own, as
-/// nothing heard is (`perceive`): as it was modified into its history; as
-/// the agent hears it - `Message::as_heard`, through its perceive
-/// `processors`, as everything heard - into its transcript, as what its
+/// nothing heard is (`perceive`): as it was modified into its history, if
+/// that holds the message; as the agent hears it - `Message::as_heard`,
+/// through its perceive `processors`, as everything heard - into its
+/// transcript, if the message is on its active path, as what its
 /// processors made of it under the message's id. Where nothing is left
-/// under it, or the stage fails, the message is no longer given there: the
-/// version given before does not stand any more. Returns what its
-/// processors made of it, `None` if nothing.
+/// under it, or the stage fails, the message is taken back there: the
+/// version given before does not stand any more. Returns the change the
+/// transcript did not take, as the agent hears it - a modification of
+/// which nothing passed as taken back - or `None` if it took it.
 async fn take_in_modified(
     state: &mut AgentChannelState,
     modified: Message,
     processors: &[ComponentImpl<dyn PerceiveInProcessor>],
     security: &SecurityContext,
-) -> Option<Message> {
+) -> Option<TranscriptEntry> {
+    let (id, at) = (modified.id, modified.timestamp);
     let perceived = match modified.as_heard() {
         None => None,
         Some(heard) => match apply_stage_processors(processors, vec![heard], security).await {
@@ -97,27 +100,38 @@ async fn take_in_modified(
             }
         },
     };
-    state.modify_message(modified, perceived.clone());
-    perceived
+    state.history.modify(modified);
+    let taken = match &perceived {
+        Some(perceived) => state.transcript.modify(perceived.clone()),
+        None => state.transcript.revoke(id, at),
+    };
+    if taken {
+        return None;
+    }
+    Some(match perceived {
+        Some(message) => TranscriptEntry::Modified { message },
+        None => TranscriptEntry::Revoked { message: id, at },
+    })
 }
-
 
 /// Takes in what an agent was told while it could not listen (issue 222),
 /// the same for both kinds of agent: `received`, and everything `rx` holds
 /// already behind it, in order. What others said is perceived as it comes
 /// (`perceive`, with the agent's `processors`), and so is a message
 /// modified or taken back since (issue 234); a reclassification is recorded
-/// as it is (issue 239). Of the requests to respond the last is returned -
+/// as it is (issue 239), in the history and the transcript where they hold
+/// the message, the transcript on its active path. Of the requests to respond the last is returned -
 /// one answer to the conversation as it stands, in the authority of the
 /// last who asked - and the others are dropped, as is
 /// every other event but the requests to answer again (issue 234), which
-/// are returned in order, each to be answered. Every modification and
-/// revocation is handed, once taken in, to `elsewhere` (issue 236) - so in
-/// order with what was said - as an entry of what became of the message as
-/// the agent hears it, a modification of which nothing passes as taken
-/// back: for an actor that gave its transcript elsewhere to tell what the
-/// transcript could not take. Neither commits nor stores: when that happens
-/// is the actor's.
+/// are returned in order, each to be answered. A modification or revocation
+/// is recorded in the history and in the transcript where they hold the
+/// message - the transcript on its active path; one the transcript did not
+/// take is handed to `elsewhere` where it came (issue 236) - so in order
+/// with what was said - as the agent hears it, a modification of which
+/// nothing passes as taken back: for an actor that gave its transcript
+/// elsewhere to tell. Neither commits nor stores: when that happens is the
+/// actor's.
 async fn take_in(
     state: &mut AgentChannelState,
     received: Envelope,
@@ -140,21 +154,21 @@ async fn take_in(
                     None
                 }
                 ActorEvent::MessageModified(modified) => {
-                    let (id, at) = (modified.id, modified.timestamp);
-                    let change = match take_in_modified(state, modified, processors, security).await {
-                        Some(message) => TranscriptEntry::Modified { message },
-                        None => TranscriptEntry::Revoked { message: id, at },
-                    };
-                    elsewhere(state, change);
+                    if let Some(change) = take_in_modified(state, modified, processors, security).await {
+                        elsewhere(state, change);
+                    }
                     None
                 }
                 ActorEvent::MessageRevoked { message, at } => {
-                    state.revoke_message(message, at);
-                    elsewhere(state, TranscriptEntry::Revoked { message, at });
+                    state.history.revoke(message, at);
+                    if !state.transcript.revoke(message, at) {
+                        elsewhere(state, TranscriptEntry::Revoked { message, at });
+                    }
                     None
                 }
                 ActorEvent::MessageReclassified { message, classification } => {
-                    state.reclassify_message(message, classification);
+                    state.history.reclassify(message, classification.clone());
+                    state.transcript.reclassify(message, classification);
                     None
                 }
                 ActorEvent::ResponseRequested => Some(event),
@@ -264,6 +278,8 @@ mod tests {
         }
     }
 
+    impl PerceiveInProcessor for Without {}
+
     fn stage(id: &str, processor: Without, fail_policy: ComponentFailPolicy) -> ComponentImpl<dyn MessageProcessor> {
         ComponentImpl { id: id.to_string(), fail_policy, facet: Arc::new(processor) }
     }
@@ -305,7 +321,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn every_change_is_handed_over_where_it_was_taken_in() {
+    async fn a_change_is_recorded_where_the_chains_hold_the_message_and_handed_over_where_the_transcript_does_not() {
         let (tx, rx) = tokio::sync::mpsc::channel(8);
         let mut rx: Box<dyn EventReceiver> = Box::new(crate::transport_impl::memory::InMemoryEventReceiver::new(rx));
         let mut state = AgentChannelState::default();
@@ -315,7 +331,7 @@ mod tests {
         state.transcript.start_anew();
         state.perceive(vec![kept.clone()], vec![kept.clone()]);
         let modified = |message: &Message, text: &str| envelope(ActorEvent::MessageModified(Message { content: Some(text.to_string()), ..message.clone() }));
-
+        let heard = |text: &str| envelope(ActorEvent::FullResponseGenerated(vec![Message { id: MessageId::new(), ..said(text) }]));
         // Writes down what it is handed, where it is handed it.
         fn noted(state: &mut AgentChannelState, change: TranscriptEntry) {
             let text = match change {
@@ -325,15 +341,34 @@ mod tests {
             };
             state.transcript.push(Message { id: MessageId::new(), ..said(&text) });
         }
-        let heard = |text: &str| envelope(ActorEvent::FullResponseGenerated(vec![Message { id: MessageId::new(), ..said(text) }]));
+
         tx.try_send(modified(&given, "given, corrected")).expect("room");
         tx.try_send(heard("and then")).expect("room");
         tx.try_send(envelope(ActorEvent::MessageRevoked { message: given.id, at: chrono::Utc::now() })).expect("room");
+        tx.try_send(envelope(ActorEvent::MessageRevoked { message: MessageId::new(), at: chrono::Utc::now() })).expect("room");
         take_in(&mut state, modified(&kept, "kept, corrected"), &mut rx, &[], &security, noted).await;
 
-        assert_eq!(texts(&state.transcript.messages()), ["kept, corrected", "modified: kept, corrected", "modified: given, corrected", "and then", "taken back"],
-            "recorded where the transcript holds it, and handed over where it came, as the agent hears it");
-        assert!(state.history.message(given.id).is_some_and(|m| m.revoked.is_some()), "the history holds it as it stands");
+        assert_eq!(texts(&state.transcript.messages()), ["kept, corrected", "modified: given, corrected", "and then", "taken back", "taken back"],
+            "on the active path the transcript takes it; off it, it is handed over where it came - also what the agent never held: whether that is anything to tell is the actor's to see");
+        assert_eq!(state.history.message(kept.id).and_then(|m| m.content).as_deref(), Some("kept, corrected"), "the history holds both as they stand");
+        assert!(state.history.message(given.id).is_some_and(|m| m.revoked.is_some()));
+
+        // A modification of which nothing passes the processors takes the
+        // message back in the transcript; the history keeps what was said.
+        let stages: [ComponentImpl<dyn PerceiveInProcessor>; 1] = [ComponentImpl { id: "no-spam".to_string(), fail_policy: ComponentFailPolicy::FailClosed, facet: Arc::new(Without(Some("spam"))) }];
+        take_in(&mut state, modified(&kept, "kept, spam"), &mut rx, &stages, &security, noted).await;
+        assert_eq!(texts(&state.transcript.messages()), ["modified: given, corrected", "and then", "taken back", "taken back"], "no longer given, and nothing handed over");
+        assert_eq!(state.history.message(kept.id).and_then(|m| m.content).as_deref(), Some("kept, spam"));
+
+        // A reclassification is recorded where the chains hold the message,
+        // and handed over nowhere: a remote agent knows no labels.
+        let earlier = Message { id: MessageId::new(), ..said("earlier") };
+        state.perceive(vec![earlier.clone()], vec![earlier.clone()]);
+        state.transcript.start_anew();
+        let (public, before) = (Classification::PUBLIC, state.transcript.all_entries().len());
+        take_in(&mut state, envelope(ActorEvent::MessageReclassified { message: earlier.id, classification: public.clone() }), &mut rx, &[], &security, noted).await;
+        assert_eq!(state.history.message(earlier.id).map(|m| m.classification), Some(public), "in the history");
+        assert_eq!(state.transcript.all_entries().len(), before, "off the transcript's path: nothing recorded, nothing handed over");
     }
 
     #[tokio::test]

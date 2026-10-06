@@ -79,7 +79,10 @@ the old version stops acting.
 ### The model (`caelumora-model`)
 
 Only what the notice needs, none of the decision: whether and how a change is told is the external
-agent's alone, and `AgentChannelState::modify_message` and `revoke_message` stay as they are.
+agent's alone. `AgentChannelState::modify_message` and `revoke_message` go: they recorded a change
+in both chains and said only whether either took it, so whoever had to tell what the transcript did
+not take asked the transcript a second time. Now `take_in` records a change in the history and the
+transcript itself, and the retry of an agent run here takes its answer back in both chains itself.
 
 - **`Message::notice_of: Option<MessageId>`** marks a notice and names the message it tells of. A
   notice has an id of its own - with the id of the message, every later change of that message
@@ -94,16 +97,16 @@ agent's alone, and `AgentChannelState::modify_message` and `revoke_message` stay
 
 ### The external agent (`caelumora-runtime`)
 
-- **`take_in`** hands every modification or revocation, once taken in, to a function of the actor -
-  where it takes it in, so in order with what was said - as an entry of what became of the message
-  as the agent hears it, a modification of which nothing passes its perceive processors as taken
-  back. An agent run here passes one that does nothing.
-- **`tell`**, the external agent's: while it keeps a remote conversation, of a message its
-  transcript holds only off its active path - given already (`Transcript::message`) - and that was
-  not taken back where it was given, it appends a notice to the transcript - or, if a notice of the
-  message was not given yet, modifies that one, so that several changes before the next call are
-  told once, as the message stands then. On the active path the change was recorded where the
-  message stands, and there is nothing to tell.
+- **`take_in`** records a modification or revocation in the history and the transcript where they
+  hold the message - the transcript on its active path - and hands one the transcript did not take
+  to a function of the actor, where it came, so in order with what was said: as an entry of what
+  became of the message as the agent hears it, a modification of which nothing passes its perceive
+  processors as taken back. One decision, the transcript's (`modify` and `revoke` say whether they
+  recorded), read once. An agent run here passes a function that does nothing.
+- **`tell`**, the external agent's: while it keeps a remote conversation, of a message it was given
+  (`Transcript::message`) and that was not taken back where it was given, it appends a notice to
+  the transcript - or, if a notice of the message was not given yet, modifies that one, so that
+  several changes before the next call are told once, as the message stands then.
 - **`notice(was, now, at)`** words it, in one place, in English: the message as it was first given
   (`was`), named by what it said, cut to some 200 characters, and what became of it (`now`:
   modified to it, or `None`: taken back). Its sender and role are the message's, so that it is
@@ -180,3 +183,8 @@ was given, and the documentation says what that can and cannot achieve.
   same batch after the change. Whether the change is one to tell - of a message given already - is
   for `tell` to see. Done in one step: the external agent's `tell` and `notice`, the label
   seeing every entry's classification, tests, AGENT-TURN.md, CHANNELS.md and ARCHITECTURE.md.
+- **2026-10-06** — Whether the transcript took a change was decided twice, by `Transcript::revoke`
+  and again by `tell` with a predicate of its own; now `take_in` records in both chains itself and
+  hands over only what the transcript did not take, and `AgentChannelState::modify_message` and
+  `revoke_message` are gone - and `reclassify_message` with them, which had the same form and the
+  same one caller.

@@ -327,13 +327,13 @@ A message once said can be modified or taken back by its author
 ([234](../issues/234-modify-revoke-and-retry-messages.md)). Neither rewrites it: the change is an
 entry of its own after it - `Modified` with the message as it reads from now on, or `Revoked` - in
 every chain that holds the message (`modify` and `revoke` of `MessageHistory` and `Transcript`, both
-through `AgentChannelState::modify_message` and `revoke_message`). A chain that does not hold the
+called where an agent takes a change in, `actor_impl::take_in`). A chain that does not hold the
 message records nothing, and so does one where the message as it stands cannot be changed so: taken
 back already, or modified by another sender or in another role.
 
 A message reclassified ([133](../issues/133-classification-model.md),
 [239](../issues/239-reclassified-message-not-in-agents-state.md)) is recorded so as well:
-`Reclassified` in both chains, through `AgentChannelState::reclassify_message`. A turn begun
+`Reclassified` in both chains, where an agent takes it in (`take_in`). A turn begun
 afterwards has seen the message as it stands (`begin_turn`), so a message released no longer raises
 the label of what follows.
 
@@ -361,11 +361,11 @@ reached the transcript at all - reads `all_entries` instead.
 An external agent's transcript starts anew with every call (issue 205), so a message its remote
 agent was given is on a branch off the active path, where `modify` and `revoke` record nothing. The
 external agent tells its remote agent of the change instead
-([236](../issues/236-external-agent-not-told-of-changes.md)): `take_in` hands every change to the
-actor where it takes it in - so in order with what was said - and the external agent, for a message
-its transcript holds only off the active path and while it keeps a remote conversation, appends a
-*notice* to its transcript, given with the next call as any message is. An agent run here tells
-nobody. A notice is a message of its own (`Message::notice_of` names the one it tells of), in the
+([236](../issues/236-external-agent-not-told-of-changes.md)): a change the transcript did not take,
+`take_in` hands to the actor where it came - so in order with what was said - and the external
+agent, while it keeps a remote conversation that was given the message, appends a *notice* to its
+transcript, given with the next call as any message is. An agent run here tells nobody. A notice is
+a message of its own (`Message::notice_of` names the one it tells of), in the
 name and role of the message's sender, so that it is marked as every message is; it names the
 message by what it said as it was first given (`Transcript::message`), shortened, and says what
 became of it: `[changed an earlier message "..."; it now reads:] ...` or `[took back an earlier
