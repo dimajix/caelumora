@@ -1,5 +1,5 @@
 use crate::auth::AuthenticatedUser;
-use crate::models::{AddParticipantRequest, AgentToolsResponse, DeletedResponse, ListOptions, ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CreateChannelRequest, KnowledgeRefResponse, CommandReplyResponse, ExecuteCommandRequest, GivenUpTurnResponse, HistoryMessageResponse, LabelCauses, MessageContextResponse, SeenItemResponse, PublishedNotesResponse, MessageRequest, SendApprovalRequest, StreamOptions};
+use crate::models::{AddParticipantRequest, AgentToolsResponse, DeletedResponse, ListOptions, ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CreateChannelRequest, KnowledgeRefResponse, CommandReplyResponse, ExecuteCommandRequest, GivenUpTurnResponse, HistoryMessageResponse, LabelCauses, MessageContextResponse, SeenItemResponse, PublishedNotesResponse, MessageRequest, RetryTurnRequest, SendApprovalRequest, StreamOptions};
 use crate::state::AppState;
 use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response, Sse};
@@ -290,6 +290,27 @@ pub async fn retry_message(
     let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let user_actor = user_actor_of(&channel, &user)?;
     let span_id = user_actor.request_retry(MessageId(mid)).await
+        .map_err(|e| ApiError::from_runtime(e, Subject::Session, "asking for another answer"))?;
+    tracing::Span::current().record("span_id", tracing::field::display(span_id));
+    Ok(StatusCode::OK)
+}
+
+/// Asks participant `aid`, an agent, to answer again instead of its answer
+/// under way, the turn the body names (issue 235). Refused at once if that
+/// turn is not under way any more (`409 not_under_way`); otherwise the
+/// channel ends the turn as it delivers the request, and the stream shows
+/// `RetryAccepted` and the new answer.
+pub async fn retry_turn(
+    State(state): State<Arc<AppState>>,
+    Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
+    user: AuthenticatedUser,
+    Json(payload): Json<RetryTurnRequest>,
+) -> Result<StatusCode, ApiError> {
+    let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let user_actor = user_actor_of(&channel, &user)?;
+    let participant = actor_in(&channel, aid)
+        .ok_or_else(|| ApiError::not_found("participant_not_found", format!("{} takes no part in channel {}", aid, cid)))?;
+    let span_id = user_actor.request_retry_of_turn(participant, payload.turn_id).await
         .map_err(|e| ApiError::from_runtime(e, Subject::Session, "asking for another answer"))?;
     tracing::Span::current().record("span_id", tracing::field::display(span_id));
     Ok(StatusCode::OK)

@@ -496,7 +496,13 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           setMessages(prev => prev.map(m => m.id === message ? {...m, classification} : m));
         } else if (actorEvent.RetryAccepted) {
           // Its answer is taken back next and a new one begins: shown as
-          // under way from now on.
+          // under way from now on. An answer under way was given up, and
+          // what of it was shown goes: it never reached the history, so a
+          // reload agrees (issue 235).
+          const target = actorEvent.RetryAccepted.target;
+          if ('turn' in target) {
+            setMessages(prev => prev.filter(m => m.turn_id !== target.turn));
+          }
           setAnswers(prev => withAnswer(prev.filter(a => a.sender !== answerer), answerer, answererName, a => a));
         } else if (actorEvent.RetryRejected) {
           // Like a failed turn: shown, but not part of the history.
@@ -772,15 +778,33 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
     }
   };
 
+  /** The id the REST API addresses the sender of `answer` by. */
+  const answererUuid = (answer: Answer) => actorUuid(members.find(m => actorKey(m.id) === answer.sender)?.id);
+
   /** Stops the answer of one agent alone (issue 235); the others go on. */
   const stopAnswer = async (answer: Answer) => {
-    const member = members.find(m => actorKey(m.id) === answer.sender);
-    const uuid = actorUuid(member?.id);
+    const uuid = answererUuid(answer);
     if (!uuid) return;
     try {
       await api.cancelParticipant(sessionId, channelId, uuid);
     } catch (error) {
       reportError('Failed to stop the answer', error);
+    }
+  };
+
+  /**
+   * Asks for another answer instead of `answer`, still under way (issue
+   * 235): offered once its turn is known and where `can_retry` allows it.
+   * Refused if the answer ended meanwhile; the retry icon on its last
+   * message is then the way.
+   */
+  const retryAnswer = async (answer: Answer) => {
+    const uuid = answererUuid(answer);
+    if (!uuid || !answer.turnId) return;
+    try {
+      await api.retryAnswer(sessionId, channelId, uuid, answer.turnId);
+    } catch (error) {
+      reportError('Failed to ask for another answer', error);
     }
   };
 
@@ -981,14 +1005,28 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
                   <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
                   generating…
                 </span>
-                <button
-                  type="button"
-                  onClick={() => void stopAnswer(answer)}
-                  className="ml-auto p-0.5 rounded-sm text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
-                  title="Stop this answer alone"
-                >
-                  <Square size={12} fill="currentColor" />
-                </button>
+                <span className="ml-auto inline-flex items-center gap-1">
+                  {channel?.can_retry && answer.turnId && (
+                    <button
+                      type="button"
+                      onClick={() => void retryAnswer(answer)}
+                      className="p-0.5 rounded-sm text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+                      title="Ask for another answer instead of this one"
+                      aria-label="Ask for another answer instead of this one"
+                    >
+                      <RotateCcw size={12} />
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void stopAnswer(answer)}
+                    className="p-0.5 rounded-sm text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
+                    title="Stop this answer alone"
+                    aria-label="Stop this answer alone"
+                  >
+                    <Square size={12} fill="currentColor" />
+                  </button>
+                </span>
               </div>
               {answer.reasoning && <Reasoning text={answer.reasoning} thinking={!answer.content} />}
               {answer.content && <MarkdownMessage content={answer.content} />}

@@ -262,6 +262,16 @@ export const api = {
     await ensureOk(res, 'Failed to ask for another answer');
   },
 
+  /** Asks agent `actorUuid` to answer again instead of its answer under way, the turn `turnId` (issue 235). */
+  async retryAnswer(sessionId: string, channelId: string, actorUuid: string, turnId: string): Promise<void> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/participants/${actorUuid}/retry`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ turn_id: turnId }),
+    });
+    await ensureOk(res, 'Failed to ask for another answer');
+  },
+
   /** What actor `actorUuid` saw when it produced message `messageId`. */
   async getMessageContext(sessionId: string, channelId: string, actorUuid: string, messageId: string): Promise<MessageContextResponse> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/actors/${actorUuid}/messages/${messageId}/context`);

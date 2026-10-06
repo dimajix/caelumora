@@ -7,6 +7,7 @@ use caelumora_model::mention::mention_spans;
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::user::{User, UserId};
+use caelumora_model::work::TurnId;
 use caelumora_runtime::component::ComponentRegistry;
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::runtime::RuntimeManager;
@@ -52,8 +53,10 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
     // both flow through the same generic ApprovalRequested event.
     let mut pending_approvals: HashMap<Uuid, AgentId> = HashMap::new();
     // The last answer of an agent shown, which `/retry` asks it to give
-    // again (issue 234).
+    // again (issue 234) - or, while one is under way, that answer, by the
+    // agent and its turn (issue 235).
     let mut last_answer: Option<MessageId> = None;
+    let mut under_way: Option<(ActorId, TurnId)> = None;
     let handles: HashMap<ActorId, String> = channel.members()
         .into_iter()
         .filter_map(|m| Some((m.id, m.handle?)))
@@ -76,7 +79,15 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                     continue;
                 }
                 let sender = maybe_envelope.as_ref().map(|e| e.context.sender_name.clone()).unwrap_or_default();
+                let sender_id = maybe_envelope.as_ref().map(|e| e.context.sender_id);
                 match maybe_envelope.map(|envelope| envelope.event) {
+                    Some(ActorEvent::ResponseStarted { turn_id }) => {
+                        under_way = sender_id.filter(|id| matches!(id, ActorId::Agent(_))).map(|id| (id, turn_id));
+                    }
+                    // Its answer has ended, said or not.
+                    Some(ActorEvent::FullResponseGenerated(_)) if under_way.is_some_and(|(agent, _)| Some(agent) == sender_id) => {
+                        under_way = None;
+                    }
                     // Each message as soon as it is complete, as the web UI
                     // shows it; the full response that ends an answer holds
                     // them again (issue 220).
@@ -109,6 +120,9 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                         println!("\r{} cannot answer again: {}", sender, reason);
                     }
                     Some(ActorEvent::TurnFailed { message }) => {
+                        if under_way.is_some_and(|(agent, _)| Some(agent) == sender_id) {
+                            under_way = None;
+                        }
                         println!("\r[error] An agent could not answer: {}", message);
                     }
                     Some(ActorEvent::CommandExecuted { command, output }) => {
@@ -165,14 +179,17 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                             continue;
                         }
                         if input == "/retry" {
-                            match last_answer {
-                                Some(answer) => {
-                                    if let Err(e) = user_actor.request_retry(answer).await {
-                                        let message = caelumora_runtime::error::user_message(&e).unwrap_or_else(|| e.to_string());
-                                        println!("[error] {}", message);
-                                    }
+                            let asked = match (under_way, last_answer) {
+                                (Some((agent, turn)), _) => user_actor.request_retry_of_turn(agent, turn).await,
+                                (None, Some(answer)) => user_actor.request_retry(answer).await,
+                                (None, None) => {
+                                    println!("No answer of an agent to give again");
+                                    continue;
                                 }
-                                None => println!("No answer of an agent to give again"),
+                            };
+                            if let Err(e) = asked {
+                                let message = caelumora_runtime::error::user_message(&e).unwrap_or_else(|| e.to_string());
+                                println!("[error] {}", message);
                             }
                             continue;
                         }

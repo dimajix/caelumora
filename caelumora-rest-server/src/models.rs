@@ -8,6 +8,7 @@ use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::template::{SessionTemplate, SessionTemplateId};
 use caelumora_model::user::{UserProfile, MAX_INTRODUCTION_CHARS};
+use caelumora_model::work::TurnId;
 use caelumora_model::snapshot;
 use caelumora_runtime::view::{Reached, SessionView};
 use serde::{Deserialize, Serialize};
@@ -442,6 +443,13 @@ pub struct MessageRequest {
     /// channel's releases it: to a wider audience or a lower level, as long
     /// as it may flow into the channel.
     pub classification: Option<Classification>,
+}
+
+/// Which answer under way of a participant is asked for again (issue
+/// 235): its turn, as `ResponseStarted` and its messages name it.
+#[derive(Debug, Deserialize)]
+pub struct RetryTurnRequest {
+    pub turn_id: TurnId,
 }
 
 #[derive(Debug, Deserialize)]

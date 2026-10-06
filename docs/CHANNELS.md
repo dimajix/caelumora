@@ -268,8 +268,9 @@ announced and every message of the turn carries).
 
 `RetryAccepted` and `RetryRejected` go to the users and are never written to the history. Whether a
 viewer may ask is part of the channel's snapshot (`ChannelSnapshot::can_retry`,
-`ChannelView::may_retry`), so that a client offers it only where it is permitted. The TUI asks it of
-the last answer of an agent it showed, with `/retry`.
+`ChannelView::may_retry`), so that a client offers it only where it is permitted. The TUI asks it,
+with `/retry`, of the answer under way it was told of last, else of the last answer of an agent it
+showed.
 
 ## Participants
 

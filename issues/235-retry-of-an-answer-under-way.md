@@ -429,3 +429,22 @@ ended, and its answer is replaced as a completed one is.
   one waiting for an approval withdraws the request; an external agent has no turn to ask for
   again; the security suite (M2). CHANNELS.md (*Answering again*), AGENT-TURN.md, SECURITY.md,
   REST-SERVER.md.
+- **2026-10-06** — The decision of a request to answer again moved into `AgentActor::retry` for all
+  three cases (the turn given up for it, another turn, a message), on the maintainer's request to
+  simplify `handle_waiting`, which now only picks the request it judges. Of two requests of a turn
+  not given up only the last is rejected as `Ended`, the other as asked again.
+- **2026-10-06** — Step 4 done. `POST …/participants/{aid}/retry` with `{turn_id}`
+  (`RetryTurnRequest`), through `UserActor::request_retry_of_turn`; `409 not_under_way` was mapped
+  in step 3. The web UI offers a retry icon on an answer under way once its turn is known and
+  `can_retry` allows it, beside the stop icon of step 2; `RetryAccepted` of a turn removes the
+  messages of that turn shown so far, by `turn_id`. The TUI keeps the agent and turn of the last
+  answer under way from `ResponseStarted`, forgets them as it ends, and `/retry` asks for that
+  answer while there is one, else for the last answer shown. Verified in the browser against the
+  REST server with `examples/config.yaml` and `gemma4:26b`, session `simple-session`: an essay
+  asked for again mid-stream from its icon was replaced at once by a new answer under way, the
+  server logging the turn given up; the channel's history then held the question and the new
+  answer alone, with a new `turn_id`; asking for the given-up turn again over REST was refused
+  `409 not_under_way`. A second essay kept streaming while the older answer was asked for again
+  over REST, and once it ended the notice "did not answer again: more was said or done since that
+  answer" followed. *From here on the issue's "done when" holds.* REST-SERVER.md, WEB-UI.md,
+  CHANNELS.md.
