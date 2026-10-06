@@ -260,6 +260,13 @@ export interface Message {
   tool_results?: ToolResult[];
   /** Participants addressed by `@`-mentions, resolved by the server. */
   mentions?: ActorId[];
+  /** When its author last modified it (issue 234); absent if never. */
+  modified?: string;
+  /**
+   * When its author took it back (issue 234); absent if not. A message taken
+   * back keeps its place without what it said.
+   */
+  revoked?: string;
   // UI only: a failed turn shown in the chat (never sent by the server as a
   // message), with the `span_id` under which the error is in the server log.
   turnFailed?: boolean;
@@ -329,6 +336,13 @@ export interface ActorEvent {
    * `not_asked` are the agents it mentioned. Sent in the name of the system.
    */
   ChainCutOff?: { message: string; max_agent_hops: number; not_asked: ActorId[] };
+  /**
+   * The message `id` reads as this from now on (issue 234): its author
+   * modified it; `timestamp` is when.
+   */
+  MessageModified?: Message;
+  /** Its author took the message `message` back at `at` (issue 234). */
+  MessageRevoked?: { message: string; at: string };
 }
 
 /** A user command, as `/help` and completion show it (issue 28). */

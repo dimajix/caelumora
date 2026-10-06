@@ -74,7 +74,8 @@ Everything except `POST /auth/login` and `POST /auth/logout` requires a logged-i
 | `PUT …/channels/{cid}/language` | Hold the channel in the language the body names - a BCP 47 tag such as `"de"` - or in none (`null`), whoever may change it (issue 56); answered like `GET` |
 | `POST …/channels/{cid}/restore` | Restore a deleted channel into its session and start it again, answered like `GET`; `409` if its name was taken meanwhile. A channel is purged only with its session (issue 164) |
 | `PUT …/messages/{mid}/classification` | Reclassify a message - its author or the channel's owner (issue 133; `message_not_found`) |
-| `GET …/messages`, `POST …/messages` | The channel's history, older messages on request; write a message, with an optional `classification` that releases it (issue 133; refused as `invalid_classification`) |
+| `GET …/messages`, `POST …/messages` | The channel's history, older messages on request; write a message, with an optional `classification` that releases it (issue 133; refused as `invalid_classification`). Each message as it stands, with `modified` and `revoked` - when its author changed it - where set (issue 234) |
+| `PUT …/messages/{mid}`, `DELETE …/messages/{mid}` | Modify one's own message - `{content, classification?}`, classified as it is if absent - or take it back, answered `204` (issue 234, see [CHANNELS.md](CHANNELS.md#changing-what-was-said)); `404 message_not_found`, `403 session_forbidden` for another's, `409 message_revoked` for one taken back already, `400 invalid_classification`. The stream shows the change as `MessageModified` or `MessageRevoked` |
 | `POST …/approvals` | Approve or deny a tool call |
 | `POST …/cancel` | End the current turn of every agent in the channel |
 | `GET …/notes` | The notes the channel's agents published |

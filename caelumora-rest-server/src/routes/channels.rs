@@ -1,5 +1,5 @@
 use crate::auth::AuthenticatedUser;
-use crate::models::{AddParticipantRequest, AgentToolsResponse, DeletedResponse, ListOptions, ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CreateChannelRequest, KnowledgeRefResponse, CommandReplyResponse, ExecuteCommandRequest, GivenUpTurnResponse, HistoryMessageResponse, LabelCauses, MessageContextResponse, SeenItemResponse, PublishedNotesResponse, SendApprovalRequest, SendMessageRequest, StreamOptions};
+use crate::models::{AddParticipantRequest, AgentToolsResponse, DeletedResponse, ListOptions, ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CreateChannelRequest, KnowledgeRefResponse, CommandReplyResponse, ExecuteCommandRequest, GivenUpTurnResponse, HistoryMessageResponse, LabelCauses, MessageContextResponse, SeenItemResponse, PublishedNotesResponse, MessageRequest, SendApprovalRequest, StreamOptions};
 use crate::state::AppState;
 use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response, Sse};
@@ -250,7 +250,7 @@ pub async fn send_message(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
     user: AuthenticatedUser,
-    Json(payload): Json<SendMessageRequest>,
+    Json(payload): Json<MessageRequest>,
 ) -> Result<StatusCode, ApiError> {
     let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let user_actor = user_actor_of(&channel, &user)?;
@@ -258,6 +258,39 @@ pub async fn send_message(
         .map_err(|e| ApiError::from_runtime(e, Subject::Session, "sending the message"))?;
     tracing::Span::current().record("span_id", tracing::field::display(span_id));
     Ok(StatusCode::OK)
+}
+
+/// Modifies the authenticated user's message `mid` (issue 234): it reads as
+/// `content` from now on, in its place. Answered once it is on its way; the
+/// channel's stream shows it as `MessageModified`.
+pub async fn modify_message(
+    State(state): State<Arc<AppState>>,
+    Path((id, cid, mid)): Path<(Uuid, Uuid, Uuid)>,
+    user: AuthenticatedUser,
+    Json(payload): Json<MessageRequest>,
+) -> Result<StatusCode, ApiError> {
+    let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let user_actor = user_actor_of(&channel, &user)?;
+    let span_id = user_actor.modify_message(MessageId(mid), payload.content, payload.classification).await
+        .map_err(|e| ApiError::from_runtime(e, Subject::Session, "modifying the message"))?;
+    tracing::Span::current().record("span_id", tracing::field::display(span_id));
+    Ok(StatusCode::OK)
+}
+
+/// Takes the authenticated user's message `mid` back (issue 234): it stays
+/// in its place without what it said, and the agents are no longer given
+/// it - not a deletion. Shown on the channel's stream as `MessageRevoked`.
+pub async fn revoke_message(
+    State(state): State<Arc<AppState>>,
+    Path((id, cid, mid)): Path<(Uuid, Uuid, Uuid)>,
+    user: AuthenticatedUser,
+) -> Result<StatusCode, ApiError> {
+    let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let user_actor = user_actor_of(&channel, &user)?;
+    let span_id = user_actor.revoke_message(MessageId(mid)).await
+        .map_err(|e| ApiError::from_runtime(e, Subject::Session, "taking back the message"))?;
+    tracing::Span::current().record("span_id", tracing::field::display(span_id));
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// The actor of `channel` whose id is `id`, whatever kind it is - a path

@@ -167,6 +167,9 @@ const CopyButton: React.FC<{text: string}> = ({text}) => {
 export const MessageFooter: React.FC<{message: Message; actions?: React.ReactNode}> = ({message, actions}) => (
   <div className="mt-2 flex items-center gap-2 text-[11px]">
     <MessageTime timestamp={message.timestamp} className="opacity-60" />
+    {message.modified && (
+      <span className="opacity-60" title={`Edited ${formatTimestamp(message.modified)?.full ?? ''}`}>edited</span>
+    )}
     <UsageInfo message={message} />
     {message.content && <CopyButton text={message.content} />}
     {actions}

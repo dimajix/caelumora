@@ -15,6 +15,7 @@ import {
   Send,
   Square,
   Trash2,
+  Undo2,
   UserMinus,
   Unlink,
   UserPlus,
@@ -48,6 +49,7 @@ import {
 } from '../confidentiality';
 import {ClassificationPicker} from './ClassificationPicker';
 import {ClassificationDialog} from './ClassificationDialog';
+import {MessageEditor} from './MessageEditor';
 import {LanguageDialog} from './LanguageDialog';
 import {languageLabel} from '../language';
 import {changedChannel, languageChangedChannel, membershipChangedChannel, onGlobalEvent, reclassifiedChannel, reclassifiedMessage} from '../globalEvents';
@@ -165,6 +167,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   // The agent message whose context is shown, with the channel it belongs
   // to - another channel shows none (issue 41).
   const [contextOf, setContextOf] = useState<{channelId: string; message: Message} | null>(null);
+  // The user's own message being edited, and the one whose taking back
+  // waits for a second click (issue 234).
+  const [editing, setEditing] = useState<string | null>(null);
+  const [revoking, setRevoking] = useState<string | null>(null);
   // The agent whose history is shown, with the channel it belongs to (issue
   // 207); a context opened from it is shown on top and returns to it.
   const [historyOf, setHistoryOf] = useState<{channelId: string; member: ChannelMember; givenUp?: boolean} | null>(null);
@@ -295,6 +301,38 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   const mayReclassify = (msg: Message) =>
     !!msg.id && !!msg.classification && (!!channel?.can_change || (typeof msg.sender_id === 'object' && msg.sender_id !== null && 'User' in msg.sender_id && msg.sender_id.User === user.id));
 
+  /**
+   * Whether `msg` is the user's own to edit and take back (issue 234): a
+   * stored message of theirs not taken back, in a channel they take part in
+   * - only a participant has an actor to change it through.
+   */
+  const mayChange = (msg: Message) =>
+    !!participant && !!msg.id && !msg.revoked && typeof msg.sender_id === 'object' && msg.sender_id !== null
+      && 'User' in msg.sender_id && msg.sender_id.User === user.id;
+
+  const saveEdit = async (msg: Message, content: string) => {
+    try {
+      await api.modifyMessage(sessionId, channelId, msg.id!, content);
+      setEditing(null);
+    } catch (error) {
+      reportError('Failed to edit the message', error);
+    }
+  };
+
+  /** Takes `msg` back on the second click; the first asks for it. */
+  const takeBack = async (msg: Message) => {
+    if (revoking !== msg.id) {
+      setRevoking(msg.id!);
+      return;
+    }
+    setRevoking(null);
+    try {
+      await api.revokeMessage(sessionId, channelId, msg.id!);
+    } catch (error) {
+      reportError('Failed to take the message back', error);
+    }
+  };
+
   /** Deletes the agent `member` (issue 164): it leaves every channel, this one too. */
   const deleteAgent = async (member: ChannelMember) => {
     const uuid = actorUuid(member.id);
@@ -400,6 +438,19 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           });
           // Its sender may go on: what streams in next is its next message.
           setAnswers(prev => prev.map(a => a.sender === answerer ? {...a, reasoning: '', content: ''} : a));
+        } else if (actorEvent.MessageModified) {
+          // In its place, as the server reads it (`Message::modify`, issue
+          // 234): its words, classification and mentions, and when.
+          const modified = actorEvent.MessageModified;
+          setMessages(prev => prev.map(m => m.id === modified.id
+            ? {...m, content: modified.content, reasoning: modified.reasoning, classification: modified.classification, mentions: modified.mentions, modified: modified.timestamp}
+            : m));
+        } else if (actorEvent.MessageRevoked) {
+          // In its place without what it said (`Message::revoke`).
+          const {message, at} = actorEvent.MessageRevoked;
+          setMessages(prev => prev.map(m => m.id === message
+            ? {...m, content: null, reasoning: undefined, tool_calls: [], tool_results: [], mentions: [], revoked: at}
+            : m));
         } else if (actorEvent.ApprovalRequested) {
           // Asked again by an agent that resumed its turn (issue 172), or
           // already in the snapshot: shown once.
@@ -755,6 +806,26 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
               )}
               <MessageFooter message={msg} />
             </div>
+          ) : msg.revoked ? (
+            <div
+              key={idx}
+              className={cn(
+                "max-w-[80%] p-3 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 text-sm italic",
+                msg.role === 'User' && "ml-auto",
+              )}
+            >
+              {msg.sender_name || 'Its author'} took this message back
+              <div className="mt-1 text-[11px] not-italic opacity-70" title={formatTimestamp(msg.revoked)?.full}>
+                {formatTimestamp(msg.revoked)?.short}
+              </div>
+            </div>
+          ) : editing === msg.id ? (
+            <MessageEditor
+              key={idx}
+              content={msg.content ?? ''}
+              onSave={(content) => saveEdit(msg, content)}
+              onCancel={() => setEditing(null)}
+            />
           ) : (
             <MessageView
               key={idx}
@@ -763,8 +834,30 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
               badges={channel && msg.classification && !sameClassification(msg.classification, channel.classification)
                 ? [`released: ${classificationLabel(msg.classification)}`]
                 : undefined}
-              actions={(mayShowContext(msg) || mayReclassify(msg)) ? (
+              actions={(mayShowContext(msg) || mayReclassify(msg) || mayChange(msg)) ? (
                 <>
+                  {mayChange(msg) && (
+                    <button
+                      onClick={() => { setRevoking(null); setEditing(msg.id!); }}
+                      className="p-0.5 opacity-60 hover:opacity-100 focus:opacity-100"
+                      title="Edit the message"
+                      aria-label="Edit the message"
+                    >
+                      <Pencil size={13} />
+                    </button>
+                  )}
+                  {mayChange(msg) && (
+                    <button
+                      onClick={() => void takeBack(msg)}
+                      onBlur={() => setRevoking(prev => prev === msg.id ? null : prev)}
+                      className={cn("p-0.5 flex items-center gap-1", revoking === msg.id ? "opacity-100 font-semibold" : "opacity-60 hover:opacity-100 focus:opacity-100")}
+                      title="Take the message back - it stays in the record of who saw it"
+                      aria-label={revoking === msg.id ? "Take the message back? Click again" : "Take the message back"}
+                    >
+                      <Undo2 size={13} />
+                      {revoking === msg.id && <span>Take back?</span>}
+                    </button>
+                  )}
                   {mayReclassify(msg) && (
                     <button
                       onClick={() => setReclassifying({kind: 'message', message: msg})}

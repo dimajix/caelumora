@@ -87,6 +87,15 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                             println!("\r[working] {}> {}", message.sender_name, render_content(&message, content, &handles));
                         }
                     }
+                    // What another changed of what was said (issue 234).
+                    Some(ActorEvent::MessageModified(message)) => {
+                        if let Some(content) = &message.content {
+                            println!("\r{}> [edited] {}", message.sender_name, render_content(&message, content, &handles));
+                        }
+                    }
+                    Some(ActorEvent::MessageRevoked { .. }) => {
+                        println!("\r{} took a message back", sender);
+                    }
                     Some(ActorEvent::TurnFailed { message }) => {
                         println!("\r[error] An agent could not answer: {}", message);
                     }

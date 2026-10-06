@@ -487,3 +487,17 @@ describe the events, the routes and what revoking does not do.
   leaves the agent's own messages out before perceiving - they are in its history already, unless
   its state was lost, and then they are not what it heard. Against before, such messages no longer
   land in its history; two tests that fed an agent its own message changed accordingly.
+- **2026-10-06** — Step 4 done. `PUT` and `DELETE /sessions/{id}/channels/{cid}/messages/{mid}`,
+  through the user's actor; `DELETE` answers `204` like the other deletions. `SendMessageRequest`
+  became `MessageRequest`, the body of writing and of modifying: the same two fields, with the
+  classification's default the only difference, said in its documentation, rather than a second
+  type alike. The web UI's edit and take-back icons on one's own messages (`MessageEditor`; taking
+  back on a second click, as the trash confirms), "edited" in the footer, a placeholder for what was
+  taken back, and the two events applied in place. Against the plan, the editor has no
+  classification picker: the classification stays and is changed with the shield as before. The
+  TUI prints what others modified or took back; it shows no message ids, so it offers neither
+  action. The client crates are empty and needed nothing. Verified in the browser against the REST
+  server with `examples/config.yaml`: a message edited and taken back in the chat, the channel's
+  history and an agent's history over REST showing both, and `409 message_revoked` and `404
+  message_not_found` for a change that cannot be made. *From here on a user can correct and take
+  back their messages.*

@@ -173,6 +173,15 @@ else who may read it - the session's owner, say - is shown its history and no in
     When a chain between agents is cut off at its limit (`ChainCutOff`), a notice "Chain cut off"
     says so, naming the agents mentioned that were not asked, and that a message of a user starts a
     new chain; like a failed turn, it is gone on reload (issue 200).
+*   **Changing one's own messages** (issue 234). A participant's own message has an edit icon, which
+    turns it into an editor in its place (`MessageEditor`: save, cancel, Escape, Ctrl+Enter), and a
+    take-back icon, which asks "Take back?" on the first click and takes the message back on the
+    second (`PUT` and `DELETE …/messages/{mid}`). A modified message shows "edited" in its footer
+    with when on hover; one taken back is a placeholder naming who took it back. Both arrive as
+    `MessageModified` and `MessageRevoked` - from others, and from the user's own actor - and are
+    applied to the message in place as the server reads them, so a reload shows the same. The
+    classification of a modified message stays as it is; it is changed as before, with the shield
+    icon.
 *   **Approvals.** A tool call that needs approval is shown to everybody, with approve and deny only
     for who may approve the agent's calls (`can_approve` of the member, issue 14); everybody else is
     told that it waits for whoever is responsible for the agent. Once this user answered, it waits

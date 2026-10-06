@@ -230,6 +230,25 @@ export const api = {
     await ensureOk(res, 'Failed to send message');
   },
 
+  /**
+   * Modifies the user's own message `messageId` to read `content` (issue
+   * 234), classified as it is; the stream shows it as `MessageModified`.
+   */
+  async modifyMessage(sessionId: string, channelId: string, messageId: string, content: string): Promise<void> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/messages/${messageId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    });
+    await ensureOk(res, 'Failed to edit the message');
+  },
+
+  /** Takes the user's own message `messageId` back (issue 234); the stream shows it as `MessageRevoked`. */
+  async revokeMessage(sessionId: string, channelId: string, messageId: string): Promise<void> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/messages/${messageId}`, { method: 'DELETE' });
+    await ensureOk(res, 'Failed to take the message back');
+  },
+
   /** What actor `actorUuid` saw when it produced message `messageId`. */
   async getMessageContext(sessionId: string, channelId: string, actorUuid: string, messageId: string): Promise<MessageContextResponse> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/actors/${actorUuid}/messages/${messageId}/context`);
