@@ -113,6 +113,7 @@ argues against it, and what came out of the last attempt.
 | [235](235-retry-of-an-answer-under-way.md) | done | An answer still being generated cannot be asked for again; only stopping every agent of the channel gets there. |
 | [238](238-retry-of-an-older-answer.md) | open | Only an agent's last answer can be asked for again, and the alternatives of an answer are not kept. |
 | [239](239-reclassified-message-not-in-agents-state.md) | done | A reclassified message keeps its old classification in every agent's state, so a released message still raises the label of later answers. |
+| [245](245-session-and-channel-descriptions.md) | open | Sessions and channels have no description, so neither the users nor the agents in them learn what they are for. |
 
 ## Identity and access management
 
