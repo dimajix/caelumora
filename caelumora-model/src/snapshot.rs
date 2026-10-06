@@ -25,6 +25,7 @@ use crate::message::TokenUsage;
 use crate::note::Note;
 use crate::privacy::PrivacyConfig;
 use crate::session::{ChannelId, SessionId};
+use crate::work::TurnId;
 
 bitflags::bitflags! {
     /// What a snapshot holds beyond what it always does, each detail in the
@@ -132,6 +133,13 @@ pub struct MemberSnapshot {
     /// Whether the viewer may approve this participant's tool calls
     /// (`ApproveToolCall`, issue 14) - only ever for agents taking part.
     pub can_approve: bool,
+    /// The turn of the answer the member is giving now (issue 240), read
+    /// from the running channel: only an agent run here in a turn that can
+    /// still be ended has one - not an external agent, whose answers are its
+    /// remote side's. `None` in a channel that does not run. A snapshot of a
+    /// channel's stream is kept up by the events that follow it; elsewhere
+    /// it says how things stood when it was taken.
+    pub turn_under_way: Option<TurnId>,
     /// What an agent member's model calls in the channel used (issue 209)
     /// - with `Detail::USAGE`; `None` also for a member whose calls report
     /// no tokens (an external agent, a user), before its first call, and if

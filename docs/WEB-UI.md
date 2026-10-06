@@ -163,11 +163,11 @@ else who may read it - the session's owner, say - is shown its history and no in
     above the chat (issue 203). Answers under way are shown below every complete message: a
     message joins the history when it is complete, so an answer that ends first moves up past those
     still under way - as a reload shows the history. Each answer under way knows its turn, from
-    `ResponseStarted` or, for one that began before the page was loaded, from its first message
-    (issue 235). The stop button stays while any agent answers. Reasoning that is the
-    owner's never reaches the chat, and reasoning held back while the agent could still make a call
-    whose content is the owner's arrives only with the complete message
-    (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reasoning)). A failed turn and the channel-wide
+    `ResponseStarted` or, for one that began before the page was loaded, from the snapshot's
+    `turn_under_way` of its member (issues 235, 240); what streamed before is not shown. The stop
+    button stays while any agent answers. Reasoning that is the owner's never reaches the chat, and
+    reasoning held back while the agent could still make a call whose content is the owner's
+    arrives only with the complete message (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reasoning)). A failed turn and the channel-wide
     answer of a command are shown in the chat but never stored. When a participant is removed, the
     channel says so with `ParticipantRemoved`, and nothing of it follows: its partial answer and the
     stop button go, and its calls still without a result are shown as abandoned (issue 162).

@@ -429,7 +429,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
         setNotes(snapshot.notes ?? []);
         setPendingApprovals(snapshot.pending_approvals ?? []);
         setHasMore(snapshot.has_more);
-        setAnswers([]);
+        // The answers under way as the snapshot found them (issue 240): what
+        // streamed before is not kept, what follows streams in.
+        setAnswers(snapshot.channel.members.flatMap(m => m.turn_under_way
+          ? [{sender: actorKey(m.id), name: m.name, turnId: m.turn_under_way, reasoning: '', content: '', step: null}]
+          : []));
       } catch (e) {
         reportError('Failed to read the channel state', e);
       }

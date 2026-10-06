@@ -15,6 +15,7 @@ use caelumora_model::agent::AgentChannelState;
 use caelumora_model::name::Name;
 use caelumora_model::note::Note;
 use caelumora_model::removal::Removal;
+use caelumora_model::work::TurnId;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Place};
 use caelumora_model::session::ChannelId;
 use caelumora_model::snapshot::{ChannelSnapshot, Detail, MemberSnapshot, PublishedNotes};
@@ -510,6 +511,13 @@ impl MemberView {
         self.state.agent().ok_or_else(no_context)
     }
 
+    /// The turn of the answer the member is giving now (issue 240), from the
+    /// running channel - none of a former member, nor in a channel that does
+    /// not run.
+    fn turn_under_way(&self) -> Option<TurnId> {
+        self.channel.running().filter(|_| !self.former)?.turn_under_way(self.id())
+    }
+
     /// The member as the viewer sees it at this moment (issue 80), with
     /// the details `detail` asks for - those of an agent taken from its
     /// state, read once for all of them. If it cannot be read, they are
@@ -545,6 +553,7 @@ impl MemberView {
             can_read_tools: self.may_read_tools().await,
             can_approve: self.may_approve().await,
             can_delete: self.may_delete().await,
+            turn_under_way: self.turn_under_way(),
             usage,
             notes,
             pending_approvals,

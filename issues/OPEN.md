@@ -69,7 +69,8 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [208](208-generated-artifacts.md) | open | Files and data an agent generates - an external agent's artifacts, a tool's images - are dropped; only their text is kept, and nothing can be stored or downloaded. |
 | [218](218-paged-histories.md) | open | A channel's history and an agent's history are returned whole over REST, though both grow without a limit and only their end is shown first. |
 | [227](227-agent-management.md) | open | Agents cannot be seen or managed on their own, only as members of channels: no list, no renaming, no trash in the web UI, nothing of what an agent has across channels. |
-| [240](240-answers-under-way-not-in-snapshot.md) | open | A page loaded while an agent answers does not know the answer is under way, so it offers neither stop nor retry for it until its next message. |
+| [242](242-retry-offered-for-external-agents.md) | open | The web UI offers to ask an external agent for another answer - of a message and while it answers - which it never gives. |
+| [243](243-member-state-in-member-list.md) | open | The members panel does not show what an agent is doing - idle, asleep, working, waiting - nor offers to stop one that works. |
 
 ## Context and knowledge
 

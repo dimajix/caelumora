@@ -1,6 +1,6 @@
 # 240 — A page loaded during an answer does not know it is under way
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -41,3 +41,16 @@ before their first new message.
 ## History
 
 - **2026-10-06** — Opened from open question 2 of [235](235-retry-of-an-answer-under-way.md).
+- **2026-10-06** — Decided with the maintainer and done. `MemberSnapshot::turn_under_way`, always
+  given - it is read from the running channel (`ChannelLoop::turn_under_way`) without a lock held
+  for long and without the store, so no `Detail` is needed; a snapshot that no events follow says
+  how things stood when it was taken. `ChannelMemberResponse::turn_under_way` (absent if none).
+  External agents are left out: they have no turn here to stop or ask for again, and show their
+  answer once its next message comes. The race the considerations feared does not exist: the
+  stream subscribes before it reads, so a turn that ends in between is not listed, and one that
+  begins in between is listed and announced. The web UI seeds its answers under way from the
+  snapshot instead of starting empty; the stop button, the stop and the retry icons follow. That
+  the retry icon is offered for an external agent's answers is
+  [242](242-retry-offered-for-external-agents.md). Tests: the member of a running channel carries
+  the turn `ResponseStarted` named, and none once its turn ended; the REST response leaves it out
+  when absent. REST-SERVER.md (*Snapshots*), WEB-UI.md.

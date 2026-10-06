@@ -79,6 +79,11 @@ export interface ChannelMember {
    */
   can_approve: boolean;
   /**
+   * The turn of the answer it is giving now (issue 240), as `ResponseStarted`
+   * named it; absent if none - also for an external agent.
+   */
+  turn_under_way?: string;
+  /**
    * What its model calls used (issue 209): sent with the channel stream's
    * snapshot and by `getParticipant`, not where channels are listed; absent
    * for a member whose calls report no tokens.

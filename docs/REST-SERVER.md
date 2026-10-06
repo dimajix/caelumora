@@ -209,7 +209,10 @@ state they start from (issue 34):
     members carry what their model calls used (`usage`, issue 209), as `GET …/participants/{aid}`
     does; where channels are listed - the global stream, `GET /sessions/{id}` - they do not, since
     it reads every agent's state (the `Detail` a handler asks the views for, see
-    [SECURITY.md](SECURITY.md#views));
+    [SECURITY.md](SECURITY.md#views)). A member giving an answer now carries its turn
+    (`turn_under_way`, issue 240), read from the running channel at no cost: a client that connects
+    during an answer shows it as under way, as if it had seen its `ResponseStarted`. An external
+    agent has no turn here and carries none;
 *   for the global stream, every session with its channels.
 
 The order matters: the server subscribes *first* and reads the state afterwards, so nothing that

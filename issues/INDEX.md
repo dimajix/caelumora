@@ -212,7 +212,9 @@ argues against it, and what came out of the last attempt.
 | [231](231-resizable-panels.md) | done | The panels of the web UI - sidebar, channel members, an agent's context and history - have a fixed width that cannot be changed. |
 | [232](232-empty-trash-shown.md) | done | The sections of deleted sessions and channels are shown in the sidebar even where they hold nothing the user may see, so every unfolded session carries an empty line. |
 | [233](233-private-notes-panel.md) | done | An agent's private notes can be read only inside the context of one of its messages, as they stood then, not on their own, current and for every channel of the session. |
-| [240](240-answers-under-way-not-in-snapshot.md) | open | A page loaded while an agent answers does not know the answer is under way, so it offers neither stop nor retry for it until its next message. |
+| [240](240-answers-under-way-not-in-snapshot.md) | done | A page loaded while an agent answers does not know the answer is under way, so it offers neither stop nor retry for it until its next message. |
+| [242](242-retry-offered-for-external-agents.md) | open | The web UI offers to ask an external agent for another answer - of a message and while it answers - which it never gives. |
+| [243](243-member-state-in-member-list.md) | open | The members panel does not show what an agent is doing - idle, asleep, working, waiting - nor offers to stop one that works. |
 
 ## Context and knowledge
 

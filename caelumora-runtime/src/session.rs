@@ -1942,6 +1942,96 @@ mod tests {
         manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
+    /// A model whose answer never comes.
+    #[derive(Debug)]
+    struct Silent;
+
+    #[async_trait::async_trait]
+    impl crate::llm::LLMClient for Silent {
+        async fn chat_completion(&self, _: &[caelumora_model::message::Message], _: &[caelumora_model::tool::Tool])
+            -> futures::stream::BoxStream<'static, crate::llm::LLMResult<caelumora_model::message::MessageEvent>>
+        {
+            Box::pin(futures::stream::pending())
+        }
+
+        fn profile(&self) -> caelumora_model::context::ModelProfile {
+            Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_member_s_answer_under_way_is_in_the_snapshot_of_its_channel() {
+        use caelumora_model::actor::{ActorEvent, ActorId};
+        use caelumora_model::agent::{Agent, Personality, PersonalityId, PersonalityKind};
+        use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+        use caelumora_model::scope::Scope;
+        use caelumora_model::snapshot::Detail;
+        use caelumora_model::store::EntityStore;
+        use caelumora_model::user::{User, UserId};
+
+        let store = Arc::new(MemoryStore::new());
+        let mut registry = crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
+        registry.register(crate::component::ComponentKind::new("silent").provides::<dyn crate::llm::LLMClient>(), |_descriptor, _context| {
+            let mut facets = crate::component::ComponentFacets::empty();
+            facets.insert::<dyn crate::llm::LLMClient>(Arc::new(Silent));
+            Ok(facets)
+        });
+        let policy = Arc::new(DummySecurityManager::new());
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&policy)));
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), registry).unwrap());
+        let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
+        let system = SecurityContext::system();
+
+        let alice = User { id: UserId::new(), username: "alice".to_string(), email: String::new(), roles: Vec::new(), deleted: None };
+        let participants = record_users(&manager, &[&alice]).await;
+        let personality = Personality {
+            id: PersonalityId::new(), name: ScopedName::new("thinker", Default::default()).unwrap(), kind: PersonalityKind::Internal,
+            roles: None, description: String::new(), introduction: None,
+            components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("model", "silent")] },
+            security_attributes: Default::default(), reasoning_visibility: Default::default(),
+            deleted: None,
+        };
+        store.create_personality(&system, &personality).await.unwrap();
+        let thinker = Agent::new(ScopedName::new("thinker", Scope::GlobalScope).unwrap(), &personality, ActorId::User(alice.id));
+        store.create_agent(&system, &thinker).await.unwrap();
+        let agent = ActorId::Agent(thinker.id);
+
+        let alice_ctx = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
+        let mut session = make_session("thinking");
+        session.participants = participants;
+        session.participants.push(caelumora_model::session::Participant::Agent(thinker.id));
+        let session = create(&manager, &alice_ctx, session).await.unwrap();
+        let channel = session.create_channel(&alice_ctx, spec("talk", vec![ActorId::User(alice.id), agent])).await.unwrap();
+        let mut events = channel.user_actor(alice.id).unwrap().watch().events;
+        let shown = |events: &mut tokio::sync::broadcast::Receiver<caelumora_model::actor::Envelope>, wanted: &'static str| {
+            let mut events = events.resubscribe();
+            async move {
+                tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                    loop {
+                        let envelope = events.recv().await.expect("the channel is running");
+                        if envelope.context.sender_id == agent && envelope.event.kind() == wanted { break envelope.event }
+                    }
+                }).await.unwrap_or_else(|_| panic!("the agent sends {wanted}"))
+            }
+        };
+        let member = || async {
+            let view = manager.views(Viewer::new(alice_ctx.clone())).session(session.id()).await.unwrap().channel(channel.id()).await.unwrap();
+            view.snapshot(Detail::MEMBERS).await.members.into_iter().find(|m| m.id == agent).expect("a member")
+        };
+        assert_eq!(member().await.turn_under_way, None, "nothing under way yet");
+
+        let started = shown(&mut events, "ResponseStarted");
+        channel.user_actor(alice.id).unwrap().send_message("hello".to_string(), None).await.unwrap();
+        let ActorEvent::ResponseStarted { turn_id } = started.await else { unreachable!() };
+        assert_eq!(member().await.turn_under_way, Some(turn_id), "the turn its start announced");
+
+        let ended = shown(&mut events, "FullResponseGenerated");
+        channel.cancel_actor(&alice_ctx, agent).await.unwrap();
+        ended.await;
+        assert_eq!(member().await.turn_under_way, None, "over once it ended");
+        manager.stop_session(&system, session.id()).await.unwrap();
+    }
+
     #[tokio::test]
     async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_since() {
         use crate::external::ExternalEvent;
