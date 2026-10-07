@@ -31,8 +31,6 @@ use tokio::task::{AbortHandle, JoinHandle, JoinSet};
 /// messages are meant for users (see `crate::error::user_message`).
 #[derive(Debug, thiserror::Error)]
 pub enum SessionError {
-    #[error("Session {session} already has a channel named \"{name}\"")]
-    DuplicateChannelName { session: SessionId, name: Name },
     /// The channel's components do not make a moderator (issue 174): a kind
     /// that does not exist, two moderators, two policies. Found when the
     /// channel is built; a channel created so is taken back out.
@@ -303,9 +301,11 @@ impl SessionLoop {
     ///
     /// # Errors
     /// - `ValueError` if its name is no name or its language no tag.
-    /// - [`SessionError`] if `spec` asks for something that cannot be: a
-    ///   name the session already has, components that make no moderator,
-    ///   or a participant who is not one of the session's.
+    /// - `StoreError::NameTaken` if the session has a channel of that name
+    ///   (issue 250).
+    /// - [`SessionError`] if `spec` asks for something that cannot be:
+    ///   components that make no moderator, or a participant who is not one
+    ///   of the session's.
     /// - `StoreError::PermissionDenied` if `context` may not change the
     ///   session; nothing is changed then.
     pub async fn create_channel(self: &Arc<Self>, context: &SecurityContext, spec: ChannelSpec) -> Result<Arc<ChannelLoop>> {
@@ -317,9 +317,6 @@ impl SessionLoop {
             .require(context, ActionType::UpdateSession(&session.security_attributes), || StoreError::PermissionDenied).await?;
         let name = Name::new(&spec.name)?;
         let language = Language::optional(spec.language.as_deref())?;
-        if self.channels.iter().any(|entry| entry.channel.name() == name) {
-            return Err(SessionError::DuplicateChannelName { session: self.id, name }.into());
-        }
         let classification = spec.classification.unwrap_or_default();
         require_classification(&self.runtime_manager, context, &classification).await?;
         let language = match language {
@@ -430,7 +427,7 @@ impl SessionLoop {
     /// # Errors
     /// - `SessionError::ChannelNotFound` if the session has no such deleted
     ///   channel, or `context` may not see it.
-    /// - `SessionError::DuplicateChannelName` if its name was taken since.
+    /// - `StoreError::NameTaken` if its name was taken since (issue 250).
     /// - `StoreError::PermissionDenied` if `context` may not change the
     ///   session or restore the channel; nothing is changed then.
     pub async fn restore_channel(self: &Arc<Self>, context: &SecurityContext, channel_id: ChannelId) -> Result<Arc<ChannelLoop>> {
@@ -443,9 +440,6 @@ impl SessionLoop {
             Some(channel) if channel.session_id == self.id => channel,
             _ => return Err(not_found().into()),
         };
-        if self.channels.iter().any(|entry| entry.channel.name() == channel.name) {
-            return Err(SessionError::DuplicateChannelName { session: self.id, name: channel.name }.into());
-        }
         // As when it was created: its participants' clearance may have
         // changed while it was deleted.
         crate::channel::require_admitted(&self.runtime_manager, context, &channel).await?;
@@ -965,14 +959,11 @@ impl SessionManager {
     /// # Errors
     /// `StoreError::NotFound` if there is no such deleted agent or
     /// `context` may not see it, `StoreError::PermissionDenied` if they may
-    /// but not restore it, `StoreError::Conflict` if another agent took its
-    /// name in its scope meanwhile.
+    /// but not restore it, `StoreError::NameTaken` if another agent took its
+    /// name in its scope meanwhile (issue 250).
     pub async fn restore_agent(&self, context: &SecurityContext, id: AgentId) -> Result<Agent> {
         let store = &self.entities;
         let deleted = store.get_deleted_agent(context, id).await?;
-        if store.list_agents(&SecurityContext::system()).await?.iter().any(|a| a.name == deleted.name) {
-            return Err(StoreError::Conflict(format!("agent {} is taken meanwhile", deleted.name)).into());
-        }
         store.restore_agent(context, id).await?;
         let agent = Agent { deleted: None, ..deleted };
         self.events.publish(GlobalEvent::AgentRestored(id), agent.security_attributes.clone());
@@ -1333,7 +1324,7 @@ mod tests {
         let again = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), &personality, ActorId::None);
         store.create_agent(&system, &again).await.unwrap();
         let taken = manager.restore_agent(&ctx, helper.id).await.expect_err("its name is taken");
-        assert!(matches!(taken.downcast_ref::<StoreError>(), Some(StoreError::Conflict(_))), "{taken}");
+        assert!(matches!(taken.downcast_ref::<StoreError>(), Some(StoreError::NameTaken { entity: "agent" })), "{taken}");
 
         manager.purge_agent(&ctx, helper.id).await.expect("purged");
         assert!(store.get_deleted_agent(&system, helper.id).await.is_err(), "nothing left to restore");
@@ -1498,8 +1489,9 @@ mod tests {
         let (session, ctx, _) = running_session_of_a_user(&manager).await;
         let stranger = caelumora_model::actor::ActorId::User(caelumora_model::user::UserId::new());
 
+        let taken = session.create_channel(&ctx, spec("MAIN", vec![])).await.expect_err("its name is taken");
+        assert!(matches!(taken.downcast_ref::<StoreError>(), Some(StoreError::NameTaken { entity: "channel" })), "by the store, as names are compared: {taken}");
         let refusal = |result: Result<Arc<ChannelLoop>>| result.expect_err("refused").downcast::<SessionError>().expect("a SessionError");
-        assert!(matches!(refusal(session.create_channel(&ctx, spec("main", vec![])).await), SessionError::DuplicateChannelName { .. }));
         assert!(matches!(refusal(session.create_channel(&ctx, spec("x", vec![stranger])).await), SessionError::NotAParticipant { .. }));
         let unknown = ChannelSpec { components: caelumora_model::channel::moderation_components(None, Some("nobody")), ..spec("x", vec![]) };
         assert!(matches!(refusal(session.create_channel(&ctx, unknown).await), SessionError::InvalidModerator(_)));
@@ -1511,6 +1503,24 @@ mod tests {
 
         assert_eq!(session.channels().len(), 1);
         assert_eq!(runtime.entity_store().get_session(&ctx, session.id()).await.unwrap().channels.len(), 1);
+        manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_channel_is_not_renamed_to_a_name_its_session_has() {
+        // Kept by the store (issue 250): in another session the name is
+        // free, which the store suite says.
+        let runtime = test_runtime();
+        let manager = SessionManager::new(Arc::clone(&runtime));
+        let (session, ctx, _) = running_session_of_a_user(&manager).await;
+        let side = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
+
+        let refused = side.update_name(&ctx, "Main").await.expect_err("the session has a main");
+        assert!(matches!(refused.downcast_ref::<StoreError>(), Some(StoreError::NameTaken { entity: "channel" })), "{refused}");
+        assert_eq!(side.name().as_str(), "side", "unchanged");
+        assert_eq!(runtime.entity_store().get_channel(&ctx, side.id()).await.unwrap().name.as_str(), "side", "also as stored");
+        side.update_name(&ctx, "Side").await.expect("its own name, written otherwise");
+        assert_eq!(side.name().as_str(), "Side");
         manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
@@ -1545,7 +1555,7 @@ mod tests {
         // Restored: listed and running again, from the state it kept.
         let taken = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
         let refused = session.restore_channel(&ctx, id).await.expect_err("its name is taken");
-        assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::DuplicateChannelName { .. })), "{refused}");
+        assert!(matches!(refused.downcast_ref::<StoreError>(), Some(StoreError::NameTaken { entity: "channel" })), "{refused}");
         session.delete_channel(&ctx, taken.id()).await.unwrap();
         session.restore_channel(&ctx, id).await.expect("restored");
         assert!(session.channel_by_id(id).is_some());
@@ -2288,9 +2298,18 @@ mod tests {
         assert!(store.get_personality(&system, personality.id).await.is_ok());
         assert!(!present(&earlier).await, "but not what was deleted before it");
 
+        // A name taken meanwhile (issue 250): that one stays deleted, the
+        // others come back.
+        manager.delete_session(&ctx, id).await.unwrap();
+        let taker = agent_in("Aside", Scope::ChannelScope { session_id: id, channel_id: side });
+        store.create_agent(&system, &taker).await.unwrap();
+        manager.restore_session(&ctx, id).await.unwrap();
+        assert!(!present(&sides).await, "the one whose name is taken stays deleted");
+        assert!(present(&sessions).await && present(&taker).await, "the others are back");
+
         manager.delete_session(&ctx, id).await.unwrap();
         manager.purge_session(&ctx, id).await.unwrap();
-        for agent in [&sessions, &sides, &earlier] {
+        for agent in [&sessions, &sides, &earlier, &taker] {
             assert!(store.get_deleted_agent(&system, agent.id).await.is_err(), "{} is purged with it", agent.name);
         }
         assert!(store.get_deleted_personality(&system, personality.id).await.is_err());

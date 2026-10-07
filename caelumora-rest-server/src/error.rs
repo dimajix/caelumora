@@ -205,7 +205,6 @@ impl ApiError {
         if let Some(e) = error.downcast_ref::<SessionError>() {
             match e {
                 SessionError::ChannelNotFound { .. } => return Self::not_found("channel_not_found", detail),
-                SessionError::DuplicateChannelName { .. } => return Self::conflict("channel_exists", detail),
                 SessionError::InvalidModerator(_) | SessionError::NotAParticipant { .. }
                 | SessionError::ClassificationRefused(_) => return bad_request("invalid_channel"),
                 // A caller that is no user: not the client's request.
@@ -242,6 +241,10 @@ impl ApiError {
         }
         if is_not_found(&error, "agent") {
             return Self::not_found("agent_not_found", user_message(&error).unwrap_or(detail));
+        }
+        // Of every kind alike (issue 250), wherever it was found out.
+        if error.chain().any(|e| matches!(e.downcast_ref(), Some(caelumora_model::store::StoreError::NameTaken { .. }))) {
+            return Self::conflict("name_taken", user_message(&error).unwrap_or(detail));
         }
         if let Some(caelumora_model::store::StoreError::Conflict(_)) = error.downcast_ref() {
             return Self::conflict("already_exists", detail);
@@ -397,7 +400,8 @@ mod tests {
         assert_eq!(answer(not_found("session"), Subject::Session), (404, "session_not_found"));
         assert_eq!(answer(not_found("session_template"), Subject::Session), (404, "template_not_found"));
         assert_eq!(answer(anyhow::Error::new(SessionError::ChannelNotFound { session, channel }), Subject::Session), (404, "channel_not_found"));
-        assert_eq!(answer(anyhow::Error::new(SessionError::DuplicateChannelName { session, name: caelumora_model::value::name::Name::new("x").unwrap() }), Subject::Session), (409, "channel_exists"));
+        assert_eq!(answer(anyhow::Error::new(StoreError::NameTaken { entity: "channel" }), Subject::Session), (409, "name_taken"));
+        assert_eq!(answer(anyhow::Error::new(StoreError::NameTaken { entity: "agent" }).context("renaming"), Subject::Agent), (409, "name_taken"), "of every kind, also below a context");
         assert_eq!(answer(anyhow::Error::new(ChannelError::AlreadyParticipant { participant: someone, channel }), Subject::Participant), (409, "already_participant"));
         assert_eq!(answer(anyhow::Error::new(ChannelError::StillLeaving { participant: someone, channel }), Subject::Participant), (409, "still_leaving"));
         assert_eq!(answer(anyhow::Error::new(ChannelError::ParticipantGone { participant: someone, channel }), Subject::Participant), (404, "participant_not_found"));

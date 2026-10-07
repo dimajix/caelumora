@@ -274,3 +274,15 @@ core and differ only in it.
   create one name at once. Two runtime tests that made two personalities or channels of one name
   got names of their own. `AcceptAnyUserProvider`: of two first logins under one name, the store
   now refuses the second.
+- **2026-10-07** — Step 3: the checks by hand in `SessionLoop::create_channel`, `restore_channel`
+  and `SessionManager::restore_agent` are gone, and with them `SessionError::DuplicateChannelName`;
+  the store answers `NameTaken`, which the REST API answers `409 name_taken` - found anywhere in
+  the error's chain - instead of `channel_exists` and `already_exists`. `template::agent` looks
+  once more after `NameTaken` (`existing_agent`) and keeps the error if it finds none it may read.
+  `restore_scoped_in` leaves one whose name was taken meanwhile deleted, with a `warn!`, and
+  restores the others - with `?`, as before, the first taken name would have left the rest of the
+  scope deleted. Tests: renaming a channel to a name of its session; the template's second look,
+  deterministic through a `SecurityManager` that has another make the agent when asked whether the
+  template may; an agent the caller may not read keeps its name; a session restored after a name of
+  its scope was taken. That a channel's name is free in another session the store suite says.
+  REST-SERVER.md names `name_taken`.

@@ -63,7 +63,7 @@ Everything except `POST /auth/login` and `POST /auth/logout` requires a logged-i
 | `POST /profile/approval-rules`, `DELETE /profile/approval-rules/{id}` | Add one of the user's answers to tool calls given in advance (issue 13) - `{matcher, decision, reach?, expires_at?}`, `allow` or `deny`, everywhere unless a `{session}` or `{channel}` is named - answered `201` with the rule and its id; `400 invalid_rule` for one that asks, has a pattern that cannot be matched, or is one too many. Take one back: `204`, `404 rule_not_found` |
 | `GET /sessions`, `POST /sessions` | List the user's sessions - with `?deleted=true` those they deleted and may read as such, the trash, each with `deleted` (who, when), `can_restore` and `can_purge` (issue 164); create one from a template (`SessionManager::create_from_template`) |
 | `GET /agents`, `DELETE /agents/{id}` | The agents the user may read, each with `can_delete` - with `?deleted=true` the trash of agents, like that of sessions; delete one: it leaves every channel it takes part in (issue 164) |
-| `POST /agents/{id}/restore`, `POST /agents/{id}/purge` | Restore a deleted agent - into no channel; `409 already_exists` if its name was taken meanwhile - or remove it for good with its state (issue 164) |
+| `POST /agents/{id}/restore`, `POST /agents/{id}/purge` | Restore a deleted agent - into no channel; `409 name_taken` if its name was taken meanwhile - or remove it for good with its state (issue 164) |
 | `POST /sessions/{id}/restore`, `POST /sessions/{id}/purge` | Restore a deleted session - answered like `GET /sessions/{id}`, not started -, or remove it for good with its channels and their state; `403` unless the policy allows, by default the system's alone (issue 164) |
 | `GET /sessions/{id}` | One session, in the form of the global stream's snapshot (`SessionSnapshot`), without starting it |
 | `PATCH /sessions/{id}`, `DELETE /sessions/{id}` | Rename, delete a session - marked and kept, with its channels (issue 164) |
@@ -71,13 +71,13 @@ Everything except `POST /auth/login` and `POST /auth/logout` requires a logged-i
 | `PUT /sessions/{id}/privacy` | Change whom the session lets read what was said in it - its owner (`privacy`: `private`, `same_owner` or `shared_audience`, issue 134); answers the `SessionSnapshot` |
 | `PUT /sessions/{id}/description` | Say what the session is for - its owner (issue 245): `{summary, briefing}`, each replacing what it said, `null` or empty removing it, anything else kept as written; `400 invalid_value` for one that does not fit; answers the `SessionSnapshot`. Sessions carry `summary` - in lists too - and `briefing` where one is fetched, each left out where absent |
 | `PUT /sessions/{id}/approval-rules` | Set what the session restricts of the tool calls in its channels - its owner (issue 13): a list of rules that `ask` or `deny`, replacing those it had; `400 invalid_rule` for one that allows, reaches less than the session or has a pattern that cannot be matched; answers the `SessionSnapshot`, which carries `approval_rules` |
-| `GET …/channels`, `POST …/channels` | List a session's channels - with `?deleted=true` those deleted from it, like the sessions' trash (issue 164); create one, with an optional `classification` (`level` and `compartments`, see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)) and optional kinds of its `moderator` and `responder_policy` (see [CHANNELS.md](CHANNELS.md#moderators)), and an optional `language`, the user's preferred one if absent (issue 56) |
+| `GET …/channels`, `POST …/channels` | List a session's channels - with `?deleted=true` those deleted from it, like the sessions' trash (issue 164); create one, with an optional `classification` (`level` and `compartments`, see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)) and optional kinds of its `moderator` and `responder_policy` (see [CHANNELS.md](CHANNELS.md#moderators)), and an optional `language`, the user's preferred one if absent (issue 56); `409 name_taken` if the session has a channel of that name (issue 250) |
 | `GET …/channels/{cid}`, `DELETE …/channels/{cid}` | One channel, with its `former_members`, each with `left` - who removed it and when (issue 164); delete it - marked and kept (issue 164) |
 | `PUT …/channels/{cid}/classification` | Reclassify the channel - its owner (issue 133) |
 | `PUT …/channels/{cid}/language` | Hold the channel in the language the body names - a BCP 47 tag such as `"de"` - or in none (`null`), whoever may change it (issue 56); answered like `GET` |
 | `PUT …/channels/{cid}/description` | Say what the channel is for - whoever may change it (issue 245), as for the session; answered like `GET`. Channels carry `summary` always and `briefing` where one channel is fetched, in its stream's snapshot and in `GET` of its session - not in lists of channels |
 | `PUT …/channels/{cid}/approval-rules` | Set what the channel restricts of the tool calls in it - whoever may change it (issue 13), as for the session; answered like `GET`, which carries `approval_rules` |
-| `POST …/channels/{cid}/restore` | Restore a deleted channel into its session and start it again, answered like `GET`; `409` if its name was taken meanwhile. A channel is purged only with its session (issue 164) |
+| `POST …/channels/{cid}/restore` | Restore a deleted channel into its session and start it again, answered like `GET`; `409 name_taken` if its name was taken meanwhile. A channel is purged only with its session (issue 164) |
 | `PUT …/messages/{mid}/classification` | Reclassify a message - its author or the channel's owner, as a participant, through their actor (issues 133, 239; `message_not_found`, `409 message_revoked`, `403 not_a_participant`); shown on the channel's stream as `MessageReclassified` |
 | `GET …/messages`, `POST …/messages` | The channel's history, older messages on request; write a message, with an optional `classification` that releases it (issue 133; refused as `invalid_classification`). Each message as it stands, with `modified` and `revoked` - when its author changed it - where set (issue 234) |
 | `POST …/messages/{mid}/retry` | Ask the agent that said the message to answer again instead of it (issue 234, see [CHANNELS.md](CHANNELS.md#answering-again)), answered once the request is on its way; the agent's answer is on the stream - `RetryAccepted`, the message taken back and the new answer, or `RetryRejected` with a `reason`: `not_its_answer`, `not_last`, `calls_ran`, `asked_again`, `elsewhere` or `ended` (issue 235). The events name what they are about as `target`: `{"message": …}`, or `{"turn": …}` for an answer under way. `404 message_not_found`, `403 session_forbidden`, `409 message_revoked`, `409 not_an_agents_message`. Offered where the member's `can_retry` (issue 242) |
@@ -161,10 +161,13 @@ extension members:
 Client errors state their cause. A text of the request that does not fit the field it is for - a
 name, a language, a summary, an introduction, too long, of whitespace alone, of several lines where
 one is asked for - is `400 invalid_value`, naming the field (`ValueError`, issue
-[248](../issues/248-validated-text-fields.md)), wherever it is found out. Server errors state it
-only if `caelumora_runtime::error::user_message` allows it, and otherwise point to the log. A
-refusal by the runtime (`caelumora_runtime::error::is_forbidden`) is a `403`, not a `500`. How
-handlers produce these errors is a rule of [CODING-GUIDELINES.md](CODING-GUIDELINES.md#rest-errors).
+[248](../issues/248-validated-text-fields.md)), wherever it is found out. A name that another of
+its kind has in its name space - a channel's in its session, an agent's in its scope - is
+`409 name_taken`, for every kind alike (issue [250](../issues/250-unique-names-per-name-space.md)).
+Server errors state it only if `caelumora_runtime::error::user_message` allows it, and otherwise
+point to the log. A refusal by the runtime (`caelumora_runtime::error::is_forbidden`) is a `403`,
+not a `500`. How handlers produce these errors is a rule of
+[CODING-GUIDELINES.md](CODING-GUIDELINES.md#rest-errors).
 
 ## Streams
 

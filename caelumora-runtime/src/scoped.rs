@@ -14,8 +14,10 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::removal::Stored;
 use caelumora_model::scope::{Scoped, Scope};
 use caelumora_model::security::SecurityContext;
-use caelumora_model::store::{EntityStore, StateStore, StoreResult};
+use caelumora_model::store::{EntityStore, StateStore, StoreError, StoreResult};
+use caelumora_model::value::name::ScopedName;
 use chrono::{DateTime, Utc};
+use tracing::warn;
 
 /// Deletes what lies in `holder` or within it, and announces the agents
 /// among it as `SessionManager::delete_agent` does. They leave no channel:
@@ -40,23 +42,40 @@ pub(crate) async fn delete_scoped_in(store: &dyn EntityStore, events: &EventBus,
 
 /// Restores what lies in `holder` or within it and was deleted with it -
 /// at `since`, when `holder` was deleted, or later. What was deleted
-/// before stays deleted, as a channel deleted before its session does.
+/// before stays deleted, as a channel deleted before its session does; so
+/// does one whose name was taken meanwhile (issue 250), and the others are
+/// restored all the same.
 ///
 /// # Errors
-/// Whatever the store reports; what was restored before stays restored.
+/// Whatever else the store reports; what was restored before stays
+/// restored.
 pub(crate) async fn restore_scoped_in(store: &dyn EntityStore, events: &EventBus, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()> {
     let system = SecurityContext::system();
     for personality in deleted_with(store.list_deleted_personalities(&system).await?, holder, since) {
-        store.restore_personality(&system, personality.id).await?;
+        unless_taken(store.restore_personality(&system, personality.id).await, "personality", &personality.name)?;
     }
     for template in deleted_with(store.list_deleted_session_templates(&system).await?, holder, since) {
-        store.restore_session_template(&system, template.id).await?;
+        unless_taken(store.restore_session_template(&system, template.id).await, "session template", &template.name)?;
     }
     for agent in deleted_with(store.list_deleted_agents(&system).await?, holder, since) {
-        store.restore_agent(&system, agent.id).await?;
-        events.publish(GlobalEvent::AgentRestored(agent.id), agent.security_attributes.clone());
+        if unless_taken(store.restore_agent(&system, agent.id).await, "agent", &agent.name)? {
+            events.publish(GlobalEvent::AgentRestored(agent.id), agent.security_attributes.clone());
+        }
     }
     Ok(())
+}
+
+/// Whether what `restored` says was restored; `false` if its name was
+/// taken meanwhile, which leaves it deleted.
+fn unless_taken(restored: StoreResult<()>, kind: &str, name: &ScopedName) -> StoreResult<bool> {
+    match restored {
+        Ok(()) => Ok(true),
+        Err(StoreError::NameTaken { .. }) => {
+            warn!("The {} {} stays deleted: its name was taken while what holds its scope was deleted", kind, name);
+            Ok(false)
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// Purges what lies in `holder` or within it and is deleted, and the

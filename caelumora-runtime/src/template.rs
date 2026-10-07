@@ -9,7 +9,7 @@ use caelumora_model::channel::Participant;
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
-use caelumora_model::store::{EntityStore, StoreResultExt};
+use caelumora_model::store::{EntityStore, StoreError, StoreResultExt};
 use caelumora_model::template::{ParticipantRequest, SessionTemplate, TemplateError, TemplateResult};
 use caelumora_model::user::UserId;
 
@@ -47,29 +47,49 @@ pub(crate) async fn resolve_participants(store: &dyn EntityStore, context: &Secu
 /// The agent of `name` - in exactly its scope (issue 178) - if it is of
 /// `personality_id`, or a new one of it there, owned by whoever `context`
 /// acts for. One of that name in another scope is not it: from the
-/// session, the new one shadows it.
+/// session, the new one shadows it. If another makes it meanwhile, the
+/// store refuses the second (issue 250) and the agent is looked up once
+/// more.
 ///
 /// # Errors
 /// `TemplateError::AgentNameTaken` if the agent of `name` is of another
 /// personality, `PersonalityOutOfScope` if the personality lies in a
-/// session's or a channel's scope the agent would not; whatever the store
-/// reports.
+/// session's or a channel's scope the agent would not;
+/// `StoreError::NameTaken` if the agent of `name` lies where `context` may
+/// not read it; whatever else the store reports.
 async fn agent(store: &dyn EntityStore, context: &SecurityContext, name: ScopedName, personality_id: PersonalityId) -> anyhow::Result<AgentId> {
-    // Only "there is none" means "make one": a lookup that failed or was
-    // refused is an error, not a reason for a second agent of that name
-    // (issue 77).
-    match store.find_agent_by_name(context, &name).await.optional()? {
-        Some(agent) if agent.personality_id == personality_id => return Ok(agent.id),
-        Some(_) => return Err(TemplateError::AgentNameTaken(name.name).into()),
-        None => {}
+    if let Some(found) = existing_agent(store, context, &name, personality_id).await? {
+        return Ok(found);
     }
     let personality = store.get_personality(context, personality_id).await?;
     if !personality.name.scope.admits(&name.scope) {
         return Err(TemplateError::PersonalityOutOfScope(personality.name.name).into());
     }
-    let agent = Agent::new(name, &personality, context.initiator_id);
-    store.create_agent(context, &agent).await?;
-    Ok(agent.id)
+    let agent = Agent::new(name.clone(), &personality, context.initiator_id);
+    match store.create_agent(context, &agent).await {
+        Ok(()) => Ok(agent.id),
+        Err(taken @ StoreError::NameTaken { .. }) => match existing_agent(store, context, &name, personality_id).await? {
+            Some(found) => Ok(found),
+            None => Err(taken.into()),
+        },
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// The agent of `name` if there is one the caller may read and it is of
+/// `personality_id`; `None` if there is none.
+///
+/// # Errors
+/// `TemplateError::AgentNameTaken` if it is of another personality;
+/// whatever the store reports. Only "there is none" means "make one": a
+/// lookup that failed or was refused is an error, not a reason for a second
+/// agent of that name (issue 77).
+async fn existing_agent(store: &dyn EntityStore, context: &SecurityContext, name: &ScopedName, personality_id: PersonalityId) -> anyhow::Result<Option<AgentId>> {
+    match store.find_agent_by_name(context, name).await.optional()? {
+        Some(agent) if agent.personality_id == personality_id => Ok(Some(agent.id)),
+        Some(_) => Err(TemplateError::AgentNameTaken(name.name.clone()).into()),
+        None => Ok(None),
+    }
 }
 
 #[cfg(test)]
@@ -81,7 +101,6 @@ mod tests {
     use caelumora_model::agent::Personality;
     use caelumora_model::scope::Scope;
     use caelumora_model::security::{ActionType, SecurityManager};
-    use caelumora_model::store::StoreError;
     use caelumora_model::store_impl::memory::MemoryStore;
     use caelumora_model::template::{ParticipantTemplate, ScopeTemplate, SessionTemplateId, TemplateError};
     use caelumora_model::user::User;
@@ -192,6 +211,60 @@ mod tests {
             .expect_err("the global one is of another personality");
         assert!(matches!(refused.downcast_ref::<TemplateError>(), Some(TemplateError::AgentNameTaken(name)) if *name == "helper"), "{refused}");
         assert_eq!(store.list_agents(&system).await.unwrap().len(), 3, "and none is made: the user's, the session's, the global one");
+    }
+
+    /// Allows everything, and has another make the agent `helper` between a
+    /// template's lookup and its making it, as the first to ask to make one
+    /// (issue 250).
+    #[derive(Debug, Default)]
+    struct MadeMeanwhile {
+        store: std::sync::OnceLock<std::sync::Weak<MemoryStore>>,
+        personality: std::sync::OnceLock<Personality>,
+        made: std::sync::atomic::AtomicBool,
+    }
+
+    #[async_trait::async_trait]
+    impl SecurityManager for MadeMeanwhile {
+        async fn check(&self, _context: &SecurityContext, action: ActionType<'_>) -> bool {
+            use std::sync::atomic::Ordering;
+            if matches!(action, ActionType::CreateAgent(_)) && !self.made.swap(true, Ordering::SeqCst) {
+                let (Some(store), Some(personality)) = (self.store.get().and_then(std::sync::Weak::upgrade), self.personality.get()) else { return true };
+                let other = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), personality, ActorId::None);
+                store.create_agent(&SecurityContext::system(), &other).await.unwrap();
+            }
+            true
+        }
+    }
+
+    #[tokio::test]
+    async fn an_agent_made_meanwhile_is_looked_up_again() {
+        let owner = UserId::new();
+        let manager = Arc::new(MadeMeanwhile::default());
+        let (store, personality) = store_with_personality(MemoryStore::with_security_manager(Arc::<MadeMeanwhile>::clone(&manager))).await;
+        let system = SecurityContext::system();
+        manager.store.set(Arc::downgrade(&store)).unwrap();
+        manager.personality.set(store.get_personality(&system, personality).await.unwrap()).unwrap();
+
+        let participants = resolve_participants(store.as_ref(), &as_user(owner), &template(vec![helper(personality)]), SessionId::new(), owner).await
+            .expect("the one made meanwhile");
+        let agents = store.list_agents(&system).await.unwrap();
+        assert_eq!(agents.len(), 1, "no second one");
+        assert!(matches!(participants[0].1, Participant::Agent(id) if id == agents[0].id && agents[0].security_attributes.owner_id == ActorId::None), "the other's");
+    }
+
+    #[tokio::test]
+    async fn an_agent_the_caller_may_not_read_keeps_its_name() {
+        use caelumora_model::security::OwnershipSecurityManager;
+        let (owner, other) = (UserId::new(), UserId::new());
+        let (store, personality) = store_with_personality(MemoryStore::with_security_manager(Arc::new(OwnershipSecurityManager::new()))).await;
+        let system = SecurityContext::system();
+        let plain = store.get_personality(&system, personality).await.unwrap();
+        store.create_agent(&system, &Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), &plain, ActorId::User(other))).await.unwrap();
+
+        let refused = resolve_participants(store.as_ref(), &as_user(owner), &template(vec![helper(personality)]), SessionId::new(), owner).await
+            .expect_err("the name is another's");
+        assert!(matches!(refused.downcast_ref::<StoreError>(), Some(StoreError::NameTaken { entity: "agent" })), "{refused}");
+        assert_eq!(store.list_agents(&system).await.unwrap().len(), 1, "and no second one is made");
     }
 
     #[tokio::test]
