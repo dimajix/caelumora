@@ -1,6 +1,6 @@
 # 178 — Definitions cannot be looked up by name within their scope
 
-**Status:** in progress
+**Status:** done
 **Area:** Persistence
 
 ## The problem
@@ -268,3 +268,11 @@ the holder, so that a restore meanwhile finds nothing half done.
   session's definitions go and come back, a user's stays, one deleted before stays deleted, purging
   takes them all), and the security suite's `deleting_a_session_needs_owning_it`, which shows that
   bob's agent of alice's session goes with it without anything more being asked of her.
+- **2026-10-07** — Step 4 and done. `docs/CHANNELS.md` says what goes with a session and a channel,
+  `docs/ARCHITECTURE.md` how a template finds its agents, `docs/SECURITY.md` that the cascade runs
+  in the runtime's name and deletes somebody else's agent of the scope too; `docs/STORAGE.md` was
+  updated with step 2. Against *Done when*: a definition is looked up from a place, innermost
+  first, by `scope::find_by_name`, which has no caller yet; templates find their agents by name,
+  personality and scope - in exactly the scope asked for, through the store, not through the lookup
+  from a place (step 2); what lies in a session's or a channel's scope goes with it (step 3).
+  Uniqueness of names is issue [250](250-unique-names-per-name-space.md), next.

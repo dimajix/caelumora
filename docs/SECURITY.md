@@ -87,6 +87,11 @@ The `OwnershipSecurityManager` decides by those attributes and the context's ini
 *   Deleting an agent is its owner's (`DeleteAgent`). That it leaves channels owned by others is
     done in the runtime's name: it is a consequence of the deletion, not a change of those channels
     by the owner.
+*   What lies in a session's or a channel's scope - personalities, session templates, agents - is
+    deleted, restored and purged with it in the runtime's name (issue
+    [178](../issues/178-scoped-lookup-by-name.md)): whoever may delete the session deletes an agent
+    of its scope even if it is somebody else's, and is asked nothing more. The security suite says
+    so (`deleting_a_session_needs_owning_it`).
 *   The runtime acting on its own uses `SecurityContext::system()` (`ActorId::System`), which may do
     everything. This is deliberate and never a default: an empty context has no rights.
 

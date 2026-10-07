@@ -18,6 +18,14 @@ channel is reached only through its session (issue 164) -, purging it removes th
 session loads them. Loading happens in the runtime's name, since starting a session the caller may
 read must not fail on a channel the caller is not in.
 
+What lies in a session's scope - the personalities, session templates and agents of
+`Scope::SessionScope`, and those of its channels' scopes - goes with it (issue
+[178](../issues/178-scoped-lookup-by-name.md), `caelumora-runtime/src/definitions.rs`): deleting the
+session deletes them, restoring it restores those deleted with it - not one deleted by hand before
+-, purging it purges them, an agent with its state. That is done in the runtime's name, as a
+consequence of what was permitted; a deleted or restored agent is announced (`AgentDeleted`,
+`AgentRestored`). Its agents take part in no other session, so they leave no channel.
+
 Every session has a privacy policy (`Session.privacy`, issue 134): whom it lets read what was said
 in it from other sessions. It is taken over from its template (`SessionTemplate.privacy`, private
 unless the template says otherwise), changed only by the session's owner
@@ -35,10 +43,13 @@ Channels can be created in and deleted from a running session: `SessionLoop::cre
     `SessionController::add_channel`, which checks `UpdateSession`, so that only the owner may do
     it.
 *   **Deleting** takes the channel out of the session (`remove_channel`) and marks its document
-    deleted (`DeleteChannel`, issue 164). The channel and its state are kept.
+    deleted (`DeleteChannel`, issue 164). The channel and its state are kept. What lies in its scope
+    (`Scope::ChannelScope`) is deleted with it, as with a session; an agent of it that takes part
+    in another channel of the session leaves that (`SessionLoop::leave_channels`).
 *   **Restoring** a deleted channel (`SessionLoop::restore_channel`) asks `UpdateSession` and its
     participants' clearance, as creating one does, takes the mark away (`Restore`), lists it in
-    the session again and starts it from its stored state. Its name must still be free.
+    the session again and starts it from its stored state. Its name must still be free. What
+    lies in its scope and was deleted with it comes back.
 *   **Purging** is not a channel's: a deleted channel is removed for good - document and state -
     with its session (`SessionManager::purge_session`), which needs no running loop.
 
@@ -337,7 +348,8 @@ they are restored, as any participant that no longer exists. A deleted agent kee
 views, so that what it said keeps its sender. Restoring it (`restore_agent`) brings it back into no
 channel - it is added again where it is wanted - and is refused if another agent took its name in
 its scope meanwhile. Purging it (`purge_agent`) removes its document and its state, its own and in
-every channel.
+every channel. An agent of a session's or a channel's scope is also deleted, restored and purged
+with that session or channel (see [Sessions](#sessions)).
 
 Adding is asked first as `UpdateChannel`, before anything of the newcomer is looked at (issue 198),
 and additionally as `ActionType::JoinChannel` with the channel's classification, where a policy can

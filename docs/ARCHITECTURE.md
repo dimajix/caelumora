@@ -51,13 +51,15 @@ which refer to the participants by name. Creating a session from a template has 
 88):
 
 1.  The model says what each participant is for the session (`ParticipantTemplate::request`: "user"
-    is the session's owner, an agent is looked up by name in its scope, an approver is made), and
+    is the session's owner, an agent is the one of its name in exactly the scope the template asks
+    for, an approver is made), and
     builds the session and its channels from the participants it is given
     (`SessionTemplate::build`), without touching a store.
 2.  `SessionManager::create_from_template(ctx, template_id, name)` does the rest: it reads the
-    template, finds the owner and the agents, makes the agents that are missing (only when the
-    lookup finds none, never because it failed), and builds, stores and starts the session. REST
-    (`POST /sessions`) and the TUI both call it.
+    template, finds the owner and the agents (`EntityStore::find_agent_by_name`, issue 178), makes
+    the agents that are missing (only when the lookup finds none, never because it failed), refuses
+    one of another personality (`TemplateError::AgentNameTaken`), and builds, stores and starts the
+    session. REST (`POST /sessions`) and the TUI both call it.
 
 Sessions and channels hold their users and agents by reference - `Participant::User(UserId)`,
 `Participant::Agent(AgentId)` - not as copies (issue 120). The records live in the `EntityStore`; a
