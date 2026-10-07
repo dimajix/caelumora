@@ -12,10 +12,10 @@
 //! to `str`: a `Name` is compared by its folded form, and `&*name == text`
 //! would compare it as written.
 //!
-//! A free text is checked and kept as written. A name and a language are
-//! tidied as well - a name's whitespace, a tag's case - since they identify
-//! something: "Dr.  Who" and "Dr. Who" are one name, and `de-ch` and `de-CH`
-//! one language. Refusing what is not tidy would make every caller tidy it.
+//! A value is checked, never changed: it is kept exactly as written. What
+//! identifies something - a name, a language - is compared by a key made
+//! from it as well: "Dr.  Who" and "dr. who" are one name, `de-ch` and
+//! `de-CH` one language, each kept as it was written.
 
 /// Why a text does not fit its field. Every variant names the field; the
 /// messages are meant for users.

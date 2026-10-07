@@ -4,6 +4,7 @@
 //! elsewhere - a user's, which a user provider such as a directory owns -
 //! too: it is opaque to Caelumora.
 
+use super::text::{Text, TextRule};
 use super::ValueError;
 use crate::mention::handle_of;
 use crate::scope::Scope;
@@ -14,62 +15,63 @@ use std::hash::{Hash, Hasher};
 /// The longest name, in characters: a name stands in prompts and lists.
 pub const MAX_NAME_CHARS: usize = 100;
 
+/// What a name may be, as a text: one line of at most `MAX_NAME_CHARS`.
+pub enum NameRule {}
+
+impl TextRule for NameRule {
+    const FIELD: &'static str = "name";
+    const MAX_CHARS: usize = MAX_NAME_CHARS;
+    const ONE_LINE: bool = true;
+}
+
 /// A name that something is looked up by: an agent's, a personality's, a
-/// session template's, a channel's. Kept as written, with its whitespace
-/// tidied - no leading or trailing whitespace, every run of it one space -
-/// and compared by its ASCII form regardless of case (`fold`): "Jonathan",
-/// "jonathan" and "JONATHAN" are one name, and so are "Zoë" and "Zoe", in a
-/// lookup, in a map and as a key. Written down as a string, and checked when
-/// read.
+/// session template's, a channel's, a session's. A text of its own rule
+/// (`NameRule`), kept exactly as written, and compared by its ASCII form
+/// regardless of case and of how whitespace runs (`fold`): "Jonathan",
+/// "jonathan" and "JONATHAN" are one name, and so are "Zoë" and "Zoe" and
+/// "Dr.  Who" and "Dr. Who", in a lookup, in a map and as a key. Written
+/// down as a string, and checked when read.
 #[derive(Clone)]
 pub struct Name {
-    text: String,
+    text: Text<NameRule>,
     /// What it is compared and hashed by, made once with the name: a name
     /// never changes.
     key: String,
 }
 
 impl Name {
-    /// `text` as a name, its whitespace tidied.
+    /// `text` as a name, as it is written.
     ///
     /// # Errors
-    /// `ValueError` if nothing is left of it, if it contains a control
-    /// character, or if it is longer than `MAX_NAME_CHARS`.
+    /// `ValueError` if it is no text of the rule `NameRule`: empty, of
+    /// whitespace alone, more than one line, with a control character, or
+    /// longer than `MAX_NAME_CHARS`.
     pub fn new(text: impl AsRef<str>) -> Result<Self, ValueError> {
-        let name = text.as_ref().split_whitespace().collect::<Vec<_>>().join(" ");
-        if name.is_empty() {
-            return Err(ValueError::Empty { field: Self::FIELD });
-        }
-        if name.chars().any(char::is_control) {
-            return Err(ValueError::ControlCharacter { field: Self::FIELD });
-        }
-        if name.chars().count() > MAX_NAME_CHARS {
-            return Err(ValueError::TooLong { field: Self::FIELD, max_chars: MAX_NAME_CHARS });
-        }
-        let key = fold(&name);
-        Ok(Self { text: name, key })
+        let text = Text::<NameRule>::new(text)?;
+        let key = fold(text.as_str());
+        Ok(Self { text, key })
     }
 
     /// The name as written.
     pub fn as_str(&self) -> &str {
-        &self.text
+        self.text.as_str()
     }
 
     /// The handle the name is `@`-mentioned by (see `crate::mention`);
     /// empty if it has no character a handle may have.
     pub fn handle(&self) -> String {
-        handle_of(&self.text)
+        handle_of(self.as_str())
     }
 }
 
 /// What a name is compared by: transliterated to ASCII (`any_ascii` - the
 /// web UI uses the npm package of the same name), in lower case, every run
-/// of whitespace one space. A name of which nothing is left so is compared
-/// by its lower case.
+/// of whitespace one space, none at its ends. A name of which nothing is
+/// left so is compared by its lower case, its whitespace so, too.
 fn fold(name: &str) -> String {
-    let ascii = any_ascii::any_ascii(name).to_lowercase();
-    let key = ascii.split_whitespace().collect::<Vec<_>>().join(" ");
-    if key.is_empty() { name.to_lowercase() } else { key }
+    let tidied = |text: String| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let key = tidied(any_ascii::any_ascii(name).to_lowercase());
+    if key.is_empty() { tidied(name.to_lowercase()) } else { key }
 }
 
 impl PartialEq for Name {
@@ -143,14 +145,17 @@ mod tests {
     }
 
     #[test]
-    fn a_name_is_kept_as_written_with_its_whitespace_tidied() {
-        assert_eq!(name("  Dr.   Who ").as_str(), "Dr. Who");
-        assert_eq!(Name::new(" \t "), Err(ValueError::Empty { field: "name" }));
+    fn a_name_is_kept_exactly_as_written() {
+        assert_eq!(name("  Dr.   Who ").as_str(), "  Dr.   Who ", "checked, not changed");
+        assert_eq!(name("  Dr.   Who "), name("Dr. Who"), "but compared regardless of how whitespace runs");
+        assert_eq!(Name::new(""), Err(ValueError::Empty { field: "name" }));
+        assert_eq!(Name::new(" \t "), Err(ValueError::Blank { field: "name" }));
+        assert_eq!(Name::new("Dr.\nWho"), Err(ValueError::LineBreak { field: "name" }));
         assert_eq!(Name::new("a\u{7}b"), Err(ValueError::ControlCharacter { field: "name" }));
         assert_eq!(Name::new("x".repeat(MAX_NAME_CHARS + 1)), Err(ValueError::TooLong { field: "name", max_chars: MAX_NAME_CHARS }));
         assert_eq!(Name::optional(Some("")), Ok(None), "empty is none");
-        assert_eq!(Name::optional(Some("  ")), Err(ValueError::Empty { field: "name" }), "whitespace is no name");
-        assert_eq!(Name::new(" \t ").unwrap_err().to_string(), "the name must not be empty", "naming the field");
+        assert_eq!(Name::optional(Some("  ")), Err(ValueError::Blank { field: "name" }), "whitespace is no name");
+        assert_eq!(Name::new("").unwrap_err().to_string(), "the name must not be empty", "naming the field");
         assert!(Name::new("x".repeat(MAX_NAME_CHARS)).is_ok());
     }
 

@@ -4,6 +4,7 @@
 //! translated.
 
 use super::ValueError;
+use std::hash::{Hash, Hasher};
 
 /// The longest language tag, in characters: longer than any a user would
 /// choose, short enough for a prompt.
@@ -16,20 +17,29 @@ const EXPECTED: &str = "a tag such as \"de\" or \"en-GB\"";
 /// followed by subtags of one to eight letters or digits - a script, a
 /// region, a variant. Only its form is checked, not whether the language
 /// exists: models know the tags, and a list of them would always be
-/// incomplete. Kept in the usual case - `de-CH`, `zh-Hant-TW`, `sr-Latn` -
-/// so that one language is one tag; `_` is taken as `-`. Written down as a
-/// string, and checked when read.
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub struct Language(String);
+/// incomplete. Kept exactly as written, and compared in the usual case -
+/// `de-CH`, `zh-Hant-TW`, `sr-Latn` - with `_` taken as `-`: `de-ch`,
+/// `DE_CH` and `de-CH` are one language. Written down as a string, and
+/// checked when read.
+#[derive(Clone)]
+pub struct Language {
+    tag: String,
+    /// The tag in the usual case, which it is compared, hashed and named
+    /// by; made once with the language.
+    key: String,
+}
 
 impl Language {
-    /// `tag` as a language, trimmed and in the usual case.
+    /// `tag` as a language, as it is written.
     ///
     /// # Errors
-    /// `ValueError` if it is longer than `MAX_LANGUAGE_CHARS` or no tag of
-    /// the form above.
+    /// `ValueError` if it is empty, longer than `MAX_LANGUAGE_CHARS` or no
+    /// tag of the form above.
     pub fn new(tag: impl AsRef<str>) -> Result<Self, ValueError> {
-        let tag = tag.as_ref().trim();
+        let tag = tag.as_ref();
+        if tag.is_empty() {
+            return Err(ValueError::Empty { field: Self::FIELD });
+        }
         if tag.chars().count() > MAX_LANGUAGE_CHARS {
             return Err(ValueError::TooLong { field: Self::FIELD, max_chars: MAX_LANGUAGE_CHARS });
         }
@@ -46,11 +56,12 @@ impl Language {
             canonical.push('-');
             canonical.push_str(&case_of(subtag));
         }
-        Ok(Self(canonical))
+        Ok(Self { tag: tag.to_string(), key: canonical })
     }
 
+    /// The tag as written.
     pub fn as_str(&self) -> &str {
-        &self.0
+        &self.tag
     }
 
     /// The language's name in English and in the language itself, e.g.
@@ -59,7 +70,7 @@ impl Language {
     /// without its last subtags (`de-CH` is German); `None` for a language
     /// the table does not know, which is then named by its tag alone.
     pub fn names(&self) -> Option<(&'static str, &'static str)> {
-        let mut tag = self.0.as_str();
+        let mut tag = self.key.as_str();
         loop {
             if let Some((_, english, native)) = NAMES.iter().find(|(known, ..)| *known == tag) {
                 return Some((english, native));
@@ -136,27 +147,44 @@ fn case_of(subtag: &str) -> String {
 
 impl_value!([] Language, "language");
 
+impl PartialEq for Language {
+    fn eq(&self, other: &Self) -> bool {
+        self.key == other.key
+    }
+}
+
+impl Eq for Language {}
+
+impl Hash for Language {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.key.hash(state);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn tag(text: &str) -> String {
-        Language::new(text).expect("a language").to_string()
+    fn language(text: &str) -> Language {
+        Language::new(text).expect("a language")
     }
 
     #[test]
-    fn a_language_is_kept_in_the_usual_case() {
-        assert_eq!(tag(" de "), "de");
-        assert_eq!(tag("DE-ch"), "de-CH");
-        assert_eq!(tag("zh-hant-tw"), "zh-Hant-TW");
-        assert_eq!(tag("en_GB"), "en-GB", "an underscore is taken as a hyphen");
-        assert_eq!(tag("es-419"), "es-419", "a numeric region stays as it is");
-        assert_eq!(tag("de-CH-1996"), "de-CH-1996");
+    fn a_language_is_kept_as_written_and_compared_in_the_usual_case() {
+        assert_eq!(language("DE-ch").as_str(), "DE-ch", "checked, not changed");
+        assert_eq!(language("DE-ch"), language("de-CH"));
+        assert_eq!(language("zh-hant-tw"), language("zh-Hant-TW"));
+        assert_eq!(language("en_GB"), language("en-GB"), "an underscore is taken as a hyphen");
+        assert_eq!(language("es-419"), language("es-419"), "a numeric region stays as it is");
+        assert_ne!(language("de-CH"), language("de-AT"));
+        let set: std::collections::HashSet<Language> = [language("de-ch"), language("de-CH")].into_iter().collect();
+        assert_eq!(set.len(), 1, "one language, one key");
     }
 
     #[test]
     fn only_a_tag_is_a_language() {
-        for text in ["", "d", "deut", "de-", "de--CH", "de CH", "dé", "1de", "de-toolongsubtag"] {
+        assert_eq!(Language::new(""), Err(ValueError::Empty { field: "language" }));
+        for text in ["d", "deut", "de-", "de--CH", "de CH", " de", "dé", "1de", "de-toolongsubtag"] {
             assert_eq!(Language::new(text), Err(ValueError::Malformed { field: "language", expected: EXPECTED }), "{text:?}");
         }
         assert_eq!(Language::new(format!("de{}", "-a".repeat(MAX_LANGUAGE_CHARS))), Err(ValueError::TooLong { field: "language", max_chars: MAX_LANGUAGE_CHARS }));
@@ -172,6 +200,7 @@ mod tests {
         assert_eq!(names("de-CH-1996"), Some(("German", "Deutsch")), "without its region and variant");
         assert_eq!(names("zh-Hant-TW"), Some(("Traditional Chinese", "繁體中文")), "as far as the table knows it");
         assert_eq!(names("pt-BR"), Some(("Brazilian Portuguese", "português do Brasil")));
+        assert_eq!(names("PT_br"), Some(("Brazilian Portuguese", "português do Brasil")), "by the tag in the usual case");
         assert_eq!(names("tlh"), None, "a language the table does not know");
         assert!(NAMES.iter().all(|(tag, ..)| Language::new(tag).is_ok_and(|language| language.as_str() == *tag)), "every tag of the table as a language keeps it");
     }
@@ -179,7 +208,7 @@ mod tests {
     #[test]
     fn a_language_is_written_as_its_tag_and_checked_when_read() {
         let language = Language::new("en-gb").unwrap();
-        assert_eq!(serde_json::to_string(&language).unwrap(), "\"en-GB\"");
+        assert_eq!(serde_json::to_string(&language).unwrap(), "\"en-gb\"", "as written");
         assert_eq!(serde_json::from_str::<Language>("\"pt_br\"").unwrap(), Language::new("pt-BR").unwrap());
         assert!(serde_json::from_str::<Language>("\"Deutsch\"").is_err());
     }

@@ -42,10 +42,11 @@ Every entity has a name, and the fields that mean something for it (issue 177):
 The type of a name says what it is for (`caelumora_model::value::name`):
 
 *   **`Name`** - a name something is looked up by: a channel's. It is checked when it is made or
-    read (not empty, no control characters, at most `MAX_NAME_CHARS`), kept as written with its
-    whitespace tidied, and compared by its ASCII form (`any_ascii`) regardless of case - "Jonathan"
-    and "jonathan" are one name, and so are "Zoë" and "Zoe", in a lookup, a map and a key. The form
-    it is compared by is made once, with the name. Its `handle` is what it is `@`-mentioned by.
+    read as a text of its own rule (`NameRule`: one line, not empty, not of whitespace alone, no
+    control characters, at most `MAX_NAME_CHARS`), kept exactly as written, and compared by its
+    ASCII form (`any_ascii`) regardless of case and of how whitespace runs - "Jonathan" and
+    "jonathan" are one name, and so are "Zoë" and "Zoe", in a lookup, a map and a key. The form it
+    is compared by is made once, with the name. Its `handle` is what it is `@`-mentioned by.
 *   **`ScopedName`** - a `Name` with the `Scope` it lies in: what a definition is found by. Written
     into the document as the fields `name` and `scope`, the scope global unless named.
 *   **`String`** - a name that is only shown (a session's), or that is decided elsewhere: a user's
@@ -59,8 +60,10 @@ others to read - `Text<R>`, whose rule `R` says how long it may be and whether i
 has a type that is made only through its constructor, `new`, and checked again when a document is
 read, so that a stored document that does not fit fails to load. They share one API - `FIELD`,
 `as_str`, `optional` (a missing or empty text is `None`), the conversions to and from a `String`, a
-string in the document - and one error, `ValueError`, whose message names the field. None derefs
-to `str`: a `Name` is compared by its folded form, which `&*name == text` would bypass.
+string in the document - and one error, `ValueError`, whose message names the field. A value is
+checked, never changed: it is kept exactly as written, and what identifies something - a name, a
+language - is compared by a key made from it. None derefs to `str`: a `Name` is compared by its
+folded form, which `&*name == text` would bypass.
 
 There are two implementations: `MemoryStore`, for tests, and `JsonFileStore`, which keeps one JSON
 file per document.

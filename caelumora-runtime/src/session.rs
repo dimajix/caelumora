@@ -1393,9 +1393,9 @@ mod tests {
         let (session, ctx, other) = running_session_of_a_user(&manager).await;
         let mut rx = runtime.event_bus().subscribe_all();
 
-        let channel = session.create_channel(&ctx, spec(" side ", vec![other])).await.expect("the channel is created");
+        let channel = session.create_channel(&ctx, spec("side", vec![other])).await.expect("the channel is created");
 
-        assert_eq!(channel.name(), "side", "the name is trimmed");
+        assert_eq!(channel.name(), "side");
         let kinds: Vec<String> = channel.members().into_iter().map(|m| m.kind).collect();
         assert_eq!(kinds.iter().filter(|k| *k == "user").count(), 2, "the creator and the other user: {kinds:?}");
         assert!(kinds.iter().any(|k| k == "approver"), "an approver is added: {kinds:?}");

@@ -127,3 +127,9 @@ are not checked today are, or say why not.
   and a text that does not fit is `StoreError::Validation`. The variant with typed parameters
   (step 2 as first committed) was not taken. Step 3 follows this: `update_name` and
   `update_language`, which take a `Name` and a `Language` today, are to take strings as well.
+- **2026-10-07** — Step 3, first part: no value changes what it is given (maintainer's decision).
+  `Name` is a text of its own rule (`NameRule`: one line, at most `MAX_NAME_CHARS`), kept exactly
+  as written and compared by its folded key, which now also ignores how whitespace runs; a name of
+  whitespace alone is `Blank`, one with a line break `LineBreak`. `Language` keeps its tag as
+  written and is compared, hashed and named by the tag in the usual case; an empty one is `Empty`.
+  With that, an event can carry a value as it was sent: it is exactly what the model keeps.
