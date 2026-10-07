@@ -46,6 +46,19 @@ impl Scope {
         }
     }
 
+    /// Whether what lies in this scope may be used at `place` - an agent
+    /// take part in a channel there, a personality make an agent there: what
+    /// lies in a session's or a channel's scope only within it, since it goes
+    /// with it (issue 178); what lies in a user's or a group's scope or
+    /// everywhere wherever the permissions allow - that scope says only
+    /// where its name is found.
+    pub fn admits(&self, place: &Scope) -> bool {
+        match self {
+            Scope::SessionScope { .. } | Scope::ChannelScope { .. } => self.contains(place),
+            Scope::UserScope { .. } | Scope::GroupScope { .. } | Scope::GlobalScope => true,
+        }
+    }
+
     /// How far in it lies: what a lookup prefers, the innermost first.
     fn depth(&self) -> u8 {
         match self {
@@ -204,6 +217,24 @@ mod tests {
         let group = Scope::GroupScope { group_id: Uuid::new_v4() };
         let in_group = [defined("helper", group.clone(), "the group's")];
         assert_eq!(found(&in_group, "helper", &group, None), None, "a group is no place yet (issue 23)");
+    }
+
+    #[test]
+    fn what_lies_in_a_session_or_a_channel_is_used_only_within_it() {
+        let session_id = SessionId::new();
+        let (channel_id, other_channel) = (ChannelId::new(), ChannelId::new());
+        let channel = Scope::ChannelScope { session_id, channel_id };
+        let session = Scope::SessionScope { session_id };
+        let elsewhere = Scope::ChannelScope { session_id: SessionId::new(), channel_id: ChannelId::new() };
+
+        assert!(session.admits(&channel) && session.admits(&session), "a session's in it and its channels");
+        assert!(!session.admits(&elsewhere), "not in another session");
+        assert!(channel.admits(&channel), "a channel's in it");
+        assert!(!channel.admits(&Scope::ChannelScope { session_id, channel_id: other_channel }), "not in another channel of its session");
+        assert!(!channel.admits(&session), "nor in its session at large");
+        for anywhere in [Scope::UserScope { user_id: UserId::new() }, Scope::GroupScope { group_id: Uuid::new_v4() }, Scope::GlobalScope] {
+            assert!(anywhere.admits(&elsewhere), "{anywhere:?} only says where its name is found");
+        }
     }
 
     #[test]

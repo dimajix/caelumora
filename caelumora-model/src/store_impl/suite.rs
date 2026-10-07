@@ -218,6 +218,17 @@ pub(crate) async fn entity_store_behaves(store: &dyn EntityStore) {
     let missing = store.find_user_by_name(&ctx, "carol").await;
     assert!(matches!(missing, Err(StoreError::NotFound { entity: "user", .. })), "an unknown name is NotFound, got {missing:?}");
 
+    // A template that would make sessions it can never lie in (issue 178).
+    let ctx = SecurityContext::default();
+    let in_session = SessionTemplate { name: ScopedName::new("nested", Scope::SessionScope { session_id: SessionId::new() }).unwrap(), ..session_template() };
+    let refused = store.create_session_template(&ctx, &in_session).await;
+    assert!(matches!(refused, Err(StoreError::Validation(_))), "a template of a session's scope is not stored, got {refused:?}");
+    let template = session_template();
+    store.create_session_template(&ctx, &template).await.expect("a global one is");
+    let moved = SessionTemplate { name: ScopedName::new("nested", Scope::ChannelScope { session_id: SessionId::new(), channel_id: ChannelId::new() }).unwrap(), ..template };
+    let refused = store.update_session_template(&ctx, &moved).await;
+    assert!(matches!(refused, Err(StoreError::Validation(_))), "nor moved into a channel's, got {refused:?}");
+
     found_by_name!(store, |name| Personality { name, id: PersonalityId::new(), ..personality() }, "personality",
         create_personality, delete_personality, find_personality_by_name);
     found_by_name!(store, |name| SessionTemplate { name, id: SessionTemplateId::new(), ..session_template() }, "session_template",

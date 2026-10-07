@@ -14,6 +14,17 @@ tests. Rules that belong to one subject live with it - where permission checks g
 *   **Module docs:** use `//!` at the top of new modules to describe their purpose.
 *   **Consistency:** mirror the comment frequency and style of the module you are editing.
 
+## Imports
+
+A type, trait or function used by name is imported with `use` at the top of the module and written
+by its name, not by its path (`impl Definition for Agent`, not `impl crate::scope::Definition for
+Agent`) - also when adding the import means touching the import block for a single use. A path is
+written out only where an import cannot serve: inside a `macro_rules!`, which expands in other
+modules and writes `$crate::…`; where two items of one name meet (`crate::chain::Stored` and
+`crate::removal::Stored`), unless one of them is renamed on import; and where the module around it
+calls something by its module on purpose, as `crate::channel::require_admitted` says where the check
+lives.
+
 ## Crates and interfaces
 
 *   **Model and runtime.** When you change `caelumora-model`, keep `caelumora-runtime` compatible

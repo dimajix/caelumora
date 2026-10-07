@@ -10,7 +10,6 @@
 //! to delete by the policy - a contributor's agent in the owner's session.
 
 use crate::event::EventBus;
-use caelumora_model::agent::AgentId;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::removal::Stored;
 use caelumora_model::scope::{Definition, Scope};
@@ -19,12 +18,12 @@ use caelumora_model::store::{EntityStore, StateStore, StoreResult};
 use chrono::{DateTime, Utc};
 
 /// Deletes what lies in `holder` or within it, and announces the agents
-/// among it as `SessionManager::delete_agent` does. Returns the agents, so
-/// that whoever holds their channels can have them leave.
+/// among it as `SessionManager::delete_agent` does. They leave no channel:
+/// they take part only within `holder` (`Scope::admits`).
 ///
 /// # Errors
 /// Whatever the store reports; what was deleted before stays deleted.
-pub(crate) async fn delete_definitions_of(store: &dyn EntityStore, events: &EventBus, holder: &Scope) -> StoreResult<Vec<AgentId>> {
+pub(crate) async fn delete_definitions_of(store: &dyn EntityStore, events: &EventBus, holder: &Scope) -> StoreResult<()> {
     let system = SecurityContext::system();
     for personality in lying_in(store.list_personalities(&system).await?, holder) {
         store.delete_personality(&system, personality.id).await?;
@@ -32,13 +31,11 @@ pub(crate) async fn delete_definitions_of(store: &dyn EntityStore, events: &Even
     for template in lying_in(store.list_session_templates(&system).await?, holder) {
         store.delete_session_template(&system, template.id).await?;
     }
-    let mut agents = Vec::new();
     for agent in lying_in(store.list_agents(&system).await?, holder) {
         store.delete_agent(&system, agent.id).await?;
         events.publish(GlobalEvent::AgentDeleted(agent.id), agent.security_attributes.clone());
-        agents.push(agent.id);
     }
-    Ok(agents)
+    Ok(())
 }
 
 /// Restores what lies in `holder` or within it and was deleted with it -

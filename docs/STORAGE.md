@@ -39,7 +39,10 @@ Every entity has a name, and the fields that mean something for it (issue 177):
     in those around it or in the user's own. A template asks for each agent in exactly the scope it
     names and reuses it only if it is of the personality it names - one of another is an error -
     so an agent's scope decides whether it is reused - one per user, with its memory - or made
-    anew for every session.
+    anew for every session. What lies in a session's or a channel's scope is used only within it
+    and goes with it; a user's scope or the global one only says where a name is found (see
+    [CHANNELS.md](CHANNELS.md#sessions)). A session template lies in no session's or channel's
+    scope: `Stored::validate` refuses it, as a kind may refuse what cannot be stored.
 *   What is offered for choosing - a personality, a session template - has a `description` as well,
     a catalogue line.
 

@@ -26,6 +26,15 @@ session deletes them, restoring it restores those deleted with it - not one dele
 consequence of what was permitted; a deleted or restored agent is announced (`AgentDeleted`,
 `AgentRestored`). Its agents take part in no other session, so they leave no channel.
 
+That holds because what lies in a session's or a channel's scope is used only within it
+(`Scope::admits`): an agent of it takes part only in that session's channels, or in that channel -
+creating, restoring or adding to a channel refuses one of another (`ChannelError::OutOfScope`,
+`Member::require_in_scope`) -, and a personality of it makes agents only within it
+(`TemplateError::PersonalityOutOfScope`). What lies in a user's scope or everywhere is used wherever
+the permissions allow: that scope only says where its name is found. A session template lies only
+in a user's scope or everywhere; one of a session's or a channel's would make sessions it can never
+lie in, and is not stored (`Stored::validate`, `StoreError::Validation`).
+
 Every session has a privacy policy (`Session.privacy`, issue 134): whom it lets read what was said
 in it from other sessions. It is taken over from its template (`SessionTemplate.privacy`, private
 unless the template says otherwise), changed only by the session's owner
@@ -44,8 +53,8 @@ Channels can be created in and deleted from a running session: `SessionLoop::cre
     it.
 *   **Deleting** takes the channel out of the session (`remove_channel`) and marks its document
     deleted (`DeleteChannel`, issue 164). The channel and its state are kept. What lies in its scope
-    (`Scope::ChannelScope`) is deleted with it, as with a session; an agent of it that takes part
-    in another channel of the session leaves that (`SessionLoop::leave_channels`).
+    (`Scope::ChannelScope`) is deleted with it, as with a session; an agent of it takes part in no
+    other channel, so it leaves none.
 *   **Restoring** a deleted channel (`SessionLoop::restore_channel`) asks `UpdateSession` and its
     participants' clearance, as creating one does, takes the mark away (`Restore`), lists it in
     the session again and starts it from its stored state. Its name must still be free. What

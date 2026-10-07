@@ -15,6 +15,8 @@ use crate::transcript::{as_they_stand, GivenUp, GivenUpReason, Transcript, Trans
 use crate::turn::{TurnEntry, TurnState};
 use crate::work::{TurnId, Work};
 use crate::note::{NoteChain, NoteChange, NoteOrigin, Notes};
+use crate::removal::Removal;
+use crate::scope::Definition;
 use crate::value::name::ScopedName;
 use crate::value::text::{Description, Introduction};
 use crate::security::{Secured, SecurityAttributes, SecurityContext};
@@ -105,7 +107,7 @@ pub struct Personality {
     /// Set when it was deleted (issue 164): it stays stored, hidden from
     /// every read but those for what was deleted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub deleted: Option<crate::removal::Removal>,
+    pub deleted: Option<Removal>,
 }
 
 impl Personality {
@@ -139,13 +141,13 @@ impl Secured for Agent {
     }
 }
 
-impl crate::scope::Definition for Personality {
+impl Definition for Personality {
     fn scoped_name(&self) -> &ScopedName {
         &self.name
     }
 }
 
-impl crate::scope::Definition for Agent {
+impl Definition for Agent {
     fn scoped_name(&self) -> &ScopedName {
         &self.name
     }
@@ -168,7 +170,7 @@ pub struct Agent {
     /// Set when it was deleted (issue 164): it stays stored, hidden from
     /// every read but those for what was deleted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub deleted: Option<crate::removal::Removal>,
+    pub deleted: Option<Removal>,
 }
 
 impl Agent {

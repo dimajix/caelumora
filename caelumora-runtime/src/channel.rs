@@ -23,6 +23,7 @@ use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::work::TurnId;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Reclassified, SecurityAttributes, SecurityContext, SecurityManager};
+use caelumora_model::scope::Scope;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::{EntityStore, StateStore, StoreError, StoreResultExt};
 use caelumora_model::user::UserId;
@@ -79,6 +80,10 @@ pub enum ChannelError {
     /// (issue 46).
     #[error("{participant} is not a participant of the session of channel {channel}")]
     NotInSession { participant: ActorId, channel: ChannelId },
+    /// An agent of another session's or channel's scope, which takes part
+    /// only there (issue 178).
+    #[error("{participant} lies in the scope of another session or channel than channel {channel}")]
+    OutOfScope { participant: ActorId, channel: ChannelId },
     #[error("{participant} already takes part in channel {channel}")]
     AlreadyParticipant { participant: ActorId, channel: ChannelId },
     #[error("{participant} takes no part in channel {channel}")]
@@ -194,6 +199,21 @@ impl Member {
         }
     }
 
+    /// Nothing if the member may take part in channel `channel_id` of
+    /// session `session_id` by where it lies: an agent of a session's or a
+    /// channel's scope only within it (`Scope::admits`, issue 178).
+    ///
+    /// # Errors
+    /// `ChannelError::OutOfScope` if it may not.
+    fn require_in_scope(&self, session_id: SessionId, channel_id: ChannelId) -> Result<(), ChannelError> {
+        let (Member::Agent(agent, _) | Member::ExternalAgent(agent, _)) = self else { return Ok(()) };
+        if agent.load().name.scope.admits(&Scope::ChannelScope { session_id, channel_id }) {
+            Ok(())
+        } else {
+            Err(ChannelError::OutOfScope { participant: self.actor_id(), channel: channel_id })
+        }
+    }
+
     /// Nothing if the member is cleared for channel `channel`, classified
     /// `classification` (`JoinChannel`), by every set of roles that binds
     /// it - to join it, to take part in it when it is created, or for what
@@ -212,16 +232,18 @@ impl Member {
     }
 }
 
-/// Nothing if every participant of `channel` that still exists is cleared
-/// for its classification (`Member::require_cleared`) - asked before
-/// anything of a new channel or session is stored.
+/// Nothing if every participant of `channel` that still exists may take
+/// part in it - lies where it may (`Member::require_in_scope`) and is
+/// cleared for its classification (`Member::require_cleared`) - asked
+/// before anything of a new or restored channel or session is stored.
 ///
 /// # Errors
-/// `ChannelError::NotCleared` for the first who is not; whatever reading a
-/// participant reports.
-pub(crate) async fn require_cleared(runtime: &RuntimeManager, context: &SecurityContext, channel: &Channel) -> Result<()> {
+/// `ChannelError::OutOfScope` or `NotCleared` for the first who may not;
+/// whatever reading a participant reports.
+pub(crate) async fn require_admitted(runtime: &RuntimeManager, context: &SecurityContext, channel: &Channel) -> Result<()> {
     for participant in &channel.participants {
         if let Some(member) = Member::of(participant, channel, runtime.controller_manager(), runtime.security_manager().as_ref()).await? {
+            member.require_in_scope(channel.session_id, channel.id)?;
             member.require_cleared(runtime.entity_store().as_ref(), runtime.security_manager().as_ref(), context, &channel.classification, channel.id).await?;
         }
     }
@@ -622,8 +644,9 @@ impl ChannelLoop {
     /// actor has ended (`left`, issue 171).
     ///
     /// # Errors
-    /// `ChannelError::NotInSession`, `AlreadyParticipant`, `StillLeaving` or
-    /// `Forbidden`; a `StoreError` if `context` may not change the channel.
+    /// `ChannelError::NotInSession`, `OutOfScope`, `AlreadyParticipant`,
+    /// `StillLeaving` or `Forbidden`; a `StoreError` if `context` may not
+    /// change the channel.
     pub async fn add_participant(&self, context: &SecurityContext, participant: ActorId, history: HistoryAccess) -> Result<()> {
         // Whether the actor may change the channel at all, before anything
         // is asked of the participant (issue 198, F2): who may not learns
@@ -639,6 +662,7 @@ impl ChannelLoop {
             .ok_or(ChannelError::NotInSession { participant, channel: self.id })?;
         let member = self.member_of(&found).await?
             .ok_or(ChannelError::ParticipantGone { participant, channel: self.id })?;
+        member.require_in_scope(self.session_id, self.id)?;
         member.require_cleared(self.entities.as_ref(), self.security.as_ref(), context, &self.classification(), self.id).await?;
 
         let messages = self.history().await;

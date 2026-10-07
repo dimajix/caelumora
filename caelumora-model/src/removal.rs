@@ -35,6 +35,13 @@ pub trait Stored: Secured {
     fn deleted(&self) -> Option<&Removal> {
         None
     }
+
+    /// Nothing if it may be stored as it is; why not otherwise, which the
+    /// store answers as `StoreError::Validation` when it is created or
+    /// changed.
+    fn validate(&self) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 /// A stored kind that deleting marks rather than removes (issue 164): what

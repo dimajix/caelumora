@@ -51,7 +51,9 @@ pub(crate) async fn resolve_participants(store: &dyn EntityStore, context: &Secu
 ///
 /// # Errors
 /// `TemplateError::AgentNameTaken` if the agent of `name` is of another
-/// personality; whatever the store reports.
+/// personality, `PersonalityOutOfScope` if the personality lies in a
+/// session's or a channel's scope the agent would not; whatever the store
+/// reports.
 async fn agent(store: &dyn EntityStore, context: &SecurityContext, name: ScopedName, personality_id: PersonalityId) -> anyhow::Result<AgentId> {
     // Only "there is none" means "make one": a lookup that failed or was
     // refused is an error, not a reason for a second agent of that name
@@ -62,6 +64,9 @@ async fn agent(store: &dyn EntityStore, context: &SecurityContext, name: ScopedN
         None => {}
     }
     let personality = store.get_personality(context, personality_id).await?;
+    if !personality.name.scope.admits(&name.scope) {
+        return Err(TemplateError::PersonalityOutOfScope(personality.name.name).into());
+    }
     let agent = Agent::new(name, &personality, context.initiator_id);
     store.create_agent(context, &agent).await?;
     Ok(agent.id)
@@ -187,6 +192,27 @@ mod tests {
             .expect_err("the global one is of another personality");
         assert!(matches!(refused.downcast_ref::<TemplateError>(), Some(TemplateError::AgentNameTaken(name)) if *name == "helper"), "{refused}");
         assert_eq!(store.list_agents(&system).await.unwrap().len(), 3, "and none is made: the user's, the session's, the global one");
+    }
+
+    #[tokio::test]
+    async fn a_personality_of_a_session_makes_agents_only_within_it() {
+        let owner = UserId::new();
+        let (store, personality) = store_with_personality(MemoryStore::new()).await;
+        let system = SecurityContext::system();
+        let plain = store.get_personality(&system, personality).await.unwrap();
+        let session_id = SessionId::new();
+        let sessions = Personality { id: PersonalityId::new(), name: ScopedName::new("planner", Scope::SessionScope { session_id }).unwrap(), ..plain };
+        store.create_personality(&system, &sessions).await.unwrap();
+        let in_scope = |scope| template(vec![ParticipantTemplate::Agent { name: Name::new("planner").unwrap(), scope, personality_id: sessions.id }]);
+
+        resolve_participants(store.as_ref(), &as_user(owner), &in_scope(ScopeTemplate::SessionScope), session_id, owner).await
+            .expect("an agent of its session");
+        for (scope, session) in [(ScopeTemplate::SessionScope, SessionId::new()), (ScopeTemplate::UserScope, session_id), (ScopeTemplate::GlobalScope, session_id)] {
+            let refused = resolve_participants(store.as_ref(), &as_user(owner), &in_scope(scope.clone()), session, owner).await
+                .expect_err("not one outside it");
+            assert!(matches!(refused.downcast_ref::<TemplateError>(), Some(TemplateError::PersonalityOutOfScope(name)) if *name == "planner"), "{scope:?}: {refused}");
+        }
+        assert_eq!(store.list_agents(&system).await.unwrap().len(), 1, "none is made outside it");
     }
 
     #[tokio::test]

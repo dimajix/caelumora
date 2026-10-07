@@ -343,7 +343,7 @@ impl SessionLoop {
         }
 
         let channel = Channel::build(self.id, session.security_attributes.owner_id, name, spec.components, classification, language, participants);
-        crate::channel::require_cleared(&self.runtime_manager, context, &channel).await?;
+        crate::channel::require_admitted(&self.runtime_manager, context, &channel).await?;
         let store = &self.entities;
         store.create_channel(context, &channel).await?;
         if let Err(error) = self.session_controller.add_channel(context, channel.id).await {
@@ -413,14 +413,9 @@ impl SessionLoop {
         }
         event_bus.publish(GlobalEvent::ChannelDeleted(self.id, channel_id), channel.security_attributes.clone());
         // What lies in its scope goes with it (issue 178); an agent of it
-        // that takes part in another channel of the session leaves that.
-        match delete_definitions_of(self.entities.as_ref(), event_bus, &Scope::ChannelScope { session_id: self.id, channel_id }).await {
-            Ok(agents) => {
-                for agent in agents {
-                    self.leave_channels(ActorId::Agent(agent)).await;
-                }
-            }
-            Err(e) => warn!("Channel {} was deleted from session {}, but not what lies in its scope: {}", channel_id, self.id, e),
+        // takes part in no other channel (`Scope::admits`).
+        if let Err(e) = delete_definitions_of(self.entities.as_ref(), event_bus, &Scope::ChannelScope { session_id: self.id, channel_id }).await {
+            warn!("Channel {} was deleted from session {}, but not what lies in its scope: {}", channel_id, self.id, e);
         }
         info!("Channel {}/{} deleted from session {} by {}", channel.name, channel_id, self.id, context.caller_id);
         Ok(())
@@ -453,7 +448,7 @@ impl SessionLoop {
         }
         // As when it was created: its participants' clearance may have
         // changed while it was deleted.
-        crate::channel::require_cleared(&self.runtime_manager, context, &channel).await?;
+        crate::channel::require_admitted(&self.runtime_manager, context, &channel).await?;
         store.restore_channel(context, channel_id).await?;
         let deleted_at = channel.deleted.as_ref().map(|removal| removal.at);
         let channel = Channel { deleted: None, ..channel };
@@ -695,7 +690,7 @@ impl SessionManager {
 
         for channel in &channels {
             require_classification(&self.runtime_manager, context, &channel.classification).await?;
-            crate::channel::require_cleared(&self.runtime_manager, context, channel).await?;
+            crate::channel::require_admitted(&self.runtime_manager, context, channel).await?;
         }
         let store = &self.entities;
         store.create_session(context, &session).await?;
@@ -832,8 +827,8 @@ impl SessionManager {
         // its session - until it is purged.
         let removed = self.entities.delete_session(context, id).await?;
         // What lies in its scope and in its channels' goes with it (issue
-        // 178). Its agents take part in no other session: they leave
-        // nothing, and come back with its channels.
+        // 178). Its agents take part in no other session (`Scope::admits`):
+        // they leave nothing, and come back with its channels.
         if removed {
             if let Err(e) = delete_definitions_of(self.entities.as_ref(), event_bus, &Scope::SessionScope { session_id: id }).await {
                 warn!("Session {} was deleted, but not what lies in its scope: {}", id, e);
@@ -2005,7 +2000,7 @@ mod tests {
                 let ActorId::Agent(id) = participant else { unreachable!("agents only") };
                 let channel = caelumora_model::channel::Channel::build(SessionId::new(), alice_id, caelumora_model::value::name::Name::new("probe").unwrap(),
                     Default::default(), classification, None, vec![caelumora_model::channel::Participant::Agent(id)]);
-                crate::channel::require_cleared(&runtime, &alice_ctx, &channel).await.is_ok()
+                crate::channel::require_admitted(&runtime, &alice_ctx, &channel).await.is_ok()
             }
         };
         assert!(cleared(hers, &hr).await, "an agent that names no roles is cleared as its owner");
@@ -2246,7 +2241,6 @@ mod tests {
     #[tokio::test]
     async fn what_lies_in_a_scope_goes_with_its_session_or_channel() {
         use caelumora_model::agent::{Personality, PersonalityId};
-        use caelumora_model::store::EntityStore;
         use caelumora_model::user::UserId;
 
         let runtime = test_runtime();
@@ -2301,6 +2295,47 @@ mod tests {
         }
         assert!(store.get_deleted_personality(&system, personality.id).await.is_err());
         assert!(present(&users).await, "the user's is not");
+    }
+
+    #[tokio::test]
+    async fn an_agent_takes_part_only_within_its_sessions_or_channels_scope() {
+        use crate::channel::ChannelError;
+        use caelumora_model::agent::{Personality, PersonalityId};
+        use caelumora_model::channel::{HistoryAccess, Participant};
+
+        let runtime = test_runtime();
+        let store = Arc::clone(runtime.entity_store());
+        let manager = SessionManager::new(runtime);
+        let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
+        let personality = Personality {
+            id: PersonalityId::new(), name: ScopedName::new("plain", Scope::GlobalScope).unwrap(), kind: Default::default(),
+            roles: None, description: None, introduction: None, components: Default::default(),
+            security_attributes: Default::default(), reasoning_visibility: Default::default(), deleted: None,
+        };
+        store.create_personality(&system, &personality).await.unwrap();
+        let mut session = make_session("scoped");
+        let id = session.id;
+        let elsewhere = [
+            Agent::new(ScopedName::new("aside", Scope::ChannelScope { session_id: id, channel_id: ChannelId::new() }).unwrap(), &personality, ActorId::None),
+            Agent::new(ScopedName::new("visitor", Scope::SessionScope { session_id: SessionId::new() }).unwrap(), &personality, ActorId::None),
+        ];
+        for agent in &elsewhere {
+            store.create_agent(&system, agent).await.unwrap();
+            session.participants.push(Participant::Agent(agent.id));
+        }
+        let running = create(&manager, &ctx, session).await.unwrap();
+        let main = running.channel_by_name("main").unwrap();
+
+        for agent in &elsewhere {
+            let actor = ActorId::Agent(agent.id);
+            let refused = running.create_channel(&ctx, spec("with-it", vec![actor])).await.expect_err("not in a new channel");
+            assert!(matches!(refused.downcast_ref::<ChannelError>(), Some(ChannelError::OutOfScope { participant, .. }) if *participant == actor), "{refused}");
+            let refused = main.add_participant(&ctx, actor, HistoryAccess::All).await.expect_err("nor in one there is");
+            assert!(matches!(refused.downcast_ref::<ChannelError>(), Some(ChannelError::OutOfScope { participant, .. }) if *participant == actor), "{refused}");
+        }
+        assert!(running.channel_by_name("with-it").is_none(), "nothing was created");
+        assert!(main.channel().participants.is_empty(), "nor added");
+        manager.stop_session(&system, id).await.unwrap();
     }
 
     #[tokio::test]

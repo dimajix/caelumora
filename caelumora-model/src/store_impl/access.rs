@@ -76,6 +76,7 @@ impl<'a> Access<'a> {
     /// Whether the caller may create `value`.
     pub(crate) async fn create<T: Stored>(&self, value: &T, kind: &Actions) -> StoreResult<()> {
         unmarked(value, kind)?;
+        valid(value)?;
         self.allow((kind.create)(value.security_attributes())).await
     }
 
@@ -86,7 +87,8 @@ impl<'a> Access<'a> {
         let Some(stored) = stored.filter(|s| present(*s)) else { return Err(not_found()) };
         self.require((kind.get)(stored.security_attributes()), not_found).await?;
         self.allow((kind.update)(stored.security_attributes())).await?;
-        unmarked(value, kind)
+        unmarked(value, kind)?;
+        valid(value)
     }
 
     /// Whether to delete `stored`: `false` if there is nothing the caller
@@ -156,6 +158,11 @@ fn unmarked<T: Stored>(value: &T, kind: &Actions) -> StoreResult<()> {
         None => Ok(()),
         Some(_) => Err(StoreError::Validation(format!("a {} is marked deleted only by deleting it", kind.entity))),
     }
+}
+
+/// Refuses `value` if it may not be stored as it is (`Stored::validate`).
+fn valid<T: Stored>(value: &T) -> StoreResult<()> {
+    value.validate().map_err(StoreError::Validation)
 }
 
 /// The actions that guard one kind of entity, and its name in errors: every

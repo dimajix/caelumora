@@ -276,3 +276,20 @@ the holder, so that a restore meanwhile finds nothing half done.
   personality and scope - in exactly the scope asked for, through the store, not through the lookup
   from a place (step 2); what lies in a session's or a channel's scope goes with it (step 3).
   Uniqueness of names is issue [250](250-unique-names-per-name-space.md), next.
+- **2026-10-07** — Extended after review, at the maintainer's proposal: what lies in a session's or
+  a channel's scope is used only within it, which makes what goes with it whole. The scope answers
+  two questions: where a name is found (the chain with the user, for the lookup and for issue 250),
+  and where something reached by its id may be used - only within a session's or a channel's scope
+  it lies in; a user's or the global scope restricts nothing, the permissions decide. Built:
+  `Scope::admits`; an agent takes part only where its scope admits the channel
+  (`Member::require_in_scope`, in `channel::require_admitted` - renamed from `require_cleared`, for
+  creating, restoring and making channels - and in `ChannelLoop::add_participant`;
+  `ChannelError::OutOfScope`, `400 invalid_participant`); a personality makes agents only where its
+  scope admits theirs (`TemplateError::PersonalityOutOfScope`); a session template of a session's
+  or a channel's scope is not stored (`Stored::validate`, a new method every stored kind may
+  override, checked by the store on create and update as `StoreError::Validation`). Deleting a
+  channel no longer has its agents leave other channels: they take part in none.
+  `SessionLoop::leave_channels` stays for `delete_agent`. Before, a personality of a session could
+  make a global agent that outlived it with a personality that was gone. Tests in `scope.rs`,
+  `template.rs`, `session.rs` and the store suite; the security suite is unchanged, since the checks
+  ask nothing of the policy. `docs/CHANNELS.md` and `docs/STORAGE.md` say the rule.

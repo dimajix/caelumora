@@ -13,7 +13,8 @@ use crate::value::language::Language;
 use crate::scope::Scope::{GlobalScope, SessionScope, UserScope};
 use crate::value::name::{Name, ScopedName};
 use crate::value::text::{Briefing, Description, Summary};
-use crate::scope::Scope;
+use crate::removal::{Deletable, Removal, Stored};
+use crate::scope::{Definition, Scope};
 use crate::privacy::PrivacyConfig;
 use crate::session::{Session, SessionId};
 use chrono::Utc;
@@ -41,6 +42,10 @@ pub enum TemplateError {
     /// with another personality (issue 178): neither reused nor replaced.
     #[error("the agent '{0}' already exists where the template asks for it, with another personality")]
     AgentNameTaken(Name),
+    /// The personality of an agent lies in a session's or a channel's
+    /// scope the agent would not lie in (issue 178).
+    #[error("the personality '{0}' cannot make an agent outside the session or channel it lies in")]
+    PersonalityOutOfScope(Name),
 }
 
 pub type TemplateResult<T> = Result<T, TemplateError>;
@@ -167,10 +172,31 @@ pub struct SessionTemplate {
     /// Set when it was deleted (issue 164): it stays stored, hidden from
     /// every read but those for what was deleted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub deleted: Option<crate::removal::Removal>,
+    pub deleted: Option<Removal>,
 }
 
-crate::impl_deletable!(SessionTemplate);
+/// A template lies in a user's scope or everywhere (issue 178): one of a
+/// session's or a channel's scope would make sessions that can never lie
+/// in it, so it is not stored.
+impl Stored for SessionTemplate {
+    fn deleted(&self) -> Option<&Removal> {
+        self.deleted.as_ref()
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        match self.name.scope {
+            Scope::SessionScope { .. } | Scope::ChannelScope { .. } =>
+                Err(format!("the session template '{}' cannot lie in a session's or a channel's scope", self.name)),
+            Scope::UserScope { .. } | Scope::GroupScope { .. } | Scope::GlobalScope => Ok(()),
+        }
+    }
+}
+
+impl Deletable for SessionTemplate {
+    fn set_deleted(&mut self, deleted: Option<Removal>) {
+        self.deleted = deleted;
+    }
+}
 
 impl Secured for SessionTemplate {
     fn security_attributes(&self) -> &SecurityAttributes {
@@ -178,7 +204,7 @@ impl Secured for SessionTemplate {
     }
 }
 
-impl crate::scope::Definition for SessionTemplate {
+impl Definition for SessionTemplate {
     fn scoped_name(&self) -> &ScopedName {
         &self.name
     }
