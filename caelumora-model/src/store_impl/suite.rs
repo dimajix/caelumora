@@ -11,7 +11,7 @@ use crate::confidentiality::{Classification, Visibility};
 use crate::external_agent::ConversationId;
 use crate::value::name::{Name, ScopedName};
 use crate::value::text::Introduction;
-use crate::scope::{Definition, Scope};
+use crate::scope::{Scoped, Scope};
 use crate::security::SecurityContext;
 use crate::session::{Session, SessionId};
 use crate::store::{ComponentStore, EntityStore, Journaled, StateStore, StoreError};

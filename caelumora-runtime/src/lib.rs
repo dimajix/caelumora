@@ -35,4 +35,4 @@ pub mod seed;
 pub mod view;
 pub mod work;
 mod template;
-mod definitions;
+mod scoped;

@@ -20,7 +20,7 @@ read must not fail on a channel the caller is not in.
 
 What lies in a session's scope - the personalities, session templates and agents of
 `Scope::SessionScope`, and those of its channels' scopes - goes with it (issue
-[178](../issues/178-scoped-lookup-by-name.md), `caelumora-runtime/src/definitions.rs`): deleting the
+[178](../issues/178-scoped-lookup-by-name.md), `caelumora-runtime/src/scoped.rs`): deleting the
 session deletes them, restoring it restores those deleted with it - not one deleted by hand before
 -, purging it purges them, an agent with its state. That is done in the runtime's name, as a
 consequence of what was permitted; a deleted or restored agent is announced (`AgentDeleted`,

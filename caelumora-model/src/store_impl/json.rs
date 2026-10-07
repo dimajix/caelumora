@@ -2,7 +2,7 @@ use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, P
 use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::StoredComponent;
 use crate::removal::{Deletable, Removal, Stored};
-use crate::scope::Definition;
+use crate::scope::Scoped;
 use crate::security::SecurityManager;
 use crate::value::name::ScopedName;
 use crate::store_impl::access::{Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, USERS, USER_PROFILES};
@@ -439,8 +439,8 @@ impl JsonFileStore {
         Ok(access.filter(all, kind).await)
     }
 
-    /// The definition of `name`, in exactly its scope, among those listed.
-    async fn find_dir<T: Stored + Definition + DeserializeOwned + Send>(&self, ctx: &SecurityContext, kind: &Actions, dir: PathBuf, name: &ScopedName) -> StoreResult<T> {
+    /// The one of `name`, in exactly its scope, among those listed.
+    async fn find_dir<T: Stored + Scoped + DeserializeOwned + Send>(&self, ctx: &SecurityContext, kind: &Actions, dir: PathBuf, name: &ScopedName) -> StoreResult<T> {
         let all: Vec<T> = self.list_dir(ctx, kind, dir).await?;
         require_entity(all.into_iter().find(|d| d.scoped_name() == name), kind.entity.name(), name.to_string())
     }

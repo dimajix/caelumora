@@ -16,7 +16,7 @@ use crate::turn::{TurnEntry, TurnState};
 use crate::work::{TurnId, Work};
 use crate::note::{NoteChain, NoteChange, NoteOrigin, Notes};
 use crate::removal::Removal;
-use crate::scope::Definition;
+use crate::scope::Scoped;
 use crate::value::name::ScopedName;
 use crate::value::text::{Description, Introduction};
 use crate::security::{Secured, SecurityAttributes, SecurityContext};
@@ -141,13 +141,13 @@ impl Secured for Agent {
     }
 }
 
-impl Definition for Personality {
+impl Scoped for Personality {
     fn scoped_name(&self) -> &ScopedName {
         &self.name
     }
 }
 
-impl Definition for Agent {
+impl Scoped for Agent {
     fn scoped_name(&self) -> &ScopedName {
         &self.name
     }

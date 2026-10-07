@@ -293,3 +293,8 @@ the holder, so that a restore meanwhile finds nothing half done.
   make a global agent that outlived it with a personality that was gone. Tests in `scope.rs`,
   `template.rs`, `session.rs` and the store suite; the security suite is unchanged, since the checks
   ask nothing of the policy. `docs/CHANNELS.md` and `docs/STORAGE.md` say the rule.
+- **2026-10-07** — Renamed at the maintainer's request: the trait `Definition` is `Scoped`, beside
+  `Secured`, `Stored` and `Deletable`, since an agent is no definition and the trait asks only for
+  a `ScopedName`; the runtime's module `definitions.rs` is `scoped.rs`, its functions
+  `delete_scoped_in`, `restore_scoped_in` and `purge_scoped_in`. The plan and the entries above
+  keep the old names.

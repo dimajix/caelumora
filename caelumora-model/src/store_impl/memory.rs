@@ -9,7 +9,7 @@ use tracing::info;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use crate::removal::{Deletable, Removal, Stored};
-use crate::scope::Definition;
+use crate::scope::Scoped;
 use crate::value::name::ScopedName;
 use crate::security::{DummySecurityManager, SecurityManager};
 use crate::store_impl::access::{Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, USERS, USER_PROFILES};
@@ -188,9 +188,9 @@ impl MemoryStore {
         Ok(access.filter(all, kind).await)
     }
 
-    /// The definition of `name`, in exactly its scope, among those listed.
+    /// The one of `name`, in exactly its scope, among those listed.
     async fn find_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, name: &ScopedName) -> StoreResult<T>
-    where K: Eq + Hash + Send + Sync, T: Stored + Definition + Clone + Send + Sync {
+    where K: Eq + Hash + Send + Sync, T: Stored + Scoped + Clone + Send + Sync {
         let all = self.list_in(ctx, map, kind).await?;
         require_entity(all.into_iter().find(|d| d.scoped_name() == name), kind.entity.name(), name.to_string())
     }

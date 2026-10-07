@@ -14,7 +14,7 @@ use crate::scope::Scope::{GlobalScope, SessionScope, UserScope};
 use crate::value::name::{Name, ScopedName};
 use crate::value::text::{Briefing, Description, Summary};
 use crate::removal::{Deletable, Removal, Stored};
-use crate::scope::{Definition, Scope};
+use crate::scope::{Scoped, Scope};
 use crate::privacy::PrivacyConfig;
 use crate::session::{Session, SessionId};
 use chrono::Utc;
@@ -204,7 +204,7 @@ impl Secured for SessionTemplate {
     }
 }
 
-impl Definition for SessionTemplate {
+impl Scoped for SessionTemplate {
     fn scoped_name(&self) -> &ScopedName {
         &self.name
     }

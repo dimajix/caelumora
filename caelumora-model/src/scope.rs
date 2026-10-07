@@ -1,8 +1,8 @@
-//! `Scope`: where a definition lies (issue 177), and finding a definition
-//! by name from a place (issue 178).
+//! `Scope`: where a personality, a session template or an agent lies
+//! (issue 177), and finding one by name from a place (issue 178).
 //!
 //! A place is where one looks from - a channel, a session - and who is
-//! looking. From it, a definition is found in the place's own scope, in
+//! looking. From it, what is `Scoped` is found in the place's own scope, in
 //! the scopes around it and in the looking user's own; of several of one
 //! name, the one that lies innermost. The store lists what the caller may
 //! read; this only chooses among it, so it never widens what anybody
@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use uuid::Uuid;
 
-/// Where a definition - a personality, a session template, an agent - lies:
+/// Where a personality, a session template or an agent lies:
 /// the name space it is found in by name (issue 177). Sessions, channels and
 /// users have none: they are scopes themselves.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -82,16 +82,16 @@ impl Scope {
 
 /// What lies in a scope and is found there by name: a personality, a
 /// session template, an agent.
-pub trait Definition {
+pub trait Scoped {
     fn scoped_name(&self) -> &ScopedName;
 }
 
-/// The definition of `name` that `user` finds from `place` among
-/// `definitions` - the one that lies innermost; of two that lie equally
+/// The one of `name` that `user` finds from `place` among `scoped` -
+/// the one that lies innermost; of two that lie equally
 /// deep, the first. `None` if none of them is visible from there. Names
 /// are compared as `Name` compares them (issue 248).
-pub fn find_by_name<'a, D: Definition>(definitions: impl IntoIterator<Item = &'a D>, name: &Name, place: &Scope, user: Option<UserId>) -> Option<&'a D> {
-    definitions.into_iter()
+pub fn find_by_name<'a, D: Scoped>(scoped: impl IntoIterator<Item = &'a D>, name: &Name, place: &Scope, user: Option<UserId>) -> Option<&'a D> {
+    scoped.into_iter()
         .filter(|d| d.scoped_name().name == *name && d.scoped_name().scope.visible_from(place, user))
         .min_by_key(|d| Reverse(d.scoped_name().scope.depth()))
 }
@@ -160,62 +160,62 @@ mod tests {
         assert!(!channel_scope.contains(&Scope::GlobalScope));
     }
 
-    /// A definition, told apart by `what`.
-    struct Defined {
+    /// Something in a scope, told apart by `what`.
+    struct Item {
         name: ScopedName,
         what: &'static str,
     }
 
-    impl Definition for Defined {
+    impl Scoped for Item {
         fn scoped_name(&self) -> &ScopedName {
             &self.name
         }
     }
 
-    fn defined(name: &str, scope: Scope, what: &'static str) -> Defined {
-        Defined { name: ScopedName::new(name, scope).unwrap(), what }
+    fn item(name: &str, scope: Scope, what: &'static str) -> Item {
+        Item { name: ScopedName::new(name, scope).unwrap(), what }
     }
 
-    fn found(definitions: &[Defined], name: &str, place: &Scope, user: Option<UserId>) -> Option<&'static str> {
-        find_by_name(definitions, &Name::new(name).unwrap(), place, user).map(|d| d.what)
+    fn found(items: &[Item], name: &str, place: &Scope, user: Option<UserId>) -> Option<&'static str> {
+        find_by_name(items, &Name::new(name).unwrap(), place, user).map(|d| d.what)
     }
 
     #[test]
-    fn a_definition_is_found_innermost_first_from_a_place() {
+    fn the_innermost_of_a_name_is_found_from_a_place() {
         let (alice, bob) = (UserId::new(), UserId::new());
         let session_id = SessionId::new();
         let (channel_id, other_channel) = (ChannelId::new(), ChannelId::new());
         let channel = Scope::ChannelScope { session_id, channel_id };
         let session = Scope::SessionScope { session_id };
-        let definitions = [
-            defined("helper", Scope::GlobalScope, "global"),
-            defined("helper", Scope::UserScope { user_id: alice }, "alice's"),
-            defined("helper", session.clone(), "the session's"),
-            defined("helper", channel.clone(), "the channel's"),
+        let items = [
+            item("helper", Scope::GlobalScope, "global"),
+            item("helper", Scope::UserScope { user_id: alice }, "alice's"),
+            item("helper", session.clone(), "the session's"),
+            item("helper", channel.clone(), "the channel's"),
         ];
 
-        assert_eq!(found(&definitions, "helper", &channel, Some(alice)), Some("the channel's"));
+        assert_eq!(found(&items, "helper", &channel, Some(alice)), Some("the channel's"));
         let next_door = Scope::ChannelScope { session_id, channel_id: other_channel };
-        assert_eq!(found(&definitions, "helper", &next_door, Some(alice)), Some("the session's"), "not another channel's");
-        assert_eq!(found(&definitions, "helper", &Scope::SessionScope { session_id: SessionId::new() }, Some(alice)), Some("alice's"), "from another session, her own");
-        assert_eq!(found(&definitions, "helper", &Scope::SessionScope { session_id: SessionId::new() }, Some(bob)), Some("global"), "not somebody else's");
-        assert_eq!(found(&definitions, "helper", &Scope::SessionScope { session_id: SessionId::new() }, None), Some("global"), "nobody's own");
-        assert_eq!(found(&definitions, "HELPER", &channel, Some(alice)), Some("the channel's"), "names compare as names do");
-        assert_eq!(found(&definitions, "other", &channel, Some(alice)), None);
+        assert_eq!(found(&items, "helper", &next_door, Some(alice)), Some("the session's"), "not another channel's");
+        assert_eq!(found(&items, "helper", &Scope::SessionScope { session_id: SessionId::new() }, Some(alice)), Some("alice's"), "from another session, her own");
+        assert_eq!(found(&items, "helper", &Scope::SessionScope { session_id: SessionId::new() }, Some(bob)), Some("global"), "not somebody else's");
+        assert_eq!(found(&items, "helper", &Scope::SessionScope { session_id: SessionId::new() }, None), Some("global"), "nobody's own");
+        assert_eq!(found(&items, "HELPER", &channel, Some(alice)), Some("the channel's"), "names compare as names do");
+        assert_eq!(found(&items, "other", &channel, Some(alice)), None);
     }
 
     #[test]
     fn what_lies_in_a_scope_not_around_the_place_is_not_found() {
         let session = Scope::SessionScope { session_id: SessionId::new() };
-        let definitions = [
-            defined("helper", Scope::SessionScope { session_id: SessionId::new() }, "another session's"),
-            defined("helper", Scope::ChannelScope { session_id: SessionId::new(), channel_id: ChannelId::new() }, "another channel's"),
-            defined("helper", Scope::GroupScope { group_id: Uuid::new_v4() }, "a group's"),
+        let items = [
+            item("helper", Scope::SessionScope { session_id: SessionId::new() }, "another session's"),
+            item("helper", Scope::ChannelScope { session_id: SessionId::new(), channel_id: ChannelId::new() }, "another channel's"),
+            item("helper", Scope::GroupScope { group_id: Uuid::new_v4() }, "a group's"),
         ];
-        assert_eq!(found(&definitions, "helper", &session, Some(UserId::new())), None);
+        assert_eq!(found(&items, "helper", &session, Some(UserId::new())), None);
 
         let group = Scope::GroupScope { group_id: Uuid::new_v4() };
-        let in_group = [defined("helper", group.clone(), "the group's")];
+        let in_group = [item("helper", group.clone(), "the group's")];
         assert_eq!(found(&in_group, "helper", &group, None), None, "a group is no place yet (issue 23)");
     }
 
@@ -239,7 +239,7 @@ mod tests {
 
     #[test]
     fn of_two_equally_deep_the_first_is_found() {
-        let definitions = [defined("helper", Scope::GlobalScope, "first"), defined("Helper", Scope::GlobalScope, "second")];
-        assert_eq!(found(&definitions, "helper", &Scope::GlobalScope, None), Some("first"));
+        let items = [item("helper", Scope::GlobalScope, "first"), item("Helper", Scope::GlobalScope, "second")];
+        assert_eq!(found(&items, "helper", &Scope::GlobalScope, None), Some("first"));
     }
 }

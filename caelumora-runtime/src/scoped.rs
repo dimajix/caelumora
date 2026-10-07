@@ -12,7 +12,7 @@
 use crate::event::EventBus;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::removal::Stored;
-use caelumora_model::scope::{Definition, Scope};
+use caelumora_model::scope::{Scoped, Scope};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::{EntityStore, StateStore, StoreResult};
 use chrono::{DateTime, Utc};
@@ -23,7 +23,7 @@ use chrono::{DateTime, Utc};
 ///
 /// # Errors
 /// Whatever the store reports; what was deleted before stays deleted.
-pub(crate) async fn delete_definitions_of(store: &dyn EntityStore, events: &EventBus, holder: &Scope) -> StoreResult<()> {
+pub(crate) async fn delete_scoped_in(store: &dyn EntityStore, events: &EventBus, holder: &Scope) -> StoreResult<()> {
     let system = SecurityContext::system();
     for personality in lying_in(store.list_personalities(&system).await?, holder) {
         store.delete_personality(&system, personality.id).await?;
@@ -44,7 +44,7 @@ pub(crate) async fn delete_definitions_of(store: &dyn EntityStore, events: &Even
 ///
 /// # Errors
 /// Whatever the store reports; what was restored before stays restored.
-pub(crate) async fn restore_definitions_of(store: &dyn EntityStore, events: &EventBus, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()> {
+pub(crate) async fn restore_scoped_in(store: &dyn EntityStore, events: &EventBus, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()> {
     let system = SecurityContext::system();
     for personality in deleted_with(store.list_deleted_personalities(&system).await?, holder, since) {
         store.restore_personality(&system, personality.id).await?;
@@ -64,7 +64,7 @@ pub(crate) async fn restore_definitions_of(store: &dyn EntityStore, events: &Eve
 ///
 /// # Errors
 /// Whatever the stores report.
-pub(crate) async fn purge_definitions_of(store: &dyn EntityStore, states: &dyn StateStore, holder: &Scope) -> StoreResult<()> {
+pub(crate) async fn purge_scoped_in(store: &dyn EntityStore, states: &dyn StateStore, holder: &Scope) -> StoreResult<()> {
     let system = SecurityContext::system();
     for personality in lying_in(store.list_deleted_personalities(&system).await?, holder) {
         store.purge_personality(&system, personality.id).await?;
@@ -79,13 +79,13 @@ pub(crate) async fn purge_definitions_of(store: &dyn EntityStore, states: &dyn S
     Ok(())
 }
 
-/// Those of `definitions` that lie in `holder` or within it.
-fn lying_in<D: Definition>(definitions: Vec<D>, holder: &Scope) -> Vec<D> {
-    definitions.into_iter().filter(|d| holder.contains(&d.scoped_name().scope)).collect()
+/// Those of `scoped` that lie in `holder` or within it.
+fn lying_in<D: Scoped>(scoped: Vec<D>, holder: &Scope) -> Vec<D> {
+    scoped.into_iter().filter(|d| holder.contains(&d.scoped_name().scope)).collect()
 }
 
-/// Those of `definitions` that lie in `holder` or within it and were
+/// Those of `scoped` that lie in `holder` or within it and were
 /// deleted at `since` or later.
-fn deleted_with<D: Definition + Stored>(definitions: Vec<D>, holder: &Scope, since: DateTime<Utc>) -> Vec<D> {
-    lying_in(definitions, holder).into_iter().filter(|d| d.deleted().is_some_and(|removal| removal.at >= since)).collect()
+fn deleted_with<D: Scoped + Stored>(scoped: Vec<D>, holder: &Scope, since: DateTime<Utc>) -> Vec<D> {
+    lying_in(scoped, holder).into_iter().filter(|d| d.deleted().is_some_and(|removal| removal.at >= since)).collect()
 }

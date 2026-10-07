@@ -17,7 +17,7 @@ tests. Rules that belong to one subject live with it - where permission checks g
 ## Imports
 
 A type, trait or function used by name is imported with `use` at the top of the module and written
-by its name, not by its path (`impl Definition for Agent`, not `impl crate::scope::Definition for
+by its name, not by its path (`impl Scoped for Agent`, not `impl crate::scope::Scoped for
 Agent`) - also when adding the import means touching the import block for a single use. A path is
 written out only where an import cannot serve: inside a `macro_rules!`, which expands in other
 modules and writes `$crate::…`; where two items of one name meet (`crate::chain::Stored` and
