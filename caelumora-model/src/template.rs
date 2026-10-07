@@ -174,6 +174,12 @@ impl Secured for SessionTemplate {
     }
 }
 
+impl crate::scope::Definition for SessionTemplate {
+    fn scoped_name(&self) -> &ScopedName {
+        &self.name
+    }
+}
+
 impl SessionTemplate {
 
     /// Builds the session `id` of `owner`, named `name`, and its channels -

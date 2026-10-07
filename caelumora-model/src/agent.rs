@@ -139,6 +139,18 @@ impl Secured for Agent {
     }
 }
 
+impl crate::scope::Definition for Personality {
+    fn scoped_name(&self) -> &ScopedName {
+        &self.name
+    }
+}
+
+impl crate::scope::Definition for Agent {
+    fn scoped_name(&self) -> &ScopedName {
+        &self.name
+    }
+}
+
 
 define_id!(AgentId);
 

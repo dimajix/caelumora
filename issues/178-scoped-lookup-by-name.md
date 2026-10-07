@@ -1,6 +1,6 @@
 # 178 — Definitions cannot be looked up by name within their scope
 
-**Status:** open
+**Status:** in progress
 **Area:** Persistence
 
 ## The problem
@@ -227,3 +227,11 @@ the holder, so that a restore meanwhile finds nothing half done.
 - **2026-10-07** — Decided to do this issue before 250, not after, as the history of 250 first
   said: the model says what a place and a name space are, the store then keeps the name spaces
   unique. The decisions and the plan above were written at the maintainer's request.
+- **2026-10-07** — Step 1 of the plan, without a change of behaviour: `Scope::ChannelScope` refers
+  to its channel as `channel_id`, a `ChannelId`; `Scope` says how deep it lies (`depth`) and whether
+  what lies in it is found from a place by a user (`visible_from`, `GroupScope` from nowhere); the
+  trait `Definition` (`scoped_name`) is implemented by `Personality`, `Agent` and `SessionTemplate`;
+  `scope::find_by_name` finds a definition of a name from a place, innermost first, the first of two
+  equally deep. Unlike the plan, `depth`, `visible_from` and the listing for a place (`visible`)
+  are not public: nothing outside the module uses them yet, and the listing comes with whatever
+  offers definitions from a place.
