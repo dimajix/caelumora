@@ -63,6 +63,9 @@ The reasons and details are in [CODING-GUIDELINES.md](docs/CODING-GUIDELINES.md)
 *   A new action that acts in someone's name, or a change to what an action asks, comes with its
     test in the security suite (`caelumora-runtime/tests/security_suite.rs`, see
     [SECURITY.md](docs/SECURITY.md#the-security-suite)).
+*   Stored data need not stay readable: until further notice, old data may be deleted. A change to
+    what is stored comes without compatibility code - no `serde` aliases, no readers of an older
+    form. Instead, say in the summary which stored data has to be deleted.
 *   Markdown documents (`docs/`, `issues/`, this file) wrap prose at 100 characters. Headings,
     table rows, code blocks and links that would not fit stay on one line; field lines such as
     `**Status:**` keep a line of their own.
