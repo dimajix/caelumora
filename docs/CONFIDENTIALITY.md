@@ -362,7 +362,8 @@ The agent keeps the full calls in its context. What it publishes is redacted in 
 `Turn::send_event` (`Message::published`):
 
 *   a call whose `call` is the owner's is left out;
-*   a call whose `content` is the owner's has its arguments set to `null` and its result emptied;
+*   a call whose `content` is the owner's has its arguments set to `null` and its result emptied,
+    the record of the answers to its questions included (issue 165);
 *   reasoning that is the owner's is dropped;
 *   a message with nothing left is not sent.
 

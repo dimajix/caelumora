@@ -275,7 +275,7 @@ impl OllamaChatMessage {
         for r in &value.tool_results {
             messages.push( Self {
                 role: "tool".to_string(),
-                content: serde_json::to_string(&r).unwrap_or_default(),
+                content: serde_json::to_string(&r.for_the_model()).unwrap_or_default(),
                 thinking: None,
                 tool_name: Some(r.tool_name.clone()),
                 tool_calls: None,

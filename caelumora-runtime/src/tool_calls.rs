@@ -96,23 +96,27 @@ impl<'t> ToolCalls<'t> {
         let ToolCallStatus::WaitingUser { questions, .. } = &call.status else { return Err(QuestionError::NotOpen) };
         questions.check_responses(&responses)?;
         let closed = ActorEvent::QuestionClosed { id, shown_to: questions.shown_to() };
-        call.status = ToolCallStatus::Ready { answers: Some(Answers { answered_by: by, answered_by_name: by_name, responses }) };
+        let questions = questions.clone();
+        call.status = ToolCallStatus::Ready { answers: Some(Answers { questions, answered_by: by, answered_by_name: by_name, responses }) };
         Ok(closed)
     }
 
-    /// Records that `by` declined to answer the questions `id` (issue
-    /// 165): the call is answered so at once, without running it. Returns
-    /// the event that closes the questions.
+    /// Records that `by`, called `by_name`, declined to answer the
+    /// questions `id` (issue 165): the call is answered so at once, without
+    /// running it, with the record of who declined. Returns the event that
+    /// closes the questions.
     ///
     /// # Errors
     /// `NotOpen` and `NotAsked` as for `answer`.
-    pub(crate) fn decline(&mut self, id: QuestionId, by: ActorId) -> Result<ActorEvent, QuestionError> {
+    pub(crate) fn decline(&mut self, id: QuestionId, by: ActorId, by_name: String) -> Result<ActorEvent, QuestionError> {
         // A fixed text of the runtime's: as the turn (issue 168).
         let label = self.turn.work.label();
         let call = self.asking(id, by)?;
         let ToolCallStatus::WaitingUser { questions, .. } = &call.status else { return Err(QuestionError::NotOpen) };
         let closed = ActorEvent::QuestionClosed { id, shown_to: questions.shown_to() };
-        call.status = ToolCallStatus::Finished(ToolCallResult::of(&call.tool_call, ToolResultStatus::Declined, crate::tool::declined_result(), label));
+        let mut result = ToolCallResult::of(&call.tool_call, ToolResultStatus::Declined, crate::tool::declined_result(), label);
+        result.answers = Answers::declined(questions.clone(), by, by_name).record();
+        call.status = ToolCallStatus::Finished(result);
         Ok(closed)
     }
 
@@ -137,10 +141,11 @@ impl<'t> ToolCalls<'t> {
             .collect()
     }
 
-    /// Records `result` as what the call at `index` of the step gave.
+    /// Records `result` as what the call at `index` of the step gave, with
+    /// the record of the answers it ran with (`finish`).
     pub(crate) fn record(&mut self, index: usize, result: ToolCallResult) {
         if let Some(call) = self.turn.tool_calls.get_mut(index) {
-            call.status = ToolCallStatus::Finished(result);
+            finish(call, result);
         }
     }
 
@@ -156,7 +161,8 @@ impl<'t> ToolCalls<'t> {
         for call in self.turn.tool_calls.iter_mut().filter(|c| !c.is_finished()) {
             abandoned.push(call.clone());
             let content = crate::tool::abandoned_result(because);
-            call.status = ToolCallStatus::Finished(ToolCallResult::of(&call.tool_call, ToolResultStatus::NotExecuted, content, label.clone()));
+            let result = ToolCallResult::of(&call.tool_call, ToolResultStatus::NotExecuted, content, label.clone());
+            finish(call, result);
         }
         self.collect(internal);
         abandoned
@@ -196,6 +202,16 @@ impl<'t> ToolCalls<'t> {
         self.turn.push(message.clone());
         Some(message)
     }
+}
+
+/// Finishes `call` with `result`, and keeps with it the record of the
+/// answers it was to run with (issue 165), if it had any - unless they are
+/// sensitive (`Answers::record`).
+fn finish(call: &mut ToolCallState, mut result: ToolCallResult) {
+    if let ToolCallStatus::Ready { answers: Some(answers) } = &call.status {
+        result.answers = answers.record();
+    }
+    call.status = ToolCallStatus::Finished(result);
 }
 
 #[cfg(test)]
@@ -287,14 +303,36 @@ mod tests {
         assert_eq!(view(&mut turn).answer(asked.id, alice, "alice".to_string(), text()).err(), Some(QuestionError::NotOpen), "answered once");
 
         let to_run = view(&mut turn).to_run();
-        let [(_, run, Some(answers))] = to_run.as_slice() else { panic!("the answered call runs with its answers: {to_run:?}") };
+        let [(index, run, Some(answers))] = to_run.as_slice() else { panic!("the answered call runs with its answers: {to_run:?}") };
         assert_eq!((run.function_name.as_str(), answers.answered_by, answers.answered_by_name.as_str()), ("asking", alice, "alice"));
+        assert_eq!(answers.questions, questions_of(alice), "with the questions they answer");
 
         // Declined, the other is answered so and never runs.
-        assert_eq!(view(&mut turn).decline(asked_after.id, bob).err(), Some(QuestionError::NotAsked));
-        view(&mut turn).decline(asked_after.id, alice).expect("declined");
+        assert_eq!(view(&mut turn).decline(asked_after.id, bob, "bob".to_string()).err(), Some(QuestionError::NotAsked));
+        view(&mut turn).decline(asked_after.id, alice, "alice".to_string()).expect("declined");
         assert_eq!(view(&mut turn).to_run().len(), 1, "only the answered call");
-        let declined = turn.tool_calls.iter().find(|c| c.tool_call.function_name == "approved").and_then(|c| c.result()).map(|r| r.status);
-        assert_eq!(declined, Some(ToolResultStatus::Declined));
+
+        // The result of each keeps the record of its answers.
+        view(&mut turn).record(*index, ToolCallResult::of(run, ToolResultStatus::Ok, "ran".to_string(), caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT));
+        let result = |name: &str| turn.tool_calls.iter().find(|c| c.tool_call.function_name == name).and_then(|c| c.result()).cloned().expect("finished");
+        assert_eq!(result("asking").answers.as_ref(), Some(answers), "what it ran with");
+        let declined = result("approved");
+        assert_eq!(declined.status, ToolResultStatus::Declined);
+        assert_eq!(declined.answers.map(|a| (a.answered_by, a.responses)), Some((alice, vec![Response::Declined])), "who declined");
+    }
+
+    #[test]
+    fn the_answers_to_sensitive_questions_are_kept_with_no_result() {
+        let alice = ActorId::User(UserId::new());
+        let mut turn = a_turn();
+        let sensitive = Questions { sensitive: true, ..questions_of(alice) };
+        let requests = view(&mut turn).register(vec![ToolCallState::asking(call("asking"), sensitive.clone()), ToolCallState::asking(call("other"), sensitive)]);
+        let [ActorEvent::QuestionRequested(answered), ActorEvent::QuestionRequested(declined)] = requests.as_slice() else { panic!("{requests:?}") };
+        view(&mut turn).answer(answered.id, alice, "alice".to_string(), vec![Response::Text { text: "hunter2".to_string() }]).expect("answered");
+        view(&mut turn).decline(declined.id, alice, "alice".to_string()).expect("declined");
+        let to_run = view(&mut turn).to_run();
+        let [(index, run, Some(_))] = to_run.as_slice() else { panic!("it runs with them: {to_run:?}") };
+        view(&mut turn).record(*index, ToolCallResult::of(run, ToolResultStatus::Ok, "ran".to_string(), caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT));
+        assert!(turn.tool_calls.iter().all(|c| c.result().is_some_and(|r| r.answers.is_none())), "neither the answers nor who declined");
     }
 }

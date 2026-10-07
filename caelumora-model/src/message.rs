@@ -147,7 +147,8 @@ impl Message {
     /// 133): every part only its owner sees (`Visibility::Owner`) is
     /// withheld - a tool call or result whose call is the owner's is left
     /// out, one whose content is has its arguments set to `null` or its
-    /// result emptied, and such reasoning is dropped. `None` if nothing is
+    /// result emptied - with the record of the answers to its questions -
+    /// and such reasoning is dropped. `None` if nothing is
     /// left to show.
     pub fn published(&self) -> Option<Message> {
         let mut message = self.clone();
@@ -164,6 +165,7 @@ impl Message {
         for result in &mut message.tool_results {
             if !result.visibility.content.is_channel() {
                 result.content.clear();
+                result.answers = None;
             }
         }
         let empty = message.content.as_deref().is_none_or(str::is_empty)
@@ -338,7 +340,7 @@ pub(crate) mod tests {
         let started_at = chrono::Utc::now();
         ToolCallResult {
             id: Some(id.to_string()), tool_name: "f".to_string(), content: "secret".to_string(), status: Default::default(), visibility, classification: crate::confidentiality::Classification::CHANNEL_DEFAULT,
-            started_at: Some(started_at), finished_at: Some(started_at + chrono::Duration::milliseconds(250)),
+            started_at: Some(started_at), finished_at: Some(started_at + chrono::Duration::milliseconds(250)), answers: None,
         }
     }
 
@@ -374,15 +376,21 @@ pub(crate) mod tests {
         assert_eq!(published.tool_calls[1].arguments, serde_json::Value::Null, "call-only without arguments");
         assert_eq!(published.id, message.id, "the same message, for the context panel to find");
 
+        use crate::question::{Addressee, Answers, Question, Questions};
+        let answered = |result: ToolCallResult| {
+            let questions = Questions { questions: vec![Question { header: "Name".to_string(), question: "Who?".to_string(), choices: Vec::new(), multi_select: false }], ask: vec![Addressee::Owner], sensitive: false };
+            ToolCallResult { answers: Some(Answers::declined(questions, crate::actor::ActorId::None, "alice".to_string())), ..result }
+        };
         let results = Message {
             role: MessageRole::Tool,
             content: None,
-            tool_results: vec![result("1", ToolVisibility::SHOWN), result("2", ToolVisibility::CALL_ONLY), result("3", ToolVisibility::HIDDEN)],
+            tool_results: vec![answered(result("1", ToolVisibility::SHOWN)), answered(result("2", ToolVisibility::CALL_ONLY)), answered(result("3", ToolVisibility::HIDDEN))],
             ..make_message(MessageId::new())
         };
         let published = results.published().expect("public and call-only results are left");
-        let contents: Vec<_> = published.tool_results.iter().map(|r| r.content.as_str()).collect();
-        assert_eq!(contents, ["secret", ""], "the hidden result is gone, the call-only one empty");
+        let contents: Vec<_> = published.tool_results.iter().map(|r| (r.content.as_str(), r.answers.is_some())).collect();
+        assert_eq!(contents, [("secret", true), ("", false)], "the hidden result is gone, the call-only one empty, the record of its answers with it");
+        assert!(results.tool_results[0].for_the_model().answers.is_none(), "a model is never given the record");
         let ran = |r: &ToolCallResult| (r.started_at, r.finished_at);
         assert_eq!(ran(&published.tool_results[1]), ran(&results.tool_results[1]), "when it ran is the call's, not the content's");
     }

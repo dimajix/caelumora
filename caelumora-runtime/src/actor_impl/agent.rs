@@ -511,7 +511,7 @@ impl AgentActor {
                 .map(|closed| vec![closed])
                 .inspect_err(|e| info!("Agent {} leaves out an answer of {} to questions {}: {}", self.id(), sender, id, e))
                 .ok(),
-            ActorEvent::QuestionDeclined { id, .. } => turn.tool_calls().decline(id, sender)
+            ActorEvent::QuestionDeclined { id, .. } => turn.tool_calls().decline(id, sender, envelope.context.sender_name.clone())
                 .map(|closed| vec![closed])
                 .inspect_err(|e| info!("Agent {} leaves out that {} declined questions {}: {}", self.id(), sender, id, e))
                 .ok(),

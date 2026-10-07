@@ -113,9 +113,11 @@ Taken with the maintainer on 2026-10-07, after weighing the alternatives recorde
   `matcher`). The answers are handed to the tool's `execute` as a parameter of their own; the tool
   does with them what it wants. `ask_user` is only the simplest such tool: it formats the answers
   as its result.
-- **The answers are not messages.** They go neither into the history nor into the transcript. What
-  the model learns of them is what the tool puts into its result - `ask_user` all of it, a tool
-  asking for something sensitive nothing. This is a channel to a tool that bypasses the model.
+- **The answers are not messages.** What the model learns of them is what the tool puts into its
+  result - `ask_user` all of it, a tool asking for something sensitive nothing. This is a channel
+  to a tool that bypasses the model. For the record, the result keeps the questions and the
+  answers to them beside what the tool gave (`ToolCallResult::answers`, step 3a), into the history
+  and the transcript, never to the model - unless they are sensitive.
 - **The turn waits, it is not ended.** The call is parked like a call waiting for an approval: the
   turn is stored, survives a restart, and goes on with the result once the answers have come - a
   plan in progress included. The tool never blocks; `execute` runs only once the answers are there.
@@ -139,8 +141,9 @@ Taken with the maintainer on 2026-10-07, after weighing the alternatives recorde
   (`ToolCallStatus`) whose last variant holds the result; how a call ended is said by the result's
   `ToolResultStatus` alone. `ApprovalStatus` is again only the approver's decision.
 - **Presentation is display only.** Whether a call asks is decided by `questions`, not by the
-  presentation. `Tool::presentation` only says how a call and its result are shown in the history -
-  for `ask_user` as questions and answers.
+  presentation. `Tool::presentation` only says how a call and its result are shown in the history.
+  Questions and answers need none of their own: every result carries their record, which the
+  frame of every call shows (step 3a) - `ask_user` included.
 - **Prepared for sensitive questions.** No tool asking for something sensitive is built here, but
   everything it needs is: a tool says of its questions whether they are *sensitive*, and that
   changes what is stored, logged, shown and to whom (see
@@ -163,9 +166,10 @@ A new module `question.rs`, the contract between tools, runtime, REST and UI:
 - `Addressee` - `Handle(String)` as a model writes it (`ask_user`), or `Owner`, the agent's owner,
   for a tool that decides itself whom it asks. The runtime resolves them to `ActorId`s when the
   call is admitted; an unknown handle makes the call invalid.
-- `Answers` - who answered (`ActorId` and name, set by the runtime) and one `Response` per
-  question, in their order: `Chosen { chosen: Vec<String>, other: Option<String> }`,
-  `Text { text }` or `Declined`. The "Other" row of a choice is `other`.
+- `Answers` - the questions they answer, who answered (`ActorId` and name, set by the runtime) and
+  one `Response` per question, in their order:
+  `Chosen { chosen: Vec<String>, other: Option<String> }`, `Text { text }` or `Declined`. The
+  "Other" row of a choice is `other`.
 - `Questions::check()` - the limits (1-5 questions, 2-4 choices each, the header's length),
   reported as invalid arguments. `Questions::check_answers(&Answers)` - one response per question,
   of the kind the question asks, chosen labels among the choices, one only without `multi_select`.
@@ -217,7 +221,7 @@ pub enum ToolCallStatus {
 - `ToolProvider::execute(name, params, answers: Option<&Answers>, turn)` and
   `ToolExecutor::execute(call, answers, turn)`: every implementation gets the parameter; those
   that do not ask ignore it.
-- `Tool::presentation` (`Default | Question`), stamped on `ToolCall::presentation` by the agent like
+- `Tool::presentation` (`Default` so far), stamped on `ToolCall::presentation` by the agent like
   `visibility`, so that the history can be shown as the call was made.
 - `GuardedToolExecutor::admit`, in this order: the policy, a place's `deny` rule, `describe`, then
   `questions` and `Questions::check`, and the addressees resolved - each failure answered at once.
@@ -265,7 +269,7 @@ A tool says per call whether its questions are sensitive (`Questions::sensitive`
 is, since its answers go to the model. For sensitive questions:
 
 1. **Not stored.** The answers are kept in memory only, until the tool ran; they are not in the
-   stored turn, not in the history, not in the transcript.
+   stored turn, and the result keeps no record of them - not even who declined.
 2. **Not logged.** Not even at `trace`; `Answers`' `Debug` hides them for every question.
 3. **Only to those asked.** The request, the snapshot entry and `QuestionClosed` reach only the
    addressees; only their answer counts.
@@ -288,8 +292,8 @@ is, since its answers go to the model. For sensitive questions:
   two options, a list for one or several, a text field, the "Other" row, the recommended option
   marked, a "decline" button, masked input and the hint where the answer goes. Only addressees get
   the controls; others see the question. A registry of handlers by `ToolCall::presentation`, with
-  today's rendering as the default handler; the `question` handler shows an `ask_user` call and its
-  result as questions and answers in the history.
+  today's rendering as the default handler. The frame of every call shows the record of its
+  questions and answers, where its result has one - `ask_user` like every other tool that asks.
 - **TUI.** A pending question shown as text, answered by typed input in the expected form.
 
 ### Steps
@@ -310,12 +314,16 @@ Each a step of its own, to be reviewed separately; 0 to 2 change no behaviour.
    gets: an answer of someone not asked is left out, a sensitive question and its snapshot entry
    reach no one else, `AnswerQuestion` is required. Documented in TOOLS-AND-COMMANDS.md,
    AGENT-TURN.md, SECURITY.md, REST-SERVER.md.
+3a. **The record of the answers.** `ToolCallResult::answers`, kept by the runtime as a call
+   finishes - with the questions, who answered or declined and what - unless the questions are
+   sensitive; published as `content` is, left out where it is the owner's; never given to a model
+   (`ToolCallResult::for_the_model`).
 4. **`ask_user_tool`.** The tool with `questions` (array of 1-5) and `ask` (handles, required, at
    least one); its description tells the model to put options only into `choices`, never into the
-   question text, and to ask independent questions in one call; `presentation: question`; its result
+   question text, and to ask independent questions in one call; its result
    `{"answered_by": ..., "responses": [...]}`. Into the table of built-in tools.
-5. **Web UI.** The form, the `question` handler, the REST client, the pending questions in
-   `ChatView` and in the snapshot.
+5. **Web UI.** The form, the record of questions and answers in the frame of every call, the REST
+   client, the pending questions in `ChatView` and in the snapshot.
 6. **TUI.**
 
 ### Open questions
@@ -380,3 +388,14 @@ Each a step of its own, to be reviewed separately; 0 to 2 change no behaviour.
     whoever takes part; that the one answering was asked is the agent's check. The snapshot shows
     the open questions under `Detail::APPROVALS` beside the approvals.
   - The REST endpoint is `POST …/questions/{qid}` with `{responses}` or `{declined: true}`.
+- **2026-10-07** — Step 3a, at the maintainer's request: the answers to questions that are not
+  sensitive are kept for the record, with the result of their call (`ToolCallResult::answers`) -
+  into the transcript and the history, not as messages of their own, which would ask agents to
+  respond and count as what users said. `Answers` carries the questions it answers; a declined call
+  keeps who declined (`Answers::declined`); sensitive questions leave no record
+  (`Answers::record`). The record is published as `content` is and dropped where that is the
+  owner's (`Message::published`). The Ollama backend gave the model the whole result as JSON, and
+  would have given it the record too: it now gives `ToolCallResult::for_the_model`. With the record
+  on every result, `ToolPresentation::Question` is not needed: the frame of every call shows
+  questions and answers, `ask_user`'s too, so step 4 adds no presentation and the stamping test of
+  step 1 waits for a presentation that needs one. Plan adjusted.

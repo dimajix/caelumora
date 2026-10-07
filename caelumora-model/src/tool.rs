@@ -275,6 +275,13 @@ pub struct ToolCallResult {
     pub started_at: Option<chrono::DateTime<chrono::Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finished_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// The questions the call asked and how they were answered or declined
+    /// (issue 165), for the record - kept with the history and the
+    /// transcript, published as `content` is, never given to the model,
+    /// which learns of them only what the tool put into `content`. `None`
+    /// for a call that asked nothing, or sensitive questions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answers: Option<Answers>,
 }
 
 impl ToolCallResult {
@@ -291,7 +298,14 @@ impl ToolCallResult {
             classification,
             started_at: None,
             finished_at: None,
+            answers: None,
         }
+    }
+
+    /// The result as a model is given it: without the record of the
+    /// answers to the call's questions, which is not the model's.
+    pub fn for_the_model(&self) -> ToolCallResult {
+        ToolCallResult { answers: None, ..self.clone() }
     }
 }
 

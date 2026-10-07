@@ -108,11 +108,13 @@ impl QuestionRequest {
     }
 }
 
-/// The answers a call runs with: who gave them, and one response per
-/// question, in their order. Its `Debug` shows how many there are, never
-/// what they say.
+/// The answers a call runs with: the questions they answer, who gave them,
+/// and one response per question, in their order - the record of them too,
+/// kept with the call's result unless they are sensitive. Its `Debug` shows
+/// how many there are, never what they say.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Answers {
+    pub questions: Questions,
     /// Who answered, set by the runtime from whom the answers came - never
     /// from what they say.
     pub answered_by: ActorId,
@@ -137,6 +139,21 @@ pub enum Response {
     Text { text: String },
     /// Not answered: the person declined this question.
     Declined,
+}
+
+impl Answers {
+    /// That `by`, called `by_name`, declined to answer `questions`: every
+    /// one of them declined.
+    pub fn declined(questions: Questions, by: ActorId, by_name: String) -> Self {
+        let responses = vec![Response::Declined; questions.questions.len()];
+        Self { questions, answered_by: by, answered_by_name: by_name, responses }
+    }
+
+    /// What of them is kept with the call's result as its record: all of
+    /// them, unless the questions are sensitive.
+    pub fn record(&self) -> Option<Answers> {
+        (!self.questions.sensitive).then(|| self.clone())
+    }
 }
 
 impl fmt::Debug for Answers {
@@ -398,6 +415,7 @@ mod tests {
     #[test]
     fn answers_are_read_back_as_written_and_never_shown_by_debug() {
         let answers = Answers {
+            questions: questions(vec![question(&[], false), question(&["a", "b"], false), question(&[], false)]),
             answered_by: ActorId::None,
             answered_by_name: "alice".to_string(),
             responses: vec![

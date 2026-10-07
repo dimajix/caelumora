@@ -378,10 +378,9 @@ published with the call, so that a client can show the duration (issue 100).
 ## Questions
 
 A tool may ask a person before its call runs (issue 165): `ToolProvider::questions` says what, and
-the answers are handed to its `execute`. They are no messages - they go into neither the history
-nor a transcript - and the model learns of them only what the tool puts into its result. The turn
-waits for them as for an approval, without blocking: the call is parked, the turn stored, and it
-goes on with the result once the answers have come.
+the answers are handed to its `execute`. They are no messages, and the model learns of them only
+what the tool puts into its result. The turn waits for them as for an approval, without blocking:
+the call is parked, the turn stored, and it goes on with the result once the answers have come.
 
 1.  **Admission.** `GuardedToolExecutor::admit` asks the tool for the call's questions after
     `describe`, checks them (`Questions::check`: one to five, each with a header of at most twelve
@@ -415,8 +414,16 @@ goes on with the result once the answers have come.
 
 The turn is the record of what it waits for (`TurnState::pending_questions`): a turn resumed after
 a restart asks again, with the same ids, and the snapshot of a channel shows the open questions.
-The answers themselves are never stored (`ToolCallStatus::Ready` skips them): a call ready to run
-when its turn is resumed is not run but answered as not executed, so nothing is lost.
+While a call waits to run, its answers are not stored (`ToolCallStatus::Ready` skips them): a
+call ready to run when its turn is resumed is not run but answered as not executed, so nothing is
+lost.
+
+Once the call has finished - run, declined, or abandoned - its result keeps the record of the
+questions and their answers (`ToolCallResult::answers`, issue 165): who answered or declined, and
+what, whatever the tool put into `content`. The record goes with the result into the transcript
+and the history, and is published as `content` is - left out where the content is the owner's. It
+is never given to a model: a backend gives the result without it
+(`ToolCallResult::for_the_model`).
 
 ### Sensitive questions
 
@@ -425,8 +432,9 @@ such questions `sensitive`. Then:
 
 *   they are shown to those asked alone: the request, their closing and the snapshot entry reach
     nobody else;
-*   their answers are not stored and not logged: `Answers` and `Response` show no content in
-    `Debug`, and a user's own actor does not echo the answers to their other frontends;
+*   their answers are not stored and not logged: the result keeps no record of them, not even who
+    declined (`Answers::record`), `Answers` and `Response` show no content in `Debug`, and a
+    user's own actor does not echo the answers to their other frontends;
 *   whom they are put to is the tool's to say, not the model's (e.g. `Addressee::Owner`), so that
     the model cannot choose who is asked for a password;
 *   the frontend masks the input and says that the answer goes to the tool alone - a mark the tool

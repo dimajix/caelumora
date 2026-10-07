@@ -3883,6 +3883,11 @@ mod tests {
         let stored = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
         let result = stored.transcript.messages().into_iter().flat_map(|m| m.tool_results).next().expect("the call ran");
         assert!(result.content.contains("Kaya") && result.content.contains("alice"), "the tool gave the model what it was answered: {}", result.content);
+        let recorded = |result: &caelumora_model::tool::ToolCallResult| result.answers.as_ref().map(|a| (a.answered_by, a.responses.clone()));
+        let kaya = Some((ActorId::User(alice), vec![Response::Text { text: "Kaya".to_string() }]));
+        assert_eq!(recorded(&result), kaya, "the transcript keeps the record of the answers");
+        let history = channel.history().await;
+        assert_eq!(history.iter().flat_map(|m| &m.tool_results).map(recorded).next(), Some(kaya), "and so does the history");
         let error = actor.answer_questions(asked.id, Some(vec![Response::Text { text: "again".to_string() }])).await.expect_err("closed");
         assert!(matches!(error.downcast_ref::<ChannelError>(), Some(ChannelError::Question { reason: caelumora_model::question::QuestionError::NotOpen, .. })), "{error}");
         running.abort();

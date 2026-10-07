@@ -189,7 +189,8 @@ mod tests {
 
         let mut agent_channel_state = agent_state();
         let mut context = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached()).expect("a turn is under way");
-        let answers = Answers { answered_by: ActorId::None, answered_by_name: "alice".to_string(), responses: vec![caelumora_model::question::Response::Declined] };
+        let questions = executor.questions(&call("asking_tool")).unwrap().expect("it asks");
+        let answers = Answers::declined(questions, ActorId::None, "alice".to_string());
         let output = executor.execute(&call("asking_tool"), Some(&answers), &mut context).await.unwrap();
         assert_eq!(output.value, json!({"answered_by": "alice"}));
     }
