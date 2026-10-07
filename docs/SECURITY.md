@@ -117,6 +117,11 @@ itself is unchanged.
 *   **What was deleted** is not there for any of these. Reading it as deleted asks `ReadDeleted`
     and answers "not found" alike; restoring asks that and `Restore`, purging that and `Purge`.
     What is not marked is neither restored nor purged.
+*   **Names** are checked against everything of the kind, also what the caller may not read (issue
+    [250](../issues/250-unique-names-per-name-space.md)): a name is unique in its name space or not
+    at all. So a refusal (`NameTaken`) tells that the name is taken there - not by what, nor whose.
+    For a name space of the caller's own, their session or their user scope, that is nothing new;
+    in the global scope it tells a little more than they may read, which is accepted.
 
 ### How the SessionManager checks
 

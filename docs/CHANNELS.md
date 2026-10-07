@@ -21,7 +21,8 @@ read must not fail on a channel the caller is not in.
 What lies in a session's scope - the personalities, session templates and agents of
 `Scope::SessionScope`, and those of its channels' scopes - goes with it (issue
 [178](../issues/178-scoped-lookup-by-name.md), `caelumora-runtime/src/scoped.rs`): deleting the
-session deletes them, restoring it restores those deleted with it - not one deleted by hand before
+session deletes them, restoring it restores those deleted with it - not one deleted by hand before,
+nor one whose name was taken meanwhile (issue [250](../issues/250-unique-names-per-name-space.md))
 -, purging it purges them, an agent with its state. That is done in the runtime's name, as a
 consequence of what was permitted; a deleted or restored agent is announced (`AgentDeleted`,
 `AgentRestored`). Its agents take part in no other session, so they leave no channel.
@@ -50,7 +51,9 @@ Channels can be created in and deleted from a running session: `SessionLoop::cre
 
 *   **Creating** stores the channel (`CreateChannel`) and then adds its id to the session through
     `SessionController::add_channel`, which checks `UpdateSession`, so that only the owner may do
-    it.
+    it. A channel's name is unique in its session: the store refuses one the session has
+    (`NameTaken`, issue [250](../issues/250-unique-names-per-name-space.md)), when the channel is
+    created, renamed or restored.
 *   **Deleting** takes the channel out of the session (`remove_channel`) and marks its document
     deleted (`DeleteChannel`, issue 164). The channel and its state are kept. What lies in its scope
     (`Scope::ChannelScope`) is deleted with it, as with a session; an agent of it takes part in no
@@ -58,7 +61,8 @@ Channels can be created in and deleted from a running session: `SessionLoop::cre
 *   **Restoring** a deleted channel (`SessionLoop::restore_channel`) asks `UpdateSession` and its
     participants' clearance, as creating one does, takes the mark away (`Restore`), lists it in
     the session again and starts it from its stored state. Its name must still be free. What
-    lies in its scope and was deleted with it comes back.
+    lies in its scope and was deleted with it comes back - but for one whose name was taken
+    meanwhile, which stays deleted.
 *   **Purging** is not a channel's: a deleted channel is removed for good - document and state -
     with its session (`SessionManager::purge_session`), which needs no running loop.
 
@@ -86,9 +90,9 @@ the agent gives its turn up within the grace, the call recorded as having run (i
 
 Each document has one writer, which holds a lock while it changes and stores it: the
 `SessionController` for the session, the `ChannelController` for its channel. Renaming a channel
-(`ChannelLoop::update_name`, checked as `UpdateChannel`) is stored first and only then taken over
-and announced (`ChannelUpdated`). The controllers are described in
-[STORAGE.md](STORAGE.md#controllers).
+(`ChannelLoop::update_name`, checked as `UpdateChannel`) is stored first - where a name the session
+has is refused - and only then taken over and announced (`ChannelUpdated`). The controllers are
+described in [STORAGE.md](STORAGE.md#controllers).
 
 ## Channels
 

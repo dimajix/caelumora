@@ -46,6 +46,28 @@ Every entity has a name, and the fields that mean something for it (issue 177):
 *   What is offered for choosing - a personality, a session template - has a `description` as well,
     a catalogue line.
 
+Of one kind, a name is unique in its name space, and the store keeps it so (issue
+[250](../issues/250-unique-names-per-name-space.md)). What is `Scoped` says its name and the scope
+it lies in: a personality, a session template, an agent their own; a channel its name in its
+session's scope; a user their username in the global scope. None of it is created, renamed, moved
+into another scope or restored under a name another of its kind has there - compared as names are
+- and the store answers `StoreError::NameTaken` (REST `409 name_taken`). A session has a name, but
+no unique one.
+
+*   The check reads every one of the kind that is not deleted, also those the caller may not read
+    (`store_impl::access::name_free`; see [SECURITY.md](SECURITY.md#how-stores-check)). What is
+    deleted holds no name: restoring it is checked as creating it is.
+*   It is made in the same step as the write. The memory store checks inside its map's lock; the
+    JSON store holds a lock per named kind through every write of that kind - within its process,
+    the only one that writes its files - and reads the kind's documents only when the name
+    changes.
+*   Both stores build their writing operations alike: a core that takes the check as a hook
+    (`create_with`, `create_file_with`, ...), a plain variant for the kinds without unique names
+    and a named one (`create_named_in`, `create_named_file`, ...) that the named kinds call. A new
+    named kind is wired to the named variants; the store suite says the rule for every one.
+*   Documents stored before the rule that share a name stay as they are - reading never checks -
+    until one of them is renamed.
+
 The type of a name says what it is for (`caelumora_model::value::name`):
 
 *   **`Name`** - a name something is or could be looked up by: a channel's, a session's (issue 248),

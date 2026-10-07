@@ -59,7 +59,9 @@ which refer to the participants by name. Creating a session from a template has 
     template, finds the owner and the agents (`EntityStore::find_agent_by_name`, issue 178), makes
     the agents that are missing (only when the lookup finds none, never because it failed), refuses
     one of another personality (`TemplateError::AgentNameTaken`), and builds, stores and starts the
-    session. REST (`POST /sessions`) and the TUI both call it.
+    session. An agent another made meanwhile the store refuses to make twice, since names are unique
+    in their scope (issue 250); the template then looks for it once more. REST (`POST /sessions`)
+    and the TUI both call it.
 
 Sessions and channels hold their users and agents by reference - `Participant::User(UserId)`,
 `Participant::Agent(AgentId)` - not as copies (issue 120). The records live in the `EntityStore`; a

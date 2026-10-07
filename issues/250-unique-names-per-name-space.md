@@ -1,6 +1,6 @@
 # 250 — Names are not kept unique in their name space
 
-**Status:** in progress
+**Status:** done
 **Area:** Persistence
 
 ## The problem
@@ -286,3 +286,10 @@ core and differ only in it.
   template may; an agent the caller may not read keeps its name; a session restored after a name of
   its scope was taken. That a channel's name is free in another session the store suite says.
   REST-SERVER.md names `name_taken`.
+- **2026-10-07** — Done. Step 4: STORAGE.md says the rule - what is `Scoped` and its name space,
+  that the check reads every one of the kind, that it is made in the same step as the write, how
+  both stores build their writing operations, and that names shared before stay until renamed;
+  CHANNELS.md that a channel's name is unique in its session, when it is created, renamed or
+  restored, and that one whose name was taken stays deleted when its session or channel is
+  restored; SECURITY.md what a refusal tells of what the caller may not read; ARCHITECTURE.md that
+  a template looks for its agent once more if another made it meanwhile.
