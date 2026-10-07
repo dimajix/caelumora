@@ -203,6 +203,7 @@ unknown field is refused. In messages the endpoint is shown without credentials,
 | `sleep_tool` | `ToolProvider` | `seconds` (default 5), `requires_approval` (default `false`) | The tool `sleep`, which waits, for testing what happens while a tool runs. |
 | `calculator_tool` | `ToolProvider` | - | The tool `calculate`. |
 | `stop_tool` | `ToolProvider` | - | The tools `stop`, `bye` and `silence`, with which the agent ends its turn. |
+| `ask_user_tool` | `ToolProvider` | - | The tool `ask_user`, with which the agent asks users of its channel and waits for their answers (issue 165). |
 | `create_plan_tool` | `ToolProvider`, `PromptProvider` | - | The tool `create_plan` and a system prompt part telling the model when to plan. |
 | `mcp_tool` | `ToolProvider` | `endpoint` (its timeout 10 s, for a call or the discovery of the tools), `requires_approval` (`true`; `false`, or `"unless_read_only"` for all but the tools the server marks read-only), `classification` (the channel's), `description` (the server's `instructions`) | The tools of a remote MCP server; `classification` is how their results are classified (issue 133), `description` what they are for, as their tool set tells it (issue 194). |
 | `notes` | `ToolProvider`, `PromptProvider` | - | Public notes of the agents in a channel: `note`, `revoke_note`, `read_notes` and a prompt part ([MEMORY.md](MEMORY.md)). |

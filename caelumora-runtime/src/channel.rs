@@ -3934,6 +3934,47 @@ mod tests {
         running.abort();
     }
 
+    #[tokio::test]
+    async fn ask_user_asks_whom_it_names_and_gives_the_model_the_answers() {
+        use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+        use caelumora_model::message::MessageRole;
+        use caelumora_model::question::Response;
+        use caelumora_model::tool::{ToolCall, ToolResultStatus, ToolVisibility};
+
+        let ask = |id: &str, whom: &str| Message {
+            role: MessageRole::Assistant,
+            tool_calls: vec![ToolCall {
+                id: Some(id.to_string()),
+                function_name: "ask_user".to_string(),
+                arguments: serde_json::json!({ "questions": [{ "header": "Name", "question": "What should it be called?" }], "ask": [whom] }),
+                visibility: ToolVisibility::SHOWN,
+                presentation: Default::default(),
+            }],
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        };
+        let done = Message { role: MessageRole::Assistant, content: Some("Done.".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+        let components = ComponentConfig { component_nodes: vec![ComponentDescriptor::new("ask", crate::tool_impl::ask_user_tool::ASK_USER_TOOL_KIND)] };
+        let model = Scripted(std::sync::Mutex::new([ask("1", "@carol"), ask("2", "@alice"), done].into()));
+        let Stuck { channel, context, agent, helper, mut events, running } = with_an_agent(Arc::new(model), components).await;
+
+        // Nobody called carol takes part: the first call is answered at
+        // once, and the model asks alice.
+        let asked = questions_requested(&mut events).await;
+        assert_eq!(asked.questions.asked(), [ActorId::User(alice_of(&context))]);
+        settled(&helper, ActorState::WaitingForUser).await;
+        channel.user_actor(alice_of(&context)).unwrap().answer_questions(asked.id, Some(vec![Response::Text { text: "Caelumora".to_string() }])).await.expect("answered");
+        let said: Vec<_> = answered(&mut events, agent).await.iter().filter_map(|m| m.content.clone()).collect();
+        assert_eq!(said, ["Done."]);
+
+        let stored = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+        let results: Vec<_> = stored.transcript.messages().into_iter().flat_map(|m| m.tool_results).collect();
+        let [unknown, answer] = results.as_slice() else { panic!("two calls: {results:?}") };
+        assert_eq!(unknown.status, ToolResultStatus::InvalidArguments);
+        assert!(unknown.content.contains("@carol"), "the model is told whom it named: {}", unknown.content);
+        assert!(answer.content.contains("Caelumora") && answer.content.contains("alice"), "{}", answer.content);
+        running.abort();
+    }
+
     fn register_no_secrets(registry: &mut crate::component::ComponentRegistry) {
         registry.register(
             crate::component::ComponentKind::new("test_no_secrets").provides::<dyn crate::message::PerceiveInProcessor>(),

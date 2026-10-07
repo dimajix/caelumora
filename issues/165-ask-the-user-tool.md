@@ -399,3 +399,10 @@ Each a step of its own, to be reviewed separately; 0 to 2 change no behaviour.
   on every result, `ToolPresentation::Question` is not needed: the frame of every call shows
   questions and answers, `ask_user`'s too, so step 4 adds no presentation and the stamping test of
   step 1 waits for a presentation that needs one. Plan adjusted.
+- **2026-10-07** — Step 4 done: the component `ask_user_tool` with the tool `ask_user` - its
+  arguments `questions` and `ask` (handles, required) are its questions, never sensitive; its
+  result is `{"answered_by", "responses"}`, classified as the channel. Its description tells the
+  model to put the possible answers into `choices`, never into the question, to ask independent
+  questions in one call, and that a declined call means going on with what the user wrote. A
+  handle that names no user of the channel is answered as invalid arguments at once, naming the
+  handle. In the tables of components and built-in tools.

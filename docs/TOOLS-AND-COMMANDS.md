@@ -381,6 +381,8 @@ A tool may ask a person before its call runs (issue 165): `ToolProvider::questio
 the answers are handed to its `execute`. They are no messages, and the model learns of them only
 what the tool puts into its result. The turn waits for them as for an approval, without blocking:
 the call is parked, the turn stored, and it goes on with the result once the answers have come.
+The built-in tool `ask_user` (`ask_user_tool`) is the simplest such tool: the model writes the
+questions and names whom to ask by their handles, and the tool's result is the answers.
 
 1.  **Admission.** `GuardedToolExecutor::admit` asks the tool for the call's questions after
     `describe`, checks them (`Questions::check`: one to five, each with a header of at most twelve
@@ -522,6 +524,7 @@ A command answers the issuer alone (`/help`) or the whole channel (`/wakeup`).
 | `stop` | `stop_tool` | - | no | `SHOWN` | Ends the turn: the agent has finished its task and goes to sleep. |
 | `bye` | `stop_tool` | - | no | `SHOWN` | Ends the turn: the agent says good-bye and goes to sleep. |
 | `silence` | `stop_tool` | - | no | `SHOWN` | Ends the turn without an answer; the agent stays idle. |
+| `ask_user` | `ask_user_tool` | `questions` (1-5, each with `header`, `question`, optional `choices` and `multi_select`), `ask` (handles, at least one) | no | `SHOWN` | Asks the users named and waits for their answers, which are its result (see [Questions](#questions)). |
 | `create_plan` | `create_plan_tool` | `summary`, `steps` (each with `description`) | yes | `SHOWN` | Submits a multi-step plan; a plan in progress is extended, not replaced. |
 | `{id}__{name}` | `mcp_tool` | as the server declares | per `requires_approval`, yes by default; with `"unless_read_only"` not for a tool the server marks read-only | `SHOWN` | A tool of a remote MCP server. |
 | `note` | `notes` | `text` | no | `SHOWN` | Notes something in the channel, visible to every participant. |

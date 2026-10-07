@@ -5,6 +5,7 @@
 
 use crate::component::ComponentRegistry;
 
+pub mod ask_user_tool;
 pub mod calculator_tool;
 pub mod default_tool_executor;
 pub mod echo_tool;
@@ -17,6 +18,7 @@ pub mod stop_tool;
 pub fn register_all(registry: &mut ComponentRegistry) {
     registry.single::<dyn crate::tool::ToolExecutor>(Some(default_tool_executor::DEFAULT_TOOL_EXECUTOR_KIND));
 
+    ask_user_tool::register(registry);
     calculator_tool::register(registry);
     default_tool_executor::register(registry);
     echo_tool::register(registry);
