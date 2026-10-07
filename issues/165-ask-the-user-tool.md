@@ -1,6 +1,6 @@
 # 165 — An agent cannot ask the user a question and wait for the answer
 
-**Status:** open
+**Status:** in progress
 **Area:** User interaction
 
 ## The problem
@@ -344,3 +344,9 @@ Each a step of its own, to be reviewed separately; 0 to 2 change no behaviour.
   sensitive information; this issue prepares for such a tool without building one. Decided by the
   maintainer: approval before the questions; a message instead of the form declines the call;
   `ask_user`'s `ask` is required.
+- **2026-10-07** — Step 0 done, without a change of behaviour: `ToolCallState` is the call and its
+  `ToolCallStatus` (`WaitingApproval` with the approval's id, description, `explicit` and
+  `suggested`; `Ready`; `Finished` with the result); `ToolCalls::decide` finishes a denied or
+  timed-out call at once, `to_run` and `record` go by the call's place in the step.
+  `ApprovalStatus` lost `Pending`. `ActorState::WaitingForApproval` is `WaitingForUser`, the web UI
+  along. Stored states of the old form are not read: old data may still be deleted.

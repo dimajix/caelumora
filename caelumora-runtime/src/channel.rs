@@ -3146,7 +3146,7 @@ mod tests {
         let (call, components) = a_call_needing_approval();
         let Stuck { channel, context, agent, helper, mut events, running } =
             with_an_agent_under(Arc::new(FlowRule), Arc::new(Scripted(std::sync::Mutex::new([call].into()))), components).await;
-        settled(&helper, ActorState::WaitingForApproval).await;
+        settled(&helper, ActorState::WaitingForUser).await;
 
         channel.reclassify(&context, Classification::general(Confidentiality::Public)).await.expect("permitted");
 
@@ -3174,7 +3174,7 @@ mod tests {
         let (call, components) = a_call_needing_approval();
         let Stuck { channel, context, agent, helper, mut events, running } =
             with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([call].into()))), components).await;
-        settled(&helper, ActorState::WaitingForApproval).await;
+        settled(&helper, ActorState::WaitingForUser).await;
 
         channel.cancel(&context).await.expect("permitted");
 
@@ -3239,7 +3239,7 @@ mod tests {
         let Stuck { helper, mut events, running, .. } = start(built).await;
         let request = approval_requested(&mut events).await;
         assert!(request.explicit, "for a decision of a person's own");
-        settled(&helper, ActorState::WaitingForApproval).await;
+        settled(&helper, ActorState::WaitingForUser).await;
         running.abort();
     }
 
@@ -3265,7 +3265,7 @@ mod tests {
         let done = Message { role: MessageRole::Assistant, content: Some("Done.".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
         let Stuck { channel, agent, helper, mut events, running, .. } =
             with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([call, done].into()))), components).await;
-        settled(&helper, ActorState::WaitingForApproval).await;
+        settled(&helper, ActorState::WaitingForUser).await;
         let asked = approval_requested(&mut events).await;
 
         // The turn is the record of what it waits for (issue 172).
@@ -3350,7 +3350,7 @@ mod tests {
         let Stuck { channel, context, agent, helper, mut events, running } =
             with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([plan, instead].into()))), components).await;
         let ActorEvent::ApprovalRequested(request) = shown_by(&mut events, agent, "ApprovalRequested").await else { unreachable!() };
-        settled(&helper, ActorState::WaitingForApproval).await;
+        settled(&helper, ActorState::WaitingForUser).await;
 
         let turn = channel.turn_under_way(ActorId::Agent(agent)).expect("waiting is under way");
         channel.user_actor(alice_of(&context)).unwrap().request_retry_of_turn(ActorId::Agent(agent), turn).await.expect("asked");
@@ -3462,7 +3462,7 @@ mod tests {
         let (call, components) = a_call_needing_approval();
         let Stuck { channel, context, agent, helper, running, .. } =
             with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([call].into()))), components).await;
-        settled(&helper, ActorState::WaitingForApproval).await;
+        settled(&helper, ActorState::WaitingForUser).await;
 
         channel.remove_participant(&context, ActorId::Agent(agent)).await.expect("permitted");
 

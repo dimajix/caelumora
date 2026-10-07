@@ -611,7 +611,7 @@ pub(crate) mod tests {
         assert!(decoded.turn.is_none() && decoded.processing_state == ActorState::Idle);
 
         let waiting = AgentChannelState {
-            processing_state: ActorState::WaitingForApproval,
+            processing_state: ActorState::WaitingForUser,
             turn: Some({
                 let mut turn = TurnState::default();
                 turn.push(Message::new(crate::confidentiality::Classification::CHANNEL_DEFAULT));
@@ -620,9 +620,9 @@ pub(crate) mod tests {
             ..AgentChannelState::default()
         };
         let json = serde_json::to_string(&waiting).unwrap();
-        assert!(json.contains("\"WaitingForApproval\""));
+        assert!(json.contains("\"WaitingForUser\""));
         let decoded: AgentChannelState = serde_json::from_str(&json).unwrap();
-        assert_eq!(decoded.processing_state, ActorState::WaitingForApproval);
+        assert_eq!(decoded.processing_state, ActorState::WaitingForUser);
         assert_eq!(decoded.turn.as_ref().map(|t| t.messages().count()), Some(1), "the turn is resumed from what was stored");
         assert_eq!(decoded.turn.map(|t| t.work.turn_id), waiting.turn.map(|t| t.work.turn_id), "as the same turn");
     }
@@ -751,7 +751,7 @@ pub(crate) mod tests {
         state.private_notes.push(NoteChange::Add { id: NoteId(1), text: "mine".to_string(), classification: Classification::CHANNEL_DEFAULT }, Default::default(), id(2));
         state.prompts.keep(crate::digest::prompt("system"), || "system".to_string());
         state.offered_tools.keep(crate::digest::tool_sets(&[]), Vec::new);
-        state.processing_state = ActorState::WaitingForApproval;
+        state.processing_state = ActorState::WaitingForUser;
         state.turn = Some(TurnState { model_calls: 3, ..TurnState::default() });
 
         let changes = state.changes();

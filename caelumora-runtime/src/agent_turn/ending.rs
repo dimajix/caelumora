@@ -233,15 +233,16 @@ mod tests {
     /// A turn begun on `state`, whose model called `send_mail` and `delete`
     /// in one step: `send_mail` ran, `delete` waits for its approval.
     fn a_turn_with_an_open_step(state: &mut AgentChannelState) -> Turn<'_> {
-        use caelumora_model::approval::{ApprovalId, ApprovalStatus};
+        use caelumora_model::approval::ToolMatcher;
         use caelumora_model::tool::{ToolCallState, ToolResultStatus, ToolVisibility};
         let mut turn = Turn::begun(AgentId::default(), String::new(), state, crate::agent_state::AgentStateHandle::detached());
         let call = |id: &str, name: &str| ToolCall { id: Some(id.to_string()), function_name: name.to_string(), arguments: serde_json::json!({ "to": "bob" }), visibility: ToolVisibility::SHOWN };
         let calls = vec![call("1", "send_mail"), call("2", "delete")];
         turn.push_message(Message { id: MessageId::new(), role: MessageRole::Assistant, tool_calls: calls.clone(), ..Message::new(Classification::CHANNEL_DEFAULT) });
-        let states: Vec<ToolCallState> = calls.into_iter().zip([ApprovalStatus::Approved, ApprovalStatus::Pending])
-            .map(|(tool_call, status)| ToolCallState { id: ApprovalId::new(), status, tool_call, description: String::new(), explicit: false, suggested: None, result: None })
-            .collect();
+        let states = vec![
+            ToolCallState::approved(calls[0].clone()),
+            ToolCallState::pending(calls[1].clone(), String::new(), false, ToolMatcher::exact(&calls[1])),
+        ];
         turn.tool_calls().register(states);
         let (id, ran) = turn.tool_calls().to_run().remove(0);
         let mut result = ToolCallResult::of(&ran, ToolResultStatus::Ok, "sent".to_string(), Classification::CHANNEL_DEFAULT);
@@ -264,8 +265,8 @@ mod tests {
         assert_eq!(results, [("send_mail", ToolResultStatus::Ok), ("delete", ToolResultStatus::NotExecuted)], "what ran is kept");
         assert!(messages[2].tool_results[1].content.contains("cancelled"), "the model is told why: {}", messages[2].tool_results[1].content);
         assert!(committed.final_messages.iter().any(|m| m.role == MessageRole::Tool), "observers learn of it too");
-        let abandoned: Vec<_> = committed.abandoned_calls.iter().map(|c| (c.tool_call.function_name.as_str(), c.status)).collect();
-        assert_eq!(abandoned, [("delete", caelumora_model::approval::ApprovalStatus::Pending)], "only the call without a result, as it stood");
+        let abandoned: Vec<_> = committed.abandoned_calls.iter().map(|c| (c.tool_call.function_name.as_str(), c.approval_id().is_some())).collect();
+        assert_eq!(abandoned, [("delete", true)], "only the call without a result, as it stood: waiting for its approval");
     }
 
     #[test]

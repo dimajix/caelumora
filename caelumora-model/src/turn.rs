@@ -5,14 +5,14 @@
 //! (`AgentChannelState::begin_turn`, `record_turn`, `give_up_turn`).
 
 use crate::actor::{ActorId, ActorState};
-use crate::approval::{ApprovalRequest, ApprovalStatus};
+use crate::approval::ApprovalRequest;
 use crate::chain::Node;
 use crate::context::ContextRef;
 use crate::memory::{MemoryChange, MemoryOrigin};
 use crate::message::Message;
 use crate::note::NoteChange;
 use crate::plan::PlanState;
-use crate::tool::{Tool, ToolCallState};
+use crate::tool::{Tool, ToolCallState, ToolCallStatus};
 use crate::transcript::TranscriptEntry;
 use crate::work::Work;
 use serde::{Deserialize, Serialize};
@@ -74,16 +74,18 @@ impl TurnState {
     pub fn pending_approvals(&self) -> Vec<ApprovalRequest> {
         let ActorId::Agent(agent) = self.work.event_context.sender_id else { return Vec::new() };
         self.tool_calls.iter()
-            .filter(|c| c.status == ApprovalStatus::Pending)
-            .map(|c| ApprovalRequest {
-                id: c.id,
-                session_id: self.work.event_context.session_id,
-                channel_id: self.work.event_context.channel_id,
-                agent_id: agent,
-                tool_call: c.tool_call.clone(),
-                description: c.description.clone(),
-                explicit: c.explicit,
-                suggested: c.suggested.clone(),
+            .filter_map(|c| match &c.status {
+                ToolCallStatus::WaitingApproval { id, description, explicit, suggested } => Some(ApprovalRequest {
+                    id: *id,
+                    session_id: self.work.event_context.session_id,
+                    channel_id: self.work.event_context.channel_id,
+                    agent_id: agent,
+                    tool_call: c.tool_call.clone(),
+                    description: description.clone(),
+                    explicit: *explicit,
+                    suggested: Some(suggested.clone()),
+                }),
+                _ => None,
             })
             .collect()
     }

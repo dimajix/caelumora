@@ -224,11 +224,11 @@ state they start from (issue 34):
     (`turn_under_way`, issue 240), read from the running channel at no cost: a client that connects
     during an answer shows it as under way, as if it had seen its `ResponseStarted`. An external
     agent has no turn here and carries none. An agent member carries where it stands (`state`,
-    issue 243) - `Idle`, `Sleeping`, `Planning`, `ExecutingTools`, `WaitingForApproval`,
+    issue 243) - `Idle`, `Sleeping`, `Planning`, `ExecutingTools`, `WaitingForUser`,
     `Reflecting` or `Cancelling` - read from the running channel alike and kept up by
     `{"StateChanged": …}` on the stream; absent in a channel that does not run. `can_cancel` says
     whether the viewer may end its answer (`POST …/participants/{aid}/cancel`), which ends one in
-    `Planning`, `ExecutingTools` or `WaitingForApproval`;
+    `Planning`, `ExecutingTools` or `WaitingForUser`;
 *   for the global stream, every session with its channels.
 
 The order matters: the server subscribes *first* and reads the state afterwards, so nothing that

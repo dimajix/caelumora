@@ -472,7 +472,8 @@ pub enum ActorState {
     Cancelling,
     /// Fall asleep, do not generate new messages
     Sleeping,
-    WaitingForApproval,
+    /// Waiting for a person: an approval of a tool call (issue 165).
+    WaitingForUser,
 }
 
 impl ActorState {
@@ -485,7 +486,7 @@ impl ActorState {
         ActorState::Reflecting,
         ActorState::Cancelling,
         ActorState::Sleeping,
-        ActorState::WaitingForApproval,
+        ActorState::WaitingForUser,
     ];
 
     /// Whether the state belongs to a turn - an error in it ends the turn,
@@ -497,7 +498,7 @@ impl ActorState {
     /// Whether a cancel can still end the turn in this state (issues 235,
     /// 243): not one ending already, nor none.
     pub fn interruptible(self) -> bool {
-        matches!(self, ActorState::Planning | ActorState::ExecutingTools | ActorState::WaitingForApproval)
+        matches!(self, ActorState::Planning | ActorState::ExecutingTools | ActorState::WaitingForUser)
     }
 
     fn from_raw(v: u8) -> Self {
@@ -559,7 +560,7 @@ mod tests {
         assert!(!holder.replace(ActorState::Planning, ActorState::Idle), "not in that state");
         assert!(holder.replace(ActorState::Sleeping, ActorState::Idle));
         assert_eq!(holder.load(), ActorState::Idle);
-        assert!(ActorState::WaitingForApproval.in_turn() && !ActorState::Sleeping.in_turn());
+        assert!(ActorState::WaitingForUser.in_turn() && !ActorState::Sleeping.in_turn());
     }
 
     #[test]

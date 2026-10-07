@@ -1123,7 +1123,7 @@ mod tests {
 
         said(&mut state, 3, 5);
         store.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
-        state.processing_state = crate::actor::ActorState::WaitingForApproval;
+        state.processing_state = crate::actor::ActorState::WaitingForUser;
         store.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
         assert_eq!(journal_lines(&store, agent, channel), Some(2), "one line per put");
         assert_eq!(std::fs::metadata(store.agent_channel_state_path(agent, channel)).unwrap().len(), snapshot, "the snapshot is untouched");

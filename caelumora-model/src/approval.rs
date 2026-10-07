@@ -63,9 +63,10 @@ impl ApprovalResponse {
     }
 }
 
+/// A decision on an approval: a person's answer, or the approver's verdict.
+/// Where the call stands meanwhile is its `ToolCallStatus` (issue 165).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ApprovalStatus {
-    Pending,
     Approved,
     Denied,
     Timeout,

@@ -193,7 +193,7 @@ mod tests {
             assert_eq!(control.take_interrupt(), None, "{state:?}");
             assert!(!control.token().is_cancelled(), "{state:?}");
         }
-        for state in [ActorState::Planning, ActorState::ExecutingTools, ActorState::WaitingForApproval] {
+        for state in [ActorState::Planning, ActorState::ExecutingTools, ActorState::WaitingForUser] {
             let control = RunControl::new(state, None);
             control.cancel();
             assert!(control.token().is_cancelled(), "{state:?}");

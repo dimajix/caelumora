@@ -60,7 +60,7 @@ export type ParticipantKind = 'user' | 'agent' | 'approver';
 export type PersonalityKind = 'internal' | 'external';
 
 /** Where an agent stands (issue 243), as `StateChanged` and a member's `state` name it. */
-export type ActorState = 'Idle' | 'Sleeping' | 'Planning' | 'ExecutingTools' | 'WaitingForApproval' | 'Reflecting' | 'Cancelling';
+export type ActorState = 'Idle' | 'Sleeping' | 'Planning' | 'ExecutingTools' | 'WaitingForUser' | 'Reflecting' | 'Cancelling';
 
 /** A participant of a channel. */
 /**

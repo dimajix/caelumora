@@ -12,7 +12,7 @@
 use caelumora_model::turn::TurnState;
 use caelumora_model::approval::{ApprovalId, ApprovalRequest, ApprovalStatus};
 use caelumora_model::message::{Message, MessageId, MessageRole};
-use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState, ToolResultStatus};
+use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState, ToolCallStatus, ToolResultStatus};
 use std::mem;
 
 /// The tool calls of the current step of a turn, of the agent the turn's
@@ -46,64 +46,53 @@ impl<'t> ToolCalls<'t> {
         self.turn.pending_approvals()
     }
 
-    /// Records the decision on the call `id`; `false` if there is no such
-    /// call.
-    pub(crate) fn decide(&mut self, id: ApprovalId, status: ApprovalStatus) -> bool {
-        match self.turn.tool_calls.iter_mut().find(|c| c.id == id) {
-            Some(call) => {
-                call.status = status;
-                true
-            }
-            None => false,
-        }
-    }
-
-    /// Answers every call that a decision settles without running it -
-    /// denied, timed out - and returns the approved ones that still wait for
-    /// their result, for the actor to run. What the model is given for each
-    /// outcome is decided in `crate::tool` (issue 15).
-    pub(crate) fn to_run(&mut self) -> Vec<(ApprovalId, ToolCall)> {
-        let mut to_run = Vec::new();
+    /// Records the decision on the approval `id`: an approved call may run,
+    /// one denied or timed out is answered so at once, without running it.
+    /// What the model is given for each outcome is decided in `crate::tool`
+    /// (issue 15). `false` if no call waits for that approval.
+    pub(crate) fn decide(&mut self, id: ApprovalId, decision: ApprovalStatus) -> bool {
         // A fixed text of the runtime's: as the turn (issue 168).
         let label = self.turn.work.label();
-        for call in self.turn.tool_calls.iter_mut().filter(|c| c.result.is_none()) {
-            let answer = match call.status {
-                ApprovalStatus::Denied => Some((ToolResultStatus::Denied, crate::tool::denied_result())),
-                ApprovalStatus::Timeout => Some((ToolResultStatus::TimedOut, crate::tool::timed_out_result())),
-                ApprovalStatus::Approved => {
-                    to_run.push((call.id, call.tool_call.clone()));
-                    None
-                }
-                ApprovalStatus::Pending => None,
-            };
-            if let Some((status, content)) = answer {
-                call.result = Some(ToolCallResult::of(&call.tool_call, status, content, label.clone()));
-            }
-        }
-        to_run
+        let Some(call) = self.turn.tool_calls.iter_mut().find(|c| c.approval_id() == Some(id)) else {
+            return false;
+        };
+        call.status = match decision {
+            ApprovalStatus::Approved => ToolCallStatus::Ready,
+            ApprovalStatus::Denied => ToolCallStatus::Finished(ToolCallResult::of(&call.tool_call, ToolResultStatus::Denied, crate::tool::denied_result(), label)),
+            ApprovalStatus::Timeout => ToolCallStatus::Finished(ToolCallResult::of(&call.tool_call, ToolResultStatus::TimedOut, crate::tool::timed_out_result(), label)),
+        };
+        true
     }
 
-    /// Records `result` as what the call `id` gave.
-    pub(crate) fn record(&mut self, id: ApprovalId, result: ToolCallResult) {
-        if let Some(call) = self.turn.tool_calls.iter_mut().find(|c| c.id == id) {
-            call.result = Some(result);
+    /// The calls that may run and have not yet, for the actor to run, each
+    /// with its place in the step, which `record` takes.
+    pub(crate) fn to_run(&self) -> Vec<(usize, ToolCall)> {
+        self.turn.tool_calls.iter().enumerate()
+            .filter(|(_, c)| matches!(c.status, ToolCallStatus::Ready))
+            .map(|(index, c)| (index, c.tool_call.clone()))
+            .collect()
+    }
+
+    /// Records `result` as what the call at `index` of the step gave.
+    pub(crate) fn record(&mut self, index: usize, result: ToolCallResult) {
+        if let Some(call) = self.turn.tool_calls.get_mut(index) {
+            call.status = ToolCallStatus::Finished(result);
         }
     }
 
-    /// Ends the step as its turn ends (issue 148): answers every call still
-    /// without a result as not executed, `because` - why the turn ended -
-    /// and keeps the tool message as `collect` does, so that no call is left
+    /// Ends the step as its turn ends (issue 148): answers every call not
+    /// yet finished as not executed, `because` - why the turn ended - and
+    /// keeps the tool message as `collect` does, so that no call is left
     /// unanswered and the results of those that ran are kept. Returns the
-    /// calls it abandoned - those that had no result - as answered so, with
-    /// the approval status they had.
+    /// calls it abandoned as they stood before, still waiting or ready.
     pub(crate) fn abandon(&mut self, because: &str, internal: bool) -> Vec<ToolCallState> {
         // A fixed text of the runtime's: as the turn (issue 168).
         let label = self.turn.work.label();
         let mut abandoned = Vec::new();
-        for call in self.turn.tool_calls.iter_mut().filter(|c| c.result.is_none()) {
-            let content = crate::tool::abandoned_result(because);
-            call.result = Some(ToolCallResult::of(&call.tool_call, ToolResultStatus::NotExecuted, content, label.clone()));
+        for call in self.turn.tool_calls.iter_mut().filter(|c| !c.is_finished()) {
             abandoned.push(call.clone());
+            let content = crate::tool::abandoned_result(because);
+            call.status = ToolCallStatus::Finished(ToolCallResult::of(&call.tool_call, ToolResultStatus::NotExecuted, content, label.clone()));
         }
         self.collect(internal);
         abandoned
@@ -115,11 +104,14 @@ impl<'t> ToolCalls<'t> {
     /// for its approval, and for a step without calls: there is nothing to
     /// give.
     pub(crate) fn collect(&mut self, internal: bool) -> Option<Message> {
-        if self.is_empty() || self.turn.tool_calls.iter().any(|c| c.result.is_none()) {
+        if self.is_empty() || self.turn.tool_calls.iter().any(|c| !c.is_finished()) {
             return None;
         }
         let tool_results: Vec<_> = mem::take(&mut self.turn.tool_calls).into_iter()
-            .filter_map(|c| c.result)
+            .filter_map(|c| match c.status {
+                ToolCallStatus::Finished(result) => Some(result),
+                _ => None,
+            })
             .collect();
         // The model sees the results from here on (issue 168).
         for result in &tool_results {
@@ -149,16 +141,8 @@ mod tests {
     use caelumora_model::agent::AgentId;
     use caelumora_model::tool::ToolVisibility;
 
-    fn call(name: &str, status: ApprovalStatus) -> ToolCallState {
-        ToolCallState {
-            suggested: None,
-            explicit: false,
-            id: ApprovalId::new(),
-            status,
-            tool_call: ToolCall { id: Some(name.to_string()), function_name: name.to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN },
-            description: String::new(),
-            result: None,
-        }
+    fn call(name: &str) -> ToolCall {
+        ToolCall { id: Some(name.to_string()), function_name: name.to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN }
     }
 
     #[test]
@@ -170,7 +154,10 @@ mod tests {
         }
 
         // Registering asks for the approvals still to be given.
-        let requests = view(&mut turn).register(vec![call("run", ApprovalStatus::Approved), call("ask", ApprovalStatus::Pending)]);
+        let requests = view(&mut turn).register(vec![
+            ToolCallState::approved(call("run")),
+            ToolCallState::pending(call("ask"), String::new(), false, caelumora_model::approval::ToolMatcher::exact(&call("ask"))),
+        ]);
         assert_eq!(requests.iter().map(|r| r.tool_call.function_name.as_str()).collect::<Vec<_>>(), ["ask"]);
 
         // Waiting for one of them, there is no tool message yet.

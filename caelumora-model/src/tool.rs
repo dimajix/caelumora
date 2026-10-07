@@ -1,4 +1,4 @@
-use crate::approval::{ApprovalId, ApprovalStatus, ToolMatcher};
+use crate::approval::{ApprovalId, ToolMatcher};
 use crate::confidentiality::{Classification, Visibility};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -268,40 +268,72 @@ impl ToolCallResult {
     }
 }
 
+/// A tool call of the current step of a turn, and where it stands (issue
+/// 165): kept with the turn, so that a step resumes after a restart.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallState {
-    pub id: ApprovalId,
-    pub status: ApprovalStatus,
     pub tool_call: ToolCall,
-    pub description: String,
-    /// Whether a rule of a place asked for this very call to be decided by
-    /// a person (issue 13): no rule of a person answers it.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub explicit: bool,
-    /// What other calls are like this one, as its tool says (issue 13).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub suggested: Option<ToolMatcher>,
-    /// How the call ended - its one result, from the executor or from a
-    /// decision that settled it (issue 100) - once it has.
-    pub result: Option<ToolCallResult>,
+    pub status: ToolCallStatus,
+}
+
+/// Where a tool call stands in its life - not how it ended, which its
+/// result says (`ToolResultStatus`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ToolCallStatus {
+    /// A person decides whether it may run (issue 13). They are shown
+    /// `description` - a decision of their own if `explicit`, which no rule
+    /// of a person answers - and offered a rule for the calls `suggested`
+    /// matches. `id` is the approval's, from the agent's request to the
+    /// decision (issue 81).
+    WaitingApproval {
+        id: ApprovalId,
+        description: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        explicit: bool,
+        suggested: ToolMatcher,
+    },
+    /// It may run.
+    Ready,
+    /// It ended - ran, or was answered before it ran - with its one result
+    /// (issue 100).
+    Finished(ToolCallResult),
 }
 
 impl ToolCallState {
-    /// `tool_call`, waiting for a user's decision, who is shown
-    /// `description` - a decision of their own if `explicit` (issue 13) -
-    /// and offered a rule for the calls `suggested` matches.
+    /// `tool_call`, waiting for a person's decision (`ToolCallStatus::WaitingApproval`).
     pub fn pending(tool_call: ToolCall, description: String, explicit: bool, suggested: ToolMatcher) -> Self {
-        Self { id: ApprovalId::new(), status: ApprovalStatus::Pending, tool_call, description, explicit, suggested: Some(suggested), result: None }
+        Self { tool_call, status: ToolCallStatus::WaitingApproval { id: ApprovalId::new(), description, explicit, suggested } }
     }
 
     /// `tool_call`, to be run as it is.
     pub fn approved(tool_call: ToolCall) -> Self {
-        Self { id: ApprovalId::new(), status: ApprovalStatus::Approved, tool_call, description: String::new(), explicit: false, suggested: None, result: None }
+        Self { tool_call, status: ToolCallStatus::Ready }
     }
 
     /// `tool_call`, answered with `result` before it ran: it is not run.
     pub fn answered(tool_call: ToolCall, result: ToolCallResult) -> Self {
-        Self { result: Some(result), ..Self::approved(tool_call) }
+        Self { tool_call, status: ToolCallStatus::Finished(result) }
+    }
+
+    /// Its result, once it ended.
+    pub fn result(&self) -> Option<&ToolCallResult> {
+        match &self.status {
+            ToolCallStatus::Finished(result) => Some(result),
+            _ => None,
+        }
+    }
+
+    /// Whether it ended.
+    pub fn is_finished(&self) -> bool {
+        self.result().is_some()
+    }
+
+    /// The approval it waits for, if it does.
+    pub fn approval_id(&self) -> Option<ApprovalId> {
+        match &self.status {
+            ToolCallStatus::WaitingApproval { id, .. } => Some(*id),
+            _ => None,
+        }
     }
 }
 
@@ -338,5 +370,16 @@ mod tests {
             }
             _ => panic!("Expected Object"),
         }
+    }
+
+    #[test]
+    fn a_call_state_is_read_back_as_written() {
+        let call = ToolCall { id: Some("1".to_string()), function_name: "delete".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN };
+        let waiting = ToolCallState::pending(call.clone(), "Delete it?".to_string(), true, ToolMatcher::exact(&call));
+        let read: ToolCallState = serde_json::from_str(&serde_json::to_string(&waiting).unwrap()).unwrap();
+        assert_eq!(read.approval_id(), waiting.approval_id());
+        assert!(matches!(read.status, ToolCallStatus::WaitingApproval { explicit: true, ref description, .. } if description == "Delete it?"));
+        let ready: ToolCallState = serde_json::from_str(&serde_json::to_string(&ToolCallState::approved(call.clone())).unwrap()).unwrap();
+        assert!(matches!(ready.status, ToolCallStatus::Ready));
     }
 }

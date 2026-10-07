@@ -24,7 +24,7 @@ use caelumora_model::message::{Message, MessageEvent};
 use caelumora_model::transcript::GivenUpReason;
 use caelumora_model::plan::PlanProgress;
 use caelumora_model::security::{AccessQuestions, SecurityContext};
-use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState, ToolResultStatus, ToolSet};
+use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState, ToolCallStatus, ToolResultStatus, ToolSet};
 use tracing::{debug, info, warn, Instrument};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -467,7 +467,7 @@ impl AgentActor {
         }
     }
 
-    /// Handle a single approval event while in WaitingForApproval state.
+    /// Handle a single approval event while in WaitingForUser state.
     /// Records the decision; the run loop dispatches the actual tool execution
     /// on its next iteration via ExecutingTools.
     async fn handle_waiting_for_approval(
@@ -489,7 +489,7 @@ impl AgentActor {
         let cancelled = self.control.token();
         let received = tokio::select! {
             received = rx.recv_matching(is_approval_event) => received,
-            _ = cancelled.cancelled() => return Ok(Some(ActorState::WaitingForApproval)),
+            _ = cancelled.cancelled() => return Ok(Some(ActorState::WaitingForUser)),
         };
         match received {
             Some(event) => {
@@ -629,8 +629,8 @@ impl AgentActor {
     }
 
     /// Runs any tool calls that are ready (Approved, or newly-approved on resume
-    /// from WaitingForApproval). Loops back to Planning once all calls for this
-    /// step have results, or parks in WaitingForApproval if some are still
+    /// from WaitingForUser). Loops back to Planning once all calls for this
+    /// step have results, or parks in WaitingForUser if some are still
     /// Pending.
     async fn handle_executing_tools(
         &self,
@@ -691,7 +691,7 @@ impl AgentActor {
                 Ok(ActorState::Planning)
             }
         } else {
-            Ok(ActorState::WaitingForApproval)
+            Ok(ActorState::WaitingForUser)
         }
     }
 }
@@ -699,11 +699,11 @@ impl AgentActor {
 /// Withdraws the approval requests of the calls a turn `abandoned` as it
 /// ended, in its contexts (`answering`), so that nobody is asked any longer
 /// to decide on a call that will not run (issue 148) - the counterpart of
-/// `AgentActor::request_approvals`. Every abandoned call: the approver
-/// ignores what it does not hold - decided already, or never asked for.
+/// `AgentActor::request_approvals`. Every abandoned call that waited for
+/// an approval: the approver ignores what it does not hold.
 async fn withdraw_approval_requests(answering: &Answering, abandoned: &[ToolCallState], output: &dyn EventSender) -> Result<()> {
-    for call in abandoned {
-        answering.send(ActorEvent::ApprovalRequestWithdrawn { id: call.id }, output).await?;
+    for id in abandoned.iter().filter_map(ToolCallState::approval_id) {
+        answering.send(ActorEvent::ApprovalRequestWithdrawn { id }, output).await?;
     }
     Ok(())
 }
@@ -774,7 +774,7 @@ fn label(message: &mut Message, turn: &Turn, reasoning_visibility: Visibility, c
 /// stopped or crashed in the middle of it - stored with the step that
 /// was to come next (issue 85), and most states resume as they are:
 /// `Planning` asks the model with the turn so far, `Reflecting` takes
-/// the finished turn over, `WaitingForApproval` keeps waiting,
+/// the finished turn over, `WaitingForUser` keeps waiting,
 /// `Cancelling` ends the turn. A deliberate end never leaves a turn in the
 /// store (`stop`, `cancel`, the stop tool).
 ///
@@ -797,8 +797,8 @@ fn prepare_resume(state: &mut AgentChannelState) -> usize {
     let mut answered = 0;
     let classification = turn.work.classification.clone();
     for call in &mut turn.tool_calls {
-        if call.status == ApprovalStatus::Approved && call.result.is_none() {
-            call.result = Some(ToolCallResult::of(&call.tool_call, ToolResultStatus::NotExecuted, crate::tool::not_executed_result(), classification.clone()));
+        if matches!(call.status, ToolCallStatus::Ready) {
+            call.status = ToolCallStatus::Finished(ToolCallResult::of(&call.tool_call, ToolResultStatus::NotExecuted, crate::tool::not_executed_result(), classification.clone()));
             answered += 1;
         }
     }
@@ -877,7 +877,7 @@ impl Actor for AgentActor {
             self.announce_state(&*output).await;
             let current_state = self.control.state();
 
-            // Idle/WaitingForApproval/Sleep may consume no event before the actor's
+            // Idle/WaitingForUser/Sleep may consume no event before the actor's
             // input channel closes (Ok(None)) - that's the only way this loop ends.
             // Every other state always produces a next state.
             let span = crate::logging::agent_span(self.agent_id, &self.agent_controller.name(), current_state, state.turn.as_ref().map(|t| &t.work.event_context));
@@ -898,7 +898,7 @@ impl Actor for AgentActor {
             // on the turn under way.
             let result = async { Ok::<_, anyhow::Error>(match current_state {
                 ActorState::Idle | ActorState::Sleeping => self.handle_waiting(&mut state, &mut rx, &mut given_up_for, &*output).await?,
-                ActorState::WaitingForApproval => {
+                ActorState::WaitingForUser => {
                     self.handle_waiting_for_approval(&mut self.turn_under_way(&mut state)?, &mut rx).await?
                 }
                 ActorState::Planning => Some(self.handle_llm_turn(&mut self.turn_under_way(&mut state)?, &*output).await?),
@@ -1104,21 +1104,14 @@ mod tests {
     #[test]
     fn a_resumed_turn_answers_unfinished_tool_calls_as_not_executed_instead_of_running_them() {
         use caelumora_model::tool::{ToolCallState, ToolVisibility};
-        let call = |status: ApprovalStatus, result: Option<&str>| {
-            let tool_call = ToolCall { id: None, function_name: "note".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN };
-            match (status, result) {
-                (ApprovalStatus::Pending, _) => ToolCallState::pending(tool_call.clone(), String::new(), false, caelumora_model::approval::ToolMatcher::exact(&tool_call)),
-                (_, Some(r)) => {
-                    let result = ToolCallResult::of(&tool_call, ToolResultStatus::Ok, r.to_string(), caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT);
-                    ToolCallState::answered(tool_call, result)
-                }
-                _ => ToolCallState::approved(tool_call),
-            }
-        };
+        let tool_call = ToolCall { id: None, function_name: "note".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN };
+        let ready = ToolCallState::approved(tool_call.clone());
+        let done = ToolCallState::answered(tool_call.clone(), ToolCallResult::of(&tool_call, ToolResultStatus::Ok, "done".to_string(), caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT));
+        let waiting = ToolCallState::pending(tool_call.clone(), String::new(), false, caelumora_model::approval::ToolMatcher::exact(&tool_call));
         let state_in = |actor_state: ActorState| AgentChannelState {
             processing_state: actor_state,
             turn: Some(caelumora_model::turn::TurnState {
-                tool_calls: vec![call(ApprovalStatus::Approved, None), call(ApprovalStatus::Approved, Some("done")), call(ApprovalStatus::Pending, None)],
+                tool_calls: vec![ready.clone(), done.clone(), waiting.clone()],
                 ..Default::default()
             }),
             ..AgentChannelState::default()
@@ -1129,17 +1122,17 @@ mod tests {
         assert_eq!(prepare_resume(&mut executing), 1, "one approved call had no result");
         let executing = calls(&executing);
         let [unfinished, finished, pending] = executing.as_slice() else { panic!("three calls") };
-        let unfinished = unfinished.result.as_ref().expect("answered");
+        let unfinished = unfinished.result().expect("answered");
         assert_eq!(unfinished.status, ToolResultStatus::NotExecuted);
         assert!(unfinished.content.contains("not executed"), "the model is told: {}", unfinished.content);
-        assert_eq!(finished.result.as_ref().map(|r| r.content.as_str()), Some("done"), "a stored result stays");
-        assert!(pending.result.is_none(), "a call nobody approved is still waiting");
+        assert_eq!(finished.result().map(|r| r.content.as_str()), Some("done"), "a stored result stays");
+        assert!(pending.approval_id().is_some(), "a call nobody approved is still waiting");
 
         // Every other state resumes as it is.
-        for other in [ActorState::Planning, ActorState::WaitingForApproval, ActorState::Reflecting] {
+        for other in [ActorState::Planning, ActorState::WaitingForUser, ActorState::Reflecting] {
             let mut state = state_in(other);
             assert_eq!(prepare_resume(&mut state), 0, "{other:?}");
-            assert!(calls(&state)[0].result.is_none());
+            assert!(matches!(calls(&state)[0].status, ToolCallStatus::Ready));
             assert_eq!(state.processing_state, other);
         }
 

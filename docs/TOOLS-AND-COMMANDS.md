@@ -171,8 +171,8 @@ Some tool calls need a person's approval before they run. The process is asynchr
 suspends its turn while it waits, and nothing blocks.
 
 1.  **Interruption.** When the model's answer contains tool calls that require approval, the
-    `AgentActor` registers them as pending, runs whatever needs no approval, and moves to
-    `WaitingForApproval`. Its state, the pending calls included, is stored after every step.
+    `AgentActor` registers them as waiting for it, runs whatever needs no approval, and moves to
+    `WaitingForUser`. Its state, the waiting calls included, is stored after every step.
 2.  **Request.** The agent emits `ApprovalRequested`, carrying the call's `ApprovalId`. The
     moderator routes it to the channel's `ApproverActor` only. The approver passes it on unchanged
     to the users (`UserActor`s), whose frontends show it - to everybody, so that all see what the
@@ -190,6 +190,12 @@ suspends its turn while it waits, and nothing blocks.
     once the approver says so, not when one user answered.
 5.  **Resumption.** The agent runs the granted calls and continues its turn.
 
+Where a call of the current step stands is its `ToolCallStatus` (issue 165), kept with the turn:
+`WaitingApproval` - with the approval's id and what the approvers are shown - then `Ready` once it
+may run, and `Finished` with its one result once it ran or was answered without running. How it
+ended is not a status of its own but the result's (see [Results](#results)): a denial finishes the
+call at once with `denied`, a timeout with `timed_out`.
+
 A turn that ends while it waits - cancelled, given up - withdraws its requests (issue 148): the
 agent sends `ApprovalRequestWithdrawn` with the id, which the moderator routes to the approver only.
 The approver takes it only from the agent that asked, forgets the request without deciding it, and
@@ -199,7 +205,7 @@ agent withdraws nothing - it has left - and the approver answers its pending req
 
 The agent's turn is the record of what it waits for (issue 172): the approver holds its requests
 only in memory and starts empty after a restart. An agent that resumes a turn with calls still
-pending - in `WaitingForApproval`, or stored right after asking - asks again, with the same ids
+pending - in `WaitingForUser`, or stored right after asking - asks again, with the same ids
 (`TurnState::pending_approvals`). The approver takes a request it does not know up as new, with a
 new timeout; one it still holds it only announces again, keeping the answers given so far. Answers
 given before a restart are lost with the approver's memory: the users are asked again.

@@ -54,12 +54,12 @@ issue 222), then commits once:
     otherwise to `Reflecting`. A turn makes at most 25 model calls (`MAX_MODEL_CALLS`), then it goes
     to `Reflecting`. The count (`TurnState::model_calls`, `Turn::count_model_call`) is stored with
     the turn, so a turn resumed after a restart goes on counting.
-*   **`ExecutingTools`** runs the approved calls that have no result yet. Once every call of the
-    step has a result, the tool message goes into the turn and the agent returns to `Planning` - or
-    to `Reflecting` if a tool asked for the turn to end, as the stop tool does. If calls are still
-    pending, it goes to `WaitingForApproval`. A cancel or stop interrupts the call under way - it
-    is answered as interrupted - and starts no further one (issue 161).
-*   **`WaitingForApproval`** waits for `ApprovalGranted`, `ApprovalDenied` or `ApprovalTimedOut`,
+*   **`ExecutingTools`** runs the calls that are ready. Once every call of the step has finished,
+    the tool message goes into the turn and the agent returns to `Planning` - or to `Reflecting` if
+    a tool asked for the turn to end, as the stop tool does. If calls still wait for a person, it
+    goes to `WaitingForUser`. A cancel or stop interrupts the call under way - it is answered as
+    interrupted - and starts no further one (issue 161).
+*   **`WaitingForUser`** waits for `ApprovalGranted`, `ApprovalDenied` or `ApprovalTimedOut`,
     records the decision and returns to `ExecutingTools`. Other events stay queued until the turn is
     over. See [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md) for the approval process.
 *   **`Reflecting`** takes the turn over (`Turn::commit`), stores the state and announces the
@@ -228,10 +228,10 @@ alone. When the agent is loaded again, the turn is resumed (issue 75):
 
 *   `Planning` asks the model again with the turn so far.
 *   `Reflecting` takes the finished turn over.
-*   `WaitingForApproval` keeps waiting.
+*   `WaitingForUser` keeps waiting.
 *   `Cancelling` ends the turn.
 *   `ExecutingTools` is the exception. A tool may have run without its result being stored, and
-    running it again would repeat its effect (issue 20). So every approved call without a result is
+    running it again would repeat its effect (issue 20). So every call that was ready to run is
     answered as *not executed* (`prepare_resume` in `actor_impl/agent.rs`), the tool message is
     built from that, and the model decides again.
 

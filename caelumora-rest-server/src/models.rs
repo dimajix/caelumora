@@ -487,7 +487,7 @@ pub struct ChannelMemberResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub turn_under_way: Option<TurnId>,
     /// Where the participant stands now (issue 243), an agent's: `Idle`,
-    /// `Sleeping`, `Planning`, `ExecutingTools`, `WaitingForApproval`,
+    /// `Sleeping`, `Planning`, `ExecutingTools`, `WaitingForUser`,
     /// `Reflecting`, `Cancelling`. Kept up by `StateChanged` on the
     /// channel's stream. Absent for a user or an approver, and in a channel
     /// that does not run.
@@ -957,8 +957,8 @@ mod tests {
         let json = serde_json::to_value(ChannelMemberResponse::of(snapshot::MemberSnapshot { turn_under_way: Some(turn), ..member(None) }).unwrap()).unwrap();
         assert_eq!(json["turn_under_way"], serde_json::json!(turn.to_string()), "the turn its messages carry");
         assert!(json.get("state").is_none(), "where nothing runs, no state");
-        let json = serde_json::to_value(ChannelMemberResponse::of(snapshot::MemberSnapshot { state: Some(ActorState::WaitingForApproval), ..member(None) }).unwrap()).unwrap();
-        assert_eq!(json["state"], serde_json::json!("WaitingForApproval"), "named as `StateChanged` names it (issue 243)");
+        let json = serde_json::to_value(ChannelMemberResponse::of(snapshot::MemberSnapshot { state: Some(ActorState::WaitingForUser), ..member(None) }).unwrap()).unwrap();
+        assert_eq!(json["state"], serde_json::json!("WaitingForUser"), "named as `StateChanged` names it (issue 243)");
     }
 
     #[test]

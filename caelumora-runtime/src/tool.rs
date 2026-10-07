@@ -730,7 +730,7 @@ mod tests {
         let admitted = running.admit(&call("test_tool"), &turn).await;
         assert!(matches!(admitted, Admission::Run), "no approval needed");
         let state = admitted.state(call("test_tool"));
-        assert!(state.status == caelumora_model::approval::ApprovalStatus::Approved && state.result.is_none(), "to be run");
+        assert!(matches!(state.status, caelumora_model::tool::ToolCallStatus::Ready), "to be run");
     }
 
     #[tokio::test]

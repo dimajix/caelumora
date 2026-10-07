@@ -119,7 +119,7 @@ const WORKING: Partial<Record<ActorState, string>> = {
 };
 
 /** The states in which a cancel still ends an agent's answer (`ActorState::interruptible`). */
-const INTERRUPTIBLE: ActorState[] = ['Planning', 'ExecutingTools', 'WaitingForApproval'];
+const INTERRUPTIBLE: ActorState[] = ['Planning', 'ExecutingTools', 'WaitingForUser'];
 
 /**
  * The dot that shows where a member stands (issue 243): an agent's state as
@@ -131,7 +131,7 @@ function stateDot(member: ChannelMember): {className: string; title: string} | n
   if (working) return {className: 'bg-green-500 animate-working', title: working};
   switch (member.state) {
     case 'Idle': return {className: 'bg-green-500', title: 'Idle'};
-    case 'WaitingForApproval': return {className: 'bg-amber-500', title: 'Waiting for an approval'};
+    case 'WaitingForUser': return {className: 'bg-amber-500', title: 'Waiting for a person'};
     case 'Sleeping': return {className: 'bg-indigo-500', title: 'Asleep'};
     default: return {className: 'bg-gray-400 dark:bg-gray-500', title: 'Not running'};
   }

@@ -971,13 +971,13 @@ use caelumora_model::turn::TurnState;
         turn.work.event_context.channel_id = channel.id;
         turn.work.event_context.sender_id = ActorId::Agent(helper.id);
         turn.tool_calls = vec![waiting.clone(), ToolCallState::approved(call("echo"))];
-        let mut state = AgentChannelState { processing_state: ActorState::WaitingForApproval, turn: Some(turn), ..Default::default() };
+        let mut state = AgentChannelState { processing_state: ActorState::WaitingForUser, turn: Some(turn), ..Default::default() };
         store.put_agent_channel_state(helper.id, channel.id, &mut state).await.unwrap();
 
         let main = manager.views(as_user(alice.id)).session(session.id).await.unwrap().channel(channel.id).await.unwrap();
         let pending = main.pending_approvals().await.unwrap();
         assert_eq!(pending.len(), 1, "only the call that waits");
-        assert_eq!((pending[0].id, pending[0].agent_id, pending[0].channel_id, pending[0].description.as_str()), (waiting.id, helper.id, channel.id, "Delete it?"));
+        assert_eq!((pending[0].id, pending[0].agent_id, pending[0].channel_id, pending[0].description.as_str()), (waiting.approval_id().unwrap(), helper.id, channel.id, "Delete it?"));
         assert!(manager.running(session.id).is_none(), "read without starting the session");
     }
 
