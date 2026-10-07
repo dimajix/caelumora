@@ -4,6 +4,7 @@ use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
+use caelumora_model::question::Answers;
 use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
 use serde_json::Value;
 use std::sync::Arc;
@@ -36,7 +37,7 @@ impl ToolProvider for EchoToolProvider {
         }]
     }
 
-    async fn execute(&self, name: &str, params: &Value, turn: &mut Turn) -> ToolResult<ToolOutput> {
+    async fn execute(&self, name: &str, params: &Value, _answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
         if name == ECHO_TOOL_NAME {
             // The arguments themselves: classified as the turn (issue 168).
             Ok(ToolOutput::classified(params.clone(), turn.label()))

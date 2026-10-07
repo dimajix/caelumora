@@ -652,7 +652,7 @@ impl AgentActor {
             if cancelled.is_cancelled() {
                 return Ok(ActorState::ExecutingTools);
             }
-            let result = self.tool_executor.execute(&call, turn, &cancelled).await;
+            let result = self.tool_executor.execute(&call, None, turn, &cancelled).await;
             turn.tool_calls().record(id, result);
         }
         // Once every call has its result, the turn keeps the tool message for

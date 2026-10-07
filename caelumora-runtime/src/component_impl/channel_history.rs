@@ -9,6 +9,7 @@ use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::tool::{arguments, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
+use caelumora_model::question::Answers;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::message::Message;
@@ -59,7 +60,7 @@ impl ToolProvider for ChannelHistoryComponent {
         }]
     }
 
-    async fn execute(&self, name: &str, params: &Value, turn: &mut Turn) -> ToolResult<ToolOutput> {
+    async fn execute(&self, name: &str, params: &Value, _answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
         if name != READ_HISTORY_TOOL_NAME {
             return Err(ToolError::UnknownTool(name.to_string()));
         }

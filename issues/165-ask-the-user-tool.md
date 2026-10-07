@@ -355,3 +355,10 @@ Each a step of its own, to be reviewed separately; 0 to 2 change no behaviour.
   `Tool` and stamped on `ToolCall` by `label` as the visibility is. In the web UI `ToolCallView`
   draws the frame of every call and leaves its content to the handler of its presentation
   (`PRESENTATIONS`), the default one being what `MessageView` showed before.
+- **2026-10-07** — Step 2 done, without a change of behaviour: `caelumora_model::question` with
+  `Questions`, `Question`, `Choice`, `Addressee`, `Answers` and `Response`, their limits and checks
+  (`Questions::check`, `Questions::check_responses`) and `QuestionError`; `Answers` and `Response`
+  show no content in `Debug`. `ToolProvider::questions` (by default none) and
+  `ToolExecutor::questions` (no default, so that no executor drops them); the answers are a
+  parameter of `execute` from the guard through the executor to the provider. Nothing asks yet:
+  the agent runs every call with none. `QuestionId` comes with the waiting in step 3.

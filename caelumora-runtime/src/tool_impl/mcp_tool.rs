@@ -1,4 +1,5 @@
 use crate::agent_turn::Turn;
+use caelumora_model::question::Answers;
 use caelumora_model::confidentiality::Classification;
 use crate::component::{ComponentError, ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::remote::RemoteEndpoint;
@@ -306,7 +307,7 @@ impl ToolProvider for McpToolProvider {
         self.unavailable.clone()
     }
 
-    async fn execute(&self, name: &str, params: &Value, turn: &mut Turn) -> ToolResult<ToolOutput> {
+    async fn execute(&self, name: &str, params: &Value, _answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
         let remote_name = self.strip_prefix(name)?.to_string();
         let security_context = turn.security_context().clone();
 

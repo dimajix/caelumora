@@ -5,6 +5,7 @@ use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::tool::{arguments, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
+use caelumora_model::question::Answers;
 use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
 use serde::Deserialize;
 use serde_json::Value;
@@ -38,7 +39,7 @@ impl ToolProvider for CalculatorToolProvider {
         }]
     }
 
-    async fn execute(&self, name: &str, params: &Value, turn: &mut Turn) -> ToolResult<ToolOutput> {
+    async fn execute(&self, name: &str, params: &Value, _answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
         if name == CALCULATE_TOOL_NAME {
             #[derive(Deserialize)]
             struct Calculate { expression: String }
@@ -90,7 +91,7 @@ mod tests {
 
         for (expr, expected) in cases {
             let params = json!({ "expression": expr });
-            let result = provider.execute(CALCULATE_TOOL_NAME, &params, &mut turn).await.unwrap();
+            let result = provider.execute(CALCULATE_TOOL_NAME, &params, None, &mut turn).await.unwrap();
             let val = result.value.as_f64().unwrap();
             assert!((val - expected).abs() < 1e-10, "Expression {} failed: expected {}, got {}", expr, expected, val);
         }
@@ -103,7 +104,7 @@ mod tests {
         let mut turn = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
         let params = json!({ "expression": "invalid" });
-        let result = provider.execute(CALCULATE_TOOL_NAME, &params, &mut turn).await;
+        let result = provider.execute(CALCULATE_TOOL_NAME, &params, None, &mut turn).await;
         assert!(result.is_err());
     }
 }

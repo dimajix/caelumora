@@ -26,6 +26,7 @@ use crate::work::AgentWork;
 use crate::tool::{classification_argument, id_argument, reclassify_parameters, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
+use caelumora_model::question::Answers;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::session::ChannelId;
 use caelumora_model::digest::Digest;
@@ -104,7 +105,7 @@ impl ToolProvider for PrivateNotesComponent {
         ]
     }
 
-    async fn execute(&self, name: &str, params: &Value, turn: &mut Turn) -> ToolResult<ToolOutput> {
+    async fn execute(&self, name: &str, params: &Value, _answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
         let value = match name {
             NOTE_PRIVATE_TOOL_NAME => self.execute_note_private(params, turn),
             REVOKE_PRIVATE_NOTE_TOOL_NAME => self.execute_revoke_private_note(params, turn),
@@ -258,7 +259,7 @@ mod tests {
         };
         let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
         AgentNotes::note(&mut turn, NoteKind::Public, "public".to_string());
-        let noted = tools.execute(NOTE_PRIVATE_TOOL_NAME, &serde_json::json!({ "text": "secret" }), &mut turn).await.unwrap();
+        let noted = tools.execute(NOTE_PRIVATE_TOOL_NAME, &serde_json::json!({ "text": "secret" }), None, &mut turn).await.unwrap();
         assert_eq!(noted.value["id"], 1, "its own numbering");
         assert!(AgentNotes::current(&turn.work(), NoteKind::Private).is_empty(), "not before the turn completes");
         assert!(turn.commit(false).await.channel_state_changed, "the channel state changed");
@@ -267,9 +268,9 @@ mod tests {
 
         // The next turn.
         let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
-        let unknown = tools.execute(REVOKE_PRIVATE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 9 }), &mut turn).await;
+        let unknown = tools.execute(REVOKE_PRIVATE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 9 }), None, &mut turn).await;
         assert!(matches!(unknown, Err(ToolError::InvalidParameter(_))));
-        tools.execute(REVOKE_PRIVATE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1 }), &mut turn).await.unwrap();
+        tools.execute(REVOKE_PRIVATE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn).await.unwrap();
         assert!(turn.commit(false).await.channel_state_changed, "private notes are part of the channel state too");
         assert!(state.private_notes.current().is_empty());
     }

@@ -22,6 +22,7 @@ pub mod ledger;
 pub mod note;
 pub mod memory;
 pub mod plan;
+pub mod question;
 pub mod privacy;
 pub mod session;
 pub mod store;

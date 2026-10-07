@@ -5,6 +5,7 @@ use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
+use caelumora_model::question::Answers;
 use caelumora_model::actor::ActorState;
 use caelumora_model::tool::{Tool, ToolVisibility, ToolParameters};
 use serde_json::Value;
@@ -60,7 +61,7 @@ impl ToolProvider for StopToolProvider {
         ]
     }
 
-    async fn execute(&self, name: &str, _params: &Value, turn: &mut Turn) -> ToolResult<ToolOutput> {
+    async fn execute(&self, name: &str, _params: &Value, _answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
         // What it answers tells nothing: classified as the turn (issue 168).
         match name {
             STOP_TOOL_NAME | BYE_TOOL_NAME => {
@@ -103,10 +104,10 @@ mod tests {
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
-        let result = provider.execute(STOP_TOOL_NAME, &json!({}), &mut turn).await.unwrap();
+        let result = provider.execute(STOP_TOOL_NAME, &json!({}), None, &mut turn).await.unwrap();
         assert_eq!(result.value["status"], "stopped");
         assert_eq!(turn.requested_state(), Some(ActorState::Sleeping), "the turn ends, the agent sleeps");
-        provider.execute(SILENCE_TOOL_NAME, &json!({}), &mut turn).await.unwrap();
+        provider.execute(SILENCE_TOOL_NAME, &json!({}), None, &mut turn).await.unwrap();
         assert_eq!(turn.requested_state(), Some(ActorState::Idle), "the turn ends, the agent waits");
 
         let tools = provider.tools();

@@ -8,6 +8,7 @@ use crate::work::AgentWork;
 use crate::tool::{arguments, ToolOutput, ToolProvider, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
+use caelumora_model::question::Answers;
 use caelumora_model::plan::{Plan, PlanId, PlanProgress, PlanState, PlanStep};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::tool::{Tool, ToolVisibility, ToolParameters};
@@ -121,7 +122,7 @@ impl ToolProvider for CreatePlanToolProvider {
         }]
     }
 
-    async fn execute(&self, _name: &str, params: &Value, turn: &mut Turn) -> ToolResult<ToolOutput> {
+    async fn execute(&self, _name: &str, params: &Value, _answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
         let incoming = parse_plan(params)?;
         // What it answers tells nothing: classified as the turn (issue 168).
         match turn.take_plan() {
@@ -199,7 +200,7 @@ mod tests {
             ]
         });
 
-        let result = provider.execute(CREATE_PLAN_TOOL_NAME, &params, &mut turn).await;
+        let result = provider.execute(CREATE_PLAN_TOOL_NAME, &params, None, &mut turn).await;
         assert!(result.is_ok());
 
         let plan_state = turn.plan().expect("plan should be set after execute");
@@ -227,7 +228,7 @@ mod tests {
             "summary": "updated",
             "steps": [ { "description": "second" } ]
         });
-        let result = provider.execute(CREATE_PLAN_TOOL_NAME, &params, &mut turn).await;
+        let result = provider.execute(CREATE_PLAN_TOOL_NAME, &params, None, &mut turn).await;
         assert!(result.is_ok());
 
         let plan_state = turn.plan().expect("plan should still be set");
@@ -257,7 +258,7 @@ mod tests {
             "summary": "updated",
             "steps": [ { "description": "one more thing" } ]
         });
-        let result = provider.execute(CREATE_PLAN_TOOL_NAME, &params, &mut turn).await;
+        let result = provider.execute(CREATE_PLAN_TOOL_NAME, &params, None, &mut turn).await;
         assert!(result.is_ok());
 
         let plan_state = turn.plan().expect("plan should still be set");
@@ -272,7 +273,7 @@ mod tests {
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
-        let result = provider.execute(CREATE_PLAN_TOOL_NAME, &json!({}), &mut turn).await;
+        let result = provider.execute(CREATE_PLAN_TOOL_NAME, &json!({}), None, &mut turn).await;
         assert!(matches!(result, Err(ToolError::InvalidParameter(_))), "the model is asked to correct the call: {result:?}");
         assert!(turn.plan().is_none());
     }

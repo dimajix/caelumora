@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use caelumora_model::approval::{ApprovalRule, RuleDecision, ToolMatcher};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityManager};
+use caelumora_model::question::{Answers, Questions};
 use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolCallState, ToolSet, ToolVisibility, ToolResultStatus};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
@@ -241,8 +242,16 @@ pub trait ToolProvider: Send + Sync + Debug {
         None
     }
 
-    /// Executes a specific tool by name.
-    async fn execute(&self, name: &str, params: &Value, turn: &mut Turn) -> ToolResult<ToolOutput>;
+    /// Executes a specific tool by name - with the `answers` to the
+    /// questions it asked for the call (`questions`), if it asked any.
+    async fn execute(&self, name: &str, params: &Value, answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput>;
+    /// What the call of tool `name` with `params` asks a person before it
+    /// runs (issue 165): the answers are handed to `execute`, and reach the
+    /// model only as far as the tool puts them into its result. By default
+    /// nothing; an error is the call's, as with `describe`.
+    fn questions(&self, _name: &str, _params: &Value) -> ToolResult<Option<Questions>> {
+        Ok(None)
+    }
     /// What other calls are like the call of tool `name` with `params`
     /// (issue 13): the matcher a rule derived from it is offered with. By
     /// default the calls exactly like it; a tool whose argument is a
@@ -275,9 +284,14 @@ pub trait ToolProvider: Send + Sync + Debug {
 pub trait ToolExecutor: Send + Sync + Debug {
     /// Runs `call` with the tool that provides it: what the tool gave, or
     /// what went wrong (`ToolError::UnknownTool` if no tool has the name).
-    /// Called only for calls the policy permits.
-    async fn execute(&self, call: &ToolCall, turn: &mut Turn) -> ToolResult<ToolOutput>;
+    /// Called only for calls the policy permits, with the `answers` to the
+    /// questions the tool asked for the call.
+    async fn execute(&self, call: &ToolCall, answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput>;
     fn describe(&self, call: &ToolCall) -> ToolResult<String>;
+    /// What `call` asks a person before it runs, as its tool says (issue
+    /// 165). No default: an executor that left it out would run a tool
+    /// without the answers it needs.
+    fn questions(&self, call: &ToolCall) -> ToolResult<Option<Questions>>;
     /// What other calls are like `call`, as its tool says (issue 13); by
     /// default the calls exactly like it.
     fn matcher(&self, call: &ToolCall) -> ToolMatcher {
@@ -359,13 +373,14 @@ impl GuardedToolExecutor {
         ApprovalRule::decide(rules, call, session.id, channel.id, chrono::Utc::now()).cloned()
     }
 
-    /// Runs `call` if it may be run now, and answers it either way. Once
+    /// Runs `call` if it may be run now, with the `answers` to the questions
+    /// its tool asked, and answers it either way. Once
     /// `cancelled` - the turn is cancelled or stopped - the call is no
     /// longer waited for (issue 161): whatever the executor and its tool
     /// are doing is dropped, and the call is answered as interrupted, with
     /// when it started, so that it counts as having run. Dropping a tool
     /// does not undo what it did (issue 20).
-    pub async fn execute(&self, call: &ToolCall, turn: &mut Turn<'_>, cancelled: &CancellationToken) -> ToolCallResult {
+    pub async fn execute(&self, call: &ToolCall, answers: Option<&Answers>, turn: &mut Turn<'_>, cancelled: &CancellationToken) -> ToolCallResult {
         if let Err(e) = self.check(call, turn).await {
             return self.failed(call, e, turn);
         }
@@ -373,7 +388,7 @@ impl GuardedToolExecutor {
         // A tool that is done when the turn ends has its result.
         let outcome = tokio::select! {
             biased;
-            outcome = self.executor.execute(call, turn) => Some(outcome),
+            outcome = self.executor.execute(call, answers, turn) => Some(outcome),
             () = cancelled.cancelled() => None,
         };
         let finished_at = chrono::Utc::now();
@@ -554,7 +569,7 @@ mod tests {
                 tool("hanging_tool", self.requires_approval, None),
             ]
         }
-        async fn execute(&self, name: &str, _params: &Value, _turn: &mut Turn) -> ToolResult<ToolOutput> {
+        async fn execute(&self, name: &str, _params: &Value, _answers: Option<&Answers>, _turn: &mut Turn) -> ToolResult<ToolOutput> {
             match name {
                 "hr_tool" => Ok(ToolOutput::classified(json!({"salary": 1}), hr())),
                 "configured_tool" => Ok(json!({"salary": 2}).into()),
@@ -684,7 +699,7 @@ mod tests {
         // As if set in another instance, and announced.
         let denying = caelumora_model::session::SessionUpdateEvent::ApprovalRulesChanged(vec![rule("test_tool", RuleDecision::Deny)]);
         session.process_global_event(&caelumora_model::event::GlobalEvent::SessionUpdated(session.id(), denying));
-        let result = executor.execute(&call("test_tool"), &mut turn, &CancellationToken::new()).await;
+        let result = executor.execute(&call("test_tool"), None, &mut turn, &CancellationToken::new()).await;
         assert_eq!(result.status, ToolResultStatus::Forbidden, "as it stands when run");
         assert!(result.started_at.is_none(), "it never ran");
     }
@@ -700,7 +715,7 @@ mod tests {
 
         let admitted = executor.admit(&call("test_tool"), &context).await;
         assert!(matches!(admitted, Admission::Answered(ref r) if r.status == ToolResultStatus::Forbidden), "refused before anyone is asked: {admitted:?}");
-        let result = executor.execute(&call("test_tool"), &mut context, &CancellationToken::new()).await;
+        let result = executor.execute(&call("test_tool"), None, &mut context, &CancellationToken::new()).await;
         assert_eq!(result.status, ToolResultStatus::Forbidden);
         assert_eq!(result.content, forbidden_result());
         assert!(result.started_at.is_none() && result.finished_at.is_none(), "a refused call never ran");
@@ -741,7 +756,7 @@ mod tests {
         agent_channel_state.turn = Some(caelumora_model::turn::TurnState { work: caelumora_model::work::Work { security_context: SecurityContext { caller_id: ActorId::User(caelumora_model::user::UserId::new()), ..SecurityContext::default() }, ..Default::default() }, ..Default::default() });
         let mut context = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached()).expect("a turn is under way");
 
-        let result = executor.execute(&call("test_tool"), &mut context, &CancellationToken::new()).await;
+        let result = executor.execute(&call("test_tool"), None, &mut context, &CancellationToken::new()).await;
         assert_eq!(result.status, ToolResultStatus::Forbidden, "whatever the policy says");
     }
 
@@ -768,7 +783,7 @@ mod tests {
         let mut agent_channel_state = agent_turn(&executor);
         let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached()).expect("a turn is under way");
 
-        let result = executor.execute(&call("test_tool"), &mut turn, &CancellationToken::new()).await;
+        let result = executor.execute(&call("test_tool"), None, &mut turn, &CancellationToken::new()).await;
         assert_eq!(result.status, ToolResultStatus::Ok);
         assert_eq!(result.content, "{\"result\":\"ok\"}");
         assert_eq!(result.classification, Classification::CHANNEL_DEFAULT, "the channel's");
@@ -776,7 +791,7 @@ mod tests {
         assert!(finished_at >= started_at);
         assert!(serde_json::to_string(&result).unwrap().contains("\"started_at\""), "and it is stored with the history");
 
-        let unknown = executor.execute(&call("does_not_exist"), &mut turn, &CancellationToken::new()).await;
+        let unknown = executor.execute(&call("does_not_exist"), None, &mut turn, &CancellationToken::new()).await;
         assert_eq!(unknown.status, ToolResultStatus::UnknownTool);
         assert!(unknown.content.contains("Available tools: test_tool"), "{}", unknown.content);
         assert_eq!((unknown.id.as_deref(), unknown.tool_name.as_str()), (Some("call_1"), "does_not_exist"), "the result is the call's");
@@ -795,13 +810,13 @@ mod tests {
             ending.cancel();
         });
 
-        let result = executor.execute(&call("hanging_tool"), &mut turn, &cancelled).await;
+        let result = executor.execute(&call("hanging_tool"), None, &mut turn, &cancelled).await;
         assert_eq!(result.status, ToolResultStatus::Interrupted, "not waited for once the turn ends");
         assert_eq!(result.content, interrupted_result());
         let (started_at, finished_at) = (result.started_at.expect("it ran"), result.finished_at.expect("until it was interrupted"));
         assert!(finished_at >= started_at);
 
-        let done = executor.execute(&call("test_tool"), &mut turn, &cancelled).await;
+        let done = executor.execute(&call("test_tool"), None, &mut turn, &cancelled).await;
         assert_eq!(done.status, ToolResultStatus::Ok, "a tool that is done has its result");
     }
 
@@ -812,7 +827,7 @@ mod tests {
         let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached()).expect("a turn is under way");
 
         for name in ["hr_tool", "configured_tool"] {
-            let result = executor.execute(&call(name), &mut turn, &CancellationToken::new()).await;
+            let result = executor.execute(&call(name), None, &mut turn, &CancellationToken::new()).await;
             assert_eq!(result.status, ToolResultStatus::Withheld, "{name}: HR's, and the channel is general");
             assert!(!result.content.contains("salary"), "{name}: {}", result.content);
             assert!(result.content.contains("internal {hr}"), "the model is told why: {}", result.content);
@@ -829,7 +844,7 @@ mod tests {
             turn.work.classification = hr();
         }
         let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached()).expect("a turn is under way");
-        let result = executor.execute(&call("hr_tool"), &mut turn, &CancellationToken::new()).await;
+        let result = executor.execute(&call("hr_tool"), None, &mut turn, &CancellationToken::new()).await;
         assert_eq!(result.status, ToolResultStatus::Ok);
         assert_eq!(result.classification, hr(), "as the tool classified it");
     }

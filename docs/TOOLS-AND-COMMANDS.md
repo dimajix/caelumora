@@ -16,13 +16,21 @@ The trait has these methods:
 *   `tools()` - the tools the component offers.
 *   `unavailable()` - why it gives no tools now, in general terms and never with the error; by
     default `None`, available.
-*   `execute(name, params, turn)` - runs one of them.
+*   `execute(name, params, answers, turn)` - runs one of them, with the `answers` to its questions
+    if it asked any.
 *   `describe(name, params)` - the text approvers are shown for a call; by default the tool's
     description.
 *   `matcher(name, params)` - what other calls are like this one (issue 13): the matcher a rule
     derived from the call is offered with (`ApprovalRequest::suggested`); by default the calls
     exactly like it (`ToolMatcher::exact`). A tool whose argument is a language says better what
     makes two calls alike.
+*   `questions(name, params)` - what the call asks a person before it runs (issue 165), by default
+    nothing. The answers are handed to `execute`; the model learns of them only what the tool puts
+    into its result. The questions, their limits and the answers are `caelumora_model::question`:
+    up to five questions, each answered with text or by choosing among two to four choices -
+    several with `multi_select` - or by writing another answer, and put to those the tool names
+    (`ask`). A tool may mark them `sensitive`, for answers the model must not see. Not asked yet:
+    the runtime does not wait for answers so far, and runs every call without them.
 
 A `Tool` declares its `name`, `description` and `parameters`, whether it `requires_approval`, its
 `visibility`, optionally the `classification` of its results, and its `presentation`: how frontends

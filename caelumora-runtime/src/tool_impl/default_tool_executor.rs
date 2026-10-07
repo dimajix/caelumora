@@ -9,6 +9,7 @@ use crate::component::{ComponentError, ComponentFacets, ComponentImpl, Component
 use crate::tool::{ToolError, ToolExecutor, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::approval::ToolMatcher;
+use caelumora_model::question::{Answers, Questions};
 use caelumora_model::tool::{ToolCall, ToolSet};
 use std::sync::Arc;
 
@@ -56,12 +57,16 @@ impl DefaultToolExecutor {
 
 #[async_trait]
 impl ToolExecutor for DefaultToolExecutor {
-    async fn execute(&self, call: &ToolCall, turn: &mut Turn) -> ToolResult<ToolOutput> {
-        self.provider_of(&call.function_name)?.execute(&call.function_name, &call.arguments, turn).await
+    async fn execute(&self, call: &ToolCall, answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
+        self.provider_of(&call.function_name)?.execute(&call.function_name, &call.arguments, answers, turn).await
     }
 
     fn describe(&self, call: &ToolCall) -> ToolResult<String> {
         self.provider_of(&call.function_name)?.describe(&call.function_name, &call.arguments)
+    }
+
+    fn questions(&self, call: &ToolCall) -> ToolResult<Option<Questions>> {
+        self.provider_of(&call.function_name)?.questions(&call.function_name, &call.arguments)
     }
 
     fn matcher(&self, call: &ToolCall) -> ToolMatcher {
@@ -119,7 +124,7 @@ mod tests {
                 presentation: Default::default(),
             }]
         }
-        async fn execute(&self, _name: &str, _params: &Value, _turn: &mut Turn) -> ToolResult<ToolOutput> {
+        async fn execute(&self, _name: &str, _params: &Value, _answers: Option<&Answers>, _turn: &mut Turn) -> ToolResult<ToolOutput> {
             Ok(json!({"result": "ok"}).into())
         }
     }
@@ -144,10 +149,49 @@ mod tests {
         let mut agent_channel_state = agent_state();
         let mut context = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached()).expect("a turn is under way");
 
-        let output = executor.execute(&call("test_tool"), &mut context).await.unwrap();
+        let output = executor.execute(&call("test_tool"), None, &mut context).await.unwrap();
         assert_eq!(output.value, json!({"result": "ok"}));
-        let unknown = executor.execute(&call("does_not_exist"), &mut context).await;
+        let unknown = executor.execute(&call("does_not_exist"), None, &mut context).await;
         assert!(matches!(unknown, Err(ToolError::UnknownTool(name)) if name == "does_not_exist"));
+    }
+
+    /// A provider whose tool asks a question and says what it was answered.
+    #[derive(Debug)]
+    struct Asking;
+
+    #[async_trait]
+    impl ToolProvider for Asking {
+        fn description(&self) -> String {
+            "asking tools".to_string()
+        }
+        fn tools(&self) -> Vec<Tool> {
+            vec![Tool { name: "asking_tool".to_string(), ..MockToolProvider.tools().remove(0) }]
+        }
+        async fn execute(&self, _name: &str, _params: &Value, answers: Option<&Answers>, _turn: &mut Turn) -> ToolResult<ToolOutput> {
+            Ok(json!({"answered_by": answers.map(|a| a.answered_by_name.clone())}).into())
+        }
+        fn questions(&self, _name: &str, _params: &Value) -> ToolResult<Option<Questions>> {
+            Ok(Some(Questions {
+                questions: vec![caelumora_model::question::Question { header: "Name".to_string(), question: "Who?".to_string(), choices: Vec::new(), multi_select: false }],
+                ask: vec![caelumora_model::question::Addressee::Owner],
+                sensitive: false,
+            }))
+        }
+    }
+
+    #[tokio::test]
+    async fn the_questions_of_a_call_are_its_tool_s_and_the_answers_go_to_it() {
+        let asking = ComponentImpl { id: "asking".to_string(), fail_policy: Default::default(), facet: Arc::new(Asking) as Arc<dyn ToolProvider> };
+        let executor = DefaultToolExecutor::new(vec![component("tools"), asking]).unwrap();
+        assert!(executor.questions(&call("test_tool")).unwrap().is_none(), "a tool asks nothing by default");
+        assert_eq!(executor.questions(&call("asking_tool")).unwrap().map(|q| q.questions.len()), Some(1));
+        assert!(matches!(executor.questions(&call("does_not_exist")), Err(ToolError::UnknownTool(_))));
+
+        let mut agent_channel_state = agent_state();
+        let mut context = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached()).expect("a turn is under way");
+        let answers = Answers { answered_by: ActorId::None, answered_by_name: "alice".to_string(), responses: vec![caelumora_model::question::Response::Declined] };
+        let output = executor.execute(&call("asking_tool"), Some(&answers), &mut context).await.unwrap();
+        assert_eq!(output.value, json!({"answered_by": "alice"}));
     }
 
     /// A provider whose source cannot be reached.
@@ -165,7 +209,7 @@ mod tests {
         fn unavailable(&self) -> Option<String> {
             Some("its server cannot be reached".to_string())
         }
-        async fn execute(&self, name: &str, _params: &Value, _turn: &mut Turn) -> ToolResult<ToolOutput> {
+        async fn execute(&self, name: &str, _params: &Value, _answers: Option<&Answers>, _turn: &mut Turn) -> ToolResult<ToolOutput> {
             Err(ToolError::UnknownTool(name.to_string()))
         }
     }

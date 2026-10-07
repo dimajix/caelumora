@@ -9,6 +9,7 @@ use crate::agent_turn::Turn;
 use crate::component::{flag_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::tool::{arguments, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
+use caelumora_model::question::Answers;
 use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
 use serde::Deserialize;
 use serde_json::Value;
@@ -64,7 +65,7 @@ impl ToolProvider for SleepToolProvider {
         }]
     }
 
-    async fn execute(&self, name: &str, params: &Value, turn: &mut Turn) -> ToolResult<ToolOutput> {
+    async fn execute(&self, name: &str, params: &Value, _answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
         if name != SLEEP_TOOL_NAME {
             return Err(ToolError::UnknownTool(name.to_string()));
         }
@@ -109,13 +110,13 @@ mod tests {
         let mut turn = Turn::begun(AgentId::default(), String::new(), &mut state, crate::agent_state::AgentStateHandle::detached());
 
         let started = std::time::Instant::now();
-        let slept = tool.execute(SLEEP_TOOL_NAME, &Value::Null, &mut turn).await.unwrap();
+        let slept = tool.execute(SLEEP_TOOL_NAME, &Value::Null, None, &mut turn).await.unwrap();
         assert!(started.elapsed() >= Duration::from_millis(50), "the component's default");
         assert_eq!(slept.value["seconds"], 0.05);
 
-        let told = tool.execute(SLEEP_TOOL_NAME, &serde_json::json!({ "seconds": 0 }), &mut turn).await.unwrap();
+        let told = tool.execute(SLEEP_TOOL_NAME, &serde_json::json!({ "seconds": 0 }), None, &mut turn).await.unwrap();
         assert_eq!(told.value["seconds"], 0.0, "the call's");
-        let too_long = tool.execute(SLEEP_TOOL_NAME, &serde_json::json!({ "seconds": MAX_SECONDS + 1.0 }), &mut turn).await;
+        let too_long = tool.execute(SLEEP_TOOL_NAME, &serde_json::json!({ "seconds": MAX_SECONDS + 1.0 }), None, &mut turn).await;
         assert!(matches!(too_long, Err(ToolError::InvalidParameter(_))));
     }
 }
