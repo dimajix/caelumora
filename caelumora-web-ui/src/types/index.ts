@@ -229,6 +229,12 @@ export interface ToolResult {
   /** When the tool started and finished running; absent for a call that did not run. */
   started_at?: string;
   finished_at?: string;
+  /**
+   * The questions the call asked and how they were answered or declined (issue 165), for the
+   * record; absent for a call that asked nothing, for sensitive questions, and where the content is
+   * not shown.
+   */
+  answers?: Answers;
 }
 
 /** The state of a channel when an event stream connects (issue 34). */
@@ -241,6 +247,8 @@ export interface ChannelSnapshot {
   notes: PublishedNotes[];
   /** The approvals the channel's agents wait for (issue 172): the stream tells only of requests made while it listens. */
   pending_approvals?: ApprovalRequest[];
+  /** The questions the channel's agents wait for the answers to (issue 165), as for approvals. */
+  pending_questions?: QuestionRequest[];
 }
 
 /** A note as it stands (issue 17). */
@@ -405,6 +413,10 @@ export interface ActorEvent {
    * ended first (issue 148). Nobody is asked any longer.
    */
   ApprovalRequestWithdrawn?: { id: string };
+  /** An agent's call asks questions of users of the channel (issue 165). */
+  QuestionRequested?: QuestionRequest;
+  /** The agent no longer waits for the answers to questions `id`: answered, declined, or its turn ended. */
+  QuestionClosed?: { id: string; shown_to?: ActorId[] | null };
   FullResponseGenerated?: Message[];
   IntermediatePartialGenerated?: Message;
   IntermediateMessageGenerated?: Message;
@@ -536,6 +548,58 @@ export interface AddParticipantRequest {
 }
 
 export type ApprovalStatus = 'Approved' | 'Denied';
+
+/** An answer offered to a question (issue 165). */
+export interface Choice {
+  label: string;
+  description?: string;
+  /** The asker recommends it. */
+  recommended?: boolean;
+}
+
+/** One question: answered with text without `choices`, else by choosing - several with `multi_select` - or writing another answer. */
+export interface Question {
+  /** A short label, at most 12 characters. */
+  header: string;
+  question: string;
+  choices?: Choice[];
+  multi_select?: boolean;
+}
+
+/** Whom questions are put to; as the server sends them, every one found among the users: `{actor}`. */
+export type Addressee = 'owner' | { handle: string } | { actor: ActorId };
+
+/** What a call asks (issue 165). */
+export interface Questions {
+  questions: Question[];
+  ask: Addressee[];
+  /** The answers are for the tool alone: masked, shown to those asked alone. */
+  sensitive?: boolean;
+}
+
+/** The response to one question, in the order of the questions (`Response` on the server). */
+export type QuestionResponse =
+  | { kind: 'chosen'; chosen?: string[]; other?: string }
+  | { kind: 'text'; text: string }
+  | { kind: 'declined' };
+
+/** The answers to a call's questions, with the questions and who gave them. */
+export interface Answers {
+  questions: Questions;
+  answered_by: ActorId;
+  answered_by_name: string;
+  responses: QuestionResponse[];
+}
+
+/** Questions an agent's call waits for the answers to (issue 165). */
+export interface QuestionRequest {
+  id: string;
+  session_id: string;
+  channel_id: string;
+  agent_id: string;
+  tool_call: ToolCall;
+  questions: Questions;
+}
 
 export interface ApprovalRequest {
   id: string;

@@ -406,3 +406,11 @@ Each a step of its own, to be reviewed separately; 0 to 2 change no behaviour.
   questions in one call, and that a declined call means going on with what the user wrote. A
   handle that names no user of the channel is answered as invalid arguments at once, naming the
   handle. In the tables of components and built-in tools.
+- **2026-10-07** — Step 5 done: the web UI shows the open questions above the approvals
+  (`QuestionCard`) - from the snapshot, kept up by `QuestionRequested` and `QuestionClosed` -
+  with controls only for those asked: choices as buttons, one or several, the recommended one
+  marked, an "Other" field, a text field without choices, skipping a question, declining all;
+  sensitive questions masked and said to go to the tool alone. Answers are sent with
+  `api.answerQuestions`. The frame of every call (`ToolCallView`) shows the record of its
+  questions and answers. The response type is `QuestionResponse` in TypeScript, where `Response`
+  is fetch's. Type-checked and built; not tried against a running server with a model.

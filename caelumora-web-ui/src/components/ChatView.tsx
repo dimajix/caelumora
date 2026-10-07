@@ -8,6 +8,7 @@ import {
   IdCard,
   Languages,
   Lock,
+  MessageCircleQuestion,
   MessageSquare,
   NotebookPen,
   Pencil,
@@ -40,6 +41,8 @@ import type {
   Message,
   PlanStepEvent,
   PublishedNotes,
+  QuestionRequest,
+  QuestionResponse,
   TokenUsage,
   UserResponse,
 } from '../types';
@@ -82,6 +85,7 @@ import {ChannelDescription} from './ChannelDescription';
 import {DescriptionDialog} from './DescriptionDialog';
 import {AddParticipantDialog} from './AddParticipantDialog';
 import {ApprovalRuleOffer} from './ApprovalRuleOffer';
+import {QuestionCard} from './QuestionCard';
 import {approveEverything, approvingEverything, initialChoice, ruleOf, type RuleChoice} from '../approvalRules';
 import {actorKey, actorUuid, handleOf, mentionQueryAt} from '../mention';
 import {commandQueryAt, parseInput} from '../command';
@@ -216,6 +220,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   const [answeredByRule, setAnsweredByRule] = useState<Record<string, string>>({});
   // The rule each card is to add with its answer, by request id.
   const [ruleChoices, setRuleChoices] = useState<Record<string, RuleChoice | null>>({});
+  // The questions the agents' calls wait for the answers to (issue 165),
+  // and those this user answered, until the agent closes them.
+  const [pendingQuestions, setPendingQuestions] = useState<QuestionRequest[]>([]);
+  const [answeredQuestions, setAnsweredQuestions] = useState<string[]>([]);
   // This user's own rules (issue 13) - for the brave mode, shown while it
   // lasts; they follow the global stream.
   const [myRules, setMyRules] = useState<ApprovalRule[]>([]);
@@ -511,6 +519,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
         setUsage(Object.fromEntries(snapshot.channel.members.flatMap(m => m.usage ? [[actorKey(m.id), m.usage]] : [])));
         setNotes(snapshot.notes ?? []);
         setPendingApprovals(snapshot.pending_approvals ?? []);
+        setPendingQuestions(snapshot.pending_questions ?? []);
         setHasMore(snapshot.has_more);
         // The answers under way as the snapshot found them (issue 240): what
         // streamed before is not kept, what follows streams in.
@@ -626,6 +635,15 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
             setPendingApprovals(prev => prev.filter(req => req.id !== ended));
             setAnsweredApprovals(prev => prev.filter(id => id !== ended));
           }
+        } else if (actorEvent.QuestionRequested) {
+          // Asked again by an agent that resumed its turn, or already in the
+          // snapshot: shown once.
+          const requested = actorEvent.QuestionRequested;
+          setPendingQuestions(prev => prev.some(q => q.id === requested.id) ? prev : [...prev, requested]);
+        } else if (actorEvent.QuestionClosed) {
+          const closed = actorEvent.QuestionClosed.id;
+          setPendingQuestions(prev => prev.filter(q => q.id !== closed));
+          setAnsweredQuestions(prev => prev.filter(id => id !== closed));
         } else if (actorEvent.FullResponseGenerated) {
           //setMessages(prev => [...prev, ...actorEvent.FullResponseGenerated!]);
           answerEnded();
@@ -909,6 +927,20 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
     }
   };
 
+  // Only those questions are put to answer them (issue 165); everybody else
+  // they reach sees what the agent waits for.
+  const me = actorKey({User: user.id});
+  const askedOf = (request: QuestionRequest) =>
+    request.questions.ask.flatMap(a => typeof a === 'object' && 'actor' in a ? [actorKey(a.actor)] : []);
+  const answerQuestions = async (request: QuestionRequest, responses: QuestionResponse[] | null) => {
+    try {
+      await api.answerQuestions(sessionId, channelId, request.id, responses);
+      setAnsweredQuestions(prev => [...prev, request.id]);
+    } catch (e) {
+      reportError(responses ? 'Failed to answer the questions' : 'Failed to decline the questions', e);
+    }
+  };
+
   // Only who may approve the agent's calls is asked (issue 14); everybody
   // else sees what it waits for.
   const mayApprove = (approval: ApprovalRequest) =>
@@ -1178,6 +1210,24 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
             <button onClick={() => void stopBraveMode(braveMode)} className="rounded-sm border border-amber-400 px-2 py-0.5 hover:bg-amber-200 dark:hover:bg-amber-800">
               Stop
             </button>
+          </div>
+        )}
+        {pendingQuestions.length > 0 && (
+          <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border-t border-blue-200 dark:border-blue-900/50 space-y-4">
+            <h4 className="text-sm font-semibold text-blue-800 dark:text-blue-200 flex items-center gap-2">
+              <MessageCircleQuestion size={16} />
+              Questions of an agent
+            </h4>
+            {pendingQuestions.map(request => (
+              <QuestionCard
+                key={request.id}
+                request={request}
+                asked={askedOf(request).includes(me)}
+                askedNames={askedOf(request).map(key => members.find(m => actorKey(m.id) === key)?.name ?? key)}
+                answered={answeredQuestions.includes(request.id)}
+                onAnswer={responses => answerQuestions(request, responses)}
+              />
+            ))}
           </div>
         )}
         {pendingApprovals.length > 0 && (

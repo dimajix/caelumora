@@ -49,7 +49,7 @@ The UI shows what the server says and repeats no rule of its own:
 | `src/panelWidth.ts` | The widths of the panels beside the chat, kept in browser storage |
 | `src/moderator.ts`, `src/confidentiality.ts` | Labels and explanations of responder policies and classifications |
 | `src/App.tsx` | Login state, keep-alive, the error banner, the layout |
-| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `ToolCallView`, `MarkdownMessage`, `ContextPanel`, `HistoryPanel`, `ToolsPanel`, `PrivateNotesPanel`, `ToolSetList`, `DeletedList`, `NotesList`, `TokenGauge`, `HoverCard`, `ActionMenu`, `ResizeHandle`, `UsageStats`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ApprovalRulesDialog`, `ErrorBanner` |
+| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `ToolCallView`, `QuestionCard`, `MarkdownMessage`, `ContextPanel`, `HistoryPanel`, `ToolsPanel`, `PrivateNotesPanel`, `ToolSetList`, `DeletedList`, `NotesList`, `TokenGauge`, `HoverCard`, `ActionMenu`, `ResizeHandle`, `UsageStats`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ApprovalRulesDialog`, `ErrorBanner` |
 
 ## Talking to the server
 
@@ -163,7 +163,9 @@ else who may read it - the session's owner, say - is shown its history and no in
     agent stamps on each call, never by the tool's name. `ToolCallView` draws the frame every call
     has - the tool, who sees it, its status and duration - and leaves what is inside to the handler
     of the call's presentation (`PRESENTATIONS`); a call without one, or with one this client does
-    not know, gets the default handler: its arguments and its result as they are.
+    not know, gets the default handler: its arguments and its result as they are. Where a result
+    keeps the record of the questions its call asked (`answers`, issue 165), the frame shows each
+    question with its answer, and who answered or declined.
 *   **While an agent answers**, its partial message is shown as it streams, its reasoning
     included: folded under "Thinking" until the answer begins (issue 216). Several agents answering
     at once each have an answer of their own, in the order they began, and a plan step of their own
@@ -214,6 +216,15 @@ else who may read it - the session's owner, say - is shown its history and no in
     channel, this session or everywhere, until taken back or for an hour or a day; it is added
     after the answer, with the answer's decision. A request a rule of this user's answered says so
     ("Answered by your rule"), from their own answer as their actor shows it.
+*   **Questions.** The questions an agent's call waits for the answers to (issue 165) are shown to
+    everybody the server sends them to, above the approvals (`QuestionCard`): each question with
+    its header, its choices as buttons - one or several to choose, the recommended one marked - an
+    "Other" field beside them, or a text field without choices. Only the users they are put to get
+    the controls, everybody else whom they wait for; a question may be skipped, the whole of them
+    declined. Sensitive questions mask the input and say that the answers go to the tool alone;
+    the others that they go to the agent, and that writing a message instead declines them. Sent
+    with `POST …/questions/{qid}`, a card says "Answered" until the agent closes the questions
+    (`QuestionClosed`); the open questions come with the stream's snapshot.
 *   **Brave mode.** "Approve everything in this session for an hour" adds a rule that allows every
     tool call there for an hour (`approvalRules.ts`); while one of this user's rules allows
     everything in the channel, a bar says so, until when, and stops it. The user's rules follow

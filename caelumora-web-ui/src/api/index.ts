@@ -22,6 +22,7 @@ import type {
   Compartment,
   ProfileRequest,
   ProfileResponse,
+  QuestionResponse,
   UserResponse
 } from '../types';
 import type {Classification} from '../confidentiality';
@@ -501,6 +502,17 @@ export const api = {
     const res = await request(`/sessions/${sessionId}`);
     await ensureOk(res, 'Failed to fetch session');
     return res.json();
+  },
+
+  /** Answers the questions `questionId` of an agent's call (issue 165) - one response per question - or, with `null`, declines them. */
+  async answerQuestions(sessionId: string, channelId: string, questionId: string, responses: QuestionResponse[] | null): Promise<void> {
+    const payload = responses === null ? { declined: true } : { responses };
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/questions/${questionId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    await ensureOk(res, 'Failed to answer the questions');
   },
 
   async respondToApproval(sessionId: string, channelId: string, approvalId: string, agentId: string, approved: boolean): Promise<void> {

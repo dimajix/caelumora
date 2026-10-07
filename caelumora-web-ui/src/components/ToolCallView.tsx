@@ -1,10 +1,12 @@
 // One tool call as the chat shows it - its tool, who sees it, its status, and its content as its
 // presentation says (issue 165). The frame is the same for every call; what is inside it is the
-// handler's of the call's presentation, the default one for every call that declares none.
+// handler's of the call's presentation, the default one for every call that declares none. The
+// frame also shows the questions a call asked and how they were answered, where its result keeps
+// their record.
 
 import React from 'react';
-import {CheckCircle2, EyeOff, Terminal, Wrench, XCircle} from 'lucide-react';
-import type {ToolCall, ToolPresentation, ToolResult, ToolResultStatus, ToolVisibility} from '../types';
+import {CheckCircle2, EyeOff, MessageCircleQuestion, Terminal, Wrench, XCircle} from 'lucide-react';
+import type {Answers, QuestionResponse, ToolCall, ToolPresentation, ToolResult, ToolResultStatus, ToolVisibility} from '../types';
 import {formatArguments, formatTimestamp} from '../messages';
 
 const TOOL_STATUS_LABELS: Record<Exclude<ToolResultStatus, 'ok'>, string> = {
@@ -52,6 +54,36 @@ function toolResultText(result: ToolResult): string {
   }
   return result.content;
 }
+
+/** A response as the record shows it. */
+function responseText(response: QuestionResponse | undefined): string {
+  switch (response?.kind) {
+    case 'text': return response.text;
+    case 'chosen': return [...(response.chosen ?? []), ...(response.other ? [response.other] : [])].join(', ');
+    default: return 'declined';
+  }
+}
+
+/** The record of the questions a call asked and of their answers (issue 165). */
+const QuestionsRecord: React.FC<{answers: Answers}> = ({answers}) => {
+  const declined = answers.responses.every(r => r.kind === 'declined');
+  return (
+    <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700 space-y-1">
+      <div className="text-[11px] uppercase opacity-50 flex items-center gap-1">
+        <MessageCircleQuestion size={11} />
+        {declined ? `Declined by ${answers.answered_by_name}` : `Answered by ${answers.answered_by_name}`}
+      </div>
+      {answers.questions.questions.map((question, index) => (
+        <div key={index} className="text-xs">
+          <span className="opacity-70">{question.question}</span>{' '}
+          <span className={answers.responses[index]?.kind === 'declined' ? 'italic opacity-60' : 'font-medium'}>
+            {responseText(answers.responses[index])}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+};
 
 /** What a presentation's handler is given: the call, and its result once it has one. */
 export interface ToolCallContentProps {
@@ -144,6 +176,7 @@ export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, abandon
       </div>
       <div className="p-2">
         <Content call={call} result={result} />
+        {result?.answers && <QuestionsRecord answers={result.answers} />}
       </div>
     </div>
   );
