@@ -58,7 +58,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [139](139-mcp-result-classification.md) | open | An MCP server cannot classify its results one by one, only be configured with one classification for all of them. |
 | [180](180-outbound-flow-unchecked.md) | open | What an agent writes into the arguments of a remote MCP tool leaves the system with no confidentiality rule asked; only what comes back is checked. |
 | [226](226-concurrent-tool-calls.md) | open | The tool calls of one step run one after the other, because every tool holds the turn while it runs, so a step of several slow calls takes the sum of their durations. |
-| [246](246-mcp-tool-hints.md) | open | An MCP server's hints on its tools - read-only, destructive - are ignored, so all tools of a server need approval alike. |
 | [247](247-tool-own-matcher.md) | open | A rule on tool calls can match an argument that is a language - a shell command, SQL - only by its text, which a chained command slips past. |
 
 ## User interaction

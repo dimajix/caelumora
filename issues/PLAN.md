@@ -46,7 +46,6 @@ Worth doing soon, in any order, alongside the blocks of section B.
 | [223](223-full-inbox-drops-events.md) | M | Catch up what was said from the history; never drop a request or an approval. | Silent loss - and exactly the agents with long turns are hit, which working on files will produce. A dropped change to a message (234) is lost for good: catching up finds missing messages, not missed changes. |
 | [178](178-scoped-lookup-by-name.md) | S now, M whole | Now: turn the scope check round and match the personality. The name space with shadowing and lifetime later, with 221. | The check finds another user's agent today; that part is a defect, not a feature. |
 | [07](07-session-deletion-audit.md) | S | `retention.purge_deleted_after` and the purge task. | Policy decided, and nothing blocks it: soft deletion (164) and `ActionType::Purge` exist. |
-| [246](246-mcp-tool-hints.md) | S | Decide between its three options (`requires_approval: hints`, hints that only tighten, both), then set `Tool::requires_approval` per tool from the annotations. | Every MCP tool asks by default (150), the reading ones too - approval fatigue. |
 | [248](248-validated-text-fields.md) | M | `Text<R: TextRule>` as the issue recommends; the checks done by writers today move into it, the unchecked fields get a rule. | A refactoring without behaviour change - best before W1 and 221 add more fields that people write. |
 
 Decisions that cost an hour and close an issue are listed under [D](#d-questionable-issues).
@@ -103,7 +102,6 @@ at-least-once made visible, nothing more) → **W1 with 208** → the refactorin
 | No. | Size | Note |
 |---|---|---|
 | [165](165-ask-the-user-tool.md) | L | The design is nearly complete. Its second half - presentation handlers in the web UI - is infrastructure the workspace needs (diffs, attachments). |
-| [246](246-mcp-tool-hints.md) | S | See A: the server's hints set a tool's default within what the configuration allows. |
 
 165 has to fit the approval rules that exist - whether an answer *is* an approval, and whether a
 person's rules may answer a question, are its to decide - and should take 14's rule (who is
@@ -185,7 +183,7 @@ a decision recorded in the issue file.
 Each milestone leaves the system usable; decisions come before the code that depends on them.
 
 1.  **Clear the table.** The decisions of section D (19, 18, 21, 05, 12, 57, 59, 173 - no code),
-    and the small ones: 218, 178 (the defect), 223, 246; 248 as a refactoring of its own.
+    and the small ones: 218, 178 (the defect), 223; 248 as a refactoring of its own.
 2.  **A team can log in, and a session can change.** 25 with the remainders of 10 and 142; 07,
     the administrator role of 125; 221; 227.
 3.  **Agents ask.** 165 with the presentation handlers.
@@ -220,9 +218,9 @@ The plan stands on assumptions the maintainer should confirm or correct:
 
 | Section | Issues |
 |---|---|
-| A - small | 07, 178, 218, 223, 246, 248 |
+| A - small | 07, 178, 218, 223, 248 |
 | B1 - workspace | 20 (part), 169, 208, new W1-W5 |
-| B2 - asking and approving | 165, 246 |
+| B2 - asking and approving | 165 |
 | B3 - context and memory | 16, 22, 55, 58, 65, 166, 169 |
 | B4 - tools | 126, 180, 226 |
 | B5 - sessions and team | 07, 10, 25, 140, 142, 221, 227, 125 (part) |

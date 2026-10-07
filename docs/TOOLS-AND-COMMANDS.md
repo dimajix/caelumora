@@ -27,7 +27,8 @@ The trait has these methods:
 A `Tool` declares its `name`, `description` and `parameters`, whether it `requires_approval`, its
 `visibility`, and optionally the `classification` of its results. Approval and classification are
 decided per tool by its provider, not by the personality; `mcp_tool` takes them from its parameters
-`requires_approval` and `classification` for every tool of its server.
+`requires_approval` - with what the server says of each tool, if so configured - and
+`classification`.
 
 `execute` answers with a `ToolOutput`: the tool's value and, if the tool classifies it - by its
 input, by what it read, by the source it drew on - its classification. A tool that does not classify
@@ -153,9 +154,9 @@ over the Streamable HTTP transport:
 *   **Credentials.** `auth.secret` names a secret, resolved through the secret chain (see
     [SECURITY.md](SECURITY.md)); it is never a literal credential.
 *   **Parameters.** `url` (required), `auth` (optional; only `bearer` so far), `timeout_secs`
-    (default 10, for discovery and for every call), `requires_approval` (default `true`, for every
-    tool of the server; see [What needs approval](#what-needs-approval)), `classification` and
-    `description`.
+    (default 10, for discovery and for every call), `requires_approval` (`true`, the default,
+    `false` or `"unless_read_only"`; see [What needs approval](#what-needs-approval)),
+    `classification` and `description`.
 *   **Calls.** Each call opens a connection of its own. The remote structured content is the result
     if there is one, else the joined text; a remote error is a failed call.
 *   **Interrupted calls.** An interrupted call (issue 161) drops its connection. rmcp then closes
@@ -212,8 +213,15 @@ marker into their own message, and models believe it. A call runs under the agen
 marker gains the agent nothing it could not do anyway - but it can make the agent do it. What needs
 approval follows from that:
 
-*   **A tool that acts outside** needs it. `mcp_tool` requires approval unless its configuration
-    says `requires_approval: false`, which fits a server that only reads.
+*   **A tool that acts outside** needs it. `mcp_tool` requires approval for every tool of its
+    server unless its configuration says otherwise: `requires_approval: false` for none, which fits
+    a server that only reads, or `"unless_read_only"` for all but the tools the server marks as
+    read-only (`readOnlyHint`, issue [246](../issues/246-mcp-tool-hints.md)). A tool without that
+    mark counts as one that changes something, as MCP says. The mark is the server's word: it is
+    trusted only where the configuration says so, and it relaxes nothing beyond that - `false`
+    stays none, `true` stays all. Read-only does not mean that nothing leaves the system: the
+    arguments of a search reach the server all the same (issue
+    [180](../issues/180-outbound-flow-unchecked.md)).
 *   **Releasing** a note, a private note or something remembered to a wider circle needs it
     (`reclassify_…`, issue 133).
 *   **What stays in the conversation** needs none: reading (`read_notes`, `read_history`), within
@@ -429,7 +437,7 @@ A command answers the issuer alone (`/help`) or the whole channel (`/wakeup`).
 | `bye` | `stop_tool` | - | no | `SHOWN` | Ends the turn: the agent says good-bye and goes to sleep. |
 | `silence` | `stop_tool` | - | no | `SHOWN` | Ends the turn without an answer; the agent stays idle. |
 | `create_plan` | `create_plan_tool` | `summary`, `steps` (each with `description`) | yes | `SHOWN` | Submits a multi-step plan; a plan in progress is extended, not replaced. |
-| `{id}__{name}` | `mcp_tool` | as the server declares | per `requires_approval`, yes by default | `SHOWN` | A tool of a remote MCP server. |
+| `{id}__{name}` | `mcp_tool` | as the server declares | per `requires_approval`, yes by default; with `"unless_read_only"` not for a tool the server marks read-only | `SHOWN` | A tool of a remote MCP server. |
 | `note` | `notes` | `text` | no | `SHOWN` | Notes something in the channel, visible to every participant. |
 | `revoke_note` | `notes` | `id` | no | `SHOWN` | Revokes one of the agent's own notes. |
 | `read_notes` | `notes` | `channel` (optional) | no | `SHOWN` | Reads the notes of another channel, or of every readable channel. |

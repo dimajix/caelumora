@@ -39,9 +39,14 @@ impl EchoServer {
         }
     }
 
-    #[tool(description = "Echoes the provided message back")]
+    #[tool(description = "Echoes the provided message back", annotations(read_only_hint = true))]
     async fn echo(&self, Parameters(EchoArgs { message }): Parameters<EchoArgs>) -> Result<CallToolResult, McpError> {
         Ok(CallToolResult::success(vec![ContentBlock::text(message)]))
+    }
+
+    #[tool(description = "Forgets every message echoed so far", annotations(destructive_hint = true))]
+    async fn forget(&self) -> Result<CallToolResult, McpError> {
+        Ok(CallToolResult::success(vec![ContentBlock::text("forgotten")]))
     }
 }
 
@@ -99,9 +104,10 @@ async fn discovers_and_calls_echo_tool_over_streamable_http() {
     let provider = Arc::clone(&providers[0].facet);
 
     let tools = provider.tools();
-    assert_eq!(tools.len(), 1);
-    assert_eq!(tools[0].name, "test-echo__echo");
-    assert!(tools[0].requires_approval, "approval unless configured otherwise");
+    let mut names: Vec<_> = tools.iter().map(|t| t.name.as_str()).collect();
+    names.sort();
+    assert_eq!(names, ["test-echo__echo", "test-echo__forget"]);
+    assert!(tools.iter().all(|t| t.requires_approval), "approval unless configured otherwise, read-only or not");
     assert_eq!(provider.description(), "Echo messages back, for testing.", "what the server says of itself");
     assert!(provider.unavailable().is_none());
 
@@ -134,6 +140,20 @@ async fn a_configured_approval_and_classification_reach_every_discovered_tool() 
     assert!(tools.iter().all(|t| !t.requires_approval), "no tool of this server needs approval: {tools:?}");
     let confidential = caelumora_model::confidentiality::Classification::general(caelumora_model::confidentiality::Confidentiality::Confidential);
     assert!(tools.iter().all(|t| t.classification.as_ref() == Some(&confidential)), "and so does the classification: {tools:?}");
+}
+
+#[tokio::test]
+async fn unless_read_only_the_tools_the_server_says_only_read_need_no_approval() {
+    let (addr, _server) = start_test_server().await;
+    let url = format!("http://{}/mcp", addr);
+
+    let container = build_container(json!({ "endpoint": { "url": url }, "requires_approval": "unless_read_only" })).await;
+    let provider = Arc::clone(&container.get_all::<dyn ToolProvider>(None)[0].facet);
+
+    let tools = provider.tools();
+    let asks = |name: &str| tools.iter().find(|t| t.name == name).map(|t| t.requires_approval);
+    assert_eq!(asks("test-echo__echo"), Some(false), "read-only, as the server says");
+    assert_eq!(asks("test-echo__forget"), Some(true), "it changes something");
 }
 
 #[tokio::test]
@@ -188,8 +208,8 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
 
     for provider in [&provider_a, &provider_b] {
         let tools = provider.tools();
-        assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0].name, "shared-echo__echo");
+        assert_eq!(tools.len(), 2);
+        assert!(tools.iter().all(|t| t.name.starts_with("shared-echo__")), "{tools:?}");
     }
 }
 
