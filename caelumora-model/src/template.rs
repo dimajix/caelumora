@@ -9,9 +9,9 @@ use crate::approval::{ApprovalRule, ApprovalStrategy, Approver, ApproverId};
 use crate::channel::{participant_attributes, Channel, Participant};
 use crate::component::ComponentConfig;
 use crate::confidentiality::Classification;
-use crate::language::Language;
+use crate::value::language::Language;
 use crate::scope::Scope::{GlobalScope, SessionScope, UserScope};
-use crate::name::{Name, ScopedName};
+use crate::value::name::{Name, ScopedName};
 use crate::scope::Scope;
 use crate::privacy::PrivacyConfig;
 use crate::session::{Session, SessionId};
@@ -357,8 +357,8 @@ mod tests {
     #[test]
     fn a_channel_is_held_in_its_templates_language_before_the_one_its_owner_prefers() {
         let mut template = template();
-        template.channels[0].language = Some(Language::parse("de").unwrap());
-        let preferred = Language::parse("fr").unwrap();
+        template.channels[0].language = Some(Language::new("de").unwrap());
+        let preferred = Language::new("fr").unwrap();
         let (id, owner) = (SessionId::new(), UserId::new());
         let (_, channels) = template.build(id, owner, "s".to_string(), Some(&preferred), resolved(&template, id, owner)).unwrap();
         assert_eq!(channels[0].language.as_ref().map(Language::as_str), Some("de"), "the template's");

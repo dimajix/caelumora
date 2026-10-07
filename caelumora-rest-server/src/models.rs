@@ -4,8 +4,8 @@ use chrono::{DateTime, Utc};
 use caelumora_model::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
 use caelumora_model::confidentiality::{Classification, Compartment};
 use caelumora_model::message::{Message, TokenUsage};
-use caelumora_model::language::Language;
-use caelumora_model::name::Name;
+use caelumora_model::value::language::Language;
+use caelumora_model::value::name::Name;
 use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::session::{ChannelId, SessionId};
@@ -985,7 +985,7 @@ mod tests {
     #[test]
     fn a_language_is_a_tag_checked_as_the_request_is_read() {
         let request: ProfileRequest = serde_json::from_str(r#"{"introduction": null, "preferred_language": "de_ch"}"#).unwrap();
-        assert_eq!(request.preferred_language, Some(Language::parse("de-CH").unwrap()));
+        assert_eq!(request.preferred_language, Some(Language::new("de-CH").unwrap()));
         assert!(serde_json::from_str::<ProfileRequest>(r#"{"preferred_language": "Deutsch"}"#).is_err(), "no tag");
         let request: CreateChannelRequest = serde_json::from_str(r#"{"name": "side"}"#).unwrap();
         assert_eq!(request.language, None, "the preferred one when left out");

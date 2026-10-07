@@ -825,7 +825,7 @@ mod tests {
         let store = Arc::new(store(dir.path()));
         let system = SecurityContext::system();
         let personality = Personality {
-            id: PersonalityId::new(), name: crate::name::ScopedName::new("plain", Default::default()).unwrap(),
+            id: PersonalityId::new(), name: crate::value::name::ScopedName::new("plain", Default::default()).unwrap(),
             kind: Default::default(), roles: None, description: String::new(), introduction: None,
             components: Default::default(), security_attributes: Default::default(), reasoning_visibility: Default::default(),
             deleted: None,
@@ -866,7 +866,7 @@ mod tests {
             approval_rules: Vec::new(),
             id: ChannelId(Uuid::new_v4()),
             session_id,
-            name: crate::name::Name::new("general").unwrap(),
+            name: crate::value::name::Name::new("general").unwrap(),
             components: crate::channel::moderation_components(None, Some("broadcast_policy")),
             classification: crate::confidentiality::Classification::CHANNEL_DEFAULT,
             language: None,

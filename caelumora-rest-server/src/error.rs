@@ -386,7 +386,7 @@ mod tests {
         assert_eq!(answer(not_found("session"), Subject::Session), (404, "session_not_found"));
         assert_eq!(answer(not_found("session_template"), Subject::Session), (404, "template_not_found"));
         assert_eq!(answer(anyhow::Error::new(SessionError::ChannelNotFound { session, channel }), Subject::Session), (404, "channel_not_found"));
-        assert_eq!(answer(anyhow::Error::new(SessionError::DuplicateChannelName { session, name: caelumora_model::name::Name::new("x").unwrap() }), Subject::Session), (409, "channel_exists"));
+        assert_eq!(answer(anyhow::Error::new(SessionError::DuplicateChannelName { session, name: caelumora_model::value::name::Name::new("x").unwrap() }), Subject::Session), (409, "channel_exists"));
         assert_eq!(answer(anyhow::Error::new(ChannelError::AlreadyParticipant { participant: someone, channel }), Subject::Participant), (409, "already_participant"));
         assert_eq!(answer(anyhow::Error::new(ChannelError::StillLeaving { participant: someone, channel }), Subject::Participant), (409, "still_leaving"));
         assert_eq!(answer(anyhow::Error::new(ChannelError::ParticipantGone { participant: someone, channel }), Subject::Participant), (404, "participant_not_found"));

@@ -561,7 +561,7 @@ impl Actor for UserActor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::name::Name;
+    use caelumora_model::value::name::Name;
     use caelumora_model::command::default_commands;
     use crate::command::CommandExecutor;
     use crate::runtime::{ChannelRuntime, RuntimeManager};

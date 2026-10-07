@@ -3,21 +3,14 @@
 //! one, and the agents of the channel are told which - nothing is
 //! translated.
 
-use serde::{Deserialize, Serialize};
-use std::fmt;
+use super::ValueError;
 
 /// The longest language tag, in characters: longer than any a user would
 /// choose, short enough for a prompt.
 pub const MAX_LANGUAGE_CHARS: usize = 35;
 
-/// Why a text is no language tag. The messages are meant for users.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum LanguageError {
-    #[error("a language must be a tag such as \"de\" or \"en-GB\"")]
-    Malformed,
-    #[error("a language tag must not be longer than {MAX_LANGUAGE_CHARS} characters")]
-    TooLong,
-}
+/// What a language tag looks like, in the error for one that does not.
+const EXPECTED: &str = "a tag such as \"de\" or \"en-GB\"";
 
 /// A language as a BCP 47 tag: a primary language of two or three letters,
 /// followed by subtags of one to eight letters or digits - a script, a
@@ -26,30 +19,29 @@ pub enum LanguageError {
 /// incomplete. Kept in the usual case - `de-CH`, `zh-Hant-TW`, `sr-Latn` -
 /// so that one language is one tag; `_` is taken as `-`. Written down as a
 /// string, and checked when read.
-#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(try_from = "String", into = "String")]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Language(String);
 
 impl Language {
     /// `tag` as a language, trimmed and in the usual case.
     ///
     /// # Errors
-    /// `LanguageError` if it is longer than `MAX_LANGUAGE_CHARS` or no tag
-    /// of the form above.
-    pub fn parse(tag: impl AsRef<str>) -> Result<Self, LanguageError> {
+    /// `ValueError` if it is longer than `MAX_LANGUAGE_CHARS` or no tag of
+    /// the form above.
+    pub fn new(tag: impl AsRef<str>) -> Result<Self, ValueError> {
         let tag = tag.as_ref().trim();
         if tag.chars().count() > MAX_LANGUAGE_CHARS {
-            return Err(LanguageError::TooLong);
+            return Err(ValueError::TooLong { field: Self::FIELD, max_chars: MAX_LANGUAGE_CHARS });
         }
         let mut subtags = tag.split(['-', '_']);
         let primary = subtags.next().unwrap_or_default();
         if !(2..=3).contains(&primary.len()) || !primary.chars().all(|c| c.is_ascii_alphabetic()) {
-            return Err(LanguageError::Malformed);
+            return Err(ValueError::Malformed { field: Self::FIELD, expected: EXPECTED });
         }
         let mut canonical = primary.to_ascii_lowercase();
         for subtag in subtags {
             if !(1..=8).contains(&subtag.len()) || !subtag.chars().all(|c| c.is_ascii_alphanumeric()) {
-                return Err(LanguageError::Malformed);
+                return Err(ValueError::Malformed { field: Self::FIELD, expected: EXPECTED });
             }
             canonical.push('-');
             canonical.push_str(&case_of(subtag));
@@ -142,43 +134,14 @@ fn case_of(subtag: &str) -> String {
     }
 }
 
-impl TryFrom<String> for Language {
-    type Error = LanguageError;
-    fn try_from(tag: String) -> Result<Self, LanguageError> {
-        Language::parse(tag)
-    }
-}
-
-impl From<Language> for String {
-    fn from(language: Language) -> Self {
-        language.0
-    }
-}
-
-impl AsRef<str> for Language {
-    fn as_ref(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for Language {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl fmt::Debug for Language {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(&self.0, f)
-    }
-}
+impl_value!([] Language, "language");
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn tag(text: &str) -> String {
-        Language::parse(text).expect("a language").to_string()
+        Language::new(text).expect("a language").to_string()
     }
 
     #[test]
@@ -194,27 +157,29 @@ mod tests {
     #[test]
     fn only_a_tag_is_a_language() {
         for text in ["", "d", "deut", "de-", "de--CH", "de CH", "dé", "1de", "de-toolongsubtag"] {
-            assert_eq!(Language::parse(text), Err(LanguageError::Malformed), "{text:?}");
+            assert_eq!(Language::new(text), Err(ValueError::Malformed { field: "language", expected: EXPECTED }), "{text:?}");
         }
-        assert_eq!(Language::parse(format!("de{}", "-a".repeat(MAX_LANGUAGE_CHARS))), Err(LanguageError::TooLong));
+        assert_eq!(Language::new(format!("de{}", "-a".repeat(MAX_LANGUAGE_CHARS))), Err(ValueError::TooLong { field: "language", max_chars: MAX_LANGUAGE_CHARS }));
+        assert_eq!(Language::new("Deutsch").unwrap_err().to_string(), "the language must be a tag such as \"de\" or \"en-GB\"", "naming the field");
+        assert_eq!(Language::optional(Some(" ")), Ok(None), "blank is none");
     }
 
     #[test]
     fn a_language_is_named_by_its_tag_or_what_is_left_of_it() {
-        let names = |text: &str| Language::parse(text).unwrap().names();
+        let names = |text: &str| Language::new(text).unwrap().names();
         assert_eq!(names("de"), Some(("German", "Deutsch")));
         assert_eq!(names("de-CH-1996"), Some(("German", "Deutsch")), "without its region and variant");
         assert_eq!(names("zh-Hant-TW"), Some(("Traditional Chinese", "繁體中文")), "as far as the table knows it");
         assert_eq!(names("pt-BR"), Some(("Brazilian Portuguese", "português do Brasil")));
         assert_eq!(names("tlh"), None, "a language the table does not know");
-        assert!(NAMES.iter().all(|(tag, ..)| Language::parse(tag).is_ok_and(|language| language.as_str() == *tag)), "every tag of the table as a language keeps it");
+        assert!(NAMES.iter().all(|(tag, ..)| Language::new(tag).is_ok_and(|language| language.as_str() == *tag)), "every tag of the table as a language keeps it");
     }
 
     #[test]
     fn a_language_is_written_as_its_tag_and_checked_when_read() {
-        let language = Language::parse("en-gb").unwrap();
+        let language = Language::new("en-gb").unwrap();
         assert_eq!(serde_json::to_string(&language).unwrap(), "\"en-GB\"");
-        assert_eq!(serde_json::from_str::<Language>("\"pt_br\"").unwrap(), Language::parse("pt-BR").unwrap());
+        assert_eq!(serde_json::from_str::<Language>("\"pt_br\"").unwrap(), Language::new("pt-BR").unwrap());
         assert!(serde_json::from_str::<Language>("\"Deutsch\"").is_err());
     }
 }

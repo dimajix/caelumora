@@ -89,7 +89,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 
 | No. | Status | Issue |
 |---|---|---|
-| [248](248-validated-text-fields.md) | open | Text fields are `String`s checked by whoever writes them, if at all, so a field can hold what its rules forbid and a new writer has to remember the check. |
+| [248](248-validated-text-fields.md) | in progress | Text fields are `String`s checked by whoever writes them, if at all, so a field can hold what its rules forbid and a new writer has to remember the check. |
 
 ## Open architecture questions
 

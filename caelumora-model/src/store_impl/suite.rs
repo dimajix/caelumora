@@ -9,7 +9,7 @@ use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::{ComponentDescriptor, StoredComponent};
 use crate::confidentiality::{Classification, Visibility};
 use crate::external_agent::ConversationId;
-use crate::name::{Name, ScopedName};
+use crate::value::name::{Name, ScopedName};
 use crate::scope::Scope;
 use crate::security::SecurityContext;
 use crate::session::{Session, SessionId};

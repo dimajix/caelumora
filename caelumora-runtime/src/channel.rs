@@ -1,4 +1,4 @@
-use caelumora_model::name::Name;
+use caelumora_model::value::name::Name;
 use crate::actor::Actor;
 use crate::actor_impl::agent::AgentActor;
 use crate::actor_impl::approval::ApproverActor;
@@ -18,7 +18,7 @@ use caelumora_model::channel::{Channel, ChannelId, ChannelState, HistoryAccess, 
 use crate::controller::{AgentController, ChannelController, ControllerManager, UserController};
 use caelumora_model::agent::{Personality, PersonalityKind};
 use caelumora_model::approval::{ApprovalRule, Approver};
-use caelumora_model::language::Language;
+use caelumora_model::value::language::Language;
 use caelumora_model::confidentiality::{user_roles, Classification};
 use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::message::{Message, MessageId};
@@ -1359,7 +1359,7 @@ fn visible_from(start: HistoryStart, history: Vec<Message>) -> Vec<Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::name::{Name, ScopedName};
+    use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::store::EntityStore;
     use crate::command::CommandExecutor;
     use crate::command_impl::help_command::HelpCommandProvider;

@@ -1,7 +1,7 @@
 use crate::actor::ActorId;
 use crate::approval::{ApprovalRule, ApprovalRuleId, RuleError, MAX_PERSONAL_RULES};
 use chrono::{DateTime, Utc};
-use crate::language::Language;
+use crate::value::language::Language;
 use crate::security::{SecurityAttributes, Secured};
 use crate::text::{TextError, TextRule};
 use serde::{Deserialize, Serialize};
@@ -202,7 +202,7 @@ mod tests {
 
     #[test]
     fn a_preferred_language_is_kept_with_the_profile() {
-        let profile = UserProfile { preferred_language: Some(Language::parse("de").unwrap()), ..UserProfile::new(UserId::new(), None) };
+        let profile = UserProfile { preferred_language: Some(Language::new("de").unwrap()), ..UserProfile::new(UserId::new(), None) };
         let written = serde_json::to_value(&profile).unwrap();
         assert_eq!(written["preferred_language"], "de");
         let read: UserProfile = serde_json::from_value(written).unwrap();

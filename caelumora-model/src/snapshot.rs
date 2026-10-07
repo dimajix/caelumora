@@ -21,7 +21,7 @@ use crate::actor::{ActorId, ActorState};
 use crate::agent::PersonalityKind;
 use crate::approval::{ApprovalRequest, ApprovalRule};
 use crate::confidentiality::Classification;
-use crate::language::Language;
+use crate::value::language::Language;
 use crate::digest::Digest;
 use crate::message::TokenUsage;
 use crate::note::Note;

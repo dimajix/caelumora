@@ -39,7 +39,7 @@ Every entity has a name, and the fields that mean something for it (issue 177):
 *   What is offered for choosing - a personality, a session template - has a `description` as well,
     a catalogue line.
 
-The type of a name says what it is for (`caelumora_model::name`):
+The type of a name says what it is for (`caelumora_model::value::name`):
 
 *   **`Name`** - a name something is looked up by: a channel's. It is checked when it is made or
     read (not empty, no control characters, at most `MAX_NAME_CHARS`), kept as written with its
@@ -51,6 +51,14 @@ The type of a name says what it is for (`caelumora_model::name`):
 *   **`String`** - a name that is only shown (a session's), or that is decided elsewhere: a user's
     `username` is their login identity, owned by a user provider such as a directory, and opaque to
     Caelumora.
+
+`Name` is one of the values with rules (`caelumora_model::value`, issue
+[248](../issues/248-validated-text-fields.md)): a field whose text may only be what its rules allow
+has a type that is made only through its constructor, `new`, and checked again when a document is
+read, so that a stored document that does not fit fails to load. They share one API - `FIELD`,
+`as_str`, `optional` (a missing or blank text is `None`), the conversions to and from a `String`, a
+string in the document - and one error, `ValueError`, whose message names the field. None derefs
+to `str`: a `Name` is compared by its folded form, which `&*name == text` would bypass.
 
 There are two implementations: `MemoryStore`, for tests, and `JsonFileStore`, which keeps one JSON
 file per document.

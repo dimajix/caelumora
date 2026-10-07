@@ -24,8 +24,8 @@ use caelumora_model::command::default_commands;
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_model::external_agent::{ConversationId, TaskId};
 use caelumora_model::confidentiality::{Classification, Clearance, Compartments, ConfidentialityRules, Confidentiality, Roles};
-use caelumora_model::language::Language;
-use caelumora_model::name::{Name, ScopedName};
+use caelumora_model::value::language::Language;
+use caelumora_model::value::name::{Name, ScopedName};
 use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::scope::Scope;
 use caelumora_model::secret::SecretManager;
@@ -490,7 +490,7 @@ async fn a_participant_takes_part_but_changes_nothing() {
     assert!(session.delete_channel(&bob, main.id()).await.is_err(), "nor to delete them");
     assert!(main.remove_participant(&bob, ActorId::User(world.alice)).await.is_err(), "nor to remove others");
     assert!(main.reclassify(&bob, Classification::general(Confidentiality::Public)).await.is_err(), "nor to reclassify the channel");
-    assert!(denied(&main.update_language(&bob, Some(Language::parse("fr").unwrap())).await.expect_err("nor to change its language")));
+    assert!(denied(&main.update_language(&bob, Some(Language::new("fr").unwrap())).await.expect_err("nor to change its language")));
     assert!(denied(&session.update_approval_rules(&bob, vec![]).await.expect_err("nor what it restricts of tool calls")));
     assert!(denied(&main.update_approval_rules(&bob, vec![]).await.expect_err("in any of its channels")));
     assert!(denied(&session.update_description(&bob, Some("his"), None).await.expect_err("nor to say what it is for (issue 245)")));
@@ -510,7 +510,7 @@ async fn the_owner_changes_and_ends_the_session() {
 
     session.update_name(&alice, "renamed".to_string()).await.expect("hers to rename");
     let main = Arc::clone(&session.channels()[0]);
-    main.update_language(&alice, Some(Language::parse("de").unwrap())).await.expect("and to choose the language of its channels");
+    main.update_language(&alice, Some(Language::new("de").unwrap())).await.expect("and to choose the language of its channels");
     let shell = |decision| ApprovalRule::new(ToolMatcher { tool: "shell".to_string(), arguments: Default::default() }, decision, Reach::Everywhere, None).unwrap();
     session.update_approval_rules(&alice, vec![shell(RuleDecision::Deny)]).await.expect("and what it restricts of tool calls");
     main.update_approval_rules(&alice, vec![shell(RuleDecision::Ask)]).await.expect("in it or in one of its channels");

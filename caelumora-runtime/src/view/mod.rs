@@ -506,7 +506,7 @@ impl std::fmt::Debug for ViewsFactory {
 mod tests {
     use super::*;
     use caelumora_model::snapshot::Detail;
-    use caelumora_model::name::{Name, ScopedName};
+    use caelumora_model::value::name::{Name, ScopedName};
     use crate::runtime::RuntimeManager;
     use caelumora_model::agent::{Agent, Personality, PersonalityId};
     use caelumora_model::channel::{Channel, Participant};
@@ -1176,7 +1176,7 @@ use caelumora_model::turn::TurnState;
         let channel = main_channel(&session);
         let mut side = channel.clone();
         side.id = ChannelId::new();
-        side.name = caelumora_model::name::Name::new("side").unwrap();
+        side.name = caelumora_model::value::name::Name::new("side").unwrap();
         let system = SecurityContext::system();
         store.create_session(&system, &session).await.unwrap();
         store.create_channel(&system, &channel).await.unwrap();

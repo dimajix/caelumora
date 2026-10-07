@@ -1,4 +1,4 @@
-use caelumora_model::name::Name;
+use caelumora_model::value::name::Name;
 use arc_swap::ArcSwap;
 use caelumora_model::agent::{Agent, AgentId, AgentUpdateEvent, Personality};
 use caelumora_model::event::{EventPublisher, GlobalEvent};
@@ -100,7 +100,7 @@ impl AgentController {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::name::{Name, ScopedName};
+    use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::agent::{Personality, PersonalityId};
     use caelumora_model::scope::Scope;
     use caelumora_model::store_impl::memory::MemoryStore;

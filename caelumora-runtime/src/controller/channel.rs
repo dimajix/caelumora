@@ -1,6 +1,6 @@
-use caelumora_model::name::Name;
+use caelumora_model::value::name::Name;
 use arc_swap::ArcSwap;
-use caelumora_model::language::Language;
+use caelumora_model::value::language::Language;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::actor::ActorId;
 use caelumora_model::approval::ApprovalRule;

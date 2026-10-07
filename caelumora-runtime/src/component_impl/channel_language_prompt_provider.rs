@@ -23,7 +23,7 @@ use crate::work::AgentWork;
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::language::Language;
+use caelumora_model::value::language::Language;
 use std::sync::{Arc, Mutex};
 
 pub const CHANNEL_LANGUAGE_PROMPT_PROVIDER_KIND: &str = "channel_language_prompt_provider";
@@ -134,7 +134,7 @@ mod tests {
     use caelumora_model::channel::{Channel, Participant};
     use caelumora_model::command::default_commands;
     use caelumora_model::confidentiality::Visibility;
-    use caelumora_model::name::{Name, ScopedName};
+    use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::scope::Scope;
     use caelumora_model::secret::SecretManager;
     use caelumora_model::security::{DummySecurityManager, SecurityContext};
@@ -143,7 +143,7 @@ mod tests {
     use caelumora_model::store_impl::memory::MemoryStore;
 
     fn language(tag: &str) -> Option<Language> {
-        Some(Language::parse(tag).unwrap())
+        Some(Language::new(tag).unwrap())
     }
 
     #[test]

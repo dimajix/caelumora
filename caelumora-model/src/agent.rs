@@ -15,7 +15,7 @@ use crate::transcript::{as_they_stand, GivenUp, GivenUpReason, Transcript, Trans
 use crate::turn::{TurnEntry, TurnState};
 use crate::work::{TurnId, Work};
 use crate::note::{NoteChain, NoteChange, NoteOrigin, Notes};
-use crate::name::{Name, ScopedName};
+use crate::value::name::{Name, ScopedName};
 use crate::security::{Secured, SecurityAttributes, SecurityContext};
 use crate::store::Journaled;
 use crate::tool::{RecordedToolSets, Tool, ToolSet};

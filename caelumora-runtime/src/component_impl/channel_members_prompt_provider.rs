@@ -207,7 +207,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 mod tests {
     use super::*;
     use crate::agent_turn::Turn;
-    use caelumora_model::name::{Name, ScopedName};
+    use caelumora_model::value::name::{Name, ScopedName};
     use crate::agent_state::AgentStateHandle;
     use crate::runtime::RuntimeManager;
     use crate::session::SessionLoop;

@@ -135,7 +135,7 @@ mod tests {
     use caelumora_model::channel::{Channel, Participant};
     use caelumora_model::command::default_commands;
     use caelumora_model::confidentiality::{Confidentiality, Visibility};
-    use caelumora_model::name::{Name, ScopedName};
+    use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::scope::Scope;
     use caelumora_model::secret::SecretManager;
     use caelumora_model::security::{DummySecurityManager, SecurityContext};

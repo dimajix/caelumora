@@ -17,7 +17,7 @@ use caelumora_model::approval::{ApprovalId, ApprovalResponse, ApprovalRule};
 use caelumora_model::channel::moderation_components;
 use caelumora_model::command::{Command, CommandVisibility};
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::language::Language;
+use caelumora_model::value::language::Language;
 use caelumora_model::context::ContextItem;
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::security::SecurityContext;

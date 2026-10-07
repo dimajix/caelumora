@@ -1,6 +1,6 @@
 # 248 — Text fields are checked by whoever writes them, not by their type
 
-**Status:** open
+**Status:** in progress
 **Area:** Code structure
 
 ## The problem
@@ -74,3 +74,30 @@ are not checked today are, or say why not.
   implemented, which introduced `TextRule` - the rule kept by the field's owner, applied by its
   writers. The maintainer asked whether the fields could be types that check themselves, as with
   Pydantic; deferred to be done thoroughly, across the model.
+- **2026-10-07** — Decided with the maintainer:
+  - **One module for values with rules**, `caelumora_model::value`, one file per subject: `name`
+    (`Name`, `ScopedName`), `language` (`Language`), `text` (`Text<R>` and its rules). Not `types`,
+    which would say nothing about what is in it. What they share lives in `value/mod.rs`.
+  - **One API for all of them**: a trait with the field's name (`FIELD`), `new(&str)`, `as_str()`
+    and `optional(Option<&str>)` - a blank text is `None`; one error type, `ValueError`, whose
+    every variant names the field; a macro for the trait implementations that are alike
+    (`TryFrom<String>`, `From<…> for String`, `AsRef<str>`, `Display`, `Debug`, serde: written as
+    a string, checked when read). `Language::parse` becomes `new`; `NameError`, `LanguageError` and
+    `TextError` are folded into `ValueError`. No `Deref<Target = str>`: for a `Name`, `&*name ==
+    text` would compare exactly where `name == text` compares folded.
+  - **`Text<R>`** with the rule as a marker type (`TextRule`: `FIELD`, `MAX_CHARS`, `ONE_LINE`),
+    the rules kept together in `value/text.rs`, since several owners share them: `Summary` (one
+    line, 300), `Briefing` (16 000), `Introduction` (1000; a user's and a personality's),
+    `Description` (one line, 300; the catalogue line of a personality and a session template).
+  - **Whatever could be looked up by its name is a `Name`** - a session's, too. A user's name stays
+    a `String`: a user provider decides it.
+  - **Messages, notes, plan steps, tool and command descriptions are left out**: models and code
+    write them, not people into a field with a rule; failing to read a model's answer would end
+    its turn, and notes are in a digested ledger.
+  - **Stored documents that do not fit fail to load**; old data is not migrated.
+  - Done in three steps: the module and the shared API for `Name` and `Language`, without a change
+    in behaviour; `Text<R>` for the fields checked today; then the fields not checked so far.
+- **2026-10-07** — Step 1 done: `caelumora_model::value` holds `Name` and `Language`
+  (`value::name`, `value::language`), with `ValueError` and `impl_value!` in `value/mod.rs`.
+  `Language::parse` is `Language::new`; `NameError` and `LanguageError` are gone, and their messages
+  now name the field ("the name must not be empty"). No behaviour changed otherwise.

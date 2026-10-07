@@ -6,7 +6,7 @@
 
 use caelumora_model::agent::{Agent, AgentId, PersonalityId};
 use caelumora_model::channel::Participant;
-use caelumora_model::name::ScopedName;
+use caelumora_model::value::name::ScopedName;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::{EntityStore, StoreResult};
@@ -63,7 +63,7 @@ async fn agent(store: &dyn EntityStore, context: &SecurityContext, name: ScopedN
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::name::{Name, ScopedName};
+    use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::confidentiality::Visibility;
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::Personality;

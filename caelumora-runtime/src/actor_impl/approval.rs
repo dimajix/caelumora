@@ -441,7 +441,7 @@ mod tests {
     use caelumora_model::approval::ApproverId;
     use caelumora_model::channel::{Channel, ChannelId, Participant};
     use caelumora_model::command::default_commands;
-    use caelumora_model::name::{Name, ScopedName};
+    use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::secret::SecretManager;
     use caelumora_model::security::{OwnershipSecurityManager, SecurityManager};
     use caelumora_model::session::SessionId;

@@ -1,5 +1,5 @@
 use caelumora_model::approval::ApprovalRule;
-use caelumora_model::name::Name;
+use caelumora_model::value::name::Name;
 use crate::channel::ChannelLoop;
 use crate::command::CommandExecutor;
 use crate::runtime::{ChannelRuntime, RuntimeManager};
@@ -10,7 +10,7 @@ use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::channel::Channel;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::language::Language;
+use caelumora_model::value::language::Language;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityAttributes, SecurityContext, SecurityManager};
 use crate::view::{Viewer, Views};
@@ -968,7 +968,7 @@ impl SessionManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::name::{Name, ScopedName};
+    use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::command::default_commands;
     use caelumora_model::channel::Channel;
@@ -1337,7 +1337,7 @@ mod tests {
         store.create_session_template(&SecurityContext::system(), &template).await.unwrap();
         let hers = SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
         let mut profile = caelumora_model::user::UserProfile::new(owner, None);
-        profile.preferred_language = Some(Language::parse("de").unwrap());
+        profile.preferred_language = Some(Language::new("de").unwrap());
         store.create_user_profile(&hers, &profile).await.unwrap();
 
         let session = manager.create_from_template(&hers, template.id, None).await.expect("created and started");
@@ -1424,7 +1424,7 @@ mod tests {
         let runtime = test_runtime();
         let manager = SessionManager::new(Arc::clone(&runtime));
         let (session, ctx, _) = running_session_of_a_user(&manager).await;
-        let language = |tag: &str| Some(Language::parse(tag).unwrap());
+        let language = |tag: &str| Some(Language::new(tag).unwrap());
 
         let unsaid = session.create_channel(&ctx, spec("unsaid", vec![])).await.unwrap();
         assert_eq!(unsaid.channel().language, None, "no profile, no language");
@@ -1896,7 +1896,7 @@ mod tests {
         use caelumora_model::actor::ActorId;
         use caelumora_model::agent::{Agent, Personality, PersonalityId, PersonalityKind};
         use caelumora_model::confidentiality::{Clearance, Compartment, Compartments, ConfidentialityRules, Confidentiality, Roles};
-        use caelumora_model::name::ScopedName;
+        use caelumora_model::value::name::ScopedName;
         use caelumora_model::scope::Scope;
         use caelumora_model::security::{OwnershipSecurityManager, SecurityManager};
         use caelumora_model::store::EntityStore;
@@ -1952,7 +1952,7 @@ mod tests {
                 // A channel of only `participant` - and its approver, who is
                 // cleared for anything.
                 let ActorId::Agent(id) = participant else { unreachable!("agents only") };
-                let channel = caelumora_model::channel::Channel::build(SessionId::new(), alice_id, caelumora_model::name::Name::new("probe").unwrap(),
+                let channel = caelumora_model::channel::Channel::build(SessionId::new(), alice_id, caelumora_model::value::name::Name::new("probe").unwrap(),
                     Default::default(), classification, None, vec![caelumora_model::channel::Participant::Agent(id)]);
                 crate::channel::require_cleared(&runtime, &alice_ctx, &channel).await.is_ok()
             }

@@ -10,9 +10,9 @@ that holds the details; the list at the end names them all.
 The project is a Rust workspace, with a web UI next to it:
 
 *   **`caelumora-model`** - the domain: entities (`Session`, `Channel`, `Agent`, `Personality`,
-    `User`, `SessionTemplate`), messages and events, the traits of the stores, the security and
-    confidentiality model, and the configuration (`AppConfig`). It holds data and rules, but runs
-    nothing.
+    `User`, `SessionTemplate`), the values with rules their fields hold (`value`: `Name`,
+    `Language`), messages and events, the traits of the stores, the security and confidentiality
+    model, and the configuration (`AppConfig`). It holds data and rules, but runs nothing.
 *   **`caelumora-runtime`** - everything that runs: sessions, channels and their actors, the agent's
     cognitive cycle, components, the event bus, the controllers that keep entities live, and the
     store implementations.

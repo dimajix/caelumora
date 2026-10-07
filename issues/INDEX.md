@@ -320,7 +320,7 @@ argues against it, and what came out of the last attempt.
 | [214](214-prompt-logic-in-the-context-provider.md) | done | What an agent is given besides the conversation is decided in a component, a free function and, for an external agent, its actor - and the component's facet writes into the turn instead of answering. |
 | [229](229-services-fetched-through-the-runtime.md) | done | Central services - the `SecurityManager`, the stores, the event bus - are fetched through the runtime at every use, often through long chains, so no type says what it depends on. |
 | [241](241-turn-membership-recorded-twice.md) | done | Which messages belong to a turn is recorded twice - as the turn's id on each message and as a count in its `ContextRef` - and read by different rules. |
-| [248](248-validated-text-fields.md) | open | Text fields are `String`s checked by whoever writes them, if at all, so a field can hold what its rules forbid and a new writer has to remember the check. |
+| [248](248-validated-text-fields.md) | in progress | Text fields are `String`s checked by whoever writes them, if at all, so a field can hold what its rules forbid and a new writer has to remember the check. |
 
 ## Integrations
 

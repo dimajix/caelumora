@@ -1,7 +1,7 @@
 use arc_swap::ArcSwap;
 use caelumora_model::approval::{ApprovalRule, ApprovalRuleId};
 use caelumora_model::event::{EventPublisher, GlobalEvent};
-use caelumora_model::language::Language;
+use caelumora_model::value::language::Language;
 use caelumora_model::security::{Secured, SecurityContext};
 use caelumora_model::store::{EntityStore, StoreError, StoreResult};
 use caelumora_model::user::{User, UserId, UserProfile, UserUpdateEvent};

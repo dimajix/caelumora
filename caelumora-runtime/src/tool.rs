@@ -636,7 +636,7 @@ mod tests {
         let tools = DefaultToolExecutor::new(vec![ComponentImpl { id: "tools".to_string(), fail_policy: Default::default(), facet: provider }]).unwrap();
         let store = Arc::new(caelumora_model::store_impl::memory::MemoryStore::new());
         let session = crate::runtime::bare_session(caelumora_model::session::SessionId::new());
-        let mut channel = caelumora_model::channel::Channel::build(session.id, ActorId::None, caelumora_model::name::Name::new("main").unwrap(), Default::default(), Classification::CHANNEL_DEFAULT, None, Vec::new());
+        let mut channel = caelumora_model::channel::Channel::build(session.id, ActorId::None, caelumora_model::value::name::Name::new("main").unwrap(), Default::default(), Classification::CHANNEL_DEFAULT, None, Vec::new());
         channel.approval_rules = places.channel;
         let session = Arc::new(SessionController::new(caelumora_model::session::Session { approval_rules: places.session, ..session }, Arc::new(()), Arc::clone(&store) as Arc<dyn caelumora_model::store::EntityStore>));
         let channel = Arc::new(ChannelController::new(channel, Arc::new(()), store));

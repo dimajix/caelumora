@@ -4,6 +4,7 @@
 //! elsewhere - a user's, which a user provider such as a directory owns -
 //! too: it is opaque to Caelumora.
 
+use super::ValueError;
 use crate::mention::handle_of;
 use crate::scope::Scope;
 use serde::{Deserialize, Serialize};
@@ -13,17 +14,6 @@ use std::hash::{Hash, Hasher};
 /// The longest name, in characters: a name stands in prompts and lists.
 pub const MAX_NAME_CHARS: usize = 100;
 
-/// Why a text is no name. The messages are meant for users.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum NameError {
-    #[error("a name must not be empty")]
-    Empty,
-    #[error("a name must not contain control characters")]
-    ControlCharacter,
-    #[error("a name must not be longer than {MAX_NAME_CHARS} characters")]
-    TooLong,
-}
-
 /// A name that something is looked up by: an agent's, a personality's, a
 /// session template's, a channel's. Kept as written, with its whitespace
 /// tidied - no leading or trailing whitespace, every run of it one space -
@@ -31,8 +21,7 @@ pub enum NameError {
 /// "jonathan" and "JONATHAN" are one name, and so are "Zoë" and "Zoe", in a
 /// lookup, in a map and as a key. Written down as a string, and checked when
 /// read.
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(try_from = "String", into = "String")]
+#[derive(Clone)]
 pub struct Name {
     text: String,
     /// What it is compared and hashed by, made once with the name: a name
@@ -44,18 +33,18 @@ impl Name {
     /// `text` as a name, its whitespace tidied.
     ///
     /// # Errors
-    /// `NameError` if nothing is left of it, if it contains a control
+    /// `ValueError` if nothing is left of it, if it contains a control
     /// character, or if it is longer than `MAX_NAME_CHARS`.
-    pub fn new(text: impl AsRef<str>) -> Result<Self, NameError> {
+    pub fn new(text: impl AsRef<str>) -> Result<Self, ValueError> {
         let name = text.as_ref().split_whitespace().collect::<Vec<_>>().join(" ");
         if name.is_empty() {
-            return Err(NameError::Empty);
+            return Err(ValueError::Empty { field: Self::FIELD });
         }
         if name.chars().any(char::is_control) {
-            return Err(NameError::ControlCharacter);
+            return Err(ValueError::ControlCharacter { field: Self::FIELD });
         }
         if name.chars().count() > MAX_NAME_CHARS {
-            return Err(NameError::TooLong);
+            return Err(ValueError::TooLong { field: Self::FIELD, max_chars: MAX_NAME_CHARS });
         }
         let key = fold(&name);
         Ok(Self { text: name, key })
@@ -111,36 +100,7 @@ impl PartialEq<&str> for Name {
     }
 }
 
-impl TryFrom<String> for Name {
-    type Error = NameError;
-    fn try_from(text: String) -> Result<Self, NameError> {
-        Name::new(text)
-    }
-}
-
-impl From<Name> for String {
-    fn from(name: Name) -> Self {
-        name.text
-    }
-}
-
-impl AsRef<str> for Name {
-    fn as_ref(&self) -> &str {
-        &self.text
-    }
-}
-
-impl fmt::Display for Name {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.text)
-    }
-}
-
-impl fmt::Debug for Name {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(&self.text, f)
-    }
-}
+impl_value!([] Name, "name");
 
 /// The name of a definition and the scope it lies in (issue 177): what it
 /// is found by. Written into the definition's document as its fields `name`
@@ -156,8 +116,8 @@ impl ScopedName {
     /// `name` as a name in `scope`.
     ///
     /// # Errors
-    /// `NameError` if `name` is no name (`Name::new`).
-    pub fn new(name: impl AsRef<str>, scope: Scope) -> Result<Self, NameError> {
+    /// `ValueError` if `name` is no name (`Name::new`).
+    pub fn new(name: impl AsRef<str>, scope: Scope) -> Result<Self, ValueError> {
         Ok(Self { name: Name::new(name)?, scope })
     }
 
@@ -185,9 +145,11 @@ mod tests {
     #[test]
     fn a_name_is_kept_as_written_with_its_whitespace_tidied() {
         assert_eq!(name("  Dr.   Who ").as_str(), "Dr. Who");
-        assert_eq!(Name::new(" \t "), Err(NameError::Empty));
-        assert_eq!(Name::new("a\u{7}b"), Err(NameError::ControlCharacter));
-        assert_eq!(Name::new("x".repeat(MAX_NAME_CHARS + 1)), Err(NameError::TooLong));
+        assert_eq!(Name::new(" \t "), Err(ValueError::Empty { field: "name" }));
+        assert_eq!(Name::new("a\u{7}b"), Err(ValueError::ControlCharacter { field: "name" }));
+        assert_eq!(Name::new("x".repeat(MAX_NAME_CHARS + 1)), Err(ValueError::TooLong { field: "name", max_chars: MAX_NAME_CHARS }));
+        assert_eq!(Name::optional(Some("  ")), Ok(None), "blank is none");
+        assert_eq!(Name::new(" \t ").unwrap_err().to_string(), "the name must not be empty", "naming the field");
         assert!(Name::new("x".repeat(MAX_NAME_CHARS)).is_ok());
     }
 
