@@ -112,16 +112,17 @@ announced as `ChannelUpdateEvent::LanguageChanged`. Its agents are told by a pro
 
 A session and a channel may say what they are for (issue 245): a `summary`, one line seen at a
 glance, and a `briefing`, what an agent should know before it works there - conventions, context,
-what to do and what not, like an `AGENTS.md`. Both are `Option<String>` of `Session` and `Channel`,
+what to do and what not, like an `AGENTS.md`. Both are optional fields of `Session` and `Channel`,
 set in the template (`SessionTemplate` and `ChannelTemplate` have them, copied into what they make;
 `SessionTemplate::description` stays the catalogue line) and changed by whoever may change the place
 (`SessionLoop::update_description`, `ChannelLoop::update_description`; `UpdateSession`,
 `UpdateChannel`), announced as `DescriptionChanged` of `SessionUpdateEvent` and
-`ChannelUpdateEvent`. The rules of the two texts are the session's (`Session::SUMMARY`, one line of
-at most 300 characters; `Session::BRIEFING`, at most 16 000): a briefing is in the context of every
-agent there on every turn. They are checked by `TextRule::check` - trimmed, blank is none, no
-control characters - when they are changed and when a template is used, since a template is written
-by hand.
+`ChannelUpdateEvent`. Their types say what they may be (`Summary`, one line of at most 300
+characters; `Briefing`, at most 16 000 - a briefing is in the context of every agent there on every
+turn): trimmed, never empty, no control characters (`caelumora_model::value::text`, issue
+[248](../issues/248-validated-text-fields.md)). They are checked when they are made - the REST
+server makes them from what a request says, a blank one being none - and when a document is read,
+so a template written by hand is checked when the seed is loaded.
 
 A session's descriptions are public, as its name is: everybody in the session reads them, and every
 agent in each of its channels, external ones too. A channel's are part of the channel and classified

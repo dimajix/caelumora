@@ -3,7 +3,7 @@ use crate::approval::{ApprovalRule, ApprovalRuleId, RuleError, MAX_PERSONAL_RULE
 use chrono::{DateTime, Utc};
 use crate::value::language::Language;
 use crate::security::{SecurityAttributes, Secured};
-use crate::text::{TextError, TextRule};
+use crate::value::text::Introduction;
 use serde::{Deserialize, Serialize};
 
 define_id!(UserId);
@@ -57,7 +57,7 @@ pub struct UserProfile {
     user_id: UserId,
     /// How the user introduces themselves; `None` if they have not.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub introduction: Option<String>,
+    pub introduction: Option<Introduction>,
     /// The language the user would like the conversations of the channels
     /// they create to be held in (issue 56); `None` if they did not say.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -76,40 +76,10 @@ pub struct UserProfile {
     security_attributes: SecurityAttributes,
 }
 
-/// The longest introduction of a user, in characters: it goes into the
-/// system prompt of every agent in every channel the user takes part in.
-pub const MAX_INTRODUCTION_CHARS: usize = 1000;
-
 impl UserProfile {
-    /// What an introduction may be: it goes into the system prompt of every
-    /// agent in every channel the user takes part in.
-    pub const INTRODUCTION: TextRule = TextRule::lines("introduction", MAX_INTRODUCTION_CHARS);
-
-    /// The profile of user `user_id`, introducing them as `introduction`
-    /// says, trimmed - none if nothing is left of it. What a user writes
-    /// about themselves is checked so, wherever it comes from.
-    ///
-    /// # Errors
-    /// `TextError` if it is longer than `MAX_INTRODUCTION_CHARS` or
-    /// contains a control character that is no whitespace.
-    pub fn introducing(user_id: UserId, introduction: Option<&str>) -> Result<Self, TextError> {
-        let mut profile = Self::new(user_id, None);
-        profile.introduce(introduction)?;
-        Ok(profile)
-    }
-
-    /// Introduces the user as `introduction` says, trimmed - as nobody if
-    /// nothing is left of it - checked as `introducing` checks it.
-    ///
-    /// # Errors
-    /// `TextError`, as `introducing`; the profile is then unchanged.
-    pub fn introduce(&mut self, introduction: Option<&str>) -> Result<(), TextError> {
-        self.introduction = Self::INTRODUCTION.check(introduction)?;
-        Ok(())
-    }
-
-    /// The profile of user `user_id`, owned by them.
-    pub fn new(user_id: UserId, introduction: Option<String>) -> Self {
+    /// The profile of user `user_id`, owned by them, introducing them as
+    /// `introduction` says.
+    pub fn new(user_id: UserId, introduction: Option<Introduction>) -> Self {
         let security_attributes = SecurityAttributes { owner_id: ActorId::User(user_id), contributors: Vec::new() };
         Self { user_id, introduction, preferred_language: None, approval_rules: Vec::new(), deleted: None, security_attributes }
     }
@@ -165,7 +135,7 @@ impl Secured for UserProfile {
 struct UserProfileFields {
     user_id: UserId,
     #[serde(default)]
-    introduction: Option<String>,
+    introduction: Option<Introduction>,
     #[serde(default)]
     preferred_language: Option<Language>,
     #[serde(default)]
@@ -194,7 +164,7 @@ mod tests {
         });
         let profile: UserProfile = serde_json::from_value(stored).unwrap();
         assert_eq!(profile.security_attributes().owner_id, ActorId::User(user));
-        assert_eq!(profile.introduction.as_deref(), Some("I run the budget."));
+        assert_eq!(profile.introduction.as_ref().map(Introduction::as_str), Some("I run the budget."));
         assert_eq!(profile.preferred_language, None, "a profile stored before issue 56 prefers none");
         let written = serde_json::to_value(&profile).unwrap();
         assert!(written.get("security_attributes").is_none(), "the owner is not written: {written}");
@@ -210,19 +180,10 @@ mod tests {
     }
 
     #[test]
-    fn an_introduction_is_trimmed_and_checked() {
-        let user = UserId::new();
-        let profile = UserProfile::introducing(user, Some("  I run the budget.\nAsk me.  ")).unwrap();
-        assert_eq!(profile.introduction.as_deref(), Some("I run the budget.\nAsk me."));
-        assert_eq!(UserProfile::introducing(user, Some(" \n ")).unwrap().introduction, None, "nothing in it is none");
-        assert_eq!(UserProfile::introducing(user, Some(&"x".repeat(MAX_INTRODUCTION_CHARS + 1))).unwrap_err(), TextError::TooLong { field: "introduction", max_chars: MAX_INTRODUCTION_CHARS });
-        assert_eq!(UserProfile::introducing(user, Some("a\u{1b}[2Jb")).unwrap_err(), TextError::ControlCharacter { field: "introduction" });
-
-        let mut introduced = profile.clone();
-        assert!(introduced.introduce(Some("a\u{1b}[2Jb")).is_err());
-        assert_eq!(introduced.introduction, profile.introduction, "unchanged by what is refused");
-        introduced.introduce(None).unwrap();
-        assert_eq!(introduced.introduction, None);
+    fn a_stored_introduction_is_checked_when_read() {
+        let stored = serde_json::json!({ "user_id": UserId::new(), "introduction": "a\u{1b}[2Jb" });
+        let refused = serde_json::from_value::<UserProfile>(stored).unwrap_err();
+        assert!(refused.to_string().contains("the introduction must not contain control characters"), "{refused}");
     }
 
     #[test]
@@ -261,11 +222,11 @@ mod tests {
         let (alice, bob) = (UserId::new(), UserId::new());
         let as_user = |id| SecurityContext::new(ActorId::User(id), SessionId::default(), ChannelId::default());
 
-        let hers = UserProfile::new(alice, Some("I run the budget.".to_string()));
+        let hers = UserProfile::new(alice, Some(Introduction::new("I run the budget.").unwrap()));
         assert!(matches!(store.create_user_profile(&as_user(bob), &hers).await, Err(StoreError::PermissionDenied)), "nobody writes a profile of someone else");
         store.create_user_profile(&as_user(alice), &hers).await.expect("her own");
-        let changed = UserProfile::new(alice, Some("Bob decides everything.".to_string()));
+        let changed = UserProfile::new(alice, Some(Introduction::new("Bob decides everything.").unwrap()));
         assert!(matches!(store.update_user_profile(&as_user(bob), &changed).await, Err(StoreError::NotFound { .. })), "nor changes it");
-        assert_eq!(store.get_user_profile(&SecurityContext::system(), alice).await.unwrap().introduction.as_deref(), Some("I run the budget."));
+        assert_eq!(store.get_user_profile(&SecurityContext::system(), alice).await.unwrap().introduction.as_ref().map(Introduction::as_str), Some("I run the budget."));
     }
 }

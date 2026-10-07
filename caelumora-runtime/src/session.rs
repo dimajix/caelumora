@@ -11,6 +11,7 @@ use caelumora_model::channel::Channel;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::value::language::Language;
+use caelumora_model::value::text::{Briefing, Summary};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityAttributes, SecurityContext, SecurityManager};
 use crate::view::{Viewer, Views};
@@ -238,10 +239,9 @@ impl SessionLoop {
     /// next turn on.
     ///
     /// # Errors
-    /// `StoreError::Validation` if `summary` or `briefing` is too long or
-    /// holds what it may not, `StoreError::PermissionDenied` if `context`
-    /// may not change the session, or whatever else storing it reports.
-    pub async fn update_description(&self, context: &SecurityContext, summary: Option<&str>, briefing: Option<&str>) -> Result<()> {
+    /// `StoreError::PermissionDenied` if `context` may not change the
+    /// session, or whatever else storing it reports.
+    pub async fn update_description(&self, context: &SecurityContext, summary: Option<Summary>, briefing: Option<Briefing>) -> Result<()> {
         self.session_controller.update_description(context, summary, briefing).await?;
         info!(session = %self.id, by = %context.caller_id, "Session description changed");
         Ok(())

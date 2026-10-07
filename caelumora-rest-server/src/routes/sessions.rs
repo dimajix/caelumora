@@ -172,8 +172,9 @@ pub async fn update_session_description(
     let session_id = SessionId(id);
     let session_loop = crate::routes::ensure_session(&state, &user, session_id).await?;
 
-    session_loop.update_description(&user.security_context(), payload.summary.as_deref(), payload.briefing.as_deref()).await
-        .map_err(|e| crate::routes::change_error(e, "invalid_description", Subject::Session, &format!("changing the description of session {session_id}")))?;
+    let (summary, briefing) = payload.description()?;
+    session_loop.update_description(&user.security_context(), summary, briefing).await
+        .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("changing the description of session {session_id}")))?;
 
     Ok(Json(crate::routes::session_view(&state, &user, session_id).await?))
 }

@@ -369,7 +369,7 @@ mod tests {
         let mut alices = bus.subscribe_as(as_user(alice));
         let mut bobs = bus.subscribe_as(as_user(bob));
 
-        let profile = caelumora_model::user::UserProfile::new(alice, Some("I run the budget.".to_string()));
+        let profile = caelumora_model::user::UserProfile::new(alice, Some(caelumora_model::value::text::Introduction::new("I run the budget.").unwrap()));
         let attributes = caelumora_model::security::Secured::security_attributes(&profile).clone();
         bus.publish(GlobalEvent::UserProfileUpdated(alice, profile), attributes);
 

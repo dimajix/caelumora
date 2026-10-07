@@ -25,6 +25,7 @@ use crate::work::AgentWork;
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
+use caelumora_model::value::text::{Briefing, Summary};
 use std::sync::{Arc, Mutex};
 
 pub const CHANNEL_BRIEFING_PROMPT_PROVIDER_KIND: &str = "channel_briefing_prompt_provider";
@@ -94,7 +95,7 @@ impl PromptProvider for ChannelBriefingPromptProvider {
 
 /// The part describing the `place` - "session" or "channel" - by its
 /// `summary` and `briefing`; empty if it has neither.
-fn described(place: &str, summary: Option<&str>, briefing: Option<&str>) -> String {
+fn described(place: &str, summary: Option<&Summary>, briefing: Option<&Briefing>) -> String {
     if summary.is_none() && briefing.is_none() {
         return String::new();
     }
@@ -145,9 +146,10 @@ mod tests {
 
     #[test]
     fn a_place_is_described_by_its_summary_and_briefing() {
-        assert_eq!(described("channel", Some("Planning the release."), Some("Dates are in UTC.\nBe brief.")),
+        let (summary, briefing) = (Summary::new("Planning the release.").unwrap(), Briefing::new("Dates are in UTC.\nBe brief.").unwrap());
+        assert_eq!(described("channel", Some(&summary), Some(&briefing)),
             "[About this channel]\nWhat this channel is for, as its owner describes it.\nIn short: Planning the release.\n\nDates are in UTC.\nBe brief.\n");
-        assert_eq!(described("session", Some("Release 2.0"), None), "[About this session]\nWhat this session is for, as its owner describes it.\nIn short: Release 2.0\n");
+        assert_eq!(described("session", Some(&Summary::new("Release 2.0").unwrap()), None), "[About this session]\nWhat this session is for, as its owner describes it.\nIn short: Release 2.0\n");
         assert_eq!(described("session", None, None), "", "a place that says nothing adds nothing");
     }
 
@@ -186,7 +188,7 @@ mod tests {
         let channel = Channel::build(session_id, ActorId::None, Name::new("main").unwrap(), Default::default(), confidential.clone(), None, vec![Participant::Agent(agent.id)]);
         let now = chrono::Utc::now();
         let session = Session {
-            summary: Some("Release 2.0".to_string()), briefing: None,
+            summary: Some(Summary::new("Release 2.0").unwrap()), briefing: None,
             approval_rules: Vec::new(),
             id: session_id, name: String::new(), participants: channel.participants.clone(), channels: vec![channel.id],
             commands: Default::default(), privacy: Default::default(), created_at: now, updated_at: now, security_attributes: Default::default(),
@@ -205,7 +207,7 @@ mod tests {
         assert_eq!(prompt.classification, Some(Classification::PUBLIC), "a session's descriptions are public");
 
         let running = session_loop.channel_by_id(channel.id).expect("the channel runs");
-        running.update_description(&system, Some("Planning"), Some("Dates are in UTC.")).await.unwrap();
+        running.update_description(&system, Some(Summary::new("Planning").unwrap()), Some(Briefing::new("Dates are in UTC.").unwrap())).await.unwrap();
         let prompt = told(&provider, agent.id, &session_loop, &context, &mut state).await;
         let (ours, its) = (prompt.text.find("[About this session]").unwrap(), prompt.text.find("[About this channel]").unwrap());
         assert!(ours < its, "the session's first: {}", prompt.text);

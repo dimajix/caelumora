@@ -124,7 +124,7 @@ impl MemberState for UserMember {
         let introduction = self.introduction.get_or_try_init(|| async {
             let profile = self.store.get_user_profile(&SecurityContext::system(), self.id).await.optional()
                 .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context(format!("reading the introduction of {}", ActorId::User(self.id)))))?;
-            Ok::<_, ViewError>(profile.and_then(|profile| profile.introduction))
+            Ok::<_, ViewError>(profile.and_then(|profile| profile.introduction).map(String::from))
         }).await?;
         Ok(introduction.clone())
     }

@@ -10,7 +10,10 @@ use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::template::{SessionTemplate, SessionTemplateId};
-use caelumora_model::user::{UserProfile, MAX_INTRODUCTION_CHARS};
+use caelumora_model::user::UserProfile;
+use caelumora_model::value::text::{Briefing, Introduction, Summary};
+use crate::error::ApiError;
+use axum::http::StatusCode;
 use caelumora_model::work::TurnId;
 use caelumora_model::snapshot;
 use caelumora_runtime::view::{Reached, SessionView};
@@ -30,7 +33,7 @@ pub struct SessionResponse {
     pub name: String,
     /// What it is for, in a line (issue 245); absent if nobody said.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub summary: Option<String>,
+    pub summary: Option<Summary>,
     /// Whom the session lets read what was said in it (issue 134).
     pub privacy: PrivacyConfig,
 }
@@ -70,7 +73,7 @@ impl From<&SessionTemplate> for TemplateResponse {
 /// be.
 #[derive(Debug, Serialize)]
 pub struct ProfileResponse {
-    pub introduction: Option<String>,
+    pub introduction: Option<Introduction>,
     pub max_introduction_chars: usize,
     /// The language the user prefers (issue 56), a BCP 47 tag such as `de`.
     pub preferred_language: Option<Language>,
@@ -84,7 +87,7 @@ impl ProfileResponse {
     pub(crate) fn of(profile: Option<UserProfile>) -> Self {
         let approval_rules = profile.as_ref().map_or_else(Vec::new, |profile| profile.approval_rules().to_vec());
         let (introduction, preferred_language) = profile.map_or((None, None), |profile| (profile.introduction, profile.preferred_language));
-        Self { introduction, max_introduction_chars: MAX_INTRODUCTION_CHARS, preferred_language, approval_rules }
+        Self { introduction, max_introduction_chars: Introduction::MAX_CHARS, preferred_language, approval_rules }
     }
 }
 
@@ -113,6 +116,18 @@ pub struct ProfileRequest {
     /// request.
     #[serde(default)]
     pub preferred_language: Option<Language>,
+}
+
+impl ProfileRequest {
+    /// The introduction as a profile keeps it; none if blank.
+    ///
+    /// # Errors
+    /// `400 invalid_introduction` for one that is too long or contains
+    /// control characters.
+    pub(crate) fn introduction(&self) -> Result<Option<Introduction>, ApiError> {
+        Introduction::optional(self.introduction.as_deref())
+            .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, "invalid_introduction", e.to_string()))
+    }
 }
 
 /// A compartment a classification may name (issue 133), as configured.
@@ -274,12 +289,12 @@ pub struct SessionSnapshot {
     pub name: String,
     /// What it is for, in a line (issue 245); absent if nobody said.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub summary: Option<String>,
+    pub summary: Option<Summary>,
     /// What an agent should know before it works here (issue 245): given
     /// where one session or channel is asked for, not where they are
     /// listed; absent if nobody wrote one.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub briefing: Option<String>,
+    pub briefing: Option<Briefing>,
     /// Whom the session lets read what was said in it (issue 134).
     pub privacy: PrivacyConfig,
     /// What it restricts of the tool calls made in any of its channels
@@ -341,6 +356,19 @@ pub struct DescriptionRequest {
     pub briefing: Option<String>,
 }
 
+impl DescriptionRequest {
+    /// The summary and briefing as a session or channel keeps them; none
+    /// for one that is blank.
+    ///
+    /// # Errors
+    /// `400 invalid_description` for the first that is too long or holds
+    /// what it may not.
+    pub(crate) fn description(&self) -> Result<(Option<Summary>, Option<Briefing>), ApiError> {
+        let invalid = |e: caelumora_model::value::ValueError| ApiError::new(StatusCode::BAD_REQUEST, "invalid_description", e.to_string());
+        Ok((Summary::optional(self.summary.as_deref()).map_err(invalid)?, Briefing::optional(self.briefing.as_deref()).map_err(invalid)?))
+    }
+}
+
 /// A session's new privacy policy (issue 134).
 #[derive(Debug, Deserialize)]
 pub struct SessionPrivacyRequest {
@@ -389,12 +417,12 @@ pub struct ChannelResponse {
     pub name: String,
     /// What it is for, in a line (issue 245); absent if nobody said.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub summary: Option<String>,
+    pub summary: Option<Summary>,
     /// What an agent should know before it works here (issue 245): given
     /// where one session or channel is asked for, not where they are
     /// listed; absent if nobody wrote one.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub briefing: Option<String>,
+    pub briefing: Option<Briefing>,
     /// All participants, in no particular order, with the handles they are
     /// `@`-mentioned by - used by the web UI for the member list, completion
     /// and to render the `mentions` of a message.
@@ -862,11 +890,16 @@ mod tests {
             moderator: None, responder_policy: None, classification: Classification::CHANNEL_DEFAULT, language: None, can_change: false, members: Vec::new(), former_members: Vec::new() };
         let json = serde_json::to_value(ChannelResponse::from(view.clone())).unwrap();
         assert!(json.get("summary").is_none() && json.get("briefing").is_none(), "{json}");
-        let described = snapshot::ChannelSnapshot { summary: Some("Planning".to_string()), briefing: Some("Dates in UTC.".to_string()), ..view };
+        let described = snapshot::ChannelSnapshot { summary: Some(Summary::new("Planning").unwrap()), briefing: Some(Briefing::new("Dates in UTC.").unwrap()), ..view };
         let json = serde_json::to_value(ChannelResponse::from(described)).unwrap();
         assert_eq!((&json["summary"], &json["briefing"]), (&serde_json::json!("Planning"), &serde_json::json!("Dates in UTC.")));
         let request: DescriptionRequest = serde_json::from_value(serde_json::json!({ "summary": "Planning" })).unwrap();
-        assert_eq!((request.summary.as_deref(), request.briefing), (Some("Planning"), None), "one left out is none: removed");
+        assert_eq!(request.description().unwrap(), (Some(Summary::new("Planning").unwrap()), None), "one left out is none: removed");
+        let blank: DescriptionRequest = serde_json::from_value(serde_json::json!({ "summary": " ", "briefing": "" })).unwrap();
+        assert_eq!(blank.description().unwrap(), (None, None), "and so is a blank one");
+        let invalid: DescriptionRequest = serde_json::from_value(serde_json::json!({ "summary": "two\nlines" })).unwrap();
+        let refused = invalid.description().unwrap_err();
+        assert_eq!((refused.status(), refused.code()), (StatusCode::BAD_REQUEST, "invalid_description"));
     }
 
     #[test]

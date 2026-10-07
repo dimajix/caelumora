@@ -297,7 +297,7 @@ mod tests {
         for user in [&kaya, &bob] {
             store.create_user(&system, user).await.unwrap();
         }
-        store.create_user_profile(&system, &UserProfile::new(kaya.id, Some("I run the budget.".to_string()))).await.unwrap();
+        store.create_user_profile(&system, &UserProfile::new(kaya.id, Some(caelumora_model::value::text::Introduction::new("I run the budget.").unwrap()))).await.unwrap();
         let quiz_master = personality(&store, Some("A quiz master.")).await;
         let plain = personality(&store, None).await;
         let jonathan = agent(&store, "Jonathan", &quiz_master).await;

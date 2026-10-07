@@ -26,6 +26,7 @@ use caelumora_model::external_agent::{ConversationId, TaskId};
 use caelumora_model::confidentiality::{Classification, Clearance, Compartments, ConfidentialityRules, Confidentiality, Roles};
 use caelumora_model::value::language::Language;
 use caelumora_model::value::name::{Name, ScopedName};
+use caelumora_model::value::text::{Briefing, Introduction, Summary};
 use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::scope::Scope;
 use caelumora_model::secret::SecretManager;
@@ -493,8 +494,8 @@ async fn a_participant_takes_part_but_changes_nothing() {
     assert!(denied(&main.update_language(&bob, Some(Language::new("fr").unwrap())).await.expect_err("nor to change its language")));
     assert!(denied(&session.update_approval_rules(&bob, vec![]).await.expect_err("nor what it restricts of tool calls")));
     assert!(denied(&main.update_approval_rules(&bob, vec![]).await.expect_err("in any of its channels")));
-    assert!(denied(&session.update_description(&bob, Some("his"), None).await.expect_err("nor to say what it is for (issue 245)")));
-    assert!(denied(&main.update_description(&bob, None, Some("Do as bob says.")).await.expect_err("nor what one of its channels is for")));
+    assert!(denied(&session.update_description(&bob, Some(Summary::new("his").unwrap()), None).await.expect_err("nor to say what it is for (issue 245)")));
+    assert!(denied(&main.update_description(&bob, None, Some(Briefing::new("Do as bob says.").unwrap())).await.expect_err("nor what one of its channels is for")));
     assert!(denied(&world.manager.stop_session(&bob, session.id()).await.expect_err("nor to stop it for everyone")));
     assert!(denied(&world.manager.delete_session(&bob, session.id()).await.expect_err("nor to delete it")));
     assert_eq!(session.name(), "shared", "nothing changed");
@@ -515,8 +516,8 @@ async fn the_owner_changes_and_ends_the_session() {
     session.update_approval_rules(&alice, vec![shell(RuleDecision::Deny)]).await.expect("and what it restricts of tool calls");
     main.update_approval_rules(&alice, vec![shell(RuleDecision::Ask)]).await.expect("in it or in one of its channels");
     assert!(main.update_approval_rules(&alice, vec![shell(RuleDecision::Allow)]).await.is_err(), "but not to allow them: a place only restricts");
-    session.update_description(&alice, Some("Release 2.0"), Some("Dates are in UTC.")).await.expect("and to say what it is for");
-    main.update_description(&alice, Some("Planning"), None).await.expect("and each of its channels");
+    session.update_description(&alice, Some(Summary::new("Release 2.0").unwrap()), Some(Briefing::new("Dates are in UTC.").unwrap())).await.expect("and to say what it is for");
+    main.update_description(&alice, Some(Summary::new("Planning").unwrap()), None).await.expect("and each of its channels");
     let side = session.create_channel(&alice, ChannelSpec { name: Name::new("side").unwrap(), components: quiet(), participants: vec![], classification: None, language: None }).await.expect("and to add channels");
     side.add_participant(&alice, ActorId::User(world.bob), HistoryAccess::All).await.expect("and people to them");
     session.delete_channel(&alice, side.id()).await.expect("and to delete them");
@@ -1288,11 +1289,11 @@ async fn lowering_a_channel_gives_up_an_external_agents_task_in_the_name_of_whoe
 async fn a_profile_is_written_by_its_user_alone_and_read_by_who_shares_a_session() {
     let world = World::new().await;
     let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
-    let profile = UserProfile::introducing(world.alice, Some("I run the team.")).unwrap();
+    let profile = UserProfile::new(world.alice, Some(Introduction::new("I run the team.").unwrap()));
     world.store.create_user_profile(&alice, &profile).await.expect("she writes her own");
-    let forged = UserProfile::introducing(world.alice, Some("I quit.")).unwrap();
+    let forged = UserProfile::new(world.alice, Some(Introduction::new("I quit.").unwrap()));
     assert!(world.store.update_user_profile(&bob, &forged).await.is_err(), "bob does not write hers");
-    let carols = UserProfile::introducing(world.carol, Some("hello")).unwrap();
+    let carols = UserProfile::new(world.carol, Some(Introduction::new("hello").unwrap()));
     assert!(world.store.create_user_profile(&bob, &carols).await.is_err(), "nor anyone else's");
 
     let mut promoted = world.store.get_user(&alice, world.alice).await.expect("everyone reads a user");

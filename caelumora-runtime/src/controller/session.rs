@@ -4,10 +4,11 @@ use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::session::{ChannelId, Session, SessionId, SessionUpdateEvent};
+use caelumora_model::value::text::{Briefing, Summary};
 use caelumora_model::store::{EntityStore, StoreError, StoreResult};
 use chrono::Utc;
 use std::sync::Arc;
-use super::{check_restricting, checked_description};
+use super::check_restricting;
 
 /// The one writer of a session's document.
 #[derive(Debug)]
@@ -76,13 +77,11 @@ impl SessionController {
 
     /// Says what the session is for (issue 245) on behalf of `ctx`
     /// (`UpdateSession`), as [`Self::update`] does: `summary` and `briefing`
-    /// replace what it said, trimmed - a blank one removes it.
+    /// replace what it said - `None` removes it.
     ///
     /// # Errors
-    /// `StoreError::Validation` if one is too long or holds what it may not
-    /// (`Session::described`), otherwise see [`Self::update`].
-    pub async fn update_description(&self, ctx: &SecurityContext, summary: Option<&str>, briefing: Option<&str>) -> StoreResult<()> {
-        let (summary, briefing) = checked_description(summary, briefing)?;
+    /// See [`Self::update`].
+    pub async fn update_description(&self, ctx: &SecurityContext, summary: Option<Summary>, briefing: Option<Briefing>) -> StoreResult<()> {
         self.update(ctx, SessionUpdateEvent::DescriptionChanged { summary, briefing }).await
     }
 

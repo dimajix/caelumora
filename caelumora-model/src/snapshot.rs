@@ -22,6 +22,7 @@ use crate::agent::PersonalityKind;
 use crate::approval::{ApprovalRequest, ApprovalRule};
 use crate::confidentiality::Classification;
 use crate::value::language::Language;
+use crate::value::text::{Briefing, Summary};
 use crate::digest::Digest;
 use crate::message::TokenUsage;
 use crate::note::Note;
@@ -59,10 +60,10 @@ pub struct SessionSnapshot {
     pub id: SessionId,
     pub name: String,
     /// What it is for, in a line (issue 245); `None` if nobody said.
-    pub summary: Option<String>,
+    pub summary: Option<Summary>,
     /// What an agent should know before it works here (issue 245) - with
     /// `Detail::BRIEFING`.
-    pub briefing: Option<String>,
+    pub briefing: Option<Briefing>,
     /// Whom the session lets read what was said in it (issue 134) - shown
     /// to everyone who takes part.
     pub privacy: PrivacyConfig,
@@ -94,10 +95,10 @@ pub struct ChannelSnapshot {
     pub id: ChannelId,
     pub name: String,
     /// What it is for, in a line (issue 245); `None` if nobody said.
-    pub summary: Option<String>,
+    pub summary: Option<Summary>,
     /// What an agent should know before it works here (issue 245) - with
     /// `Detail::BRIEFING`.
-    pub briefing: Option<String>,
+    pub briefing: Option<Briefing>,
     /// The kind of the channel's moderator, e.g. `policy_moderator` (issue
     /// 174); `None` if it is a preconfigured component, whose kind is not
     /// known without reading it.

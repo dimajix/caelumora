@@ -2,6 +2,7 @@ use arc_swap::ArcSwap;
 use caelumora_model::approval::{ApprovalRule, ApprovalRuleId};
 use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::value::language::Language;
+use caelumora_model::value::text::Introduction;
 use caelumora_model::security::{Secured, SecurityContext};
 use caelumora_model::store::{EntityStore, StoreError, StoreResult};
 use caelumora_model::user::{User, UserId, UserProfile, UserUpdateEvent};
@@ -66,12 +67,10 @@ impl UserController {
     /// stands.
     ///
     /// # Errors
-    /// `StoreError::Validation` for an introduction that is too long or
-    /// contains control characters (`UserProfile::introduce`), otherwise
-    /// whatever the store reports; the profile is then unchanged.
-    pub async fn update_profile(&self, ctx: &SecurityContext, introduction: Option<&str>, preferred_language: Option<Language>) -> StoreResult<UserProfile> {
+    /// Whatever the store reports; the profile is then unchanged.
+    pub async fn update_profile(&self, ctx: &SecurityContext, introduction: Option<Introduction>, preferred_language: Option<Language>) -> StoreResult<UserProfile> {
         self.change(ctx, |profile| {
-            profile.introduce(introduction).map_err(|e| StoreError::Validation(e.to_string()))?;
+            profile.introduction = introduction;
             profile.preferred_language = preferred_language;
             Ok(())
         }).await.map(|(_, profile)| profile)
@@ -197,12 +196,12 @@ mod tests {
         let hers = as_user(user.id);
 
         for text in ["I run the budget.", "I run the budget and the team."] {
-            let profile = controller.update_profile(&hers, Some(text), None).await.expect("her own, created once and changed after");
-            assert_eq!(profile.introduction.as_deref(), Some(text));
-            assert_eq!(controller.profile().introduction.as_deref(), Some(text), "live");
-            assert_eq!(store.get_user_profile(&hers, user.id).await.unwrap().introduction.as_deref(), Some(text), "stored");
+            let profile = controller.update_profile(&hers, Some(Introduction::new(text).unwrap()), None).await.expect("her own, created once and changed after");
+            assert_eq!(profile.introduction.as_ref().map(Introduction::as_str), Some(text));
+            assert_eq!(controller.profile().introduction.as_ref().map(Introduction::as_str), Some(text), "live");
+            assert_eq!(store.get_user_profile(&hers, user.id).await.unwrap().introduction.as_ref().map(Introduction::as_str), Some(text), "stored");
         }
-        assert!(matches!(announced.0.lock().unwrap().as_slice(), [GlobalEvent::UserProfileUpdated(..), GlobalEvent::UserProfileUpdated(id, p)] if *id == user.id && p.introduction.as_deref() == Some("I run the budget and the team.")));
+        assert!(matches!(announced.0.lock().unwrap().as_slice(), [GlobalEvent::UserProfileUpdated(..), GlobalEvent::UserProfileUpdated(id, p)] if *id == user.id && p.introduction.as_ref().map(Introduction::as_str) == Some("I run the budget and the team.")));
     }
 
     #[tokio::test]
@@ -212,9 +211,7 @@ mod tests {
         let user = alice();
         let controller = UserController::new(user.clone(), None, Arc::<Announced>::clone(&announced), Arc::<MemoryStore>::clone(&store));
 
-        let invalid = controller.update_profile(&as_user(user.id), Some("a\u{1b}[2Jb"), None).await;
-        assert!(matches!(invalid, Err(StoreError::Validation(_))), "{invalid:?}");
-        let forged = controller.update_profile(&as_user(UserId::new()), Some("I am alice."), None).await;
+        let forged = controller.update_profile(&as_user(UserId::new()), Some(Introduction::new("I am alice.").unwrap()), None).await;
         assert!(matches!(forged, Err(StoreError::PermissionDenied)), "not by someone else: {forged:?}");
 
         assert_eq!(controller.profile().introduction, None);
@@ -228,14 +225,14 @@ mod tests {
         let user = alice();
         let controller = UserController::new(user.clone(), None, Arc::new(()), Arc::<MemoryStore>::clone(&store));
         let hers = as_user(user.id);
-        controller.update_profile(&hers, Some("I run the budget."), None).await.unwrap();
+        controller.update_profile(&hers, Some(Introduction::new("I run the budget.").unwrap()), None).await.unwrap();
         let rule = ApprovalRule::new(ToolMatcher { tool: "shell".to_string(), arguments: Default::default() }, RuleDecision::Allow, Reach::Everywhere, None).unwrap();
 
         assert!(matches!(controller.add_approval_rule(&as_user(UserId::new()), rule.clone()).await, Err(StoreError::PermissionDenied)), "not by someone else");
         controller.add_approval_rule(&hers, rule.clone()).await.expect("hers");
         assert_eq!(controller.profile().approval_rules(), [rule.clone()], "live");
         assert_eq!(store.get_user_profile(&hers, user.id).await.unwrap().approval_rules(), [rule.clone()], "stored");
-        assert_eq!(controller.profile().introduction.as_deref(), Some("I run the budget."), "the rest stays");
+        assert_eq!(controller.profile().introduction.as_ref().map(Introduction::as_str), Some("I run the budget."), "the rest stays");
         controller.update_profile(&hers, None, None).await.unwrap();
         assert_eq!(controller.profile().approval_rules(), [rule.clone()], "and stays through a change of the rest");
 
@@ -250,11 +247,11 @@ mod tests {
     async fn a_profile_changed_elsewhere_is_taken_over() {
         let user = alice();
         let controller = UserController::new(user.clone(), None, Arc::new(()), Arc::new(MemoryStore::new()));
-        let changed = UserProfile::new(user.id, Some("I run the budget.".to_string()));
+        let changed = UserProfile::new(user.id, Some(Introduction::new("I run the budget.").unwrap()));
 
-        controller.process_global_event(&GlobalEvent::UserProfileUpdated(UserId::new(), UserProfile::new(UserId::new(), Some("not hers".to_string()))));
+        controller.process_global_event(&GlobalEvent::UserProfileUpdated(UserId::new(), UserProfile::new(UserId::new(), Some(Introduction::new("not hers").unwrap()))));
         assert_eq!(controller.profile().introduction, None, "another user's");
         controller.process_global_event(&GlobalEvent::UserProfileUpdated(user.id, changed));
-        assert_eq!(controller.profile().introduction.as_deref(), Some("I run the budget."));
+        assert_eq!(controller.profile().introduction.as_ref().map(Introduction::as_str), Some("I run the budget."));
     }
 }

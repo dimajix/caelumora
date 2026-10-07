@@ -53,7 +53,9 @@ The type of a name says what it is for (`caelumora_model::value::name`):
     Caelumora.
 
 `Name` is one of the values with rules (`caelumora_model::value`, issue
-[248](../issues/248-validated-text-fields.md)): a field whose text may only be what its rules allow
+[248](../issues/248-validated-text-fields.md)), with `Language` and the free text people write for
+others to read - `Text<R>`, whose rule `R` says how long it may be and whether it is one line
+(`Summary`, `Briefing`, `Introduction`): a field whose text may only be what its rules allow
 has a type that is made only through its constructor, `new`, and checked again when a document is
 read, so that a stored document that does not fit fails to load. They share one API - `FIELD`,
 `as_str`, `optional` (a missing or blank text is `None`), the conversions to and from a `String`, a

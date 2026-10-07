@@ -101,3 +101,13 @@ are not checked today are, or say why not.
   (`value::name`, `value::language`), with `ValueError` and `impl_value!` in `value/mod.rs`.
   `Language::parse` is `Language::new`; `NameError` and `LanguageError` are gone, and their messages
   now name the field ("the name must not be empty"). No behaviour changed otherwise.
+- **2026-10-07** — Step 2 done: `value::text` holds `Text<R>` with the rules `Summary`,
+  `Briefing` and `Introduction`; the summary and briefing of sessions, channels and their
+  templates, a user's introduction, their events and snapshots are of these types, checked when
+  made and when read. `TextRule` is a trait now; `Session::described`, the controllers'
+  `checked_description`, `TemplateError::Description`, `UserProfile::introduce`/`introducing` and
+  `MAX_INTRODUCTION_CHARS` (now `Introduction::MAX_CHARS`) are gone. The REST server makes the
+  values from the strings of a request (`DescriptionRequest::description`,
+  `ProfileRequest::introduction`) and still answers `400 invalid_description` or
+  `invalid_introduction`. A member's introduction in a snapshot stays a `String` until step 3,
+  when a personality's is an `Introduction` too.

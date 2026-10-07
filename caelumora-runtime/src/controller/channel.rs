@@ -1,6 +1,7 @@
 use caelumora_model::value::name::Name;
 use arc_swap::ArcSwap;
 use caelumora_model::value::language::Language;
+use caelumora_model::value::text::{Briefing, Summary};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::actor::ActorId;
 use caelumora_model::approval::ApprovalRule;
@@ -11,7 +12,7 @@ use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::{EntityStore, StoreError, StoreResult};
 use std::sync::Arc;
-use super::{check_restricting, checked_description};
+use super::check_restricting;
 
 /// The one writer of a channel's document (issue 70): changes are stored
 /// first - where the permission is checked, on the channel's own attributes
@@ -160,16 +161,12 @@ impl ChannelController {
     }
 
     /// Says what the channel is for (issue 245) on behalf of `ctx`
-    /// (`UpdateChannel`): `summary` and `briefing` replace what it said,
-    /// trimmed - a blank one removes it. They reach its agents with their
-    /// next turn.
+    /// (`UpdateChannel`): `summary` and `briefing` replace what it said -
+    /// `None` removes it. They reach its agents with their next turn.
     ///
     /// # Errors
-    /// `StoreError::Validation` if one is too long or holds what it may not
-    /// (`Session::described`), otherwise whatever the store reports; the
-    /// channel is then unchanged.
-    pub async fn update_description(&self, ctx: &SecurityContext, summary: Option<&str>, briefing: Option<&str>) -> StoreResult<()> {
-        let (summary, briefing) = checked_description(summary, briefing)?;
+    /// Whatever the store reports; the channel is then unchanged.
+    pub async fn update_description(&self, ctx: &SecurityContext, summary: Option<Summary>, briefing: Option<Briefing>) -> StoreResult<()> {
         self.update(ctx, &ChannelUpdateEvent::DescriptionChanged { summary, briefing }).await
     }
 

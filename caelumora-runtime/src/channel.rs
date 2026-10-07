@@ -19,6 +19,7 @@ use crate::controller::{AgentController, ChannelController, ControllerManager, U
 use caelumora_model::agent::{Personality, PersonalityKind};
 use caelumora_model::approval::{ApprovalRule, Approver};
 use caelumora_model::value::language::Language;
+use caelumora_model::value::text::{Briefing, Summary};
 use caelumora_model::confidentiality::{user_roles, Classification};
 use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::message::{Message, MessageId};
@@ -518,10 +519,9 @@ impl ChannelLoop {
     /// next turn on.
     ///
     /// # Errors
-    /// `StoreError::Validation` if `summary` or `briefing` is too long or
-    /// holds what it may not, `StoreError::PermissionDenied` if `context`
-    /// may not change the channel, or whatever else storing it reports.
-    pub async fn update_description(&self, context: &SecurityContext, summary: Option<&str>, briefing: Option<&str>) -> Result<()> {
+    /// `StoreError::PermissionDenied` if `context` may not change the
+    /// channel, or whatever else storing it reports.
+    pub async fn update_description(&self, context: &SecurityContext, summary: Option<Summary>, briefing: Option<Briefing>) -> Result<()> {
         self.channel.update_description(context, summary, briefing).await?;
         info!(channel = %self.id, by = %context.caller_id, "Channel description changed");
         Ok(())

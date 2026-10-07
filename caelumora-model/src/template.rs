@@ -12,6 +12,7 @@ use crate::confidentiality::Classification;
 use crate::value::language::Language;
 use crate::scope::Scope::{GlobalScope, SessionScope, UserScope};
 use crate::value::name::{Name, ScopedName};
+use crate::value::text::{Briefing, Summary};
 use crate::scope::Scope;
 use crate::privacy::PrivacyConfig;
 use crate::session::{Session, SessionId};
@@ -36,10 +37,6 @@ pub enum TemplateError {
     /// A scope that cannot be made yet.
     #[error("the scope '{0}' is not supported yet")]
     UnsupportedScope(&'static str),
-    /// A summary or briefing that is too long or holds what it may not
-    /// (issue 245).
-    #[error(transparent)]
-    Description(#[from] crate::text::TextError),
 }
 
 pub type TemplateResult<T> = Result<T, TemplateError>;
@@ -80,9 +77,9 @@ pub struct ChannelTemplate {
     /// What the channel is for, in a line, and what its agents should know
     /// (issue 245): copied into it, where they are changed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub summary: Option<String>,
+    pub summary: Option<Summary>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub briefing: Option<String>,
+    pub briefing: Option<Briefing>,
     /// The language the channel is held in (issue 56), whoever creates it;
     /// the one its creator prefers unless named.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -120,9 +117,7 @@ impl ChannelTemplate {
                 .ok_or_else(|| TemplateError::ParticipantNotFound(name.clone())))
             .collect::<TemplateResult<Vec<_>>>()?;
         let channel = Channel::build(session_id, ActorId::User(owner), self.name.clone(), self.components.clone(), self.classification.clone(), self.language.as_ref().or(language).cloned(), participants);
-        // Checked as when they are changed, since a template is written by hand.
-        let (summary, briefing) = Session::described(self.summary.as_deref(), self.briefing.as_deref())?;
-        Ok(Channel { approval_rules: self.approval_rules.clone(), summary, briefing, ..channel })
+        Ok(Channel { approval_rules: self.approval_rules.clone(), summary: self.summary.clone(), briefing: self.briefing.clone(), ..channel })
     }
 }
 
@@ -144,9 +139,9 @@ pub struct SessionTemplate {
     /// What sessions made from it are for, in a line, and what their agents
     /// should know (issue 245): copied into each, where they are changed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub summary: Option<String>,
+    pub summary: Option<Summary>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub briefing: Option<String>,
+    pub briefing: Option<Briefing>,
     /// Every actor of the session - users, agents and approvers - each with
     /// the name its channels refer to it by.
     pub participants: Vec<ParticipantTemplate>,
@@ -195,13 +190,12 @@ impl SessionTemplate {
             .collect::<TemplateResult<Vec<_>>>()?;
         let participants: Vec<Participant> = participants.into_iter().map(|(_, participant)| participant).collect();
         let security_attributes = participant_attributes(ActorId::User(owner), &participants);
-        let (summary, briefing) = Session::described(self.summary.as_deref(), self.briefing.as_deref())?;
         let now = Utc::now();
         let session = Session {
             id,
             name,
-            summary,
-            briefing,
+            summary: self.summary.clone(),
+            briefing: self.briefing.clone(),
             participants,
             channels: channels.iter().map(|c: &Channel| c.id).collect(),
             commands: self.commands.clone(),
@@ -340,18 +334,19 @@ mod tests {
     #[test]
     fn a_session_and_its_channels_are_described_as_their_templates_say() {
         let mut template = template();
-        template.summary = Some(" Pair programming ".to_string());
-        template.briefing = Some("Review before you merge.".to_string());
-        template.channels[0].summary = Some("Where the pairing happens".to_string());
+        template.summary = Some(Summary::new(" Pair programming ").unwrap());
+        template.briefing = Some(Briefing::new("Review before you merge.").unwrap());
+        template.channels[0].summary = Some(Summary::new("Where the pairing happens").unwrap());
         let (id, owner) = (SessionId::new(), UserId::new());
         let (session, channels) = template.build(id, owner, "s".to_string(), None, resolved(&template, id, owner)).unwrap();
-        assert_eq!((session.summary.as_deref(), session.briefing.as_deref()), (Some("Pair programming"), Some("Review before you merge.")), "copied, checked as when changed");
-        assert_eq!((channels[0].summary.as_deref(), channels[0].briefing.as_deref()), (Some("Where the pairing happens"), None));
+        assert_eq!((session.summary.as_ref().map(Summary::as_str), session.briefing.as_ref().map(Briefing::as_str)), (Some("Pair programming"), Some("Review before you merge.")), "copied");
+        assert_eq!((channels[0].summary.as_ref().map(Summary::as_str), channels[0].briefing.as_ref()), (Some("Where the pairing happens"), None));
         assert_eq!(channels[1].summary, None, "a channel that says nothing");
 
-        template.channels[1].summary = Some("two\nlines".to_string());
-        let refused = template.build(id, owner, "s".to_string(), None, resolved(&template, id, owner)).unwrap_err();
-        assert_eq!(refused.to_string(), "the summary must be one line", "a template is written by hand");
+        let mut written = serde_json::to_value(&template).unwrap();
+        written["channels"][1]["summary"] = serde_json::json!("two\nlines");
+        let refused = serde_json::from_value::<SessionTemplate>(written).unwrap_err();
+        assert!(refused.to_string().contains("the summary must be one line"), "a template written by hand is checked when it is read: {refused}");
     }
 
     #[test]

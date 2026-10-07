@@ -452,8 +452,9 @@ pub async fn update_channel_description(
     Json(payload): Json<DescriptionRequest>,
 ) -> Result<Json<ChannelResponse>, ApiError> {
     let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    channel.update_description(&user.security_context(), payload.summary.as_deref(), payload.briefing.as_deref()).await
-        .map_err(|e| crate::routes::change_error(e, "invalid_description", Subject::Session, "changing the description of the channel"))?;
+    let (summary, briefing) = payload.description()?;
+    channel.update_description(&user.security_context(), summary, briefing).await
+        .map_err(|e| ApiError::from_runtime(e, Subject::Session, "changing the description of the channel"))?;
     Ok(Json(crate::routes::channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?))
 }
 

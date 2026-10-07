@@ -8,6 +8,7 @@ use crate::moderator_impl::ResponderPolicy;
 use caelumora_model::actor::{ActorId, ActorState};
 use caelumora_model::approval::ApprovalRequest;
 use caelumora_model::channel::{Channel, ChannelState, Participant};
+use caelumora_model::value::text::{Briefing, Summary};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::value::language::Language;
 use caelumora_model::digest::Digest;
@@ -93,14 +94,14 @@ impl ChannelView {
     }
 
     /// What the channel is for, in a line (issue 245); `None` if nobody said.
-    pub fn summary(&self) -> Option<&str> {
-        self.channel.summary.as_deref()
+    pub fn summary(&self) -> Option<&Summary> {
+        self.channel.summary.as_ref()
     }
 
     /// What an agent should know before it works in the channel (issue 245);
     /// `None` if nobody wrote it.
-    pub fn briefing(&self) -> Option<&str> {
-        self.channel.briefing.as_deref()
+    pub fn briefing(&self) -> Option<&Briefing> {
+        self.channel.briefing.as_ref()
     }
 
     /// What the channel holds classified `classification`: one side of the

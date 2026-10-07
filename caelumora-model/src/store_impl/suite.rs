@@ -10,6 +10,7 @@ use crate::component::{ComponentDescriptor, StoredComponent};
 use crate::confidentiality::{Classification, Visibility};
 use crate::external_agent::ConversationId;
 use crate::value::name::{Name, ScopedName};
+use crate::value::text::Introduction;
 use crate::scope::Scope;
 use crate::security::SecurityContext;
 use crate::session::{Session, SessionId};
@@ -22,10 +23,16 @@ use uuid::Uuid;
 
 /// Runs one kind through its whole life: create, create again, update, get,
 /// list, delete, delete again, and get and update once it is gone.
-/// `$field` is a text field of the entity that the update changes, `$key`
-/// what the entity is stored under.
+/// `$field` is a text field of the entity that the update changes - to
+/// "renamed", or to `$new` where given - `$key` what the entity is stored
+/// under.
 macro_rules! lifecycle {
     ($store:expr, $value:expr, $key:expr, $($field:ident).+, $entity:literal,
+     $create:ident, $get:ident, $update:ident, $delete:ident, $list:ident) => {
+        lifecycle!($store, $value, $key, $($field).+ = "renamed".to_string().try_into().expect(concat!($entity, ": a valid value")), $entity,
+            $create, $get, $update, $delete, $list)
+    };
+    ($store:expr, $value:expr, $key:expr, $($field:ident).+ = $new:expr, $entity:literal,
      $create:ident, $get:ident, $update:ident, $delete:ident, $list:ident) => {{
         let store = $store;
         let ctx = SecurityContext::default();
@@ -35,7 +42,7 @@ macro_rules! lifecycle {
         let conflict = store.$create(&ctx, &value).await;
         assert!(matches!(conflict, Err(StoreError::Conflict(_))), concat!($entity, ": creating twice is a conflict, got {:?}"), conflict);
 
-        value.$($field).+ = "renamed".to_string().try_into().expect(concat!($entity, ": a valid value"));
+        value.$($field).+ = $new;
         store.$update(&ctx, &value).await.expect(concat!($entity, ": update"));
         let found = store.$get(&ctx, ($key)(&value)).await.expect(concat!($entity, ": get"));
         assert_eq!(found.$($field).+, value.$($field).+, concat!($entity, ": get sees the update"));
@@ -173,7 +180,7 @@ pub(crate) async fn entity_store_behaves(store: &dyn EntityStore) {
         create_channel, get_channel, update_channel, delete_channel, list_channels);
     lifecycle!(store, user("alice"), |v: &User| v.id, username, "user",
         create_user, get_user, update_user, delete_user, list_users);
-    lifecycle!(store, UserProfile::new(UserId::new(), None), |v: &UserProfile| v.user_id(), introduction, "user_profile",
+    lifecycle!(store, UserProfile::new(UserId::new(), None), |v: &UserProfile| v.user_id(), introduction = Some(Introduction::new("renamed").unwrap()), "user_profile",
         create_user_profile, get_user_profile, update_user_profile, delete_user_profile, list_user_profiles);
 
     let ctx = SecurityContext::default();

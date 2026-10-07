@@ -507,6 +507,7 @@ mod tests {
     use super::*;
     use caelumora_model::snapshot::Detail;
     use caelumora_model::value::name::{Name, ScopedName};
+    use caelumora_model::value::text::{Briefing, Summary};
     use crate::runtime::RuntimeManager;
     use caelumora_model::agent::{Agent, Personality, PersonalityId};
     use caelumora_model::channel::{Channel, Participant};
@@ -747,18 +748,18 @@ mod tests {
         let alice = user("alice");
         let mut session = make_session("hers", ActorId::User(alice.id), vec![]);
         session.participants = record_users(&store, &[&alice]).await;
-        (session.summary, session.briefing) = (Some("Release 2.0".to_string()), Some("Dates are in UTC.".to_string()));
+        (session.summary, session.briefing) = (Some(Summary::new("Release 2.0").unwrap()), Some(Briefing::new("Dates are in UTC.").unwrap()));
         let mut channel = main_channel(&session);
-        (channel.summary, channel.briefing) = (Some("Planning".to_string()), Some("Be brief.".to_string()));
+        (channel.summary, channel.briefing) = (Some(Summary::new("Planning").unwrap()), Some(Briefing::new("Be brief.").unwrap()));
         store.create_session(&SecurityContext::system(), &session).await.unwrap();
         store.create_channel(&SecurityContext::system(), &channel).await.unwrap();
 
         let view = manager.views(as_user(alice.id)).session(session.id).await.unwrap();
         let listed = view.snapshot(Detail::CHANNELS).await;
-        assert_eq!((listed.summary.as_deref(), listed.briefing.as_deref()), (Some("Release 2.0"), None), "the summary always, the briefing not where listed");
-        assert_eq!((listed.channels[0].summary.as_deref(), listed.channels[0].briefing.as_deref()), (Some("Planning"), None));
+        assert_eq!((listed.summary.as_ref().map(Summary::as_str), listed.briefing.as_ref()), (Some("Release 2.0"), None), "the summary always, the briefing not where listed");
+        assert_eq!((listed.channels[0].summary.as_ref().map(Summary::as_str), listed.channels[0].briefing.as_ref()), (Some("Planning"), None));
         let read = view.snapshot(Detail::CHANNELS | Detail::BRIEFING).await;
-        assert_eq!((read.briefing.as_deref(), read.channels[0].briefing.as_deref()), (Some("Dates are in UTC."), Some("Be brief.")));
+        assert_eq!((read.briefing.as_ref().map(Briefing::as_str), read.channels[0].briefing.as_ref().map(Briefing::as_str)), (Some("Dates are in UTC."), Some("Be brief.")));
     }
 
     #[tokio::test]
@@ -783,7 +784,7 @@ mod tests {
         session.participants.push(Participant::Agent(remote.id));
         let mut channel = main_channel(&session);
         channel.participants.push(Participant::Approver(approver));
-        store.create_user_profile(&system, &UserProfile::introducing(alice.id, Some("I run the project.")).unwrap()).await.unwrap();
+        store.create_user_profile(&system, &UserProfile::new(alice.id, Some(caelumora_model::value::text::Introduction::new("I run the project.").unwrap()))).await.unwrap();
         store.create_session(&system, &session).await.unwrap();
         store.create_channel(&system, &channel).await.unwrap();
 

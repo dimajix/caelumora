@@ -8,6 +8,7 @@ use crate::session::{Found, SessionLoop};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
 use caelumora_model::channel::{Channel, Participant};
+use caelumora_model::value::text::{Briefing, Summary};
 use caelumora_model::digest::Digest;
 use caelumora_model::note::Note;
 use caelumora_model::confidentiality::Classification;
@@ -56,14 +57,14 @@ impl SessionView {
     }
 
     /// What the session is for, in a line (issue 245); `None` if nobody said.
-    pub fn summary(&self) -> Option<&str> {
-        self.session.summary.as_deref()
+    pub fn summary(&self) -> Option<&Summary> {
+        self.session.summary.as_ref()
     }
 
     /// What an agent should know before it works in the session (issue 245);
     /// `None` if nobody wrote it.
-    pub fn briefing(&self) -> Option<&str> {
-        self.session.briefing.as_deref()
+    pub fn briefing(&self) -> Option<&Briefing> {
+        self.session.briefing.as_ref()
     }
 
     /// The session as privacy sees it now (issue 134).

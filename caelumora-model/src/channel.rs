@@ -8,6 +8,7 @@ use crate::value::language::Language;
 use crate::message::MessageId;
 use crate::message_history::{HistoryEntry, MessageHistory};
 use crate::value::name::Name;
+use crate::value::text::{Briefing, Summary};
 use crate::security::{Secured, SecurityAttributes};
 use crate::session::SessionId;
 use crate::store::Journaled;
@@ -26,7 +27,7 @@ pub enum ChannelUpdateEvent {
     /// Its rules on tool calls changed (issue 13), as they now stand.
     ApprovalRulesChanged(Vec<ApprovalRule>),
     /// What it is for changed (issue 245), as it now stands.
-    DescriptionChanged { summary: Option<String>, briefing: Option<String> },
+    DescriptionChanged { summary: Option<Summary>, briefing: Option<Briefing> },
 }
 
 define_id!(ChannelId);
@@ -49,12 +50,12 @@ pub struct Channel {
     pub name: Name,
     /// What it is for, in a line (issue 245); `None` if nobody said.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub summary: Option<String>,
+    pub summary: Option<Summary>,
     /// What an agent should know before it works here (issue 245), given to
     /// the agents whose personality wires in the
     /// `channel_briefing_prompt_provider`; `None` if nobody wrote one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub briefing: Option<String>,
+    pub briefing: Option<Briefing>,
     /// The channel's components (issue 174): its moderator and the policy
     /// that fills the moderator's slot. A facet nobody here provides is
     /// built from its default.

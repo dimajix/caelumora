@@ -4,7 +4,7 @@ use crate::component::ComponentConfig;
 use crate::privacy::PrivacyConfig;
 use crate::security::{Secured, SecurityAttributes};
 use chrono::{DateTime, Utc};
-use crate::text::{TextError, TextRule};
+use crate::value::text::{Briefing, Summary};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,7 +15,7 @@ pub enum SessionUpdateEvent {
     /// Its rules on tool calls changed (issue 13), as they now stand.
     ApprovalRulesChanged(Vec<ApprovalRule>),
     /// What it is for changed (issue 245), as it now stands.
-    DescriptionChanged { summary: Option<String>, briefing: Option<String> },
+    DescriptionChanged { summary: Option<Summary>, briefing: Option<Briefing> },
 }
 
 define_id!(SessionId);
@@ -27,13 +27,13 @@ pub struct Session {
     pub name: String,
     /// What it is for, in a line (issue 245); `None` if nobody said.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub summary: Option<String>,
+    pub summary: Option<Summary>,
     /// What an agent should know before it works in any of
     /// the session's channels (issue 245), given to
     /// the agents whose personality wires in the
     /// `channel_briefing_prompt_provider`; `None` if nobody wrote one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub briefing: Option<String>,
+    pub briefing: Option<Briefing>,
     pub participants: Vec<Participant>,
     /// The session's channels by id, in order; each is a document of its own
     /// (issue 70).
@@ -59,24 +59,6 @@ pub struct Session {
 }
 
 crate::impl_deletable!(Session);
-
-impl Session {
-    /// What a summary may be - of a session, a channel, their templates
-    /// (issue 245): a line, seen at a glance.
-    pub const SUMMARY: TextRule = TextRule::line("summary", 300);
-    /// What a briefing may be - of a session, a channel, their templates
-    /// (issue 245): it is in the context of every agent there on every turn.
-    pub const BRIEFING: TextRule = TextRule::lines("briefing", 16_000);
-
-    /// `summary` and `briefing` as a session or channel keeps them, each
-    /// checked by its rule.
-    ///
-    /// # Errors
-    /// `TextError` for the first that does not fit.
-    pub fn described(summary: Option<&str>, briefing: Option<&str>) -> Result<(Option<String>, Option<String>), TextError> {
-        Ok((Self::SUMMARY.check(summary)?, Self::BRIEFING.check(briefing)?))
-    }
-}
 
 impl Secured for Session {
     fn security_attributes(&self) -> &SecurityAttributes {
