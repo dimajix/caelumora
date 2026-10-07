@@ -119,10 +119,11 @@ set in the template (`SessionTemplate` and `ChannelTemplate` have them, copied i
 `UpdateChannel`), announced as `DescriptionChanged` of `SessionUpdateEvent` and
 `ChannelUpdateEvent`. Their types say what they may be (`Summary`, one line of at most 300
 characters; `Briefing`, at most 16 000 - a briefing is in the context of every agent there on every
-turn): trimmed, never empty, no control characters (`caelumora_model::value::text`, issue
-[248](../issues/248-validated-text-fields.md)). They are checked when they are made - the REST
-server makes them from what a request says, a blank one being none - and when a document is read,
-so a template written by hand is checked when the seed is loaded.
+turn): not blank, no control characters, and kept as written - trimming is the input's, as the web
+UI does (`caelumora_model::value::text`, issue [248](../issues/248-validated-text-fields.md)).
+They are checked when they are made - the REST server makes them from what a request says, a blank
+one being none - and when a document is read, so a template written by hand is checked when the
+seed is loaded.
 
 A session's descriptions are public, as its name is: everybody in the session reads them, and every
 agent in each of its channels, external ones too. A channel's are part of the channel and classified

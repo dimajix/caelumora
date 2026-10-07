@@ -111,3 +111,7 @@ are not checked today are, or say why not.
   `ProfileRequest::introduction`) and still answers `400 invalid_description` or
   `invalid_introduction`. A member's introduction in a snapshot stays a `String` until step 3,
   when a personality's is an `Introduction` too.
+- **2026-10-07** — A text is checked, not changed (maintainer's decision): `Text::new` keeps it as
+  written instead of trimming it; a blank one is still `Empty`, and `optional` still makes a blank
+  one `None`. Trimming is the input's - the web UI trims what it sends. `Name` and `Language` stay
+  tidied, since they identify something (`value/mod.rs`).

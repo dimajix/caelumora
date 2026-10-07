@@ -1,6 +1,8 @@
 //! Free text people write for others to read (issue 248): `Text<R>`, checked
-//! alike wherever it comes from - trimmed, not empty, bounded in length, and
-//! without control characters that could break out of where it is placed.
+//! alike wherever it comes from - not blank, bounded in length, and without
+//! control characters that could break out of where it is placed - and kept
+//! as written: it is checked, not changed. Whoever wants it trimmed trims it
+//! where it is entered.
 //! How long it may be and whether it is one line is its rule `R`; the rules
 //! are kept here together, since several owners share them: a session's,
 //! a channel's and their templates' `Summary` and `Briefing`, a user's
@@ -20,8 +22,8 @@ pub trait TextRule {
     const ONE_LINE: bool;
 }
 
-/// A text that fits the rule `R`. Made trimmed and never empty: a field
-/// that may be left blank is an `Option`, and blank is `None` (`optional`).
+/// A text that fits the rule `R`, as written. Never blank: a field that may
+/// be left blank is an `Option`, and blank is `None` (`optional`).
 /// Written down as a string, and checked when read.
 pub struct Text<R> {
     text: String,
@@ -32,15 +34,15 @@ impl<R: TextRule> Text<R> {
     /// How many characters it may have.
     pub const MAX_CHARS: usize = R::MAX_CHARS;
 
-    /// `text` trimmed.
+    /// `text` as it is written.
     ///
     /// # Errors
-    /// `ValueError` if nothing is left of it, if it is longer than
+    /// `ValueError` if it is blank, if it is longer than
     /// `MAX_CHARS`, contains a control character that is no whitespace, or
     /// - where it is one line - a line break.
     pub fn new(text: impl AsRef<str>) -> Result<Self, ValueError> {
-        let text = text.as_ref().trim();
-        if text.is_empty() {
+        let text = text.as_ref();
+        if text.trim().is_empty() {
             return Err(ValueError::Empty { field: R::FIELD });
         }
         if text.chars().count() > R::MAX_CHARS {
@@ -138,13 +140,14 @@ mod tests {
     }
 
     #[test]
-    fn a_text_is_trimmed_bounded_and_kept_free_of_control_characters() {
-        assert_eq!(Text::<Lines>::new("  Be brief.\n").unwrap().as_str(), "Be brief.");
+    fn a_text_is_bounded_and_kept_free_of_control_characters_and_as_written() {
+        assert_eq!(Text::<Lines>::new(" Brief.\n").unwrap().as_str(), " Brief.\n", "checked, not changed");
         assert_eq!(Text::<Line>::new("   "), Err(ValueError::Empty { field: "summary" }));
         assert_eq!(Text::<Line>::optional(Some("   ")), Ok(None), "blank is none");
         assert_eq!(Text::<Line>::optional(None), Ok(None));
         assert_eq!(Text::<Line>::new("eleven char"), Err(ValueError::TooLong { field: "summary", max_chars: 10 }));
         assert_eq!(Text::<Line>::new("one\ntwo"), Err(ValueError::LineBreak { field: "summary" }));
+        assert_eq!(Text::<Line>::new("one\n"), Err(ValueError::LineBreak { field: "summary" }), "a line break at its end, too");
         assert!(Text::<Lines>::new("one\ntwo\tx").is_ok(), "lines and tabs where it is not one line");
         assert_eq!(Text::<Lines>::new("bell\u{7}"), Err(ValueError::ControlCharacter { field: "briefing" }));
         assert_eq!(ValueError::LineBreak { field: "summary" }.to_string(), "the summary must be one line", "naming the field");

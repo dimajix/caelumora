@@ -334,7 +334,7 @@ mod tests {
     #[test]
     fn a_session_and_its_channels_are_described_as_their_templates_say() {
         let mut template = template();
-        template.summary = Some(Summary::new(" Pair programming ").unwrap());
+        template.summary = Some(Summary::new("Pair programming").unwrap());
         template.briefing = Some(Briefing::new("Review before you merge.").unwrap());
         template.channels[0].summary = Some(Summary::new("Where the pairing happens").unwrap());
         let (id, owner) = (SessionId::new(), UserId::new());
