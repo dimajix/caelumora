@@ -2,7 +2,9 @@ use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, P
 use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::StoredComponent;
 use crate::removal::{Deletable, Removal, Stored};
+use crate::scope::Definition;
 use crate::security::SecurityManager;
+use crate::value::name::ScopedName;
 use crate::store_impl::access::{Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, USERS, USER_PROFILES};
 use crate::session::{Session, SessionId};
 use crate::store::{ComponentStore, EntityStore, Journaled, StateStore, StoreError, StoreResult};
@@ -436,6 +438,12 @@ impl JsonFileStore {
         let all = read_all_from_dir::<T>(&dir).await?;
         Ok(access.filter(all, kind).await)
     }
+
+    /// The definition of `name`, in exactly its scope, among those listed.
+    async fn find_dir<T: Stored + Definition + DeserializeOwned + Send>(&self, ctx: &SecurityContext, kind: &Actions, dir: PathBuf, name: &ScopedName) -> StoreResult<T> {
+        let all: Vec<T> = self.list_dir(ctx, kind, dir).await?;
+        require_entity(all.into_iter().find(|d| d.scoped_name() == name), kind.entity.name(), name.to_string())
+    }
 }
 
 #[async_trait]
@@ -468,6 +476,9 @@ impl EntityStore for JsonFileStore {
     async fn list_deleted_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>> {
         self.list_deleted_dir(ctx, &PERSONALITIES, self.personality_dir()).await
     }
+    async fn find_personality_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Personality> {
+        self.find_dir(ctx, &PERSONALITIES, self.personality_dir(), name).await
+    }
 
     // Session templates
     async fn create_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()> {
@@ -497,6 +508,9 @@ impl EntityStore for JsonFileStore {
     async fn list_deleted_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>> {
         self.list_deleted_dir(ctx, &SESSION_TEMPLATES, self.session_templates_dir()).await
     }
+    async fn find_session_template_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<SessionTemplate> {
+        self.find_dir(ctx, &SESSION_TEMPLATES, self.session_templates_dir(), name).await
+    }
 
     // Agents
     async fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
@@ -525,6 +539,9 @@ impl EntityStore for JsonFileStore {
     }
     async fn list_deleted_agents(&self, ctx: &SecurityContext) -> StoreResult<Vec<Agent>> {
         self.list_deleted_dir(ctx, &AGENTS, self.agents_dir()).await
+    }
+    async fn find_agent_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Agent> {
+        self.find_dir(ctx, &AGENTS, self.agents_dir(), name).await
     }
 
     // Sessions - their state is the `StateStore`'s, which may be another

@@ -9,17 +9,18 @@ use caelumora_model::channel::Participant;
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
-use caelumora_model::store::{EntityStore, StoreResult};
-use caelumora_model::template::{ParticipantRequest, SessionTemplate, TemplateResult};
+use caelumora_model::store::{EntityStore, StoreResultExt};
+use caelumora_model::template::{ParticipantRequest, SessionTemplate, TemplateError, TemplateResult};
 use caelumora_model::user::UserId;
 
 /// The participants of `template` for the session `session_id` of `owner`,
 /// each with its name in the template, found or made as `context`.
 ///
 /// # Errors
-/// A `TemplateError` if the template cannot be made into a session; a
-/// `StoreError` if a user or personality it names does not exist, or the
-/// store refuses or fails - never a second agent because a lookup failed.
+/// A `TemplateError` if the template cannot be made into a session - also
+/// if an agent it names exists with another personality; a `StoreError` if
+/// a user or personality it names does not exist, or the store refuses or
+/// fails - never a second agent because a lookup failed.
 pub(crate) async fn resolve_participants(store: &dyn EntityStore, context: &SecurityContext, template: &SessionTemplate, session_id: SessionId, owner: UserId) -> anyhow::Result<Vec<(String, Participant)>> {
     let requests = template.participants.iter()
         .map(|p| p.request(session_id, owner).map(|request| (p.name().to_string(), request)))
@@ -43,16 +44,22 @@ pub(crate) async fn resolve_participants(store: &dyn EntityStore, context: &Secu
     Ok(participants)
 }
 
-/// The agent of `name`, or a new one of `personality_id`, owned by whoever
-/// `context` acts for.
-async fn agent(store: &dyn EntityStore, context: &SecurityContext, name: ScopedName, personality_id: PersonalityId) -> StoreResult<AgentId> {
+/// The agent of `name` - in exactly its scope (issue 178) - if it is of
+/// `personality_id`, or a new one of it there, owned by whoever `context`
+/// acts for. One of that name in another scope is not it: from the
+/// session, the new one shadows it.
+///
+/// # Errors
+/// `TemplateError::AgentNameTaken` if the agent of `name` is of another
+/// personality; whatever the store reports.
+async fn agent(store: &dyn EntityStore, context: &SecurityContext, name: ScopedName, personality_id: PersonalityId) -> anyhow::Result<AgentId> {
     // Only "there is none" means "make one": a lookup that failed or was
     // refused is an error, not a reason for a second agent of that name
     // (issue 77).
-    let known = store.list_agents(context).await?.into_iter()
-        .find(|a| a.name.name == name.name && name.scope.contains(&a.name.scope));
-    if let Some(agent) = known {
-        return Ok(agent.id);
+    match store.find_agent_by_name(context, &name).await.optional()? {
+        Some(agent) if agent.personality_id == personality_id => return Ok(agent.id),
+        Some(_) => return Err(TemplateError::AgentNameTaken(name.name).into()),
+        None => {}
     }
     let personality = store.get_personality(context, personality_id).await?;
     let agent = Agent::new(name, &personality, context.initiator_id);
@@ -67,6 +74,7 @@ mod tests {
     use caelumora_model::confidentiality::Visibility;
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::Personality;
+    use caelumora_model::scope::Scope;
     use caelumora_model::security::{ActionType, SecurityManager};
     use caelumora_model::store::StoreError;
     use caelumora_model::store_impl::memory::MemoryStore;
@@ -146,6 +154,39 @@ mod tests {
         let refused = resolve_participants(store.as_ref(), &as_user(owner), &self::template(vec![helper(personality)]), SessionId::new(), owner).await
             .expect_err("the lookup is refused");
         assert!(matches!(refused.downcast_ref::<StoreError>(), Some(StoreError::PermissionDenied)), "{refused}");
+    }
+
+    #[tokio::test]
+    async fn an_agent_is_reused_only_in_the_scope_asked_for_and_of_its_personality() {
+        let owner = UserId::new();
+        let (store, personality) = store_with_personality(MemoryStore::new()).await;
+        let system = SecurityContext::system();
+        let plain = store.get_personality(&system, personality).await.unwrap();
+        let other = Personality { id: PersonalityId::new(), name: ScopedName::new("other", Default::default()).unwrap(), ..plain.clone() };
+        store.create_personality(&system, &other).await.unwrap();
+        let own = Agent::new(ScopedName::new("helper", Scope::UserScope { user_id: owner }).unwrap(), &plain, ActorId::User(owner));
+        store.create_agent(&system, &own).await.unwrap();
+        let in_scope = |scope| template(vec![ParticipantTemplate::Agent { name: Name::new("Helper").unwrap(), scope, personality_id: personality }]);
+        let made = |participants: Vec<(String, Participant)>| match participants[0].1 { Participant::Agent(id) => id, _ => panic!("an agent") };
+
+        let reused = resolve_participants(store.as_ref(), &as_user(owner), &in_scope(ScopeTemplate::UserScope), SessionId::new(), owner).await.unwrap();
+        assert_eq!(made(reused), own.id, "the user's own, with its memory");
+
+        let session_id = SessionId::new();
+        let shadowing = made(resolve_participants(store.as_ref(), &as_user(owner), &in_scope(ScopeTemplate::SessionScope), session_id, owner).await.unwrap());
+        assert_ne!(shadowing, own.id, "the user's lies in another scope: a new one shadows it");
+        assert_eq!(store.get_agent(&system, shadowing).await.unwrap().name.scope, Scope::SessionScope { session_id });
+
+        let global = made(resolve_participants(store.as_ref(), &as_user(owner), &in_scope(ScopeTemplate::GlobalScope), SessionId::new(), owner).await.unwrap());
+        let again = made(resolve_participants(store.as_ref(), &as_user(owner), &in_scope(ScopeTemplate::GlobalScope), SessionId::new(), owner).await.unwrap());
+        assert_eq!(global, again, "one global agent, although the user's own lies further in");
+        assert_ne!(global, own.id);
+
+        let taken = ParticipantTemplate::Agent { name: Name::new("helper").unwrap(), scope: ScopeTemplate::GlobalScope, personality_id: other.id };
+        let refused = resolve_participants(store.as_ref(), &as_user(owner), &template(vec![taken]), SessionId::new(), owner).await
+            .expect_err("the global one is of another personality");
+        assert!(matches!(refused.downcast_ref::<TemplateError>(), Some(TemplateError::AgentNameTaken(name)) if *name == "helper"), "{refused}");
+        assert_eq!(store.list_agents(&system).await.unwrap().len(), 3, "and none is made: the user's, the session's, the global one");
     }
 
     #[tokio::test]

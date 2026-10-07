@@ -235,3 +235,19 @@ the holder, so that a restore meanwhile finds nothing half done.
   equally deep. Unlike the plan, `depth`, `visible_from` and the listing for a place (`visible`)
   are not public: nothing outside the module uses them yet, and the listing comes with whatever
   offers definitions from a place.
+- **2026-10-07** — Step 2, differently from the plan. Building it showed that a template does not
+  ask what is seen from a place under a name but whether the agent of that name exists in the scope
+  it asks for: through `find_by_name` from the new session, a user's own "helper" lies further in
+  than a global one and is found instead, so a template asking for a global "helper" would make a
+  new global one for every session. Decided with the maintainer: the store finds a definition by
+  its `ScopedName` in exactly its scope - `find_personality_by_name`,
+  `find_session_template_by_name`, `find_agent_by_name`, the counterparts of `find_user_by_name`,
+  `NotFound` if there is none among what the caller may read; tested in the store suite for both
+  stores. A template's agent is the one `find_agent_by_name` finds, reused if it is of the
+  personality asked for, `TemplateError::AgentNameTaken` if not (`400 template_invalid`), made in
+  the scope asked for if there is none; tests in `caelumora-runtime/src/template.rs`, among them
+  one global agent for a template asking twice although the user's own lies further in. The
+  security suite asks the same as before: the lookup lists the agents and reads what it filters.
+  `scope::find_by_name` stays for what looks up from a place - mentioning, adding an agent by name,
+  offering what is there - and has no caller in this issue; the second point of *Done when* is
+  met with the lookup in exactly one scope. `docs/STORAGE.md` says both.

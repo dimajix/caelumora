@@ -10,6 +10,7 @@ use crate::security::SecurityContext;
 use crate::session::{Session, SessionId};
 use crate::template::{SessionTemplate, SessionTemplateId};
 use crate::user::{User, UserId, UserProfile};
+use crate::value::name::ScopedName;
 
 
 #[derive(Debug, thiserror::Error)]
@@ -117,9 +118,12 @@ impl std::fmt::Display for EntityKind {
 /// every one of them is checked the same way (`store_impl::access`).
 /// `create` refuses an entity that exists (`Conflict`), `update` one that
 /// does not (`NotFound`); `delete` says whether there was one to delete.
-/// Only users are also found by name: a username is an identity. Whoever
-/// looks for another kind by name filters `list_x`, with `Scope::contains`
-/// where the scope matters.
+/// Some kinds are also found by name, among what the caller may read -
+/// `NotFound` if there is none: users by their username, an identity, and
+/// what lies in a scope - personalities, session templates, agents - by
+/// their `ScopedName`, the name in exactly that scope (issue 178). Finding
+/// one from a place, in the scopes around it, is `scope::find_by_name`
+/// over `list_x`.
 ///
 /// Deleting marks (issue 164): `delete_x` sets the mark - who, when - and
 /// keeps the document. What is marked is not there for any of the five:
@@ -143,6 +147,7 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn purge_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool>;
     async fn get_deleted_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality>;
     async fn list_deleted_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>>;
+    async fn find_personality_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Personality>;
 
     // Session templates
     async fn create_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()>;
@@ -154,6 +159,7 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn purge_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool>;
     async fn get_deleted_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<SessionTemplate>;
     async fn list_deleted_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>>;
+    async fn find_session_template_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<SessionTemplate>;
 
     // Agents
     async fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()>;
@@ -165,6 +171,7 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn purge_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<bool>;
     async fn get_deleted_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent>;
     async fn list_deleted_agents(&self, ctx: &SecurityContext) -> StoreResult<Vec<Agent>>;
+    async fn find_agent_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Agent>;
 
     // Sessions
     async fn create_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()>;

@@ -32,10 +32,14 @@ Every entity has a name, and the fields that mean something for it (issue 177):
 
 *   **What is a scope** - a session, a channel, a user - has a name only.
 *   **What lies in a scope** - a personality, a session template, an agent - has a name and a
-    `Scope`: where it is found by name. A template finds its agents there, so an agent's scope
-    decides whether it is reused - one per user, with its memory - or made anew for every session.
-    Looking definitions up by name within their scope is
-    [178](../issues/178-scoped-lookup-by-name.md).
+    `Scope`: where it is found by name (issue [178](../issues/178-scoped-lookup-by-name.md)). The
+    store finds one by its `ScopedName`, in exactly its scope (`find_personality_by_name`,
+    `find_session_template_by_name`, `find_agent_by_name`). From a place - a channel or a session,
+    and who is looking - `scope::find_by_name` finds the innermost of a name: in the place's scope,
+    in those around it or in the user's own. A template asks for each agent in exactly the scope it
+    names and reuses it only if it is of the personality it names - one of another is an error -
+    so an agent's scope decides whether it is reused - one per user, with its memory - or made
+    anew for every session.
 *   What is offered for choosing - a personality, a session template - has a `description` as well,
     a catalogue line.
 

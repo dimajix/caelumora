@@ -11,7 +11,7 @@ use crate::confidentiality::{Classification, Visibility};
 use crate::external_agent::ConversationId;
 use crate::value::name::{Name, ScopedName};
 use crate::value::text::Introduction;
-use crate::scope::Scope;
+use crate::scope::{Definition, Scope};
 use crate::security::SecurityContext;
 use crate::session::{Session, SessionId};
 use crate::store::{ComponentStore, EntityStore, Journaled, StateStore, StoreError};
@@ -159,14 +159,40 @@ pub(crate) async fn component_store_behaves(store: &dyn ComponentStore) {
         create_component, get_component, update_component, delete_component, list_components);
 }
 
+/// A definition of a kind is found by its name in exactly its scope (issue
+/// 178): compared as names are, not in another scope, not once deleted.
+/// `$make` makes one of a `ScopedName`.
+macro_rules! found_by_name {
+    ($store:expr, $make:expr, $entity:literal, $create:ident, $delete:ident, $find:ident) => {{
+        let store = $store;
+        let ctx = SecurityContext::default();
+        let user_id = UserId::new();
+        let global = ($make)(ScopedName::new("Helper", Scope::GlobalScope).unwrap());
+        let users = ($make)(ScopedName::new("helper", Scope::UserScope { user_id }).unwrap());
+        store.$create(&ctx, &global).await.expect(concat!($entity, ": create"));
+        store.$create(&ctx, &users).await.expect(concat!($entity, ": create"));
+
+        let found = store.$find(&ctx, &ScopedName::new("helper", Scope::GlobalScope).unwrap()).await.expect(concat!($entity, ": found by name"));
+        assert_eq!(found.id, global.id, concat!($entity, ": the one in that scope, compared as names are"));
+        let found = store.$find(&ctx, &ScopedName::new("HELPER", Scope::UserScope { user_id }).unwrap()).await.expect(concat!($entity, ": found by name"));
+        assert_eq!(found.id, users.id, concat!($entity, ": the one in the user's scope"));
+        let elsewhere = store.$find(&ctx, &ScopedName::new("helper", Scope::SessionScope { session_id: SessionId::new() }).unwrap()).await;
+        assert!(matches!(elsewhere, Err(StoreError::NotFound { entity: $entity, .. })), concat!($entity, ": not in a scope it does not lie in, got {:?}"), elsewhere);
+
+        store.$delete(&ctx, global.id).await.expect(concat!($entity, ": delete"));
+        let deleted = store.$find(&ctx, global.scoped_name()).await;
+        assert!(matches!(deleted, Err(StoreError::NotFound { entity: $entity, .. })), concat!($entity, ": not once deleted, got {:?}"), deleted);
+    }};
+}
+
 // A named function rather than a closure: a closure returning a borrow of
 // its argument doesn't get the lifetime inferred.
 fn component_id(value: &StoredComponent) -> &str {
     value.id()
 }
 
-/// Every kind of entity goes through the same life, and users are also
-/// found by name.
+/// Every kind of entity goes through the same life; users are also found
+/// by name, and so are definitions in their scope.
 pub(crate) async fn entity_store_behaves(store: &dyn EntityStore) {
     lifecycle!(store, personality(), |v: &Personality| v.id, name.name, "personality",
         create_personality, get_personality, update_personality, delete_personality, list_personalities);
@@ -191,6 +217,13 @@ pub(crate) async fn entity_store_behaves(store: &dyn EntityStore) {
     assert_eq!(found.id, alice.id);
     let missing = store.find_user_by_name(&ctx, "carol").await;
     assert!(matches!(missing, Err(StoreError::NotFound { entity: "user", .. })), "an unknown name is NotFound, got {missing:?}");
+
+    found_by_name!(store, |name| Personality { name, id: PersonalityId::new(), ..personality() }, "personality",
+        create_personality, delete_personality, find_personality_by_name);
+    found_by_name!(store, |name| SessionTemplate { name, id: SessionTemplateId::new(), ..session_template() }, "session_template",
+        create_session_template, delete_session_template, find_session_template_by_name);
+    found_by_name!(store, |name| Agent::new(name, &personality(), crate::actor::ActorId::None), "agent",
+        create_agent, delete_agent, find_agent_by_name);
 }
 
 /// Agent states that were never stored read as their default, a channel

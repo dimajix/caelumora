@@ -9,6 +9,8 @@ use tracing::info;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use crate::removal::{Deletable, Removal, Stored};
+use crate::scope::Definition;
+use crate::value::name::ScopedName;
 use crate::security::{DummySecurityManager, SecurityManager};
 use crate::store_impl::access::{Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, USERS, USER_PROFILES};
 use std::fmt::Display;
@@ -185,6 +187,13 @@ impl MemoryStore {
         let all = self.read_lock(map, |v| v.values().cloned().collect());
         Ok(access.filter(all, kind).await)
     }
+
+    /// The definition of `name`, in exactly its scope, among those listed.
+    async fn find_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, name: &ScopedName) -> StoreResult<T>
+    where K: Eq + Hash + Send + Sync, T: Stored + Definition + Clone + Send + Sync {
+        let all = self.list_in(ctx, map, kind).await?;
+        require_entity(all.into_iter().find(|d| d.scoped_name() == name), kind.entity.name(), name.to_string())
+    }
 }
 
 fn require_entity<T>(value: Option<T>, entity: &'static str, id: String) -> StoreResult<T> {
@@ -224,6 +233,9 @@ impl EntityStore for MemoryStore {
     async fn list_deleted_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>> {
         self.list_deleted_in(ctx, &self.personalities, &PERSONALITIES).await
     }
+    async fn find_personality_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Personality> {
+        self.find_in(ctx, &self.personalities, &PERSONALITIES, name).await
+    }
 
     // Session templates
     async fn create_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()> {
@@ -253,6 +265,9 @@ impl EntityStore for MemoryStore {
     async fn list_deleted_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>> {
         self.list_deleted_in(ctx, &self.session_templates, &SESSION_TEMPLATES).await
     }
+    async fn find_session_template_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<SessionTemplate> {
+        self.find_in(ctx, &self.session_templates, &SESSION_TEMPLATES, name).await
+    }
 
     // Agents
     async fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
@@ -281,6 +296,9 @@ impl EntityStore for MemoryStore {
     }
     async fn list_deleted_agents(&self, ctx: &SecurityContext) -> StoreResult<Vec<Agent>> {
         self.list_deleted_in(ctx, &self.agents, &AGENTS).await
+    }
+    async fn find_agent_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Agent> {
+        self.find_in(ctx, &self.agents, &AGENTS, name).await
     }
 
     // Sessions - their state is the `StateStore`'s, which may be another
