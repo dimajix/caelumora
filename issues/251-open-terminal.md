@@ -91,7 +91,9 @@ From its sources (`open_terminal/main.py`, `mcp_server.py`, v0.14.0):
   (`client.rs`: the API's types, `reqwest`, errors through `RemoteEndpoint` and
   `describe_request_error`, issue [188](188-remote-helpers-on-llm-error.md)) and the component with
   its `ToolProvider` (`mod.rs`) - an integration test against a stand-in server, and the documents.
-  The client follows a 0.x API and has to be maintained.
+  The client follows a 0.x API and has to be maintained. Whether the file tools belong to it at all
+  is Decision 5: with Open Terminal as the executor over a workspace of our own, only the commands
+  remain.
 - **C. Extend `mcp_tool` instead.** Headers with placeholders (`{channel_id}`, `{agent_id}`) and
   approval per remote tool in the configuration. All MCP servers would gain from it, but polling,
   the kill and the matcher stay missing, and whether FastMCP's proxy passes headers on to the REST
@@ -153,6 +155,36 @@ channel where that is too coarse.
 - **ii. Everything in the background,** the model polling. Costs steps and tokens, and gains only
   for very long jobs - which `command_output` under i already allows.
 
+### Decision 5: Open Terminal as the workspace, or as the executor over ours
+
+[PLAN.md](PLAN.md) (block B1) asks for a workspace of Caelumora's own - W1, an issue still to be
+opened: a tree of files with `SecurityAttributes` and one classification, kept as a plain
+directory, with tools for agents (W2), a side for the users (W3: upload, download, a panel, diffs)
+and versions (W4). Open Terminal brings a workspace of its own. Two of them would be the repeated
+logic AGENTS.md warns of, so the question is which one it is:
+
+- **Open Terminal's container is the workspace** - B as described, file tools included. Fast, and
+  it covers code that is to be built and run. But the files belong to nobody in Caelumora: no
+  `SecurityAttributes`, no owner, no versions, no download in the web UI, one classification per
+  container by configuration; and the artifacts of issue [208](208-generated-artifacts.md) would
+  need a store of their own anyway.
+- **Open Terminal is the executor over our workspace (recommended).** An Open Terminal container
+  mounts the workspace's directory and runs commands on it. Reading and writing files is W2's
+  alone, and this component offers only the commands: `run_command`, `command_output`,
+  `kill_command`. Otherwise two components offer the same file tools, with two approval rules and
+  two records of what was read and written. The workspace's classification is the one of Decision
+  2, now a property of the workspace instead of the component's configuration. The costs:
+  - What a command changes passes W2's record and versions by. W4 needs a snapshot around every
+    command (git in the directory, say), not only around a write; what a command read is not
+    recorded as knowledge at all.
+  - A container per workspace, mounting its directory, is something to operate - and to start
+    when a workspace is attached, if workspaces are created at run time.
+  - Open Terminal's own file endpoints stay reachable with the API key; the component simply does
+    not offer them, which is no boundary but the same trust the shell already needs.
+- **First the one, then the other.** B with its file tools can come first, as the quick way to try
+  agents on files, if its file tools are understood as interim and removed once W2 exists. The
+  configuration of agents that used them changes then.
+
 ### Relation to issue 252
 
 The two issues share one preparatory step and are otherwise independent.
@@ -199,12 +231,15 @@ The price is that the harder and less certain work comes before the concrete nee
 1. The shape: B, or A (252) or C?
 2. Confidentiality: 180 first or alongside (b), or c for the time being?
 3. Separation: `X-User-Id` = the agent's id, or one shared workspace per component for now?
+4. Open Terminal as the workspace, or as the executor over ours (Decision 5)? And if the executor:
+   wait for W1, or B with file tools first as an interim?
 
 ## Done when
 
-- An agent can run commands and read and write files in an Open Terminal workspace, with approval
-  by kind of tool, the command shown to the approver, long commands followed within a call, and an
-  interrupted call killing its command.
+- An agent can run commands in an Open Terminal workspace - and read and write files there, unless
+  Decision 5 leaves that to a workspace of our own - with approval by kind of tool, the command
+  shown to the approver, long commands followed within a call, and an interrupted call killing its
+  command.
 - A workspace is not offered in a channel whose classification it does not match, and the agent is
   told so.
 - The integration is documented in TOOLS-AND-COMMANDS.md and COMPONENTS.md, its limits in
@@ -219,3 +254,6 @@ The price is that the harder and less certain work comes before the concrete nee
   (`Approval`), why B is not built on 252, and 252 as a possible bridge for Open Terminal, with the
   `/ports` proxy filtered out. Option A was said to gain nothing over MCP; it gains approval by HTTP
   method, and the text says so now. The order now decides 180 before B is built.
+- **2026-10-07** — Added Decision 5, from the update of PLAN.md: Open Terminal as the workspace, or
+  as the executor over a workspace of Caelumora's own (W1), its tools then the commands alone. The
+  open questions and *Done when* say so.
