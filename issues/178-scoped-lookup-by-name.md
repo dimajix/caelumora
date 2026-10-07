@@ -251,3 +251,20 @@ the holder, so that a restore meanwhile finds nothing half done.
   `scope::find_by_name` stays for what looks up from a place - mentioning, adding an agent by name,
   offering what is there - and has no caller in this issue; the second point of *Done when* is
   met with the lookup in exactly one scope. `docs/STORAGE.md` says both.
+- **2026-10-07** — Step 3: what lies in a scope goes with what holds it. A new module
+  `caelumora-runtime/src/definitions.rs` deletes, restores and purges the personalities, session
+  templates and agents that lie in a scope *or within it* (`Scope::contains`, so a session takes its
+  channels' scopes along), in the runtime's name, announcing agents as `delete_agent` and
+  `restore_agent` do. Restoring takes back only what was deleted at the holder's `Removal::at` or
+  later, so that what was deleted by hand before stays deleted. Callers: `delete_session`,
+  `restore_session` - which reads when the session was deleted in the runtime's name before the mark
+  goes, and uses it only once restoring was permitted - and `purge_session` of the
+  `SessionManager`, `delete_channel` and `restore_channel` of the `SessionLoop`. Deleting and
+  restoring log a failure of the cascade and go on, since the holder is already changed; purging
+  reports it. An agent of a channel's scope that takes part in another channel of the session leaves
+  it; for that, `SessionLoop::leave_channels` was taken out of `SessionManager::delete_agent`, which
+  now uses it too. Nothing creates a definition of a channel's scope yet (`ScopeTemplate` has no
+  channel scope), so that path is covered by tests alone. Tests: `session.rs` (a channel's and a
+  session's definitions go and come back, a user's stays, one deleted before stays deleted, purging
+  takes them all), and the security suite's `deleting_a_session_needs_owning_it`, which shows that
+  bob's agent of alice's session goes with it without anything more being asked of her.

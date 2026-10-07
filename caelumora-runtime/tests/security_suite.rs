@@ -1405,11 +1405,16 @@ async fn stopping_a_session_needs_owning_it() {
 }
 
 /// Deleting a session: reading it and deleting it - its owner's alone. It
-/// is marked and kept, with its channels (issue 164).
+/// is marked and kept, with its channels (issue 164), and what lies in its
+/// scope goes with it in the runtime's name - also an agent of somebody
+/// else's, whom nothing more is asked (issue 178).
 #[tokio::test]
 async fn deleting_a_session_needs_owning_it() {
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
+    let personality = world.personality("plain", None, &[]).await;
+    let bobs = Agent::new(ScopedName::new("helper", Scope::SessionScope { session_id: session.id() }).unwrap(), &personality, ActorId::User(world.bob));
+    world.store.create_agent(&World::system(), &bobs).await.unwrap();
     let (_, asked) = world.asked(world.manager.delete_session(&World::as_user(world.carol), session.id())).await;
     assert_eq!(asked, checks(&["carol: GetSession(alice's) no"]));
     let (_, asked) = world.asked(world.manager.delete_session(&World::as_user(world.bob), session.id())).await;
@@ -1422,6 +1427,10 @@ async fn deleting_a_session_needs_owning_it() {
         "alice: GetSession(alice's) yes",
         "alice: DeleteSession(alice's) yes",
     ]), "asked by the session manager before it stops anything, and again by the store");
+    assert!(world.store.get_agent(&World::system(), bobs.id).await.is_err(), "bob's agent of its scope went with it");
+
+    world.manager.restore_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    assert!(world.store.get_agent(&World::system(), bobs.id).await.is_ok(), "and comes back with it");
 }
 
 /// Creating a channel: the classification it is given, everyone's

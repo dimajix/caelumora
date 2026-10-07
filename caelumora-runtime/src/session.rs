@@ -17,8 +17,10 @@ use crate::view::{Viewer, Views};
 use caelumora_model::privacy::{PrivacyConfig, SessionPrivacy};
 use caelumora_model::store::{EntityStore, StoreError, StoreResult, StoreResultExt};
 use tracing::{info, warn};
+use caelumora_model::scope::Scope;
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::template::SessionTemplateId;
+use crate::definitions::{delete_definitions_of, purge_definitions_of, restore_definitions_of};
 use crate::controller::SessionController;
 use dashmap::DashMap;
 use std::sync::Arc;
@@ -255,6 +257,20 @@ impl SessionLoop {
         self.session().channels.iter().filter_map(|c| self.channel_by_id(*c)).collect()
     }
 
+    /// Has `actor` leave every channel of the session it takes part in -
+    /// kept there as a former participant -, in the runtime's name: for an
+    /// agent that is deleted, which was permitted.
+    pub(crate) async fn leave_channels(&self, actor: ActorId) {
+        let system = SecurityContext::system();
+        for channel in self.channels() {
+            if channel.channel().participants.iter().any(|p| p.actor_id() == actor) {
+                if let Err(e) = channel.remove_participant(&system, actor).await {
+                    warn!("Deleted {} could not leave channel {}: {:#}", actor, channel.id(), e);
+                }
+            }
+        }
+    }
+
     pub fn channel_by_id(&self, channel_id: ChannelId) -> Option<Arc<ChannelLoop>> {
         self.channels.get(&channel_id).map(|entry| Arc::clone(&entry.channel))
     }
@@ -396,6 +412,16 @@ impl SessionLoop {
             event_bus.publish(GlobalEvent::ChannelStopped(self.id, channel_id), channel.security_attributes.clone());
         }
         event_bus.publish(GlobalEvent::ChannelDeleted(self.id, channel_id), channel.security_attributes.clone());
+        // What lies in its scope goes with it (issue 178); an agent of it
+        // that takes part in another channel of the session leaves that.
+        match delete_definitions_of(self.entities.as_ref(), event_bus, &Scope::ChannelScope { session_id: self.id, channel_id }).await {
+            Ok(agents) => {
+                for agent in agents {
+                    self.leave_channels(ActorId::Agent(agent)).await;
+                }
+            }
+            Err(e) => warn!("Channel {} was deleted from session {}, but not what lies in its scope: {}", channel_id, self.id, e),
+        }
         info!("Channel {}/{} deleted from session {} by {}", channel.name, channel_id, self.id, context.caller_id);
         Ok(())
     }
@@ -429,6 +455,7 @@ impl SessionLoop {
         // changed while it was deleted.
         crate::channel::require_cleared(&self.runtime_manager, context, &channel).await?;
         store.restore_channel(context, channel_id).await?;
+        let deleted_at = channel.deleted.as_ref().map(|removal| removal.at);
         let channel = Channel { deleted: None, ..channel };
         let listed = match self.session_controller.add_channel(context, channel_id).await {
             Ok(()) => self.add_channel_loop(&channel).await,
@@ -445,6 +472,12 @@ impl SessionLoop {
                 return Err(error);
             }
         };
+        if let Some(since) = deleted_at {
+            // What was deleted with it comes back with it (issue 178).
+            if let Err(e) = restore_definitions_of(self.entities.as_ref(), &self.events, &Scope::ChannelScope { session_id: self.id, channel_id }, since).await {
+                warn!("Channel {} of session {} was restored, but not what lies in its scope: {}", channel_id, self.id, e);
+            }
+        }
         self.events.publish(GlobalEvent::ChannelRestored(self.id, channel_id), channel.security_attributes.clone());
         info!("Channel {}/{} restored in session {} by {}", channel.name, channel_id, self.id, context.caller_id);
         Ok(channel_loop)
@@ -798,6 +831,14 @@ impl SessionManager {
         // as they are, hidden with it - a channel is reached only through
         // its session - until it is purged.
         let removed = self.entities.delete_session(context, id).await?;
+        // What lies in its scope and in its channels' goes with it (issue
+        // 178). Its agents take part in no other session: they leave
+        // nothing, and come back with its channels.
+        if removed {
+            if let Err(e) = delete_definitions_of(self.entities.as_ref(), event_bus, &Scope::SessionScope { session_id: id }).await {
+                warn!("Session {} was deleted, but not what lies in its scope: {}", id, e);
+            }
+        }
         event_bus.publish(GlobalEvent::SessionDeleted(id), session.security_attributes.clone());
         self.starts.remove(&id);
         Ok(removed)
@@ -818,8 +859,18 @@ impl SessionManager {
         let start = self.start_lock(id);
         let _starting = start.lock().await;
         let store = &self.entities;
+        // When it was deleted, read before the mark goes - in the runtime's
+        // name, and used only once restoring it was permitted: what was
+        // deleted with it comes back with it (issue 178).
+        let deleted_at = store.get_deleted_session(&SecurityContext::system(), id).await.optional()?
+            .and_then(|session| session.deleted.map(|removal| removal.at));
         store.restore_session(context, id).await?;
         let session = store.get_session(context, id).await?;
+        if let Some(since) = deleted_at {
+            if let Err(e) = restore_definitions_of(store.as_ref(), &self.events, &Scope::SessionScope { session_id: id }, since).await {
+                warn!("Session {} was restored, but not what lies in its scope: {}", id, e);
+            }
+        }
         self.events.publish(GlobalEvent::SessionRestored(id), session.security_attributes.clone());
         info!("Session {} restored by {}", id, context.caller_id);
         Ok(session)
@@ -854,6 +905,8 @@ impl SessionManager {
             purge_channel_document(store.as_ref(), channel_id).await?;
             state_store.delete_channel_state(channel_id).await?;
         }
+        // And what lay in its scope and in its channels' (issue 178).
+        purge_definitions_of(store.as_ref(), state_store.as_ref(), &Scope::SessionScope { session_id: id }).await?;
         self.starts.remove(&id);
         info!("Session {} purged by {}", id, context.caller_id);
         Ok(())
@@ -891,15 +944,7 @@ impl SessionManager {
             let start = self.start_lock(session.id);
             let _starting = start.lock().await;
             match self.running(session.id) {
-                Some(running) => {
-                    for channel in running.channels() {
-                        if channel.channel().participants.iter().any(|p| p.actor_id() == actor) {
-                            if let Err(e) = channel.remove_participant(&system, actor).await {
-                                warn!("Deleted agent {} could not leave channel {}: {:#}", id, channel.id(), e);
-                            }
-                        }
-                    }
-                }
+                Some(running) => running.leave_channels(actor).await,
                 None => {
                     for channel in self.load_channels(&session).await? {
                         if channel.participants.iter().any(|p| p.actor_id() == actor) {
@@ -2196,6 +2241,66 @@ mod tests {
         assert!(entities.get_channel(&ctx, channel_id).await.is_err(), "its channels go with it (issue 70)");
         assert!(entities.get_deleted_channel(&ctx, side).await.is_err(), "also those deleted from it before");
         assert!(states.get_channel_state(side).await.is_err(), "with their state");
+    }
+
+    #[tokio::test]
+    async fn what_lies_in_a_scope_goes_with_its_session_or_channel() {
+        use caelumora_model::agent::{Personality, PersonalityId};
+        use caelumora_model::store::EntityStore;
+        use caelumora_model::user::UserId;
+
+        let runtime = test_runtime();
+        let store = Arc::clone(runtime.entity_store());
+        let manager = SessionManager::new(runtime);
+        let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
+        let session = make_session("scoped");
+        let id = session.id;
+        let running = create(&manager, &ctx, session).await.unwrap();
+        let side = running.create_channel(&ctx, spec("side", vec![])).await.unwrap().id();
+
+        let personality = Personality {
+            id: PersonalityId::new(), name: ScopedName::new("planner", Scope::SessionScope { session_id: id }).unwrap(), kind: Default::default(),
+            roles: None, description: None, introduction: None, components: Default::default(),
+            security_attributes: Default::default(), reasoning_visibility: Default::default(), deleted: None,
+        };
+        store.create_personality(&system, &personality).await.unwrap();
+        let agent_in = |name: &str, scope| Agent::new(ScopedName::new(name, scope).unwrap(), &personality, ActorId::None);
+        let sessions = agent_in("helper", Scope::SessionScope { session_id: id });
+        let sides = agent_in("aside", Scope::ChannelScope { session_id: id, channel_id: side });
+        let users = agent_in("own", Scope::UserScope { user_id: UserId::new() });
+        let earlier = agent_in("earlier", Scope::SessionScope { session_id: id });
+        for agent in [&sessions, &sides, &users, &earlier] {
+            store.create_agent(&system, agent).await.unwrap();
+        }
+        store.delete_agent(&system, earlier.id).await.unwrap();
+        let present = |agent: &Agent| {
+            let (store, id) = (Arc::clone(&store), agent.id);
+            async move { store.get_agent(&SecurityContext::system(), id).await.is_ok() }
+        };
+
+        running.delete_channel(&ctx, side).await.unwrap();
+        assert!(!present(&sides).await, "the channel's agent goes with it");
+        assert!(present(&sessions).await && present(&users).await, "the session's and the user's stay");
+        running.restore_channel(&ctx, side).await.unwrap();
+        assert!(present(&sides).await, "and comes back with it");
+
+        manager.delete_session(&ctx, id).await.unwrap();
+        assert!(!present(&sessions).await && !present(&sides).await, "the session's and its channels' go with it");
+        assert!(store.get_personality(&system, personality.id).await.is_err(), "so do its personalities");
+        assert!(present(&users).await, "the user's stays");
+
+        manager.restore_session(&ctx, id).await.unwrap();
+        assert!(present(&sessions).await && present(&sides).await, "back with it");
+        assert!(store.get_personality(&system, personality.id).await.is_ok());
+        assert!(!present(&earlier).await, "but not what was deleted before it");
+
+        manager.delete_session(&ctx, id).await.unwrap();
+        manager.purge_session(&ctx, id).await.unwrap();
+        for agent in [&sessions, &sides, &earlier] {
+            assert!(store.get_deleted_agent(&system, agent.id).await.is_err(), "{} is purged with it", agent.name);
+        }
+        assert!(store.get_deleted_personality(&system, personality.id).await.is_err());
+        assert!(present(&users).await, "the user's is not");
     }
 
     #[tokio::test]
