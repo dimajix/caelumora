@@ -25,8 +25,9 @@ any_ascii = "=0.3.3"
 # The patterns of approval rules (issue 13): no backtracking, so that a
 # pattern takes linear time whatever it is matched against.
 regex = "1.12"
-# The JSON store reads and writes files asynchronously.
-tokio = { version = "1.53.1", features = ["fs", "io-util"] }
+# The JSON store reads and writes files asynchronously, and keeps names
+# unique under a lock per kind (issue 250).
+tokio = { version = "1.53.1", features = ["fs", "io-util", "sync"] }
 
 [dev-dependencies]
 tokio = { version = "1.53.1", features = ["macros", "rt", "sync"] }

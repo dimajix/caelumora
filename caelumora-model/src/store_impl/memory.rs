@@ -12,7 +12,7 @@ use crate::removal::{Deletable, Removal, Stored};
 use crate::scope::Scoped;
 use crate::value::name::ScopedName;
 use crate::security::{DummySecurityManager, SecurityManager};
-use crate::store_impl::access::{Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, USERS, USER_PROFILES};
+use crate::store_impl::access::{name_free, Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, USERS, USER_PROFILES};
 use std::fmt::Display;
 use std::hash::Hash;
 
@@ -90,16 +90,39 @@ impl MemoryStore {
     }
 }
 
+/// What a write checks of the other entities of its kind, inside the lock
+/// that writes: the entity as it is to be written, and the others.
+type Others<'a, T> = &'a mut dyn Iterator<Item = &'a T>;
+
+/// A write of a kind whose names are not unique checks nothing of the
+/// others.
+fn unnamed<T>(_: &T, _: Others<'_, T>) -> StoreResult<()> {
+    Ok(())
+}
+
 /// The operations of every kind (issues 93, 164), on the map that holds
-/// that kind and checked with its `Actions`.
+/// that kind and checked with its `Actions`. Those that write come as
+/// three: the plain one, the one for a kind whose names are unique
+/// (`…_named_in`, issue 250), and what both are made of (`…_with`).
 impl MemoryStore {
     async fn create_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, key: K, value: &T) -> StoreResult<()>
+    where K: Eq + Hash + Display + Send + Sync, T: Stored + Clone + Send + Sync {
+        self.create_with(ctx, map, kind, key, value, unnamed).await
+    }
+
+    async fn create_named_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, key: K, value: &T) -> StoreResult<()>
+    where K: Eq + Hash + Display + Send + Sync, T: Stored + Scoped + Clone + Send + Sync {
+        self.create_with(ctx, map, kind, key, value, |value, others| name_free(value, others, kind)).await
+    }
+
+    async fn create_with<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, key: K, value: &T, others: impl FnOnce(&T, Others<'_, T>) -> StoreResult<()>) -> StoreResult<()>
     where K: Eq + Hash + Display + Send + Sync, T: Stored + Clone + Send + Sync {
         self.access(ctx).create(value, kind).await?;
         self.write_lock(map, |v| {
             if v.contains_key(&key) {
                 return Err(StoreError::Conflict(format!("{} {} already exists", kind.entity, key)));
             }
+            others(value, &mut v.values())?;
             v.insert(key, value.clone());
             Ok(())
         })
@@ -113,10 +136,23 @@ impl MemoryStore {
 
     async fn update_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, key: K, value: &T) -> StoreResult<()>
     where K: Eq + Hash + Display + Send + Sync, T: Stored + Clone + Send + Sync {
+        self.update_with(ctx, map, kind, key, value, unnamed).await
+    }
+
+    async fn update_named_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, key: K, value: &T) -> StoreResult<()>
+    where K: Eq + Hash + Display + Send + Sync, T: Stored + Scoped + Clone + Send + Sync {
+        self.update_with(ctx, map, kind, key, value, |value, others| name_free(value, others, kind)).await
+    }
+
+    async fn update_with<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, key: K, value: &T, others: impl FnOnce(&T, Others<'_, T>) -> StoreResult<()>) -> StoreResult<()>
+    where K: Eq + Hash + Display + Send + Sync, T: Stored + Clone + Send + Sync {
         let stored = self.read_lock(map, |v| v.get(&key).cloned());
         self.access(ctx).change(stored.as_ref(), value, kind, key.to_string()).await?;
-        self.write_lock(map, |v| v.insert(key, value.clone()));
-        Ok(())
+        self.write_lock(map, |v| {
+            others(value, &mut v.iter().filter(|(k, _)| **k != key).map(|(_, other)| other))?;
+            v.insert(key, value.clone());
+            Ok(())
+        })
     }
 
     /// Marks the entity deleted, by the caller and now (issue 164).
@@ -144,12 +180,25 @@ impl MemoryStore {
 
     async fn restore_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, key: K) -> StoreResult<()>
     where K: Eq + Hash + Display + Send + Sync, T: Deletable + Clone + Send + Sync {
+        self.restore_with(ctx, map, kind, key, unnamed).await
+    }
+
+    async fn restore_named_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, key: K) -> StoreResult<()>
+    where K: Eq + Hash + Display + Send + Sync, T: Deletable + Scoped + Clone + Send + Sync {
+        self.restore_with(ctx, map, kind, key, |value, others| name_free(value, others, kind)).await
+    }
+
+    async fn restore_with<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, key: K, others: impl FnOnce(&T, Others<'_, T>) -> StoreResult<()>) -> StoreResult<()>
+    where K: Eq + Hash + Display + Send + Sync, T: Deletable + Clone + Send + Sync {
         let stored = self.read_lock(map, |v| v.get(&key).cloned());
         self.access(ctx).restore(stored.as_ref(), kind, key.to_string()).await?;
         let Some(mut restored) = stored else { return Ok(()) };
         restored.set_deleted(None);
-        self.write_lock(map, |v| v.insert(key, restored));
-        Ok(())
+        self.write_lock(map, |v| {
+            others(&restored, &mut v.iter().filter(|(k, _)| **k != key).map(|(_, other)| other))?;
+            v.insert(key, restored);
+            Ok(())
+        })
     }
 
     async fn purge_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, key: &K) -> StoreResult<bool>
@@ -207,13 +256,13 @@ use crate::user::{User, UserId, UserProfile};
 impl EntityStore for MemoryStore {
     // Personalities
     async fn create_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()> {
-        self.create_in(ctx, &self.personalities, &PERSONALITIES, value.id, value).await
+        self.create_named_in(ctx, &self.personalities, &PERSONALITIES, value.id, value).await
     }
     async fn get_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
         self.get_in(ctx, &self.personalities, &PERSONALITIES, &id).await
     }
     async fn update_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()> {
-        self.update_in(ctx, &self.personalities, &PERSONALITIES, value.id, value).await
+        self.update_named_in(ctx, &self.personalities, &PERSONALITIES, value.id, value).await
     }
     async fn delete_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool> {
         self.delete_in(ctx, &self.personalities, &PERSONALITIES, id).await
@@ -222,7 +271,7 @@ impl EntityStore for MemoryStore {
         self.list_in(ctx, &self.personalities, &PERSONALITIES).await
     }
     async fn restore_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<()> {
-        self.restore_in(ctx, &self.personalities, &PERSONALITIES, id).await
+        self.restore_named_in(ctx, &self.personalities, &PERSONALITIES, id).await
     }
     async fn purge_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool> {
         self.purge_in(ctx, &self.personalities, &PERSONALITIES, &id).await
@@ -239,13 +288,13 @@ impl EntityStore for MemoryStore {
 
     // Session templates
     async fn create_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()> {
-        self.create_in(ctx, &self.session_templates, &SESSION_TEMPLATES, value.id, value).await
+        self.create_named_in(ctx, &self.session_templates, &SESSION_TEMPLATES, value.id, value).await
     }
     async fn get_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<SessionTemplate> {
         self.get_in(ctx, &self.session_templates, &SESSION_TEMPLATES, &id).await
     }
     async fn update_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()> {
-        self.update_in(ctx, &self.session_templates, &SESSION_TEMPLATES, value.id, value).await
+        self.update_named_in(ctx, &self.session_templates, &SESSION_TEMPLATES, value.id, value).await
     }
     async fn delete_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool> {
         self.delete_in(ctx, &self.session_templates, &SESSION_TEMPLATES, id).await
@@ -254,7 +303,7 @@ impl EntityStore for MemoryStore {
         self.list_in(ctx, &self.session_templates, &SESSION_TEMPLATES).await
     }
     async fn restore_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<()> {
-        self.restore_in(ctx, &self.session_templates, &SESSION_TEMPLATES, id).await
+        self.restore_named_in(ctx, &self.session_templates, &SESSION_TEMPLATES, id).await
     }
     async fn purge_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool> {
         self.purge_in(ctx, &self.session_templates, &SESSION_TEMPLATES, &id).await
@@ -271,13 +320,13 @@ impl EntityStore for MemoryStore {
 
     // Agents
     async fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
-        self.create_in(ctx, &self.agents, &AGENTS, value.id, value).await
+        self.create_named_in(ctx, &self.agents, &AGENTS, value.id, value).await
     }
     async fn get_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
         self.get_in(ctx, &self.agents, &AGENTS, &id).await
     }
     async fn update_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
-        self.update_in(ctx, &self.agents, &AGENTS, value.id, value).await
+        self.update_named_in(ctx, &self.agents, &AGENTS, value.id, value).await
     }
     async fn delete_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<bool> {
         self.delete_in(ctx, &self.agents, &AGENTS, id).await
@@ -286,7 +335,7 @@ impl EntityStore for MemoryStore {
         self.list_in(ctx, &self.agents, &AGENTS).await
     }
     async fn restore_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<()> {
-        self.restore_in(ctx, &self.agents, &AGENTS, id).await
+        self.restore_named_in(ctx, &self.agents, &AGENTS, id).await
     }
     async fn purge_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<bool> {
         self.purge_in(ctx, &self.agents, &AGENTS, &id).await
@@ -333,13 +382,13 @@ impl EntityStore for MemoryStore {
 
     // Channels (issue 70)
     async fn create_channel(&self, ctx: &SecurityContext, value: &Channel) -> StoreResult<()> {
-        self.create_in(ctx, &self.channels, &CHANNELS, value.id, value).await
+        self.create_named_in(ctx, &self.channels, &CHANNELS, value.id, value).await
     }
     async fn get_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel> {
         self.get_in(ctx, &self.channels, &CHANNELS, &id).await
     }
     async fn update_channel(&self, ctx: &SecurityContext, value: &Channel) -> StoreResult<()> {
-        self.update_in(ctx, &self.channels, &CHANNELS, value.id, value).await
+        self.update_named_in(ctx, &self.channels, &CHANNELS, value.id, value).await
     }
     async fn delete_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool> {
         self.delete_in(ctx, &self.channels, &CHANNELS, id).await
@@ -348,7 +397,7 @@ impl EntityStore for MemoryStore {
         self.list_in(ctx, &self.channels, &CHANNELS).await
     }
     async fn restore_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<()> {
-        self.restore_in(ctx, &self.channels, &CHANNELS, id).await
+        self.restore_named_in(ctx, &self.channels, &CHANNELS, id).await
     }
     async fn purge_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool> {
         self.purge_in(ctx, &self.channels, &CHANNELS, &id).await
@@ -363,13 +412,13 @@ impl EntityStore for MemoryStore {
     // Users - found by name as well, since a username is an identity
     // (issue 93).
     async fn create_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()> {
-        self.create_in(ctx, &self.users, &USERS, value.id, value).await
+        self.create_named_in(ctx, &self.users, &USERS, value.id, value).await
     }
     async fn get_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
         self.get_in(ctx, &self.users, &USERS, &id).await
     }
     async fn update_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()> {
-        self.update_in(ctx, &self.users, &USERS, value.id, value).await
+        self.update_named_in(ctx, &self.users, &USERS, value.id, value).await
     }
     async fn delete_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
         self.delete_in(ctx, &self.users, &USERS, id).await
@@ -378,7 +427,7 @@ impl EntityStore for MemoryStore {
         self.list_in(ctx, &self.users, &USERS).await
     }
     async fn restore_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<()> {
-        self.restore_in(ctx, &self.users, &USERS, id).await
+        self.restore_named_in(ctx, &self.users, &USERS, id).await
     }
     async fn purge_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
         self.purge_in(ctx, &self.users, &USERS, &id).await
@@ -516,5 +565,12 @@ mod tests {
     #[tokio::test]
     async fn keeps_what_is_deleted_marked() {
         suite::deleting_marks(&MemoryStore::new()).await;
+    }
+
+    #[tokio::test]
+    async fn keeps_names_unique() {
+        suite::names_are_unique(&MemoryStore::new()).await;
+        let owners = MemoryStore::with_security_manager(Arc::new(crate::security::OwnershipSecurityManager::new()));
+        suite::names_are_unique_beyond_what_is_read(&owners).await;
     }
 }

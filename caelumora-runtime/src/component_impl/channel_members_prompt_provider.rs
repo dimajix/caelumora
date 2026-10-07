@@ -263,10 +263,12 @@ mod tests {
     }
 
     async fn personality(store: &MemoryStore, introduction: Option<&str>) -> Personality {
+        // Named apart: a name is unique in its scope (issue 250).
+        let id = PersonalityId::new();
         let personality = Personality {
             description: None,
-            id: PersonalityId::new(),
-            name: ScopedName::new("plain", Default::default()).unwrap(),
+            id,
+            name: ScopedName::new(format!("plain {id}"), Default::default()).unwrap(),
             kind: Default::default(),
             roles: None,
             introduction: introduction.map(|text| caelumora_model::value::text::Introduction::new(text).unwrap()),

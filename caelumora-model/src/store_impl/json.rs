@@ -5,9 +5,9 @@ use crate::removal::{Deletable, Removal, Stored};
 use crate::scope::Scoped;
 use crate::security::SecurityManager;
 use crate::value::name::ScopedName;
-use crate::store_impl::access::{Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, USERS, USER_PROFILES};
+use crate::store_impl::access::{name_free, Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, USERS, USER_PROFILES};
 use crate::session::{Session, SessionId};
-use crate::store::{ComponentStore, EntityStore, Journaled, StateStore, StoreError, StoreResult};
+use crate::store::{ComponentStore, EntityKind, EntityStore, Journaled, StateStore, StoreError, StoreResult};
 use crate::template::{SessionTemplate, SessionTemplateId};
 use crate::user::{User, UserId, UserProfile};
 use async_trait::async_trait;
@@ -17,9 +17,11 @@ use serde::Serialize;
 use std::ffi::OsString;
 use std::fmt::Display;
 use std::fs;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
+use tokio::sync::{Mutex, MutexGuard};
 
 /// A journal is folded into its snapshot once it is at least as large as
 /// the snapshot, and at least this large (issue 193): small states are not
@@ -40,6 +42,9 @@ pub struct JsonFileStore {
     root: PathBuf,
     security_manager: Arc<dyn SecurityManager>,
     journal_floor: u64,
+    /// One per kind whose names are unique (issue 250), held by its writes:
+    /// within this process, which is the only one that writes the files.
+    name_locks: HashMap<EntityKind, Mutex<()>>,
 }
 
 impl JsonFileStore {
@@ -50,6 +55,8 @@ impl JsonFileStore {
             root,
             security_manager,
             journal_floor: DEFAULT_JOURNAL_FLOOR,
+            name_locks: [EntityKind::Personality, EntityKind::SessionTemplate, EntityKind::Agent, EntityKind::Channel, EntityKind::User]
+                .into_iter().map(|kind| (kind, Mutex::new(()))).collect(),
         };
         store.ensure_layout()?;
         Ok(store)
@@ -347,14 +354,49 @@ fn sanitize_file_component(value: &str) -> String {
 
 use crate::security::SecurityContext;
 
+/// The directory of the document at `path`: where the others of its kind
+/// are.
+fn dir_of(path: &Path) -> StoreResult<PathBuf> {
+    path.parent().map(Path::to_path_buf).ok_or_else(|| StoreError::Backend(format!("invalid path: {}", path.display())))
+}
+
+/// Refuses `value` if another document in `dir` has its name (issue 250).
+async fn name_free_in<T: Stored + Scoped + DeserializeOwned>(dir: &Path, value: &T, kind: &Actions) -> StoreResult<()> {
+    name_free(value, &read_all_from_dir::<T>(dir).await?, kind)
+}
+
 /// The operations of every kind (issues 93, 164), each document a file at
-/// `path` and checked with its kind's `Actions`.
+/// `path` and checked with its kind's `Actions`. Those that write come as
+/// three: the plain one, the one for a kind whose names are unique
+/// (`…_named_file`, issue 250), which holds the kind's lock from reading
+/// what is stored to writing and checks the others of the kind, and what
+/// both are made of (`…_file_with`), which asks `others` once the access
+/// is granted.
 impl JsonFileStore {
+    /// Held by a write of a kind whose names are unique, so that no two
+    /// writes take one name.
+    async fn names_lock(&self, kind: &Actions) -> StoreResult<MutexGuard<'_, ()>> {
+        let lock = self.name_locks.get(&kind.entity)
+            .ok_or_else(|| StoreError::Backend(format!("the names of a {} are not kept", kind.entity)))?;
+        Ok(lock.lock().await)
+    }
+
     async fn create_file<T: Stored + Serialize + Sync>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf, id: String, value: &T) -> StoreResult<()> {
+        self.create_file_with(ctx, kind, path, id, value, async |_| Ok(())).await
+    }
+
+    async fn create_named_file<T: Stored + Scoped + Serialize + DeserializeOwned + Sync>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf, id: String, value: &T) -> StoreResult<()> {
+        let dir = dir_of(&path)?;
+        let _names = self.names_lock(kind).await?;
+        self.create_file_with(ctx, kind, path, id, value, async |value| name_free_in(&dir, value, kind).await).await
+    }
+
+    async fn create_file_with<T: Stored + Serialize + Sync>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf, id: String, value: &T, others: impl AsyncFnOnce(&T) -> StoreResult<()>) -> StoreResult<()> {
         self.access(ctx).create(value, kind).await?;
         if tokio::fs::try_exists(&path).await.map_err(to_backend_error)? {
             return Err(StoreError::Conflict(format!("{} {} already exists", kind.entity, id)));
         }
+        others(value).await?;
         debug!("Writing {} {} to {}", kind.entity, id, path.display());
         write_json_atomic(&path, value).await
     }
@@ -365,8 +407,27 @@ impl JsonFileStore {
     }
 
     async fn update_file<T: Stored + Serialize + DeserializeOwned + Send + Sync>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf, id: String, value: &T) -> StoreResult<()> {
+        self.update_file_with(ctx, kind, path, id, value, async |_, _| Ok(())).await
+    }
+
+    /// Reads the others of the kind only if `value` is named otherwise than
+    /// it is stored: whatever else changes takes nobody's name.
+    async fn update_named_file<T: Stored + Scoped + Serialize + DeserializeOwned + Send + Sync>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf, id: String, value: &T) -> StoreResult<()> {
+        let dir = dir_of(&path)?;
+        let _names = self.names_lock(kind).await?;
+        self.update_file_with(ctx, kind, path, id, value, async |stored, value| match stored.scoped_name() == value.scoped_name() {
+            true => Ok(()),
+            false => name_free_in(&dir, value, kind).await,
+        }).await
+    }
+
+    /// `others` is asked with the entity as stored and as it is to be.
+    async fn update_file_with<T: Stored + Serialize + DeserializeOwned + Send + Sync>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf, id: String, value: &T, others: impl AsyncFnOnce(&T, &T) -> StoreResult<()>) -> StoreResult<()> {
         let stored = read_json_opt::<T>(&path).await?;
         self.access(ctx).change(stored.as_ref(), value, kind, id.clone()).await?;
+        if let Some(stored) = &stored {
+            others(stored, value).await?;
+        }
         debug!("Writing {} {} to {}", kind.entity, id, path.display());
         write_json_atomic(&path, value).await
     }
@@ -396,10 +457,21 @@ impl JsonFileStore {
     }
 
     async fn restore_file<T: Deletable + Serialize + DeserializeOwned + Send + Sync>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf, id: String) -> StoreResult<()> {
+        self.restore_file_with::<T>(ctx, kind, path, id, async |_| Ok(())).await
+    }
+
+    async fn restore_named_file<T: Deletable + Scoped + Serialize + DeserializeOwned + Send + Sync>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf, id: String) -> StoreResult<()> {
+        let dir = dir_of(&path)?;
+        let _names = self.names_lock(kind).await?;
+        self.restore_file_with::<T>(ctx, kind, path, id, async |value| name_free_in(&dir, value, kind).await).await
+    }
+
+    async fn restore_file_with<T: Deletable + Serialize + DeserializeOwned + Send + Sync>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf, id: String, others: impl AsyncFnOnce(&T) -> StoreResult<()>) -> StoreResult<()> {
         let stored = read_json_opt::<T>(&path).await?;
         self.access(ctx).restore(stored.as_ref(), kind, id).await?;
         let Some(mut restored) = stored else { return Ok(()) };
         restored.set_deleted(None);
+        others(&restored).await?;
         debug!("Restoring {} at {}", kind.entity, path.display());
         write_json_atomic(&path, &restored).await
     }
@@ -450,13 +522,13 @@ impl JsonFileStore {
 impl EntityStore for JsonFileStore {
     // Personalities
     async fn create_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()> {
-        self.create_file(ctx, &PERSONALITIES, self.personality_path(value.id), value.id.to_string(), value).await
+        self.create_named_file(ctx, &PERSONALITIES, self.personality_path(value.id), value.id.to_string(), value).await
     }
     async fn get_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
         self.get_file(ctx, &PERSONALITIES, self.personality_path(id), id.to_string()).await
     }
     async fn update_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()> {
-        self.update_file(ctx, &PERSONALITIES, self.personality_path(value.id), value.id.to_string(), value).await
+        self.update_named_file(ctx, &PERSONALITIES, self.personality_path(value.id), value.id.to_string(), value).await
     }
     async fn delete_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool> {
         self.delete_file::<Personality>(ctx, &PERSONALITIES, self.personality_path(id)).await
@@ -465,7 +537,7 @@ impl EntityStore for JsonFileStore {
         self.list_dir(ctx, &PERSONALITIES, self.personality_dir()).await
     }
     async fn restore_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<()> {
-        self.restore_file::<Personality>(ctx, &PERSONALITIES, self.personality_path(id), id.to_string()).await
+        self.restore_named_file::<Personality>(ctx, &PERSONALITIES, self.personality_path(id), id.to_string()).await
     }
     async fn purge_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool> {
         self.purge_file::<Personality>(ctx, &PERSONALITIES, self.personality_path(id)).await
@@ -482,13 +554,13 @@ impl EntityStore for JsonFileStore {
 
     // Session templates
     async fn create_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()> {
-        self.create_file(ctx, &SESSION_TEMPLATES, self.session_template_path(value.id), value.id.to_string(), value).await
+        self.create_named_file(ctx, &SESSION_TEMPLATES, self.session_template_path(value.id), value.id.to_string(), value).await
     }
     async fn get_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<SessionTemplate> {
         self.get_file(ctx, &SESSION_TEMPLATES, self.session_template_path(id), id.to_string()).await
     }
     async fn update_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()> {
-        self.update_file(ctx, &SESSION_TEMPLATES, self.session_template_path(value.id), value.id.to_string(), value).await
+        self.update_named_file(ctx, &SESSION_TEMPLATES, self.session_template_path(value.id), value.id.to_string(), value).await
     }
     async fn delete_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool> {
         self.delete_file::<SessionTemplate>(ctx, &SESSION_TEMPLATES, self.session_template_path(id)).await
@@ -497,7 +569,7 @@ impl EntityStore for JsonFileStore {
         self.list_dir(ctx, &SESSION_TEMPLATES, self.session_templates_dir()).await
     }
     async fn restore_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<()> {
-        self.restore_file::<SessionTemplate>(ctx, &SESSION_TEMPLATES, self.session_template_path(id), id.to_string()).await
+        self.restore_named_file::<SessionTemplate>(ctx, &SESSION_TEMPLATES, self.session_template_path(id), id.to_string()).await
     }
     async fn purge_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool> {
         self.purge_file::<SessionTemplate>(ctx, &SESSION_TEMPLATES, self.session_template_path(id)).await
@@ -514,13 +586,13 @@ impl EntityStore for JsonFileStore {
 
     // Agents
     async fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
-        self.create_file(ctx, &AGENTS, self.agent_path(value.id), value.id.to_string(), value).await
+        self.create_named_file(ctx, &AGENTS, self.agent_path(value.id), value.id.to_string(), value).await
     }
     async fn get_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
         self.get_file(ctx, &AGENTS, self.agent_path(id), id.to_string()).await
     }
     async fn update_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
-        self.update_file(ctx, &AGENTS, self.agent_path(value.id), value.id.to_string(), value).await
+        self.update_named_file(ctx, &AGENTS, self.agent_path(value.id), value.id.to_string(), value).await
     }
     async fn delete_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<bool> {
         self.delete_file::<Agent>(ctx, &AGENTS, self.agent_path(id)).await
@@ -529,7 +601,7 @@ impl EntityStore for JsonFileStore {
         self.list_dir(ctx, &AGENTS, self.agents_dir()).await
     }
     async fn restore_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<()> {
-        self.restore_file::<Agent>(ctx, &AGENTS, self.agent_path(id), id.to_string()).await
+        self.restore_named_file::<Agent>(ctx, &AGENTS, self.agent_path(id), id.to_string()).await
     }
     async fn purge_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<bool> {
         self.purge_file::<Agent>(ctx, &AGENTS, self.agent_path(id)).await
@@ -576,13 +648,13 @@ impl EntityStore for JsonFileStore {
 
     // Channels (issue 70) - their state likewise.
     async fn create_channel(&self, ctx: &SecurityContext, value: &Channel) -> StoreResult<()> {
-        self.create_file(ctx, &CHANNELS, self.channel_path(value.id), value.id.to_string(), value).await
+        self.create_named_file(ctx, &CHANNELS, self.channel_path(value.id), value.id.to_string(), value).await
     }
     async fn get_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel> {
         self.get_file(ctx, &CHANNELS, self.channel_path(id), id.to_string()).await
     }
     async fn update_channel(&self, ctx: &SecurityContext, value: &Channel) -> StoreResult<()> {
-        self.update_file(ctx, &CHANNELS, self.channel_path(value.id), value.id.to_string(), value).await
+        self.update_named_file(ctx, &CHANNELS, self.channel_path(value.id), value.id.to_string(), value).await
     }
     async fn delete_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool> {
         self.delete_file::<Channel>(ctx, &CHANNELS, self.channel_path(id)).await
@@ -591,7 +663,7 @@ impl EntityStore for JsonFileStore {
         self.list_dir(ctx, &CHANNELS, self.channels_dir()).await
     }
     async fn restore_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<()> {
-        self.restore_file::<Channel>(ctx, &CHANNELS, self.channel_path(id), id.to_string()).await
+        self.restore_named_file::<Channel>(ctx, &CHANNELS, self.channel_path(id), id.to_string()).await
     }
     async fn purge_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool> {
         self.purge_file::<Channel>(ctx, &CHANNELS, self.channel_path(id)).await
@@ -606,13 +678,13 @@ impl EntityStore for JsonFileStore {
     // Users - found by name as well, since a username is an identity
     // (issue 93).
     async fn create_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()> {
-        self.create_file(ctx, &USERS, self.user_path(value.id), value.id.to_string(), value).await
+        self.create_named_file(ctx, &USERS, self.user_path(value.id), value.id.to_string(), value).await
     }
     async fn get_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
         self.get_file(ctx, &USERS, self.user_path(id), id.to_string()).await
     }
     async fn update_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()> {
-        self.update_file(ctx, &USERS, self.user_path(value.id), value.id.to_string(), value).await
+        self.update_named_file(ctx, &USERS, self.user_path(value.id), value.id.to_string(), value).await
     }
     async fn delete_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
         self.delete_file::<User>(ctx, &USERS, self.user_path(id)).await
@@ -621,7 +693,7 @@ impl EntityStore for JsonFileStore {
         self.list_dir(ctx, &USERS, self.users_dir()).await
     }
     async fn restore_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<()> {
-        self.restore_file::<User>(ctx, &USERS, self.user_path(id), id.to_string()).await
+        self.restore_named_file::<User>(ctx, &USERS, self.user_path(id), id.to_string()).await
     }
     async fn purge_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
         self.purge_file::<User>(ctx, &USERS, self.user_path(id)).await
@@ -816,6 +888,15 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn keeps_names_unique() {
+        let dir = tempdir().unwrap();
+        suite::names_are_unique(&store(dir.path())).await;
+        let dir = tempdir().unwrap();
+        let owners = JsonFileStore::new(dir.path(), Arc::new(crate::security::OwnershipSecurityManager::new())).unwrap();
+        suite::names_are_unique_beyond_what_is_read(&owners).await;
+    }
+
+    #[tokio::test]
     async fn a_document_stored_before_marks_existed_loads_and_one_not_deleted_is_written_without() {
         let dir = tempdir().unwrap();
         let store = store(dir.path());
@@ -866,6 +947,39 @@ mod tests {
         assert_eq!(names, [path.file_name().unwrap().to_string_lossy().into_owned()], "only the file itself");
         let stored = store.get_personality(&system, personality.id).await.expect("readable");
         assert!(stored.description.as_ref().map(|d| d.as_str()).unwrap_or_default().starts_with("version "), "one of the writes, whole");
+    }
+
+    #[tokio::test]
+    async fn of_concurrent_writes_under_one_name_one_takes_it() {
+        // Checked and written under the kind's lock (issue 250): nothing
+        // writes between another's check and its write.
+        use crate::actor::ActorId;
+        use crate::agent::{Agent, Personality, PersonalityId};
+        let dir = tempdir().unwrap();
+        let store = Arc::new(store(dir.path()));
+        let system = SecurityContext::system();
+        let personality = Personality {
+            id: PersonalityId::new(), name: crate::value::name::ScopedName::new("plain", Default::default()).unwrap(),
+            kind: Default::default(), roles: None, description: None, introduction: None,
+            components: Default::default(), security_attributes: Default::default(), reasoning_visibility: Default::default(),
+            deleted: None,
+        };
+
+        let mut writes = tokio::task::JoinSet::new();
+        for _ in 0..16 {
+            let (store, system) = (Arc::clone(&store), system.clone());
+            let agent = Agent::new(crate::value::name::ScopedName::new("Helper", Default::default()).unwrap(), &personality, ActorId::None);
+            writes.spawn(async move { store.create_agent(&system, &agent).await });
+        }
+        let mut made = 0;
+        while let Some(result) = writes.join_next().await {
+            match result.unwrap() {
+                Ok(()) => made += 1,
+                Err(e) => assert!(matches!(e, StoreError::NameTaken { entity: "agent" }), "refused for its name: {e:?}"),
+            }
+        }
+        assert_eq!(made, 1);
+        assert_eq!(store.list_agents(&system).await.unwrap().len(), 1);
     }
 
     #[tokio::test]

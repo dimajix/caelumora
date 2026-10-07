@@ -1157,6 +1157,7 @@ use caelumora_model::turn::TurnState;
         let alice_ctx = as_user(alice.id).context().clone();
         let mut deleted = channel.clone();
         deleted.id = ChannelId::new();
+        deleted.name = Name::new("deleted").unwrap();
         store.create_channel(&system, &deleted).await.unwrap();
         store.delete_channel(&alice_ctx, deleted.id).await.unwrap();
         match views.channel_of(session.id, deleted.id).await.unwrap() {

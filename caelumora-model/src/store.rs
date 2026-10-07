@@ -17,8 +17,13 @@ use crate::value::name::ScopedName;
 pub enum StoreError {
     #[error("not found: {entity} {id}")]
     NotFound { entity: &'static str, id: String },
+    /// An id that is taken.
     #[error("conflict: {0}")]
     Conflict(String),
+    /// A name that another of the kind has in its name space (issue 250):
+    /// creating, renaming or restoring one under it is refused.
+    #[error("the name is taken by another {entity}")]
+    NameTaken { entity: &'static str },
     #[error("validation: {0}")]
     Validation(String),
     /// A text that does not fit the field it was to be written into
@@ -124,6 +129,13 @@ impl std::fmt::Display for EntityKind {
 /// their `ScopedName`, the name in exactly that scope (issue 178). Finding
 /// one from a place, in the scopes around it, is `scope::find_by_name`
 /// over `list_x`.
+///
+/// What is `Scoped` - personalities, session templates, agents, channels,
+/// users - has a name unique of its kind in its scope (issue 250): `create`,
+/// `update` and `restore` refuse one that another has there (`NameTaken`),
+/// checked against every one of the kind that is not deleted, also those
+/// the caller may not read, in the same step as the write. Sessions have
+/// names, but no unique ones.
 ///
 /// Deleting marks (issue 164): `delete_x` sets the mark - who, when - and
 /// keeps the document. What is marked is not there for any of the five:

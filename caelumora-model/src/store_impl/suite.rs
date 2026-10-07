@@ -237,6 +237,89 @@ pub(crate) async fn entity_store_behaves(store: &dyn EntityStore) {
         create_agent, delete_agent, find_agent_by_name);
 }
 
+/// Of one kind, a name is unique in its name space (issue 250): creating,
+/// renaming and restoring under a name another has there is refused,
+/// compared as names are; in another name space, or once the other is
+/// deleted, it is free. `$make` makes one of a name in one name space,
+/// `$elsewhere` one in another, `$rename` renames one where it is.
+macro_rules! unique_by_name {
+    ($store:expr, $make:expr, $(elsewhere: $elsewhere:expr,)? rename: $rename:expr, $entity:literal, $create:ident, $update:ident, $delete:ident, $restore:ident) => {{
+        let store = $store;
+        let ctx = SecurityContext::default();
+        let taken = |result| matches!(result, Err(StoreError::NameTaken { entity: $entity }));
+
+        let first = ($make)("Helper");
+        store.$create(&ctx, &first).await.expect(concat!($entity, ": create"));
+        let second = ($make)("helper");
+        assert!(taken(store.$create(&ctx, &second).await), concat!($entity, ": a name taken in its name space, compared as names are"));
+        $(store.$create(&ctx, &($elsewhere)("helper")).await.expect(concat!($entity, ": the name is free in another name space"));)?
+
+        let other = ($make)("Other");
+        store.$create(&ctx, &other).await.expect(concat!($entity, ": create"));
+        assert!(taken(store.$update(&ctx, &($rename)(other.clone(), "HELPER")).await), concat!($entity, ": nor renamed to it"));
+        store.$update(&ctx, &($rename)(other.clone(), "other")).await.expect(concat!($entity, ": renamed to what is still its own name"));
+        store.$update(&ctx, &($rename)(other.clone(), "Another")).await.expect(concat!($entity, ": renamed to a free one"));
+
+        store.$delete(&ctx, first.id).await.expect(concat!($entity, ": delete"));
+        store.$create(&ctx, &second).await.expect(concat!($entity, ": what is deleted holds no name"));
+        assert!(taken(store.$restore(&ctx, first.id).await), concat!($entity, ": and is not restored under one taken meanwhile"));
+        store.$update(&ctx, &($rename)(second.clone(), "Helper 2")).await.expect(concat!($entity, ": rename"));
+        store.$restore(&ctx, first.id).await.expect(concat!($entity, ": once it is free again, it is"));
+    }};
+}
+
+/// Names are unique per kind in their name space (issue 250), for every
+/// kind that is `Scoped`.
+pub(crate) async fn names_are_unique(store: &dyn EntityStore) {
+    let user_id = UserId::new();
+    let in_scope = |name: &str, scope: &Scope| ScopedName::new(name, scope.clone()).unwrap();
+    let (global, users) = (Scope::GlobalScope, Scope::UserScope { user_id });
+    unique_by_name!(store, |name| Personality { name: in_scope(name, &global), id: PersonalityId::new(), ..personality() },
+        elsewhere: |name| Personality { name: in_scope(name, &users), id: PersonalityId::new(), ..personality() },
+        rename: |value: Personality, name| Personality { name: in_scope(name, &value.name.scope), ..value }, "personality",
+        create_personality, update_personality, delete_personality, restore_personality);
+    unique_by_name!(store, |name| SessionTemplate { name: in_scope(name, &global), id: SessionTemplateId::new(), ..session_template() },
+        elsewhere: |name| SessionTemplate { name: in_scope(name, &users), id: SessionTemplateId::new(), ..session_template() },
+        rename: |value: SessionTemplate, name| SessionTemplate { name: in_scope(name, &value.name.scope), ..value }, "session_template",
+        create_session_template, update_session_template, delete_session_template, restore_session_template);
+    unique_by_name!(store, |name| Agent::new(in_scope(name, &global), &personality(), crate::actor::ActorId::None),
+        elsewhere: |name| Agent::new(in_scope(name, &users), &personality(), crate::actor::ActorId::None),
+        rename: |value: Agent, name| Agent { name: in_scope(name, &value.name.scope), ..value }, "agent",
+        create_agent, update_agent, delete_agent, restore_agent);
+    let (session_id, other_session) = (SessionId::new(), SessionId::new());
+    unique_by_name!(store, |name| Channel { name: Name::new(name).unwrap(), session_id, id: ChannelId::new(), ..channel() },
+        elsewhere: |name| Channel { name: Name::new(name).unwrap(), session_id: other_session, id: ChannelId::new(), ..channel() },
+        rename: |value: Channel, name| Channel { name: Name::new(name).unwrap(), ..value }, "channel",
+        create_channel, update_channel, delete_channel, restore_channel);
+    unique_by_name!(store, user, rename: |value: User, name| User { username: Name::new(name).unwrap(), ..value }, "user",
+        create_user, update_user, delete_user, restore_user);
+
+    // Moved into a scope where its name is taken.
+    let ctx = SecurityContext::default();
+    let mine = Agent::new(in_scope("Moving", &users), &personality(), crate::actor::ActorId::None);
+    store.create_agent(&ctx, &mine).await.expect("create");
+    store.create_agent(&ctx, &Agent::new(in_scope("moving", &global), &personality(), crate::actor::ActorId::None)).await.expect("create");
+    let moved = store.update_agent(&ctx, &Agent { name: in_scope("Moving", &global), ..mine }).await;
+    assert!(matches!(moved, Err(StoreError::NameTaken { entity: "agent" })), "nor moved where its name is taken: {moved:?}");
+
+    // Sessions have names, but no unique ones.
+    store.create_session(&ctx, &session()).await.expect("create");
+    store.create_session(&ctx, &session()).await.expect("a second session of the same name");
+}
+
+/// A name is taken also by what the caller may not read (issue 250): the
+/// store must ask an `OwnershipSecurityManager`.
+pub(crate) async fn names_are_unique_beyond_what_is_read(store: &dyn EntityStore) {
+    let as_user = |id: UserId| SecurityContext::new(crate::actor::ActorId::User(id), Default::default(), Default::default());
+    let (alice, bob) = (UserId::new(), UserId::new());
+    let owned_by = |name: &str, owner: UserId| Agent::new(ScopedName::new(name, Scope::GlobalScope).unwrap(), &personality(), crate::actor::ActorId::User(owner));
+    store.create_agent(&as_user(alice), &owned_by("Helper", alice)).await.expect("alice makes hers");
+    let hidden = store.find_agent_by_name(&as_user(bob), &ScopedName::new("helper", Scope::GlobalScope).unwrap()).await;
+    assert!(matches!(hidden, Err(StoreError::NotFound { .. })), "bob does not see hers: {hidden:?}");
+    let refused = store.create_agent(&as_user(bob), &owned_by("helper", bob)).await;
+    assert!(matches!(refused, Err(StoreError::NameTaken { entity: "agent" })), "but cannot take its name: {refused:?}");
+}
+
 /// Agent states that were never stored read as their default, a channel
 /// state as `NotFound`; deleting a channel's state takes its agents' states
 /// in the channel along - of either kind - and nothing else.

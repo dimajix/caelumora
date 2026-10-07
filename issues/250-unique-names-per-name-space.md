@@ -181,9 +181,10 @@ core and differ only in it.
   insert (`create`), the write (`update`) and taking the mark away (`restore`). The read of what is
   stored and the access check stay before it, as they are.
 - **JSON store:** `JsonFileStore` gets one `tokio::sync::Mutex<()>` per named kind, reached through
-  the kind's `EntityKind`. The named variants hold it from reading the directory
-  (`read_all_from_dir`) to the write - only when the check is asked. An update that keeps its name
-  takes no lock and reads nothing more than today.
+  the kind's `EntityKind`. The named variants hold it through the whole write, from reading what
+  is stored to writing, so that whether the name changes is decided under it; they read the
+  directory (`read_all_from_dir`) only when it does. An update that keeps its name reads nothing
+  more than today.
 - The check reads every document of the kind, including those the caller may not read, without
   asking the `SecurityManager`: it reads no content out, only whether a name is taken.
 
@@ -262,3 +263,14 @@ core and differ only in it.
   that is no name and finds the configured roles as names are compared. Unlike the plan said at
   first, `UserUpdateEvent::NameChanged` keeps a string, as every event does: the `UserController`
   makes it a `Name` when it takes it over. No change of what is stored or refused yet.
+- **2026-10-07** — Step 2: `StoreError::NameTaken`, `name_free` in `store_impl/access.rs`, and in
+  both stores the writing operations as a core with a hook (`…_with`), a plain variant and a named
+  one for the five `Scoped` kinds. The memory store checks inside the map's write lock, excluding
+  the entity's own key; the JSON store holds a `tokio::sync::Mutex` per named kind
+  (`caelumora-model` takes tokio's `sync`). Unlike the plan said at first, a named write holds the
+  lock also when the name stays: whether it changes is decided under the lock, else two renames of
+  one entity to one name could find each other. The store suite says the rule for every named kind in both stores,
+  and that what the caller may not read counts too; a test of the JSON store has sixteen writers
+  create one name at once. Two runtime tests that made two personalities or channels of one name
+  got names of their own. `AcceptAnyUserProvider`: of two first logins under one name, the store
+  now refuses the second.

@@ -21,12 +21,18 @@
 //!   attributes, and answers "not found" alike; **restoring** it asks that
 //!   and then `Restore`, **purging** it that and then `Purge`. What is not
 //!   marked is neither restored nor purged.
+//! - **Names** (issue 250): what is `Scoped` is created, renamed and
+//!   restored only under a name that no other one of its kind has in its
+//!   scope (`name_free`) - checked against every document of the kind that
+//!   is not deleted, also those the caller may not read, and answered with
+//!   `NameTaken`, which tells that the name is taken, not by what.
 //!
 //! Every check goes through `Enforcement::require` (issue 95), with the
 //! answer the store gives - "not found" for what the caller may not see -
 //! except filtering a list, which is a question.
 
 use crate::removal::Stored;
+use crate::scope::Scoped;
 use crate::security::{ActionType, Enforcement, SecurityAttributes, SecurityContext, SecurityManager};
 use crate::store::{EntityKind, StoreError, StoreResult};
 
@@ -149,6 +155,17 @@ impl<'a> Access<'a> {
 /// Whether `value` is there for the five operations: not marked deleted.
 fn present<T: Stored>(value: &T) -> bool {
     value.deleted().is_none()
+}
+
+/// Refuses `value` if one of `others` that is not deleted has its name in
+/// its scope (issue 250). `others` may hold `value`'s own document only as
+/// it is stored: absent, deleted or under another name.
+pub(crate) fn name_free<'a, T: Stored + Scoped + 'a>(value: &T, others: impl IntoIterator<Item = &'a T>, kind: &Actions) -> StoreResult<()> {
+    let name = value.scoped_name();
+    match others.into_iter().filter(|other| present(*other)).any(|other| other.scoped_name() == name) {
+        false => Ok(()),
+        true => Err(StoreError::NameTaken { entity: kind.entity.name() }),
+    }
 }
 
 /// Refuses `value` if it carries the mark of a deletion: only deleting

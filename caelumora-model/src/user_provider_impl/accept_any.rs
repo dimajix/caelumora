@@ -19,9 +19,10 @@ use std::sync::Arc;
 /// stable as the store — across restarts with `JsonFileStore`, only for the
 /// lifetime of the process with `MemoryStore`.
 ///
-/// Find-or-create is not atomic: two concurrent *first* logins under the same
-/// name can create two users. Accepted for a development stand-in rather than
-/// making `caelumora-model` depend on an async runtime for a lock.
+/// Find-or-create is not atomic: of two concurrent *first* logins under the
+/// same name, the store lets one create the user and refuses the other its
+/// name (issue 250), whose login then fails. Accepted for a development
+/// stand-in.
 #[derive(Debug)]
 pub struct AcceptAnyUserProvider {
     store: Arc<dyn EntityStore>,
