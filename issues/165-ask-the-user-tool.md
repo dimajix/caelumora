@@ -1,6 +1,6 @@
 # 165 — An agent cannot ask the user a question and wait for the answer
 
-**Status:** in progress
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -414,3 +414,11 @@ Each a step of its own, to be reviewed separately; 0 to 2 change no behaviour.
   `api.answerQuestions`. The frame of every call (`ToolCallView`) shows the record of its
   questions and answers. The response type is `QuestionResponse` in TypeScript, where `Response`
   is fetch's. Type-checked and built; not tried against a running server with a model.
+- **2026-10-07** — Step 6 done, and with it the issue: the TUI prints the questions as text -
+  their choices numbered, the recommended one marked - and whether they are put to the user.
+  `/answer [id]` asks them one by one: a line gives the numbers of choices, a choice's label or
+  another answer, or `-` to skip; `/decline [id]` declines them. Without an id, the last questions
+  put to the user. Sensitive questions are said to be shown on the terminal as typed. "Done when"
+  is met, with one change decided on the way (step 3a): question and answer are shown in the
+  history by the frame of every call, from the record its result keeps, not by a handler of a
+  presentation of their own. The example seed gives both internal personalities `ask_user_tool`.

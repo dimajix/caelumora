@@ -52,6 +52,9 @@ personalities:
   - id: stop-tool
     kind: stop_tool
     fail_policy: FailClosed
+  - id: ask-user-tool
+    kind: ask_user_tool
+    fail_policy: FailClosed
 - id: 9e11411a-0aa5-41c8-a17f-61bf7b0352ce
   name: sassy-assistant
   description: A sassy and witty assistant
@@ -89,6 +92,9 @@ personalities:
     fail_policy: FailClosed
   - id: stop-tool
     kind: stop_tool
+    fail_policy: FailClosed
+  - id: ask-user-tool
+    kind: ask_user_tool
     fail_policy: FailClosed
 # An agent that runs elsewhere, reached over A2A (issue 179) - for instance
 # a Hermes Agent with its A2A plugin. Set the endpoint's `url` to where it

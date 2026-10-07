@@ -399,13 +399,14 @@ questions and names whom to ask by their handles, and the tool's result is the a
     moderator sends it to the users of the channel - to those asked alone if the questions are
     sensitive - never to the approver or other agents. Everybody it reaches sees what the agent
     waits for; only those asked answer.
-3.  **Answers.** A user answers over REST (`POST …/questions/{qid}`) through
-    `UserActor::answer_questions`, which asks `AnswerQuestion` of the channel and refuses what
-    cannot count - questions not open or not put to them, responses not as the questions ask
-    (`Questions::check_responses`) - before anything is sent. `QuestionAnswered` goes to the
-    asking agent alone. The agent takes it only if its sender was asked and the questions are
-    still open, and checks the responses again; who answered it takes from the envelope, never
-    from what was said. The first answer that counts settles the call.
+3.  **Answers.** A user answers over REST (`POST …/questions/{qid}`) or in the TUI - which shows the
+    questions as text, asks them one by one after `/answer [id]` and declines them with
+    `/decline [id]` - through `UserActor::answer_questions`, which asks `AnswerQuestion` of the
+    channel and refuses what cannot count - questions not open or not put to them, responses not as
+    the questions ask (`Questions::check_responses`) - before anything is sent. `QuestionAnswered`
+    goes to the asking agent alone. The agent takes it only if its sender was asked and the
+    questions are still open, and checks the responses again; who answered it takes from the
+    envelope, never from what was said. The first answer that counts settles the call.
 4.  **Declining.** The user may decline - `QuestionDeclined` - and a message of theirs written
     while questions put to them are open declines them all: their actor sends the declines before
     the message, so that the turn goes on and the message is heard after it. A declined call is

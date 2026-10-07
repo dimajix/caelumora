@@ -5,6 +5,7 @@ use caelumora_model::command::{parse_input, UserInput};
 use caelumora_model::config::AppConfig;
 use caelumora_model::mention::mention_spans;
 use caelumora_model::message::{Message, MessageId};
+use caelumora_model::question::{Question, QuestionId, QuestionRequest, Response};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::user::{User, UserId};
 use caelumora_model::value::name::Name;
@@ -43,6 +44,71 @@ fn render_content(message: &Message, content: &str, handles: &HashMap<ActorId, S
     rendered
 }
 
+/// Prints the questions of `request` (issue 165), and - if they are put to
+/// `me` - how to answer them.
+fn print_questions(request: &QuestionRequest, me: ActorId) {
+    println!("\r--- Questions of {} (id: {}) ---", request.tool_call.function_name, request.id.0);
+    for (index, question) in request.questions.questions.iter().enumerate() {
+        println!("{}. [{}] {}", index + 1, question.header, question.question);
+        for (number, choice) in question.choices.iter().enumerate() {
+            let recommended = if choice.recommended { " (recommended)" } else { "" };
+            let description = choice.description.as_deref().map(|d| format!(" - {d}")).unwrap_or_default();
+            println!("   {}) {}{}{}", number + 1, choice.label, recommended, description);
+        }
+    }
+    if request.questions.is_asked(me) {
+        if request.questions.sensitive {
+            println!("Sensitive: the answers go to the tool alone - but what you type is shown on this terminal.");
+        }
+        println!("Type '/answer {}' to answer them one by one, or '/decline {}'. A message instead declines them.", request.id.0, request.id.0);
+    } else {
+        println!("They are put to others.");
+    }
+}
+
+/// What the prompt for question `index` of `question` says.
+fn prompt_of(index: usize, question: &Question) -> String {
+    let how = if question.choices.is_empty() {
+        "your answer"
+    } else if question.multi_select {
+        "the numbers of your choices, e.g. 1,3, or another answer"
+    } else {
+        "the number of your choice, or another answer"
+    };
+    format!("{}. [{}] {} - {}; '-' skips:", index + 1, question.header, question.question, how)
+}
+
+/// The response `line` gives to `question`: `-` skips it; for one with
+/// choices, numbers of choices - separated by commas, several only with
+/// `multi_select` - or a choice's label, else another answer; for one
+/// without, the line as it is.
+fn response_of(question: &Question, line: &str) -> Response {
+    if line == "-" {
+        return Response::Declined;
+    }
+    if question.choices.is_empty() {
+        return Response::Text { text: line.to_string() };
+    }
+    let numbers: Option<Vec<usize>> = line.split(',').map(|n| n.trim().parse::<usize>().ok().filter(|n| (1..=question.choices.len()).contains(n))).collect();
+    let chosen: Option<Vec<String>> = match numbers {
+        Some(numbers) => Some(numbers.into_iter().map(|n| question.choices[n - 1].label.clone()).collect()),
+        None => question.choices.iter().find(|c| c.label == line).map(|c| vec![c.label.clone()]),
+    };
+    match chosen {
+        Some(chosen) => Response::Chosen { chosen, other: None },
+        None => Response::Chosen { chosen: Vec::new(), other: Some(line.to_string()) },
+    }
+}
+
+/// The open questions `arg` names by id - or, without one, the last that
+/// was put to `me`.
+fn questions_named(open: &[QuestionRequest], arg: &str, me: ActorId) -> Option<QuestionRequest> {
+    match arg.trim() {
+        "" => open.iter().rev().find(|q| q.questions.is_asked(me)).cloned(),
+        id => Uuid::parse_str(id).ok().and_then(|id| open.iter().find(|q| q.id == QuestionId(id)).cloned()),
+    }
+}
+
 async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()> {
     let user_actor = channel.user_actor(user)
         .ok_or_else(|| anyhow::anyhow!("The user is not a participant of the channel"))?;
@@ -58,6 +124,12 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
     // agent and its turn (issue 235).
     let mut last_answer: Option<MessageId> = None;
     let mut under_way: Option<(ActorId, TurnId)> = None;
+    // The questions open in the channel (issue 165), in the order they were
+    // asked, and those being answered, with the responses given so far:
+    // while they are, every line answers the next question.
+    let me = ActorId::User(user);
+    let mut open_questions: Vec<QuestionRequest> = Vec::new();
+    let mut answering: Option<(QuestionRequest, Vec<Response>)> = None;
     let handles: HashMap<ActorId, String> = channel.members()
         .into_iter()
         .filter_map(|m| Some((m.id, m.handle?)))
@@ -157,6 +229,20 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                             println!("\r--- Approval {} withdrawn: the turn ended ---", id.0);
                         }
                     }
+                    // Asked anew by an agent that resumed its turn: shown once.
+                    Some(ActorEvent::QuestionRequested(request)) => {
+                        if !open_questions.iter().any(|q| q.id == request.id) {
+                            print_questions(&request, me);
+                            open_questions.push(request);
+                        }
+                    }
+                    Some(ActorEvent::QuestionClosed { id, .. }) => {
+                        open_questions.retain(|q| q.id != id);
+                        if answering.as_ref().is_some_and(|(q, _)| q.id == id) {
+                            answering = None;
+                            println!("\r--- Questions {} closed before you answered ---", id.0);
+                        }
+                    }
                     Some(_) => {
                     }
                     None => break,
@@ -171,6 +257,46 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                         }
                         if input == "exit" || input == "quit" {
                             break;
+                        }
+                        if let Some(rest) = input.strip_prefix("/decline").filter(|r| r.is_empty() || r.starts_with(' ')) {
+                            match questions_named(&open_questions, rest, me) {
+                                Some(request) => {
+                                    answering = None;
+                                    if let Err(e) = user_actor.answer_questions(request.id, None).await {
+                                        println!("[error] {}", caelumora_runtime::error::user_message(&e).unwrap_or_else(|| e.to_string()));
+                                    }
+                                }
+                                None => println!("No open questions put to you{}", if rest.trim().is_empty() { String::new() } else { format!(" with id {}", rest.trim()) }),
+                            }
+                            continue;
+                        }
+                        if let Some(rest) = input.strip_prefix("/answer").filter(|r| r.is_empty() || r.starts_with(' ')) {
+                            match questions_named(&open_questions, rest, me).filter(|q| q.questions.is_asked(me)) {
+                                Some(request) => {
+                                    if let Some(first) = request.questions.questions.first() {
+                                        println!("{}", prompt_of(0, first));
+                                        answering = Some((request, Vec::new()));
+                                    }
+                                }
+                                None => println!("No open questions put to you{}", if rest.trim().is_empty() { String::new() } else { format!(" with id {}", rest.trim()) }),
+                            }
+                            continue;
+                        }
+                        // While questions are answered, each line answers the next.
+                        if let Some((request, mut responses)) = answering.take() {
+                            if let Some(question) = request.questions.questions.get(responses.len()) {
+                                responses.push(response_of(question, input));
+                            }
+                            match request.questions.questions.get(responses.len()) {
+                                Some(next) => {
+                                    println!("{}", prompt_of(responses.len(), next));
+                                    answering = Some((request, responses));
+                                }
+                                None => if let Err(e) = user_actor.answer_questions(request.id, Some(responses)).await {
+                                    println!("[error] {}", caelumora_runtime::error::user_message(&e).unwrap_or_else(|| e.to_string()));
+                                },
+                            }
+                            continue;
                         }
                         if let Some(rest) = input.strip_prefix("/approve ").or_else(|| input.strip_prefix("/deny ")) {
                             let approved = input.starts_with("/approve ");
@@ -203,9 +329,9 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                             }
                             continue;
                         }
-                        // `/approve`, `/deny` and `/retry` above are this
-                        // terminal's own; every other command goes to the
-                        // channel (issue 28).
+                        // `/approve`, `/deny`, `/answer`, `/decline` and
+                        // `/retry` above are this terminal's own; every
+                        // other command goes to the channel (issue 28).
                         match parse_input(input) {
                             UserInput::Command { name, args } => {
                                 match user_actor.execute_command(&name, &args).await {
@@ -356,4 +482,34 @@ async fn main() -> anyhow::Result<()> {
     session_manager.stop_session(&security, session_id).await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use caelumora_model::question::Choice;
+
+    fn question(choices: &[&str], multi_select: bool) -> Question {
+        Question {
+            header: "Pick".to_string(),
+            question: "Which?".to_string(),
+            choices: choices.iter().map(|l| Choice { label: l.to_string(), description: None, recommended: false }).collect(),
+            multi_select,
+        }
+    }
+
+    #[test]
+    fn a_line_answers_a_question_as_it_asks() {
+        let chosen = |labels: &[&str]| Response::Chosen { chosen: labels.iter().map(|l| l.to_string()).collect(), other: None };
+        let other = |text: &str| Response::Chosen { chosen: Vec::new(), other: Some(text.to_string()) };
+        let choices = question(&["Postgres", "SQLite", "None"], true);
+        assert_eq!(response_of(&choices, "2"), chosen(&["SQLite"]));
+        assert_eq!(response_of(&choices, "1, 3"), chosen(&["Postgres", "None"]));
+        assert_eq!(response_of(&choices, "SQLite"), chosen(&["SQLite"]), "by its label");
+        assert_eq!(response_of(&choices, "4"), other("4"), "no such choice: another answer");
+        assert_eq!(response_of(&choices, "MariaDB"), other("MariaDB"));
+        assert_eq!(response_of(&choices, "-"), Response::Declined);
+        assert_eq!(response_of(&question(&[], false), "Kaya"), Response::Text { text: "Kaya".to_string() });
+        assert_eq!(response_of(&question(&[], false), "-"), Response::Declined);
+    }
 }
