@@ -123,6 +123,12 @@ impl Moderator for PolicyModerator {
             ActorEvent::ApprovalRequestWithdrawn { .. } => {
                 self.actors().route_approval_events(event)
             }
+            ActorEvent::QuestionRequested(_) |
+            ActorEvent::QuestionAnswered { .. } |
+            ActorEvent::QuestionDeclined { .. } |
+            ActorEvent::QuestionClosed { .. } => {
+                self.actors().route_question_events(event)
+            }
             ActorEvent::TurnFailed { .. } | ActorEvent::CommandExecuted { .. } | ActorEvent::ParticipantRemoved { .. } => {
                 self.actors().route_to_users(event)
             }
@@ -275,6 +281,25 @@ impl ModeratorActors {
         self.user_actors.keys()
             .map(|id| (*id, event.clone()))
             .collect()
+    }
+
+    /// Routes the questions of a tool call (issue 165), without the
+    /// approvers: an agent's questions, and their closing, go to the users,
+    /// to those asked alone if the questions are sensitive; a user's answer
+    /// goes to the agent that asked alone.
+    fn route_question_events(&self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
+        let to_users = |only: Option<Vec<ActorId>>| self.user_actors.keys()
+            .filter(|id| only.as_ref().is_none_or(|only| only.contains(id)))
+            .map(|id| (*id, event.clone()))
+            .collect::<Vec<_>>();
+        match (&event.event, event.context.sender_id) {
+            (ActorEvent::QuestionRequested(request), ActorId::Agent(_)) => to_users(request.shown_to()),
+            (ActorEvent::QuestionClosed { shown_to, .. }, ActorId::Agent(_)) => to_users(shown_to.clone()),
+            (ActorEvent::QuestionAnswered { agent_id, .. } | ActorEvent::QuestionDeclined { agent_id, .. }, ActorId::User(_)) => {
+                self.route_to_agent(ActorId::Agent(*agent_id), event)
+            }
+            _ => Vec::new(),
+        }
     }
 
     /// Routes the approval of a tool call (issues 81, 148): the agent's
@@ -802,5 +827,42 @@ mod tests {
         assert_eq!(routed_to(&actors, ActorId::Agent(agent), withdrawn()), HashSet::from([approver]));
         assert_eq!(routed_to(&actors, approver, withdrawn()), HashSet::from([user]));
         assert!(routed_to(&actors, user, withdrawn()).is_empty(), "only an agent withdraws");
+    }
+
+    #[test]
+    fn questions_go_to_the_users_those_asked_alone_if_sensitive_and_the_answers_to_the_agent_alone() {
+        use caelumora_model::question::{Addressee, Question, QuestionId, QuestionRequest, Questions};
+        let (mut actors, agent, alice, approver) = approval_parties();
+        let bob = ActorId::User(UserId::new());
+        let other = AgentId::new();
+        for id in [bob, ActorId::Agent(other)] {
+            actors.add_actor(Arc::new(TestActor { id, state: ActorState::Idle }));
+        }
+        let routed = |sender, event| actors.route_question_events(&envelope(sender, event)).into_iter().map(|(to, _)| to).collect::<HashSet<_>>();
+        let request = |sensitive| ActorEvent::QuestionRequested(QuestionRequest {
+            id: QuestionId::new(),
+            session_id: Default::default(),
+            channel_id: Default::default(),
+            agent_id: agent,
+            tool_call: approval_request().tool_call,
+            questions: Questions {
+                questions: vec![Question { header: "Name".to_string(), question: "Who?".to_string(), choices: Vec::new(), multi_select: false }],
+                ask: vec![Addressee::Actor(alice)],
+                sensitive,
+            },
+        });
+
+        assert_eq!(routed(ActorId::Agent(agent), request(false)), HashSet::from([alice, bob]), "every user sees what the agent waits for");
+        assert_eq!(routed(ActorId::Agent(agent), request(true)), HashSet::from([alice]), "sensitive: those asked alone");
+        assert!(routed(alice, request(false)).is_empty(), "only an agent asks");
+        let closed = |shown_to| ActorEvent::QuestionClosed { id: QuestionId::new(), shown_to };
+        assert_eq!(routed(ActorId::Agent(agent), closed(None)), HashSet::from([alice, bob]));
+        assert_eq!(routed(ActorId::Agent(agent), closed(Some(vec![alice]))), HashSet::from([alice]));
+
+        let answered = ActorEvent::QuestionAnswered { id: QuestionId::new(), agent_id: agent, responses: Vec::new() };
+        assert_eq!(routed(alice, answered.clone()), HashSet::from([ActorId::Agent(agent)]), "neither the other agent, the other users nor the approver");
+        assert_eq!(routed(alice, ActorEvent::QuestionDeclined { id: QuestionId::new(), agent_id: agent }), HashSet::from([ActorId::Agent(agent)]));
+        assert!(routed(ActorId::Agent(other), answered).is_empty(), "only a user answers");
+        assert!(!routed(ActorId::Agent(agent), request(false)).contains(&approver));
     }
 }

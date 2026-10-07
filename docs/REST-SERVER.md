@@ -83,6 +83,7 @@ Everything except `POST /auth/login` and `POST /auth/logout` requires a logged-i
 | `POST …/messages/{mid}/retry` | Ask the agent that said the message to answer again instead of it (issue 234, see [CHANNELS.md](CHANNELS.md#answering-again)), answered once the request is on its way; the agent's answer is on the stream - `RetryAccepted`, the message taken back and the new answer, or `RetryRejected` with a `reason`: `not_its_answer`, `not_last`, `calls_ran`, `asked_again`, `elsewhere` or `ended` (issue 235). The events name what they are about as `target`: `{"message": …}`, or `{"turn": …}` for an answer under way. `404 message_not_found`, `403 session_forbidden`, `409 message_revoked`, `409 not_an_agents_message`. Offered where the member's `can_retry` (issue 242) |
 | `PUT …/messages/{mid}`, `DELETE …/messages/{mid}` | Modify one's own message - `{content, classification?}`, classified as it is if absent - or take it back, answered `204` (issue 234, see [CHANNELS.md](CHANNELS.md#changing-what-was-said)); `404 message_not_found`, `403 session_forbidden` for another's, `409 message_revoked` for one taken back already, `400 invalid_classification`. The stream shows the change as `MessageModified` or `MessageRevoked` |
 | `POST …/approvals` | Approve or deny a tool call |
+| `POST …/questions/{qid}` | Answer the questions of an agent's call, `{responses}` with one response per question - `{"kind": "text", "text"}`, `{"kind": "chosen", "chosen", "other"?}` or `{"kind": "declined"}` - or decline them, `{declined: true}` (issue 165, see [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md#questions)). `404 question_not_found` if they are not open, `403 not_asked` if not put to the user, `400 invalid_answer` if the responses do not answer them as asked, `403 session_forbidden` |
 | `POST …/cancel` | End the current turn of every agent in the channel |
 | `POST …/participants/{aid}/retry` | Ask participant `aid`, an agent, to answer again instead of its answer under way, `{turn_id}` as `ResponseStarted` named it (issue 235, see [CHANNELS.md](CHANNELS.md#answering-again)); its turn is ended as the request is delivered, and the stream shows `RetryAccepted` and the new answer. `409 not_under_way` if the turn is not under way any more, `403 session_forbidden`, `404 participant_not_found`. Offered where the member's `can_retry` (issue 242) |
 | `POST …/participants/{aid}/cancel` | End the current turn of one participant alone, under the same permission (issue 235, see [CHANNELS.md](CHANNELS.md#cancelling)); the channel does not become quiet. `403 cancel_forbidden`, `404 participant_not_found` |
@@ -216,7 +217,9 @@ state they start from (issue 34):
 *   for a channel, its members and the last 20 messages, with `has_more`; older ones come over `GET
     .../messages`; the notes its agents published; and, for a user who takes part in it, the
     approvals its agents wait for (`pending_approvals`, issue 172), read from their stored turns -
-    an approval asked for before the client connected, or before a restart, is shown too. Its
+    an approval asked for before the client connected, or before a restart, is shown too - and the
+    questions they wait for the answers to (`pending_questions`, issue 165), sensitive ones only
+    for those asked. Its
     members carry what their model calls used (`usage`, issue 209), as `GET …/participants/{aid}`
     does; where channels are listed - the global stream, `GET /sessions/{id}` - they do not, since
     it reads every agent's state (the `Detail` a handler asks the views for, see

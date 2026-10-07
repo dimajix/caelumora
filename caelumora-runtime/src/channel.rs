@@ -20,6 +20,7 @@ use caelumora_model::agent::{Personality, PersonalityKind};
 use caelumora_model::approval::{ApprovalRule, Approver};
 use caelumora_model::confidentiality::{user_roles, Classification};
 use caelumora_model::mention::{handle_of, MentionDirectory};
+use caelumora_model::question::{QuestionError, QuestionId, Questions};
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::work::TurnId;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Reclassified, SecurityAttributes, SecurityContext, SecurityManager};
@@ -122,6 +123,11 @@ pub enum ChannelError {
     /// ending - one that does not end even when aborted (issue 171).
     #[error("{participant} is still leaving channel {channel}")]
     StillLeaving { participant: ActorId, channel: ChannelId },
+    /// Questions of an agent's call cannot be answered so (issue 165): they
+    /// are not open, not put to the one answering, or not answered as they
+    /// ask. The reason never repeats an answer.
+    #[error("questions {question} in channel {channel} cannot be answered: {reason}")]
+    Question { question: QuestionId, channel: ChannelId, reason: QuestionError },
 }
 
 /// A participant with what its actor is built from: the instance's
@@ -894,6 +900,14 @@ impl ChannelLoop {
                 ChannelMember { id: a.id(), name, handle, kind: a.kind() }
             })
             .collect()
+    }
+
+    /// `questions` as put to the users of the channel (issue 165): every
+    /// addressee found among them - a handle as its participants are
+    /// mentioned, the agent's owner as `owner` (`Questions::resolve`).
+    pub(crate) fn put(&self, questions: Questions, owner: ActorId) -> Result<Questions, QuestionError> {
+        let users: Vec<ActorId> = self.actor_ids().into_iter().filter(|id| matches!(id, ActorId::User(_))).collect();
+        questions.resolve(&self.mentions.load(), &users, owner)
     }
 
     /// The classification of the channel's contents (issue 133).
@@ -2449,6 +2463,7 @@ mod tests {
             },
         );
         register_no_secrets(&mut registry);
+        register_asking_tool(&mut registry);
         let defaults = caelumora_model::component::ComponentConfig {
             component_nodes: vec![caelumora_model::component::ComponentDescriptor {
                 id: "model".to_string(),
@@ -3754,6 +3769,166 @@ mod tests {
     }
 
     /// Registers `NoSecrets` as the kind `test_no_secrets`.
+    /// A tool that asks the agent's owner one question before it runs - its
+    /// questions `sensitive` as its parameter says - and gives what it was
+    /// answered, or of sensitive answers only how many there were.
+    #[derive(Debug)]
+    struct Asking {
+        sensitive: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::tool::ToolProvider for Asking {
+        fn description(&self) -> String {
+            "asks first".to_string()
+        }
+        fn tools(&self) -> Vec<caelumora_model::tool::Tool> {
+            vec![caelumora_model::tool::Tool {
+                name: "asking".to_string(),
+                description: "asks first".to_string(),
+                parameters: caelumora_model::tool::ToolParameters::object(Vec::<(String, caelumora_model::tool::ToolParameters)>::new(), Vec::<String>::new()),
+                requires_approval: false,
+                visibility: Default::default(),
+                classification: None,
+                presentation: Default::default(),
+            }]
+        }
+        async fn execute(&self, _name: &str, _params: &serde_json::Value, answers: Option<&caelumora_model::question::Answers>, _turn: &mut crate::agent_turn::Turn) -> crate::tool::ToolResult<crate::tool::ToolOutput> {
+            let answers = answers.ok_or_else(|| crate::tool::ToolError::ExecutionFailed("no answers".to_string()))?;
+            if self.sensitive {
+                return Ok(serde_json::json!({ "received": answers.responses.len() }).into());
+            }
+            Ok(serde_json::json!({ "answered_by": answers.answered_by_name, "responses": answers.responses }).into())
+        }
+        fn questions(&self, _name: &str, _params: &serde_json::Value) -> crate::tool::ToolResult<Option<caelumora_model::question::Questions>> {
+            use caelumora_model::question::{Addressee, Question, Questions};
+            Ok(Some(Questions {
+                questions: vec![Question { header: "Secret".to_string(), question: "What is it?".to_string(), choices: Vec::new(), multi_select: false }],
+                ask: vec![Addressee::Owner],
+                sensitive: self.sensitive,
+            }))
+        }
+    }
+
+    fn register_asking_tool(registry: &mut crate::component::ComponentRegistry) {
+        registry.register(
+            crate::component::ComponentKind::new("test_asking_tool").provides::<dyn crate::tool::ToolProvider>(),
+            |descriptor, _context| {
+                let sensitive = descriptor.params.get("sensitive").and_then(serde_json::Value::as_bool).unwrap_or(false);
+                let mut facets = crate::component::ComponentFacets::empty();
+                facets.insert::<dyn crate::tool::ToolProvider>(Arc::new(Asking { sensitive }));
+                Ok(facets)
+            },
+        );
+    }
+
+    /// A call of the `asking` tool, the component that gives it -
+    /// `sensitive` or not - and what the model says once it has its result.
+    fn a_call_asking(sensitive: bool) -> (Message, Message, caelumora_model::component::ComponentConfig) {
+        use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+        use caelumora_model::message::MessageRole;
+        use caelumora_model::tool::{ToolCall, ToolVisibility};
+
+        let call = Message {
+            role: MessageRole::Assistant,
+            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "asking".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        };
+        let done = Message { role: MessageRole::Assistant, content: Some("Done.".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+        let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
+            id: "asking".to_string(),
+            kind: "test_asking_tool".to_string(),
+            params: serde_json::json!({ "sensitive": sensitive }),
+            tags: vec![],
+            fail_policy: ComponentFailPolicy::FailClosed,
+        }] };
+        (call, done, components)
+    }
+
+    /// The questions the users are asked, from `events`.
+    async fn questions_requested(events: &mut broadcast::Receiver<Envelope>) -> caelumora_model::question::QuestionRequest {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let envelope = events.recv().await.expect("the channel is running");
+                if let ActorEvent::QuestionRequested(request) = envelope.event {
+                    break request;
+                }
+            }
+        }).await.expect("the users are asked")
+    }
+
+    #[tokio::test]
+    async fn a_call_waits_for_the_answers_and_the_turn_goes_on_with_them() {
+        use caelumora_model::question::Response;
+        let (call, done, components) = a_call_asking(false);
+        let Stuck { channel, context, agent, helper, mut events, running } =
+            with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([call, done].into()))), components).await;
+        let asked = questions_requested(&mut events).await;
+        settled(&helper, ActorState::WaitingForUser).await;
+        let alice = alice_of(&context);
+        assert_eq!(asked.questions.asked(), [ActorId::User(alice)], "the owner, found among the users");
+
+        // The turn is their record, as for approvals.
+        let stored = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+        assert_eq!(stored.pending_questions().into_iter().map(|q| q.id).collect::<Vec<_>>(), [asked.id]);
+
+        let actor = channel.user_actor(alice).unwrap();
+        let error = actor.answer_questions(asked.id, Some(vec![])).await.expect_err("one response per question");
+        assert!(matches!(error.downcast_ref::<ChannelError>(), Some(ChannelError::Question { .. })), "{error}");
+        actor.answer_questions(asked.id, Some(vec![Response::Text { text: "Kaya".to_string() }])).await.expect("answered");
+
+        let said: Vec<_> = answered(&mut events, agent).await.iter().filter_map(|m| m.content.clone()).collect();
+        assert_eq!(said, ["Done."], "the turn goes on");
+        settled(&helper, ActorState::Idle).await;
+        let stored = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+        let result = stored.transcript.messages().into_iter().flat_map(|m| m.tool_results).next().expect("the call ran");
+        assert!(result.content.contains("Kaya") && result.content.contains("alice"), "the tool gave the model what it was answered: {}", result.content);
+        let error = actor.answer_questions(asked.id, Some(vec![Response::Text { text: "again".to_string() }])).await.expect_err("closed");
+        assert!(matches!(error.downcast_ref::<ChannelError>(), Some(ChannelError::Question { reason: caelumora_model::question::QuestionError::NotOpen, .. })), "{error}");
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn a_message_instead_of_the_answers_declines_them_and_is_heard_after_the_turn() {
+        let (call, done, components) = a_call_asking(false);
+        let Stuck { channel, context, agent, helper, mut events, running } =
+            with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([call, done].into()))), components).await;
+        questions_requested(&mut events).await;
+        settled(&helper, ActorState::WaitingForUser).await;
+
+        channel.user_actor(alice_of(&context)).unwrap().send_message("rather not".to_string(), None).await.unwrap();
+        let said: Vec<_> = answered(&mut events, agent).await.iter().filter_map(|m| m.content.clone()).collect();
+        assert_eq!(said, ["Done."], "the turn goes on without the answers");
+        let stored = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+        let result = stored.transcript.messages().into_iter().flat_map(|m| m.tool_results).next().expect("the call is answered");
+        assert_eq!(result.status, caelumora_model::tool::ToolResultStatus::Declined);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap().transcript.messages().iter().any(|m| m.content.as_deref() == Some("rather not")) {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await.expect("the message is heard after the turn");
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn sensitive_answers_reach_the_tool_alone_and_are_never_stored() {
+        use caelumora_model::question::Response;
+        let (call, done, components) = a_call_asking(true);
+        let Stuck { channel, context, agent, helper, mut events, running } =
+            with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([call, done].into()))), components).await;
+        let asked = questions_requested(&mut events).await;
+        assert_eq!(asked.shown_to(), Some(vec![ActorId::User(alice_of(&context))]));
+        settled(&helper, ActorState::WaitingForUser).await;
+
+        channel.user_actor(alice_of(&context)).unwrap().answer_questions(asked.id, Some(vec![Response::Text { text: "hunter2".to_string() }])).await.expect("answered");
+        answered(&mut events, agent).await;
+        settled(&helper, ActorState::Idle).await;
+        let stored = serde_json::to_string(&channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap()).unwrap();
+        assert!(!stored.contains("hunter2"), "neither in the turn nor in the transcript");
+        assert!(channel.history().await.iter().all(|m| !format!("{m:?}").contains("hunter2")), "nor in the history");
+        running.abort();
+    }
+
     fn register_no_secrets(registry: &mut crate::component::ComponentRegistry) {
         registry.register(
             crate::component::ComponentKind::new("test_no_secrets").provides::<dyn crate::message::PerceiveInProcessor>(),

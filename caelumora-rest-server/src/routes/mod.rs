@@ -133,6 +133,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/sessions/{id}/channels/{cid}/messages/{mid}/classification", axum::routing::put(channels::reclassify_message))
         .route("/sessions/{id}/channels/{cid}/messages/{mid}/retry", post(channels::retry_message))
         .route("/sessions/{id}/channels/{cid}/approvals", post(channels::send_approval))
+        .route("/sessions/{id}/channels/{cid}/questions/{qid}", post(channels::answer_questions))
         .route("/sessions/{id}/channels/{cid}/cancel", post(channels::cancel_channel))
         .route("/sessions/{id}/channels/{cid}/notes", get(channels::get_notes))
         .route("/sessions/{id}/channels/{cid}/participants", post(channels::add_participant))

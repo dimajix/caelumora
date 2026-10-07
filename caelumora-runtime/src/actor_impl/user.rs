@@ -10,12 +10,14 @@ use caelumora_model::approval::{ApprovalRequest, ApprovalResponse, ApprovalRule,
 use caelumora_model::channel::ChannelId;
 use caelumora_model::command::{Command, CommandVisibility};
 use caelumora_model::message::{Message, MessageId, MessageRole};
+use caelumora_model::question::{QuestionError, QuestionId, QuestionRequest, Response};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Reclassified, SecurityAttributes, SecurityContext, SecurityManager};
 use caelumora_model::session::SessionId;
 use crate::controller::{ChannelController, ControllerManager, UserController};
 use chrono::Utc;
 use tracing::{debug, info, warn};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{broadcast, mpsc, Mutex};
@@ -51,6 +53,10 @@ pub struct UserActor {
     // Cancelled when the actor ends - it left the channel, or the channel
     // stopped: what ends every `watch` (issue 104).
     ended: CancellationToken,
+    /// The questions shown to this user that are open (issue 165), as the
+    /// agents asked them and until they close them: those put to the user
+    /// are what they may answer, and what a message of theirs declines.
+    open_questions: std::sync::Mutex<HashMap<QuestionId, QuestionRequest>>,
 }
 
 /// The channel as a user follows it (issues 104, 220): what is routed to
@@ -88,6 +94,7 @@ impl UserActor {
             user_tx: utx,
             received: broadcast::channel(SUBSCRIBER_CAPACITY).0,
             ended: CancellationToken::new(),
+            open_questions: std::sync::Mutex::new(HashMap::new()),
         })
     }
 
@@ -105,6 +112,55 @@ impl UserActor {
         let mut context = EventContext::new(self.session_id, self.channel_id, self.id(), self.name());
         context.span_id = span_id;
         Envelope::new(self.security_context.clone(), context, event)
+    }
+
+    /// The questions put to this user that are open, forgotten: a message
+    /// declines them all.
+    fn take_open_questions(&self) -> Vec<(QuestionId, caelumora_model::agent::AgentId)> {
+        let mut open = self.open_questions.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let asked: Vec<QuestionId> = open.values().filter(|r| r.questions.is_asked(self.id())).map(|r| r.id).collect();
+        asked.iter().filter_map(|id| open.remove(id)).map(|request| (request.id, request.agent_id)).collect()
+    }
+
+    /// Answers the questions `id` put to this user with `responses`, one per
+    /// question (issue 165) - or, with `None`, declines them. Asked here, so
+    /// that the user learns of a refusal: whether they may answer in the
+    /// channel at all (`AnswerQuestion`), then whether the questions are
+    /// open and put to them, and whether `responses` answer them as asked.
+    /// The agent asking checks again what it takes. Returns the `span_id`,
+    /// as `send_message` does.
+    ///
+    /// # Errors
+    /// `ChannelError::Forbidden` if they may not answer here,
+    /// `ChannelError::Question` with why the answer cannot be given; an
+    /// error if the channel is gone.
+    pub async fn answer_questions(&self, id: QuestionId, responses: Option<Vec<Response>>) -> anyhow::Result<Uuid> {
+        use crate::channel::ChannelError;
+        let channel_loop = self.actor_runtime.channel_loop()
+            .ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))?;
+        let attributes = channel_loop.security_attributes();
+        self.actor_runtime.security_manager()
+            .require(&self.security_context, ActionType::AnswerQuestion(&attributes), || ChannelError::Forbidden { action: "answering questions in", channel: self.channel_id })
+            .await?;
+        let refused = |reason| ChannelError::Question { question: id, channel: self.channel_id, reason };
+        let agent_id = {
+            let open = self.open_questions.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let request = open.get(&id).ok_or_else(|| refused(QuestionError::NotOpen))?;
+            if !request.questions.is_asked(self.id()) {
+                return Err(refused(QuestionError::NotAsked).into());
+            }
+            if let Some(responses) = &responses {
+                request.questions.check_responses(responses).map_err(refused)?;
+            }
+            request.agent_id
+        };
+        let event = match responses {
+            Some(responses) => ActorEvent::QuestionAnswered { id, agent_id, responses },
+            None => ActorEvent::QuestionDeclined { id, agent_id },
+        };
+        let span_id = Uuid::new_v4();
+        self.send(self.envelope(event, span_id)).await?;
+        Ok(span_id)
     }
 
     /// Sends a message from this user into the channel, classified
@@ -139,10 +195,15 @@ impl UserActor {
             timestamp: Utc::now(),
             ..Message::new(classification)
         };
-        // All stem from one user action: one span. First the request to wake
-        // the channel's agents for it - the channel does not wake by itself
-        // (issue 90).
+        // All stem from one user action: one span. A message instead of an
+        // answer declines every question put to the user (issue 165) -
+        // before it, so that the agent asking goes on and then hears it.
+        // Then the request to wake the channel's agents for it - the
+        // channel does not wake by itself (issue 90).
         let span_id = Uuid::new_v4();
+        for (id, agent_id) in self.take_open_questions() {
+            self.send(self.envelope(ActorEvent::QuestionDeclined { id, agent_id }, span_id)).await?;
+        }
         self.send(self.envelope(ActorEvent::WakeupRequested, span_id)).await?;
         self.send(self.envelope(ActorEvent::CompleteMessageGenerated(msg.clone()), span_id)).await?;
         self.send(self.envelope(ActorEvent::FullResponseGenerated(vec![msg]), span_id)).await?;
@@ -347,9 +408,11 @@ impl UserActor {
     /// shows it to those who follow this actor: the channel sends nothing
     /// back to its sender, so as an agent takes its own messages in itself,
     /// this actor shows what its user says itself (issue 220) - all but the
-    /// request to wake the channel, which is not said to anyone.
+    /// request to wake the channel, which is not said to anyone, and answers
+    /// to questions, which are for the tool asking alone (issue 165): their
+    /// closing tells the user's frontends that they were answered.
     async fn send(&self, envelope: Envelope) -> anyhow::Result<()> {
-        let shown = (!matches!(envelope.event, ActorEvent::WakeupRequested)).then(|| envelope.clone());
+        let shown = (!matches!(envelope.event, ActorEvent::WakeupRequested | ActorEvent::QuestionAnswered { .. })).then(|| envelope.clone());
         self.user_tx.send(envelope).await?;
         if let Some(envelope) = shown {
             // An error only says that nobody listens.
@@ -454,6 +517,14 @@ impl UserActor {
         debug!("UserActor {} received {}", self.id(), event.describe());
         let answer = match &event.event {
             ActorEvent::ApprovalRequested(request) => self.answer_by_rule(&event, request).await,
+            ActorEvent::QuestionRequested(request) => {
+                self.open_questions.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(request.id, request.clone());
+                None
+            }
+            ActorEvent::QuestionClosed { id, .. } => {
+                self.open_questions.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(id);
+                None
+            }
             _ => None,
         };
         // An error only says that nobody listens.

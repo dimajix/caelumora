@@ -362,3 +362,21 @@ Each a step of its own, to be reviewed separately; 0 to 2 change no behaviour.
   `ToolExecutor::questions` (no default, so that no executor drops them); the answers are a
   parameter of `execute` from the guard through the executor to the provider. Nothing asks yet:
   the agent runs every call with none. `QuestionId` comes with the waiting in step 3.
+- **2026-10-07** — Step 3 done: a call that asks waits for the answers, survives a restart, and
+  goes on with them. Decided while building, beyond the plan:
+  - The answers are never stored, sensitive or not: `ToolCallStatus::Ready` skips them, since a
+    call ready when its turn is resumed is answered as not executed anyway. Sensitivity decides
+    whom the questions are shown to, not whether answers are kept.
+  - A message instead of the form is declined by the user's actor, not by the agent: the agent's
+    inbox can only be searched with a fixed test (`EventPredicate`), which cannot know whom the
+    questions were put to. The `UserActor` keeps the questions shown to its user and, before a
+    message of theirs, sends `QuestionDeclined` for those put to them; it also refuses an answer
+    that cannot count before sending it, and does not echo the answers to the user's frontends.
+  - Addressees are found by the channel (`ChannelLoop::put`, `Questions::resolve`) - among its
+    users only, an agent answers no questions - and kept as `Addressee::Actor`. The guard reaches
+    the running channel through a `ChannelHandle`, the handle the channel's runtime already held
+    to it, now a type of its own and given to the guard when it is made.
+  - `AnswerQuestion` carries the channel's attributes and is granted as `RetryMessage` is, to
+    whoever takes part; that the one answering was asked is the agent's check. The snapshot shows
+    the open questions under `Detail::APPROVALS` beside the approvals.
+  - The REST endpoint is `POST …/questions/{qid}` with `{responses}` or `{declined: true}`.

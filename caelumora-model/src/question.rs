@@ -11,8 +11,15 @@
 //! the tool lets it fill in.
 
 use crate::actor::ActorId;
+use crate::agent::AgentId;
+use crate::channel::ChannelId;
+use crate::mention::{handle_of, MentionDirectory};
+use crate::session::SessionId;
+use crate::tool::ToolCall;
 use serde::{Deserialize, Serialize};
 use std::fmt;
+
+define_id!(QuestionId);
 
 /// The most questions one call asks.
 pub const MAX_QUESTIONS: usize = 5;
@@ -75,6 +82,30 @@ pub enum Addressee {
     /// The owner of the agent whose call it is - for a tool that decides
     /// itself whom it asks.
     Owner,
+    /// A user of the channel: whom a handle or the owner was found to be
+    /// when the call was admitted.
+    Actor(ActorId),
+}
+
+/// The questions of a call put to the users of a channel: what the agent
+/// asks for, from the call admitted until the questions are closed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QuestionRequest {
+    pub id: QuestionId,
+    pub session_id: SessionId,
+    pub channel_id: ChannelId,
+    pub agent_id: AgentId,
+    pub tool_call: ToolCall,
+    /// With every addressee found: `Addressee::Actor`.
+    pub questions: Questions,
+}
+
+impl QuestionRequest {
+    /// To whom alone the questions are shown, if not to every user of the
+    /// channel: to those asked, if they are sensitive.
+    pub fn shown_to(&self) -> Option<Vec<ActorId>> {
+        self.questions.shown_to()
+    }
 }
 
 /// The answers a call runs with: who gave them, and one response per
@@ -160,9 +191,70 @@ pub enum QuestionError {
     UnknownChoice(usize),
     #[error("question {0} allows only one choice")]
     SeveralChosen(usize),
+    #[error("nobody called {0} takes part in the channel as a user")]
+    UnknownHandle(String),
+    #[error("the agent's owner does not take part in the channel")]
+    OwnerAbsent,
+    #[error("someone asked does not take part in the channel as a user")]
+    NotInChannel,
+    #[error("the questions are not, or no longer, waiting for an answer")]
+    NotOpen,
+    #[error("only those asked may answer the questions")]
+    NotAsked,
 }
 
 impl Questions {
+    /// The users they are put to, as found (`Addressee::Actor`).
+    pub fn asked(&self) -> Vec<ActorId> {
+        self.ask.iter().filter_map(|a| match a { Addressee::Actor(id) => Some(*id), _ => None }).collect()
+    }
+
+    /// To whom alone they are shown, if not to every user of the channel:
+    /// to those asked, if they are sensitive.
+    pub fn shown_to(&self) -> Option<Vec<ActorId>> {
+        self.sensitive.then(|| self.asked())
+    }
+
+    /// Whether `actor` is among those asked.
+    pub fn is_asked(&self, actor: ActorId) -> bool {
+        self.ask.contains(&Addressee::Actor(actor))
+    }
+
+    /// The questions as put to the users of a channel: every addressee
+    /// found among them - a handle in `participants`, as a model writes it,
+    /// with or without `@`; the owner as `owner`, if a user of the channel
+    /// (`users`) - and each user asked once.
+    ///
+    /// # Errors
+    /// `UnknownHandle` if a handle names no user of the channel, `OwnerAbsent`
+    /// if the owner is none of them, `NotInChannel` if a user named by id is
+    /// none of them.
+    pub fn resolve(self, participants: &MentionDirectory, users: &[ActorId], owner: ActorId) -> Result<Questions, QuestionError> {
+        let mut asked: Vec<Addressee> = Vec::new();
+        for addressee in self.ask {
+            let found: Vec<ActorId> = match addressee {
+                Addressee::Handle(written) => {
+                    let handle = handle_of(written.strip_prefix('@').unwrap_or(&written));
+                    let found: Vec<ActorId> = participants.lookup(&handle).iter().copied().filter(|id| users.contains(id)).collect();
+                    if found.is_empty() {
+                        return Err(QuestionError::UnknownHandle(written));
+                    }
+                    found
+                }
+                Addressee::Owner if users.contains(&owner) => vec![owner],
+                Addressee::Owner => return Err(QuestionError::OwnerAbsent),
+                Addressee::Actor(id) if users.contains(&id) => vec![id],
+                Addressee::Actor(_) => return Err(QuestionError::NotInChannel),
+            };
+            for id in found {
+                if !asked.contains(&Addressee::Actor(id)) {
+                    asked.push(Addressee::Actor(id));
+                }
+            }
+        }
+        Ok(Questions { ask: asked, ..self })
+    }
+
     /// Whether they can be asked as they are: 1 to `MAX_QUESTIONS`
     /// questions put to someone, each with a header and a text, and either
     /// no choices or `MIN_CHOICES` to `MAX_CHOICES` with distinct labels.
@@ -333,5 +425,26 @@ mod tests {
         let json = serde_json::to_value(&asked).unwrap();
         assert_eq!(json["ask"], serde_json::json!([{"handle": "@alice"}, "owner"]));
         assert_eq!(serde_json::from_value::<Questions>(json).unwrap(), asked);
+    }
+
+    #[test]
+    fn addressees_are_found_among_the_users_of_the_channel() {
+        use crate::user::UserId;
+        let (alice, bob, helper) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()), ActorId::Agent(AgentId::new()));
+        let participants = MentionDirectory::new([(alice, "Alice"), (bob, "Bob"), (helper, "Helper")]);
+        let users = [alice, bob];
+        let asking = |ask: Vec<Addressee>| Questions { ask, ..questions(vec![question(&[], false)]) };
+
+        let put = asking(vec![Addressee::Handle("@alice".to_string()), Addressee::Handle("Bob".to_string()), Addressee::Owner]).resolve(&participants, &users, alice).unwrap();
+        assert_eq!(put.ask, [Addressee::Actor(alice), Addressee::Actor(bob)], "with or without @, each once");
+        assert_eq!(put.asked(), [alice, bob]);
+        assert!(put.is_asked(bob) && !put.is_asked(helper));
+        assert_eq!(put.shown_to(), None, "not sensitive: shown to everyone");
+        assert_eq!(Questions { sensitive: true, ..put }.shown_to(), Some(vec![alice, bob]));
+
+        assert_eq!(asking(vec![Addressee::Handle("@helper".to_string())]).resolve(&participants, &users, alice), Err(QuestionError::UnknownHandle("@helper".to_string())), "an agent answers no questions");
+        assert_eq!(asking(vec![Addressee::Handle("@carol".to_string())]).resolve(&participants, &users, alice), Err(QuestionError::UnknownHandle("@carol".to_string())));
+        assert_eq!(asking(vec![Addressee::Owner]).resolve(&participants, &users, ActorId::User(UserId::new())), Err(QuestionError::OwnerAbsent));
+        assert_eq!(asking(vec![Addressee::Actor(helper)]).resolve(&participants, &users, alice), Err(QuestionError::NotInChannel));
     }
 }

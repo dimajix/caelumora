@@ -215,6 +215,10 @@ pub struct ChannelSnapshot {
     /// turns are stored: the stream tells only of requests made while it
     /// listens. Empty for a viewer who does not take part as a user.
     pub pending_approvals: Vec<caelumora_model::approval::ApprovalRequest>,
+    /// The questions the channel's agents wait for the answers to (issue
+    /// 165), as their turns are stored - sensitive ones only for those
+    /// asked. Empty for a viewer who does not take part as a user.
+    pub pending_questions: Vec<caelumora_model::question::QuestionRequest>,
 }
 
 impl ChannelSnapshot {
@@ -223,15 +227,16 @@ impl ChannelSnapshot {
     /// as the API has them - and the end of its history.
     pub fn of(mut channel: snapshot::ChannelSnapshot, messages: Vec<Message>, has_more: bool) -> Self {
         let mut notes = Vec::new();
-        let mut pending_approvals = Vec::new();
+        let (mut pending_approvals, mut pending_questions) = (Vec::new(), Vec::new());
         for member in &mut channel.members {
             if matches!(member.id, ActorId::Agent(_)) {
                 let name = member.name.clone().unwrap_or_default();
                 notes.push(PublishedNotesResponse { agent_id: member.id, name, notes: std::mem::take(&mut member.notes) });
             }
             pending_approvals.append(&mut member.pending_approvals);
+            pending_questions.append(&mut member.pending_questions);
         }
-        Self { channel: channel.into(), messages, has_more, notes, pending_approvals }
+        Self { channel: channel.into(), messages, has_more, notes, pending_approvals, pending_questions }
     }
 }
 
@@ -561,6 +566,17 @@ pub struct RetryTurnRequest {
     pub turn_id: TurnId,
 }
 
+/// The answers of the user to questions an agent's call asks (issue 165):
+/// one response per question, in their order - or `declined`, without
+/// responses.
+#[derive(Debug, Deserialize)]
+pub struct AnswerQuestionsRequest {
+    #[serde(default)]
+    pub responses: Option<Vec<caelumora_model::question::Response>>,
+    #[serde(default)]
+    pub declined: bool,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct SendApprovalRequest {
     pub approval_id: Uuid,
@@ -835,7 +851,7 @@ mod tests {
     #[test]
     fn a_channel_view_is_answered_with_kinds_and_a_name_for_the_deleted() {
         let (alice, approver) = (ActorId::User(UserId::new()), ActorId::Approver(ApproverId(Uuid::new_v4())));
-        let member = |id, name: Option<&str>| snapshot::MemberSnapshot { id, name: name.map(str::to_string), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None, introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
+        let member = |id, name: Option<&str>| snapshot::MemberSnapshot { id, name: name.map(str::to_string), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), pending_questions: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None, introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
         let view = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(),
             id: ChannelId::new(),
             name: "main".to_string(),
@@ -882,7 +898,7 @@ mod tests {
             written_at: chrono::Utc::now(),
         };
         let member = |id, name: &str, notes: Vec<Note>| snapshot::MemberSnapshot {
-            id, name: Some(name.to_string()), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes, pending_approvals: Vec::new(),
+            id, name: Some(name.to_string()), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes, pending_approvals: Vec::new(), pending_questions: Vec::new(),
             left: None, can_delete: false, turn_under_way: None, state: None,
             introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None,
         };
@@ -924,7 +940,7 @@ mod tests {
     fn a_former_member_is_answered_apart_with_who_removed_it_and_when() {
         let (alice, helper) = (ActorId::User(UserId::new()), ActorId::Agent(caelumora_model::agent::AgentId::new()));
         let left = caelumora_model::removal::Removal::now(alice);
-        let member = |id, left| snapshot::MemberSnapshot { id, name: Some("x".to_string()), handle: None, can_read_context: true, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), left, can_delete: false, turn_under_way: None, state: None, introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
+        let member = |id, left| snapshot::MemberSnapshot { id, name: Some("x".to_string()), handle: None, can_read_context: true, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), pending_questions: Vec::new(), left, can_delete: false, turn_under_way: None, state: None, introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
         let view = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(),
             id: ChannelId::new(),
             name: "main".to_string(),
@@ -946,7 +962,7 @@ mod tests {
     #[test]
     fn what_a_participant_used_is_answered_only_where_it_was_read() {
         let usage = TokenUsage { calls: 2, prompt_tokens: 300, completion_tokens: 20, last_call_tokens: 170, context_size: Some(8192) };
-        let member = |usage| snapshot::MemberSnapshot { id: ActorId::User(UserId::new()), name: Some("alice".to_string()), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage, notes: Vec::new(), pending_approvals: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None, introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
+        let member = |usage| snapshot::MemberSnapshot { id: ActorId::User(UserId::new()), name: Some("alice".to_string()), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage, notes: Vec::new(), pending_approvals: Vec::new(), pending_questions: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None, introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
 
         let json = serde_json::to_value(ChannelMemberResponse::of(member(Some(usage))).unwrap()).unwrap();
         assert_eq!(json["usage"], serde_json::json!({ "calls": 2, "prompt_tokens": 300, "completion_tokens": 20, "last_call_tokens": 170, "context_size": 8192 }));
@@ -964,7 +980,7 @@ mod tests {
     #[test]
     fn a_participants_profile_is_answered_only_where_it_was_read() {
         let carol = UserId::new();
-        let member = snapshot::MemberSnapshot { id: ActorId::Agent(caelumora_model::agent::AgentId::new()), name: Some("Helper".to_string()), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None, introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
+        let member = snapshot::MemberSnapshot { id: ActorId::Agent(caelumora_model::agent::AgentId::new()), name: Some("Helper".to_string()), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), pending_questions: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None, introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
 
         let json = serde_json::to_value(ChannelMemberResponse::of(member.clone()).unwrap()).unwrap();
         for field in ["introduction", "personality", "personality_kind", "owner", "owner_name"] {

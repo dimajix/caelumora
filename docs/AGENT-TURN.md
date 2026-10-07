@@ -59,9 +59,11 @@ issue 222), then commits once:
     a tool asked for the turn to end, as the stop tool does. If calls still wait for a person, it
     goes to `WaitingForUser`. A cancel or stop interrupts the call under way - it is answered as
     interrupted - and starts no further one (issue 161).
-*   **`WaitingForUser`** waits for `ApprovalGranted`, `ApprovalDenied` or `ApprovalTimedOut`,
-    records the decision and returns to `ExecutingTools`. Other events stay queued until the turn is
-    over. See [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md) for the approval process.
+*   **`WaitingForUser`** waits for a person: for `ApprovalGranted`, `ApprovalDenied` or
+    `ApprovalTimedOut`, or for `QuestionAnswered` or `QuestionDeclined` (issue 165). It records
+    what they settle and returns to `ExecutingTools`; an answer that does not count is left out,
+    and it waits on. Other events stay queued until the turn is over. See
+    [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md) for approvals and questions.
 *   **`Reflecting`** takes the turn over (`Turn::commit`), stores the state and announces the
     end with `FullResponseGenerated`. The agent then lands in the state a tool requested (`Sleeping`
     after `stop` or `bye`) or in `Idle`.

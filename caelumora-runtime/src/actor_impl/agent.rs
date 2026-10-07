@@ -18,7 +18,7 @@ use caelumora_model::agent::{AgentChannelState, AgentId, Personality, RetryRefus
 use caelumora_model::turn::TurnState;
 use caelumora_model::work::TurnId;
 use crate::controller::{AgentController, ChannelController};
-use caelumora_model::approval::ApprovalStatus;
+use caelumora_model::approval::{ApprovalId, ApprovalStatus};
 use caelumora_model::confidentiality::{Classification, Visibility};
 use caelumora_model::message::{Message, MessageEvent};
 use caelumora_model::transcript::GivenUpReason;
@@ -103,6 +103,7 @@ impl AgentActor {
             Arc::clone(actor_runtime.approval_rules()),
             Arc::clone(actor_runtime.session_controller()),
             channel_controller,
+            actor_runtime.channel_handle(),
         );
 
         let mut agent_channel_state = actor_runtime.load_channel_state().await?;
@@ -279,7 +280,7 @@ impl AgentActor {
         if channel_state_changed {
             self.actor_runtime.announce_channel_state_changed();
         }
-        withdraw_approval_requests(&answering, &abandoned_calls, output).await?;
+        withdraw_requests(&answering, &abandoned_calls, output).await?;
         answering.send(ActorEvent::FullResponseGenerated(final_messages), output).await?;
         debug!("Agent {} {} ended its turn{}", self.id(), self.agent_controller.name(), if cancelled { ", cancelled" } else { "" });
         Ok(next)
@@ -442,7 +443,7 @@ impl AgentActor {
         if !stays {
             return;
         }
-        if let Err(e) = withdraw_approval_requests(&answering, &abandoned_calls, output).await {
+        if let Err(e) = withdraw_requests(&answering, &abandoned_calls, output).await {
             warn!("Agent {} {} cannot withdraw the approval requests of its given-up turn: {:#}", self.id(), agent_name, e);
         }
         let Some(message) = told else { return };
@@ -467,20 +468,28 @@ impl AgentActor {
         }
     }
 
-    /// Handle a single approval event while in WaitingForUser state.
-    /// Records the decision; the run loop dispatches the actual tool execution
-    /// on its next iteration via ExecutingTools.
-    async fn handle_waiting_for_approval(
+    /// Waits for a person while in `WaitingForUser`, and records what one
+    /// event of theirs settles: a decision on an approval, or the answers to
+    /// questions, or that they were declined (issue 165). What the decision
+    /// leads to - questions an approved call now asks, the closing of
+    /// questions answered - is sent at once; the run loop runs what may run
+    /// via `ExecutingTools`. Answers that do not count - from someone not
+    /// asked, to questions no longer open, not of the kind asked - are left
+    /// out, logged without what they say, and the turn waits on.
+    async fn handle_waiting_for_user(
         &self,
         turn: &mut Turn<'_>,
         rx: &mut Box<dyn EventReceiver>,
+        output: &dyn EventSender,
     ) -> Result<Option<ActorState>> {
-        let is_approval_event = |env: &Envelope| {
+        let for_the_waiting = |env: &Envelope| {
             matches!(
                 env.event,
                 ActorEvent::ApprovalGranted(_)
                     | ActorEvent::ApprovalDenied(_)
                     | ActorEvent::ApprovalTimedOut(_)
+                    | ActorEvent::QuestionAnswered { .. }
+                    | ActorEvent::QuestionDeclined { .. }
             )
         };
 
@@ -488,28 +497,42 @@ impl AgentActor {
         // loop then finds what it was told to do.
         let cancelled = self.control.token();
         let received = tokio::select! {
-            received = rx.recv_matching(is_approval_event) => received,
+            received = rx.recv_matching(for_the_waiting) => received,
             _ = cancelled.cancelled() => return Ok(Some(ActorState::WaitingForUser)),
         };
-        match received {
-            Some(event) => {
-                let (req, status) = match &event.event {
-                    ActorEvent::ApprovalGranted(r) => (r, ApprovalStatus::Approved),
-                    ActorEvent::ApprovalDenied(r) => (r, ApprovalStatus::Denied),
-                    ActorEvent::ApprovalTimedOut(r) => (r, ApprovalStatus::Timeout),
-                    _ => unreachable!("handle_approval_event called with non-approval event"),
-                };
-
-                if !turn.tool_calls().decide(req.id, status) {
-                    warn!("Received approval for unknown approval id {}", req.id);
-                }
-
-                rx.commit().await?;
-                Ok(Some(ActorState::ExecutingTools))
-            }
-            // Channel is closed
-            None => Ok(None),
+        // Channel is closed
+        let Some(envelope) = received else { return Ok(None) };
+        let sender = envelope.context.sender_id;
+        let settled = match envelope.event {
+            ActorEvent::ApprovalGranted(r) => self.decided(turn, r.id, ApprovalStatus::Approved),
+            ActorEvent::ApprovalDenied(r) => self.decided(turn, r.id, ApprovalStatus::Denied),
+            ActorEvent::ApprovalTimedOut(r) => self.decided(turn, r.id, ApprovalStatus::Timeout),
+            ActorEvent::QuestionAnswered { id, responses, .. } => turn.tool_calls().answer(id, sender, envelope.context.sender_name.clone(), responses)
+                .map(|closed| vec![closed])
+                .inspect_err(|e| info!("Agent {} leaves out an answer of {} to questions {}: {}", self.id(), sender, id, e))
+                .ok(),
+            ActorEvent::QuestionDeclined { id, .. } => turn.tool_calls().decline(id, sender)
+                .map(|closed| vec![closed])
+                .inspect_err(|e| info!("Agent {} leaves out that {} declined questions {}: {}", self.id(), sender, id, e))
+                .ok(),
+            _ => None,
+        };
+        rx.commit().await?;
+        let Some(events) = settled else { return Ok(Some(ActorState::WaitingForUser)) };
+        for event in events {
+            turn.send_event(event, output).await?;
         }
+        Ok(Some(ActorState::ExecutingTools))
+    }
+
+    /// Records the approver's `decision` on the approval `id`, and returns
+    /// the requests it leads to; `None` if no call waits for it.
+    fn decided(&self, turn: &mut Turn<'_>, id: ApprovalId, decision: ApprovalStatus) -> Option<Vec<ActorEvent>> {
+        let events = turn.tool_calls().decide(id, decision);
+        if events.is_none() {
+            warn!("Received approval for unknown approval id {}", id);
+        }
+        events
     }
 
     /// Takes the model's `tool_calls` into the turn as the tool guard admits
@@ -530,7 +553,7 @@ impl AgentActor {
             states.push(self.tool_executor.admit(call, turn).await.state(call.clone()));
         }
         for request in turn.tool_calls().register(states) {
-            turn.send_event(ActorEvent::ApprovalRequested(request), output).await?;
+            turn.send_event(request, output).await?;
         }
         Ok(())
     }
@@ -539,9 +562,9 @@ impl AgentActor {
     /// the turn is their record, the approver holds them only in memory and
     /// starts empty after a restart. The same ids as before, so that the
     /// approver, should it still hold them, only announces them again.
-    async fn request_pending_approvals(&self, turn: &mut Turn<'_>, output: &dyn EventSender) -> Result<()> {
-        for request in turn.tool_calls().pending_approvals() {
-            turn.send_event(ActorEvent::ApprovalRequested(request), output).await?;
+    async fn request_pending(&self, turn: &mut Turn<'_>, output: &dyn EventSender) -> Result<()> {
+        for request in turn.tool_calls().requests() {
+            turn.send_event(request, output).await?;
         }
         Ok(())
     }
@@ -648,11 +671,11 @@ impl AgentActor {
         // as the turn ends. What happens to the turn is the run loop's: it
         // takes the interrupt after this step.
         let cancelled = self.control.token();
-        for (id, call) in turn.tool_calls().to_run() {
+        for (id, call, answers) in turn.tool_calls().to_run() {
             if cancelled.is_cancelled() {
                 return Ok(ActorState::ExecutingTools);
             }
-            let result = self.tool_executor.execute(&call, None, turn, &cancelled).await;
+            let result = self.tool_executor.execute(&call, answers.as_ref(), turn, &cancelled).await;
             turn.tool_calls().record(id, result);
         }
         // Once every call has its result, the turn keeps the tool message for
@@ -696,14 +719,21 @@ impl AgentActor {
     }
 }
 
-/// Withdraws the approval requests of the calls a turn `abandoned` as it
-/// ended, in its contexts (`answering`), so that nobody is asked any longer
-/// to decide on a call that will not run (issue 148) - the counterpart of
+/// Withdraws the requests of the calls a turn `abandoned` as it ended, in
+/// its contexts (`answering`), so that nobody is asked any longer to decide
+/// on, or answer for, a call that will not run (issue 148) - the counterpart of
 /// `AgentActor::request_approvals`. Every abandoned call that waited for
-/// an approval: the approver ignores what it does not hold.
-async fn withdraw_approval_requests(answering: &Answering, abandoned: &[ToolCallState], output: &dyn EventSender) -> Result<()> {
-    for id in abandoned.iter().filter_map(ToolCallState::approval_id) {
-        answering.send(ActorEvent::ApprovalRequestWithdrawn { id }, output).await?;
+/// an approval - the approver ignores what it does not hold - and every one
+/// that waited for answers, whose questions are closed for those they were
+/// shown to (issue 165).
+async fn withdraw_requests(answering: &Answering, abandoned: &[ToolCallState], output: &dyn EventSender) -> Result<()> {
+    for call in abandoned {
+        let withdrawn = match &call.status {
+            ToolCallStatus::WaitingApproval { id, .. } => ActorEvent::ApprovalRequestWithdrawn { id: *id },
+            ToolCallStatus::WaitingUser { id, questions } => ActorEvent::QuestionClosed { id: *id, shown_to: questions.shown_to() },
+            _ => continue,
+        };
+        answering.send(withdrawn, output).await?;
     }
     Ok(())
 }
@@ -798,7 +828,7 @@ fn prepare_resume(state: &mut AgentChannelState) -> usize {
     let mut answered = 0;
     let classification = turn.work.classification.clone();
     for call in &mut turn.tool_calls {
-        if matches!(call.status, ToolCallStatus::Ready) {
+        if matches!(call.status, ToolCallStatus::Ready { .. }) {
             call.status = ToolCallStatus::Finished(ToolCallResult::of(&call.tool_call, ToolResultStatus::NotExecuted, crate::tool::not_executed_result(), classification.clone()));
             answered += 1;
         }
@@ -825,6 +855,8 @@ impl Actor for AgentActor {
                 ActorEvent::ApprovalGranted(_)
                     | ActorEvent::ApprovalDenied(_)
                     | ActorEvent::ApprovalTimedOut(_)
+                    | ActorEvent::QuestionAnswered { .. }
+                    | ActorEvent::QuestionDeclined { .. }
                     | ActorEvent::FullResponseGenerated(_)
                     | ActorEvent::MessageModified(_)
                     | ActorEvent::MessageRevoked { .. }
@@ -863,8 +895,8 @@ impl Actor for AgentActor {
         // stored right after asking resumes executing its tools, then waits.
         if self.control.state().in_turn() && self.control.state() != ActorState::Cancelling {
             if let Some(mut turn) = self.turn(&mut state) {
-                if let Err(e) = self.request_pending_approvals(&mut turn, &*output).await {
-                    warn!("AgentActor {} cannot ask again for the approvals it waits for: {:#}", self.id(), e);
+                if let Err(e) = self.request_pending(&mut turn, &*output).await {
+                    warn!("AgentActor {} cannot ask again for the approvals and answers it waits for: {:#}", self.id(), e);
                 }
             }
         }
@@ -900,7 +932,7 @@ impl Actor for AgentActor {
             let result = async { Ok::<_, anyhow::Error>(match current_state {
                 ActorState::Idle | ActorState::Sleeping => self.handle_waiting(&mut state, &mut rx, &mut given_up_for, &*output).await?,
                 ActorState::WaitingForUser => {
-                    self.handle_waiting_for_approval(&mut self.turn_under_way(&mut state)?, &mut rx).await?
+                    self.handle_waiting_for_user(&mut self.turn_under_way(&mut state)?, &mut rx, &*output).await?
                 }
                 ActorState::Planning => Some(self.handle_llm_turn(&mut self.turn_under_way(&mut state)?, &*output).await?),
                 ActorState::ExecutingTools => Some(self.handle_executing_tools(&mut self.turn_under_way(&mut state)?, &*output).await?),
@@ -1109,7 +1141,7 @@ mod tests {
         let tool_call = ToolCall { id: None, function_name: "note".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
         let ready = ToolCallState::approved(tool_call.clone());
         let done = ToolCallState::answered(tool_call.clone(), ToolCallResult::of(&tool_call, ToolResultStatus::Ok, "done".to_string(), caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT));
-        let waiting = ToolCallState::pending(tool_call.clone(), String::new(), false, caelumora_model::approval::ToolMatcher::exact(&tool_call));
+        let waiting = ToolCallState::pending(tool_call.clone(), String::new(), false, caelumora_model::approval::ToolMatcher::exact(&tool_call), None);
         let state_in = |actor_state: ActorState| AgentChannelState {
             processing_state: actor_state,
             turn: Some(caelumora_model::turn::TurnState {
@@ -1134,7 +1166,7 @@ mod tests {
         for other in [ActorState::Planning, ActorState::WaitingForUser, ActorState::Reflecting] {
             let mut state = state_in(other);
             assert_eq!(prepare_resume(&mut state), 0, "{other:?}");
-            assert!(matches!(calls(&state)[0].status, ToolCallStatus::Ready));
+            assert!(matches!(calls(&state)[0].status, ToolCallStatus::Ready { .. }));
             assert_eq!(state.processing_state, other);
         }
 

@@ -6,6 +6,7 @@
 
 use crate::actor::{ActorId, ActorState};
 use crate::approval::ApprovalRequest;
+use crate::question::QuestionRequest;
 use crate::chain::Node;
 use crate::context::ContextRef;
 use crate::memory::{MemoryChange, MemoryOrigin};
@@ -75,7 +76,7 @@ impl TurnState {
         let ActorId::Agent(agent) = self.work.event_context.sender_id else { return Vec::new() };
         self.tool_calls.iter()
             .filter_map(|c| match &c.status {
-                ToolCallStatus::WaitingApproval { id, description, explicit, suggested } => Some(ApprovalRequest {
+                ToolCallStatus::WaitingApproval { id, description, explicit, suggested, .. } => Some(ApprovalRequest {
                     id: *id,
                     session_id: self.work.event_context.session_id,
                     channel_id: self.work.event_context.channel_id,
@@ -84,6 +85,28 @@ impl TurnState {
                     description: description.clone(),
                     explicit: *explicit,
                     suggested: Some(suggested.clone()),
+                }),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The questions the calls of the current step still wait for the
+    /// answers to (issue 165), as the turn asks them - the same ids every
+    /// time, in the name of the agent the turn's context is sent by. The
+    /// turn is their record, as for approvals. None for a turn whose
+    /// context is sent by no agent.
+    pub fn pending_questions(&self) -> Vec<QuestionRequest> {
+        let ActorId::Agent(agent) = self.work.event_context.sender_id else { return Vec::new() };
+        self.tool_calls.iter()
+            .filter_map(|c| match &c.status {
+                ToolCallStatus::WaitingUser { id, questions } => Some(QuestionRequest {
+                    id: *id,
+                    session_id: self.work.event_context.session_id,
+                    channel_id: self.work.event_context.channel_id,
+                    agent_id: agent,
+                    tool_call: c.tool_call.clone(),
+                    questions: questions.clone(),
                 }),
                 _ => None,
             })

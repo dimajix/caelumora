@@ -29,8 +29,8 @@ The trait has these methods:
     into its result. The questions, their limits and the answers are `caelumora_model::question`:
     up to five questions, each answered with text or by choosing among two to four choices -
     several with `multi_select` - or by writing another answer, and put to those the tool names
-    (`ask`). A tool may mark them `sensitive`, for answers the model must not see. Not asked yet:
-    the runtime does not wait for answers so far, and runs every call without them.
+    (`ask`). A tool may mark them `sensitive`, for answers the model must not see. How they are
+    asked is described under [Questions](#questions).
 
 A `Tool` declares its `name`, `description` and `parameters`, whether it `requires_approval`, its
 `visibility`, optionally the `classification` of its results, and its `presentation`: how frontends
@@ -356,14 +356,15 @@ Every call ends with a result the model can act on (issue 15).
 *   Every other outcome reaches the model as a JSON object `{"status": ..., "message": ...}`, whose
     message says what happened and what to do next. The statuses are `denied` (by a user),
     `forbidden` (by policy - without the reason, which stays in the log), `timed_out` (no approval
-    in time), `invalid_arguments`, `failed` (with the tool's error), `not_executed` (the tool never
-    ran: its turn ended first, or the server restarted before it ran), `interrupted` (the tool ran,
-    but its turn was cancelled or stopped before it ended) and `unknown_tool` (with the tools that
-    do exist).
+    in time), `declined` (a user declined the call's questions), `invalid_arguments`, `failed` (with
+    the tool's error), `not_executed` (the tool never ran: its turn ended first, or the server
+    restarted before it ran), `interrupted` (the tool ran, but its turn was cancelled or stopped
+    before it ended) and `unknown_tool` (with the tools that do exist).
 *   The same status is stored as `ToolCallResult::status`, so the UI and an audit trail can tell
     refusals and failures from results.
 *   The wording lives in `crate::tool` (`ToolError::to_result`, `denied_result`, `timed_out_result`,
-    `forbidden_result`, `abandoned_result`, `not_executed_result`, `interrupted_result`).
+    `declined_result`, `forbidden_result`, `abandoned_result`, `not_executed_result`,
+    `interrupted_result`).
 *   No call is left without a result. A turn that ends while calls of its step have none - cancelled
     while waiting for an approval, given up - answers them as `not_executed`, saying why the turn
     ended, and keeps the tool message with the results of those that did run (`ToolCalls::abandon`,
@@ -373,6 +374,66 @@ A call that ran also records when: `ToolCallResult::started_at` and `finished_at
 executor around the tool's own run (not the checks before it) - `finished_at` is when an
 interrupted call was interrupted. They are stored with the history and
 published with the call, so that a client can show the duration (issue 100).
+
+## Questions
+
+A tool may ask a person before its call runs (issue 165): `ToolProvider::questions` says what, and
+the answers are handed to its `execute`. They are no messages - they go into neither the history
+nor a transcript - and the model learns of them only what the tool puts into its result. The turn
+waits for them as for an approval, without blocking: the call is parked, the turn stored, and it
+goes on with the result once the answers have come.
+
+1.  **Admission.** `GuardedToolExecutor::admit` asks the tool for the call's questions after
+    `describe`, checks them (`Questions::check`: one to five, each with a header of at most twelve
+    characters, no choices or two to four with distinct labels, someone asked) and puts them to
+    the users of the channel (`ChannelLoop::put`): a handle as participants are mentioned, with or
+    without `@`; `Owner` as the agent's owner. A handle that names no user of the channel, or an
+    owner who does not take part, makes the call invalid, answered at once. A call whose tool
+    requires approval, or that a rule of a place asks for, is put up for approval first
+    (`ToolCallStatus::WaitingApproval` keeps its questions); approved, it asks them. Whoever
+    approves sees the arguments, never the answers.
+2.  **Request.** A call that asks waits in `ToolCallStatus::WaitingUser`, the agent in
+    `WaitingForUser`. It sends `QuestionRequested` with the call and its questions, under a
+    `QuestionId` of the runtime's - not the model's call id, which some backends repeat. The
+    moderator sends it to the users of the channel - to those asked alone if the questions are
+    sensitive - never to the approver or other agents. Everybody it reaches sees what the agent
+    waits for; only those asked answer.
+3.  **Answers.** A user answers over REST (`POST …/questions/{qid}`) through
+    `UserActor::answer_questions`, which asks `AnswerQuestion` of the channel and refuses what
+    cannot count - questions not open or not put to them, responses not as the questions ask
+    (`Questions::check_responses`) - before anything is sent. `QuestionAnswered` goes to the
+    asking agent alone. The agent takes it only if its sender was asked and the questions are
+    still open, and checks the responses again; who answered it takes from the envelope, never
+    from what was said. The first answer that counts settles the call.
+4.  **Declining.** The user may decline - `QuestionDeclined` - and a message of theirs written
+    while questions put to them are open declines them all: their actor sends the declines before
+    the message, so that the turn goes on and the message is heard after it. A declined call is
+    answered `declined` without running.
+5.  **Closing.** Once questions are no longer open - answered, declined, or abandoned as their
+    turn ends - the agent sends `QuestionClosed` to those they were shown to, and every frontend
+    closes its form. A cancel or a stop ends the waiting as for an approval.
+
+The turn is the record of what it waits for (`TurnState::pending_questions`): a turn resumed after
+a restart asks again, with the same ids, and the snapshot of a channel shows the open questions.
+The answers themselves are never stored (`ToolCallStatus::Ready` skips them): a call ready to run
+when its turn is resumed is not run but answered as not executed, so nothing is lost.
+
+### Sensitive questions
+
+A tool may ask for what the model must not see - a one-time code, an account to pay to - and marks
+such questions `sensitive`. Then:
+
+*   they are shown to those asked alone: the request, their closing and the snapshot entry reach
+    nobody else;
+*   their answers are not stored and not logged: `Answers` and `Response` show no content in
+    `Debug`, and a user's own actor does not echo the answers to their other frontends;
+*   whom they are put to is the tool's to say, not the model's (e.g. `Addressee::Owner`), so that
+    the model cannot choose who is asked for a password;
+*   the frontend masks the input and says that the answer goes to the tool alone - a mark the tool
+    sets, which a model cannot set on the questions of `ask_user`;
+*   the tool does not repeat the answers in its result - its own responsibility;
+*   a transport that keeps envelopes ([122](../issues/122-several-instances.md)) must not keep
+    them.
 
 ## User commands
 

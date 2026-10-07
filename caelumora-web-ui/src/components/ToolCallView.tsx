@@ -11,6 +11,7 @@ const TOOL_STATUS_LABELS: Record<Exclude<ToolResultStatus, 'ok'>, string> = {
   denied: 'Denied',
   forbidden: 'Not permitted',
   timed_out: 'Timed out',
+  declined: 'Declined',
   invalid_arguments: 'Invalid arguments',
   failed: 'Failed',
   not_executed: 'Not executed',

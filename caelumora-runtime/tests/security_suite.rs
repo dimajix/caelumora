@@ -102,7 +102,7 @@ fn attributes_of<'a>(action: &ActionType<'a>) -> Option<&'a SecurityAttributes> 
         | GetChannel(a) | CreateChannel(a) | UpdateChannel(a) | DeleteChannel(a)
         | GetUser(a) | CreateUser(a) | UpdateUser(a) | DeleteUser(a)
         | GetUserProfile(a) | CreateUserProfile(a) | UpdateUserProfile(a) | DeleteUserProfile(a)
-        | CancelChannel(a) | WakeChannel(a) | RetryMessage(a)
+        | CancelChannel(a) | WakeChannel(a) | RetryMessage(a) | AnswerQuestion(a)
         | GetComponent(a) | CreateComponent(a) | UpdateComponent(a) | DeleteComponent(a)
         | ReadDeleted(_, a) | Restore(_, a) | Purge(_, a) => Some(a),
         _ => None,
@@ -851,6 +851,138 @@ async fn with_a_call_to_approve() -> (World, Arc<SessionLoop>, Arc<caelumora_run
     let main = Arc::clone(&session.channels()[0]);
     world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     (world, session, main, helper)
+}
+
+/// A tool that asks the agent's owner its name before it runs (issue 165),
+/// the question `sensitive` or not.
+#[derive(Debug)]
+struct AskingOwner {
+    sensitive: bool,
+}
+
+#[async_trait]
+impl caelumora_runtime::tool::ToolProvider for AskingOwner {
+    fn description(&self) -> String {
+        "asks its owner".to_string()
+    }
+    fn tools(&self) -> Vec<caelumora_model::tool::Tool> {
+        vec![caelumora_model::tool::Tool {
+            name: "asking".to_string(),
+            description: "asks its owner".to_string(),
+            parameters: caelumora_model::tool::ToolParameters::object(Vec::<(String, caelumora_model::tool::ToolParameters)>::new(), Vec::<String>::new()),
+            requires_approval: false,
+            visibility: Default::default(),
+            classification: None,
+            presentation: Default::default(),
+        }]
+    }
+    async fn execute(&self, _: &str, _: &serde_json::Value, answers: Option<&caelumora_model::question::Answers>, _: &mut caelumora_runtime::agent_turn::Turn) -> caelumora_runtime::tool::ToolResult<caelumora_runtime::tool::ToolOutput> {
+        Ok(serde_json::json!({ "answered": answers.is_some() }).into())
+    }
+    fn questions(&self, _: &str, _: &serde_json::Value) -> caelumora_runtime::tool::ToolResult<Option<caelumora_model::question::Questions>> {
+        use caelumora_model::question::{Addressee, Question, Questions};
+        Ok(Some(Questions {
+            questions: vec![Question { header: "Name".to_string(), question: "Who are you?".to_string(), choices: Vec::new(), multi_select: false }],
+            ask: vec![Addressee::Owner],
+            sensitive: self.sensitive,
+        }))
+    }
+}
+
+/// alice's agent `helper`, which calls `asking` - a tool that asks alice,
+/// its owner, before it runs - once it is asked, in a session alice shares
+/// with bob and he opened; with the session's main channel, the questions
+/// as alice is shown them, and what bob was shown since before she asked.
+async fn with_a_call_asking(sensitive: bool) -> (World, Arc<SessionLoop>, Arc<caelumora_runtime::channel::ChannelLoop>, caelumora_model::question::QuestionRequest, caelumora_runtime::actor_impl::user::ChannelWatch) {
+    use caelumora_model::message::{Message, MessageRole};
+    use caelumora_model::tool::{ToolCall, ToolVisibility};
+
+    let call = Message {
+        role: MessageRole::Assistant,
+        tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "asking".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
+        ..Message::new(Classification::general(Confidentiality::Internal))
+    };
+    let model = Arc::new(Once(Mutex::new(Some(call))));
+    let world = World::with_kinds(|registry| {
+        registry.register(ComponentKind::new("once").provides::<dyn caelumora_runtime::llm::LLMClient>(), move |_, _| {
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn caelumora_runtime::llm::LLMClient>(Arc::<Once>::clone(&model));
+            Ok(facets)
+        });
+        registry.register(ComponentKind::new("asking_owner").provides::<dyn caelumora_runtime::tool::ToolProvider>(), move |_, _| {
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn caelumora_runtime::tool::ToolProvider>(Arc::new(AskingOwner { sensitive }));
+            Ok(facets)
+        });
+    }).await;
+    let asking = Personality {
+        components: ComponentConfig { component_nodes: vec![
+            ComponentDescriptor::new("model", "once"),
+            ComponentDescriptor::new("asking", "asking_owner"),
+        ] },
+        ..world.personality("asking", None, &[]).await
+    };
+    world.store.update_personality(&World::system(), &asking).await.unwrap();
+    let helper = world.agent("helper", world.alice, &asking).await;
+    let session = world.shared_session(&[helper], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    let mut watch = main.user_actor(world.alice).expect("she takes part").watch();
+    let his = main.user_actor(world.bob).expect("he takes part").watch();
+    main.user_actor(world.alice).unwrap().send_message("@helper ask".to_string(), None).await.expect("sent");
+    let caelumora_model::actor::ActorEvent::QuestionRequested(request) = shown(&mut watch, "QuestionRequested").await else { unreachable!() };
+    (world, session, main, request, his)
+}
+
+/// The questions of `helper`'s calls in `main`, as `user` is shown them in
+/// a snapshot.
+async fn questions_shown(world: &World, session: SessionId, main: ChannelId, user: UserId) -> Vec<caelumora_model::question::QuestionId> {
+    use caelumora_model::snapshot::Detail;
+    let view = world.manager.views(Viewer::new(World::as_user(user))).session(session).await.unwrap().channel(main).await.unwrap();
+    view.snapshot(Detail::MEMBERS | Detail::APPROVALS).await.members.into_iter().flat_map(|m| m.pending_questions).map(|q| q.id).collect()
+}
+
+/// Answering the questions of an agent's call (issue 165) is asked as
+/// `AnswerQuestion` of the channel, of whoever answers - bob may, as a
+/// participant - and counts only of those the questions were put to: bob,
+/// shown alice's questions, is refused, alice answers.
+#[tokio::test]
+async fn questions_are_answered_by_whom_they_are_put_to() {
+    use caelumora_model::question::{QuestionError, Response};
+    let (world, session, main, request, _) = with_a_call_asking(false).await;
+    assert_eq!(request.questions.asked(), [ActorId::User(world.alice)], "the agent's owner");
+    assert_eq!(questions_shown(&world, session.id(), main.id(), world.bob).await, [request.id], "everyone taking part sees what the agent waits for");
+    let name = || Some(vec![Response::Text { text: "Alice".to_string() }]);
+
+    let (refused, asked) = world.asked(main.user_actor(world.bob).unwrap().answer_questions(request.id, name())).await;
+    let refused = refused.expect_err("not put to him");
+    assert!(matches!(refused.downcast_ref::<ChannelError>(), Some(ChannelError::Question { reason: QuestionError::NotAsked, .. })), "{refused}");
+    assert_eq!(asked, checks(&["bob: AnswerQuestion(alice's) yes"]), "his to answer as a participant, were he asked");
+
+    let (answered, asked) = world.asked(main.user_actor(world.alice).unwrap().answer_questions(request.id, name())).await;
+    answered.expect("put to her");
+    assert_eq!(asked, checks(&["alice: AnswerQuestion(alice's) yes"]));
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// Sensitive questions (issue 165) are shown to those they are put to
+/// alone: bob, taking part, neither is sent them nor sees them in a
+/// snapshot, and cannot answer them.
+#[tokio::test]
+async fn sensitive_questions_reach_only_whom_they_are_put_to() {
+    use caelumora_model::question::{QuestionError, Response};
+    let (world, session, main, request, mut his) = with_a_call_asking(true).await;
+    assert_eq!(questions_shown(&world, session.id(), main.id(), world.alice).await, [request.id]);
+    assert!(questions_shown(&world, session.id(), main.id(), world.bob).await.is_empty(), "not in his snapshot");
+
+    let refused = main.user_actor(world.bob).unwrap().answer_questions(request.id, Some(vec![Response::Text { text: "Bob".to_string() }])).await.expect_err("never shown to him");
+    assert!(matches!(refused.downcast_ref::<ChannelError>(), Some(ChannelError::Question { reason: QuestionError::NotOpen, .. })), "{refused}");
+    main.user_actor(world.alice).unwrap().answer_questions(request.id, Some(vec![Response::Text { text: "Alice".to_string() }])).await.expect("put to her");
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    while let Ok(envelope) = his.events.try_recv() {
+        assert!(!matches!(envelope.event, caelumora_model::actor::ActorEvent::QuestionRequested(_) | caelumora_model::actor::ActorEvent::QuestionClosed { .. }), "nothing of them reaches him: {}", envelope.event.kind());
+    }
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// What came of asking `helper` in `main`, as `user` follows it: the

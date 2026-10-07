@@ -223,6 +223,9 @@ impl ApiError {
                 ChannelError::NotAnAgentsMessage { .. } => return Self::conflict("not_an_agents_message", detail),
                 ChannelError::NotUnderWay { .. } => return Self::conflict("not_under_way", detail),
                 ChannelError::NotCleared { .. } => return Self::forbidden("not_cleared", detail),
+                ChannelError::Question { reason: caelumora_model::question::QuestionError::NotOpen, .. } => return Self::not_found("question_not_found", detail),
+                ChannelError::Question { reason: caelumora_model::question::QuestionError::NotAsked, .. } => return Self::forbidden("not_asked", detail),
+                ChannelError::Question { .. } => return bad_request("invalid_answer"),
                 ChannelError::Forbidden { .. } => {}
             }
         }
@@ -415,6 +418,11 @@ mod tests {
         assert_eq!(answer(anyhow::Error::new(ChannelError::NotAnAgentsMessage { message, channel }), Subject::Session), (409, "not_an_agents_message"));
         assert_eq!(answer(anyhow::Error::new(ChannelError::NotUnderWay { turn: caelumora_model::work::TurnId::new(), channel }), Subject::Session), (409, "not_under_way"));
         assert_eq!(answer(anyhow::Error::new(ChannelError::NotCleared { participant: someone, channel }), Subject::Participant), (403, "not_cleared"));
+        use caelumora_model::question::{QuestionError, QuestionId};
+        let question = |reason| anyhow::Error::new(ChannelError::Question { question: QuestionId::new(), channel, reason });
+        assert_eq!(answer(question(QuestionError::NotOpen), Subject::Session), (404, "question_not_found"));
+        assert_eq!(answer(question(QuestionError::NotAsked), Subject::Session), (403, "not_asked"));
+        assert_eq!(answer(question(QuestionError::ResponseCount(2)), Subject::Session), (400, "invalid_answer"));
         assert_eq!(answer(anyhow::Error::new(caelumora_model::template::TemplateError::UnsupportedScope("group")), Subject::Session), (400, "template_invalid"));
         // A text that does not fit its field, wherever it was found out (issue 248).
         let blank = || caelumora_model::value::ValueError::Blank { field: "summary" };

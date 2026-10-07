@@ -3,6 +3,7 @@ use crate::approval::{ApprovalId, ApprovalRequest, ApprovalResponse, ApproverId}
 use crate::channel::ChannelId;
 use crate::confidentiality::Classification;
 use crate::message::{Message, MessageId};
+use crate::question::{QuestionId, QuestionRequest, Response};
 use crate::security::SecurityContext;
 use crate::session::SessionId;
 use crate::user::UserId;
@@ -80,6 +81,21 @@ pub enum ActorEvent {
     /// the approvers, which take it only from the agent that asked, and by
     /// an approver to the users, so that nobody is asked any longer.
     ApprovalRequestWithdrawn { id: ApprovalId },
+    /// An agent's call asks its questions (issue 165): sent by the agent to
+    /// the users - to those asked alone if the questions are sensitive.
+    QuestionRequested(QuestionRequest),
+    /// A user's answers to the questions `id` of agent `agent_id`, sent to
+    /// that agent alone; who gave them is the envelope's sender.
+    QuestionAnswered { id: QuestionId, agent_id: AgentId, responses: Vec<Response> },
+    /// A user declines to answer the questions `id` of agent `agent_id` -
+    /// by saying so, or by writing a message instead - sent to that agent
+    /// alone.
+    QuestionDeclined { id: QuestionId, agent_id: AgentId },
+    /// The agent no longer waits for the answers to its questions `id`:
+    /// they were answered or declined, or its turn ended first. Sent to the
+    /// users it asked them of - `shown_to`, or every user - so that their
+    /// frontends no longer offer to answer.
+    QuestionClosed { id: QuestionId, shown_to: Option<Vec<ActorId>> },
     ResponseRequested,
     /// An answer begins: the turn `turn_id` of the sender (issue 235) - an
     /// agent's turn or an external agent's work - whose messages carry the
@@ -284,6 +300,10 @@ impl ActorEvent {
             ActorEvent::ApprovalDenied(_) => "ApprovalDenied",
             ActorEvent::ApprovalTimedOut(_) => "ApprovalTimedOut",
             ActorEvent::ApprovalRequestWithdrawn { .. } => "ApprovalRequestWithdrawn",
+            ActorEvent::QuestionRequested(_) => "QuestionRequested",
+            ActorEvent::QuestionAnswered { .. } => "QuestionAnswered",
+            ActorEvent::QuestionDeclined { .. } => "QuestionDeclined",
+            ActorEvent::QuestionClosed { .. } => "QuestionClosed",
             ActorEvent::ResponseRequested => "ResponseRequested",
             ActorEvent::ResponseStarted { .. } => "ResponseStarted",
             ActorEvent::StateChanged(_) => "StateChanged",

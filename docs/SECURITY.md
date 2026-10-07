@@ -74,8 +74,9 @@ This is the one place ownership is recorded.
 The `OwnershipSecurityManager` decides by those attributes and the context's initiator:
 
 *   The owner may do everything. Contributors may read and use - write into a session, cancel or
-    wake a channel, ask an agent in it to answer again (`RetryMessage`, issue 234). What belongs to
-    the system, everybody may read and use.
+    wake a channel, ask an agent in it to answer again (`RetryMessage`, issue 234), answer the
+    questions of an agent's call (`AnswerQuestion`, issue 165 - whether they were asked is the
+    agent's to check, not the policy's). What belongs to the system, everybody may read and use.
 *   Creating is only allowed with oneself as owner; changing and deleting only for the owner.
 *   What was deleted (issue 164) is the owner's to read (`ReadDeleted`) and to restore
     (`Restore`). Removing it for good (`Purge`) is the system's alone - the retention policy's

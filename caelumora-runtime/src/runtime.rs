@@ -53,17 +53,30 @@ pub struct ChannelRuntime {
     /// The session the channel belongs to, live: what its agents' tool
     /// calls are guarded by (`GuardedToolExecutor`).
     session: Arc<SessionController>,
-    // Set once the channel exists (see `attach`). Weak, because the channel
-    // owns its actors and they hold this runtime: a strong reference would
-    // keep a stopped channel alive forever.
-    channel: Arc<OnceLock<Weak<ChannelLoop>>>,
+    channel: ChannelHandle,
+}
+
+/// The channel its actors run in, reachable from what they are built with
+/// once it exists: set by `ChannelLoop::new` as soon as the channel does,
+/// after its actors were built. Weak, because the channel owns its actors
+/// and they hold this handle: a strong reference would keep a stopped
+/// channel alive forever.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ChannelHandle(Arc<OnceLock<Weak<ChannelLoop>>>);
+
+impl ChannelHandle {
+    /// The channel, or `None` while it is still being built or once it is
+    /// gone.
+    pub(crate) fn get(&self) -> Option<Arc<ChannelLoop>> {
+        self.0.get().and_then(Weak::upgrade)
+    }
 }
 
 impl ChannelRuntime {
     /// A runtime for a channel of the session `session` holds, whose user
     /// commands are `commands`.
     pub fn new(runtime_manager: Arc<RuntimeManager>, command_executor: Arc<CommandExecutor>, session: Arc<SessionController>) -> Self {
-        Self { runtime_manager, command_executor, session, channel: Arc::new(OnceLock::new()) }
+        Self { runtime_manager, command_executor, session, channel: ChannelHandle::default() }
     }
 
     /// The runtime of `actor` in the channel `channel_id` of session
@@ -76,7 +89,7 @@ impl ChannelRuntime {
     /// Makes `channel` reachable from the runtimes of its actors. Called once
     /// by `ChannelLoop::new`, as soon as the channel exists.
     pub(crate) fn attach(&self, channel: &Arc<ChannelLoop>) {
-        let _ = self.channel.set(Arc::downgrade(channel));
+        let _ = self.channel.0.set(Arc::downgrade(channel));
     }
 
     pub fn security_manager(&self) -> &Arc<dyn SecurityManager> { self.runtime_manager.security_manager() }
@@ -215,7 +228,13 @@ impl ActorRuntime {
     /// The channel the actor is in, or `None` while the channel is still
     /// being built or once it is gone.
     pub(crate) fn channel_loop(&self) -> Option<Arc<ChannelLoop>> {
-        self.runtime.channel.get().and_then(Weak::upgrade)
+        self.runtime.channel.get()
+    }
+
+    /// The channel the actor is in, for what the actor is built with and
+    /// reaches it later (`GuardedToolExecutor`).
+    pub(crate) fn channel_handle(&self) -> ChannelHandle {
+        self.runtime.channel.clone()
     }
 
     fn agent_id(&self) -> Result<AgentId> {

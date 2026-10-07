@@ -1,4 +1,5 @@
 use crate::approval::{ApprovalId, ToolMatcher};
+use crate::question::{Answers, QuestionId, Questions};
 use crate::confidentiality::{Classification, Visibility};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -221,6 +222,9 @@ pub enum ToolResultStatus {
     Forbidden,
     /// No approval arrived in time.
     TimedOut,
+    /// A person declined to answer the questions of the call (issue 165):
+    /// the tool did not run.
+    Declined,
     /// The tool rejected the arguments.
     InvalidArguments,
     /// The tool ran and failed.
@@ -307,30 +311,47 @@ pub enum ToolCallStatus {
     /// `description` - a decision of their own if `explicit`, which no rule
     /// of a person answers - and offered a rule for the calls `suggested`
     /// matches. `id` is the approval's, from the agent's request to the
-    /// decision (issue 81).
+    /// decision (issue 81). Approved, it asks its `questions`, if it has
+    /// any (issue 165).
     WaitingApproval {
         id: ApprovalId,
         description: String,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         explicit: bool,
         suggested: ToolMatcher,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        questions: Option<Questions>,
     },
-    /// It may run.
-    Ready,
+    /// A person gives the answers it runs with (issue 165); `id` is the
+    /// questions', from the agent's request to the answer.
+    WaitingUser { id: QuestionId, questions: Questions },
+    /// It may run, with the `answers` to its questions if it asked any.
+    /// They are never stored: a call ready when its turn is resumed after a
+    /// restart is not run, but answered as not executed.
+    Ready {
+        #[serde(skip)]
+        answers: Option<Answers>,
+    },
     /// It ended - ran, or was answered before it ran - with its one result
     /// (issue 100).
     Finished(ToolCallResult),
 }
 
 impl ToolCallState {
-    /// `tool_call`, waiting for a person's decision (`ToolCallStatus::WaitingApproval`).
-    pub fn pending(tool_call: ToolCall, description: String, explicit: bool, suggested: ToolMatcher) -> Self {
-        Self { tool_call, status: ToolCallStatus::WaitingApproval { id: ApprovalId::new(), description, explicit, suggested } }
+    /// `tool_call`, waiting for a person's decision (`ToolCallStatus::WaitingApproval`),
+    /// and then to ask `questions`.
+    pub fn pending(tool_call: ToolCall, description: String, explicit: bool, suggested: ToolMatcher, questions: Option<Questions>) -> Self {
+        Self { tool_call, status: ToolCallStatus::WaitingApproval { id: ApprovalId::new(), description, explicit, suggested, questions } }
+    }
+
+    /// `tool_call`, waiting for the answers to `questions` (`ToolCallStatus::WaitingUser`).
+    pub fn asking(tool_call: ToolCall, questions: Questions) -> Self {
+        Self { tool_call, status: ToolCallStatus::WaitingUser { id: QuestionId::new(), questions } }
     }
 
     /// `tool_call`, to be run as it is.
     pub fn approved(tool_call: ToolCall) -> Self {
-        Self { tool_call, status: ToolCallStatus::Ready }
+        Self { tool_call, status: ToolCallStatus::Ready { answers: None } }
     }
 
     /// `tool_call`, answered with `result` before it ran: it is not run.
@@ -355,6 +376,14 @@ impl ToolCallState {
     pub fn approval_id(&self) -> Option<ApprovalId> {
         match &self.status {
             ToolCallStatus::WaitingApproval { id, .. } => Some(*id),
+            _ => None,
+        }
+    }
+
+    /// The questions it waits for the answers to, if it does.
+    pub fn question_id(&self) -> Option<QuestionId> {
+        match &self.status {
+            ToolCallStatus::WaitingUser { id, .. } => Some(*id),
             _ => None,
         }
     }
@@ -398,11 +427,11 @@ mod tests {
     #[test]
     fn a_call_state_is_read_back_as_written() {
         let call = ToolCall { id: Some("1".to_string()), function_name: "delete".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
-        let waiting = ToolCallState::pending(call.clone(), "Delete it?".to_string(), true, ToolMatcher::exact(&call));
+        let waiting = ToolCallState::pending(call.clone(), "Delete it?".to_string(), true, ToolMatcher::exact(&call), None);
         let read: ToolCallState = serde_json::from_str(&serde_json::to_string(&waiting).unwrap()).unwrap();
         assert_eq!(read.approval_id(), waiting.approval_id());
         assert!(matches!(read.status, ToolCallStatus::WaitingApproval { explicit: true, ref description, .. } if description == "Delete it?"));
         let ready: ToolCallState = serde_json::from_str(&serde_json::to_string(&ToolCallState::approved(call.clone())).unwrap()).unwrap();
-        assert!(matches!(ready.status, ToolCallStatus::Ready));
+        assert!(matches!(ready.status, ToolCallStatus::Ready { answers: None }));
     }
 }

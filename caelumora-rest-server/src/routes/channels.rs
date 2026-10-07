@@ -1,5 +1,5 @@
 use crate::auth::AuthenticatedUser;
-use crate::models::{AddParticipantRequest, DescriptionRequest, AgentToolsResponse, DeletedResponse, ListOptions, ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CreateChannelRequest, KnowledgeRefResponse, CommandReplyResponse, ExecuteCommandRequest, GivenUpTurnResponse, HistoryMessageResponse, LabelCauses, MessageContextResponse, SeenItemResponse, PublishedNotesResponse, MessageRequest, RetryTurnRequest, SendApprovalRequest, StreamOptions};
+use crate::models::{AddParticipantRequest, DescriptionRequest, AgentToolsResponse, DeletedResponse, ListOptions, ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CreateChannelRequest, KnowledgeRefResponse, CommandReplyResponse, ExecuteCommandRequest, GivenUpTurnResponse, HistoryMessageResponse, LabelCauses, MessageContextResponse, SeenItemResponse, PublishedNotesResponse, MessageRequest, RetryTurnRequest, SendApprovalRequest, StreamOptions, AnswerQuestionsRequest};
 use crate::state::AppState;
 use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response, Sse};
@@ -14,6 +14,7 @@ use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::session::ChannelSpec;
 use caelumora_runtime::view::{AgentContextView, ChannelView, MemberView, Viewer};
 use caelumora_model::approval::{ApprovalId, ApprovalResponse, ApprovalRule};
+use caelumora_model::question::QuestionId;
 use caelumora_model::channel::moderation_components;
 use caelumora_model::command::{Command, CommandVisibility};
 use caelumora_model::confidentiality::Classification;
@@ -613,6 +614,27 @@ pub async fn send_approval(
     let response = ApprovalResponse::new(ApprovalId(payload.approval_id), AgentId(payload.agent_id));
     let span_id = user_actor.send_approval(response, payload.approved).await
         .map_err(|e| ApiError::internal("approval_not_sent", "sending the approval", &e))?;
+    tracing::Span::current().record("span_id", tracing::field::display(span_id));
+    Ok(StatusCode::OK)
+}
+
+/// Answers the questions `qid` an agent's call put to the user (issue 165),
+/// or declines them: exactly one of `responses` and `declined: true`.
+pub async fn answer_questions(
+    State(state): State<Arc<AppState>>,
+    Path((id, cid, qid)): Path<(Uuid, Uuid, Uuid)>,
+    user: AuthenticatedUser,
+    Json(payload): Json<AnswerQuestionsRequest>,
+) -> Result<StatusCode, ApiError> {
+    let responses = match (payload.responses, payload.declined) {
+        (Some(responses), false) => Some(responses),
+        (None, true) => None,
+        _ => return Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid_answer", "give either the responses or that the questions are declined")),
+    };
+    let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let user_actor = user_actor_of(&channel, &user)?;
+    let span_id = user_actor.answer_questions(QuestionId(qid), responses).await
+        .map_err(|e| ApiError::from_runtime(e, Subject::Session, "answering the questions"))?;
     tracing::Span::current().record("span_id", tracing::field::display(span_id));
     Ok(StatusCode::OK)
 }

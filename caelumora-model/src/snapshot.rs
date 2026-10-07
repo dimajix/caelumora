@@ -43,7 +43,8 @@ bitflags::bitflags! {
         const USAGE = 1 << 2;
         /// Of a member: the notes it published (issue 17).
         const NOTES = 1 << 3;
-        /// Of a member: the approvals its turn waits for (issue 172).
+        /// Of a member: the approvals its turn waits for (issue 172), and the
+        /// questions (issue 165).
         const APPROVALS = 1 << 4;
         /// Of a member: who it is - its introduction, and of an agent its
         /// personality and owner (issue 244).
@@ -188,6 +189,10 @@ pub struct MemberSnapshot {
     /// viewer who takes part in the channel as a user and reads all of it -
     /// with `Detail::APPROVALS`.
     pub pending_approvals: Vec<ApprovalRequest>,
+    /// The questions an agent member's turn waits for the answers to (issue
+    /// 165), for the same viewer - sensitive ones only if they are asked -
+    /// with `Detail::APPROVALS`.
+    pub pending_questions: Vec<crate::question::QuestionRequest>,
     /// Who removed a former member and when (issue 164); `None` for one that
     /// takes part.
     pub left: Option<crate::removal::Removal>,

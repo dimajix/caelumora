@@ -615,7 +615,7 @@ impl MemberView {
             }
         }
         let (personality, personality_kind) = personality.unzip();
-        let (mut usage, mut notes, mut pending_approvals) = (None, Vec::new(), Vec::new());
+        let (mut usage, mut notes, mut pending_approvals, mut pending_questions) = (None, Vec::new(), Vec::new(), Vec::new());
         if let Some(state) = &state {
             if wanted.contains(Detail::USAGE) {
                 usage = state.usage(self.id());
@@ -625,6 +625,11 @@ impl MemberView {
             }
             if wanted.contains(Detail::APPROVALS) {
                 pending_approvals = state.pending_approvals();
+                // Sensitive questions only for those asked (issue 165).
+                let viewer = self.views().viewer().context().initiator_id;
+                pending_questions = state.pending_questions().into_iter()
+                    .filter(|q| q.shown_to().is_none_or(|asked| asked.contains(&viewer)))
+                    .collect();
             }
         }
         MemberSnapshot {
@@ -642,6 +647,7 @@ impl MemberView {
             usage,
             notes,
             pending_approvals,
+            pending_questions,
             left: self.left.clone(),
             introduction,
             personality,

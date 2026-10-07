@@ -6,6 +6,7 @@ use caelumora_model::approval::{ApprovalRule, RuleDecision, ToolMatcher};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityManager};
 use caelumora_model::question::{Answers, Questions};
+use crate::runtime::ChannelHandle;
 use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolCallState, ToolSet, ToolVisibility, ToolResultStatus};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
@@ -149,6 +150,15 @@ pub(crate) fn timed_out_result() -> String {
     unsuccessful_result(
         ToolResultStatus::TimedOut,
         "No one approved this tool call in time; it was not executed. You may ask the user whether to try again.",
+    )
+}
+
+/// The result for a call whose questions a person declined to answer
+/// (issue 165), by saying so or by writing a message instead.
+pub(crate) fn declined_result() -> String {
+    unsuccessful_result(
+        ToolResultStatus::Declined,
+        "The user declined to answer the questions of this tool call; it was not executed. Read what they wrote instead, if anything, and go on without the answers or ask differently.",
     )
 }
 
@@ -312,7 +322,10 @@ pub enum Admission {
     /// A user decides first; they are shown `description`. `explicit` if a
     /// rule of a place asked for it: a decision of their own (issue 13).
     /// `suggested` is what a rule derived from the call would match.
-    Ask { description: String, explicit: bool, suggested: ToolMatcher },
+    /// Approved, it asks `questions`, if it has any (issue 165).
+    Ask { description: String, explicit: bool, suggested: ToolMatcher, questions: Option<Questions> },
+    /// The users answer its questions first (issue 165), as put to them.
+    Await(Questions),
     /// It runs as it is.
     Run,
     /// It cannot succeed and is answered at once, without asking anyone.
@@ -323,7 +336,8 @@ impl Admission {
     /// The state `call` starts with, admitted so.
     pub fn state(self, call: ToolCall) -> ToolCallState {
         match self {
-            Admission::Ask { description, explicit, suggested } => ToolCallState::pending(call, description, explicit, suggested),
+            Admission::Ask { description, explicit, suggested, questions } => ToolCallState::pending(call, description, explicit, suggested, questions),
+            Admission::Await(questions) => ToolCallState::asking(call, questions),
             Admission::Run => ToolCallState::approved(call),
             Admission::Answered(result) => ToolCallState::answered(call, result),
         }
@@ -354,14 +368,29 @@ pub struct GuardedToolExecutor {
     system_rules: Arc<[ApprovalRule]>,
     session: Arc<SessionController>,
     channel: Arc<ChannelController>,
+    /// The channel as it runs, whose users a call's questions are put to.
+    running: ChannelHandle,
 }
 
 impl GuardedToolExecutor {
     /// `executor`, guarded by `security_manager` and by the rules of the
     /// system (`system_rules`, `AppConfig::approvals`), of `session` and of
-    /// `channel`, where the agent works.
-    pub fn new(security_manager: Arc<dyn SecurityManager>, executor: ComponentImpl<dyn ToolExecutor>, system_rules: Arc<[ApprovalRule]>, session: Arc<SessionController>, channel: Arc<ChannelController>) -> Self {
-        Self { security_manager, executor, system_rules, session, channel }
+    /// `channel`, where the agent works - which, `running`, puts the
+    /// questions of its calls to its users.
+    pub(crate) fn new(security_manager: Arc<dyn SecurityManager>, executor: ComponentImpl<dyn ToolExecutor>, system_rules: Arc<[ApprovalRule]>, session: Arc<SessionController>, channel: Arc<ChannelController>, running: ChannelHandle) -> Self {
+        Self { security_manager, executor, system_rules, session, channel, running }
+    }
+
+    /// What `call` asks before it runs, as its tool says, checked and put to
+    /// the users of the channel (issue 165) - the agent's owner being whom
+    /// `turn` acts for. Every error is the call's: it cannot be asked.
+    fn questions(&self, call: &ToolCall, turn: &Turn<'_>) -> ToolResult<Option<Questions>> {
+        let Some(questions) = self.executor.questions(call)? else { return Ok(None) };
+        questions.check().map_err(|e| ToolError::InvalidParameter(e.to_string()))?;
+        let channel = self.running.get().ok_or_else(|| ToolError::ExecutionFailed("the channel does not run".to_string()))?;
+        channel.put(questions, turn.security_context().initiator_id)
+            .map(Some)
+            .map_err(|e| ToolError::InvalidParameter(e.to_string()))
     }
 
     /// The rule of a place that decides `call` now, if one does: the
@@ -448,10 +477,11 @@ impl GuardedToolExecutor {
     /// could only approve it in vain - in the order `execute` would find
     /// out: first the policy (`CallTool`) and a rule of a place that denies
     /// it (issue 13; `execute` checks both again), then the call itself
-    /// (issue 118). Otherwise a user is asked if a rule of a place asks for
-    /// it - explicitly, for a decision of their own - or if its tool, as the
-    /// turn began with it (issue 137), requires approval, and shown what the
-    /// tool says of the call.
+    /// (issue 118) and the questions it asks (issue 165). Otherwise a user is
+    /// asked if a rule of a place asks for it - explicitly, for a decision
+    /// of their own - or if its tool, as the turn began with it (issue 137),
+    /// requires approval, and shown what the tool says of the call; the
+    /// questions are asked once it is approved, or at once.
     pub async fn admit(&self, call: &ToolCall, turn: &Turn<'_>) -> Admission {
         let agent = turn.agent_id();
         if !self.security_manager.may_call_tool(turn.security_context(), call).await {
@@ -474,9 +504,20 @@ impl GuardedToolExecutor {
                 "No description".to_string()
             }
         };
+        let questions = match self.questions(call, turn) {
+            Ok(questions) => questions,
+            Err(e) => {
+                info!("Tool call '{}' by agent {} cannot ask its questions: {}", call.function_name, agent, e);
+                return Admission::Answered(self.failed(call, e, turn));
+            }
+        };
         let explicit = rule.is_some_and(|r| r.decision == RuleDecision::Ask);
         let asks = explicit || turn.tools().iter().any(|t| t.name == call.function_name && t.requires_approval);
-        if asks { Admission::Ask { description, explicit, suggested: self.executor.matcher(call) } } else { Admission::Run }
+        match questions {
+            _ if asks => Admission::Ask { description, explicit, suggested: self.executor.matcher(call), questions },
+            Some(questions) => Admission::Await(questions),
+            None => Admission::Run,
+        }
     }
 
     pub fn tool_sets(&self) -> Vec<ToolSet> {
@@ -656,7 +697,7 @@ mod tests {
         channel.approval_rules = places.channel;
         let session = Arc::new(SessionController::new(caelumora_model::session::Session { approval_rules: places.session, ..session }, Arc::new(()), Arc::clone(&store) as Arc<dyn caelumora_model::store::EntityStore>));
         let channel = Arc::new(ChannelController::new(channel, Arc::new(()), store));
-        let executor = GuardedToolExecutor::new(security, ComponentImpl { id: "executor".to_string(), fail_policy: Default::default(), facet: Arc::new(tools) }, places.system.into(), Arc::clone(&session), Arc::clone(&channel));
+        let executor = GuardedToolExecutor::new(security, ComponentImpl { id: "executor".to_string(), fail_policy: Default::default(), facet: Arc::new(tools) }, places.system.into(), Arc::clone(&session), Arc::clone(&channel), Default::default());
         (executor, session, channel)
     }
 
@@ -746,7 +787,7 @@ mod tests {
         let admitted = running.admit(&call("test_tool"), &turn).await;
         assert!(matches!(admitted, Admission::Run), "no approval needed");
         let state = admitted.state(call("test_tool"));
-        assert!(matches!(state.status, caelumora_model::tool::ToolCallStatus::Ready), "to be run");
+        assert!(matches!(state.status, caelumora_model::tool::ToolCallStatus::Ready { answers: None }), "to be run");
     }
 
     #[tokio::test]

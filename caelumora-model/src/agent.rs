@@ -414,6 +414,12 @@ impl AgentChannelState {
         self.turn.as_ref().map(TurnState::pending_approvals).unwrap_or_default()
     }
 
+    /// The questions its turn waits for the answers to (issue 165); none
+    /// without a turn.
+    pub fn pending_questions(&self) -> Vec<crate::question::QuestionRequest> {
+        self.turn.as_ref().map(TurnState::pending_questions).unwrap_or_default()
+    }
+
     /// What the model calls of `agent` - whose state this is - used in the
     /// channel (issue 209).
     pub fn usage(&self, agent: ActorId) -> Option<TokenUsage> {
