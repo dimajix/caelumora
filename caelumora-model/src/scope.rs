@@ -1,5 +1,7 @@
 //! `Scope`: where a personality, a session template or an agent lies
-//! (issue 177), and finding one by name from a place (issue 178).
+//! (issue 177), and finding one by name from a place (issue 178) - and
+//! what is `Scoped`: what lies in a scope under a name that is unique there
+//! (issue 250).
 //!
 //! A place is where one looks from - a channel, a session - and who is
 //! looking. From it, what is `Scoped` is found in the place's own scope, in
@@ -15,9 +17,10 @@ use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use uuid::Uuid;
 
-/// Where a personality, a session template or an agent lies:
-/// the name space it is found in by name (issue 177). Sessions, channels and
-/// users have none: they are scopes themselves.
+/// Where a personality, a session template or an agent lies: the name
+/// space it is found in by name (issue 177). A channel's name space is its
+/// session's scope, a user's the global one (issue 250); neither stores a
+/// scope of its own.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Scope {
     /// A channel, by id: a renamed channel keeps what lies in it (issue
@@ -80,10 +83,15 @@ impl Scope {
     }
 }
 
-/// What lies in a scope and is found there by name: a personality, a
-/// session template, an agent.
+/// What lies in a scope and is found there by its name, which is unique of
+/// its kind in that scope (issue 250): a personality, a session template,
+/// an agent - and a channel, whose scope is its session, and a user, who
+/// lies in the global one. A kind is either `Scoped` or has no unique name
+/// at all.
 pub trait Scoped {
-    fn scoped_name(&self) -> &ScopedName;
+    /// Its name and the scope it lies in; made when asked by a kind that
+    /// does not store it so.
+    fn scoped_name(&self) -> ScopedName;
 }
 
 /// The one of `name` that `user` finds from `place` among `scoped` -
@@ -92,8 +100,10 @@ pub trait Scoped {
 /// are compared as `Name` compares them (issue 248).
 pub fn find_by_name<'a, D: Scoped>(scoped: impl IntoIterator<Item = &'a D>, name: &Name, place: &Scope, user: Option<UserId>) -> Option<&'a D> {
     scoped.into_iter()
-        .filter(|d| d.scoped_name().name == *name && d.scoped_name().scope.visible_from(place, user))
-        .min_by_key(|d| Reverse(d.scoped_name().scope.depth()))
+        .map(|d| (d.scoped_name(), d))
+        .filter(|(scoped_name, _)| scoped_name.name == *name && scoped_name.scope.visible_from(place, user))
+        .min_by_key(|(scoped_name, _)| Reverse(scoped_name.scope.depth()))
+        .map(|(_, d)| d)
 }
 
 #[cfg(test)]
@@ -167,8 +177,8 @@ mod tests {
     }
 
     impl Scoped for Item {
-        fn scoped_name(&self) -> &ScopedName {
-            &self.name
+        fn scoped_name(&self) -> ScopedName {
+            self.name.clone()
         }
     }
 

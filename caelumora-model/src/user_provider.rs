@@ -155,12 +155,13 @@ impl UserManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::value::name::Name;
     use std::collections::HashMap;
 
     fn user(name: &str) -> User {
         User {
             id: UserId::new(),
-            username: name.to_string(),
+            username: Name::new(name).unwrap(),
             email: String::new(),
             roles: Vec::new(),
             deleted: None,
@@ -176,7 +177,7 @@ mod tests {
     impl MapUserProvider {
         fn new(entries: &[(&User, &str)]) -> Self {
             let users = entries.iter()
-                .map(|(u, p)| (u.username.clone(), ((*u).clone(), p.to_string())))
+                .map(|(u, p)| (u.username.to_string(), ((*u).clone(), p.to_string())))
                 .collect();
             Self { users }
         }
@@ -273,7 +274,7 @@ mod tests {
         ]);
 
         assert_eq!(manager.find_user("alice").await.unwrap().map(|u| u.id), Some(alice.id));
-        assert_eq!(manager.get_user(alice.id).await.unwrap().map(|u| u.username), Some("alice".to_string()));
+        assert_eq!(manager.get_user(alice.id).await.unwrap().map(|u| u.username), Some(Name::new("alice").unwrap()));
         assert!(manager.find_user("bob").await.unwrap().is_none());
         assert!(UserManager::new(vec![]).get_user(alice.id).await.unwrap().is_none());
     }

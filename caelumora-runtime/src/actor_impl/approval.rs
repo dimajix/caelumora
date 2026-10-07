@@ -474,7 +474,7 @@ mod tests {
         let system = SecurityContext::system();
         let mut ids = Vec::new();
         for n in 0..users {
-            let user = User { id: UserId::new(), username: format!("user{n}"), email: String::new(), roles: vec![], deleted: None };
+            let user = User { id: UserId::new(), username: Name::new(format!("user{n}")).unwrap(), email: String::new(), roles: vec![], deleted: None };
             store.create_user(&system, &user).await.unwrap();
             ids.push(user.id);
         }

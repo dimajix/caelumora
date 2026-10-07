@@ -7,7 +7,8 @@ use crate::confidentiality::Classification;
 use crate::value::language::Language;
 use crate::message::MessageId;
 use crate::message_history::{HistoryEntry, MessageHistory};
-use crate::value::name::Name;
+use crate::scope::{Scope, Scoped};
+use crate::value::name::{Name, ScopedName};
 use crate::value::text::{Briefing, Summary};
 use crate::value::ValueError;
 use crate::security::{Secured, SecurityAttributes};
@@ -124,6 +125,13 @@ pub struct HistoryLimit {
 }
 
 crate::impl_deletable!(Channel);
+
+/// A channel's name is unique in its session (issue 250).
+impl Scoped for Channel {
+    fn scoped_name(&self) -> ScopedName {
+        ScopedName { name: self.name.clone(), scope: Scope::SessionScope { session_id: self.session_id } }
+    }
+}
 
 impl Secured for Channel {
     fn security_attributes(&self) -> &SecurityAttributes {

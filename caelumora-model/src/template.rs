@@ -205,8 +205,8 @@ impl Secured for SessionTemplate {
 }
 
 impl Scoped for SessionTemplate {
-    fn scoped_name(&self) -> &ScopedName {
-        &self.name
+    fn scoped_name(&self) -> ScopedName {
+        self.name.clone()
     }
 }
 

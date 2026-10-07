@@ -227,7 +227,7 @@ mod tests {
         let missing = resolve_participants(&store, &as_user(owner), &template, SessionId::new(), owner).await.expect_err("no such user");
         assert!(matches!(missing.downcast_ref::<StoreError>(), Some(StoreError::NotFound { entity: "user", .. })), "{missing}");
 
-        store.create_user(&SecurityContext::system(), &User { id: owner, username: "alice".to_string(), email: String::new(), roles: Vec::new(), deleted: None }).await.unwrap();
+        store.create_user(&SecurityContext::system(), &User { id: owner, username: Name::new("alice").unwrap(), email: String::new(), roles: Vec::new(), deleted: None }).await.unwrap();
         let participants = resolve_participants(&store, &as_user(owner), &template, SessionId::new(), owner).await.unwrap();
         assert!(matches!(participants[0], (ref name, Participant::User(id)) if name == "user" && id == owner));
         assert!(matches!(participants[1], (ref name, Participant::Approver(_)) if name == "approval"));

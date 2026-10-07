@@ -142,7 +142,7 @@ fn channel() -> Channel {
 fn user(username: &str) -> User {
     User {
         id: UserId::new(),
-        username: username.to_string(),
+        username: Name::new(username).unwrap(),
         email: String::new(),
         roles: vec!["user".to_string()],
         deleted: None,
@@ -180,7 +180,7 @@ macro_rules! found_by_name {
         assert!(matches!(elsewhere, Err(StoreError::NotFound { entity: $entity, .. })), concat!($entity, ": not in a scope it does not lie in, got {:?}"), elsewhere);
 
         store.$delete(&ctx, global.id).await.expect(concat!($entity, ": delete"));
-        let deleted = store.$find(&ctx, global.scoped_name()).await;
+        let deleted = store.$find(&ctx, &global.scoped_name()).await;
         assert!(matches!(deleted, Err(StoreError::NotFound { entity: $entity, .. })), concat!($entity, ": not once deleted, got {:?}"), deleted);
     }};
 }

@@ -73,7 +73,7 @@ argues against it, and what came out of the last attempt.
 | [182](182-entity-reads-not-cached.md) | open | Personalities, agents and users are read from the store again for every use - for every member of a channel, on every turn - though they change rarely. |
 | [193](193-external-state-rewritten-whole.md) | done | Every state the `StateStore` keeps is rewritten whole for everything that happens in it - an agent's for every message heard and every step of a turn - so the writes grow with the square of a channel's length. |
 | [215](215-json-store-concurrent-puts-of-one-state.md) | done | Concurrent puts of one state in the JSON store can leave a journal beside the new snapshot and lose a change appended in between, and the test that puts one state concurrently fails now and then. |
-| [250](250-unique-names-per-name-space.md) | open | No kind keeps its names unique in its name space as a whole: channels check it by hand when created, not when renamed; agents, personalities, templates and users not at all. |
+| [250](250-unique-names-per-name-space.md) | in progress | No kind keeps its names unique in its name space as a whole: channels check it by hand when created, not when renamed; agents, personalities, templates and users not at all. |
 
 ## Sessions and channels
 

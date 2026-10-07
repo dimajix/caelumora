@@ -442,7 +442,7 @@ impl JsonFileStore {
     /// The one of `name`, in exactly its scope, among those listed.
     async fn find_dir<T: Stored + Scoped + DeserializeOwned + Send>(&self, ctx: &SecurityContext, kind: &Actions, dir: PathBuf, name: &ScopedName) -> StoreResult<T> {
         let all: Vec<T> = self.list_dir(ctx, kind, dir).await?;
-        require_entity(all.into_iter().find(|d| d.scoped_name() == name), kind.entity.name(), name.to_string())
+        require_entity(all.into_iter().find(|d| d.scoped_name() == *name), kind.entity.name(), name.to_string())
     }
 }
 

@@ -235,7 +235,7 @@ mod tests {
     }
 
     async fn user_in(store: &MemoryStore) -> User {
-        let user = User { id: UserId::new(), username: "alice".to_string(), email: String::new(), roles: Vec::new(), deleted: None };
+        let user = User { id: UserId::new(), username: Name::new("alice").unwrap(), email: String::new(), roles: Vec::new(), deleted: None };
         store.create_user(&SecurityContext::system(), &user).await.unwrap();
         user
     }

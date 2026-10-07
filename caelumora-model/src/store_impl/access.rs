@@ -257,6 +257,7 @@ mod tests {
     use crate::store::{EntityStore, StoreError};
     use crate::store_impl::memory::MemoryStore;
     use crate::user::UserId;
+    use crate::value::name::Name;
     use std::sync::Arc;
 
     /// Owners do everything, contributors read, nobody acts for another.
@@ -379,7 +380,7 @@ mod tests {
         let alice_id = UserId::new();
         let alice_ctx = SecurityContext::new(ActorId::User(alice_id), Default::default(), Default::default());
         let (_, bob_ctx) = user();
-        let record = User { id: alice_id, username: "alice".to_string(), email: String::new(), roles: vec!["user".to_string()], deleted: None };
+        let record = User { id: alice_id, username: Name::new("alice").unwrap(), email: String::new(), roles: vec!["user".to_string()], deleted: None };
 
         let own = store.create_user(&alice_ctx, &record).await;
         assert!(matches!(own, Err(StoreError::PermissionDenied)), "nobody records themselves, got {own:?}");

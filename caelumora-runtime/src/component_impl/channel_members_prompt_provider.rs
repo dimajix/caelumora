@@ -293,7 +293,7 @@ mod tests {
         let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), Vec::new(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let system = SecurityContext::system();
 
-        let (kaya, bob) = (User { id: UserId::new(), username: "Kaya".to_string(), email: String::new(), roles: Vec::new(), deleted: None }, User { id: UserId::new(), username: "Bob".to_string(), email: String::new(), roles: Vec::new(), deleted: None });
+        let (kaya, bob) = (User { id: UserId::new(), username: Name::new("Kaya").unwrap(), email: String::new(), roles: Vec::new(), deleted: None }, User { id: UserId::new(), username: Name::new("Bob").unwrap(), email: String::new(), roles: Vec::new(), deleted: None });
         for user in [&kaya, &bob] {
             store.create_user(&system, user).await.unwrap();
         }

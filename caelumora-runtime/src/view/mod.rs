@@ -376,7 +376,7 @@ impl Views {
     /// 244).
     async fn name_of(&self, actor: ActorId) -> Option<String> {
         match actor {
-            ActorId::User(id) => self.entities.get_user(&SecurityContext::system(), id).await.ok().map(|user| user.username),
+            ActorId::User(id) => self.entities.get_user(&SecurityContext::system(), id).await.ok().map(|user| user.username.to_string()),
             ActorId::Agent(id) => match self.agent_of(id).await {
                 Some(agent) => Some(agent.name.to_string()),
                 None => self.deleted_agent_name(id).await,
@@ -534,7 +534,7 @@ mod tests {
     }
 
     fn user(name: &str) -> User {
-        User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new(), deleted: None }
+        User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: Vec::new(), deleted: None }
     }
 
     fn as_user(id: UserId) -> Viewer {
@@ -724,7 +724,7 @@ mod tests {
         use caelumora_model::approval::{ApprovalStrategy, Approver, ApproverId};
 
         let (store, manager) = owned_runtime();
-        let alice = User { id: UserId::new(), username: "Alice Example".to_string(), email: String::new(), roles: Vec::new(), deleted: None };
+        let alice = User { id: UserId::new(), username: Name::new("Alice Example").unwrap(), email: String::new(), roles: Vec::new(), deleted: None };
         let gone = UserId::new();
         let approver = Approver { id: ApproverId(uuid::Uuid::new_v4()), strategy: ApprovalStrategy::Any };
         let mut session = make_session("s", ActorId::User(alice.id), vec![]);

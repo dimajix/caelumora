@@ -339,7 +339,7 @@ async fn login(State(auth): State<Arc<Auth>>, Json(request): Json<LoginRequest>)
                 Ok((cookies, _)) => {
                     let body = Json(UserResponse {
                         id: user.id,
-                        username: user.username,
+                        username: user.username.to_string(),
                         token_lifetime_secs: auth.tokens.lifetime_secs(),
                     });
                     let mut response = body.into_response();
@@ -384,7 +384,7 @@ async fn me(State(auth): State<Arc<Auth>>, user: AuthenticatedUser) -> Response 
     match auth.users.get_user(user.id).await {
         Ok(Some(u)) => Json(UserResponse {
             id: u.id,
-            username: u.username,
+            username: u.username.to_string(),
             token_lifetime_secs: auth.tokens.lifetime_secs(),
         }).into_response(),
         // As when a renewal finds the user gone: the session ends, and so

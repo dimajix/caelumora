@@ -142,14 +142,14 @@ impl Secured for Agent {
 }
 
 impl Scoped for Personality {
-    fn scoped_name(&self) -> &ScopedName {
-        &self.name
+    fn scoped_name(&self) -> ScopedName {
+        self.name.clone()
     }
 }
 
 impl Scoped for Agent {
-    fn scoped_name(&self) -> &ScopedName {
-        &self.name
+    fn scoped_name(&self) -> ScopedName {
+        self.name.clone()
     }
 }
 

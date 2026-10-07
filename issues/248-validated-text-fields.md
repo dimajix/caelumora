@@ -146,3 +146,6 @@ are not checked today are, or say why not.
   as a string, empty for none. Left out, as decided: messages, notes, plan steps and the
   descriptions of tools and commands. Found on the way: renaming a channel does not check its name
   against the session's other channels - issue [250](250-unique-names-per-name-space.md).
+- **2026-10-07** — A user's `username` is a `Name` now (issue
+  [250](250-unique-names-per-name-space.md)): what this issue left an opaque `String`, since a user
+  provider decides it, is compared as names are, so that the store can keep usernames unique.

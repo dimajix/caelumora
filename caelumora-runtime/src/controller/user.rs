@@ -2,6 +2,7 @@ use arc_swap::ArcSwap;
 use caelumora_model::approval::{ApprovalRule, ApprovalRuleId};
 use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::value::language::Language;
+use caelumora_model::value::name::Name;
 use caelumora_model::security::{Secured, SecurityContext};
 use caelumora_model::store::{EntityStore, StoreError, StoreResult};
 use caelumora_model::user::{User, UserId, UserProfile, UserUpdateEvent};
@@ -56,7 +57,7 @@ impl UserController {
     }
 
     pub fn username(&self) -> String {
-        self.user.load().username.clone()
+        self.user.load().username.to_string()
     }
 
     /// Sets how the user introduces themselves and the language they prefer
@@ -138,11 +139,16 @@ impl UserController {
 
     fn process_user_update(&self, event: &UserUpdateEvent) {
         match event {
-            UserUpdateEvent::NameChanged(name) => {
-                let mut user = (**self.user.load()).clone();
-                user.username = name.clone();
-                self.user.store(Arc::new(user));
-            }
+            // Checked where it was made; a name that is none here is left
+            // out rather than taken over.
+            UserUpdateEvent::NameChanged(name) => match Name::new(name) {
+                Ok(name) => {
+                    let mut user = (**self.user.load()).clone();
+                    user.username = name;
+                    self.user.store(Arc::new(user));
+                }
+                Err(e) => tracing::warn!(user = %self.id, error = %e, "A change of the user's name made elsewhere does not fit it"),
+            },
         }
     }
 
@@ -182,7 +188,7 @@ mod tests {
     }
 
     fn alice() -> User {
-        User { id: UserId::new(), username: "alice".to_string(), email: String::new(), roles: Vec::new(), deleted: None }
+        User { id: UserId::new(), username: Name::new("alice").unwrap(), email: String::new(), roles: Vec::new(), deleted: None }
     }
 
     fn as_user(id: UserId) -> SecurityContext {

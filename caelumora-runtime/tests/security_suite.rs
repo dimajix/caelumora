@@ -156,7 +156,7 @@ impl World {
     }
 
     async fn user(&self, name: &str) -> UserId {
-        let user = User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: vec!["staff".to_string()], deleted: None };
+        let user = User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: vec!["staff".to_string()], deleted: None };
         self.store.create_user(&Self::system(), &user).await.unwrap();
         self.policy.names.lock().unwrap().insert(ActorId::User(user.id), name.to_string());
         user.id

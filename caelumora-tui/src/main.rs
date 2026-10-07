@@ -7,6 +7,7 @@ use caelumora_model::mention::mention_spans;
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::user::{User, UserId};
+use caelumora_model::value::name::Name;
 use caelumora_model::work::TurnId;
 use caelumora_runtime::component::ComponentRegistry;
 use caelumora_runtime::channel::ChannelLoop;
@@ -325,7 +326,7 @@ async fn main() -> anyhow::Result<()> {
     if entity_store.get_user(&system, owner).await.is_err() {
         entity_store.create_user(&system, &User {
             id: owner,
-            username: "user".to_string(),
+            username: Name::new("user")?,
             email: "user@example.com".to_string(),
             roles: vec!["user".to_string()],
             deleted: None,

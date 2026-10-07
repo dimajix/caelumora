@@ -2,7 +2,9 @@ use crate::actor::ActorId;
 use crate::approval::{ApprovalRule, ApprovalRuleId, RuleError, MAX_PERSONAL_RULES};
 use chrono::{DateTime, Utc};
 use crate::value::language::Language;
+use crate::scope::{Scope, Scoped};
 use crate::security::{SecurityAttributes, Secured};
+use crate::value::name::{Name, ScopedName};
 use crate::value::text::Introduction;
 use crate::value::ValueError;
 use serde::{Deserialize, Serialize};
@@ -12,7 +14,9 @@ define_id!(UserId);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
     pub id: UserId,
-    pub username: String,
+    /// An identity, compared as names are (issue 250): two usernames that
+    /// differ only in case or accents are one.
+    pub username: Name,
     pub email: String,
     pub roles: Vec<String>,
     /// Set when it was deleted (issue 164): it stays stored, hidden from
@@ -30,6 +34,13 @@ pub struct User {
 static SYSTEM_OWNED: SecurityAttributes = SecurityAttributes { owner_id: ActorId::System, contributors: Vec::new() };
 
 crate::impl_deletable!(User, UserProfile);
+
+/// A username is unique everywhere (issue 250).
+impl Scoped for User {
+    fn scoped_name(&self) -> ScopedName {
+        ScopedName { name: self.username.clone(), scope: Scope::GlobalScope }
+    }
+}
 
 impl Secured for User {
     fn security_attributes(&self) -> &SecurityAttributes {

@@ -2,6 +2,7 @@ use crate::security::SecurityContext;
 use crate::store::{EntityStore, StoreError, StoreResultExt};
 use crate::user::{User, UserId};
 use crate::user_provider::{AuthError, AuthResult, Credential, UserProvider};
+use crate::value::name::Name;
 use async_trait::async_trait;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -42,9 +43,12 @@ impl AcceptAnyUserProvider {
         Self { store, roles, default_roles }
     }
 
-    /// The roles of `username`, as configured.
-    fn roles_of(&self, username: &str) -> Vec<String> {
-        self.roles.get(username).cloned().unwrap_or_else(|| self.default_roles.clone())
+    /// The roles of `username`, as configured - named as names are
+    /// compared (issue 250).
+    fn roles_of(&self, username: &Name) -> Vec<String> {
+        self.roles.iter()
+            .find(|(configured, _)| *username == configured.as_str())
+            .map_or_else(|| self.default_roles.clone(), |(_, roles)| roles.clone())
     }
 
     /// The provider keeps its own records: nobody's action, the system's.
@@ -69,13 +73,12 @@ impl UserProvider for AcceptAnyUserProvider {
     }
 
     async fn authenticate(&self, username: &str, _credential: &Credential<'_>) -> AuthResult<Option<User>> {
-        let username = username.trim();
-        if username.is_empty() {
+        let Ok(username) = Name::new(username.trim()) else {
             return Err(AuthError::InvalidCredentials);
-        }
+        };
 
-        let roles = self.roles_of(username);
-        if let Some(user) = self.find_user(username).await? {
+        let roles = self.roles_of(&username);
+        if let Some(user) = self.find_user(username.as_str()).await? {
             // The configuration decides the roles; a changed one takes effect
             // at the next login.
             if user.roles == roles {
@@ -90,7 +93,7 @@ impl UserProvider for AcceptAnyUserProvider {
         let id = UserId::new();
         let user = User {
             id,
-            username: username.to_string(),
+            username,
             email: String::new(),
             roles,
             deleted: None,
@@ -131,7 +134,7 @@ mod tests {
         let alice = provider.authenticate("alice", &Credential::Password("x")).await.unwrap().expect("accepted");
 
         assert_eq!(provider.find_user("alice").await.unwrap().map(|u| u.id), Some(alice.id));
-        assert_eq!(provider.get_user(alice.id).await.unwrap().map(|u| u.username), Some("alice".to_string()));
+        assert_eq!(provider.get_user(alice.id).await.unwrap().map(|u| u.username), Some(Name::new("alice").unwrap()));
         assert!(provider.get_user(UserId::new()).await.unwrap().is_none());
     }
 
@@ -143,6 +146,8 @@ mod tests {
         let alice = provider.authenticate("alice", &Credential::Password("x")).await.unwrap().unwrap();
         let bob = provider.authenticate("bob", &Credential::Password("x")).await.unwrap().unwrap();
         assert_eq!((alice.roles, bob.roles), (vec!["hr".to_string()], vec!["staff".to_string()]));
+        let shouted = provider.authenticate("ALICE", &Credential::Password("x")).await.unwrap().unwrap();
+        assert_eq!((shouted.id, shouted.roles), (alice.id, vec!["hr".to_string()]), "a username is compared as a name");
 
         let changed = AcceptAnyUserProvider::with_roles(store, BTreeMap::new(), Vec::new());
         let again = changed.authenticate("alice", &Credential::Password("x")).await.unwrap().unwrap();
@@ -161,7 +166,7 @@ mod tests {
         let store: Arc<dyn EntityStore> = Arc::new(MemoryStore::new());
         let existing = User {
             id: UserId::new(),
-            username: "user".to_string(),
+            username: Name::new("user").unwrap(),
             email: "user@example.com".to_string(),
             roles: vec!["user".to_string()],
             deleted: None,

@@ -1423,7 +1423,7 @@ mod tests {
     fn user(username: &str) -> User {
         User {
             id: UserId::new(),
-            username: username.to_string(),
+            username: Name::new(username).unwrap(),
             email: String::new(),
             roles: Vec::new(),
             deleted: None,
@@ -1503,7 +1503,7 @@ mod tests {
         for participant in [&alice, &bob] {
             let actor = channel.user_actor(participant.id).expect("a participant has an actor");
             assert_eq!(actor.id(), ActorId::User(participant.id));
-            assert_eq!(actor.name(), participant.username, "the actor writes in this user's name");
+            assert_eq!(actor.name(), participant.username.as_str(), "the actor writes in this user's name");
         }
         assert!(channel.user_actor(UserId::new()).is_none(), "someone who is not a participant has no actor");
     }

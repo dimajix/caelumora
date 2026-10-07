@@ -192,7 +192,7 @@ impl MemoryStore {
     async fn find_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, name: &ScopedName) -> StoreResult<T>
     where K: Eq + Hash + Send + Sync, T: Stored + Scoped + Clone + Send + Sync {
         let all = self.list_in(ctx, map, kind).await?;
-        require_entity(all.into_iter().find(|d| d.scoped_name() == name), kind.entity.name(), name.to_string())
+        require_entity(all.into_iter().find(|d| d.scoped_name() == *name), kind.entity.name(), name.to_string())
     }
 }
 

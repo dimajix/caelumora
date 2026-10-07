@@ -594,7 +594,7 @@ mod tests {
         };
         let user = caelumora_model::user::User {
             id: caelumora_model::user::UserId::new(),
-            username: "alice".to_string(),
+            username: Name::new("alice").unwrap(),
             email: String::new(),
             roles: Vec::new(),
             deleted: None,

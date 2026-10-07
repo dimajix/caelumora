@@ -1,8 +1,8 @@
 //! Names that things are looked up by (issue 177): `Name`, and `ScopedName`
-//! for a definition that is found by name within its scope - and a
-//! session's, which it could be looked up by (issue 248). A name that is
-//! decided elsewhere - a user's, which a user provider such as a directory
-//! owns - stays a `String`: it is opaque to Caelumora.
+//! for what is found by name within its scope - and a session's, which it
+//! could be looked up by (issue 248). A user's name, though a user provider
+//! such as a directory decides it, is one, too (issue 250): it is an
+//! identity, and two that differ only as names do not are one.
 
 use super::text::{Text, TextRule};
 use super::ValueError;
@@ -25,7 +25,7 @@ impl TextRule for NameRule {
 }
 
 /// A name that something is looked up by: an agent's, a personality's, a
-/// session template's, a channel's, a session's. A text of its own rule
+/// session template's, a channel's, a session's, a user's. A text of its own rule
 /// (`NameRule`), kept exactly as written, and compared by its ASCII form
 /// regardless of case and of how whitespace runs (`fold`): "Jonathan",
 /// "jonathan" and "JONATHAN" are one name, and so are "Zoë" and "Zoe" and

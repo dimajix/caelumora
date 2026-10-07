@@ -48,7 +48,9 @@ Every entity has a name, and the fields that mean something for it (issue 177):
 
 The type of a name says what it is for (`caelumora_model::value::name`):
 
-*   **`Name`** - a name something is or could be looked up by: a channel's, a session's (issue 248).
+*   **`Name`** - a name something is or could be looked up by: a channel's, a session's (issue 248),
+    a user's `username` (issue [250](../issues/250-unique-names-per-name-space.md)), which a user
+    provider such as a directory decides but which is an identity all the same.
     It is checked when it is made or read as a text of its own rule (`NameRule`: one line, not
     empty, not of whitespace alone, no control characters, at most `MAX_NAME_CHARS`), kept exactly
     as written, and compared by its ASCII form (`any_ascii`) regardless of case and of how
@@ -57,8 +59,6 @@ The type of a name says what it is for (`caelumora_model::value::name`):
     what it is `@`-mentioned by.
 *   **`ScopedName`** - a `Name` with the `Scope` it lies in: what a definition is found by. Written
     into the document as the fields `name` and `scope`, the scope global unless named.
-*   **`String`** - a name that is decided elsewhere: a user's `username` is their login identity,
-    owned by a user provider such as a directory, and opaque to Caelumora.
 
 `Name` is one of the values with rules (`caelumora_model::value`, issue
 [248](../issues/248-validated-text-fields.md)), with `Language` and the free text people write for
