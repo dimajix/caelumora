@@ -205,6 +205,7 @@ async fn discover_tools(descriptor_id: &str, config: &McpToolConfig, auth_header
                 requires_approval: config.requires_approval.required_for(t.annotations.as_ref()),
                 visibility: ToolVisibility::SHOWN,
                 classification: config.classification.clone(),
+                presentation: Default::default(),
             }
         })
         .collect();

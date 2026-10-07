@@ -210,6 +210,7 @@ mod tests {
             requires_approval,
             visibility: Default::default(),
             classification: None,
+            presentation: Default::default(),
         };
         let answer = |content: &str| Message { id: MessageId::new(), role: MessageRole::Assistant, content: Some(content.to_string()), ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) };
         let mut state = AgentChannelState::default();

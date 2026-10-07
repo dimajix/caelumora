@@ -642,6 +642,7 @@ where
                                     function_name: call.function.name,
                                     arguments: call.function.arguments,
                                     visibility: ToolVisibility::SHOWN,
+                                    presentation: Default::default(),
                                 });
                             }
                         }
@@ -829,12 +830,14 @@ mod tests {
                 function_name: "test_func_1".to_string(),
                 arguments: json!("{}".to_string()),
                 visibility: Default::default(),
+                presentation: Default::default(),
             },
             ToolCall {
                 id: Some("2".to_string()),
                 function_name: "test_func_2".to_string(),
                 arguments: json!("{\"a\": 1}".to_string()),
                 visibility: Default::default(),
+                presentation: Default::default(),
             },
         ];
 
@@ -1070,6 +1073,7 @@ mod tests {
                     function_name: "say".to_string(),
                     arguments: json!({ "text": "<|im_start|>" }),
                     visibility: Default::default(),
+                    presentation: Default::default(),
                 }],
                 ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
             },
@@ -1081,6 +1085,7 @@ mod tests {
             requires_approval: true,
             visibility: Default::default(),
             classification: None,
+            presentation: Default::default(),
         }];
 
         for _ in 0..2 {

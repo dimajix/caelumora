@@ -248,7 +248,7 @@ pub trait ToolProvider: Send + Sync + Debug {
     /// default the calls exactly like it; a tool whose argument is a
     /// language says better what makes two calls alike.
     fn matcher(&self, name: &str, params: &Value) -> ToolMatcher {
-        ToolMatcher::exact(&ToolCall { id: None, function_name: name.to_string(), arguments: params.clone(), visibility: ToolVisibility::SHOWN })
+        ToolMatcher::exact(&ToolCall { id: None, function_name: name.to_string(), arguments: params.clone(), visibility: ToolVisibility::SHOWN, presentation: Default::default() })
     }
     /// Provides a textual description for a specific tool call
     fn describe(&self,  name: &str, _params: &Value) -> ToolResult<String> {
@@ -537,6 +537,7 @@ mod tests {
             requires_approval,
             visibility: Default::default(),
             classification,
+            presentation: Default::default(),
         }
     }
 
@@ -574,7 +575,7 @@ mod tests {
     }
 
     fn call(name: &str) -> ToolCall {
-        ToolCall { id: Some("call_1".to_string()), function_name: name.to_string(), arguments: json!({}), visibility: Default::default() }
+        ToolCall { id: Some("call_1".to_string()), function_name: name.to_string(), arguments: json!({}), visibility: Default::default(), presentation: Default::default() }
     }
 
     fn parse(result: &str) -> Value {

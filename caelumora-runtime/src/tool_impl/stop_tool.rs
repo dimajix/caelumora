@@ -37,6 +37,7 @@ impl ToolProvider for StopToolProvider {
                 requires_approval: false,
                 visibility: ToolVisibility::SHOWN,
                 classification: None,
+                presentation: Default::default(),
             },
             Tool {
                 name: BYE_TOOL_NAME.to_string(),
@@ -45,6 +46,7 @@ impl ToolProvider for StopToolProvider {
                 requires_approval: false,
                 visibility: ToolVisibility::SHOWN,
                 classification: None,
+                presentation: Default::default(),
             },
             Tool {
                 name: SILENCE_TOOL_NAME.to_string(),
@@ -53,6 +55,7 @@ impl ToolProvider for StopToolProvider {
                 requires_approval: false,
                 visibility: ToolVisibility::SHOWN,
                 classification: None,
+                presentation: Default::default(),
             }
         ]
     }

@@ -85,6 +85,7 @@ mod tests {
             requires_approval: false,
             visibility: Default::default(),
             classification: None,
+            presentation: Default::default(),
         }
     }
 

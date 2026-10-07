@@ -60,6 +60,7 @@ impl ToolProvider for SleepToolProvider {
             requires_approval: self.requires_approval,
             visibility: ToolVisibility::SHOWN,
             classification: None,
+            presentation: Default::default(),
         }]
     }
 

@@ -197,12 +197,19 @@ export interface ToolVisibility {
   content: Visibility;
 }
 
+/**
+ * How a tool's calls and their results are shown (issue 165), declared by the tool and stamped on
+ * each call; absent means `default`. Display only.
+ */
+export type ToolPresentation = 'default';
+
 export interface ToolCall {
   id?: string;
   function_name: string;
   /** `null` where the call was published without its content. */
   arguments: unknown;
   visibility?: ToolVisibility;
+  presentation?: ToolPresentation;
 }
 
 /** How a tool call ended; absent means `ok`. */
@@ -667,6 +674,8 @@ export interface Tool {
   visibility?: ToolVisibility;
   /** How its results are classified where they do not say; absent: as the channel. */
   classification?: Classification;
+  /** How its calls are shown; absent: `default`. */
+  presentation?: ToolPresentation;
 }
 
 /** The tools an agent has now in a channel (issue 194); none where it has none here - no agent run here, left, or the channel does not run. */

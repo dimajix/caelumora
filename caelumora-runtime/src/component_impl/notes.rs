@@ -68,6 +68,7 @@ impl ToolProvider for NotesComponent {
                 requires_approval: false,
                 visibility: ToolVisibility::SHOWN,
                 classification: None,
+                presentation: Default::default(),
             },
             Tool {
                 name: REVOKE_NOTE_TOOL_NAME.to_string(),
@@ -81,6 +82,7 @@ impl ToolProvider for NotesComponent {
                 requires_approval: false,
                 visibility: ToolVisibility::SHOWN,
                 classification: None,
+                presentation: Default::default(),
             },
             Tool {
                 name: RECLASSIFY_NOTE_TOOL_NAME.to_string(),
@@ -91,6 +93,7 @@ impl ToolProvider for NotesComponent {
                 requires_approval: true,
                 visibility: ToolVisibility::SHOWN,
                 classification: None,
+                presentation: Default::default(),
             },
             Tool {
                 name: READ_NOTES_TOOL_NAME.to_string(),
@@ -107,6 +110,7 @@ impl ToolProvider for NotesComponent {
                 requires_approval: false,
                 visibility: ToolVisibility::SHOWN,
                 classification: None,
+                presentation: Default::default(),
             },
         ]
     }

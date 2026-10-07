@@ -331,7 +331,7 @@ pub(crate) mod tests {
     }
 
     fn call(id: &str, visibility: ToolVisibility) -> ToolCall {
-        ToolCall { id: Some(id.to_string()), function_name: "f".to_string(), arguments: serde_json::json!({"text": "secret"}), visibility }
+        ToolCall { id: Some(id.to_string()), function_name: "f".to_string(), arguments: serde_json::json!({"text": "secret"}), visibility, presentation: Default::default() }
     }
 
     fn result(id: &str, visibility: ToolVisibility) -> ToolCallResult {

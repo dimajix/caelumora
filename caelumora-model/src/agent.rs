@@ -655,6 +655,7 @@ pub(crate) mod tests {
             requires_approval: false,
             visibility: ToolVisibility::SHOWN,
             classification: None,
+            presentation: Default::default(),
         };
         begin(&mut state, vec![tool.clone()]);
         begin(&mut state, vec![tool]);
@@ -893,7 +894,7 @@ pub(crate) mod tests {
         let mut later = state.clone();
         later.transcript.push(later_turn);
         assert_eq!(later.retried(first.id, agent), Err(RetryRefused::NotLast), "a later turn followed");
-        let call = ToolCall { id: Some("1".to_string()), function_name: "f".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN };
+        let call = ToolCall { id: Some("1".to_string()), function_name: "f".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
         let mut result = ToolCallResult::of(&call, ToolResultStatus::Ok, "done".to_string(), Classification::CHANNEL_DEFAULT);
         let step = Message { internal: true, ..answer("thinking") };
         state.transcript.push(step.clone());

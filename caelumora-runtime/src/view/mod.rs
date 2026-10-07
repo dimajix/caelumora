@@ -964,7 +964,7 @@ use caelumora_model::turn::TurnState;
         store.create_channel(&SecurityContext::system(), &channel).await.unwrap();
 
         // The agent's turn waits for one call, the other was approved.
-        let call = |name: &str| ToolCall { id: Some(name.to_string()), function_name: name.to_string(), arguments: serde_json::json!({}), visibility: Default::default() };
+        let call = |name: &str| ToolCall { id: Some(name.to_string()), function_name: name.to_string(), arguments: serde_json::json!({}), visibility: Default::default(), presentation: Default::default() };
         let waiting = ToolCallState::pending(call("delete"), "Delete it?".to_string(), false, caelumora_model::approval::ToolMatcher::everything());
         let mut turn = TurnState::default();
         turn.work.event_context.session_id = session.id;
@@ -1015,7 +1015,7 @@ use caelumora_model::turn::TurnState;
         state.notes.push(Change::Add { id: NoteId(1), text: "noted".to_string(), classification: Classification::CHANNEL_DEFAULT }, NoteOrigin::default(), MessageId::default());
         let mut turn = TurnState::default();
         turn.work.event_context.sender_id = ActorId::Agent(helper.id);
-        let call = ToolCall { id: Some("delete".to_string()), function_name: "delete".to_string(), arguments: serde_json::json!({}), visibility: Default::default() };
+        let call = ToolCall { id: Some("delete".to_string()), function_name: "delete".to_string(), arguments: serde_json::json!({}), visibility: Default::default(), presentation: Default::default() };
         turn.tool_calls = vec![ToolCallState::pending(call, "Delete it?".to_string(), false, caelumora_model::approval::ToolMatcher::everything())];
         state.turn = Some(turn);
         store.put_agent_channel_state(helper.id, channel.id, &mut state).await.unwrap();

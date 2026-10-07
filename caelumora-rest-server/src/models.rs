@@ -809,7 +809,7 @@ mod tests {
 
         let causes = LabelCauses::new(confidential.clone(), [&internal, &confidential]);
         let result = caelumora_model::tool::ToolCallResult::of(
-            &caelumora_model::tool::ToolCall { id: Some("1".to_string()), function_name: "noop".to_string(), arguments: serde_json::json!({}), visibility: Default::default() },
+            &caelumora_model::tool::ToolCall { id: Some("1".to_string()), function_name: "noop".to_string(), arguments: serde_json::json!({}), visibility: Default::default(), presentation: Default::default() },
             Default::default(), "secret".to_string(), confidential.clone());
         let message = Message { tool_results: vec![result], ..Message::new(internal.clone()) };
         assert!(causes.set_by_message(&message), "a tool result in a message sets the label as the message");

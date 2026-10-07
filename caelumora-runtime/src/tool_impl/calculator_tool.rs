@@ -34,6 +34,7 @@ impl ToolProvider for CalculatorToolProvider {
             requires_approval: false,
             visibility: ToolVisibility::SHOWN,
             classification: None,
+            presentation: Default::default(),
         }]
     }
 

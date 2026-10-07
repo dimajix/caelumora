@@ -105,6 +105,24 @@ impl Default for ToolVisibility {
     }
 }
 
+/// How a frontend shows a tool's calls and their results (issue 165), so
+/// that it need not recognise a tool by its name, which components and
+/// configuration choose. Display only: what a call does, and whether it
+/// waits for anyone, does not depend on it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolPresentation {
+    /// As every call: its name, its arguments and its result.
+    #[default]
+    Default,
+}
+
+impl ToolPresentation {
+    pub fn is_default(&self) -> bool {
+        *self == Self::Default
+    }
+}
+
 /// A tool of an agent: what its model is told of it - its name, what it
 /// does, its parameters - and what only the runtime acts on, whether its
 /// calls need approval, who sees them, how its results are classified. A
@@ -128,6 +146,9 @@ pub struct Tool {
     /// server. `None`: as the channel the call is made in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub classification: Option<Classification>,
+    /// How frontends show its calls.
+    #[serde(default, skip_serializing_if = "ToolPresentation::is_default")]
+    pub presentation: ToolPresentation,
 }
 
 /// The tools of one source of an agent - a component, e.g. an MCP server -
@@ -182,6 +203,8 @@ pub struct ToolCall {
     /// what applied then counts, even if the tool changes later.
     #[serde(default, skip_serializing_if = "ToolVisibility::is_shown")]
     pub visibility: ToolVisibility,
+    #[serde(default, skip_serializing_if = "ToolPresentation::is_default")]
+    pub presentation: ToolPresentation,
 }
 
 /// How a tool call ended (issue 15). Everything but `Ok` means the tool did
@@ -374,7 +397,7 @@ mod tests {
 
     #[test]
     fn a_call_state_is_read_back_as_written() {
-        let call = ToolCall { id: Some("1".to_string()), function_name: "delete".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN };
+        let call = ToolCall { id: Some("1".to_string()), function_name: "delete".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
         let waiting = ToolCallState::pending(call.clone(), "Delete it?".to_string(), true, ToolMatcher::exact(&call));
         let read: ToolCallState = serde_json::from_str(&serde_json::to_string(&waiting).unwrap()).unwrap();
         assert_eq!(read.approval_id(), waiting.approval_id());

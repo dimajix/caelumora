@@ -77,6 +77,7 @@ impl ToolProvider for AgentMemoryComponent {
                 requires_approval: false,
                 visibility: ToolVisibility::HIDDEN,
                 classification: None,
+                presentation: Default::default(),
             },
             Tool {
                 name: FORGET_TOOL_NAME.to_string(),
@@ -88,6 +89,7 @@ impl ToolProvider for AgentMemoryComponent {
                 requires_approval: false,
                 visibility: ToolVisibility::HIDDEN,
                 classification: None,
+                presentation: Default::default(),
             },
             Tool {
                 name: RECLASSIFY_MEMORY_TOOL_NAME.to_string(),
@@ -99,6 +101,7 @@ impl ToolProvider for AgentMemoryComponent {
                 requires_approval: true,
                 visibility: ToolVisibility::HIDDEN,
                 classification: None,
+                presentation: Default::default(),
             },
         ]
     }

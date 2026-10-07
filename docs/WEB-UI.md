@@ -49,7 +49,7 @@ The UI shows what the server says and repeats no rule of its own:
 | `src/panelWidth.ts` | The widths of the panels beside the chat, kept in browser storage |
 | `src/moderator.ts`, `src/confidentiality.ts` | Labels and explanations of responder policies and classifications |
 | `src/App.tsx` | Login state, keep-alive, the error banner, the layout |
-| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `MarkdownMessage`, `ContextPanel`, `HistoryPanel`, `ToolsPanel`, `PrivateNotesPanel`, `ToolSetList`, `DeletedList`, `NotesList`, `TokenGauge`, `HoverCard`, `ActionMenu`, `ResizeHandle`, `UsageStats`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ApprovalRulesDialog`, `ErrorBanner` |
+| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `ToolCallView`, `MarkdownMessage`, `ContextPanel`, `HistoryPanel`, `ToolsPanel`, `PrivateNotesPanel`, `ToolSetList`, `DeletedList`, `NotesList`, `TokenGauge`, `HoverCard`, `ActionMenu`, `ResizeHandle`, `UsageStats`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ApprovalRulesDialog`, `ErrorBanner` |
 
 ## Talking to the server
 
@@ -159,6 +159,11 @@ else who may read it - the session's owner, say - is shown its history and no in
     (`MessageView`); a call that is not public is marked with how far it may travel (issues 54, 61,
     100). A message's reasoning, where the server hands it out, is folded above its content under
     "Thought" and opened by the user (issue 216).
+*   **Tool calls** are shown by their presentation (issue 165), which the tool declares and the
+    agent stamps on each call, never by the tool's name. `ToolCallView` draws the frame every call
+    has - the tool, who sees it, its status and duration - and leaves what is inside to the handler
+    of the call's presentation (`PRESENTATIONS`); a call without one, or with one this client does
+    not know, gets the default handler: its arguments and its result as they are.
 *   **While an agent answers**, its partial message is shown as it streams, its reasoning
     included: folded under "Thinking" until the answer begins (issue 216). Several agents answering
     at once each have an answer of their own, in the order they began, and a plan step of their own

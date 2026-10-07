@@ -987,6 +987,7 @@ mod tests {
             function_name: "web_search".to_string(),
             arguments: serde_json::json!({ "query": "secret plans" }),
             visibility: Default::default(),
+            presentation: Default::default(),
         };
         let described = ActionType::CallTool(&call).describe();
         assert_eq!(described, "CallTool(web_search)");

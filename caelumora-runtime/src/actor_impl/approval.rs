@@ -541,7 +541,7 @@ mod tests {
                 session_id: self.channel.session_id(),
                 channel_id: self.channel.id(),
                 agent_id: self.agent,
-                tool_call: ToolCall { id: Some("call_1".to_string()), function_name: "test_tool".to_string(), arguments: json!({}), visibility: Default::default() },
+                tool_call: ToolCall { id: Some("call_1".to_string()), function_name: "test_tool".to_string(), arguments: json!({}), visibility: Default::default(), presentation: Default::default() },
                 description: "test".to_string(),
             }
         }

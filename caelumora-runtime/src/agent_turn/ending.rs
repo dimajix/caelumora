@@ -172,7 +172,7 @@ mod tests {
         use caelumora_model::note::{NoteChange, NoteId};
         use caelumora_model::tool::{ToolCall, ToolCallResult, ToolResultStatus, ToolVisibility};
         let mut turn = Turn::begun(AgentId::default(), String::new(), state, crate::agent_state::AgentStateHandle::detached());
-        let call = ToolCall { id: Some("1".to_string()), function_name: tool.to_string(), arguments: serde_json::json!({ "to": "bob" }), visibility: ToolVisibility::SHOWN };
+        let call = ToolCall { id: Some("1".to_string()), function_name: tool.to_string(), arguments: serde_json::json!({ "to": "bob" }), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
         let mut result = ToolCallResult::of(&call, ToolResultStatus::Ok, "sent".to_string(), Classification::CHANNEL_DEFAULT);
         result.started_at = ran.then(chrono::Utc::now);
         turn.push_message(Message { id: MessageId::new(), role: MessageRole::Assistant, tool_calls: vec![call], ..Message::new(Classification::CHANNEL_DEFAULT) });
@@ -236,7 +236,7 @@ mod tests {
         use caelumora_model::approval::ToolMatcher;
         use caelumora_model::tool::{ToolCallState, ToolResultStatus, ToolVisibility};
         let mut turn = Turn::begun(AgentId::default(), String::new(), state, crate::agent_state::AgentStateHandle::detached());
-        let call = |id: &str, name: &str| ToolCall { id: Some(id.to_string()), function_name: name.to_string(), arguments: serde_json::json!({ "to": "bob" }), visibility: ToolVisibility::SHOWN };
+        let call = |id: &str, name: &str| ToolCall { id: Some(id.to_string()), function_name: name.to_string(), arguments: serde_json::json!({ "to": "bob" }), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
         let calls = vec![call("1", "send_mail"), call("2", "delete")];
         turn.push_message(Message { id: MessageId::new(), role: MessageRole::Assistant, tool_calls: calls.clone(), ..Message::new(Classification::CHANNEL_DEFAULT) });
         let states = vec![

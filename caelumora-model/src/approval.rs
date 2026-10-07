@@ -325,7 +325,7 @@ mod tests {
     use serde_json::json;
 
     fn call(tool: &str, arguments: Value) -> ToolCall {
-        ToolCall { id: None, function_name: tool.to_string(), arguments, visibility: Default::default() }
+        ToolCall { id: None, function_name: tool.to_string(), arguments, visibility: Default::default(), presentation: Default::default() }
     }
 
     fn matcher(tool: &str, arguments: &[(&str, &str)]) -> ToolMatcher {

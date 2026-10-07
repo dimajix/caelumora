@@ -2012,7 +2012,7 @@ mod tests {
         assert_eq!(channel.history().await.len(), 1, "neither above the channel nor in another's name");
 
         // A tool result is a part of its own.
-        let call = caelumora_model::tool::ToolCall { id: None, function_name: "f".to_string(), arguments: serde_json::json!({}), visibility: Default::default() };
+        let call = caelumora_model::tool::ToolCall { id: None, function_name: "f".to_string(), arguments: serde_json::json!({}), visibility: Default::default(), presentation: Default::default() };
         let result = caelumora_model::tool::ToolCallResult::of(&call, Default::default(), "secret".to_string(), Classification::general(Confidentiality::Confidential));
         let mut with_result = from(alice_id, alice_id, internal);
         if let ActorEvent::FullResponseGenerated(messages) = &mut with_result.event {
@@ -2637,7 +2637,7 @@ mod tests {
             tool_calls,
             ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
         };
-        let stop = vec![ToolCall { id: Some("1".to_string()), function_name: "stop".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN }];
+        let stop = vec![ToolCall { id: Some("1".to_string()), function_name: "stop".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() }];
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
             id: "stop".to_string(),
             kind: crate::tool_impl::stop_tool::STOP_TOOL_KIND.to_string(),
@@ -2672,7 +2672,7 @@ mod tests {
         let bye = Message {
             role: MessageRole::Assistant,
             content: Some("Good bye.".to_string()),
-            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "stop".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN }],
+            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "stop".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
             ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
         };
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
@@ -2706,7 +2706,7 @@ mod tests {
         let bye = Message {
             role: MessageRole::Assistant,
             content: Some("Good bye.".to_string()),
-            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "stop".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN }],
+            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "stop".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
             ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
         };
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
@@ -2763,6 +2763,7 @@ mod tests {
                 function_name: "create_plan".to_string(),
                 arguments: serde_json::json!({ "summary": "two steps", "steps": [{ "description": "first" }, { "description": "second" }] }),
                 visibility: ToolVisibility::SHOWN,
+                presentation: Default::default(),
             }],
             ..Message::new(Classification::CHANNEL_DEFAULT)
         };
@@ -2832,6 +2833,7 @@ mod tests {
                 function_name: "create_plan".to_string(),
                 arguments: serde_json::json!({ "summary": "one step", "steps": [{ "description": "first" }] }),
                 visibility: ToolVisibility::SHOWN,
+                presentation: Default::default(),
             }],
             ..Message::new(Classification::CHANNEL_DEFAULT)
         };
@@ -2900,7 +2902,7 @@ mod tests {
         // answers again: the agent waits in `Planning` with the result.
         let calculate = Message {
             role: MessageRole::Assistant,
-            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "calculate".to_string(), arguments: serde_json::json!({ "expression": "1+1" }), visibility: ToolVisibility::SHOWN }],
+            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "calculate".to_string(), arguments: serde_json::json!({ "expression": "1+1" }), visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
             ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
         };
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
@@ -2963,7 +2965,7 @@ mod tests {
         let calculate = Message {
             id: MessageId::new(),
             role: MessageRole::Assistant,
-            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "calculate".to_string(), arguments: serde_json::json!({ "expression": "1+1" }), visibility: ToolVisibility::SHOWN }],
+            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "calculate".to_string(), arguments: serde_json::json!({ "expression": "1+1" }), visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
             ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
         };
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
@@ -3017,7 +3019,7 @@ mod tests {
         // The model calls a tool, and never answers again.
         let calculate = Message {
             role: MessageRole::Assistant,
-            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "calculate".to_string(), arguments: serde_json::json!({ "expression": "1+1" }), visibility: ToolVisibility::SHOWN }],
+            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "calculate".to_string(), arguments: serde_json::json!({ "expression": "1+1" }), visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
             ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
         };
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
@@ -3073,7 +3075,7 @@ mod tests {
         let calculate = Message {
             id: MessageId::new(),
             role: MessageRole::Assistant,
-            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "calculate".to_string(), arguments: serde_json::json!({ "expression": "1+1" }), visibility: ToolVisibility::SHOWN }],
+            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "calculate".to_string(), arguments: serde_json::json!({ "expression": "1+1" }), visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
             ..Message::new(Classification::CHANNEL_DEFAULT)
         };
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
@@ -3213,7 +3215,7 @@ mod tests {
 
         let call = Message {
             role: MessageRole::Assistant,
-            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "sleep".to_string(), arguments: serde_json::json!({ "seconds": 0 }), visibility: ToolVisibility::SHOWN }],
+            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "sleep".to_string(), arguments: serde_json::json!({ "seconds": 0 }), visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
             ..Message::new(Classification::CHANNEL_DEFAULT)
         };
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
@@ -3306,7 +3308,7 @@ mod tests {
 
         let call = Message {
             role: MessageRole::Assistant,
-            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "sleep".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN }],
+            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "sleep".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
             ..Message::new(Classification::CHANNEL_DEFAULT)
         };
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
@@ -3336,6 +3338,7 @@ mod tests {
                 function_name: "create_plan".to_string(),
                 arguments: serde_json::json!({ "summary": "one step", "steps": [{ "description": "first" }] }),
                 visibility: ToolVisibility::SHOWN,
+                presentation: Default::default(),
             }],
             ..Message::new(Classification::CHANNEL_DEFAULT)
         };
@@ -3488,7 +3491,7 @@ mod tests {
         // `create_plan` needs approval; this call's arguments are no plan.
         let not_a_plan = Message {
             role: MessageRole::Assistant,
-            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "create_plan".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN }],
+            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "create_plan".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
             ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
         };
         let answer = Message { role: MessageRole::Assistant, content: Some("Let me answer directly.".to_string()), ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) };
@@ -3768,7 +3771,7 @@ mod tests {
         use caelumora_model::tool::{ToolCall, ToolCallResult, ToolVisibility};
         let (channel, _, agent, _) = agent_channel(Arc::new(DummySecurityManager::new()), Arc::new(NeverAnswers), Default::default()).await;
         let other = ActorId::Agent(caelumora_model::agent::AgentId::new());
-        let call = ToolCall { id: Some("1".to_string()), function_name: "noop".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN };
+        let call = ToolCall { id: Some("1".to_string()), function_name: "noop".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
         let result = ToolCallResult::of(&call, Default::default(), "done".to_string(), Classification::CHANNEL_DEFAULT);
         // Another agent's answer, as the channel's history keeps it.
         let answer = Message { id: MessageId::new(), sender_id: other, sender_name: "hermes".to_string(), role: MessageRole::Assistant, content: Some("Let me check.".to_string()), tool_calls: vec![call], ..Message::new(Classification::CHANNEL_DEFAULT) };

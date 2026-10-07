@@ -25,10 +25,13 @@ The trait has these methods:
     makes two calls alike.
 
 A `Tool` declares its `name`, `description` and `parameters`, whether it `requires_approval`, its
-`visibility`, and optionally the `classification` of its results. Approval and classification are
-decided per tool by its provider, not by the personality; `mcp_tool` takes them from its parameters
-`requires_approval` - with what the server says of each tool, if so configured - and
-`classification`.
+`visibility`, optionally the `classification` of its results, and its `presentation`: how frontends
+show its calls (`ToolPresentation`, issue 165), so that they need not recognise a tool by its name.
+The presentation is display only - what a call does, and whether it waits for anyone, does not
+depend on it - and is stamped on every call (`ToolCall::presentation`) as the visibility is.
+Approval and classification are decided per tool by its provider, not by the personality; `mcp_tool`
+takes them from its parameters `requires_approval` - with what the server says of each tool, if so
+configured - and `classification`.
 
 `execute` answers with a `ToolOutput`: the tool's value and, if the tool classifies it - by its
 input, by what it read, by the source it drew on - its classification. A tool that does not classify

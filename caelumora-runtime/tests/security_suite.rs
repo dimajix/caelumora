@@ -826,7 +826,7 @@ async fn with_a_call_to_approve() -> (World, Arc<SessionLoop>, Arc<caelumora_run
 
     let call = Message {
         role: MessageRole::Assistant,
-        tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "sleep".to_string(), arguments: serde_json::json!({ "seconds": 0 }), visibility: ToolVisibility::SHOWN }],
+        tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "sleep".to_string(), arguments: serde_json::json!({ "seconds": 0 }), visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
         ..Message::new(Classification::general(Confidentiality::Internal))
     };
     let model = Arc::new(Once(Mutex::new(Some(call))));

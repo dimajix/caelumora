@@ -116,6 +116,7 @@ mod tests {
                 requires_approval: false,
                 visibility: Default::default(),
                 classification: None,
+                presentation: Default::default(),
             }]
         }
         async fn execute(&self, _name: &str, _params: &Value, _turn: &mut Turn) -> ToolResult<ToolOutput> {
@@ -128,7 +129,7 @@ mod tests {
     }
 
     fn call(name: &str) -> ToolCall {
-        ToolCall { id: Some("call_1".to_string()), function_name: name.to_string(), arguments: json!({}), visibility: Default::default() }
+        ToolCall { id: Some("call_1".to_string()), function_name: name.to_string(), arguments: json!({}), visibility: Default::default(), presentation: Default::default() }
     }
 
     fn agent_state() -> AgentChannelState {

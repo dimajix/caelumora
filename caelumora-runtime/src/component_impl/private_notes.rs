@@ -74,6 +74,7 @@ impl ToolProvider for PrivateNotesComponent {
                 requires_approval: false,
                 visibility: ToolVisibility::HIDDEN,
                 classification: None,
+                presentation: Default::default(),
             },
             Tool {
                 name: REVOKE_PRIVATE_NOTE_TOOL_NAME.to_string(),
@@ -86,6 +87,7 @@ impl ToolProvider for PrivateNotesComponent {
                 requires_approval: false,
                 visibility: ToolVisibility::HIDDEN,
                 classification: None,
+                presentation: Default::default(),
             },
             Tool {
                 name: RECLASSIFY_PRIVATE_NOTE_TOOL_NAME.to_string(),
@@ -97,6 +99,7 @@ impl ToolProvider for PrivateNotesComponent {
                 requires_approval: true,
                 visibility: ToolVisibility::HIDDEN,
                 classification: None,
+                presentation: Default::default(),
             },
         ]
     }

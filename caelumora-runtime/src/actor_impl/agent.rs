@@ -751,9 +751,10 @@ fn stamp(message: &mut Message, turn: &Turn, reasoning_visibility: Visibility, c
 /// with, which the model was offered (issue 137).
 fn label(message: &mut Message, turn: &Turn, reasoning_visibility: Visibility, complete: bool) {
     let tools = turn.tools();
-    let declared = |name: &str| tools.iter().find(|t| t.name == name).map(|t| t.visibility).unwrap_or_default();
     for call in &mut message.tool_calls {
-        call.visibility = declared(&call.function_name);
+        let declared = tools.iter().find(|t| t.name == call.function_name);
+        call.visibility = declared.map(|t| t.visibility).unwrap_or_default();
+        call.presentation = declared.map(|t| t.presentation).unwrap_or_default();
     }
     // What the model produces is derived from what the turn has seen: it
     // carries the turn's label, at most the channel's classification as
@@ -1027,12 +1028,13 @@ mod tests {
             requires_approval: false,
             visibility,
             classification: None,
+            presentation: Default::default(),
         }
     }
 
     fn call(name: &str) -> ToolCall {
         // Labelled as the model can never label a call: `label` must set it.
-        ToolCall { id: None, function_name: name.to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::HIDDEN }
+        ToolCall { id: None, function_name: name.to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::HIDDEN, presentation: Default::default() }
     }
 
     fn answer(calls: &[&str]) -> Message {
@@ -1104,7 +1106,7 @@ mod tests {
     #[test]
     fn a_resumed_turn_answers_unfinished_tool_calls_as_not_executed_instead_of_running_them() {
         use caelumora_model::tool::{ToolCallState, ToolVisibility};
-        let tool_call = ToolCall { id: None, function_name: "note".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN };
+        let tool_call = ToolCall { id: None, function_name: "note".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
         let ready = ToolCallState::approved(tool_call.clone());
         let done = ToolCallState::answered(tool_call.clone(), ToolCallResult::of(&tool_call, ToolResultStatus::Ok, "done".to_string(), caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT));
         let waiting = ToolCallState::pending(tool_call.clone(), String::new(), false, caelumora_model::approval::ToolMatcher::exact(&tool_call));

@@ -358,7 +358,7 @@ mod tests {
             session_id: Default::default(),
             channel_id: Default::default(),
             agent_id: AgentId::new(),
-            tool_call: ToolCall { id: None, function_name: "noop".to_string(), arguments: serde_json::json!({}), visibility: Default::default() },
+            tool_call: ToolCall { id: None, function_name: "noop".to_string(), arguments: serde_json::json!({}), visibility: Default::default(), presentation: Default::default() },
             description: "test".to_string(),
         }
     }
@@ -726,7 +726,7 @@ mod tests {
     async fn a_response_is_forwarded_as_said_and_one_with_nothing_to_hear_only_to_the_users() {
         use caelumora_model::tool::{ToolCall, ToolCallResult, ToolVisibility};
         let classified = caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT;
-        let call = ToolCall { id: Some("1".to_string()), function_name: "noop".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN };
+        let call = ToolCall { id: Some("1".to_string()), function_name: "noop".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
         let result = ToolCallResult::of(&call, Default::default(), "done".to_string(), classified.clone());
         for moderator in moderators() {
             let agents = add_agents(&moderator);

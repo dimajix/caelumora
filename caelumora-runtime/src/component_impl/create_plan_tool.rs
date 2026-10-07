@@ -117,6 +117,7 @@ impl ToolProvider for CreatePlanToolProvider {
             requires_approval: true,
             visibility: ToolVisibility::SHOWN,
             classification: None,
+            presentation: Default::default(),
         }]
     }
 

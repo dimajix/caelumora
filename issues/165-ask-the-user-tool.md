@@ -350,3 +350,8 @@ Each a step of its own, to be reviewed separately; 0 to 2 change no behaviour.
   timed-out call at once, `to_run` and `record` go by the call's place in the step.
   `ApprovalStatus` lost `Pending`. `ActorState::WaitingForApproval` is `WaitingForUser`, the web UI
   along. Stored states of the old form are not read: old data may still be deleted.
+- **2026-10-07** — Step 1 done, without a change of behaviour: `ToolPresentation` (only `Default`
+  so far; `Question` comes with `ask_user` in step 4, together with a test of the stamping) on
+  `Tool` and stamped on `ToolCall` by `label` as the visibility is. In the web UI `ToolCallView`
+  draws the frame of every call and leaves its content to the handler of its presentation
+  (`PRESENTATIONS`), the default one being what `MessageView` showed before.

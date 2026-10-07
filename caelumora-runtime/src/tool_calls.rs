@@ -142,7 +142,7 @@ mod tests {
     use caelumora_model::tool::ToolVisibility;
 
     fn call(name: &str) -> ToolCall {
-        ToolCall { id: Some(name.to_string()), function_name: name.to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN }
+        ToolCall { id: Some(name.to_string()), function_name: name.to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() }
     }
 
     #[test]

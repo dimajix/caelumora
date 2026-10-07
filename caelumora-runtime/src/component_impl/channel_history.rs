@@ -55,6 +55,7 @@ impl ToolProvider for ChannelHistoryComponent {
             requires_approval: false,
             visibility: ToolVisibility::SHOWN,
             classification: None,
+            presentation: Default::default(),
         }]
     }
 

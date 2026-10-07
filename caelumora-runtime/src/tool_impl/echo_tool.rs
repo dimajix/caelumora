@@ -32,6 +32,7 @@ impl ToolProvider for EchoToolProvider {
             requires_approval: false,
             visibility: ToolVisibility::SHOWN,
             classification: None,
+            presentation: Default::default(),
         }]
     }
 
