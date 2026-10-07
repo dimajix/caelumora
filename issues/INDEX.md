@@ -73,6 +73,7 @@ argues against it, and what came out of the last attempt.
 | [182](182-entity-reads-not-cached.md) | open | Personalities, agents and users are read from the store again for every use - for every member of a channel, on every turn - though they change rarely. |
 | [193](193-external-state-rewritten-whole.md) | done | Every state the `StateStore` keeps is rewritten whole for everything that happens in it - an agent's for every message heard and every step of a turn - so the writes grow with the square of a channel's length. |
 | [215](215-json-store-concurrent-puts-of-one-state.md) | done | Concurrent puts of one state in the JSON store can leave a journal beside the new snapshot and lose a change appended in between, and the test that puts one state concurrently fails now and then. |
+| [250](250-unique-names-per-name-space.md) | open | No kind keeps its names unique in its name space as a whole: channels check it by hand when created, not when renamed; agents, personalities, templates and users not at all. |
 
 ## Sessions and channels
 
@@ -114,7 +115,6 @@ argues against it, and what came out of the last attempt.
 | [238](238-retry-of-an-older-answer.md) | open | Only an agent's last answer can be asked for again, and the alternatives of an answer are not kept. |
 | [239](239-reclassified-message-not-in-agents-state.md) | done | A reclassified message keeps its old classification in every agent's state, so a released message still raises the label of later answers. |
 | [245](245-session-and-channel-descriptions.md) | done | Sessions and channels have no description, so neither the users nor the agents in them learn what they are for. |
-| [250](250-channel-rename-without-duplicate-check.md) | open | A channel can be renamed to a name another channel of its session already has: creating and restoring refuse it, renaming does not. |
 
 ## Identity and access management
 

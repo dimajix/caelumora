@@ -145,4 +145,4 @@ are not checked today are, or say why not.
   `description` an `Option<Description>` (one line, at most 300), which the REST API still answers
   as a string, empty for none. Left out, as decided: messages, notes, plan steps and the
   descriptions of tools and commands. Found on the way: renaming a channel does not check its name
-  against the session's other channels - issue [250](250-channel-rename-without-duplicate-check.md).
+  against the session's other channels - issue [250](250-unique-names-per-name-space.md).

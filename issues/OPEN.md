@@ -19,6 +19,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [05](05-postgres-event-recorder.md) | open | The `Recorder` hook is wired into every channel, but `BlackholeRecorder` is the only implementation, so nothing is recorded. |
 | [178](178-scoped-lookup-by-name.md) | open | Definitions cannot be looked up by name within their scope, and the one lookup that uses a scope - a template's agents - finds too much and ignores the personality. |
 | [182](182-entity-reads-not-cached.md) | open | Personalities, agents and users are read from the store again for every use - for every member of a channel, on every turn - though they change rarely. |
+| [250](250-unique-names-per-name-space.md) | open | No kind keeps its names unique in its name space as a whole: channels check it by hand when created, not when renamed; agents, personalities, templates and users not at all. |
 
 ## Sessions and channels
 
@@ -32,7 +33,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [221](221-adding-session-participants.md) | open | A session's participants are fixed when it is created: nobody - neither a user nor an agent, existing or created from a personality - can be added to it later. |
 | [223](223-full-inbox-drops-events.md) | open | An actor whose inbox is full - an agent in a long turn in a busy channel - loses what was said, requests and approvals without anyone learning of it. |
 | [238](238-retry-of-an-older-answer.md) | open | Only an agent's last answer can be asked for again, and the alternatives of an answer are not kept. |
-| [250](250-channel-rename-without-duplicate-check.md) | open | A channel can be renamed to a name another channel of its session already has: creating and restoring refuse it, renaming does not. |
 
 ## Identity and access management
 
