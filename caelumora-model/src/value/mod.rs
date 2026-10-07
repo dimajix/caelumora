@@ -23,6 +23,9 @@
 pub enum ValueError {
     #[error("the {field} must not be empty")]
     Empty { field: &'static str },
+    /// Of whitespace alone: not empty, but saying nothing.
+    #[error("the {field} must not consist of whitespace alone")]
+    Blank { field: &'static str },
     #[error("the {field} must not be longer than {max_chars} characters")]
     TooLong { field: &'static str, max_chars: usize },
     #[error("the {field} must be one line")]
@@ -44,12 +47,14 @@ macro_rules! impl_value {
             /// What the field is called, in the errors.
             pub const FIELD: &'static str = $field;
 
-            /// `text` as a value, `None` if it is missing or blank.
+            /// `text` as a value, `None` if it is missing or empty. Anything
+            /// else is a value or an error, whitespace too: what is not
+            /// empty is never taken for nothing.
             ///
             /// # Errors
-            /// `ValueError` if it is not blank and no value (`new`).
+            /// `ValueError` if it is not empty and no value (`new`).
             pub fn optional(text: Option<&str>) -> Result<Option<Self>, $crate::value::ValueError> {
-                text.filter(|text| !text.trim().is_empty()).map(Self::new).transpose()
+                text.filter(|text| !text.is_empty()).map(Self::new).transpose()
             }
         }
 

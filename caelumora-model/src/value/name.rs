@@ -148,7 +148,8 @@ mod tests {
         assert_eq!(Name::new(" \t "), Err(ValueError::Empty { field: "name" }));
         assert_eq!(Name::new("a\u{7}b"), Err(ValueError::ControlCharacter { field: "name" }));
         assert_eq!(Name::new("x".repeat(MAX_NAME_CHARS + 1)), Err(ValueError::TooLong { field: "name", max_chars: MAX_NAME_CHARS }));
-        assert_eq!(Name::optional(Some("  ")), Ok(None), "blank is none");
+        assert_eq!(Name::optional(Some("")), Ok(None), "empty is none");
+        assert_eq!(Name::optional(Some("  ")), Err(ValueError::Empty { field: "name" }), "whitespace is no name");
         assert_eq!(Name::new(" \t ").unwrap_err().to_string(), "the name must not be empty", "naming the field");
         assert!(Name::new("x".repeat(MAX_NAME_CHARS)).is_ok());
     }

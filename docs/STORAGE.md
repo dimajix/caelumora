@@ -58,7 +58,7 @@ others to read - `Text<R>`, whose rule `R` says how long it may be and whether i
 (`Summary`, `Briefing`, `Introduction`): a field whose text may only be what its rules allow
 has a type that is made only through its constructor, `new`, and checked again when a document is
 read, so that a stored document that does not fit fails to load. They share one API - `FIELD`,
-`as_str`, `optional` (a missing or blank text is `None`), the conversions to and from a `String`, a
+`as_str`, `optional` (a missing or empty text is `None`), the conversions to and from a `String`, a
 string in the document - and one error, `ValueError`, whose message names the field. None derefs
 to `str`: a `Name` is compared by its folded form, which `&*name == text` would bypass.
 

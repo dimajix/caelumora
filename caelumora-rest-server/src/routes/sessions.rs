@@ -159,7 +159,7 @@ pub async fn update_session_approval_rules(
 }
 
 /// Says what session `id` is for (issue 245): its summary and briefing,
-/// `null` or blank to remove one - whoever may change the session. They are
+/// `null` or empty to remove one - whoever may change the session. They are
 /// public to everybody in it. Answers `400 invalid_description` for one that
 /// is too long or holds what it may not, and otherwise the session as the
 /// user sees it now.

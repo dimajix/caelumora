@@ -441,7 +441,7 @@ pub async fn update_channel_approval_rules(
 }
 
 /// Says what the channel is for (issue 245): its summary and briefing,
-/// `null` or blank to remove one - whoever may change the channel. Its
+/// `null` or empty to remove one - whoever may change the channel. Its
 /// agents are told from their next turn on. Answers `400
 /// invalid_description` for one that is too long or holds what it may not,
 /// and otherwise the channel as the user sees it now.

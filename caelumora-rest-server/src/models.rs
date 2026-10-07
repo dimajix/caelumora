@@ -106,7 +106,7 @@ pub struct ApprovalRuleRequest {
 }
 
 /// The logged-in user's profile as it is to be: their introduction, `null`
-/// or blank for none, and the language they prefer, `null` for none - both
+/// or empty for none, and the language they prefer, `null` for none - both
 /// replaced.
 #[derive(Debug, Deserialize)]
 pub struct ProfileRequest {
@@ -119,7 +119,7 @@ pub struct ProfileRequest {
 }
 
 impl ProfileRequest {
-    /// The introduction as a profile keeps it; none if blank.
+    /// The introduction as a profile keeps it, as written; none if empty.
     ///
     /// # Errors
     /// `400 invalid_introduction` for one that is too long or contains
@@ -347,7 +347,7 @@ pub struct RenameSessionRequest {
 }
 
 /// What a session or channel is for (issue 245), replacing what it said:
-/// `null` or blank removes one.
+/// `null` or empty removes one.
 #[derive(Debug, Deserialize)]
 pub struct DescriptionRequest {
     #[serde(default)]
@@ -358,7 +358,7 @@ pub struct DescriptionRequest {
 
 impl DescriptionRequest {
     /// The summary and briefing as a session or channel keeps them; none
-    /// for one that is blank.
+    /// for one that is empty.
     ///
     /// # Errors
     /// `400 invalid_description` for the first that is too long or holds
@@ -895,8 +895,11 @@ mod tests {
         assert_eq!((&json["summary"], &json["briefing"]), (&serde_json::json!("Planning"), &serde_json::json!("Dates in UTC.")));
         let request: DescriptionRequest = serde_json::from_value(serde_json::json!({ "summary": "Planning" })).unwrap();
         assert_eq!(request.description().unwrap(), (Some(Summary::new("Planning").unwrap()), None), "one left out is none: removed");
-        let blank: DescriptionRequest = serde_json::from_value(serde_json::json!({ "summary": " ", "briefing": "" })).unwrap();
-        assert_eq!(blank.description().unwrap(), (None, None), "and so is a blank one");
+        let empty: DescriptionRequest = serde_json::from_value(serde_json::json!({ "briefing": "" })).unwrap();
+        assert_eq!(empty.description().unwrap(), (None, None), "and so is an empty one");
+        let blank: DescriptionRequest = serde_json::from_value(serde_json::json!({ "summary": " " })).unwrap();
+        let refused = blank.description().unwrap_err();
+        assert_eq!((refused.status(), refused.code()), (StatusCode::BAD_REQUEST, "invalid_description"), "whitespace alone is refused, not taken for nothing");
         let invalid: DescriptionRequest = serde_json::from_value(serde_json::json!({ "summary": "two\nlines" })).unwrap();
         let refused = invalid.description().unwrap_err();
         assert_eq!((refused.status(), refused.code()), (StatusCode::BAD_REQUEST, "invalid_description"));

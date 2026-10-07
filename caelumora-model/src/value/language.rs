@@ -161,7 +161,8 @@ mod tests {
         }
         assert_eq!(Language::new(format!("de{}", "-a".repeat(MAX_LANGUAGE_CHARS))), Err(ValueError::TooLong { field: "language", max_chars: MAX_LANGUAGE_CHARS }));
         assert_eq!(Language::new("Deutsch").unwrap_err().to_string(), "the language must be a tag such as \"de\" or \"en-GB\"", "naming the field");
-        assert_eq!(Language::optional(Some(" ")), Ok(None), "blank is none");
+        assert_eq!(Language::optional(Some("")), Ok(None), "empty is none");
+        assert!(Language::optional(Some(" ")).is_err(), "whitespace is no language");
     }
 
     #[test]

@@ -22,7 +22,7 @@ pub async fn get_profile(State(state): State<Arc<AppState>>, user: Authenticated
     Ok(Json(ProfileResponse::of(profile)))
 }
 
-/// Sets the user's profile: their introduction - `null` or blank removes
+/// Sets the user's profile: their introduction - `null` or empty removes
 /// it - and the language they prefer (issue 56), `null` for none. Answers
 /// `400 invalid_introduction` for an introduction that is too long or
 /// contains control characters. Changed through the user's controller, the

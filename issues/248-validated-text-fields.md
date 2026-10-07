@@ -115,3 +115,8 @@ are not checked today are, or say why not.
   written instead of trimming it; a blank one is still `Empty`, and `optional` still makes a blank
   one `None`. Trimming is the input's - the web UI trims what it sends. `Name` and `Language` stay
   tidied, since they identify something (`value/mod.rs`).
+- **2026-10-07** — Only an empty text is none (maintainer's decision): `optional` takes a missing or
+  empty text for `None`, and anything else for a value or an error - a text of whitespace is not
+  taken for nothing, since that would not be transparent. `Text::new` refuses an empty text
+  (`ValueError::Empty`) and one of whitespace alone (`ValueError::Blank`), and keeps any other
+  exactly as written. A `Name` or `Language` of whitespace is an error, too, being tidied first.
