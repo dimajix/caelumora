@@ -278,7 +278,7 @@ mod tests {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
             id: SessionId::new(),
-            name: String::new(),
+            name: crate::value::name::Name::new("s").unwrap(),
             participants: Vec::new(),
             channels: Vec::new(),
             commands: Default::default(),

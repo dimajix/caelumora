@@ -114,8 +114,8 @@ Errors carry what failed, and only what may be shown goes to users (issue 02).
 
 What users may see is decided in one place, `caelumora_runtime::error::user_message`. It looks
 through an error chain for a domain error written to be read - `LLMError`, `ExternalAgentError`,
-`ComponentError`, `ToolError`, `TemplateError`, `StoreError` other than `Backend` - and returns its
-message. Anything else stays in the log.
+`ComponentError`, `ToolError`, `TemplateError`, `ValueError`, `StoreError` other than `Backend` -
+and returns its message. Anything else stays in the log.
 
 A new error type meant for users must meet the rules above and be added to `user_message`.
 

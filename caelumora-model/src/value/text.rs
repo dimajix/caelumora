@@ -5,8 +5,9 @@
 //! changed. Whoever wants it trimmed trims it where it is entered.
 //! How long it may be and whether it is one line is its rule `R`; the rules
 //! are kept here together, since several owners share them: a session's,
-//! a channel's and their templates' `Summary` and `Briefing`, a user's
-//! `Introduction`.
+//! a channel's and their templates' `Summary` and `Briefing`, a user's and
+//! a personality's `Introduction`, a personality's and a session template's
+//! `Description`.
 
 use super::ValueError;
 use std::hash::{Hash, Hasher};
@@ -123,6 +124,18 @@ impl TextRule for IntroductionRule {
 }
 
 pub type Introduction = Text<IntroductionRule>;
+
+/// What a personality or a session template is, for whoever chooses one: a
+/// catalogue line.
+pub enum DescriptionRule {}
+
+impl TextRule for DescriptionRule {
+    const FIELD: &'static str = "description";
+    const MAX_CHARS: usize = 300;
+    const ONE_LINE: bool = true;
+}
+
+pub type Description = Text<DescriptionRule>;
 
 #[cfg(test)]
 mod tests {

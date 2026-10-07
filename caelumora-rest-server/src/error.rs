@@ -78,6 +78,13 @@ impl ApiError {
         Self::new(StatusCode::CONFLICT, code, detail)
     }
 
+    /// A text of the request that does not fit the field it was to be
+    /// written into (issue 248): `400 invalid_value`, saying which field and
+    /// why.
+    pub fn invalid_value(error: &caelumora_model::value::ValueError) -> Self {
+        Self::new(StatusCode::BAD_REQUEST, "invalid_value", error.to_string())
+    }
+
     /// The caller is logged in, but may not do this.
     pub fn forbidden(code: &'static str, detail: impl Into<String>) -> Self {
         Self::new(StatusCode::FORBIDDEN, code, detail)
@@ -175,6 +182,10 @@ impl ApiError {
 
         let detail = error.to_string();
         let bad_request = |code| Self::new(StatusCode::BAD_REQUEST, code, detail.clone());
+        // Wherever it was found out - the model, a controller, a loop.
+        if let Some(e) = error.chain().find_map(|e| e.downcast_ref::<caelumora_model::value::ValueError>()) {
+            return Self::invalid_value(e);
+        }
         if let Some(e) = error.downcast_ref::<ContextError>() {
             match e {
                 ContextError::NotRecorded { .. } => return Self::not_found("context_not_recorded", detail),
@@ -400,6 +411,11 @@ mod tests {
         assert_eq!(answer(anyhow::Error::new(ChannelError::NotUnderWay { turn: caelumora_model::work::TurnId::new(), channel }), Subject::Session), (409, "not_under_way"));
         assert_eq!(answer(anyhow::Error::new(ChannelError::NotCleared { participant: someone, channel }), Subject::Participant), (403, "not_cleared"));
         assert_eq!(answer(anyhow::Error::new(caelumora_model::template::TemplateError::UnsupportedScope("group")), Subject::Session), (400, "template_invalid"));
+        // A text that does not fit its field, wherever it was found out (issue 248).
+        let blank = || caelumora_model::value::ValueError::Blank { field: "summary" };
+        assert_eq!(answer(anyhow::Error::new(blank()), Subject::Session), (400, "invalid_value"));
+        assert_eq!(answer(anyhow::Error::new(StoreError::from(blank())), Subject::Session), (400, "invalid_value"), "by a controller, too");
+        assert_eq!(ApiError::from_runtime(anyhow::Error::new(StoreError::from(blank())), Subject::Session, "doing it").detail, "the summary must not consist of whitespace alone", "naming the field");
 
         // A refusal is named after what was refused, whichever layer refused it.
         let refused = || anyhow::Error::new(ChannelError::Forbidden { action: "adding a participant to", channel });

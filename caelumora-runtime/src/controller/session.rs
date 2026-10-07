@@ -4,6 +4,7 @@ use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::session::{ChannelId, Session, SessionId, SessionUpdateEvent};
+use caelumora_model::value::name::Name;
 use caelumora_model::value::ValueError;
 use caelumora_model::store::{EntityStore, StoreError, StoreResult};
 use chrono::Utc;
@@ -41,7 +42,7 @@ impl SessionController {
         self.id
     }
 
-    pub fn name(&self) -> String {
+    pub fn name(&self) -> Name {
         self.session.load().name.clone()
     }
 
@@ -49,8 +50,8 @@ impl SessionController {
     ///
     /// # Errors
     /// See [`Self::update`].
-    pub async fn update_name(&self, ctx: &SecurityContext, new_name: String) -> StoreResult<()> {
-        self.update(ctx, SessionUpdateEvent::NameChanged(new_name)).await
+    pub async fn update_name(&self, ctx: &SecurityContext, new_name: &str) -> StoreResult<()> {
+        self.update(ctx, SessionUpdateEvent::NameChanged(new_name.to_string())).await
     }
 
     /// Changes the session's privacy policy on behalf of `ctx` (issue 134),
@@ -91,13 +92,12 @@ impl SessionController {
     /// announced.
     ///
     /// # Errors
-    /// `StoreError::Validation` if what it says does not fit the session
-    /// (`Session::describe`), otherwise whatever the store reports,
-    /// `StoreError::PermissionDenied` included; the session is then
-    /// unchanged.
+    /// `StoreError::Invalid` if what it says does not fit the session,
+    /// otherwise whatever the store reports, `StoreError::PermissionDenied`
+    /// included; the session is then unchanged.
     async fn update(&self, ctx: &SecurityContext, event: SessionUpdateEvent) -> StoreResult<()> {
         let _guard = self.write_lock.lock().await;
-        let session = self.apply(&event).map_err(|e| StoreError::Validation(e.to_string()))?;
+        let session = self.apply(&event)?;
         self.entity_store.update_session(ctx, &session).await?;
         let attributes = session.security_attributes.clone();
         self.session.store(Arc::new(session));
@@ -159,14 +159,15 @@ impl SessionController {
         Ok(())
     }
 
-    /// The session with `event` applied, not yet stored anywhere.
+    /// The session with `event` applied, not yet stored anywhere; what it
+    /// says is made into the session's values here (issue 248).
     ///
     /// # Errors
-    /// `ValueError` if a description does not fit (`Session::describe`).
+    /// `ValueError` if what it says does not fit.
     fn apply(&self, event: &SessionUpdateEvent) -> Result<Session, ValueError> {
         let mut session = (**self.session.load()).clone();
         match event {
-            SessionUpdateEvent::NameChanged(name) => session.name = name.clone(),
+            SessionUpdateEvent::NameChanged(name) => session.name = Name::new(name)?,
             SessionUpdateEvent::PrivacyChanged(privacy) => session.privacy = *privacy,
             SessionUpdateEvent::ApprovalRulesChanged(rules) => session.approval_rules = rules.clone(),
             SessionUpdateEvent::DescriptionChanged { summary, briefing } => session.describe(summary.as_deref(), briefing.as_deref())?,
@@ -188,7 +189,7 @@ mod tests {
             commands: Default::default(),
             privacy: Default::default(),
             id: SessionId::new(),
-            name: "session".to_string(),
+            name: Name::new("session").unwrap(),
             participants: Vec::new(),
             channels: Vec::new(),
             created_at: Utc::now(),
@@ -215,7 +216,7 @@ mod tests {
         store.create_session(&ctx, &session).await.unwrap();
         let controller = SessionController::new(session.clone(), Arc::new(()), Arc::<MemoryStore>::clone(&store));
 
-        controller.update_name(&ctx, "renamed".to_string()).await.unwrap();
+        controller.update_name(&ctx, "renamed").await.unwrap();
 
         assert_eq!(controller.name(), "renamed");
         assert_eq!(store.get_session(&ctx, session.id).await.unwrap().name, "renamed");
@@ -236,7 +237,10 @@ mod tests {
         assert!(matches!(announced.0.lock().unwrap().as_slice(), [GlobalEvent::SessionUpdated(_, SessionUpdateEvent::DescriptionChanged { .. })]), "announced");
 
         let refused = controller.update_description(&ctx, Some("two\nlines"), None).await;
-        assert!(matches!(&refused, Err(StoreError::Validation(reason)) if reason == "the summary must be one line"), "{refused:?}");
+        assert!(matches!(&refused, Err(StoreError::Invalid(ValueError::LineBreak { field: "summary" }))), "{refused:?}");
+
+        let renamed = controller.update_name(&ctx, " ").await;
+        assert!(matches!(&renamed, Err(StoreError::Invalid(ValueError::Blank { field: "name" }))), "a name is checked so, too: {renamed:?}");
         assert_eq!(store.get_session(&ctx, session.id).await.unwrap().summary, stored.summary, "unchanged by what is refused");
         assert_eq!(announced.0.lock().unwrap().len(), 1);
     }

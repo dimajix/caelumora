@@ -202,7 +202,7 @@ impl MemberState for AgentMemberState {
     /// How its personality introduces it; nothing if the personality is
     /// gone.
     async fn introduction(&self) -> ViewResult<Option<String>> {
-        Ok(self.personality().await?.and_then(|personality| personality.introduction.clone()))
+        Ok(self.personality().await?.and_then(|personality| personality.introduction.as_ref().map(ToString::to_string)))
     }
 
     async fn personality(&self) -> ViewResult<Option<&Personality>> {

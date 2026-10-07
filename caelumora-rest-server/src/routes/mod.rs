@@ -82,9 +82,8 @@ pub fn views(state: &Arc<AppState>, user: &AuthenticatedUser) -> Views {
 
 /// What changing a place failed with, as the API answers it: `400` with
 /// `code` - `invalid_rule` for an approval rule the place may not keep
-/// (issue 13), `invalid_description` for a summary or briefing (issue 245) -
-/// and why, for what the place refused to keep; otherwise as `from_runtime`
-/// answers.
+/// (issue 13) - and why, for what the place refused to keep; otherwise as
+/// `from_runtime` answers.
 pub fn change_error(error: anyhow::Error, code: &'static str, subject: Subject, action: &str) -> ApiError {
     match error.downcast_ref::<StoreError>() {
         Some(StoreError::Validation(reason)) => ApiError::new(StatusCode::BAD_REQUEST, code, reason.clone()),

@@ -20,7 +20,7 @@ pub async fn create_session(
 ) -> Result<Json<SessionResponse>, ApiError> {
     // The logged-in user owns the session and is its template's "user".
     let template_id = SessionTemplateId(payload.template_id);
-    let session_loop = state.session_manager.create_from_template(&user.security_context(), template_id, payload.name).await
+    let session_loop = state.session_manager.create_from_template(&user.security_context(), template_id, payload.name.as_deref()).await
         .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("creating a session from template {template_id}")))?;
 
     Ok(Json(SessionResponse::from(&**session_loop.session())))
@@ -115,7 +115,7 @@ pub async fn rename_session(
     let session_id = SessionId(id);
     let session_loop = crate::routes::ensure_session(&state, &user, session_id).await?;
 
-    session_loop.update_name(&user.security_context(), payload.name).await
+    session_loop.update_name(&user.security_context(), &payload.name).await
         .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("renaming session {session_id}")))?;
 
     Ok(Json(SessionResponse::from(&**session_loop.session())))
@@ -160,9 +160,8 @@ pub async fn update_session_approval_rules(
 
 /// Says what session `id` is for (issue 245): its summary and briefing,
 /// `null` or empty to remove one - whoever may change the session. They are
-/// public to everybody in it. Answers `400 invalid_description` for one that
-/// is too long or holds what it may not, and otherwise the session as the
-/// user sees it now.
+/// public to everybody in it. Answers `400 invalid_value` for one that does
+/// not fit, and otherwise the session as the user sees it now.
 pub async fn update_session_description(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
@@ -173,7 +172,7 @@ pub async fn update_session_description(
     let session_loop = crate::routes::ensure_session(&state, &user, session_id).await?;
 
     session_loop.update_description(&user.security_context(), payload.summary.as_deref(), payload.briefing.as_deref()).await
-        .map_err(|e| crate::routes::change_error(e, "invalid_description", Subject::Session, &format!("changing the description of session {session_id}")))?;
+        .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("changing the description of session {session_id}")))?;
 
     Ok(Json(crate::routes::session_view(&state, &user, session_id).await?))
 }

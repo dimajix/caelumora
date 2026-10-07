@@ -66,13 +66,13 @@ impl UserController {
     /// stands.
     ///
     /// # Errors
-    /// `StoreError::Validation` for an introduction that does not fit
-    /// (`UserProfile::introduce`), otherwise whatever the store reports; the
-    /// profile is then unchanged.
-    pub async fn update_profile(&self, ctx: &SecurityContext, introduction: Option<&str>, preferred_language: Option<Language>) -> StoreResult<UserProfile> {
+    /// `StoreError::Invalid` for an introduction or a language that does
+    /// not fit, otherwise whatever the store reports; the profile is then
+    /// unchanged.
+    pub async fn update_profile(&self, ctx: &SecurityContext, introduction: Option<&str>, preferred_language: Option<&str>) -> StoreResult<UserProfile> {
         self.change(ctx, |profile| {
-            profile.introduce(introduction).map_err(|e| StoreError::Validation(e.to_string()))?;
-            profile.preferred_language = preferred_language;
+            profile.introduce(introduction)?;
+            profile.preferred_language = Language::optional(preferred_language)?;
             Ok(())
         }).await.map(|(_, profile)| profile)
     }
@@ -214,7 +214,9 @@ mod tests {
         let controller = UserController::new(user.clone(), None, Arc::<Announced>::clone(&announced), Arc::<MemoryStore>::clone(&store));
 
         let invalid = controller.update_profile(&as_user(user.id), Some("a\u{1b}[2Jb"), None).await;
-        assert!(matches!(invalid, Err(StoreError::Validation(_))), "{invalid:?}");
+        assert!(matches!(invalid, Err(StoreError::Invalid(_))), "{invalid:?}");
+        let invalid = controller.update_profile(&as_user(user.id), None, Some("Deutsch")).await;
+        assert!(matches!(invalid, Err(StoreError::Invalid(_))), "a language, too: {invalid:?}");
 
         let forged = controller.update_profile(&as_user(UserId::new()), Some("I am alice."), None).await;
         assert!(matches!(forged, Err(StoreError::PermissionDenied)), "not by someone else: {forged:?}");

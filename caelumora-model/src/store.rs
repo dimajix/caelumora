@@ -20,6 +20,10 @@ pub enum StoreError {
     Conflict(String),
     #[error("validation: {0}")]
     Validation(String),
+    /// A text that does not fit the field it was to be written into
+    /// (issue 248): what the field is called and why.
+    #[error("{0}")]
+    Invalid(#[from] crate::value::ValueError),
     #[error("backend: {0}")]
     Backend(String),
     #[error("permission denied")]
@@ -288,7 +292,7 @@ mod tests {
             commands: Default::default(),
             privacy: Default::default(),
             id: SessionId(Uuid::new_v4()),
-            name: "session1".to_string(),
+            name: crate::value::name::Name::new("session1").unwrap(),
             participants: Vec::new(),
             channels: Vec::new(),
             created_at: chrono::Utc::now(),
@@ -302,7 +306,7 @@ mod tests {
             commands: Default::default(),
             privacy: Default::default(),
             id: SessionId(Uuid::new_v4()),
-            name: "session2".to_string(),
+            name: crate::value::name::Name::new("session2").unwrap(),
             participants: Vec::new(),
             channels: Vec::new(),
             created_at: chrono::Utc::now(),

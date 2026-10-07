@@ -303,7 +303,7 @@ mod tests {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
             id,
-            name: String::new(),
+            name: caelumora_model::value::name::Name::new("s").unwrap(),
             participants: privacy.people.iter().map(|user| Participant::User(*user)).collect(),
             channels: Vec::new(),
             commands: Default::default(),

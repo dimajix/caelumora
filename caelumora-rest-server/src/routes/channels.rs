@@ -17,7 +17,6 @@ use caelumora_model::approval::{ApprovalId, ApprovalResponse, ApprovalRule};
 use caelumora_model::channel::moderation_components;
 use caelumora_model::command::{Command, CommandVisibility};
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::value::language::Language;
 use caelumora_model::context::ContextItem;
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::security::SecurityContext;
@@ -415,10 +414,10 @@ pub async fn set_channel_language(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
     user: AuthenticatedUser,
-    Json(language): Json<Option<Language>>,
+    Json(language): Json<Option<String>>,
 ) -> Result<Json<ChannelResponse>, ApiError> {
     let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    channel.update_language(&user.security_context(), language).await
+    channel.update_language(&user.security_context(), language.as_deref()).await
         .map_err(|e| ApiError::from_runtime(e, Subject::Session, "changing the language of the channel"))?;
     Ok(Json(crate::routes::channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?))
 }
@@ -442,9 +441,8 @@ pub async fn update_channel_approval_rules(
 
 /// Says what the channel is for (issue 245): its summary and briefing,
 /// `null` or empty to remove one - whoever may change the channel. Its
-/// agents are told from their next turn on. Answers `400
-/// invalid_description` for one that is too long or holds what it may not,
-/// and otherwise the channel as the user sees it now.
+/// agents are told from their next turn on. Answers `400 invalid_value` for
+/// one that does not fit, and otherwise the channel as the user sees it now.
 pub async fn update_channel_description(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
@@ -453,7 +451,7 @@ pub async fn update_channel_description(
 ) -> Result<Json<ChannelResponse>, ApiError> {
     let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     channel.update_description(&user.security_context(), payload.summary.as_deref(), payload.briefing.as_deref()).await
-        .map_err(|e| crate::routes::change_error(e, "invalid_description", Subject::Session, "changing the description of the channel"))?;
+        .map_err(|e| ApiError::from_runtime(e, Subject::Session, "changing the description of the channel"))?;
     Ok(Json(crate::routes::channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?))
 }
 

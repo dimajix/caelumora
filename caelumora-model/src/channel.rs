@@ -19,12 +19,14 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ChannelUpdateEvent {
-    NameChanged(Name),
+    /// Renamed, as it was asked: the name is made from it as the change is
+    /// applied (issue 248), and so is a language.
+    NameChanged(String),
     /// Reclassified (issue 133).
     ClassificationChanged(Classification),
     /// Its conversation is to be held in another language, or in none in
     /// particular (issue 56).
-    LanguageChanged(Option<Language>),
+    LanguageChanged(Option<String>),
     /// Its rules on tool calls changed (issue 13), as they now stand.
     ApprovalRulesChanged(Vec<ApprovalRule>),
     /// What it is for changed (issue 245), as it now stands.

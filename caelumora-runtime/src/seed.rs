@@ -100,12 +100,12 @@ mod tests {
 
         // A document changed in the store stays as it is.
         let mut changed = seed.personalities[0].clone();
-        changed.description = "changed".to_string();
+        changed.description = Some(caelumora_model::value::text::Description::new("changed").unwrap());
         store.update_personality(&system, &changed).await.unwrap();
         load(&store, &[example()]).await.expect("seeding again is no conflict");
         assert_eq!(store.list_personalities(&system).await.unwrap().len(), seed.personalities.len(), "nothing twice");
         assert_eq!(store.list_session_templates(&system).await.unwrap().len(), seed.session_templates.len());
-        assert_eq!(store.get_personality(&system, changed.id).await.unwrap().description, "changed");
+        assert_eq!(store.get_personality(&system, changed.id).await.unwrap().description, changed.description);
     }
 
     #[test]

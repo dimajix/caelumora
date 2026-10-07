@@ -91,7 +91,7 @@ mod tests {
             approval_rules: Vec::new(),
             id: SessionTemplateId::new(),
             name: ScopedName::new("pairing", Default::default()).unwrap(),
-            description: String::new(),
+            description: None,
             participants,
             channels: Vec::new(),
             security_attributes: Default::default(),
@@ -107,7 +107,7 @@ mod tests {
 
     async fn store_with_personality(store: MemoryStore) -> (Arc<MemoryStore>, PersonalityId) {
         let personality = Personality {
-            description: String::new(),
+            description: None,
             introduction: None,
             id: PersonalityId::new(),
             name: ScopedName::new("plain", Default::default()).unwrap(),

@@ -338,7 +338,7 @@ async fn main() -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("Session template '{}' not found: templates come from the `seed` of the configuration - `--config examples/config.yaml` seeds the demo ones", args.template))?;
 
     let session_manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
-    let session_loop = session_manager.create_from_template(&security, template.id, Some("default-session".to_string())).await?;
+    let session_loop = session_manager.create_from_template(&security, template.id, Some("default-session")).await?;
     let session_id = session_loop.id();
 
     // The template's first channel, whatever it is called.

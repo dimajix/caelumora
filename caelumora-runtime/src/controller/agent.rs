@@ -1,4 +1,5 @@
 use caelumora_model::value::name::Name;
+use caelumora_model::value::ValueError;
 use arc_swap::ArcSwap;
 use caelumora_model::agent::{Agent, AgentId, AgentUpdateEvent, Personality};
 use caelumora_model::event::{EventPublisher, GlobalEvent};
@@ -64,11 +65,12 @@ impl AgentController {
     /// announced.
     ///
     /// # Errors
-    /// Whatever the store reports; the agent is then unchanged.
-    pub async fn update_name(&self, ctx: &SecurityContext, new_name: Name) -> StoreResult<()> {
+    /// `StoreError::Invalid` if `new_name` is no name, otherwise whatever
+    /// the store reports; the agent is then unchanged.
+    pub async fn update_name(&self, ctx: &SecurityContext, new_name: &str) -> StoreResult<()> {
         let _guard = self.write_lock.lock().await;
-        let event = AgentUpdateEvent::NameChanged(new_name);
-        let agent = self.apply(&event);
+        let event = AgentUpdateEvent::NameChanged(new_name.to_string());
+        let agent = self.apply(&event)?;
         self.entity_store.update_agent(ctx, &agent).await?;
         let attributes = agent.security_attributes.clone();
         self.agent.store(Arc::new(agent));
@@ -76,13 +78,17 @@ impl AgentController {
         Ok(())
     }
 
-    /// The agent with `event` applied, not yet stored anywhere.
-    fn apply(&self, event: &AgentUpdateEvent) -> Agent {
+    /// The agent with `event` applied, not yet stored anywhere; what it
+    /// says is made into the agent's values here (issue 248).
+    ///
+    /// # Errors
+    /// `ValueError` if what it says does not fit.
+    fn apply(&self, event: &AgentUpdateEvent) -> Result<Agent, ValueError> {
         let mut agent = (**self.agent.load()).clone();
         match event {
-            AgentUpdateEvent::NameChanged(name) => agent.name.name = name.clone(),
+            AgentUpdateEvent::NameChanged(name) => agent.name.name = Name::new(name)?,
         }
-        agent
+        Ok(agent)
     }
 
     /// Takes over a change made elsewhere - already stored there - once it
@@ -91,7 +97,12 @@ impl AgentController {
     pub fn process_global_event(&self, event: &GlobalEvent) {
         if let GlobalEvent::AgentUpdated(aid, update) = event {
             if *aid == self.id {
-                self.agent.store(Arc::new(self.apply(update)));
+                // Checked where it was made; one that does not fit here is
+                // left out rather than taken over half.
+                match self.apply(update) {
+                    Ok(agent) => self.agent.store(Arc::new(agent)),
+                    Err(e) => tracing::warn!(agent = %self.id, error = %e, "A change of the agent made elsewhere does not fit it"),
+                }
             }
         }
     }
@@ -100,7 +111,7 @@ impl AgentController {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::value::name::{Name, ScopedName};
+    use caelumora_model::value::name::ScopedName;
     use caelumora_model::agent::{Personality, PersonalityId};
     use caelumora_model::scope::Scope;
     use caelumora_model::store_impl::memory::MemoryStore;
@@ -108,7 +119,7 @@ mod tests {
     #[tokio::test]
     async fn a_renamed_agent_is_stored_first() {
         let personality = Personality {
-            description: String::new(),
+            description: None,
             introduction: None,
             id: PersonalityId::new(),
             name: ScopedName::new("plain", Default::default()).unwrap(),
@@ -125,7 +136,7 @@ mod tests {
         store.create_agent(&ctx, &agent).await.unwrap();
         let controller = AgentController::new(agent.clone(), Arc::new(()), Arc::<MemoryStore>::clone(&store));
 
-        controller.update_name(&ctx, Name::new("new_name").unwrap()).await.unwrap();
+        controller.update_name(&ctx, "new_name").await.unwrap();
 
         assert_eq!(controller.name(), "new_name");
         assert_eq!(store.get_agent(&ctx, agent.id).await.unwrap().name.as_str(), "new_name");

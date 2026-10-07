@@ -806,7 +806,7 @@ mod tests {
         let session = Session {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
-            id: SessionId(Uuid::new_v4()), name: "old".to_string(), participants: Vec::new(), channels: Vec::new(),
+            id: SessionId(Uuid::new_v4()), name: crate::value::name::Name::new("old").unwrap(), participants: Vec::new(), channels: Vec::new(),
             commands: Default::default(), privacy: Default::default(), created_at: Utc::now(), updated_at: Utc::now(),
             security_attributes: SecurityAttributes::default(), deleted: None,
         };
@@ -826,7 +826,7 @@ mod tests {
         let system = SecurityContext::system();
         let personality = Personality {
             id: PersonalityId::new(), name: crate::value::name::ScopedName::new("plain", Default::default()).unwrap(),
-            kind: Default::default(), roles: None, description: String::new(), introduction: None,
+            kind: Default::default(), roles: None, description: None, introduction: None,
             components: Default::default(), security_attributes: Default::default(), reasoning_visibility: Default::default(),
             deleted: None,
         };
@@ -835,7 +835,7 @@ mod tests {
         let mut writes = tokio::task::JoinSet::new();
         for i in 0..16 {
             let (store, system) = (Arc::clone(&store), system.clone());
-            let changed = Personality { description: format!("version {i}"), ..personality.clone() };
+            let changed = Personality { description: Some(crate::value::text::Description::new(format!("version {i}")).unwrap()), ..personality.clone() };
             writes.spawn(async move { store.update_personality(&system, &changed).await });
         }
         while let Some(result) = writes.join_next().await {
@@ -848,7 +848,7 @@ mod tests {
             .collect();
         assert_eq!(names, [path.file_name().unwrap().to_string_lossy().into_owned()], "only the file itself");
         let stored = store.get_personality(&system, personality.id).await.expect("readable");
-        assert!(stored.description.starts_with("version "), "one of the writes, whole");
+        assert!(stored.description.as_ref().map(|d| d.as_str()).unwrap_or_default().starts_with("version "), "one of the writes, whole");
     }
 
     #[tokio::test]
@@ -883,7 +883,7 @@ mod tests {
             commands: Default::default(),
             privacy: Default::default(),
             id: session_id,
-            name: "to-delete".to_string(),
+            name: crate::value::name::Name::new("to-delete").unwrap(),
             participants: Vec::new(),
             channels: vec![channel.id],
             created_at: Utc::now(),
@@ -935,7 +935,7 @@ mod tests {
             commands: Default::default(),
             privacy: Default::default(),
             id: SessionId(Uuid::new_v4()),
-            name: "session-1".to_string(),
+            name: crate::value::name::Name::new("session-1").unwrap(),
             participants: Vec::new(),
             channels: Vec::new(),
             created_at: Utc::now(),

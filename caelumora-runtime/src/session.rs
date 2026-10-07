@@ -69,10 +69,11 @@ async fn require_seen<E: Into<anyhow::Error> + Send>(runtime_manager: &RuntimeMa
     }
 }
 
-/// What a new channel should be (issue 09).
+/// What a new channel should be (issue 09), as it was asked: its name and
+/// language are made from it by `create_channel` (issue 248).
 #[derive(Debug, Clone)]
 pub struct ChannelSpec {
-    pub name: Name,
+    pub name: String,
     /// The channel's components (issue 174): its moderator and the policy
     /// for the moderator's slot; the defaults for what is left out, as in a
     /// template.
@@ -86,7 +87,7 @@ pub struct ChannelSpec {
     pub classification: Option<Classification>,
     /// The language its conversation is held in (issue 56); `None` for the
     /// one its creator prefers, if they prefer one.
-    pub language: Option<Language>,
+    pub language: Option<String>,
 }
 
 /// The language the user `context` acts for prefers (issue 56), which
@@ -191,16 +192,17 @@ impl SessionLoop {
         SessionPrivacy::of(&self.session())
     }
 
-    pub fn name(&self) -> String {
+    pub fn name(&self) -> Name {
         self.session_controller.name()
     }
 
     /// Renames the session on behalf of `context`.
     ///
     /// # Errors
+    /// `StoreError::Invalid` if `new_name` is no name,
     /// `StoreError::PermissionDenied` if `context` may not change the
     /// session, or whatever else storing it reports.
-    pub async fn update_name(&self, context: &SecurityContext, new_name: String) -> Result<()> {
+    pub async fn update_name(&self, context: &SecurityContext, new_name: &str) -> Result<()> {
         Ok(self.session_controller.update_name(context, new_name).await?)
     }
 
@@ -284,10 +286,10 @@ impl SessionLoop {
     /// channel belongs to the session's owner, like the session's others.
     ///
     /// # Errors
-    /// - [`SessionError`] if `spec` asks for something that cannot be: no
-    ///   name, a name the session already has, components that make no
-    ///   moderator, or a
-    ///   participant who is not one of the session's.
+    /// - `ValueError` if its name is no name or its language no tag.
+    /// - [`SessionError`] if `spec` asks for something that cannot be: a
+    ///   name the session already has, components that make no moderator,
+    ///   or a participant who is not one of the session's.
     /// - `StoreError::PermissionDenied` if `context` may not change the
     ///   session; nothing is changed then.
     pub async fn create_channel(self: &Arc<Self>, context: &SecurityContext, spec: ChannelSpec) -> Result<Arc<ChannelLoop>> {
@@ -297,13 +299,14 @@ impl SessionLoop {
         // learns nothing of their clearance.
         self.security
             .require(context, ActionType::UpdateSession(&session.security_attributes), || StoreError::PermissionDenied).await?;
-        let name = spec.name;
+        let name = Name::new(&spec.name)?;
+        let language = Language::optional(spec.language.as_deref())?;
         if self.channels.iter().any(|entry| entry.channel.name() == name) {
             return Err(SessionError::DuplicateChannelName { session: self.id, name }.into());
         }
         let classification = spec.classification.unwrap_or_default();
         require_classification(&self.runtime_manager, context, &classification).await?;
-        let language = match spec.language {
+        let language = match language {
             Some(language) => Some(language),
             None => preferred_language(self.entities.as_ref(), context).await?,
         };
@@ -632,15 +635,18 @@ impl SessionManager {
     /// # Errors
     /// `SessionError::OwnerNotAUser` if `context` acts for no user; a
     /// `StoreError` if the template, a user or a personality it names does
-    /// not exist or may not be read; a `TemplateError` if the template
-    /// cannot be made into a session; whatever creating the session reports.
-    pub async fn create_from_template(&self, context: &SecurityContext, template_id: SessionTemplateId, name: Option<String>) -> Result<Arc<SessionLoop>> {
+    /// not exist or may not be read; a `ValueError` if `name` is no name; a
+    /// `TemplateError` if the template cannot be made into a session;
+    /// whatever creating the session reports.
+    pub async fn create_from_template(&self, context: &SecurityContext, template_id: SessionTemplateId, name: Option<&str>) -> Result<Arc<SessionLoop>> {
         let owner = context.initiator_id.as_user_id().ok_or(SessionError::OwnerNotAUser(context.initiator_id))?;
+        // Before anything is found or made for it.
+        let name = Name::optional(name)?;
         let store = &self.entities;
         let template = store.get_session_template(context, template_id).await?;
         let id = SessionId::new();
         let participants = crate::template::resolve_participants(store.as_ref(), context, &template, id, owner).await?;
-        let name = name.unwrap_or_else(|| template.name.to_string());
+        let name = name.unwrap_or_else(|| template.name.name.clone());
         let language = preferred_language(store.as_ref(), context).await?;
         let (session, channels) = template.build(id, owner, name, language.as_ref(), participants)?;
         self.create_session(context, session, channels).await
@@ -1002,7 +1008,7 @@ mod tests {
             commands: Default::default(),
             privacy: Default::default(),
             id: SessionId(Uuid::new_v4()),
-            name: name.to_string(),
+            name: Name::new(name).unwrap(),
             participants: Vec::new(),
             channels: vec![ChannelId(Uuid::new_v4())],
             created_at: chrono::Utc::now(),
@@ -1247,7 +1253,7 @@ mod tests {
         let (system, ctx) = (SecurityContext::system(), SecurityContext::default());
         let personality = Personality {
             id: PersonalityId::new(), name: ScopedName::new("plain", Scope::GlobalScope).unwrap(), kind: Default::default(),
-            roles: None, description: String::new(), introduction: None, components: Default::default(),
+            roles: None, description: None, introduction: None, components: Default::default(),
             security_attributes: Default::default(), reasoning_visibility: Default::default(), deleted: None,
         };
         store.create_personality(&system, &personality).await.unwrap();
@@ -1295,7 +1301,7 @@ mod tests {
     }
 
     fn spec(name: &str, participants: Vec<caelumora_model::actor::ActorId>) -> ChannelSpec {
-        ChannelSpec { name: Name::new(name).unwrap(), components: Default::default(), participants, classification: None, language: None }
+        ChannelSpec { name: name.to_string(), components: Default::default(), participants, classification: None, language: None }
     }
 
     #[tokio::test]
@@ -1316,7 +1322,7 @@ mod tests {
             approval_rules: Vec::new(),
             id: SessionTemplateId::new(),
             name: ScopedName::new("pairing", Default::default()).unwrap(),
-            description: String::new(),
+            description: None,
             participants: vec![
                 ParticipantTemplate::User { name: "user".to_string() },
                 ParticipantTemplate::Approver { name: "approval".to_string(), strategy: ApprovalStrategy::All },
@@ -1435,7 +1441,7 @@ mod tests {
         runtime.entity_store().create_user_profile(&ctx, &profile).await.unwrap();
         let preferred = session.create_channel(&ctx, spec("preferred", vec![])).await.unwrap();
         assert_eq!(preferred.channel().language, language("de"), "the one the creator prefers");
-        let asked = session.create_channel(&ctx, ChannelSpec { language: language("en"), ..spec("asked", vec![]) }).await.unwrap();
+        let asked = session.create_channel(&ctx, ChannelSpec { language: Some("en".to_string()), ..spec("asked", vec![]) }).await.unwrap();
         assert_eq!(asked.channel().language, language("en"), "unless another is asked for");
 
         asked.update_language(&ctx, None).await.expect("the owner changes it");
@@ -1925,7 +1931,7 @@ mod tests {
                 let personality = Personality {
                     id: PersonalityId::new(), name: ScopedName::new(name, Default::default()).unwrap(), kind,
                     roles: roles.map(|roles| roles.iter().map(|r| r.to_string()).collect()),
-                    description: String::new(), introduction: None, components: Default::default(),
+                    description: None, introduction: None, components: Default::default(),
                     security_attributes: Default::default(), reasoning_visibility: Default::default(),
                     deleted: None,
                 };
@@ -2025,7 +2031,7 @@ mod tests {
         let participants = record_users(&manager, &[&alice]).await;
         let personality = Personality {
             id: PersonalityId::new(), name: ScopedName::new("thinker", Default::default()).unwrap(), kind: PersonalityKind::Internal,
-            roles: None, description: String::new(), introduction: None,
+            roles: None, description: None, introduction: None,
             components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("model", "silent")] },
             security_attributes: Default::default(), reasoning_visibility: Default::default(),
             deleted: None,
@@ -2107,7 +2113,7 @@ mod tests {
         members.params = serde_json::json!({ "changes_only": true });
         let personality = Personality {
             id: PersonalityId::new(), name: ScopedName::new("remote", Default::default()).unwrap(), kind: PersonalityKind::External,
-            roles: None, description: String::new(), introduction: None,
+            roles: None, description: None, introduction: None,
             components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("remote", "test_remote"), members] },
             security_attributes: Default::default(), reasoning_visibility: Default::default(),
             deleted: None,
@@ -2211,11 +2217,11 @@ mod tests {
         let running = create(&manager, &as_user(alice), session).await.unwrap();
         let main = running.channel_by_name("main").unwrap();
 
-        let refused = main.update_name(&as_user(bob), Name::new("bobs").unwrap()).await.expect_err("a contributor may not");
+        let refused = main.update_name(&as_user(bob), "bobs").await.expect_err("a contributor may not");
         assert!(crate::error::is_forbidden(&refused), "{refused}");
         assert_eq!(main.name(), "main", "unchanged");
 
-        main.update_name(&as_user(alice), Name::new("lobby").unwrap()).await.expect("the owner may");
+        main.update_name(&as_user(alice), "lobby").await.expect("the owner may");
         assert_eq!(main.name(), "lobby");
         assert_eq!(store.get_channel(&as_user(alice), main.id()).await.unwrap().name, "lobby", "stored, not only in memory");
         manager.stop_session(&SecurityContext::system(), running.id()).await.unwrap();

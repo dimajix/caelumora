@@ -176,7 +176,7 @@ mod tests {
         let system = SecurityContext::system();
 
         let personality = Personality {
-            description: String::new(), id: PersonalityId::new(), name: ScopedName::new("plain", Default::default()).unwrap(),
+            description: None, id: PersonalityId::new(), name: ScopedName::new("plain", Default::default()).unwrap(),
             kind: Default::default(), roles: None, introduction: None, components: Default::default(),
             security_attributes: Default::default(), reasoning_visibility: Visibility::Channel, deleted: None,
         };
@@ -190,7 +190,7 @@ mod tests {
         let session = Session {
             summary: Some(Summary::new("Release 2.0").unwrap()), briefing: None,
             approval_rules: Vec::new(),
-            id: session_id, name: String::new(), participants: channel.participants.clone(), channels: vec![channel.id],
+            id: session_id, name: caelumora_model::value::name::Name::new("s").unwrap(), participants: channel.participants.clone(), channels: vec![channel.id],
             commands: Default::default(), privacy: Default::default(), created_at: now, updated_at: now, security_attributes: Default::default(),
             deleted: None,
         };

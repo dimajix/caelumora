@@ -351,7 +351,7 @@ impl Views {
             let attributes = &session.security_attributes;
             deleted.push(DeletedSnapshot {
                 id: session.id,
-                name: session.name.clone(),
+                name: session.name.to_string(),
                 deleted: removal,
                 can_restore: policy.may_restore(self.viewer.context(), EntityKind::Session, attributes).await,
                 can_purge: policy.may_purge(self.viewer.context(), EntityKind::Session, attributes).await,
@@ -557,7 +557,7 @@ mod tests {
             commands: Default::default(),
             privacy: Default::default(),
             id: SessionId::new(),
-            name: name.to_string(),
+            name: Name::new(name).unwrap(),
             participants: Vec::new(),
             channels: vec![ChannelId::new()],
             created_at: chrono::Utc::now(),
@@ -591,7 +591,7 @@ mod tests {
 
     async fn an_agent_of_kind(store: &MemoryStore, owner: ActorId, kind: caelumora_model::agent::PersonalityKind) -> Agent {
         let personality = Personality {
-            description: String::new(),
+            description: None,
             introduction: None,
             reasoning_visibility: Visibility::Channel,
             id: PersonalityId::new(),
@@ -671,7 +671,7 @@ mod tests {
         let main = main_channel(&session);
         let running = manager.create_session(as_user(alice.id).context(), session, vec![main]).await.unwrap();
         // Alice's alone: bob takes part in the session, not in this channel.
-        let hers = running.create_channel(as_user(alice.id).context(), crate::session::ChannelSpec { name: Name::new("private").unwrap(), components: Default::default(), classification: None, language: None, participants: vec![] }).await.unwrap().id();
+        let hers = running.create_channel(as_user(alice.id).context(), crate::session::ChannelSpec { name: "private".to_string(), components: Default::default(), classification: None, language: None, participants: vec![] }).await.unwrap().id();
         let id = running.id();
 
         let check = |state: &'static str| {
@@ -775,7 +775,7 @@ mod tests {
         store.create_user(&system, &carol).await.unwrap();
         let remote = an_agent_of_kind(&store, ActorId::User(carol.id), PersonalityKind::External).await;
         let mut personality = store.get_personality(&system, remote.personality_id).await.unwrap();
-        personality.introduction = Some("Answers questions about the weather.".to_string());
+        personality.introduction = Some(caelumora_model::value::text::Introduction::new("Answers questions about the weather.").unwrap());
         store.update_personality(&system, &personality).await.unwrap();
         let approver = Approver { id: ApproverId(uuid::Uuid::new_v4()), strategy: ApprovalStrategy::Any };
 

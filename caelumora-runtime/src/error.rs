@@ -17,6 +17,7 @@ use crate::view::{ContextError, ViewError};
 use crate::channel::ChannelError;
 use caelumora_model::store::StoreError;
 use caelumora_model::template::TemplateError;
+use caelumora_model::value::ValueError;
 
 /// The message to show a user for `error`: the outermost error in its chain
 /// whose type is known to be safe to disclose, or `None` if there is none -
@@ -47,6 +48,8 @@ pub fn user_message(error: &anyhow::Error) -> Option<String> {
         } else if let Some(e) = e.downcast_ref::<SessionError>() {
             Some(e.to_string())
         } else if let Some(e) = e.downcast_ref::<TemplateError>() {
+            Some(e.to_string())
+        } else if let Some(e) = e.downcast_ref::<ValueError>() {
             Some(e.to_string())
         } else if let Some(e) = e.downcast_ref::<StoreError>() {
             store_message(e)

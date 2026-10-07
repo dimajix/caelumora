@@ -5,7 +5,6 @@ use caelumora_model::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
 use caelumora_model::confidentiality::{Classification, Compartment};
 use caelumora_model::message::{Message, TokenUsage};
 use caelumora_model::value::language::Language;
-use caelumora_model::value::name::Name;
 use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::session::{ChannelId, SessionId};
@@ -38,7 +37,7 @@ pub struct SessionResponse {
 
 impl From<&caelumora_model::session::Session> for SessionResponse {
     fn from(session: &caelumora_model::session::Session) -> Self {
-        Self { id: session.id, name: session.name.clone(), summary: session.summary.clone(), privacy: session.privacy }
+        Self { id: session.id, name: session.name.to_string(), summary: session.summary.clone(), privacy: session.privacy }
     }
 }
 
@@ -57,12 +56,13 @@ const UNKNOWN: &str = "(unknown)";
 pub struct TemplateResponse {
     pub id: SessionTemplateId,
     pub name: String,
+    /// Empty if it says nothing.
     pub description: String,
 }
 
 impl From<&SessionTemplate> for TemplateResponse {
     fn from(template: &SessionTemplate) -> Self {
-        Self { id: template.id, name: template.name.to_string(), description: template.description.clone() }
+        Self { id: template.id, name: template.name.to_string(), description: template.description.as_ref().map(ToString::to_string).unwrap_or_default() }
     }
 }
 
@@ -110,10 +110,9 @@ pub struct ApprovalRuleRequest {
 pub struct ProfileRequest {
     #[serde(default)]
     pub introduction: Option<String>,
-    /// Checked as it is read: a text that is no language tag is a malformed
-    /// request.
+    /// A language tag, made into a language by the profile (issue 248).
     #[serde(default)]
-    pub preferred_language: Option<Language>,
+    pub preferred_language: Option<String>,
 }
 
 /// A compartment a classification may name (issue 133), as configured.
@@ -360,9 +359,8 @@ pub struct AddParticipantRequest {
 /// A channel to create in a running session (issue 09).
 #[derive(Debug, Deserialize)]
 pub struct CreateChannelRequest {
-    /// Checked as it is read: a text that is no name is a malformed request
-    /// (issue 177).
-    pub name: Name,
+    /// Made into a name where the channel is made (issues 177, 248).
+    pub name: String,
     /// The kind of the moderator, e.g. `policy_moderator`; the default if
     /// absent (issue 174).
     pub moderator: Option<String>,
@@ -381,7 +379,7 @@ pub struct CreateChannelRequest {
     /// The language its conversation is held in (issue 56), a BCP 47 tag;
     /// the one the requesting user prefers if absent.
     #[serde(default)]
-    pub language: Option<Language>,
+    pub language: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -984,10 +982,11 @@ mod tests {
     }
 
     #[test]
-    fn a_language_is_a_tag_checked_as_the_request_is_read() {
+    fn a_language_is_passed_on_as_it_was_sent() {
         let request: ProfileRequest = serde_json::from_str(r#"{"introduction": null, "preferred_language": "de_ch"}"#).unwrap();
-        assert_eq!(request.preferred_language, Some(Language::new("de-CH").unwrap()));
-        assert!(serde_json::from_str::<ProfileRequest>(r#"{"preferred_language": "Deutsch"}"#).is_err(), "no tag");
+        assert_eq!(request.preferred_language, Some("de_ch".to_string()));
+        let request: ProfileRequest = serde_json::from_str(r#"{"preferred_language": "Deutsch"}"#).unwrap();
+        assert_eq!(request.preferred_language.as_deref(), Some("Deutsch"), "checked by the profile, not as the request is read");
         let request: CreateChannelRequest = serde_json::from_str(r#"{"name": "side"}"#).unwrap();
         assert_eq!(request.language, None, "the preferred one when left out");
     }

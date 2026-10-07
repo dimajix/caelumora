@@ -230,7 +230,7 @@ pub(crate) fn bare_session(session_id: SessionId) -> Session {
     Session {
         summary: None, briefing: None,
         id: session_id,
-        name: String::new(),
+        name: caelumora_model::value::name::Name::new("s").unwrap(),
         participants: Vec::new(),
         channels: Vec::new(),
         commands: Default::default(),

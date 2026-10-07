@@ -181,7 +181,7 @@ mod tests {
         let system = SecurityContext::system();
 
         let personality = Personality {
-            description: String::new(), id: PersonalityId::new(), name: ScopedName::new("plain", Default::default()).unwrap(),
+            description: None, id: PersonalityId::new(), name: ScopedName::new("plain", Default::default()).unwrap(),
             kind: Default::default(), roles: None, introduction: None, components: Default::default(),
             security_attributes: Default::default(), reasoning_visibility: Visibility::Channel, deleted: None,
         };
@@ -194,7 +194,7 @@ mod tests {
         let session = Session {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
-            id: session_id, name: String::new(), participants: channel.participants.clone(), channels: vec![channel.id],
+            id: session_id, name: caelumora_model::value::name::Name::new("s").unwrap(), participants: channel.participants.clone(), channels: vec![channel.id],
             commands: Default::default(), privacy: Default::default(), created_at: now, updated_at: now, security_attributes: Default::default(),
             deleted: None,
         };
@@ -211,7 +211,7 @@ mod tests {
         assert_eq!(prompt.classification, Some(Classification::PUBLIC));
 
         let running = session_loop.channel_by_id(channel.id).expect("the channel runs");
-        running.update_language(&system, language("fr")).await.unwrap();
+        running.update_language(&system, Some("fr")).await.unwrap();
         let prompt = told(&provider, agent.id, &session_loop, &context, &mut state).await;
         assert!(prompt.text.contains("\"fr\""), "the language as it is now: {}", prompt.text);
     }

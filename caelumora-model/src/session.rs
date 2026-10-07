@@ -4,12 +4,15 @@ use crate::component::ComponentConfig;
 use crate::privacy::PrivacyConfig;
 use crate::security::{Secured, SecurityAttributes};
 use chrono::{DateTime, Utc};
+use crate::value::name::Name;
 use crate::value::text::{Briefing, Summary};
 use crate::value::ValueError;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SessionUpdateEvent {
+    /// Renamed, as it was asked: the name is made from it as the change is
+    /// applied (issue 248), as a description is.
     NameChanged(String),
     /// The session's privacy policy changed (issue 134).
     PrivacyChanged(PrivacyConfig),
@@ -25,7 +28,8 @@ define_id!(SessionId);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub id: SessionId,
-    pub name: String,
+    /// What it is called (issue 248): a name it could be looked up by.
+    pub name: Name,
     /// What it is for, in a line (issue 245); `None` if nobody said.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary: Option<Summary>,

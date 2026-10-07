@@ -18,7 +18,6 @@ use caelumora_model::channel::{Channel, ChannelId, ChannelState, HistoryAccess, 
 use crate::controller::{AgentController, ChannelController, ControllerManager, UserController};
 use caelumora_model::agent::{Personality, PersonalityKind};
 use caelumora_model::approval::{ApprovalRule, Approver};
-use caelumora_model::value::language::Language;
 use caelumora_model::confidentiality::{user_roles, Classification};
 use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::message::{Message, MessageId};
@@ -491,9 +490,10 @@ impl ChannelLoop {
     /// where the permission is checked (`UpdateChannel`, issue 70).
     ///
     /// # Errors
+    /// `StoreError::Invalid` if `new_name` is no name,
     /// `StoreError::PermissionDenied` if `context` may not change the
     /// channel, or whatever else storing it reports.
-    pub async fn update_name(&self, context: &SecurityContext, new_name: Name) -> Result<()> {
+    pub async fn update_name(&self, context: &SecurityContext, new_name: &str) -> Result<()> {
         Ok(self.channel.update_name(context, new_name).await?)
     }
 
@@ -504,11 +504,12 @@ impl ChannelLoop {
     /// translated.
     ///
     /// # Errors
+    /// `StoreError::Invalid` if `language` is no language tag,
     /// `StoreError::PermissionDenied` if `context` may not change the
     /// channel, or whatever else storing it reports.
-    pub async fn update_language(&self, context: &SecurityContext, language: Option<Language>) -> Result<()> {
-        self.channel.update_language(context, language.clone()).await?;
-        info!(channel = %self.id, language = language.as_ref().map_or("none", Language::as_str), by = %context.caller_id, "Channel language changed");
+    pub async fn update_language(&self, context: &SecurityContext, language: Option<&str>) -> Result<()> {
+        self.channel.update_language(context, language).await?;
+        info!(channel = %self.id, language = language.unwrap_or("none"), by = %context.caller_id, "Channel language changed");
         Ok(())
     }
 
@@ -2392,7 +2393,7 @@ mod tests {
 
         let store = Arc::new(MemoryStore::new());
         let personality = Personality {
-            description: String::new(),
+            description: None,
             introduction: None,
             reasoning_visibility: caelumora_model::confidentiality::Visibility::Channel,
             id: PersonalityId::new(),
@@ -3630,7 +3631,7 @@ mod tests {
 
         let store = Arc::new(MemoryStore::new());
         let personality = Personality {
-            description: String::new(),
+            description: None,
             introduction: None,
             reasoning_visibility: caelumora_model::confidentiality::Visibility::Channel,
             id: PersonalityId::new(),

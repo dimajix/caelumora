@@ -53,7 +53,7 @@ impl SessionView {
     }
 
     pub fn name(&self) -> &str {
-        &self.session.name
+        self.session.name.as_str()
     }
 
     /// What the session is for, in a line (issue 245); `None` if nobody said.
@@ -275,7 +275,7 @@ impl SessionView {
         }
         SessionSnapshot {
             id: self.session.id,
-            name: self.session.name.clone(),
+            name: self.session.name.to_string(),
             summary: self.session.summary.clone(),
             briefing: self.session.briefing.clone().filter(|_| detail.contains(Detail::BRIEFING)),
             privacy: self.session.privacy,

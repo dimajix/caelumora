@@ -23,15 +23,14 @@ pub async fn get_profile(State(state): State<Arc<AppState>>, user: Authenticated
 }
 
 /// Sets the user's profile: their introduction - `null` or empty removes
-/// it - and the language they prefer (issue 56), `null` for none. Answers
-/// `400 invalid_introduction` for an introduction that is too long or
-/// contains control characters. Changed through the user's controller, the
-/// profile's one writer (issue 13).
+/// it - and the language they prefer (issue 56), `null` or empty for none.
+/// Answers `400 invalid_value` for either that does not fit. Changed
+/// through the user's controller, the profile's one writer (issue 13).
 pub async fn update_profile(State(state): State<Arc<AppState>>, user: AuthenticatedUser, Json(payload): Json<ProfileRequest>) -> Result<Json<ProfileResponse>, ApiError> {
     let controller = controller_of(&state, &user).await?;
-    let profile = controller.update_profile(&user.security_context(), payload.introduction.as_deref(), payload.preferred_language).await
+    let profile = controller.update_profile(&user.security_context(), payload.introduction.as_deref(), payload.preferred_language.as_deref()).await
         .map_err(|e| match e {
-            StoreError::Validation(reason) => ApiError::new(StatusCode::BAD_REQUEST, "invalid_introduction", reason),
+            StoreError::Invalid(e) => ApiError::invalid_value(&e),
             e => ApiError::internal("profile_failed", "saving the profile", &e.into()),
         })?;
     Ok(Json(ProfileResponse::of(Some(profile))))

@@ -1,6 +1,6 @@
 # 248 — Text fields are checked by whoever writes them, not by their type
 
-**Status:** in progress
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -133,3 +133,16 @@ are not checked today are, or say why not.
   whitespace alone is `Blank`, one with a line break `LineBreak`. `Language` keeps its tag as
   written and is compared, hashed and named by the tag in the usual case; an empty one is `Empty`.
   With that, an event can carry a value as it was sent: it is exactly what the model keeps.
+- **2026-10-07** — Step 3 done; the issue is done. Strings at the whole API: loops, controllers,
+  `ChannelSpec`, the REST requests and the events `NameChanged`, `LanguageChanged` and
+  `DescriptionChanged` pass a text as it was given, and the model makes the value where it is
+  assigned - a controller as it applies an event, `create_channel` and `create_from_template` before
+  anything is made. A text that does not fit is `StoreError::Invalid(ValueError)`, which the REST
+  server answers as `400 invalid_value` naming the field, wherever in the chain it is found
+  (`ApiError::from_runtime`); `invalid_description` and `invalid_introduction` are gone, and
+  `ValueError` is one of the errors `user_message` shows. Newly checked: a session's name is a
+  `Name`; a personality's introduction an `Introduction`; a personality's and a session template's
+  `description` an `Option<Description>` (one line, at most 300), which the REST API still answers
+  as a string, empty for none. Left out, as decided: messages, notes, plan steps and the
+  descriptions of tools and commands. Found on the way: renaming a channel does not check its name
+  against the session's other channels - issue [250](250-channel-rename-without-duplicate-check.md).

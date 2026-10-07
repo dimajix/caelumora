@@ -264,12 +264,12 @@ mod tests {
 
     async fn personality(store: &MemoryStore, introduction: Option<&str>) -> Personality {
         let personality = Personality {
-            description: String::new(),
+            description: None,
             id: PersonalityId::new(),
             name: ScopedName::new("plain", Default::default()).unwrap(),
             kind: Default::default(),
             roles: None,
-            introduction: introduction.map(str::to_string),
+            introduction: introduction.map(|text| caelumora_model::value::text::Introduction::new(text).unwrap()),
             components: Default::default(),
             security_attributes: Default::default(),
             reasoning_visibility: Visibility::Channel,
@@ -310,7 +310,7 @@ mod tests {
         let session = Session {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
-            id: SessionId::new(), name: String::new(), participants: participants.clone(), channels: vec![ChannelId::new()],
+            id: SessionId::new(), name: caelumora_model::value::name::Name::new("s").unwrap(), participants: participants.clone(), channels: vec![ChannelId::new()],
             commands: Default::default(), privacy: Default::default(), created_at: now, updated_at: now, security_attributes: Default::default(),
             deleted: None,
         };

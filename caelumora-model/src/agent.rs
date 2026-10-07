@@ -15,7 +15,8 @@ use crate::transcript::{as_they_stand, GivenUp, GivenUpReason, Transcript, Trans
 use crate::turn::{TurnEntry, TurnState};
 use crate::work::{TurnId, Work};
 use crate::note::{NoteChain, NoteChange, NoteOrigin, Notes};
-use crate::value::name::{Name, ScopedName};
+use crate::value::name::ScopedName;
+use crate::value::text::{Description, Introduction};
 use crate::security::{Secured, SecurityAttributes, SecurityContext};
 use crate::store::Journaled;
 use crate::tool::{RecordedToolSets, Tool, ToolSet};
@@ -24,7 +25,9 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentUpdateEvent {
-    NameChanged(Name),
+    /// Renamed, as it was asked: the agent's name is made from it as the
+    /// change is applied (issue 248).
+    NameChanged(String),
 }
 
 
@@ -77,14 +80,14 @@ pub struct Personality {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub roles: Option<Vec<String>>,
     /// What the personality is, for whoever chooses one: a catalogue line.
-    #[serde(default)]
-    pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<Description>,
     /// How its agents are introduced (issue 176) - to the others in their
     /// channel and to themselves: who they are, what they are there for.
     /// Public, like an agent's name. Not `description`, which says what the
     /// personality is, to whoever chooses one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub introduction: Option<String>,
+    pub introduction: Option<Introduction>,
     /// Whether the agent first analyzes the request and proposes a
     /// structured plan requiring user approval before executing it, instead
     /// of answering directly, is derived from whether `components` wires in

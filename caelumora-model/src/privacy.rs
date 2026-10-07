@@ -166,7 +166,7 @@ mod tests {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
             id: Default::default(),
-            name: String::new(),
+            name: crate::value::name::Name::new("s").unwrap(),
             participants: vec![Participant::User(bob), Participant::Agent(Default::default())],
             channels: Vec::new(),
             commands: Default::default(),

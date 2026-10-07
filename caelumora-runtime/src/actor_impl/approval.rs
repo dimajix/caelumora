@@ -479,7 +479,7 @@ mod tests {
             ids.push(user.id);
         }
         let personality = Personality {
-            description: String::new(),
+            description: None,
             introduction: None,
             id: PersonalityId::new(),
             name: ScopedName::new("plain", Default::default()).unwrap(),

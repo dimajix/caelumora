@@ -41,29 +41,33 @@ Every entity has a name, and the fields that mean something for it (issue 177):
 
 The type of a name says what it is for (`caelumora_model::value::name`):
 
-*   **`Name`** - a name something is looked up by: a channel's. It is checked when it is made or
-    read as a text of its own rule (`NameRule`: one line, not empty, not of whitespace alone, no
-    control characters, at most `MAX_NAME_CHARS`), kept exactly as written, and compared by its
-    ASCII form (`any_ascii`) regardless of case and of how whitespace runs - "Jonathan" and
-    "jonathan" are one name, and so are "Zoë" and "Zoe", in a lookup, a map and a key. The form it
-    is compared by is made once, with the name. Its `handle` is what it is `@`-mentioned by.
+*   **`Name`** - a name something is or could be looked up by: a channel's, a session's (issue 248).
+    It is checked when it is made or read as a text of its own rule (`NameRule`: one line, not
+    empty, not of whitespace alone, no control characters, at most `MAX_NAME_CHARS`), kept exactly
+    as written, and compared by its ASCII form (`any_ascii`) regardless of case and of how
+    whitespace runs - "Jonathan" and "jonathan" are one name, and so are "Zoë" and "Zoe", in a
+    lookup, a map and a key. The form it is compared by is made once, with the name. Its `handle` is
+    what it is `@`-mentioned by.
 *   **`ScopedName`** - a `Name` with the `Scope` it lies in: what a definition is found by. Written
     into the document as the fields `name` and `scope`, the scope global unless named.
-*   **`String`** - a name that is only shown (a session's), or that is decided elsewhere: a user's
-    `username` is their login identity, owned by a user provider such as a directory, and opaque to
-    Caelumora.
+*   **`String`** - a name that is decided elsewhere: a user's `username` is their login identity,
+    owned by a user provider such as a directory, and opaque to Caelumora.
 
 `Name` is one of the values with rules (`caelumora_model::value`, issue
 [248](../issues/248-validated-text-fields.md)), with `Language` and the free text people write for
 others to read - `Text<R>`, whose rule `R` says how long it may be and whether it is one line
-(`Summary`, `Briefing`, `Introduction`): a field whose text may only be what its rules allow
-has a type that is made only through its constructor, `new`, and checked again when a document is
-read, so that a stored document that does not fit fails to load. They share one API - `FIELD`,
-`as_str`, `optional` (a missing or empty text is `None`), the conversions to and from a `String`, a
-string in the document - and one error, `ValueError`, whose message names the field. A value is
-checked, never changed: it is kept exactly as written, and what identifies something - a name, a
-language - is compared by a key made from it. None derefs to `str`: a `Name` is compared by its
-folded form, which `&*name == text` would bypass.
+(`Summary`, `Briefing`, `Introduction`, `Description`): a field whose text may only be what its
+rules allow has a type that is made only through its constructor, `new`, and checked again when a
+document is read, so that a stored document that does not fit fails to load. They share one API -
+`FIELD`, `as_str`, `optional` (a missing or empty text is `None`), the conversions to and from a
+`String`, a string in the document - and one error, `ValueError`, whose message names the field,
+which the stores report as `StoreError::Invalid` and the REST server answers as `400 invalid_value`.
+Above the model - in the loops, the controllers, their events and the REST requests - such a text is
+a string as it was given; the model makes the value where it is assigned, a controller as it applies
+an event (`Session::describe`, `Name::new` for a new name). A value is checked, never changed: it is
+kept exactly as written, and what identifies something - a name, a language - is compared by a key
+made from it. None derefs to `str`: a `Name` is compared by its folded form, which `&*name == text`
+would bypass.
 
 There are two implementations: `MemoryStore`, for tests, and `JsonFileStore`, which keeps one JSON
 file per document.
@@ -288,7 +292,9 @@ one task started with its first controller. That is the place where changes made
 will arrive (see [Several instances](#several-instances)).
 
 An event carries the resulting value (`NameChanged(name)`), so taking over an instance's own change
-again changes nothing. Agent events carry no session: `AgentUpdated(AgentId, …)`.
+again changes nothing. A text in it is a string, as it was given and as the model keeps it, made
+into the model's value as the event is applied; one that does not fit there is left out and logged
+(issue 248). Agent events carry no session: `AgentUpdated(AgentId, …)`.
 
 ## Several instances
 

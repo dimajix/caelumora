@@ -57,10 +57,11 @@ impl ChannelController {
     /// Renames the channel on behalf of `ctx` (`UpdateChannel`).
     ///
     /// # Errors
-    /// Whatever the store reports, `StoreError::PermissionDenied` included;
-    /// the channel is then unchanged.
-    pub async fn update_name(&self, ctx: &SecurityContext, new_name: Name) -> StoreResult<()> {
-        let event = ChannelUpdateEvent::NameChanged(new_name);
+    /// `StoreError::Invalid` if `new_name` is no name, otherwise whatever
+    /// the store reports, `StoreError::PermissionDenied` included; the
+    /// channel is then unchanged.
+    pub async fn update_name(&self, ctx: &SecurityContext, new_name: &str) -> StoreResult<()> {
+        let event = ChannelUpdateEvent::NameChanged(new_name.to_string());
         self.update(ctx, &event).await
     }
 
@@ -80,10 +81,11 @@ impl ChannelController {
     /// particular - on behalf of `ctx` (`UpdateChannel`, issue 56).
     ///
     /// # Errors
-    /// Whatever the store reports, `StoreError::PermissionDenied` included;
+    /// `StoreError::Invalid` if `language` is no language tag, otherwise
+    /// whatever the store reports, `StoreError::PermissionDenied` included;
     /// the channel is then unchanged.
-    pub async fn update_language(&self, ctx: &SecurityContext, language: Option<Language>) -> StoreResult<()> {
-        let event = ChannelUpdateEvent::LanguageChanged(language);
+    pub async fn update_language(&self, ctx: &SecurityContext, language: Option<&str>) -> StoreResult<()> {
+        let event = ChannelUpdateEvent::LanguageChanged(language.map(String::from));
         self.update(ctx, &event).await
     }
 
@@ -165,7 +167,7 @@ impl ChannelController {
     /// next turn.
     ///
     /// # Errors
-    /// `StoreError::Validation` if one does not fit (`Channel::describe`),
+    /// `StoreError::Invalid` if one does not fit (`Channel::describe`),
     /// otherwise whatever the store reports; the channel is then unchanged.
     pub async fn update_description(&self, ctx: &SecurityContext, summary: Option<&str>, briefing: Option<&str>) -> StoreResult<()> {
         self.update(ctx, &ChannelUpdateEvent::DescriptionChanged { summary: summary.map(String::from), briefing: briefing.map(String::from) }).await
@@ -188,21 +190,20 @@ impl ChannelController {
     }
 
     /// Applies `event`, stores the channel, takes it over and announces it.
+    /// What it says is made into the channel's values here (issue 248).
     ///
     /// # Errors
-    /// `StoreError::Validation` if a description does not fit
-    /// (`Channel::describe`), otherwise whatever the store reports.
+    /// `StoreError::Invalid` if what it says does not fit, otherwise
+    /// whatever the store reports.
     async fn update(&self, ctx: &SecurityContext, event: &ChannelUpdateEvent) -> StoreResult<()> {
         let _writing = self.write_lock.lock().await;
         let mut channel = (**self.channel.load()).clone();
         match event {
-            ChannelUpdateEvent::NameChanged(name) => channel.name = name.clone(),
+            ChannelUpdateEvent::NameChanged(name) => channel.name = Name::new(name)?,
             ChannelUpdateEvent::ClassificationChanged(classification) => channel.classification = classification.clone(),
-            ChannelUpdateEvent::LanguageChanged(language) => channel.language = language.clone(),
+            ChannelUpdateEvent::LanguageChanged(language) => channel.language = Language::optional(language.as_deref())?,
             ChannelUpdateEvent::ApprovalRulesChanged(rules) => channel.approval_rules = rules.clone(),
-            ChannelUpdateEvent::DescriptionChanged { summary, briefing } => {
-                channel.describe(summary.as_deref(), briefing.as_deref()).map_err(|e| StoreError::Validation(e.to_string()))?;
-            }
+            ChannelUpdateEvent::DescriptionChanged { summary, briefing } => channel.describe(summary.as_deref(), briefing.as_deref())?,
         }
         self.store(ctx, &channel).await?;
         let attributes = channel.security_attributes.clone();

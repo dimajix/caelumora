@@ -218,7 +218,7 @@ mod tests {
 
     async fn agent_in(store: &MemoryStore) -> Agent {
         let personality = Personality {
-            description: String::new(),
+            description: None,
             introduction: None,
             id: PersonalityId::new(),
             name: ScopedName::new("plain", Default::default()).unwrap(),
@@ -291,7 +291,7 @@ mod tests {
         let (agents_controller, users_controller) = (manager.agent_controller(agent.id).await.unwrap(), manager.user_controller(user.id).await.unwrap());
 
         // As another instance, or whoever changes users, would announce them.
-        bus.publish(GlobalEvent::AgentUpdated(agent.id, AgentUpdateEvent::NameChanged(Name::new("from elsewhere").unwrap())), Default::default());
+        bus.publish(GlobalEvent::AgentUpdated(agent.id, AgentUpdateEvent::NameChanged("from elsewhere".to_string())), Default::default());
         bus.publish(GlobalEvent::UserUpdated(user.id, UserUpdateEvent::NameChanged("alice b.".to_string())), Default::default());
 
         eventually(|| agents_controller.name() == "from elsewhere" && users_controller.username() == "alice b.").await;
@@ -303,8 +303,8 @@ mod tests {
         let agent = agent_in(&store).await;
         let controller = manager.agent_controller(agent.id).await.unwrap();
 
-        controller.update_name(&SecurityContext::system(), Name::new("first").unwrap()).await.unwrap();
-        controller.update_name(&SecurityContext::system(), Name::new("second").unwrap()).await.unwrap();
+        controller.update_name(&SecurityContext::system(), "first").await.unwrap();
+        controller.update_name(&SecurityContext::system(), "second").await.unwrap();
         // Both announcements come back through the follower; each carries
         // the name it set, so the last one leaves the last name.
         tokio::time::sleep(Duration::from_millis(50)).await;

@@ -75,7 +75,7 @@ fn personality() -> Personality {
         name: scoped("assistant"),
         kind: Default::default(),
         roles: None,
-        description: String::new(),
+        description: None,
         components: Default::default(),
         deleted: None,
     }
@@ -90,7 +90,7 @@ fn session_template() -> SessionTemplate {
         privacy: Default::default(),
         id: SessionTemplateId(Uuid::new_v4()),
         name: scoped("pairing"),
-        description: String::new(),
+        description: None,
         participants: vec![ParticipantTemplate::User { name: "user".to_string() }],
         channels: vec![ChannelTemplate {
             summary: None, briefing: None, language: None,
@@ -111,7 +111,7 @@ fn session() -> Session {
         commands: Default::default(),
         privacy: Default::default(),
         id: SessionId(Uuid::new_v4()),
-        name: "session".to_string(),
+        name: Name::new("session").unwrap(),
         participants: Vec::new(),
         channels: Vec::new(),
         created_at: Utc::now(),

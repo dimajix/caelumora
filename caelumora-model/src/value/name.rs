@@ -1,8 +1,8 @@
 //! Names that things are looked up by (issue 177): `Name`, and `ScopedName`
-//! for a definition that is found by name within its scope. A name that is
-//! only shown - a session's - stays a `String`; one that is decided
-//! elsewhere - a user's, which a user provider such as a directory owns -
-//! too: it is opaque to Caelumora.
+//! for a definition that is found by name within its scope - and a
+//! session's, which it could be looked up by (issue 248). A name that is
+//! decided elsewhere - a user's, which a user provider such as a directory
+//! owns - stays a `String`: it is opaque to Caelumora.
 
 use super::text::{Text, TextRule};
 use super::ValueError;

@@ -59,7 +59,7 @@ Everything except `POST /auth/login` and `POST /auth/logout` requires a logged-i
 | `POST /auth/refresh` | Renew the session |
 | `GET /templates` | The session templates a new session can be made from |
 | `GET /compartments` | The configured compartments a channel's classification may name (issue 133) |
-| `GET /profile`, `PUT /profile` | The logged-in user's own profile (issue 176): their `introduction`, `null` if none, `max_introduction_chars`, and the `preferred_language` their channels are held in, a BCP 47 tag or `null` (issue 56); `PUT` replaces both - `null` or empty removes the introduction, anything else is kept as written - and answers `400 invalid_introduction` for one that is too long, of whitespace alone or contains control characters; `GET` also answers the user's `approval_rules` (issue 13), which `PUT` leaves as they are |
+| `GET /profile`, `PUT /profile` | The logged-in user's own profile (issue 176): their `introduction`, `null` if none, `max_introduction_chars`, and the `preferred_language` their channels are held in, a BCP 47 tag or `null` (issue 56); `PUT` replaces both - `null` or empty removes the introduction, anything else is kept as written - and answers `400 invalid_value` for an introduction or a language that does not fit; `GET` also answers the user's `approval_rules` (issue 13), which `PUT` leaves as they are |
 | `POST /profile/approval-rules`, `DELETE /profile/approval-rules/{id}` | Add one of the user's answers to tool calls given in advance (issue 13) - `{matcher, decision, reach?, expires_at?}`, `allow` or `deny`, everywhere unless a `{session}` or `{channel}` is named - answered `201` with the rule and its id; `400 invalid_rule` for one that asks, has a pattern that cannot be matched, or is one too many. Take one back: `204`, `404 rule_not_found` |
 | `GET /sessions`, `POST /sessions` | List the user's sessions - with `?deleted=true` those they deleted and may read as such, the trash, each with `deleted` (who, when), `can_restore` and `can_purge` (issue 164); create one from a template (`SessionManager::create_from_template`) |
 | `GET /agents`, `DELETE /agents/{id}` | The agents the user may read, each with `can_delete` - with `?deleted=true` the trash of agents, like that of sessions; delete one: it leaves every channel it takes part in (issue 164) |
@@ -69,7 +69,7 @@ Everything except `POST /auth/login` and `POST /auth/logout` requires a logged-i
 | `PATCH /sessions/{id}`, `DELETE /sessions/{id}` | Rename, delete a session - marked and kept, with its channels (issue 164) |
 | `GET /sessions/{id}/actors/{aid}/private_notes` | The private notes an agent wrote in the channels of the session the user may read (issue 233): per channel its `channel_id`, `channel_name`, `notes` and the `digest` of their chain, sorted by the channel's name, channels without any left out - read as the agent's other private notes are, through `SessionView::private_notes_of`. `403 context_forbidden` for whoever may not read what the agent saw (`ReadAgentContext`) |
 | `PUT /sessions/{id}/privacy` | Change whom the session lets read what was said in it - its owner (`privacy`: `private`, `same_owner` or `shared_audience`, issue 134); answers the `SessionSnapshot` |
-| `PUT /sessions/{id}/description` | Say what the session is for - its owner (issue 245): `{summary, briefing}`, each replacing what it said, `null` or empty removing it, anything else kept as written; `400 invalid_description` for one too long, of whitespace alone, a summary of several lines, or control characters; answers the `SessionSnapshot`. Sessions carry `summary` - in lists too - and `briefing` where one is fetched, each left out where absent |
+| `PUT /sessions/{id}/description` | Say what the session is for - its owner (issue 245): `{summary, briefing}`, each replacing what it said, `null` or empty removing it, anything else kept as written; `400 invalid_value` for one that does not fit; answers the `SessionSnapshot`. Sessions carry `summary` - in lists too - and `briefing` where one is fetched, each left out where absent |
 | `PUT /sessions/{id}/approval-rules` | Set what the session restricts of the tool calls in its channels - its owner (issue 13): a list of rules that `ask` or `deny`, replacing those it had; `400 invalid_rule` for one that allows, reaches less than the session or has a pattern that cannot be matched; answers the `SessionSnapshot`, which carries `approval_rules` |
 | `GET …/channels`, `POST …/channels` | List a session's channels - with `?deleted=true` those deleted from it, like the sessions' trash (issue 164); create one, with an optional `classification` (`level` and `compartments`, see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)) and optional kinds of its `moderator` and `responder_policy` (see [CHANNELS.md](CHANNELS.md#moderators)), and an optional `language`, the user's preferred one if absent (issue 56) |
 | `GET …/channels/{cid}`, `DELETE …/channels/{cid}` | One channel, with its `former_members`, each with `left` - who removed it and when (issue 164); delete it - marked and kept (issue 164) |
@@ -158,10 +158,13 @@ extension members:
 *   `code`, a stable identifier, also the last segment of `type` (`urn:caelumora:problem:<code>`);
 *   `request_id`, which also appears as the `x-request-id` header and on the request's log span.
 
-Client errors state their cause. Server errors state it only if
-`caelumora_runtime::error::user_message` allows it, and otherwise point to the log. A refusal by the
-runtime (`caelumora_runtime::error::is_forbidden`) is a `403`, not a `500`. How handlers produce
-these errors is a rule of [CODING-GUIDELINES.md](CODING-GUIDELINES.md#rest-errors).
+Client errors state their cause. A text of the request that does not fit the field it is for - a
+name, a language, a summary, an introduction, too long, of whitespace alone, of several lines where
+one is asked for - is `400 invalid_value`, naming the field (`ValueError`, issue
+[248](../issues/248-validated-text-fields.md)), wherever it is found out. Server errors state it
+only if `caelumora_runtime::error::user_message` allows it, and otherwise point to the log. A
+refusal by the runtime (`caelumora_runtime::error::is_forbidden`) is a `403`, not a `500`. How
+handlers produce these errors is a rule of [CODING-GUIDELINES.md](CODING-GUIDELINES.md#rest-errors).
 
 ## Streams
 
