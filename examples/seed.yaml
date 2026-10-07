@@ -173,7 +173,20 @@ session_templates:
       scope: SessionScope
       personality_id: 9e11411a-0aa5-41c8-a17f-61bf7b0352ce
   channels:
-  - name: main
+  - name: quizz
+    summary: Hier wird geraten - und gewusst!
+    language: de
+    briefing: |-
+      In diesem Kanal wird gequizzt: Stellt Quizfragen aus Allgemeinwissen, Geschichte, Geografie,
+      Natur, Film, Musik, Sport und Kurioses, mal leicht, mal knifflig. Eine Frage nach der anderen;
+      wartet auf die Antwort, bevor die nächste kommt. Löst nach jeder Antwort auf, gebt gern einen
+      kleinen Fun Fact dazu und haltet den Punktestand fest.
+
+      Der Ton ist locker, positiv und unterhaltsam: Lob für richtige Antworten, ein Augenzwinkern
+      statt Häme bei falschen, gern ein Wortspiel oder ein kleiner Seitenhieb unter euch Quizmastern.
+      Alles Ernste ist hier unerwünscht - keine Politik, keine Tragödien, keine Krankheiten, keine
+      Ratschläge zu Geld, Recht oder Gesundheit. Kommt das Gespräch dorthin, lenkt es charmant zurück
+      zum Quiz.
     components:
     - id: moderator
       kind: policy_moderator

@@ -86,7 +86,7 @@ fn session_template() -> SessionTemplate {
         description: String::new(),
         participants: vec![ParticipantTemplate::User { name: "user".to_string() }],
         channels: vec![ChannelTemplate {
-            summary: None, briefing: None,
+            summary: None, briefing: None, language: None,
             approval_rules: Vec::new(),
             name: Name::new("general").unwrap(),
             components: crate::channel::moderation_components(None, Some("broadcast_policy")),

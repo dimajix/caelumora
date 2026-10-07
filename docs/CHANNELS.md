@@ -101,8 +101,9 @@ and deleted.
 A channel may be held in a language (`Channel::language`, issue 56): a BCP 47 tag (`Language`, such
 as `de` or `en-GB`), checked by its form and kept in its usual case. A channel created on request or
 from a template is held in the language its creator prefers (`UserProfile::preferred_language`)
-unless the request names another (`ChannelSpec::language`); one whose creator prefers none is held
-in none in particular. Whoever may change the channel changes it or takes it back
+unless the request names another (`ChannelSpec::language`) or its template does
+(`ChannelTemplate::language`, for a channel whose purpose comes with its language, such as a German
+quiz); one whose creator prefers none is held in none in particular. Whoever may change the channel changes it or takes it back
 (`ChannelLoop::update_language`), stored like a new name - where `UpdateChannel` is asked - and
 announced as `ChannelUpdateEvent::LanguageChanged`. Its agents are told by a prompt part (see
 [AGENT-TURN.md](AGENT-TURN.md#the-channels-language)); nothing said before is translated.

@@ -1322,7 +1322,7 @@ mod tests {
                 ParticipantTemplate::Approver { name: "approval".to_string(), strategy: ApprovalStrategy::All },
             ],
             channels: vec![ChannelTemplate {
-                summary: None, briefing: None,
+                summary: None, briefing: None, language: None,
                 approval_rules: Vec::new(),
                 name: Name::new("main").unwrap(),
                 components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),

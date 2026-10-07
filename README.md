@@ -54,7 +54,7 @@ cargo run -p caelumora-tui -- --config examples/config.yaml
 ```
 
 The TUI starts a session from the template `sassy-session`; `--template <name>`
-picks another. The templates and personalities come from the demo data that
+picks another. It talks in the template's first channel. The templates and personalities come from the demo data that
 `examples/config.yaml` seeds (`examples/seed.yaml`) - without a configuration
 there are none. The TUI writes its log to `local/tui.log`.
 

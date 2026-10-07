@@ -85,3 +85,7 @@ participant reads as it is (and which history, notes, digests and `read_history`
   the prompt catalogue ([57](57-prompt-catalogue.md)) and is worth it only if a comparison on the
   models in use shows it; and creating a channel explicitly held in no language by someone who
   prefers one - it is taken back after creating.
+- **2026-10-07** — A channel template may name its channel's language (`ChannelTemplate::language`),
+  which then holds for whoever creates the session, before the language they prefer: a channel
+  whose purpose comes with a language - the German quiz of the demo template `sassy-session` - is
+  held in it. Templates are not seen over REST, so the web UI does not change.

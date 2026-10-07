@@ -44,7 +44,7 @@ fn render_content(message: &Message, content: &str, handles: &HashMap<ActorId, S
 
 async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()> {
     let user_actor = channel.user_actor(user)
-        .ok_or_else(|| anyhow::anyhow!("The user is not a participant of the main channel"))?;
+        .ok_or_else(|| anyhow::anyhow!("The user is not a participant of the channel"))?;
 
     let mut receiver = user_actor.watch().events;
     let mut input_rx = spawn_rustyline_input();
@@ -341,9 +341,9 @@ async fn main() -> anyhow::Result<()> {
     let session_loop = session_manager.create_from_template(&security, template.id, Some("default-session".to_string())).await?;
     let session_id = session_loop.id();
 
-    let channel = session_loop
-        .channel_by_name("main")
-        .ok_or_else(|| anyhow::anyhow!("Cannot find main channel in session"))?;
+    // The template's first channel, whatever it is called.
+    let channel = session_loop.channels().into_iter().next()
+        .ok_or_else(|| anyhow::anyhow!("Session template '{}' has no channel", args.template))?;
 
     // Who answers, as the views tell it (issue 174).
     let view = session_manager.views(Viewer::new(security.clone())).session(session_id).await?.channel(channel.id()).await?;

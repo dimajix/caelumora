@@ -216,7 +216,7 @@ impl World {
                 ParticipantTemplate::Agent { name: Name::new(agent).unwrap(), scope: ScopeTemplate::UserScope, personality_id: personality },
             ],
             channels: vec![ChannelTemplate {
-                summary: None, briefing: None,
+                summary: None, briefing: None, language: None,
                 approval_rules: Vec::new(),
                 name: Name::new("main").unwrap(),
                 components: quiet(),
