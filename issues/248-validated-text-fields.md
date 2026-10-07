@@ -120,3 +120,10 @@ are not checked today are, or say why not.
   taken for nothing, since that would not be transparent. `Text::new` refuses an empty text
   (`ValueError::Empty`) and one of whitespace alone (`ValueError::Blank`), and keeps any other
   exactly as written. A `Name` or `Language` of whitespace is an error, too, being tidied first.
+- **2026-10-07** — Where the strings become values (maintainer's decision, after both were built
+  and compared): at the API - the loops, the controllers, the events and REST requests - a text is
+  a string; the model makes the typed value where it is assigned (`Session::describe`,
+  `Channel::describe`, `UserProfile::introduce`), which the controllers do as they apply an event,
+  and a text that does not fit is `StoreError::Validation`. The variant with typed parameters
+  (step 2 as first committed) was not taken. Step 3 follows this: `update_name` and
+  `update_language`, which take a `Name` and a `Language` today, are to take strings as well.
