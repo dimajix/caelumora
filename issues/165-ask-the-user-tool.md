@@ -104,6 +104,227 @@ for.
   form, and shows question and answer in the history - through a handler chosen by the call's
   presentation, with the default presentation for every other tool.
 
+## Decisions
+
+Taken with the maintainer on 2026-10-07, after weighing the alternatives recorded under History.
+
+- **Questions are a facet of a tool, not a tool of their own.** Before a call runs, the runtime asks
+  its tool whether it has questions for a user (`ToolProvider::questions`, beside `describe` and
+  `matcher`). The answers are handed to the tool's `execute` as a parameter of their own; the tool
+  does with them what it wants. `ask_user` is only the simplest such tool: it formats the answers
+  as its result.
+- **The answers are not messages.** They go neither into the history nor into the transcript. What
+  the model learns of them is what the tool puts into its result - `ask_user` all of it, a tool
+  asking for something sensitive nothing. This is a channel to a tool that bypasses the model.
+- **The turn waits, it is not ended.** The call is parked like a call waiting for an approval: the
+  turn is stored, survives a restart, and goes on with the result once the answers have come - a
+  plan in progress included. The tool never blocks; `execute` runs only once the answers are there.
+  A tool that waited inside `execute` would lose the question on a restart and would need a way to
+  the agent's inbox around its run loop.
+- **No approver.** A question is not decided by a strategy among several people: the first valid
+  answer of someone asked settles it. The question goes from the agent to the users, the answer from
+  a user to the agent alone. This is a deliberate difference to approvals, which go through the
+  `ApproverActor` to everyone who may approve.
+- **Approval first, then the questions.** A call whose tool requires approval and has questions is
+  put up for approval first; only an approved call asks its questions. Whoever approves sees the
+  arguments, never the answers. A place's `ask` rule concerns the approval, not the questions.
+- **Prose instead of the form declines.** A message from someone asked, written while the question
+  is open, declines the whole call; the message itself is then processed as usual.
+- **`ask` is required.** `ask_user` names whom it asks, at least one handle. Asking everyone who
+  may write would make a question fragile in a busy channel: any message of anyone would decline
+  it.
+- **Declining.** A single question can be declined within the answers; declining the whole call -
+  by the button, or by writing instead - answers it as `declined` without running the tool.
+- **Lifecycle and outcome are separated.** The state of a call in its turn becomes a lifecycle enum
+  (`ToolCallStatus`) whose last variant holds the result; how a call ended is said by the result's
+  `ToolResultStatus` alone. `ApprovalStatus` is again only the approver's decision.
+- **Presentation is display only.** Whether a call asks is decided by `questions`, not by the
+  presentation. `Tool::presentation` only says how a call and its result are shown in the history -
+  for `ask_user` as questions and answers.
+- **Prepared for sensitive questions.** No tool asking for something sensitive is built here, but
+  everything it needs is: a tool says of its questions whether they are *sensitive*, and that
+  changes what is stored, logged, shown and to whom (see
+  [Sensitive questions](#sensitive-questions)). This issue is done only once the runtime keeps
+  those rules, tested with a sensitive test tool.
+
+## Plan
+
+### The model (`caelumora-model`)
+
+A new module `question.rs`, the contract between tools, runtime, REST and UI:
+
+- `Questions` - what a call asks: `questions: Vec<Question>`, whom it asks (`ask: Vec<Addressee>`)
+  and whether it is `sensitive`. Set by the tool, never by the model: a model can only fill in
+  what a tool such as `ask_user` lets it fill in.
+- `Question` - `header` (at most 12 characters), `question`, `choices: Vec<Choice>` and
+  `multi_select`. Without choices it is free text; with choices a single choice; with
+  `multi_select` a multiple choice. Yes/no is a choice with two options.
+- `Choice` - `label`, an optional `description`, `recommended: bool`.
+- `Addressee` - `Handle(String)` as a model writes it (`ask_user`), or `Owner`, the agent's owner,
+  for a tool that decides itself whom it asks. The runtime resolves them to `ActorId`s when the
+  call is admitted; an unknown handle makes the call invalid.
+- `Answers` - who answered (`ActorId` and name, set by the runtime) and one `Response` per
+  question, in their order: `Chosen { chosen: Vec<String>, other: Option<String> }`,
+  `Text { text }` or `Declined`. The "Other" row of a choice is `other`.
+- `Questions::check()` - the limits (1-5 questions, 2-4 choices each, the header's length),
+  reported as invalid arguments. `Questions::check_answers(&Answers)` - one response per question,
+  of the kind the question asks, chosen labels among the choices, one only without `multi_select`.
+- `QuestionId` (`define_id!`) - the runtime's id of an open question. The answer refers to it, not
+  to `ToolCall::id`: that one is the model's, optional, and some backends repeat it across turns.
+- `QuestionRequest` - what the users are sent: `id`, session, channel, `agent_id`, the
+  `tool_call` (as published, by its visibility), the `Questions` with resolved addressees.
+- `ToolResultStatus::Declined`, with its fixed text in `crate::tool` (`declined_result`).
+
+`Answers` has a `Debug` that shows the number of responses, never their content. Answers are
+logged nowhere but explicitly, and those of sensitive questions not at all.
+
+### The state of a call (`caelumora-model/src/tool.rs`, `turn.rs`)
+
+```rust
+pub struct ToolCallState {
+    pub tool_call: ToolCall,
+    pub status: ToolCallStatus,
+}
+
+pub enum ToolCallStatus {
+    /// A person decides whether it may run; it asks `questions` afterwards.
+    WaitingApproval { id: ApprovalId, description: String, explicit: bool, suggested: ToolMatcher, questions: Option<Questions> },
+    /// A person gives the answers it runs with.
+    WaitingUser { id: QuestionId, questions: Questions },
+    /// It may run, with the answers if it asked.
+    Ready { answers: Option<Answers> },
+    /// It ended; how is said by the result.
+    Finished(ToolCallResult),
+}
+```
+
+- What only an approval needs - `description`, `explicit`, `suggested`, the `ApprovalId` - lives in
+  `WaitingApproval` alone, no longer on every call.
+- `ApprovalStatus` loses `Pending` and is `Approved | Denied | Timeout`, the approver's decision.
+- The answers of a sensitive question are never serialized (`skip_serializing_if` on their
+  sensitivity). Nothing is lost by it: a turn resumed in `ExecutingTools` answers every `Ready`
+  call as `not_executed` anyway (`prepare_resume`).
+- Turns stored in the old, flat form (`id`, `status`, `description`, ..., `result`) are read through
+  `#[serde(from = ...)]` with the old form as a private type.
+- `ActorState::WaitingForApproval` becomes `WaitingForUser`, with a serde alias for stored states.
+- `TurnState::pending_approvals` reads `WaitingApproval`; a new `TurnState::pending_questions`
+  reads `WaitingUser`.
+
+### Tools (`caelumora-runtime/src/tool.rs`)
+
+- `ToolProvider::questions(name, params) -> ToolResult<Option<Questions>>`, by default `None`; an
+  error is invalid arguments, as with `describe`.
+- `ToolProvider::execute(name, params, answers: Option<&Answers>, turn)` and
+  `ToolExecutor::execute(call, answers, turn)`: every implementation gets the parameter; those
+  that do not ask ignore it.
+- `Tool::presentation` (`Default | Question`), stamped on `ToolCall::presentation` by the agent like
+  `visibility`, so that the history can be shown as the call was made.
+- `GuardedToolExecutor::admit`, in this order: the policy, a place's `deny` rule, `describe`, then
+  `questions` and `Questions::check`, and the addressees resolved - each failure answered at once.
+  Then: approval if the tool or a place's rule asks for it (`WaitingApproval`, keeping the
+  questions), else the questions (`WaitingUser`), else `Ready`. `Admission` gets the variant for
+  questions.
+- `GuardedToolExecutor::execute` hands the answers through; the result is made and classified as
+  for every call, in the one place.
+
+### The flow (`caelumora-runtime`)
+
+1. **Asking.** `AgentActor::request_approvals` sends `ApprovalRequested` for `WaitingApproval` and
+   the new `QuestionRequested(QuestionRequest)` for `WaitingUser`. `ToolCalls::decide` turns an
+   approval into `WaitingUser` if the call has questions - and returns the requests to send - or
+   into `Ready`; a denial or timeout into `Finished` with the result at once.
+2. **Routing.** The moderator sends `QuestionRequested` to the users of the channel - only to the
+   addressees if sensitive - never to the approver or other agents. On a restart the agent sends
+   the open questions again from its turn, with the same ids (as `request_pending_approvals`).
+3. **Waiting.** `handle_waiting_for_user` (today `handle_waiting_for_approval`) waits for approval
+   decisions, for `QuestionAnswered` and `QuestionDeclined` - routed from the user to the asking
+   agent only - and for a message from someone asked while a question is open. A cancel or a stop
+   ends the waiting as now.
+4. **Answering.** `UserActor::send_answer` checks the new action `AnswerQuestion` - who may write in
+   the channel - with `Enforcement::require` and sends the answer. The agent takes it only if its
+   sender is an addressee of the question, the question is still open and
+   `Questions::check_answers` accepts it; else it is left out and logged, without its content.
+   Who answered is set into the `Answers` by the agent from the envelope, never from the event's
+   content. The first accepted answer settles the call (`Ready { answers }`); later ones find no
+   open question.
+5. **Declining.** `QuestionDeclined`, or a message from an addressee, answers the call as
+   `declined` (`Finished`). The message stays the next to be processed after the turn - whether by
+   leaving it queued or by taking it in again is decided in the step.
+6. **Closing.** Once a question is no longer open - answered, declined, or abandoned as the turn
+   ends - the agent sends `QuestionClosed { id }` to the users it asked, so that every frontend
+   closes its form; `withdraw_approval_requests` becomes the one place that closes both kinds.
+7. **Running.** `ExecutingTools` runs the `Ready` calls with their answers; `collect` builds the
+   tool message once every call is `Finished`, and the turn goes on in `Planning`.
+
+The snapshot of a member gets `pending_questions` beside `pending_approvals`, filtered per viewer:
+a sensitive question only for its addressees.
+
+### Sensitive questions
+
+A tool says per call whether its questions are sensitive (`Questions::sensitive`); `ask_user` never
+is, since its answers go to the model. For sensitive questions:
+
+1. **Not stored.** The answers are kept in memory only, until the tool ran; they are not in the
+   stored turn, not in the history, not in the transcript.
+2. **Not logged.** Not even at `trace`; `Answers`' `Debug` hides them for every question.
+3. **Only to those asked.** The request, the snapshot entry and `QuestionClosed` reach only the
+   addressees; only their answer counts.
+4. **Whom it asks is the tool's.** A sensitive tool does not take its addressees from the model
+   (e.g. `Addressee::Owner`), so that the model cannot choose who is asked for a password.
+5. **The UI says where the answer goes.** For a sensitive question: "goes only to the tool <name>,
+   the agent does not see it", input masked; otherwise: "goes to the agent". The flag comes from
+   the tool, so a model cannot make an `ask_user` question look like a trustworthy tool's.
+6. **The tool's result does not repeat them** - the tool's responsibility, documented in
+   [TOOLS-AND-COMMANDS.md](../docs/TOOLS-AND-COMMANDS.md).
+7. **Only the in-memory transport.** A transport that keeps envelopes
+   ([122](122-several-instances.md)) must not keep answers to sensitive questions.
+
+### REST and frontends
+
+- `POST /sessions/{session}/channels/{channel}/questions/{id}` with `agent_id` and either
+  `answers` or `declined: true`; errors as `ApiError`. The snapshot gains `pending_questions`;
+  `ToolResultStatus` gains `declined`. Additions only, compatible with the web UI.
+- **Web UI.** A form for `QuestionRequest`s, generic over `Questions`: buttons for a choice with
+  two options, a list for one or several, a text field, the "Other" row, the recommended option
+  marked, a "decline" button, masked input and the hint where the answer goes. Only addressees get
+  the controls; others see the question. A registry of handlers by `ToolCall::presentation`, with
+  today's rendering as the default handler; the `question` handler shows an `ask_user` call and its
+  result as questions and answers in the history.
+- **TUI.** A pending question shown as text, answered by typed input in the expected form.
+
+### Steps
+
+Each a step of its own, to be reviewed separately; 0 to 2 change no behaviour.
+
+0. **The state of a call.** `ToolCallStatus` with the result in `Finished`; `ApprovalStatus`
+   without `Pending`; reading the old stored form; `WaitingForApproval` renamed to
+   `WaitingForUser` (alias), the web UI and the TUI along.
+1. **Presentation.** `Tool::presentation`, stamped on `ToolCall`; the web UI's registry of handlers
+   with the default handler.
+2. **Questions in the model and the tool traits.** `question.rs` with its checks and tests;
+   `ToolProvider::questions`; the answers as a parameter of `execute` throughout.
+3. **Waiting for answers.** `admit` with questions and approval first; the events and their
+   routing; `AnswerQuestion` and `UserActor::send_answer`; waiting, declining by prose, closing,
+   asking again after a restart; `pending_questions`; the REST endpoint; `declined`; the rules for
+   sensitive questions. Tested with a test tool, a sensitive one among them; the security suite
+   gets: an answer of someone not asked is left out, a sensitive question and its snapshot entry
+   reach no one else, `AnswerQuestion` is required. Documented in TOOLS-AND-COMMANDS.md,
+   AGENT-TURN.md, SECURITY.md, REST-SERVER.md.
+4. **`ask_user_tool`.** The tool with `questions` (array of 1-5) and `ask` (handles, required, at
+   least one); its description tells the model to put options only into `choices`, never into the
+   question text, and to ask independent questions in one call; `presentation: question`; its result
+   `{"answered_by": ..., "responses": [...]}`. Into the table of built-in tools.
+5. **Web UI.** The form, the `question` handler, the REST client, the pending questions in
+   `ChatView` and in the snapshot.
+6. **TUI.**
+
+### Open questions
+
+- **Where handles are resolved.** `admit` needs the channel's `MentionDirectory`, which today the
+  `ChannelLoop` holds; how the guard reaches it is decided in step 3.
+- **The names of the events** (`QuestionRequested`, `QuestionAnswered`, `QuestionDeclined`,
+  `QuestionClosed`) are working titles.
+
 ## History
 
 - **2026-10-01** — Opened at the maintainer's request.
@@ -111,3 +332,15 @@ for.
   questions per call, the kind derived from the shape, an "Other" row, an explicit recommended
   option, a `header`, and an explicit "declined" instead of a timeout. Decided by the maintainer:
   yes/no is a choice with two options, not a kind of its own.
+- **2026-10-07** — Discussed with the maintainer; decisions and plan above. Weighed and left:
+  answering as an approval with a payload, decided by the `ApproverActor` (its strategies, timeout
+  and personal rules do not fit a question, which the first valid answer settles); `ask_user` ending
+  the turn and the answer coming as a normal message built by the UI (simple, but a plan in
+  progress would be lost and the model could not go on with the answer); the tool waiting inside
+  `execute` (lost on a restart, and no way to the agent's inbox); extending `ApprovalStatus`, then a
+  lifecycle enum beside `result` (outcome and lifecycle mixed, or two sources of one truth). The
+  maintainer's proposal - the runtime asks the tool for its questions, the answers go to the tool's
+  `execute`, not into history or transcript - opens a channel to tools that bypasses the model, for
+  sensitive information; this issue prepares for such a tool without building one. Decided by the
+  maintainer: approval before the questions; a message instead of the form declines the call;
+  `ask_user`'s `ask` is required.
