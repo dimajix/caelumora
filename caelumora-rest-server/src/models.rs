@@ -12,8 +12,6 @@ use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::template::{SessionTemplate, SessionTemplateId};
 use caelumora_model::user::UserProfile;
 use caelumora_model::value::text::{Briefing, Introduction, Summary};
-use crate::error::ApiError;
-use axum::http::StatusCode;
 use caelumora_model::work::TurnId;
 use caelumora_model::snapshot;
 use caelumora_runtime::view::{Reached, SessionView};
@@ -116,18 +114,6 @@ pub struct ProfileRequest {
     /// request.
     #[serde(default)]
     pub preferred_language: Option<Language>,
-}
-
-impl ProfileRequest {
-    /// The introduction as a profile keeps it, as written; none if empty.
-    ///
-    /// # Errors
-    /// `400 invalid_introduction` for one that is too long or contains
-    /// control characters.
-    pub(crate) fn introduction(&self) -> Result<Option<Introduction>, ApiError> {
-        Introduction::optional(self.introduction.as_deref())
-            .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, "invalid_introduction", e.to_string()))
-    }
 }
 
 /// A compartment a classification may name (issue 133), as configured.
@@ -354,19 +340,6 @@ pub struct DescriptionRequest {
     pub summary: Option<String>,
     #[serde(default)]
     pub briefing: Option<String>,
-}
-
-impl DescriptionRequest {
-    /// The summary and briefing as a session or channel keeps them; none
-    /// for one that is empty.
-    ///
-    /// # Errors
-    /// `400 invalid_description` for the first that is too long or holds
-    /// what it may not.
-    pub(crate) fn description(&self) -> Result<(Option<Summary>, Option<Briefing>), ApiError> {
-        let invalid = |e: caelumora_model::value::ValueError| ApiError::new(StatusCode::BAD_REQUEST, "invalid_description", e.to_string());
-        Ok((Summary::optional(self.summary.as_deref()).map_err(invalid)?, Briefing::optional(self.briefing.as_deref()).map_err(invalid)?))
-    }
 }
 
 /// A session's new privacy policy (issue 134).
@@ -894,15 +867,7 @@ mod tests {
         let json = serde_json::to_value(ChannelResponse::from(described)).unwrap();
         assert_eq!((&json["summary"], &json["briefing"]), (&serde_json::json!("Planning"), &serde_json::json!("Dates in UTC.")));
         let request: DescriptionRequest = serde_json::from_value(serde_json::json!({ "summary": "Planning" })).unwrap();
-        assert_eq!(request.description().unwrap(), (Some(Summary::new("Planning").unwrap()), None), "one left out is none: removed");
-        let empty: DescriptionRequest = serde_json::from_value(serde_json::json!({ "briefing": "" })).unwrap();
-        assert_eq!(empty.description().unwrap(), (None, None), "and so is an empty one");
-        let blank: DescriptionRequest = serde_json::from_value(serde_json::json!({ "summary": " " })).unwrap();
-        let refused = blank.description().unwrap_err();
-        assert_eq!((refused.status(), refused.code()), (StatusCode::BAD_REQUEST, "invalid_description"), "whitespace alone is refused, not taken for nothing");
-        let invalid: DescriptionRequest = serde_json::from_value(serde_json::json!({ "summary": "two\nlines" })).unwrap();
-        let refused = invalid.description().unwrap_err();
-        assert_eq!((refused.status(), refused.code()), (StatusCode::BAD_REQUEST, "invalid_description"));
+        assert_eq!((request.summary.as_deref(), request.briefing), (Some("Planning"), None), "one left out is none: removed");
     }
 
     #[test]

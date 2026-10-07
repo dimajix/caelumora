@@ -1,7 +1,6 @@
 use caelumora_model::value::name::Name;
 use arc_swap::ArcSwap;
 use caelumora_model::value::language::Language;
-use caelumora_model::value::text::{Briefing, Summary};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::actor::ActorId;
 use caelumora_model::approval::ApprovalRule;
@@ -161,13 +160,15 @@ impl ChannelController {
     }
 
     /// Says what the channel is for (issue 245) on behalf of `ctx`
-    /// (`UpdateChannel`): `summary` and `briefing` replace what it said -
-    /// `None` removes it. They reach its agents with their next turn.
+    /// (`UpdateChannel`): `summary` and `briefing` replace what it said - a
+    /// missing or empty one removes it. They reach its agents with their
+    /// next turn.
     ///
     /// # Errors
-    /// Whatever the store reports; the channel is then unchanged.
-    pub async fn update_description(&self, ctx: &SecurityContext, summary: Option<Summary>, briefing: Option<Briefing>) -> StoreResult<()> {
-        self.update(ctx, &ChannelUpdateEvent::DescriptionChanged { summary, briefing }).await
+    /// `StoreError::Validation` if one does not fit (`Channel::describe`),
+    /// otherwise whatever the store reports; the channel is then unchanged.
+    pub async fn update_description(&self, ctx: &SecurityContext, summary: Option<&str>, briefing: Option<&str>) -> StoreResult<()> {
+        self.update(ctx, &ChannelUpdateEvent::DescriptionChanged { summary: summary.map(String::from), briefing: briefing.map(String::from) }).await
     }
 
     /// The event announcing that `participant` joined or left.
@@ -187,6 +188,10 @@ impl ChannelController {
     }
 
     /// Applies `event`, stores the channel, takes it over and announces it.
+    ///
+    /// # Errors
+    /// `StoreError::Validation` if a description does not fit
+    /// (`Channel::describe`), otherwise whatever the store reports.
     async fn update(&self, ctx: &SecurityContext, event: &ChannelUpdateEvent) -> StoreResult<()> {
         let _writing = self.write_lock.lock().await;
         let mut channel = (**self.channel.load()).clone();
@@ -196,8 +201,7 @@ impl ChannelController {
             ChannelUpdateEvent::LanguageChanged(language) => channel.language = language.clone(),
             ChannelUpdateEvent::ApprovalRulesChanged(rules) => channel.approval_rules = rules.clone(),
             ChannelUpdateEvent::DescriptionChanged { summary, briefing } => {
-                channel.summary = summary.clone();
-                channel.briefing = briefing.clone();
+                channel.describe(summary.as_deref(), briefing.as_deref()).map_err(|e| StoreError::Validation(e.to_string()))?;
             }
         }
         self.store(ctx, &channel).await?;

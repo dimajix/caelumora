@@ -2,7 +2,6 @@ use arc_swap::ArcSwap;
 use caelumora_model::approval::{ApprovalRule, ApprovalRuleId};
 use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::value::language::Language;
-use caelumora_model::value::text::Introduction;
 use caelumora_model::security::{Secured, SecurityContext};
 use caelumora_model::store::{EntityStore, StoreError, StoreResult};
 use caelumora_model::user::{User, UserId, UserProfile, UserUpdateEvent};
@@ -67,10 +66,12 @@ impl UserController {
     /// stands.
     ///
     /// # Errors
-    /// Whatever the store reports; the profile is then unchanged.
-    pub async fn update_profile(&self, ctx: &SecurityContext, introduction: Option<Introduction>, preferred_language: Option<Language>) -> StoreResult<UserProfile> {
+    /// `StoreError::Validation` for an introduction that does not fit
+    /// (`UserProfile::introduce`), otherwise whatever the store reports; the
+    /// profile is then unchanged.
+    pub async fn update_profile(&self, ctx: &SecurityContext, introduction: Option<&str>, preferred_language: Option<Language>) -> StoreResult<UserProfile> {
         self.change(ctx, |profile| {
-            profile.introduction = introduction;
+            profile.introduce(introduction).map_err(|e| StoreError::Validation(e.to_string()))?;
             profile.preferred_language = preferred_language;
             Ok(())
         }).await.map(|(_, profile)| profile)
@@ -164,6 +165,7 @@ impl UserController {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::value::text::Introduction;
     use caelumora_model::actor::ActorId;
     use caelumora_model::store_impl::memory::MemoryStore;
     use caelumora_model::security::OwnershipSecurityManager;
@@ -196,7 +198,7 @@ mod tests {
         let hers = as_user(user.id);
 
         for text in ["I run the budget.", "I run the budget and the team."] {
-            let profile = controller.update_profile(&hers, Some(Introduction::new(text).unwrap()), None).await.expect("her own, created once and changed after");
+            let profile = controller.update_profile(&hers, Some(text), None).await.expect("her own, created once and changed after");
             assert_eq!(profile.introduction.as_ref().map(Introduction::as_str), Some(text));
             assert_eq!(controller.profile().introduction.as_ref().map(Introduction::as_str), Some(text), "live");
             assert_eq!(store.get_user_profile(&hers, user.id).await.unwrap().introduction.as_ref().map(Introduction::as_str), Some(text), "stored");
@@ -211,7 +213,10 @@ mod tests {
         let user = alice();
         let controller = UserController::new(user.clone(), None, Arc::<Announced>::clone(&announced), Arc::<MemoryStore>::clone(&store));
 
-        let forged = controller.update_profile(&as_user(UserId::new()), Some(Introduction::new("I am alice.").unwrap()), None).await;
+        let invalid = controller.update_profile(&as_user(user.id), Some("a\u{1b}[2Jb"), None).await;
+        assert!(matches!(invalid, Err(StoreError::Validation(_))), "{invalid:?}");
+
+        let forged = controller.update_profile(&as_user(UserId::new()), Some("I am alice."), None).await;
         assert!(matches!(forged, Err(StoreError::PermissionDenied)), "not by someone else: {forged:?}");
 
         assert_eq!(controller.profile().introduction, None);
@@ -225,7 +230,7 @@ mod tests {
         let user = alice();
         let controller = UserController::new(user.clone(), None, Arc::new(()), Arc::<MemoryStore>::clone(&store));
         let hers = as_user(user.id);
-        controller.update_profile(&hers, Some(Introduction::new("I run the budget.").unwrap()), None).await.unwrap();
+        controller.update_profile(&hers, Some("I run the budget."), None).await.unwrap();
         let rule = ApprovalRule::new(ToolMatcher { tool: "shell".to_string(), arguments: Default::default() }, RuleDecision::Allow, Reach::Everywhere, None).unwrap();
 
         assert!(matches!(controller.add_approval_rule(&as_user(UserId::new()), rule.clone()).await, Err(StoreError::PermissionDenied)), "not by someone else");

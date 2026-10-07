@@ -29,9 +29,11 @@ pub async fn get_profile(State(state): State<Arc<AppState>>, user: Authenticated
 /// profile's one writer (issue 13).
 pub async fn update_profile(State(state): State<Arc<AppState>>, user: AuthenticatedUser, Json(payload): Json<ProfileRequest>) -> Result<Json<ProfileResponse>, ApiError> {
     let controller = controller_of(&state, &user).await?;
-    let introduction = payload.introduction()?;
-    let profile = controller.update_profile(&user.security_context(), introduction, payload.preferred_language).await
-        .map_err(|e| ApiError::internal("profile_failed", "saving the profile", &e.into()))?;
+    let profile = controller.update_profile(&user.security_context(), payload.introduction.as_deref(), payload.preferred_language).await
+        .map_err(|e| match e {
+            StoreError::Validation(reason) => ApiError::new(StatusCode::BAD_REQUEST, "invalid_introduction", reason),
+            e => ApiError::internal("profile_failed", "saving the profile", &e.into()),
+        })?;
     Ok(Json(ProfileResponse::of(Some(profile))))
 }
 

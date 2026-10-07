@@ -5,6 +5,7 @@ use crate::privacy::PrivacyConfig;
 use crate::security::{Secured, SecurityAttributes};
 use chrono::{DateTime, Utc};
 use crate::value::text::{Briefing, Summary};
+use crate::value::ValueError;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,7 +16,7 @@ pub enum SessionUpdateEvent {
     /// Its rules on tool calls changed (issue 13), as they now stand.
     ApprovalRulesChanged(Vec<ApprovalRule>),
     /// What it is for changed (issue 245), as it now stands.
-    DescriptionChanged { summary: Option<Summary>, briefing: Option<Briefing> },
+    DescriptionChanged { summary: Option<String>, briefing: Option<String> },
 }
 
 define_id!(SessionId);
@@ -59,6 +60,19 @@ pub struct Session {
 }
 
 crate::impl_deletable!(Session);
+
+impl Session {
+    /// Says what the session is for (issue 245): `summary` and `briefing`
+    /// replace what it said - a missing or empty one removes it.
+    ///
+    /// # Errors
+    /// `ValueError` for the first that does not fit; the session is then
+    /// unchanged.
+    pub fn describe(&mut self, summary: Option<&str>, briefing: Option<&str>) -> Result<(), ValueError> {
+        (self.summary, self.briefing) = (Summary::optional(summary)?, Briefing::optional(briefing)?);
+        Ok(())
+    }
+}
 
 impl Secured for Session {
     fn security_attributes(&self) -> &SecurityAttributes {

@@ -9,6 +9,7 @@ use crate::message::MessageId;
 use crate::message_history::{HistoryEntry, MessageHistory};
 use crate::value::name::Name;
 use crate::value::text::{Briefing, Summary};
+use crate::value::ValueError;
 use crate::security::{Secured, SecurityAttributes};
 use crate::session::SessionId;
 use crate::store::Journaled;
@@ -27,7 +28,7 @@ pub enum ChannelUpdateEvent {
     /// Its rules on tool calls changed (issue 13), as they now stand.
     ApprovalRulesChanged(Vec<ApprovalRule>),
     /// What it is for changed (issue 245), as it now stands.
-    DescriptionChanged { summary: Option<Summary>, briefing: Option<Briefing> },
+    DescriptionChanged { summary: Option<String>, briefing: Option<String> },
 }
 
 define_id!(ChannelId);
@@ -158,6 +159,17 @@ impl Channel {
             approval_rules: Vec::new(),
             deleted: None,
         }
+    }
+
+    /// Says what the channel is for (issue 245): `summary` and `briefing`
+    /// replace what it said - a missing or empty one removes it.
+    ///
+    /// # Errors
+    /// `ValueError` for the first that does not fit; the channel is then
+    /// unchanged.
+    pub fn describe(&mut self, summary: Option<&str>, briefing: Option<&str>) -> Result<(), ValueError> {
+        (self.summary, self.briefing) = (Summary::optional(summary)?, Briefing::optional(briefing)?);
+        Ok(())
     }
 }
 

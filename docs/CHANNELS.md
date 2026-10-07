@@ -121,9 +121,11 @@ set in the template (`SessionTemplate` and `ChannelTemplate` have them, copied i
 characters; `Briefing`, at most 16 000 - a briefing is in the context of every agent there on every
 turn): not empty, not of whitespace alone, no control characters, and kept exactly as written -
 trimming is the input's, as the web UI does (`caelumora_model::value::text`, issue
-[248](../issues/248-validated-text-fields.md)). They are checked when they are made - the REST
-server makes them from what a request says, an empty one being none - and when a document is read,
-so a template written by hand is checked when the seed is loaded.
+[248](../issues/248-validated-text-fields.md)). They are passed on as strings - from a request to
+the loop, the controller and in `DescriptionChanged` - and made where they are assigned to the
+model (`Session::describe`, `Channel::describe`, an empty one being none), which the controller
+does as it applies the event; and they are checked when a document is read, so a template written
+by hand is checked when the seed is loaded.
 
 A session's descriptions are public, as its name is: everybody in the session reads them, and every
 agent in each of its channels, external ones too. A channel's are part of the channel and classified

@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use crate::value::language::Language;
 use crate::security::{SecurityAttributes, Secured};
 use crate::value::text::Introduction;
+use crate::value::ValueError;
 use serde::{Deserialize, Serialize};
 
 define_id!(UserId);
@@ -82,6 +83,17 @@ impl UserProfile {
     pub fn new(user_id: UserId, introduction: Option<Introduction>) -> Self {
         let security_attributes = SecurityAttributes { owner_id: ActorId::User(user_id), contributors: Vec::new() };
         Self { user_id, introduction, preferred_language: None, approval_rules: Vec::new(), deleted: None, security_attributes }
+    }
+
+    /// Introduces the user as `introduction` says - as nobody if it is
+    /// missing or empty.
+    ///
+    /// # Errors
+    /// `ValueError` if it does not fit (`Introduction`); the profile is then
+    /// unchanged.
+    pub fn introduce(&mut self, introduction: Option<&str>) -> Result<(), ValueError> {
+        self.introduction = Introduction::optional(introduction)?;
+        Ok(())
     }
 
     /// The user whose profile it is - also its id in the store.
