@@ -22,13 +22,15 @@
 //! (`Scope::admits`), and is deleted, restored and purged with it - its
 //! place removed by `purge_lying_in`.
 
+use crate::component::{ComponentError, ComponentResult};
 use crate::event::EventBus;
-use crate::terminal::{LocalProvider, Terminal, TerminalError, TerminalProvider};
+use crate::terminal::{LocalProvider, SharedProvider, Terminal, TerminalError, TerminalProvider};
 use caelumora_model::actor::ActorId;
 use caelumora_model::config::{StorageConfig, WorkspacesConfig};
 use caelumora_model::confidentiality::{user_roles, Classification};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::scope::{Scope, Scoped};
+use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityContext, SecurityManager};
 use caelumora_model::session::{Channel, Session};
 use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResultExt};
@@ -97,16 +99,24 @@ impl fmt::Debug for WorkspaceManager {
 
 impl WorkspaceManager {
     /// The manager of the storages `config` names.
-    pub(crate) fn new(entities: Arc<dyn EntityStore>, events: Arc<EventBus>, security: Arc<dyn SecurityManager>, config: &WorkspacesConfig) -> Self {
+    ///
+    /// # Errors
+    /// `ComponentError::InvalidConfig` for a storage whose provider cannot
+    /// be made, naming it.
+    pub(crate) fn new(entities: Arc<dyn EntityStore>, events: Arc<EventBus>, security: Arc<dyn SecurityManager>, secrets: &Arc<SecretManager>, config: &WorkspacesConfig) -> ComponentResult<Self> {
         let storages = config.storage.iter()
             .map(|(name, storage)| {
                 let provider: Arc<dyn TerminalProvider> = match storage {
                     StorageConfig::Local { root, shell, destination } => Arc::new(LocalProvider::new(root.clone(), *shell, destination.clone())),
+                    StorageConfig::OpenTerminalShared { endpoint, mount, destination } => Arc::new(
+                        SharedProvider::new(endpoint.clone(), mount, destination.clone(), Arc::clone(secrets))
+                            .map_err(|e| ComponentError::InvalidConfig(format!("the storage '{name}' of workspaces: {e}")))?,
+                    ),
                 };
-                (name.clone(), provider)
+                Ok((name.clone(), provider))
             })
-            .collect();
-        Self { entities, events, security, storages, max_file_bytes: config.max_file_bytes, writing: Mutex::new(()) }
+            .collect::<ComponentResult<_>>()?;
+        Ok(Self { entities, events, security, storages, max_file_bytes: config.max_file_bytes, writing: Mutex::new(()) })
     }
 
     /// The largest file a person may put into a workspace.

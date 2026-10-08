@@ -3,6 +3,7 @@ use crate::command::default_commands;
 use crate::confidentiality::{Classification, Compartments, ConfidentialityRules, Roles};
 use std::collections::BTreeMap;
 use crate::component::ComponentConfig;
+use crate::remote::RemoteEndpoint;
 use crate::secret::SecretManager;
 use crate::secret_impl::env::EnvSecretProvider;
 use crate::secret_impl::file::FileSecretProvider;
@@ -302,6 +303,38 @@ pub enum StorageConfig {
         #[serde(default)]
         destination: Option<Classification>,
     },
+    /// One Open Terminal instance, started outside Caelumora, at
+    /// `endpoint`, that has the storage at `mount`: a workspace is the
+    /// directory `<mount>/<id>` there. Every workspace of the storage lies
+    /// in the one instance, and a command in one reaches every other.
+    OpenTerminalShared {
+        endpoint: RemoteEndpoint,
+        /// Where the instance has the storage: absolute, in the instance.
+        mount: String,
+        /// What may be put into this storage; `public` unless given - a
+        /// command may send anything anywhere.
+        #[serde(default)]
+        destination: Option<Classification>,
+    },
+}
+
+impl StorageConfig {
+    /// Whether its fields fit: a `mount` is absolute and stays where it
+    /// says.
+    ///
+    /// # Errors
+    /// What does not fit.
+    pub fn check(&self) -> Result<(), String> {
+        match self {
+            Self::Local { .. } => Ok(()),
+            Self::OpenTerminalShared { mount, .. } => {
+                if !mount.starts_with('/') || mount.contains('\0') || mount.split('/').any(|part| part == "..") {
+                    return Err(format!("the mount '{mount}' is not an absolute path that stays where it says"));
+                }
+                Ok(())
+            }
+        }
+    }
 }
 
 /// The system's rules on tool calls (issue 13): each asks or denies - the
@@ -378,6 +411,9 @@ impl AppConfig {
         let invalid = |e: crate::confidentiality::RoleError| ConfigError::Invalid(e.to_string());
         if let Some(roles) = &self.roles {
             roles.check(&self.compartments).map_err(invalid)?;
+        }
+        for (name, storage) in &self.workspaces.storage {
+            storage.check().map_err(|why| ConfigError::Invalid(format!("the storage '{name}' of workspaces: {why}")))?;
         }
         for rule in &self.approvals.rules {
             rule.check_restricting().map_err(|e| ConfigError::Invalid(format!("an approval rule for `{}`: {e}", rule.matcher.tool)))?;
@@ -512,6 +548,19 @@ persistence:
         for yaml in ["workspaces:\n  storage:\n    main:\n      provider: local\n      root: x\n      rot: y\n", "workspaces:\n  storage:\n    main:\n      provider: nfs\n"] {
             assert!(AppConfig::from_yaml(yaml).is_err(), "{yaml:?}");
         }
+    }
+
+    #[test]
+    fn an_open_terminal_storage_names_its_instance_and_where_it_has_the_storage() {
+        let yaml = "workspaces:\n  storage:\n    sandbox:\n      provider: open_terminal_shared\n      endpoint: { url: \"http://open-terminal:8000\", auth: { type: bearer, secret: OPEN_TERMINAL_API_KEY } }\n      mount: /workspaces\n";
+        let config = AppConfig::from_yaml(yaml).expect("a shared Open Terminal");
+        let Some(StorageConfig::OpenTerminalShared { endpoint, mount, destination }) = config.workspaces.storage.get("sandbox") else { panic!("{:?}", config.workspaces.storage) };
+        assert_eq!((endpoint.url.as_str(), mount.as_str(), destination), ("http://open-terminal:8000", "/workspaces", &None));
+        for mount in ["workspaces", "/a/../b"] {
+            let refused = AppConfig::from_yaml(&yaml.replace("/workspaces", mount)).map(|_| ()).unwrap_err().to_string();
+            assert!(refused.contains("sandbox") && refused.contains("mount"), "{refused}");
+        }
+        assert!(AppConfig::from_yaml(&yaml.replace("      mount: /workspaces\n", "")).is_err(), "a mount is needed");
     }
 
     #[test]

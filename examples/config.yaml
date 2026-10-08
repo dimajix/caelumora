@@ -43,6 +43,18 @@ workspaces:
 #      root: "local/workspaces/dev"
 #      shell: true
 #      destination: { level: internal }
+    # One Open Terminal instance that has the storage at `mount`, e.g. the
+    # one of examples/docker-compose.yml; its key is OPEN_TERMINAL_API_KEY in
+    # local/secrets.json. Every workspace of it lies in the one instance: a
+    # command in one reaches every other.
+    sandbox:
+      provider: open_terminal_shared
+      endpoint:
+        url: "http://localhost:8000"
+        auth: { type: bearer, secret: OPEN_TERMINAL_API_KEY }
+        timeout_secs: 10
+      mount: "/home/user/workspaces"
+      destination: { level: internal }
 
 # Where users and their credentials come from. Without this section nobody
 # can authenticate. `accept_any` is a development stand-in that accepts ANY

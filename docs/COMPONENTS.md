@@ -179,7 +179,8 @@ which a tool passes on with `?`.
 ### Remote endpoints
 
 A component that talks to a remote system names it in its `params` as `endpoint`, the same
-`remote::RemoteEndpoint` for every one of them (issue 188):
+`caelumora_model::remote::RemoteEndpoint` for every one of them (issue 188) - and so does a storage
+of workspaces reached over the network (`workspaces` in [CONFIGURATION.md](CONFIGURATION.md)):
 
 ```yaml
 endpoint:

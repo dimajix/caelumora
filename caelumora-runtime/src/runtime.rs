@@ -314,7 +314,7 @@ impl RuntimeManager {
         let event_bus = Arc::new(EventBus::new(Arc::clone(&security_manager)));
         let controller_manager = Arc::new(ControllerManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus)));
         let agent_states = Arc::new(crate::agent_state::AgentStates::new(Arc::clone(&state_store), Arc::<EventBus>::clone(&event_bus)));
-        let workspaces = Arc::new(crate::workspace::WorkspaceManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus), Arc::clone(&security_manager), &workspaces));
+        let workspaces = Arc::new(crate::workspace::WorkspaceManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus), Arc::clone(&security_manager), &secret_manager, &workspaces)?);
 
         Ok(Self {
             security_manager,

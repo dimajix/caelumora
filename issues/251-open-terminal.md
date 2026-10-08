@@ -681,18 +681,24 @@ endpoint shown without credentials (`RemoteEndpoint::shown`, `redact_in`), a bod
 never a path of the host. A terminal unreachable at call time is a failed call, not an unavailable
 set: the set was offered, and the next call may succeed.
 
-**The Open Terminal shell** (`open_terminal/client.rs`, behind `Shell`): `POST /execute?wait=
-{wait}&tail=…` with `{ command, cwd: "<mount or /workspace>/<id>", env: { TERM: "dumb", NO_COLOR:
-"1", CAELUMORA_WORKSPACE: … } }`, the headers `Authorization: Bearer …` (the key resolved per call
+**The Open Terminal shell** (`open_terminal/mod.rs`, behind `Shell`; the requests in
+`open_terminal/client.rs`): `start` is `POST /execute?wait=0` with `{ command, cwd:
+"<mount or /workspace>/<id>", env: { TERM: "dumb", NO_COLOR: "1", CAELUMORA_WORKSPACE: …,
+OPEN_TERMINAL_API_KEY: "" } }` - the instance hands every command its own environment, its key
+among it -, the headers `Authorization: Bearer …` (the key resolved per call
 through the secret chain for `shared`, the generated one for `docker`) and `X-Session-Id: {scope}` -
 Open Terminal answers 404 for a process asked for under another one. It runs the command in a PTY:
 `TERM=dumb` keeps colours and cursor movement out, carriage returns are stripped. The entries
 (`{type: stdout | stderr | output, data}`) are joined; `log_path`, a path inside the container, is
-dropped. `output` is `GET /execute/{id}/status?offset=&wait=`; a process Open Terminal has
-forgotten - it drops one five minutes after it ended - is `Failed`. `kill` is `DELETE
-/execute/{id}`, then `status?wait=2` for the exit code. The files are `/files/list`, `/files/view`
-(the bytes), `/files/upload` (multipart), `/files/delete`, `/files/mkdir`, `/files/move`; `create`
-is `/files/mkdir`, `remove` is `/files/delete`.
+dropped. `output` is `GET /execute/{id}/status?offset=&wait=&tail=256` - offsets count entries,
+not bytes, and 256 entries of a PTY are about the 1 MiB the local shell keeps; a process Open
+Terminal has forgotten - it drops one five minutes after it ended - is `UnknownCommand`. `kill` is
+`DELETE /execute/{id}?force=true` - SIGKILL to the process group, as the local shell sends -, then
+`status?wait=2` for the exit code. The files are `/files/list`, `/files/view` (the bytes),
+`/files/upload` (multipart), `/files/delete`, `/files/mkdir`, `/files/move`; `create` is
+`/files/mkdir`, `remove` is `/files/delete`. There is no `stat`: what a path names is read from its
+directory's list; and `/files/delete` removes a directory with everything in it, so emptiness is
+checked first.
 
 **The local shell** (`terminal/local_shell.rs`): `bash -c` in the workspace's directory, a process
 group of its own, `kill_on_drop`, output read into a bounded buffer per command, commands kept by
@@ -843,11 +849,13 @@ For `shared`, an example `examples/docker-compose.yml`:
 open-terminal:
   image: ghcr.io/open-webui/open-terminal:0.14.0
   environment:
-    OPEN_TERMINAL_API_KEY_FILE: /run/secrets/open_terminal_api_key
-    OPEN_TERMINAL_FILE_BROWSER_ROOT: /workspaces
+    OPEN_TERMINAL_API_KEY: ${OPEN_TERMINAL_API_KEY:?the key, as in local/secrets.json}
   volumes:
-    - workspaces:/workspaces       # a volume only the instance sees; Caelumora reaches the files through it
+    - home:/home/user              # a volume only the instance sees; Caelumora reaches the files through it
 ```
+
+(Amended in step 6: the image runs as `user`, who may not write a fresh volume at `/workspaces`;
+the storage is `/home/user/workspaces`.)
 
 The key is `OPEN_TERMINAL_API_KEY` in `local/secrets.json`, the file chain, and the container reads
 the same value. For `docker`, the daemon's socket is given to Caelumora's container or process, and
@@ -1058,3 +1066,15 @@ command may come later.
   the asker's name and the workspace reached in the owner's; SECURITY.md describes it, and issue
   [255](255-whose-name-agents-act-in.md) asks whether that is right. A command handed back as
   running is ended by nothing but the model: issue [254](254-commands-run-unbounded.md).
+- **2026-10-08** — Step 6 of the plan done: `open_terminal_shared` (`terminal/open_terminal/`: the
+  wire, the client, one handle per workspace for files and shell, the provider), tested against an
+  axum stand-in that answers as 0.14.0 and runs commands, and by hand - an ignored test and the REST
+  API - against a real instance of 0.14.0. Before it, on the maintainer's decision, the endpoint
+  moved into the model (`caelumora_model::remote::RemoteEndpoint`), so that a storage's
+  configuration is typed and checked when it is loaded (`StorageConfig::check`); a step of its own
+  without a change of behaviour. The storage's key is read in the system's name, as the server's
+  own keys are. Found and documented (CONFIDENTIALITY.md, STORAGE.md): the instance hands every
+  command its own key - blanked in what Caelumora starts, but readable from the server's process -
+  so `X-Session-Id` keeps the tool's channels apart, not a command from the API. C3's paragraph on
+  the Open Terminal shell and F's compose example amended.
+

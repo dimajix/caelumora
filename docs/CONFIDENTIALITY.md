@@ -277,7 +277,12 @@ with a shell is bounded to public unless it names its own; one without a shell, 
 
 The isolation between workspaces is the storage's, not the classification's: a `local` shell runs
 on Caelumora's host as its user, and reaches every workspace of every storage there, and Caelumora's
-own files. A classification says who may read a workspace; it does not keep a command in it.
+own files. An `open_terminal_shared` storage keeps all its workspaces in one instance, so a command
+in one reaches every other, and whatever the instance's network reaches; the instance hands its
+commands its own key, which Caelumora blanks in what it starts, but which a command can still read
+from the server's process - and with it reach every command and file of the instance, of every
+channel. One classification per such storage, and a storage per classification where there are
+several. A classification says who may read a workspace; it does not keep a command in it.
 
 Reclassifying a workspace is its owner's (`UpdateWorkspace`, `Classify`): lowering releases every
 file in it; which channels may use it follows at their next use. Nothing in it is fitted - there is

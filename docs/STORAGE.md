@@ -43,6 +43,20 @@ command, an environment cleared but for `PATH`, `HOME` (the workspace), `LANG`, 
 minutes after it ended. Commands live with the provider, not with a call or a turn; one still
 running when Caelumora ends is not killed by it.
 
+The `open_terminal_shared` provider (`terminal::open_terminal`, issue
+[251](../issues/251-open-terminal.md)) keeps a storage in one Open Terminal instance, started
+outside Caelumora, at the `mount` it has the storage: a workspace is the directory `<mount>/<id>`
+there, made and removed through the instance's `/files` API, which also reads and writes its files;
+its shell is the instance's `/execute`, with the channel as `X-Session-Id`. Its key is resolved
+through the secret chain on every request, in the system's name - the storage is the operator's, as
+the server's own keys are. It behaves as `local` does, with what the instance does differently met
+or said: what a path names is read from its directory's list, since the instance has no `stat`;
+a directory is checked to be empty before it is removed, since the instance would remove it with
+everything in it; a file is written in place, from memory, so a write that breaks off may leave it
+half written; offsets count pieces of output, not bytes; no message of the instance is passed on,
+since they name paths inside it. Written against Open Terminal 0.14.0, whose API is 0.x: the
+requests and answers relied on are in `open_terminal/wire.rs`, pinned by tests against a stand-in.
+
 Preconfigured components are not among them. They are runtime configuration that personalities and
 templates refer to by `kind: "ref"`, and the `ComponentStore` keeps them: a `StoredComponent` - the
 `ComponentDescriptor` with the attributes of who may use and change it - by its id, with the same

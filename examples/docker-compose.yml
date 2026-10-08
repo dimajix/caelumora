@@ -1,0 +1,29 @@
+# An Open Terminal instance for a storage of workspaces with the provider
+# `open_terminal_shared` (issue 251), as the commented storage `sandbox` in
+# examples/config.yaml reaches it.
+#
+#   OPEN_TERMINAL_API_KEY=... docker compose -f examples/docker-compose.yml up -d
+#
+# The key is the value of OPEN_TERMINAL_API_KEY in local/secrets.json, from
+# which Caelumora reads it. The workspaces lie in a volume only the instance
+# sees - its user's home, which the instance's user may write; the storage
+# is the directory `workspaces` in it, made with the first workspace.
+# Caelumora reaches their files through the instance's API, never through
+# the volume. Every workspace of the storage lies in this one instance, and
+# a command run in one reaches every other - and whatever the instance's
+# network reaches.
+services:
+  open-terminal:
+    # Pinned: the API is 0.x, and the provider was written against 0.14.0.
+    image: ghcr.io/open-webui/open-terminal:0.14.0
+    environment:
+      OPEN_TERMINAL_API_KEY: ${OPEN_TERMINAL_API_KEY:?the key, as in local/secrets.json}
+    volumes:
+      - home:/home/user
+    ports:
+      # Reached by Caelumora on the same host only.
+      - "127.0.0.1:8000:8000"
+    restart: unless-stopped
+
+volumes:
+  home:
