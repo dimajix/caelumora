@@ -21,7 +21,7 @@ mod wire;
 use self::client::{A2aClient, Responses};
 use self::translation::{wire_message, Translation, ACCEPTED_OUTPUT_MODES};
 use self::wire::{method, SendConfiguration, SendMessageParams, StreamResponse, TaskParams, WireTask, TASK_NOT_CANCELABLE};
-use crate::component::{ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
+use crate::component::{config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::external::{ExternalAgent, ExternalAgentResult, ExternalStream, OutboundMessage};
 use caelumora_model::remote::RemoteEndpoint;
 use async_trait::async_trait;
@@ -222,8 +222,7 @@ pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
         ComponentKind::new(A2A_AGENT_KIND).provides::<dyn ExternalAgent>(),
         |descriptor, context| async move {
-            let config: A2aAgentConfig = serde_json::from_value(descriptor.params.clone())
-                .map_err(|e| ComponentError::InvalidConfig(format!("invalid parameters: {e}")))?;
+            let config: A2aAgentConfig = config_of_params(&descriptor.params)?;
             let component = A2aAgentComponent::build(descriptor.id.clone(), config, Arc::clone(&context.secret_manager), &context.security_context).await?;
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ExternalAgent>(Arc::new(component));

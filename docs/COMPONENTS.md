@@ -15,7 +15,9 @@ is in [AGENT-TURN.md](AGENT-TURN.md).
     the order in which they are handed out.
 *   **`ComponentDescriptor`** configures one component: its `id`, its `kind`, its `params`, its
     `tags` and its `fail_policy` (`FailOpen`, the default, or `FailClosed`), which decides whether a
-    failure of the component is skipped or fails the turn.
+    failure of the component is skipped or fails the turn. A factory reads `params` with
+    `config_of_params` into a configuration type of its own; left out, they count as `{}`, so a
+    configuration whose fields all have a default needs none.
 *   **`ComponentRegistry`** holds a factory per kind, together with the facets that kind provides.
     `ComponentRegistry::built_in` registers every built-in kind; the binaries hand it to the
     `RuntimeManager` as it is, which applies `component_defaults`. A test registers kinds of its own

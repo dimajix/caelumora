@@ -16,6 +16,7 @@ use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{SecurityContext, SecurityManager};
 use caelumora_model::store::ComponentStore;
 use futures::future::BoxFuture;
+use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use std::any::{Any, TypeId};
 use std::collections::{HashMap, HashSet};
@@ -55,6 +56,20 @@ pub fn flag_of_params(params: &serde_json::Value, name: &str) -> ComponentResult
         Some(value) => value.as_bool()
             .ok_or_else(|| ComponentError::InvalidConfig(format!("parameter '{name}' must be true or false"))),
     }
+}
+
+/// A component's `params` read as its configuration `T`; left out, they are
+/// read as an empty object, so that a `T` whose fields all have a default
+/// is built from them.
+///
+/// # Errors
+/// `ComponentError::InvalidConfig` if they are not a `T`.
+pub fn config_of_params<T: DeserializeOwned>(params: &serde_json::Value) -> ComponentResult<T> {
+    let result = match params {
+        serde_json::Value::Null => T::deserialize(serde_json::json!({})),
+        params => T::deserialize(params),
+    };
+    result.map_err(|e| ComponentError::InvalidConfig(format!("invalid parameters: {e}")))
 }
 
 /// A facet type, by its id and - for messages - its name.
@@ -1064,6 +1079,20 @@ mod tests {
         let built = ComponentContainer::from_config(&config(&[]), &registry, &test_context()).await.unwrap();
         let message = built.one::<dyn Named>().await.expect_err("a default kind that is not registered").to_string();
         assert!(message.contains("the default kind 'missing' of Named is not registered as providing it"), "{message}");
+    }
+
+    #[test]
+    fn params_left_out_give_the_defaults() {
+        #[derive(Debug, Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Config {
+            #[serde(default)]
+            limit: u32,
+        }
+        assert_eq!(config_of_params::<Config>(&serde_json::Value::Null).unwrap().limit, 0, "left out: all defaults");
+        assert_eq!(config_of_params::<Config>(&json!({ "limit": 3 })).unwrap().limit, 3);
+        let message = config_of_params::<Config>(&json!({ "limti": 3 })).unwrap_err().to_string();
+        assert!(message.starts_with("invalid configuration: invalid parameters: unknown field `limti`"), "{message}");
     }
 }
 

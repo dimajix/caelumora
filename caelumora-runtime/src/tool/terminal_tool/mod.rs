@@ -23,7 +23,7 @@ mod files;
 mod shell;
 
 use crate::agent::turn::Turn;
-use crate::component::{ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
+use crate::component::{config_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::terminal::TerminalError;
 use crate::tool::{ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
 use crate::view::WorkspaceView;
@@ -156,8 +156,7 @@ pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
         ComponentKind::new(TERMINAL_TOOL_KIND).provides::<dyn ToolProvider>(),
         |descriptor, _context| {
-            let config: TerminalToolConfig = serde_json::from_value(descriptor.params.clone())
-                .map_err(|e| ComponentError::InvalidConfig(format!("invalid parameters: {e}")))?;
+            let config: TerminalToolConfig = config_of_params(&descriptor.params)?;
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::new(TerminalTool { config }));
             Ok(facets)
@@ -168,9 +167,13 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::component::{ComponentContainer, ComponentContext};
     use crate::workspace::testing::session_with_workspace;
     use caelumora_model::agent::AgentChannelState;
-    use caelumora_model::security::SecurityContext;
+    use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+    use caelumora_model::secret::SecretManager;
+    use caelumora_model::security::{DummySecurityManager, SecurityContext};
+    use caelumora_model::store::memory::MemoryStore;
     use serde_json::json;
 
     pub(super) fn tool(params: Value) -> TerminalTool {
@@ -189,6 +192,19 @@ mod tests {
             assert!(matches!(&refused, Err(ToolError::ExecutionFailed(why)) if why.contains("no workspace")), "{name}: {refused:?}");
         }
         assert!(!world.dir().join("here").exists());
+    }
+
+    /// Written by hand without `params`, as the seed does: every parameter
+    /// takes its default.
+    #[tokio::test]
+    async fn is_built_without_parameters() {
+        let mut registry = ComponentRegistry::new(Arc::new(MemoryStore::new()));
+        register(&mut registry);
+        let config = ComponentConfig { component_nodes: vec![ComponentDescriptor::new("terminal", TERMINAL_TOOL_KIND)] };
+        let security_manager = Arc::new(DummySecurityManager::new());
+        let context = ComponentContext::new(SecurityContext::default(), Arc::clone(&security_manager) as _, Arc::new(SecretManager::new(vec![], security_manager)));
+        let container = ComponentContainer::from_config(&config, &Arc::new(registry), &context).await;
+        assert!(container.is_ok(), "{:?}", container.err());
     }
 
     #[test]

@@ -36,7 +36,7 @@
 //! fails rather than go out unprotected.
 
 use super::control_tokens::ControlTokens;
-use crate::component::{ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
+use crate::component::{config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::llm::{unlabelled_message, LLMClient, LLMError, LLMResult};
 use crate::remote::{describe_chain, describe_request_error};
 use caelumora_model::remote::RemoteEndpoint;
@@ -513,8 +513,8 @@ struct OllamaClientConfig {
 
 impl OllamaClientConfig {
     /// The parameters `params`, refused if one is unknown or not supported.
-    fn of(params: serde_json::Value) -> Result<Self, ComponentError> {
-        let config: Self = serde_json::from_value(params).map_err(|e| ComponentError::InvalidConfig(format!("invalid parameters: {e}")))?;
+    fn of(params: &serde_json::Value) -> Result<Self, ComponentError> {
+        let config: Self = config_of_params(params)?;
         // A secret is resolved for whoever acts, and a model is asked
         // without knowing who that is.
         if config.endpoint.auth.is_some() {
@@ -803,10 +803,7 @@ pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
         ComponentKind::new(OLLAMA_CLIENT_KIND).provides::<dyn LLMClient>(),
         move |descriptor, _context| {
-            // Built as the default, or configured without parameters: all
-            // parameters take their defaults.
-            let params = if descriptor.params.is_null() { serde_json::json!({}) } else { descriptor.params.clone() };
-            let config = OllamaClientConfig::of(params)?;
+            let config = OllamaClientConfig::of(&descriptor.params)?;
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn LLMClient>(Arc::new(OllamaClient::new(config, Arc::clone(&control_tokens), Arc::clone(&running_context_sizes))));
             Ok(facets)
@@ -930,21 +927,21 @@ mod tests {
         assert_eq!(config.reasoning_history, ReasoningHistory::Never);
         assert_eq!(config.system_messages, SystemMessages::Anywhere);
         assert_eq!((config.sender_format, config.sender_style), (SenderFormat::Xml, SenderStyle::Name));
-        assert!(OllamaClientConfig::of(json!({ "sender_format": "header" })).is_err(), "only the formats there are");
+        assert!(OllamaClientConfig::of(&json!({ "sender_format": "header" })).is_err(), "only the formats there are");
     }
 
     #[test]
     fn a_misspelt_parameter_is_refused() {
-        assert!(OllamaClientConfig::of(json!({ "modle": "qwen3:8b" })).is_err());
-        assert!(OllamaClientConfig::of(json!({ "base_url": DEFAULT_BASE_URL })).is_err(), "the server is the endpoint's url");
-        assert!(OllamaClientConfig::of(json!({ "endpoint": { "url": DEFAULT_BASE_URL, "timeout": 5 } })).is_err());
+        assert!(OllamaClientConfig::of(&json!({ "modle": "qwen3:8b" })).is_err());
+        assert!(OllamaClientConfig::of(&json!({ "base_url": DEFAULT_BASE_URL })).is_err(), "the server is the endpoint's url");
+        assert!(OllamaClientConfig::of(&json!({ "endpoint": { "url": DEFAULT_BASE_URL, "timeout": 5 } })).is_err());
     }
 
     #[test]
     fn the_server_is_reached_as_the_endpoint_says_but_without_authentication() {
-        let config = OllamaClientConfig::of(json!({ "endpoint": { "url": "http://gpu:11434", "timeout_secs": 5 } })).unwrap();
+        let config = OllamaClientConfig::of(&json!({ "endpoint": { "url": "http://gpu:11434", "timeout_secs": 5 } })).unwrap();
         assert_eq!((config.endpoint.url.as_str(), config.endpoint.timeout_secs), ("http://gpu:11434", Some(5)));
-        let refused = OllamaClientConfig::of(json!({ "endpoint": { "url": "http://gpu:11434", "auth": { "type": "bearer", "secret": "TOKEN" } } }));
+        let refused = OllamaClientConfig::of(&json!({ "endpoint": { "url": "http://gpu:11434", "auth": { "type": "bearer", "secret": "TOKEN" } } }));
         assert!(refused.is_err_and(|e| e.to_string().contains("not supported")));
     }
 
@@ -998,7 +995,7 @@ mod tests {
     }
 
     fn client_with(params: serde_json::Value) -> OllamaClient {
-        let config = OllamaClientConfig::of(params).unwrap();
+        let config = OllamaClientConfig::of(&params).unwrap();
         OllamaClient::new(config, Arc::new(ControlTokenCache::default()), Arc::new(RunningContextSizes::default()))
     }
 
@@ -1050,8 +1047,8 @@ mod tests {
 
     #[test]
     fn a_context_size_of_nothing_is_refused() {
-        assert!(OllamaClientConfig::of(json!({ "context_size": 0 })).is_err());
-        assert_eq!(OllamaClientConfig::of(json!({ "context_size": 65536 })).unwrap().context_size, Some(65536));
+        assert!(OllamaClientConfig::of(&json!({ "context_size": 0 })).is_err());
+        assert_eq!(OllamaClientConfig::of(&json!({ "context_size": 65536 })).unwrap().context_size, Some(65536));
     }
 
     #[tokio::test]

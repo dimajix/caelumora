@@ -1,7 +1,7 @@
 use crate::agent::turn::Turn;
 use caelumora_model::question::Answers;
 use caelumora_model::confidentiality::Classification;
-use crate::component::{ComponentError, ComponentFacets, ComponentRegistry, ComponentKind};
+use crate::component::{config_of_params, ComponentFacets, ComponentRegistry, ComponentKind};
 use caelumora_model::remote::RemoteEndpoint;
 use crate::tool::{ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
@@ -321,8 +321,7 @@ pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
         ComponentKind::new(MCP_TOOL_KIND).provides::<dyn ToolProvider>(),
         |descriptor, context| async move {
-            let config: McpToolConfig = serde_json::from_value(descriptor.params.clone())
-                .map_err(|e| ComponentError::InvalidConfig(format!("invalid parameters: {}", e)))?;
+            let config: McpToolConfig = config_of_params(&descriptor.params)?;
 
             let secret_manager = Arc::clone(&context.secret_manager);
             let discover = async {
