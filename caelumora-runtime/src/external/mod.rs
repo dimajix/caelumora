@@ -1,13 +1,18 @@
 //! The facet through which an external agent is reached (issue 179): an
 //! agent that runs elsewhere and takes part in a channel through an
 //! `ExternalAgentActor`. The facet says nothing of the protocol - A2A is
-//! one implementation (`external_impl`); the actor knows only this.
+//! one implementation (`a2a_agent`), and the built-in components are the
+//! submodules of this one, one module per component kind; the actor knows
+//! only the facet.
 //!
 //! The remote agent is given what was said in the channel and answers as it
 //! sees fit. What it is given becomes a *task* of the remote agent, within a
 //! *conversation* it keeps with the channel; both are opaque handles of the
 //! remote side (`ConversationId`, `TaskId`), which the actor stores.
 
+pub mod a2a_agent;
+
+use crate::component::ComponentRegistry;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::external_agent::{ConversationId, TaskId};
@@ -135,6 +140,16 @@ pub trait ExternalAgent: Send + Sync + Debug {
 }
 
 /// Stand-ins for a remote agent, for the tests of what uses the facet.
+/// Registers the external agent kinds with `registry`, and `ExternalAgent`
+/// as a facet of which an external personality has exactly one. It has no
+/// default: a remote agent is always named, and a personality that names
+/// none fails to build where its agent asks for it.
+pub fn register_all(registry: &mut ComponentRegistry) {
+    registry.single::<dyn ExternalAgent>(None);
+
+    a2a_agent::register(registry);
+}
+
 #[cfg(test)]
 pub(crate) mod testing {
     use super::*;

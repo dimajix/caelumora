@@ -23,7 +23,6 @@ pub mod controller;
 pub mod message;
 pub mod component;
 pub mod component_impl;
-pub mod external_impl;
 pub mod context;
 pub mod seed;
 pub mod view;

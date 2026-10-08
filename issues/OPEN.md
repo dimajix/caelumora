@@ -86,12 +86,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [256](256-workspace-versions.md) | open | A workspace has no versions: what a person, a file tool or a command overwrote cannot be taken back, and who changed what is not recorded. |
 | [237](237-erasing-a-message.md) | open | A message written by mistake can be taken back but not erased: it stays in every participant's record and in the contexts built on it. |
 
-## Code structure
-
-| No. | Status | Issue |
-|---|---|---|
-| [257](257-facet-and-components-in-two-modules.md) | in progress | A facet's trait and the components that provide it live in two sibling modules, `foo` and `foo_impl`, with no rule for what goes where. |
-
 ## Open architecture questions
 
 | No. | Status | Issue |

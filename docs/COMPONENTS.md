@@ -84,7 +84,7 @@ Of some facets an agent has exactly one: the `ContextProvider` (issue 98), the `
 (issue 127) and the `LLMClient` (issue 130), an external agent exactly one `ExternalAgent` (issue
 179); a channel has exactly one `Moderator` and one `ResponderPolicy` (issue 174). They are
 registered with `ComponentRegistry::single::<T>(default_kind)` in the `register_all` of the
-module that holds the default kind (`component_impl`, `tool`, `llm`, `external_impl`, `moderator`).
+module that holds the default kind (`component_impl`, `tool`, `llm`, `external`, `moderator`).
 
 *   Two components of one container that provide such a facet are refused before anything is built.
 *   If none does, a default is built the first time the facet is asked for
@@ -147,7 +147,7 @@ purpose. That module's `mod.rs` holds the facet trait - with what consumes it, s
 | `command/` | command providers (`help_command`, `wakeup_command`) |
 | `llm/` | language models (`ollama_client`) |
 | `moderator/` | the moderator and its responder policies |
-| `external_impl/` | the ways to reach an external agent (`a2a_agent`, issue 179) - a module per kind: `a2a_agent/` holds the component (`mod.rs`), the protocol's types (`wire.rs`), their translation to and from `crate::external` (`translation.rs`) and the transport (`client.rs`, issue 210) |
+| `external/` | the ways to reach an external agent (`a2a_agent`, issue 179) - a module per kind: `a2a_agent/` holds the component (`mod.rs`), the protocol's types (`wire.rs`), their translation to and from `crate::external` (`translation.rs`) and the transport (`client.rs`, issue 210) |
 | `component_impl/` | everything else, and every component that offers several facets |
 
 A component that offers several facets - `create_plan_tool`, `notes` and the other memory components
@@ -155,7 +155,7 @@ provide tools and a prompt part - stays in `component_impl`, because it cannot b
 facet. Each file holds the kind constant, its `register` function and its tests; each module's
 `register_all` registers its kinds and the singles it holds the default for, and
 `ComponentRegistry::built_in` calls them all. A new component gets a file of its own and a line in
-its module's `register_all`; `component_impl` and `external_impl` hold components only.
+its module's `register_all`; `component_impl` holds components only.
 
 They follow one convention (issue 101):
 

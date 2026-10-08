@@ -1,6 +1,6 @@
 # 257 — A facet and its components live in two modules side by side
 
-**Status:** in progress
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -52,3 +52,7 @@ it, its implementations as its submodules (`std::io`, `tokio::sync`, `serde::de:
   of answering to `actor/mod.rs` beside `Answering`, and `apply_stage_processors` to
   `crate::message`, beside the stage traits it runs. `component_impl` stays; `external_impl` is
   looked at last. No change in behaviour; nothing stored changes.
+- **2026-10-08** — Done: `external_impl` is `external`, as decided with the maintainer - a facet
+  like `llm`, so a module of its own beside it rather than one under an `agent` module.
+  `external/mod.rs` holds `ExternalAgent` and `register_all`, `a2a_agent/` is its submodule.
+  `component_impl` is the one `_impl` module left.

@@ -249,7 +249,7 @@ impl ComponentRegistry {
 
     /// A registry with every built-in component kind (the `register_all` of
     /// `component_impl`, `tool`, `command`, `llm`,
-    /// `external_impl` and `moderator`), resolving references to
+    /// `external` and `moderator`), resolving references to
     /// preconfigured components in `component_store`. A binary passes it to
     /// the `RuntimeManager` as it is; a test may register kinds of its own
     /// first, such as a stand-in for the model.
@@ -259,7 +259,7 @@ impl ComponentRegistry {
         crate::tool::register_all(&mut registry);
         crate::command::register_all(&mut registry);
         crate::llm::register_all(&mut registry);
-        crate::external_impl::register_all(&mut registry);
+        crate::external::register_all(&mut registry);
         crate::moderator::register_all(&mut registry);
         registry
     }
