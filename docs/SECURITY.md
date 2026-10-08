@@ -13,7 +13,7 @@ it.
 
 *   **`SecurityContext`** carries the initiator and the sender of an event, and the session and
     channel it happens in. The initiator is the person an action was started for, also when an agent
-    carries it out.
+    carries it out (see [In whose name an agent acts](#in-whose-name-an-agent-acts)).
 *   **`SecurityManager`** is the trait that authorizes actions: `check(context, action)`.
 *   **`ActionType`** enumerates every securable action (`GetAgent`, `UpdateSession`,
     `ListPersonalities`, `CancelChannel`, ...). An action on a stored entity carries the entity's
@@ -149,6 +149,56 @@ What is not a store call asks first and acts afterwards.
 *   Roles such as an administrator, and richer access lists
     ([23](../issues/23-acls-in-security-attributes.md)).
 *   What happens to an owner's entities when the owner is removed. For now they stay.
+
+## In whose name an agent acts
+
+An agent is no principal of its own: it has no roles and no clearance, and the policy judges what
+it does by a person - the initiator of the context it acts in, with the agent as its caller. Which
+person that is depends on what the agent does. An agent **knows with its owner's clearance and acts
+for whoever asked it**.
+
+**What it reads and knows** is asked in its owner's name: its own context
+(`Agent::security_context`, issue [87](../issues/87-security-context-in-entities.md)), its owner as
+initiator. An agent must not see more than the person responsible for it (issue
+[142](../issues/142-roles.md)), and it passes on whatever it read to whoever it answers next (issue
+[131](../issues/131-agent-memory-bypasses-policy.md)) - so what it may read is fixed by its owner,
+not by who happens to ask. This context is the one
+
+*   its views are made in (`ViewsFactory`, reached through `Turn::session`): reading another
+    channel's history and notes (`ReadChannel`, see
+    [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reading-another-channel)), its private notes, and the
+    session's workspace through its channel - the flow both ways, asked as `Publish`
+    ([CHANNELS.md](CHANNELS.md#its-workspace));
+*   its components are built with (`ComponentContext::security_context`), and in which its memory
+    decides what may be recalled in a channel;
+*   it speaks in when nobody asked it (`Answering::own`).
+
+**What it does on someone's behalf** is asked in the name of whoever asked it: the turn's context
+(`Turn::security_context`), the request's continued as the agent (`Answering::to`). A person who
+asks another's agent to act lends it their own authority for that turn, not the owner's. This
+context is the one in which
+
+*   its answers and everything else its turn says are put into the channel (`Publish`);
+*   its tool calls are admitted (`CallTool`, asked when the call is admitted and again before it
+    runs, since a rule may have changed meanwhile), and their results admitted into the channel
+    (`may_publish`);
+*   the credentials a call or a request reaches with are read (`ReadSecret`): an MCP server's
+    token in `mcp_tool`, an external agent's through its endpoint;
+*   the questions of a call are put (the initiator's, issue 165).
+
+A tool call may thus ask in both names: `terminal_tool` is called for whoever asked and reaches the
+workspace as the agent reads every other place, in its owner's name. The security suite pins both
+(`an_agents_command_is_called_for_who_asked_and_reaches_the_workspace_through_its_channel`, and the
+tests of external agents, whose requests read their credential in the name of whoever asked).
+
+Who may approve a call is decided separately, by the agent's attributes: its owner and contributors,
+for an agent of the system the channel's owner (see
+[TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md#who-may-approve)).
+
+This describes the state, not a decision: which side an action falls on follows from where its code
+sits - in a view or in the turn - and whether the split is right, and how it extends to a chain of
+agents, is open (issue [255](../issues/255-whose-name-agents-act-in.md), and in general
+[12](../issues/12-user-and-agent-permissions.md)).
 
 ## Where permission checks go
 

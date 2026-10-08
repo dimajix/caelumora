@@ -9,13 +9,19 @@
 //! provider sees it: relative, without `..`, so that no provider is ever
 //! handed one that leaves the workspace. An error never names more of a
 //! path than the caller wrote.
+//!
+//! A terminal may have a `Shell`, a capability of the storage: commands run
+//! in the workspace's directory, each seen only under the scope it was
+//! started with - a channel - and kept a while after it ended.
 
 mod local;
+mod local_shell;
 
 pub(crate) use local::LocalProvider;
 
 use async_trait::async_trait;
 use bytes::Bytes;
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::workspace::WorkspaceId;
 use chrono::{DateTime, Utc};
 use futures::Stream;
@@ -23,6 +29,7 @@ use std::fmt::Debug;
 use std::path::{Component, Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// The content of a file, read or to be written, in pieces.
 pub type ByteStream = Pin<Box<dyn Stream<Item = std::io::Result<Bytes>> + Send>>;
@@ -48,6 +55,10 @@ pub enum TerminalError {
     /// where on the host.
     #[error("the workspace's storage failed: {0}")]
     Unavailable(String),
+    /// A command not known under the scope it was asked for - never
+    /// started there, or forgotten a while after it ended.
+    #[error("no command '{0}' is known here: it was never started here, or ended a while ago and its output was given then")]
+    UnknownCommand(String),
 }
 
 pub type TerminalResult<T> = Result<T, TerminalError>;
@@ -149,6 +160,52 @@ pub trait Terminal: Send + Sync + Debug {
     async fn mkdir(&self, path: &WorkspacePath) -> TerminalResult<()>;
     /// Moves `from` to `to`, which must not exist.
     async fn move_entry(&self, from: &WorkspacePath, to: &WorkspacePath) -> TerminalResult<()>;
+    /// Its shell, if its storage has one.
+    fn shell(&self) -> Option<Arc<dyn Shell>>;
+}
+
+/// Where a command stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandStatus {
+    Running,
+    /// Ended by itself, with its exit code if it has one.
+    Completed,
+    /// Ended because it was killed.
+    Killed,
+    /// Could not be run, or ended by a signal it was not sent.
+    Failed,
+}
+
+/// What a command printed since an offset, and where it stands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandState {
+    pub id: String,
+    pub status: CommandStatus,
+    pub exit_code: Option<i32>,
+    /// What it printed - standard output and error in the order they came -
+    /// since the offset asked for, as text.
+    pub output: String,
+    /// Where to ask from next time.
+    pub next_offset: u64,
+    /// Whether output before the offset asked for, or between it and what
+    /// is given, was dropped: more than is kept.
+    pub truncated: bool,
+}
+
+/// Commands in a workspace (issue 251): started at once, followed by what
+/// they print, killed with everything they started. A command is seen only
+/// under the `scope` it was started with.
+#[async_trait]
+pub trait Shell: Send + Sync + Debug {
+    /// Starts `command` in the workspace's directory; answers its id at once.
+    async fn start(&self, scope: &str, command: &str) -> TerminalResult<String>;
+    /// What command `id` printed since `offset`, once it ended or `wait` is
+    /// over, whichever is first.
+    async fn output(&self, scope: &str, id: &str, offset: u64, wait: Duration) -> TerminalResult<CommandState>;
+    /// Ends command `id` and what it started; what it printed since
+    /// `offset`.
+    async fn kill(&self, scope: &str, id: &str, offset: u64) -> TerminalResult<CommandState>;
 }
 
 /// What makes and reaches the places of the workspaces of one storage
@@ -162,6 +219,11 @@ pub(crate) trait TerminalProvider: Send + Sync + Debug {
     async fn remove(&self, id: WorkspaceId) -> TerminalResult<()>;
     /// The terminal of the workspace `id`.
     async fn terminal_for(&self, id: WorkspaceId) -> TerminalResult<Arc<dyn Terminal>>;
+    /// Whether its terminals have a shell - asked without reaching one.
+    fn has_shell(&self) -> bool;
+    /// What may be put into this storage: the classification a workspace
+    /// in it may have at most; `None` for no bound (issue 251, part B2).
+    fn destination(&self) -> Option<&Classification>;
 }
 
 #[cfg(test)]

@@ -12,6 +12,7 @@ pub mod echo_tool;
 pub mod mcp_tool;
 pub mod sleep_tool;
 pub mod stop_tool;
+pub mod terminal_tool;
 
 /// Registers the tool kinds with `registry`, and the `ToolExecutor` as a
 /// facet of which an agent has exactly one, with its default kind.
@@ -25,4 +26,5 @@ pub fn register_all(registry: &mut ComponentRegistry) {
     mcp_tool::register(registry);
     sleep_tool::register(registry);
     stop_tool::register(registry);
+    terminal_tool::register(registry);
 }

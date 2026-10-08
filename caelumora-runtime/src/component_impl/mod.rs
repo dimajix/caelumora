@@ -20,6 +20,7 @@ pub mod turn_context_provider;
 pub mod external_context_provider;
 pub mod static_system_prompt_provider;
 pub mod tool_sets_prompt_provider;
+pub mod workspace_prompt_provider;
 
 /// Registers the component kinds of this directory with `registry`, and the
 /// `ContextProvider` as a facet of which an agent has exactly one, with its
@@ -39,4 +40,5 @@ pub fn register_all(registry: &mut ComponentRegistry) {
     external_context_provider::register(registry);
     static_system_prompt_provider::register(registry);
     tool_sets_prompt_provider::register(registry);
+    workspace_prompt_provider::register(registry);
 }

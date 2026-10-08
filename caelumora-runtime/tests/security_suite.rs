@@ -144,7 +144,8 @@ impl World {
         let mut registry = ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
         register(&mut registry);
         let files = tempfile::tempdir().unwrap();
-        let workspaces = WorkspacesConfig { storage: [("main".to_string(), StorageConfig::Local { root: files.path().to_path_buf() })].into(), ..Default::default() };
+        let shell = StorageConfig::Local { root: files.path().join("shell"), shell: true, destination: Some(Classification::general(Confidentiality::Internal)) };
+        let workspaces = WorkspacesConfig { storage: [("main".to_string(), StorageConfig::Local { root: files.path().to_path_buf(), shell: false, destination: None }), ("shell".to_string(), shell)].into(), ..Default::default() };
         let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), Vec::new(), workspaces, registry).unwrap());
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let mut world = Self { policy: recorder, store, runtime, manager, alice: UserId::new(), bob: UserId::new(), carol: UserId::new(), files };
@@ -1865,6 +1866,28 @@ async fn a_workspace_is_its_owners_alone() {
     assert!(!world.files.path().join(docs.id.to_string()).exists(), "with the files");
 }
 
+/// A storage takes what may flow to where it puts it (issue 251, part B2):
+/// a workspace classified above its destination is not made there, nor
+/// reclassified above it - asked as publishing there, before the
+/// clearance is.
+#[tokio::test]
+async fn a_storage_holds_no_workspace_above_its_destination() {
+    let world = World::new().await;
+    let workspaces = world.runtime.workspace_manager();
+    let alice = World::as_user(world.alice);
+    let mine = Scope::UserScope { user_id: world.alice };
+
+    let (above, asked) = world.asked(workspaces.create(&alice, "secrets", mine.clone(), "shell", None, Classification::general(Confidentiality::Confidential))).await;
+    assert!(matches!(&above, Err(WorkspaceError::StorageNotCleared(storage)) if storage == "shell"), "{above:?}");
+    assert_eq!(asked, checks(&["alice: Classify yes", "alice: Publish no"]));
+
+    let (made, asked) = world.asked(workspaces.create(&alice, "docs", mine, "shell", None, Classification::general(Confidentiality::Internal))).await;
+    let docs = made.expect("up to it");
+    assert_eq!(asked, checks(&["alice: Classify yes", "alice: Publish yes", "alice: JoinChannel(alice) yes", "alice: CreateWorkspace(alice's) yes"]));
+    let raised = workspaces.reclassify(&alice, docs.id, Classification::general(Confidentiality::Confidential)).await;
+    assert!(matches!(raised, Err(WorkspaceError::StorageNotCleared(_))), "{raised:?}");
+}
+
 /// Attaching a workspace shares it with the session's channels: its
 /// owner's act, into a session they may change (issue 251, decision 12);
 /// taking it away shares nothing and needs changing the session alone.
@@ -1949,6 +1972,66 @@ async fn a_workspace_is_not_used_in_a_channel_by_who_is_not_in_it() {
     let as_agent = alice.next(ActorId::Agent(waiting));
     let main = world.manager.views(Viewer::new(as_agent)).session(session.id()).await.unwrap().channel(session.channels()[0].id()).await.unwrap();
     assert!(main.workspace().await.unwrap().is_none());
+    world.manager.stop_session(&alice, session.id()).await.unwrap();
+}
+
+/// An agent's command (issue 251): the call is asked in the name of whoever
+/// asked the agent, as every call is; the workspace is reached through the
+/// channel as the agent reads every other place - with its owner's
+/// clearance (issue 142) - its flow both ways, before anything is sent to
+/// the shell.
+#[tokio::test]
+async fn an_agents_command_is_called_for_who_asked_and_reaches_the_workspace_through_its_channel() {
+    use caelumora_model::message::{Message, MessageRole};
+    use caelumora_model::tool::{ToolCall, ToolPresentation, ToolVisibility};
+
+    let call = Message {
+        role: MessageRole::Assistant,
+        tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "run_command".to_string(), arguments: serde_json::json!({ "command": "echo ran > ran.txt" }), visibility: ToolVisibility::SHOWN, presentation: ToolPresentation::Shell }],
+        ..Message::new(Classification::general(Confidentiality::Internal))
+    };
+    let model = Arc::new(Once(Mutex::new(Some(call))));
+    let world = World::with_kinds(|registry| registry.register(ComponentKind::new("once").provides::<dyn caelumora_runtime::llm::LLMClient>(), move |_, _| {
+        let mut facets = ComponentFacets::empty();
+        facets.insert::<dyn caelumora_runtime::llm::LLMClient>(Arc::<Once>::clone(&model));
+        Ok(facets)
+    })).await;
+    let running = Personality {
+        components: ComponentConfig { component_nodes: vec![
+            ComponentDescriptor::new("model", "once"),
+            ComponentDescriptor {
+                params: serde_json::json!({ "requires_approval": false }),
+                ..ComponentDescriptor::new("shell", caelumora_runtime::tool_impl::terminal_tool::TERMINAL_TOOL_KIND)
+            },
+        ] },
+        ..world.personality("running", None, &[]).await
+    };
+    world.store.update_personality(&World::system(), &running).await.unwrap();
+    let helper = world.agent("helper", world.alice, &running).await;
+    let alice = World::as_user(world.alice);
+    let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "shell", None, Classification::general(Confidentiality::Internal)).await.unwrap();
+    let session = world.shared_session(&[helper], &[]).await;
+    session.set_workspace(&alice, Some(docs.id)).await.unwrap();
+    let main = Arc::clone(&session.channels()[0]);
+
+    let ran = world.files.path().join("shell").join(docs.id.to_string()).join("ran.txt");
+    let (_, asked) = world.asked(async {
+        main.user_actor(world.bob).unwrap().send_message("@helper run it".to_string(), None).await.expect("sent");
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !ran.is_file() {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        }).await.expect("the command ran in the workspace");
+    }).await;
+    let calling: Vec<&String> = asked.iter().filter(|line| line.contains("CallTool")).collect();
+    assert!(!calling.is_empty() && calling.iter().all(|line| *line == "bob as helper: CallTool yes"), "the call in bob's name, who asked: {asked:?}");
+    let reaching: Vec<&String> = asked.iter().filter(|line| line.starts_with("alice as helper:")).collect();
+    assert_eq!(reaching, [
+        // The channel's workspace: no GetWorkspace, the flow both ways.
+        "alice as helper: Publish yes", "alice as helper: Publish yes",
+        // Its terminal, reached again through session and channel.
+        "alice as helper: GetSession(alice's) yes", "alice as helper: Publish yes", "alice as helper: Publish yes",
+    ], "the workspace as the agent reads every other place, in its owner's name (issue 142)");
     world.manager.stop_session(&alice, session.id()).await.unwrap();
 }
 

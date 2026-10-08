@@ -26,6 +26,24 @@ seed:
 #      path: "local/secrets.json"
 #    - type: env
 
+# Where the files of workspaces lie (issues 251, 253): storages by name, each
+# with its provider. `local` keeps a directory per workspace under `root`.
+# `shell: true` lets agents run commands there with `terminal_tool` - on
+# Caelumora's host, as its user, with no isolation but the directory: only
+# for development. A storage with a shell takes no workspace classified
+# above its `destination` (default then: public).
+workspaces:
+  max_file_bytes: 52428800
+  storage:
+    files:
+      provider: local
+      root: "local/workspaces/files"
+#    dev:
+#      provider: local
+#      root: "local/workspaces/dev"
+#      shell: true
+#      destination: { level: internal }
+
 # Where users and their credentials come from. Without this section nobody
 # can authenticate. `accept_any` is a development stand-in that accepts ANY
 # username and password - never enable it on a server reachable from a network.

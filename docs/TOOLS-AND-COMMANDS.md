@@ -124,7 +124,9 @@ it does not see the token, and there is no way yet for one to clean up otherwise
 *   binds whatever it starts to its own future, since that is all that is dropped: a task it spawns
     is aborted on drop (e.g. through `tokio_util::task::AbortOnDropHandle`; a plain `JoinHandle`
     only detaches it), a child process is started with `kill_on_drop(true)`, and work on a thread
-    of its own (`spawn_blocking`, `std::thread`) cannot be interrupted at all;
+    of its own (`spawn_blocking`, `std::thread`) cannot be interrupted at all - the one exception
+    is `terminal_tool`, whose commands live with the storage
+    ([Commands in the workspace](#commands-in-the-workspace));
 *   does not block: code that never reaches an `await` - a long computation, `std::thread::sleep` -
     cannot be interrupted, and holds up the agent's whole task, which even the abort after
     `STOP_GRACE` does not end.
@@ -538,10 +540,40 @@ A command answers the issuer alone (`/help`) or the whole channel (`/wakeup`).
 | `remember` | `agent_memory` | `text` | no | `HIDDEN` | Remembers something across channels and sessions. |
 | `forget` | `agent_memory` | `id` | no | `HIDDEN` | Forgets something remembered. |
 | `reclassify_memory` | `agent_memory` | `id`, `level`, `compartments` (optional) | yes | `HIDDEN` | Reclassifies something remembered that may be recalled here, never above the channel (issue 133). |
+| `run_command` | `terminal_tool` | `command`, `wait_secs` (optional, at most `max_wait_secs`) | as configured, yes by default | `SHOWN` | Runs a shell command in the session's workspace and follows it; answers with its output and exit code, or with its id while it runs (see [Commands in the workspace](#commands-in-the-workspace)). |
+| `command_output` | `terminal_tool` | `id`, `offset` (optional), `wait_secs` (optional) | no | `SHOWN` | What a command started in the channel printed since `offset`, once it ended or the wait is over. |
+| `kill_command` | `terminal_tool` | `id` | no | `SHOWN` | Ends a command started in the channel, and what it started. |
 | `read_history` | `channel_history` | `channel`, `last` (optional, default 20, at most 100), `query` (optional) | no | `SHOWN` | Reads the latest messages of another channel, or those containing a text. |
 
 `stop`, `bye` and `silence` end the turn with the current tool step (`Turn::request_state`). Notes,
 private notes and agent memory are described in [MEMORY.md](MEMORY.md).
+
+### Commands in the workspace
+
+`terminal_tool` (issue [251](../issues/251-open-terminal.md)) gives an agent a shell in its
+session's workspace, where its channel may use it ([CHANNELS.md](CHANNELS.md#its-workspace)): the
+workspace is reached through the turn's views on every call, before anything is sent, and a call
+where there is none - or whose storage has no shell - fails and says so. `workspace_prompt_provider`
+tells the model beforehand what it has. A command runs in the workspace's directory, every one
+anew - a `cd` does not carry over - and is seen only from the channel it was started in.
+
+A call follows its command for `wait_secs`; one still running then is handed back with its id, and
+the model follows it with `command_output` - handing back the `next_offset` of the last result - or
+ends it with `kill_command`. Its result is a JSON object `{ id, status, output, next_offset,
+truncated, exit_code? }`, `status` one of `running`, `completed`, `killed` and `failed`, `output`
+cut from the front to `max_output_bytes`; it is classified as the workspace. The approver reads
+the command whole ("Run in the workspace:" and the command on a line of its own); following and
+ending a command need no approval, since only a command that was approved is followed or ended.
+Its calls are presented as `shell` (`ToolPresentation::Shell`): the web UI shows the command as a
+line of code and the output as a terminal shows it.
+
+A call dropped while it waits for its command - the turn cancelled or stopped - kills the command:
+the one thing a tool does after its future is gone, in a task of its own that is bounded to five
+seconds and logged, and that the drop does not await. It is a deliberate exception to "a tool binds
+whatever it starts to its own future": a command lives with the storage, so that one handed back
+as running outlives the call, and one left running by a dropped call would go on writing into the
+workspace after the turn that started it. A command handed back as running is the model's to end;
+nothing bounds how long it runs yet (issue [254](../issues/254-commands-run-unbounded.md)).
 
 ### Commands
 

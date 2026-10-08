@@ -203,7 +203,7 @@ export interface ToolVisibility {
  * How a tool's calls and their results are shown (issue 165), declared by the tool and stamped on
  * each call; absent means `default`. Display only.
  */
-export type ToolPresentation = 'default';
+export type ToolPresentation = 'default' | 'shell';
 
 export interface ToolCall {
   id?: string;
@@ -321,6 +321,8 @@ export interface WorkspaceResponse {
   storage: string;
   description?: string;
   classification: Classification;
+  /** Whether its storage gives it a shell: agents can run commands in it. */
+  has_shell: boolean;
   /** Whether you may change it and attach it to a session: its owner. */
   can_change: boolean;
 }

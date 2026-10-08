@@ -116,6 +116,9 @@ pub enum ToolPresentation {
     /// As every call: its name, its arguments and its result.
     #[default]
     Default,
+    /// A shell command (issue 251): its `command` as a line of code, its
+    /// `output` as a terminal shows it, and its exit code.
+    Shell,
 }
 
 impl ToolPresentation {

@@ -75,7 +75,7 @@ const QuestionsRecord: React.FC<{answers: Answers}> = ({answers}) => {
       </div>
       {answers.questions.questions.map((question, index) => (
         <div key={index} className="text-xs">
-          <span className="opacity-70">{question.question}</span>{' '}
+          <span className="opacity-70 whitespace-pre-wrap">{question.question}</span>{' '}
           <span className={answers.responses[index]?.kind === 'declined' ? 'italic opacity-60' : 'font-medium'}>
             {responseText(answers.responses[index])}
           </span>
@@ -117,9 +117,99 @@ const DefaultToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) 
   </>
 );
 
+/** A call's arguments as an object, whether they came as one or as its JSON text; `null` if neither. */
+function argumentsObject(args: unknown): Record<string, unknown> | null {
+  let value = args;
+  if (typeof value === 'string') {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+/** What a shell tool answers of a command (issue 251). */
+interface CommandResult {
+  id: string;
+  status: 'running' | 'completed' | 'killed' | 'failed';
+  output: string;
+  truncated: boolean;
+  exit_code?: number;
+}
+
+/** The result of a successful call of a shell tool, or `null` for any other. */
+function commandResult(result: ToolResult): CommandResult | null {
+  if (result.status && result.status !== 'ok') return null;
+  try {
+    const parsed = JSON.parse(result.content);
+    return typeof parsed?.id === 'string' && typeof parsed?.status === 'string' && typeof parsed?.output === 'string' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Where a command stands, as its result says. */
+function commandStatus(command: CommandResult): string {
+  switch (command.status) {
+    case 'running': return `Still running as ${command.id}`;
+    case 'killed': return 'Killed';
+    case 'failed': return 'Failed';
+    default: return command.exit_code === undefined ? 'Completed' : `Exit code ${command.exit_code}`;
+  }
+}
+
+/**
+ * A shell command (issue 251): the command as a line of code, what it printed as a terminal shows it,
+ * and where it stands. A call that follows or ends a command started before names it by its id.
+ */
+const ShellToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) => {
+  const args = argumentsObject(call.arguments);
+  const command = typeof args?.command === 'string' ? args.command : null;
+  const followed = typeof args?.id === 'string' ? args.id : null;
+  const answered = result && commandResult(result);
+  const failed = answered && (answered.status === 'failed' || (answered.exit_code ?? 0) !== 0);
+  return (
+    <>
+      {call.arguments === null ? (
+        <span className="text-[11px] italic opacity-60">Command not shown</span>
+      ) : command !== null ? (
+        <pre className="text-[11px] font-mono whitespace-pre-wrap break-all"><span className="select-none opacity-50">$ </span>{command}</pre>
+      ) : followed !== null ? (
+        <div className="text-[11px] opacity-70">
+          {call.function_name === 'kill_command' ? 'Ends' : 'Follows'} command <code className="font-mono">{followed}</code>
+        </div>
+      ) : (
+        <code className="text-[11px] font-mono break-all">{formatArguments(call.arguments)}</code>
+      )}
+      {result && result.content === '' && (result.visibility?.content ?? 'channel') !== 'channel' ? (
+        <div className="mt-2 text-[11px] italic opacity-60">Output not shown</div>
+      ) : answered ? (
+        <div className="mt-2">
+          {(answered.output !== '' || answered.truncated) && (
+            <pre className="text-[11px] font-mono whitespace-pre-wrap break-all max-h-80 overflow-y-auto bg-gray-900 text-gray-100 p-1.5 rounded-sm">
+              {answered.truncated && <span className="block italic opacity-60">… earlier output dropped</span>}
+              {answered.output}
+            </pre>
+          )}
+          <div className={`mt-1 text-[11px] ${failed ? 'text-amber-600 dark:text-amber-400' : 'opacity-60'}`}>
+            {commandStatus(answered)}
+          </div>
+        </div>
+      ) : result && (
+        <pre className="mt-2 text-[11px] font-mono whitespace-pre-wrap break-all bg-white dark:bg-gray-950 p-1.5 rounded-sm border border-gray-100 dark:border-gray-900">
+          {toolResultText(result)}
+        </pre>
+      )}
+    </>
+  );
+};
+
 /** The handler of each presentation; one the server knows and this client does not falls back to the default. */
 const PRESENTATIONS: Record<ToolPresentation, React.FC<ToolCallContentProps>> = {
   default: DefaultToolCallContent,
+  shell: ShellToolCallContent,
 };
 
 interface ToolCallViewProps {

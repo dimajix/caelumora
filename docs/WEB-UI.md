@@ -189,9 +189,12 @@ else who may read it - the session's owner, say - is shown its history and no in
     agent stamps on each call, never by the tool's name. `ToolCallView` draws the frame every call
     has - the tool, who sees it, its status and duration - and leaves what is inside to the handler
     of the call's presentation (`PRESENTATIONS`); a call without one, or with one this client does
-    not know, gets the default handler: its arguments and its result as they are. Where a result
-    keeps the record of the questions its call asked (`answers`, issue 165), the frame shows each
-    question with its answer, and who answered or declined.
+    not know, gets the default handler: its arguments and its result as they are. The `shell`
+    handler (issue 251) shows a command as a line of code, what it printed as a terminal shows it,
+    and its exit code, or the id it runs under; a call that follows or ends a command names its id.
+    Where a result keeps the record of the questions its call asked (`answers`, issue 165), the
+    frame shows each question with its answer, and who answered or declined. A question's text keeps
+    its line breaks, so that an approver reads a command of several lines as it was written.
 *   **While an agent answers**, its partial message is shown as it streams, its reasoning
     included: folded under "Thinking" until the answer begins (issue 216). Several agents answering
     at once each have an answer of their own, in the order they began, and a plan step of their own

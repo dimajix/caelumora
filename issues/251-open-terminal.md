@@ -311,6 +311,7 @@ pub(crate) trait TerminalProvider: Send + Sync + Debug {
     async fn create(&self, id: WorkspaceId) -> TerminalResult<()>;              // the workspace's place: a directory, a volume
     async fn remove(&self, id: WorkspaceId) -> TerminalResult<()>;              // on purge, with everything in it
     async fn terminal_for(&self, id: WorkspaceId) -> TerminalResult<Arc<dyn Terminal>>; // the same handle for the same workspace
+    fn has_shell(&self) -> bool;                                                // asked without reaching a terminal
     fn destination(&self) -> Option<&Classification>;                           // what may be put into this storage (B2)
 }
 
@@ -328,9 +329,9 @@ pub(crate) trait Terminal: Send + Sync + Debug {
 
 #[async_trait]
 pub(crate) trait Shell: Send + Sync + Debug {
-    async fn run(&self, scope: &str, command: &str, wait: Duration) -> TerminalResult<CommandState>;
+    async fn start(&self, scope: &str, command: &str) -> TerminalResult<String>;   // its id, at once
     async fn output(&self, scope: &str, id: &str, offset: u64, wait: Duration) -> TerminalResult<CommandState>;
-    async fn kill(&self, scope: &str, id: &str) -> TerminalResult<CommandState>;
+    async fn kill(&self, scope: &str, id: &str, offset: u64) -> TerminalResult<CommandState>;
 }
 ```
 
@@ -663,7 +664,9 @@ extension of `ToolProvider` for when a second case needs it, not made here.
 3. `workspace.terminal()` - membership, the switch and the two flow questions, before anything is
    sent.
 4. `terminal.shell()`: none is a failed call that says so.
-5. `shell.run(scope: channel id, command, wait)`.
+5. `shell.start(scope: channel id, command)`, then `shell.output(scope, id, 0, wait)` - split, so
+   that the tool knows the id before it waits and can kill the command if the call is dropped
+   (C4).
 6. The output cut to `max_output_bytes` from the front; the result as C2 says.
 
 `command_output(id, offset)`: `shell.output(scope, id, offset, wait)`. The provider keeps no state
@@ -671,7 +674,7 @@ between calls (as `mcp_tool` keeps none): every result carries `next_offset`, an
 it back. A command the shell no longer knows is `failed` with "no longer known; its output was
 given when it ended".
 
-`kill_command(id)`: `shell.kill(scope, id)`.
+`kill_command(id)`: `shell.kill(scope, id, 0)`.
 
 Errors of the terminal are `ToolError::ExecutionFailed` with what the `TerminalError` says - an
 endpoint shown without credentials (`RemoteEndpoint::shown`, `redact_in`), a body shortened,
@@ -691,8 +694,8 @@ forgotten - it drops one five minutes after it ended - is `Failed`. `kill` is `D
 (the bytes), `/files/upload` (multipart), `/files/delete`, `/files/mkdir`, `/files/move`; `create`
 is `/files/mkdir`, `remove` is `/files/delete`.
 
-**The local shell** (`terminal/local.rs`): `bash -c` in the workspace's directory, a process group
-of its own, `kill_on_drop`, output read into a bounded buffer per command, commands kept by
+**The local shell** (`terminal/local_shell.rs`): `bash -c` in the workspace's directory, a process
+group of its own, `kill_on_drop`, output read into a bounded buffer per command, commands kept by
 `(scope, id)` until five minutes after they ended, as Open Terminal keeps them.
 
 #### C4. Interruption
@@ -905,8 +908,8 @@ where it says so.
    component with its shell tools and tests against it, `workspace_prompt_provider`,
    `ToolPresentation::Shell` with its UI handler, the seed personality, TOOLS-AND-COMMANDS.md,
    COMPONENTS.md, CONFIGURATION.md (with the warning). The security suite: a call asks `CallTool`
-   and `Publish` both ways. With this, the whole chain runs in `cargo test` without a
-   container.
+   and `Publish` both ways - the first in the asker's name, the second in the owner's. With this,
+   the whole chain runs in `cargo test` without a container.
 6. **`open_terminal_shared`** (A, C3's Open Terminal paragraph, C6's `open_terminal/`, F): the
    client, the wire, the handle with files and shell, the provider, the stand-in and its tests, the
    compose example. A run against a real instance is made by hand, with the key from
@@ -966,9 +969,11 @@ container.
   start; the image is pinned.
 - **`env` is per command**; no secret of Caelumora's goes into it, and a key goes into a header,
   resolved or generated per instance.
-- **The agent's context.** The ownership policy judges the initiator - in a turn, whoever asked
-  the agent. In a session no `GetWorkspace` is asked (decision 10): the channel decides, and the
-  agent is its member.
+- **The agent's context.** The ownership policy judges the initiator. The call is admitted in the
+  turn's context - whoever asked the agent - but the workspace is reached through the agent's
+  views, in its owner's name, as every other place it reads (SECURITY.md, *In whose name an agent
+  acts*; issue [255](255-whose-name-agents-act-in.md)). In a session no `GetWorkspace` is asked
+  (decision 10): the channel decides, and the agent is its member.
 - **Issue 20.** A command is an effect nothing stages: done when done, and a turn given up does not
   undo it; the transcript tells the agent what ran (issue 145). W4 is where a workspace gets what
   the turn has - a state to go back to.
@@ -1042,3 +1047,14 @@ command may come later.
   [253](253-workspace.md).
 - **2026-10-08** — Step 4 of the plan done: workspaces over REST and in the web UI - see issue
   [253](253-workspace.md).
+- **2026-10-08** — Step 5 of the plan done. The local shell (`terminal/local_shell.rs`, opt-in by
+  the storage's `shell`, with `destination` its ceiling - public by default), `terminal_tool` with
+  `run_command`, `command_output` and `kill_command`, `workspace_prompt_provider`,
+  `ToolPresentation::Shell` with its handler in the web UI, the seed personality, the example
+  configuration (the shell storage commented out) and the documents. Plan amended: `Shell` has
+  `start` instead of `run`, so that the tool knows a command's id before it waits and can kill it
+  on drop, and `kill` takes the offset; `TerminalProvider::has_shell` answers without reaching a
+  terminal; the local shell has a module of its own. The suite showed that the call is admitted in
+  the asker's name and the workspace reached in the owner's; SECURITY.md describes it, and issue
+  [255](255-whose-name-agents-act-in.md) asks whether that is right. A command handed back as
+  running is ended by nothing but the model: issue [254](254-commands-run-unbounded.md).

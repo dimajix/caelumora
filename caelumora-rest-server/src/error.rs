@@ -213,6 +213,7 @@ impl ApiError {
             match e {
                 WorkspaceError::NotFound(_) => return Self::not_found("workspace_not_found", detail),
                 WorkspaceError::UnknownStorage(_) => return bad_request("unknown_storage"),
+                WorkspaceError::StorageNotCleared(_) => return bad_request("storage_not_cleared"),
                 WorkspaceError::ClassificationRefused => return bad_request("invalid_classification"),
                 WorkspaceError::NotCleared => return Self::forbidden("not_cleared", detail),
                 WorkspaceError::Invalid(e) => return Self::invalid_value(e),
@@ -310,6 +311,7 @@ impl ApiError {
             TerminalError::NotEmpty(_) => Self::conflict("directory_not_empty", detail),
             TerminalError::TooLarge { .. } => Self::new(StatusCode::PAYLOAD_TOO_LARGE, "file_too_large", detail),
             TerminalError::Unavailable(_) => Self::unavailable("storage_unavailable", detail),
+            TerminalError::UnknownCommand(_) => Self::not_found("command_not_found", detail),
         }
     }
 }

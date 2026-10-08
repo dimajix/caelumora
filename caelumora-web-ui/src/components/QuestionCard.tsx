@@ -87,7 +87,7 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({request, asked, asked
           <fieldset key={index} className="space-y-2" disabled={!editable}>
             <legend className="text-sm">
               <span className="text-[11px] uppercase tracking-wider text-gray-500 mr-2">{question.header}</span>
-              <span className="font-medium">{question.question}</span>
+              <span className="font-medium whitespace-pre-wrap">{question.question}</span>
             </legend>
             {question.choices?.length ? (
               <>

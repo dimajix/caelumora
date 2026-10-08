@@ -55,6 +55,12 @@ personalities:
   - id: ask-user-tool
     kind: ask_user_tool
     fail_policy: FailClosed
+  - id: workspace
+    kind: workspace_prompt_provider
+    fail_policy: FailClosed
+  - id: terminal-tool
+    kind: terminal_tool
+    fail_policy: FailClosed
 - id: 9e11411a-0aa5-41c8-a17f-61bf7b0352ce
   name: sassy-assistant
   description: A sassy and witty assistant

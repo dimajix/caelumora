@@ -5,8 +5,10 @@
 //! the check and the use - by a command running in the workspace - is the
 //! one gap, closed only by a provider that keeps commands elsewhere.
 
-use super::{ByteStream, FileEntry, Terminal, TerminalError, TerminalProvider, TerminalResult, WorkspacePath};
+use super::local_shell::{LocalCommands, LocalShell};
+use super::{ByteStream, FileEntry, Shell, Terminal, TerminalError, TerminalProvider, TerminalResult, WorkspacePath};
 use async_trait::async_trait;
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::workspace::WorkspaceId;
 use futures::StreamExt;
 use std::io::ErrorKind;
@@ -20,12 +22,18 @@ use tracing::warn;
 #[derive(Debug)]
 pub(crate) struct LocalProvider {
     root: PathBuf,
+    /// The commands of its workspaces, if it has a shell.
+    commands: Option<Arc<LocalCommands>>,
+    destination: Option<Classification>,
 }
 
 impl LocalProvider {
-    /// The provider of a storage whose workspaces lie under `root`.
-    pub(crate) fn new(root: PathBuf) -> Self {
-        Self { root }
+    /// The provider of a storage whose workspaces lie under `root`, with a
+    /// shell if `shell`; what may be put into it at most `destination`, or
+    /// `public` with a shell and no bound without one.
+    pub(crate) fn new(root: PathBuf, shell: bool, destination: Option<Classification>) -> Self {
+        let destination = destination.or_else(|| shell.then_some(Classification::PUBLIC));
+        Self { root, commands: shell.then(Arc::default), destination }
     }
 
     fn place(&self, id: WorkspaceId) -> PathBuf {
@@ -69,7 +77,7 @@ impl TerminalProvider for LocalProvider {
     async fn terminal_for(&self, id: WorkspaceId) -> TerminalResult<Arc<dyn Terminal>> {
         let dir = self.place(id);
         match fs::metadata(&dir).await {
-            Ok(metadata) if metadata.is_dir() => Ok(Arc::new(LocalTerminal { dir })),
+            Ok(metadata) if metadata.is_dir() => Ok(Arc::new(LocalTerminal { dir, workspace: id, commands: self.commands.clone() })),
             Ok(_) => Err(TerminalError::Unavailable("its place is not a directory".to_string())),
             Err(e) if e.kind() == ErrorKind::NotFound => {
                 warn!(workspace = %id, "The place of a workspace is gone");
@@ -78,12 +86,23 @@ impl TerminalProvider for LocalProvider {
             Err(e) => Err(unavailable(e)),
         }
     }
+
+    fn has_shell(&self) -> bool {
+        self.commands.is_some()
+    }
+
+    fn destination(&self) -> Option<&Classification> {
+        self.destination.as_ref()
+    }
 }
 
-/// The files of one workspace, in its directory.
+/// The files of one workspace, in its directory, and its shell if the
+/// storage has one.
 #[derive(Debug)]
 struct LocalTerminal {
     dir: PathBuf,
+    workspace: WorkspaceId,
+    commands: Option<Arc<LocalCommands>>,
 }
 
 impl LocalTerminal {
@@ -231,6 +250,11 @@ impl Terminal for LocalTerminal {
         fs::create_dir_all(parent.under(&self.dir)).await.map_err(|e| failed(&parent, e))?;
         fs::rename(&source, &target).await.map_err(|e| failed(to, e))
     }
+
+    fn shell(&self) -> Option<Arc<dyn Shell>> {
+        let commands = Arc::clone(self.commands.as_ref()?);
+        Some(Arc::new(LocalShell { dir: self.dir.clone(), workspace: self.workspace, commands }))
+    }
 }
 
 #[cfg(test)]
@@ -250,7 +274,7 @@ mod tests {
 
     async fn workspace() -> (tempfile::TempDir, LocalProvider, Arc<dyn Terminal>, WorkspaceId) {
         let root = tempfile::tempdir().unwrap();
-        let provider = LocalProvider::new(root.path().to_path_buf());
+        let provider = LocalProvider::new(root.path().to_path_buf(), false, None);
         let id = WorkspaceId::new();
         provider.create(id).await.unwrap();
         let terminal = provider.terminal_for(id).await.unwrap();

@@ -56,6 +56,10 @@ pub enum WorkspaceError {
     ClassificationRefused,
     #[error("you are not cleared for the classification of the workspace")]
     NotCleared,
+    /// Its storage may not hold what is so classified (issue 251): a place
+    /// with a shell or a remote side is cleared for so much.
+    #[error("the storage '{0}' may not hold a workspace so classified")]
+    StorageNotCleared(String),
     #[error(transparent)]
     Invalid(#[from] ValueError),
     #[error(transparent)]
@@ -97,7 +101,7 @@ impl WorkspaceManager {
         let storages = config.storage.iter()
             .map(|(name, storage)| {
                 let provider: Arc<dyn TerminalProvider> = match storage {
-                    StorageConfig::Local { root } => Arc::new(LocalProvider::new(root.clone())),
+                    StorageConfig::Local { root, shell, destination } => Arc::new(LocalProvider::new(root.clone(), *shell, destination.clone())),
                 };
                 (name.clone(), provider)
             })
@@ -119,11 +123,18 @@ impl WorkspaceManager {
         self.storages.get(&workspace.storage).ok_or_else(|| WorkspaceError::UnknownStorage(workspace.storage.clone()))
     }
 
-    /// Whether whoever `ctx` acts for may give `classification`, and is
-    /// cleared for it - as they would have to be to read a channel so
-    /// classified.
-    async fn require_classification(&self, ctx: &SecurityContext, classification: &Classification) -> WorkspaceResult<()> {
+    /// Whether whoever `ctx` acts for may give `classification` to a
+    /// workspace in `storage`, and is cleared for it - as they would have
+    /// to be to read a channel so classified -, and whether the storage may
+    /// hold it: what is so classified flows into its destination, asked as
+    /// putting it there (`Publish`, issue 251).
+    async fn require_classification(&self, ctx: &SecurityContext, storage: &str, provider: &dyn TerminalProvider, classification: &Classification) -> WorkspaceResult<()> {
         self.security.require(ctx, ActionType::Classify(classification), || WorkspaceError::ClassificationRefused).await?;
+        if let Some(destination) = provider.destination() {
+            if !self.security.may_publish(ctx, ctx.caller_id, classification, destination).await {
+                return Err(WorkspaceError::StorageNotCleared(storage.to_string()));
+            }
+        }
         let roles = user_roles(self.entities.as_ref(), ctx.initiator_id).await?;
         match self.security.may_see_channel(ctx, &roles, classification).await {
             true => Ok(()),
@@ -146,7 +157,7 @@ impl WorkspaceManager {
         let provider = self.storages.get(storage).ok_or_else(|| WorkspaceError::UnknownStorage(storage.to_string()))?;
         let mut workspace = Workspace::new(ScopedName::new(name, scope)?, storage, classification, owner);
         workspace.description = Description::optional(description)?;
-        self.require_classification(ctx, &workspace.classification).await?;
+        self.require_classification(ctx, storage, provider.as_ref(), &workspace.classification).await?;
 
         let _writing = self.writing.lock().await;
         self.entities.create_workspace(ctx, &workspace).await?;
@@ -207,7 +218,8 @@ impl WorkspaceManager {
             WorkspaceUpdateEvent::NameChanged(name) => workspace.name = ScopedName::new(name, workspace.name.scope.clone())?,
             WorkspaceUpdateEvent::DescriptionChanged(description) => workspace.description = Description::optional(description.as_deref())?,
             WorkspaceUpdateEvent::ClassificationChanged(classification) => {
-                self.require_classification(ctx, classification).await?;
+                let provider = Arc::clone(self.provider(&workspace)?);
+                self.require_classification(ctx, &workspace.storage, provider.as_ref(), classification).await?;
                 workspace.classification = classification.clone();
             }
         }
@@ -338,6 +350,13 @@ impl WorkspaceManager {
         Ok(())
     }
 
+    /// Whether the terminals of `workspace` have a shell - asked of its
+    /// storage, without reaching one; `false` for a storage no longer
+    /// configured.
+    pub(crate) fn has_shell(&self, workspace: &Workspace) -> bool {
+        self.provider(workspace).is_ok_and(|provider| provider.has_shell())
+    }
+
     /// The terminal of `workspace`, which one of the two ways of using it
     /// let the caller reach.
     ///
@@ -346,5 +365,99 @@ impl WorkspaceManager {
     /// `TerminalError` of reaching its place.
     pub(crate) async fn terminal(&self, workspace: &Workspace) -> WorkspaceResult<Arc<dyn Terminal>> {
         Ok(self.provider(workspace)?.terminal_for(workspace.id).await?)
+    }
+}
+
+/// What the tests of the components that work on a workspace share: a
+/// running session whose channel "main" an agent takes part in, with a
+/// workspace attached that its storage gives a shell.
+#[cfg(test)]
+pub(crate) mod testing {
+    use crate::agent_state::AgentStateHandle;
+    use crate::agent_turn::Turn;
+    use crate::runtime::RuntimeManager;
+    use crate::session::SessionLoop;
+    use crate::view::ViewsFactory;
+    use caelumora_model::actor::{ActorId, EventContext};
+    use caelumora_model::agent::{Agent, AgentChannelState, AgentId, Personality, PersonalityId};
+    use caelumora_model::channel::{Channel, Participant};
+    use caelumora_model::command::default_commands;
+    use caelumora_model::config::{StorageConfig, WorkspacesConfig};
+    use caelumora_model::confidentiality::{Classification, Confidentiality, Visibility};
+    use caelumora_model::scope::Scope;
+    use caelumora_model::secret::SecretManager;
+    use caelumora_model::security::{DummySecurityManager, SecurityContext};
+    use caelumora_model::session::{Session, SessionId};
+    use caelumora_model::store::EntityStore;
+    use caelumora_model::store_impl::memory::MemoryStore;
+    use caelumora_model::user::UserId;
+    use caelumora_model::value::name::{Name, ScopedName};
+    use caelumora_model::workspace::Workspace;
+    use std::sync::Arc;
+
+    pub(crate) struct WithWorkspace {
+        /// Where the storage keeps the workspace's files.
+        pub(crate) files: tempfile::TempDir,
+        pub(crate) session: Arc<SessionLoop>,
+        pub(crate) agent: AgentId,
+        /// What the agent acts in: for the workspace's owner.
+        pub(crate) context: SecurityContext,
+        pub(crate) workspace: Workspace,
+    }
+
+    impl WithWorkspace {
+        /// A turn of the agent in the channel, begun in `state`.
+        pub(crate) fn turn<'a>(&self, state: &'a mut AgentChannelState) -> Turn<'a> {
+            let channel = &self.session.channels()[0];
+            state.begin_turn(EventContext::new(self.session.id(), channel.id(), ActorId::None, String::new()), self.context.clone(), channel.classification(), Vec::new(), Default::default());
+            Turn::of(self.agent, "Jonathan".to_string(), state, AgentStateHandle::detached()).expect("a turn was begun")
+                .with_views(ViewsFactory::in_session(Arc::clone(&self.session), self.context.clone()))
+        }
+
+        /// Where the workspace's files lie on the host.
+        pub(crate) fn dir(&self) -> std::path::PathBuf {
+            self.files.path().join(self.workspace.id.to_string())
+        }
+    }
+
+    pub(crate) async fn session_with_workspace() -> WithWorkspace {
+        let store = Arc::new(MemoryStore::new());
+        let policy = Arc::new(DummySecurityManager::new());
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&policy)));
+        let files = tempfile::tempdir().unwrap();
+        let internal = Classification::general(Confidentiality::Internal);
+        let storage = StorageConfig::Local { root: files.path().to_path_buf(), shell: true, destination: Some(internal.clone()) };
+        let workspaces = WorkspacesConfig { storage: [("dev".to_string(), storage)].into(), ..Default::default() };
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), Vec::new(), workspaces, crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let system = SecurityContext::system();
+
+        let owner = UserId::new();
+        let as_owner = SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
+        let workspace = runtime.workspace_manager().create(&as_owner, "docs", Scope::UserScope { user_id: owner }, "dev", Some("Drafts"), internal.clone()).await.unwrap();
+
+        let personality = Personality {
+            description: None, id: PersonalityId::new(), name: ScopedName::new("plain", Default::default()).unwrap(),
+            kind: Default::default(), roles: None, introduction: None, components: Default::default(),
+            security_attributes: Default::default(), reasoning_visibility: Visibility::Channel, deleted: None,
+        };
+        store.create_personality(&system, &personality).await.unwrap();
+        let agent = Agent::new(ScopedName::new("Jonathan", Scope::GlobalScope).unwrap(), &personality, ActorId::User(owner));
+        store.create_agent(&system, &agent).await.unwrap();
+        let session_id = SessionId::new();
+        let channel = Channel::build(session_id, ActorId::User(owner), Name::new("main").unwrap(), Default::default(), internal, None, vec![Participant::User(owner), Participant::Agent(agent.id)]);
+        let now = chrono::Utc::now();
+        let session = Session {
+            summary: None, briefing: None,
+            approval_rules: Vec::new(),
+            workspace: Some(workspace.id),
+            id: session_id, name: Name::new("s").unwrap(), participants: channel.participants.clone(), channels: vec![channel.id],
+            commands: Default::default(), privacy: Default::default(), created_at: now, updated_at: now, security_attributes: Default::default(),
+            deleted: None,
+        };
+        store.create_session(&system, &session).await.unwrap();
+        store.create_channel(&system, &channel).await.unwrap();
+        let session = SessionLoop::new(session, vec![channel], Arc::clone(&runtime)).await.unwrap();
+        let context = SecurityContext::new(ActorId::User(owner), session_id, session.channels()[0].id()).next(ActorId::Agent(agent.id));
+        WithWorkspace { files, session, agent: agent.id, context, workspace }
     }
 }

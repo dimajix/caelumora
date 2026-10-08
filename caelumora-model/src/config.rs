@@ -1,6 +1,6 @@
 use crate::approval::ApprovalRule;
 use crate::command::default_commands;
-use crate::confidentiality::{Compartments, ConfidentialityRules, Roles};
+use crate::confidentiality::{Classification, Compartments, ConfidentialityRules, Roles};
 use std::collections::BTreeMap;
 use crate::component::ComponentConfig;
 use crate::secret::SecretManager;
@@ -288,8 +288,20 @@ impl Default for WorkspacesConfig {
 #[serde(tag = "provider", rename_all = "snake_case", deny_unknown_fields)]
 pub enum StorageConfig {
     /// A directory per workspace under `root`, on Caelumora's host, read
-    /// and written by Caelumora itself.
-    Local { root: PathBuf },
+    /// and written by Caelumora itself. With `shell`, agents run commands
+    /// there - on Caelumora's host, as its user: for development and tests,
+    /// never where the host is to be protected.
+    Local {
+        root: PathBuf,
+        #[serde(default)]
+        shell: bool,
+        /// What may be put into this storage (issue 251): the classification
+        /// a workspace in it may have at most. Without it, `public` where it
+        /// has a shell - a command may send anything anywhere - and no bound
+        /// where it has none, since nothing then leaves the process.
+        #[serde(default)]
+        destination: Option<Classification>,
+    },
 }
 
 /// The system's rules on tool calls (issue 13): each asks or denies - the
@@ -491,7 +503,9 @@ persistence:
     fn workspaces_are_made_in_the_storages_configured() {
         let config = AppConfig::from_yaml("workspaces:\n  max_file_bytes: 1024\n  storage:\n    main:\n      provider: local\n      root: local/workspaces\n").expect("a local storage");
         assert_eq!(config.workspaces.max_file_bytes, 1024);
-        assert_eq!(config.workspaces.storage.get("main"), Some(&StorageConfig::Local { root: PathBuf::from("local/workspaces") }));
+        assert_eq!(config.workspaces.storage.get("main"), Some(&StorageConfig::Local { root: PathBuf::from("local/workspaces"), shell: false, destination: None }));
+        let shell = AppConfig::from_yaml("workspaces:\n  storage:\n    dev:\n      provider: local\n      root: x\n      shell: true\n      destination: { level: internal }\n").expect("a local storage with a shell");
+        assert_eq!(shell.workspaces.storage.get("dev"), Some(&StorageConfig::Local { root: PathBuf::from("x"), shell: true, destination: Some(Classification::general(crate::confidentiality::Confidentiality::Internal)) }));
         let none = AppConfig::from_yaml("{}\n").expect("nothing configured");
         assert!(none.workspaces.storage.is_empty(), "no storage unless configured");
         assert_eq!(none.workspaces.max_file_bytes, DEFAULT_MAX_FILE_BYTES);

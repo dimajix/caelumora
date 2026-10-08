@@ -34,6 +34,15 @@ the next purge. What a caller writes as a path is made a `WorkspacePath` - relat
 before any provider sees it, and a `local` storage follows a symbolic link only where it stays
 inside the workspace.
 
+A terminal may have a `Shell`, a capability of its storage (`TerminalProvider::has_shell`): commands
+started in the workspace's directory, followed by what they print and killed with everything they
+started, each seen only under the scope it was started with - the tool passes the channel. The
+`local` provider's shell is opt-in (`shell`): `bash -c` on Caelumora's host, a process group per
+command, an environment cleared but for `PATH`, `HOME` (the workspace), `LANG`, `TERM=dumb`,
+`NO_COLOR` and `CAELUMORA_WORKSPACE`, the newest 1 MiB of output kept, and a command kept five
+minutes after it ended. Commands live with the provider, not with a call or a turn; one still
+running when Caelumora ends is not killed by it.
+
 Preconfigured components are not among them. They are runtime configuration that personalities and
 templates refer to by `kind: "ref"`, and the `ComponentStore` keeps them: a `StoredComponent` - the
 `ComponentDescriptor` with the attributes of who may use and change it - by its id, with the same

@@ -360,6 +360,8 @@ pub struct WorkspaceResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<Description>,
     pub classification: Classification,
+    /// Whether its storage gives it a shell: agents can run commands in it.
+    pub has_shell: bool,
     /// Whether you may change it - rename, describe, reclassify - and
     /// attach it to a session: its owner.
     pub can_change: bool,
@@ -373,7 +375,7 @@ impl From<snapshot::WorkspaceSnapshot> for WorkspaceResponse {
             // A workspace lies in no other (`Workspace::validate`).
             _ => (WorkspaceScope::Global, None),
         };
-        Self { id: view.id, name: view.name, scope, session_id, storage: view.storage, description: view.description, classification: view.classification, can_change: view.can_change }
+        Self { id: view.id, name: view.name, scope, session_id, storage: view.storage, description: view.description, classification: view.classification, has_shell: view.has_shell, can_change: view.can_change }
     }
 }
 

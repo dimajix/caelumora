@@ -63,6 +63,11 @@ impl WorkspaceView {
         &self.workspace.classification
     }
 
+    /// Whether its storage gives it a shell: what agents can do with it.
+    pub fn has_shell(&self) -> bool {
+        self.views.workspace_manager().has_shell(&self.workspace)
+    }
+
     /// Whether the viewer may change it and attach it to a session
     /// (`UpdateWorkspace`): its owner.
     pub async fn may_change(&self) -> bool {
@@ -107,6 +112,7 @@ impl WorkspaceView {
             storage: self.workspace.storage.clone(),
             description: self.workspace.description.clone(),
             classification: self.workspace.classification.clone(),
+            has_shell: self.has_shell(),
             can_change: self.may_change().await,
         }
     }

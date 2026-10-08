@@ -255,6 +255,8 @@ pub struct WorkspaceSnapshot {
     pub storage: String,
     pub description: Option<crate::value::text::Description>,
     pub classification: Classification,
+    /// Whether its storage gives it a shell (issue 251).
+    pub has_shell: bool,
     /// Whether the viewer may change it - rename, describe, reclassify -
     /// and attach it to a session (`UpdateWorkspace`).
     pub can_change: bool,

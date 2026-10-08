@@ -130,3 +130,8 @@ its plan is kept in one place so that the two are read together. In short:
   stranger shown nothing, the channel's way and its switch - and in the browser through the DOM;
   screenshots could not be taken, the browser window being hidden. Downloads are
   `application/octet-stream` for now: `mime_guess` would have been a new dependency.
+- **2026-10-08** — Step 5 of 251's plan: a storage may have a shell (`StorageConfig::Local::shell`)
+  and bounds what it takes (`destination`): `WorkspaceManager::create` and `reclassify` refuse a
+  workspace above it (`WorkspaceError::StorageNotCleared`, asked as `Publish` into the
+  destination); snapshots and the REST responses say `has_shell`. Stored data: unchanged.
+

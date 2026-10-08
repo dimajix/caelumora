@@ -262,9 +262,22 @@ reader of a channel so classified would be:
 *   A member of a channel classified L, in a session it is attached to, where the workspace,
     classified W, and the channel flow both ways - W into L, since what is read there reaches the
     channel; L into W, since what was seen in the channel may be written there. Asked as an actor
-    putting something into a place is (`Publish` of W into L and of L into W, in the member's name),
-    at every use. With compartments and a read relation that is not symmetric this is stricter than
-    equality. A member is cleared for L, so nothing else is asked.
+    putting something into a place is (`Publish` of W into L and of L into W, in the member's name -
+    an agent's, as it reads every other place, its owner's), at every use. With compartments and a
+    read relation that is not symmetric this is stricter than equality. A member is cleared for L,
+    so nothing else is asked.
+
+A storage bounds what may be put into it (issue [251](../issues/251-open-terminal.md), part B2):
+its `destination`, the classification a workspace in it may have at most - where its files go, and
+for a storage with a shell where what a command reads can go, since a command reaches whatever its
+host or container reaches. Making or raising a workspace there asks `Publish` of its classification
+into the destination, before the clearance (`WorkspaceError::StorageNotCleared`). A `local` storage
+with a shell is bounded to public unless it names its own; one without a shell, and without a
+`destination`, is not bounded.
+
+The isolation between workspaces is the storage's, not the classification's: a `local` shell runs
+on Caelumora's host as its user, and reaches every workspace of every storage there, and Caelumora's
+own files. A classification says who may read a workspace; it does not keep a command in it.
 
 Reclassifying a workspace is its owner's (`UpdateWorkspace`, `Classify`): lowering releases every
 file in it; which channels may use it follows at their next use. Nothing in it is fitted - there is

@@ -61,3 +61,6 @@ hold credentials of their own, which is half the point of an `mcp_tool` componen
   under the ownership policy an agent may only read channels it takes part in, so counting agents
   would block reading whenever channels have different agents. Implemented as
   `ChannelLoop::may_read`.
+- **2026-10-08** — A concrete case opened as [255](255-whose-name-agents-act-in.md): today an agent
+  reads in its owner's name (its views) and acts in the name of whoever asked it (its turn), one
+  tool call often in both. SECURITY.md (*In whose name an agent acts*) describes that state.
