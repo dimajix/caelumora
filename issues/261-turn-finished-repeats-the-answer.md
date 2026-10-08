@@ -1,6 +1,6 @@
 # 261 — `TurnFinished` carries the answer the channel already has
 
-**Status:** open
+**Status:** rejected
 **Area:** Sessions and channels
 
 ## The problem
@@ -40,3 +40,8 @@ it means, and a reader has to know which copy counts.
   answer from there. The channel's history holds the same messages by their `turn_id` - which is
   what the second option, the channel handing the moderator the turn's messages at its end, would
   read.
+- **2026-10-08** — Rejected by the maintainer for now: no pressing problem. The payload costs only
+  the size of one event per turn, and the moderator decides correctly with it. Should it matter -
+  a large answer, or the moderator wanting the turn's messages from elsewhere anyway - the second
+  option above is what this issue found: the channel hands the moderator the messages of the turn
+  from its history, by their `turn_id`.
