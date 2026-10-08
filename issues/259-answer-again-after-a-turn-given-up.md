@@ -1,6 +1,6 @@
 # 259 — An agent cannot be asked to answer again after a turn it gave up
 
-**Status:** in progress
+**Status:** done
 **Area:** Sessions and channels
 
 ## The problem
@@ -160,3 +160,7 @@ lives.
   `can_retry` holds (`mayRetryGivenUp`, the route of the turn under way with that turn); the TUI's
   `/retry` asks for the turn given up it was told of last, if nothing was said since. REST was done
   in step 1. Not verified in the browser.
+- **2026-10-08** — Step 3, closed: an agent can be asked to answer anew after its last turn, given
+  up because it failed or the channel was lowered, while nothing followed it - in the web UI from
+  the turn's notice, in the TUI with `/retry`. Not yet tried in the browser against a model that
+  fails once.
