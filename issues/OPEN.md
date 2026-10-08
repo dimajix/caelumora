@@ -93,7 +93,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 
 | No. | Status | Issue |
 |---|---|---|
-| [260](260-turn-messages-into-the-transcript.md) | open | A turn keeps its messages apart from the transcript until it ends, so two places hold what an agent said and every reader puts them together. |
+| [260](260-turn-messages-into-the-transcript.md) | in progress | A turn keeps its messages apart from the transcript until it ends, so two places hold what an agent said and every reader puts them together. |
 
 ## Open architecture questions
 

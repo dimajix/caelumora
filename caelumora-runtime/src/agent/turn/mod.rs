@@ -3,9 +3,10 @@
 //!
 //! A [`Turn`] is the handle an agent's actor and its components work through:
 //! on the agent's state in its channel, and while a turn runs on that turn's
-//! working state, `AgentChannelState::turn` (issue 85) - its messages, the
-//! context and prompt parts the model is given and where they came from,
-//! pending tool calls and the plan, the changes not yet taken over - and on
+//! working state, `AgentChannelState::turn` (issue 85) - the context and
+//! prompt parts the model is given and where they came from, pending tool
+//! calls and the plan, the changes not yet taken over; what it says goes
+//! into the transcript and the history at once (issue 260) - and on
 //! the agent's own state (issues 62, 65). What those states hold is the
 //! business of wrappers such as `crate::agent::notes::AgentNotes` and
 //! `crate::agent::memory::AgentMemory`. A turn is begun on the agent's state
@@ -202,13 +203,16 @@ impl<'a> Turn<'a> {
         &self.current().tools
     }
 
-    /// The messages the turn produced so far.
-    pub fn messages(&self) -> impl Iterator<Item = &Message> {
-        self.current().messages()
+    /// The messages the turn said so far, as the transcript holds them
+    /// (issue 260).
+    pub fn messages(&self) -> Vec<Message> {
+        self.agent_channel_state.transcript.of_turn(self.turn_id())
     }
 
+    /// Records `message` as said by the turn: into the agent's transcript
+    /// and history at once (`AgentChannelState::said`, issue 260).
     pub(crate) fn push_message(&mut self, message: Message) {
-        self.current_mut().push(message);
+        self.agent_channel_state.said(message);
     }
 
     /// Counts a call of the model, if the turn may still make one: `false`
@@ -400,7 +404,7 @@ mod tests {
             Some(ActorEvent::TurnFinished { messages, .. }) => assert!(messages.is_empty(), "the hidden call is not published"),
             other => panic!("the complete message is not sent at all, got {other:?}"),
         }
-        assert_eq!(turn.messages().next().map(|m| m.tool_calls.len()), Some(1), "the agent keeps it");
+        assert_eq!(turn.messages().first().map(|m| m.tool_calls.len()), Some(1), "the agent keeps it");
 
         // Reasoning reaches the channel unless it is the owner's.
         let thinking = Message {

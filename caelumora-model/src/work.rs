@@ -44,7 +44,8 @@ pub struct Work {
     pub seen: Option<Classification>,
     /// What comes of it is produced from, as references (issues 47, 49,
     /// 136, 137, 205): what is recorded with each message it writes. A
-    /// turn's moves on with every message it produces (`TurnState::push`);
+    /// turn's names the transcript's head and moves on with every message
+    /// it says (`AgentChannelState::said`, issue 260);
     /// an external agent's is what its remote agent was given in the call,
     /// since the remote agent keeps what it was given before - empty until
     /// it was sent.

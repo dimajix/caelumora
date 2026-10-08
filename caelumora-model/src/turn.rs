@@ -1,20 +1,18 @@
 //! The working state of an agent's turn (issue 85): what one turn of an
 //! agent run here is and what it has produced and staged so far, stored with
 //! the agent's `AgentChannelState` while it runs. What a turn does to that
-//! state when it begins and ends are rules of the state
-//! (`AgentChannelState::begin_turn`, `record_turn`, `give_up_turn`).
+//! state when it begins, says something and ends are rules of the state
+//! (`AgentChannelState::begin_turn`, `said`, `finish_turn`, `give_up_turn`).
+//! What it says is not kept here: it goes into the agent's transcript and
+//! history as it is said (issue 260).
 
 use crate::actor::{ActorId, ActorState};
 use crate::approval::ApprovalRequest;
 use crate::question::QuestionRequest;
-use crate::chain::Node;
-use crate::context::ContextRef;
 use crate::memory::{MemoryChange, MemoryOrigin};
-use crate::message::Message;
 use crate::note::NoteChange;
 use crate::plan::PlanState;
 use crate::tool::{Tool, ToolCallState, ToolCallStatus};
-use crate::transcript::TranscriptEntry;
 use crate::confidentiality::Classification;
 use crate::work::Work;
 use serde::{Deserialize, Serialize};
@@ -52,16 +50,16 @@ impl GivenUpReason {
 }
 
 /// The working state of one turn (issue 85): what the turn is - fixed when
-/// it begins - and what it has produced and staged so far, none of it taken
-/// over yet. Taking the turn over (`Turn::commit`) or giving it up
+/// it begins - and what it has staged so far, none of it taken over yet;
+/// what it said is in the transcript already (issue 260). Taking the turn over (`Turn::commit`) or giving it up
 /// (`Turn::give_up`, issue 145) ends it as a whole; a branch switch (issue
 /// 08) will give it up the same way.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TurnState {
     /// What the turn is done in and as, what it has seen, and what its
     /// next message is produced from (`Work::context`): the transcript so
-    /// far - the agent's, continued by the turn's own messages - the prompt
-    /// parts placed in it, the tools offered, the knowledge read, the rules
+    /// far - its head, the turn's own messages included - the prompt parts
+    /// placed in it, the tools offered, the knowledge read, the rules
     /// of the model. Resolved by `crate::context::ContextResolver`; what is
     /// recorded with each message. Stored in line, as the turn's own fields
     /// were before work was one type.
@@ -72,9 +70,6 @@ pub struct TurnState {
     /// are labelled and put up for approval by - one set for the whole turn,
     /// a resumed one included.
     pub tools: Vec<Tool>,
-    /// The messages the turn produced so far, each with the digest it will
-    /// have in the transcript and what it was produced from.
-    pub entries: Vec<TurnEntry>,
     /// Changes to the agent's memory, each with where it was made, applied
     /// to the agent's `AgentState` as it is when the turn completes (issue
     /// 62).
@@ -145,33 +140,4 @@ impl TurnState {
             })
             .collect()
     }
-
-    /// Appends `message`, produced by the turn from its context as it
-    /// stands, and moves the context on past it (issue 136). The message
-    /// gets the digest it will have in the transcript, computed as the
-    /// transcript's chain would: the turn's messages continue the agent's
-    /// transcript, which does not change while a turn runs. It is the
-    /// turn's from now on (`Message::turn_id`, issue 235), whoever built
-    /// it.
-    pub fn push(&mut self, mut message: Message) {
-        message.turn_id = Some(self.work.turn_id);
-        let context = self.work.context.clone();
-        let digest = crate::digest::message_chain(context.transcript.as_ref(), &message);
-        self.work.context.transcript = Some(digest);
-        self.entries.push(TurnEntry { node: Node::new(digest, context.transcript, TranscriptEntry::Message(message)), context });
-    }
-
-    /// The messages the turn produced so far.
-    pub fn messages(&self) -> impl Iterator<Item = &Message> {
-        self.entries.iter().filter_map(|e| e.node.entry.message())
-    }
-}
-
-/// A message a turn produced, not yet taken over (issue 136): as it will be
-/// in the transcript, and what it was produced from - what is recorded with
-/// it in the history.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TurnEntry {
-    pub node: Node<TranscriptEntry>,
-    pub context: ContextRef,
 }

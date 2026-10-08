@@ -4,7 +4,7 @@ use crate::digest::Digest;
 use crate::external_agent::RemoteState;
 use crate::confidentiality::Classification;
 use crate::approval::ApprovalRequest;
-use crate::context::{ContextRef, ModelProfile, PromptRef, TranscriptView};
+use crate::context::{ContextRef, ModelProfile, PromptRef};
 use crate::chain::Stored;
 use crate::kept::Kept;
 use crate::ledger::LedgerEntry;
@@ -13,7 +13,7 @@ use crate::memory::{Memories, MemoryChain};
 use crate::message_history::{HistoryEntry, MessageHistory};
 use crate::transcript::{as_they_stand, Transcript, TranscriptEntry};
 use crate::turn::GivenUpReason;
-use crate::turn::{TurnEntry, TurnState};
+use crate::turn::TurnState;
 use crate::work::{TurnId, Work};
 use crate::note::{NoteChain, NoteChange, NoteOrigin, Notes};
 use crate::removal::Removal;
@@ -259,10 +259,34 @@ impl AgentChannelState {
     /// transcript, which a turn under way has then seen (issue 168).
     pub fn perceive(&mut self, heard: Vec<Message>, perceived: Vec<Message>) {
         self.history.extend(heard);
+        self.transcript.extend(perceived.clone());
+        // A turn under way has seen it, and its next message is produced
+        // from the transcript with it (issue 260).
         if let Some(turn) = self.turn.as_mut() {
             perceived.iter().for_each(|m| turn.work.see_message(m));
+            turn.work.context.transcript = self.transcript.digest();
         }
-        self.transcript.extend(perceived);
+    }
+
+    /// Records `message`, said by the turn under way (issues 136, 260): the
+    /// turn's from now on (`Message::turn_id`, issue 235), whoever built it,
+    /// into the transcript and into the history with what it was produced
+    /// from - the turn's context as it stands - and the context moved on
+    /// past it. Kept as it is said, so that nothing of it waits for the
+    /// turn's end. Between turns, which says nothing, it is recorded as
+    /// heard would be, without a context.
+    pub fn said(&mut self, mut message: Message) {
+        let Some(turn) = self.turn.as_mut() else {
+            tracing::warn!("A message was said by an agent without a turn under way");
+            self.transcript.push(message.clone());
+            self.history.push(message, None);
+            return;
+        };
+        message.turn_id = Some(turn.work.turn_id);
+        let context = turn.work.context.clone();
+        self.transcript.push(message.clone());
+        self.history.push(message, Some(context));
+        turn.work.context.transcript = self.transcript.digest();
     }
 
     /// What answering again instead of the message `id` of the agent `own`
@@ -340,6 +364,9 @@ impl AgentChannelState {
             digest
         });
         let tools: Vec<Tool> = tool_sets.into_iter().flat_map(|set| set.tools).collect();
+        if self.turn.is_some() {
+            tracing::warn!("A turn was begun while another was under way; the other ends without an end recorded");
+        }
         let mut work = Work::new(event_context, security_context, classification);
         work.context = ContextRef { transcript: self.transcript.digest(), tools: offered, profile, ..ContextRef::default() };
         self.transcript.messages().iter().for_each(|m| work.see_message(m));
@@ -349,15 +376,13 @@ impl AgentChannelState {
         turn_id
     }
 
-    /// Takes over what a turn produced (issues 06, 17, 136): its `entries`
-    /// into the transcript and the history - each with what it was produced
-    /// from, internal steps too (issue 258) - followed by its end,
-    /// `TurnFinished`; and its changes to the agent's `notes` and
-    /// `private_notes` here, anchored at its last message. `actor` is the
-    /// agent, whose turn it was. Returns whether there were changes to the
-    /// notes.
-    pub fn record_turn(&mut self, turn_id: TurnId, actor: ActorId, entries: Vec<TurnEntry>, notes: Vec<NoteChange>, private_notes: Vec<NoteChange>) -> bool {
-        self.record_messages(entries);
+    /// Takes the turn `turn_id` over (issues 06, 17, 258): its changes to
+    /// the agent's `notes` and `private_notes` here, anchored at its last
+    /// message, and its end, `TurnFinished`, after what it said - which is
+    /// in the transcript and the history already (`said`, issue 260).
+    /// `actor` is the agent, whose turn it was. Returns whether there were
+    /// changes to the notes.
+    pub fn finish_turn(&mut self, turn_id: TurnId, actor: ActorId, notes: Vec<NoteChange>, private_notes: Vec<NoteChange>) -> bool {
         // What branching (issue 08) will find the changes by: the turn's
         // last message, and the transcript as the turn left it.
         let after = self.history.last_message_id();
@@ -375,33 +400,13 @@ impl AgentChannelState {
         changed
     }
 
-    /// Keeps what the turn `turn_id` given up for `reason` produced, its
-    /// `entries`, where they are (issue 258): recorded as when taken over,
-    /// each with what it was produced from, followed by its end,
-    /// `TurnGivenUp` - also for a turn that said nothing. What it said is not
-    /// unsaid; what it staged is not applied.
-    pub fn give_up_turn(&mut self, turn_id: TurnId, actor: ActorId, entries: Vec<TurnEntry>, reason: GivenUpReason) {
-        self.record_messages(entries);
+    /// Records that the turn `turn_id` was given up for `reason` (issue
+    /// 258): its end, `TurnGivenUp`, after what it said, which stays - also
+    /// for a turn that said nothing. What it staged is not applied.
+    pub fn give_up_turn(&mut self, turn_id: TurnId, actor: ActorId, reason: GivenUpReason) {
         let at = chrono::Utc::now();
         self.transcript.end_turn(TranscriptEntry::TurnGivenUp { turn_id, reason: reason.clone(), at });
         self.history.end_turn(HistoryEntry::TurnGivenUp { turn_id, actor, reason, at });
-    }
-
-    /// Keeps the messages of a turn's `entries` in the transcript and the
-    /// history, each with what it was produced from.
-    fn record_messages(&mut self, entries: Vec<TurnEntry>) {
-        let expected = entries.last().map(|e| e.node.digest);
-        for TurnEntry { node, context } in entries {
-            let TranscriptEntry::Message(message) = node.entry else { continue };
-            self.transcript.push(message.clone());
-            self.history.push(message, Some(context));
-        }
-        // The turn's messages got their digests continuing the transcript
-        // as it was when the turn began (issue 136); had it changed
-        // meanwhile, what they were produced from could not be told.
-        if expected.is_some() && self.transcript.digest() != expected {
-            tracing::warn!("An agent's transcript changed during a turn; the contexts recorded for the turn's messages cannot be resolved");
-        }
     }
 
     /// What the history recorded the message `id` - on whichever branch -
@@ -423,9 +428,11 @@ impl AgentChannelState {
     }
 
     /// What the model calls of `agent` - whose state this is - used in the
-    /// channel (issue 209).
+    /// channel (issue 209): summed over its own messages - the others' in
+    /// the transcript carry their senders' tokens - on every branch, since
+    /// their calls were made, the turn under way's included.
     pub fn usage(&self, agent: ActorId) -> Option<TokenUsage> {
-        TranscriptView::of(self).usage(agent)
+        TokenUsage::of(self.transcript.all_entries().filter_map(|node| node.entry.message()).filter(|m| m.sender_id == agent))
     }
 }
 
@@ -618,20 +625,17 @@ pub(crate) mod tests {
         let decoded: AgentChannelState = serde_json::from_str(&json).unwrap();
         assert!(decoded.turn.is_none() && decoded.processing_state == ActorState::Idle);
 
-        let waiting = AgentChannelState {
-            processing_state: ActorState::WaitingForUser,
-            turn: Some({
-                let mut turn = TurnState::default();
-                turn.push(Message::new(crate::confidentiality::Classification::CHANNEL_DEFAULT));
-                turn
-            }),
-            ..AgentChannelState::default()
-        };
+        let mut waiting = AgentChannelState { processing_state: ActorState::WaitingForUser, turn: Some(TurnState::default()), ..AgentChannelState::default() };
+        waiting.said(Message::new(crate::confidentiality::Classification::CHANNEL_DEFAULT));
         let json = serde_json::to_string(&waiting).unwrap();
         assert!(json.contains("\"WaitingForUser\""));
         let decoded: AgentChannelState = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.processing_state, ActorState::WaitingForUser);
-        assert_eq!(decoded.turn.as_ref().map(|t| t.messages().count()), Some(1), "the turn is resumed from what was stored");
+        let turn_id = decoded.turn.as_ref().map(|t| t.work.turn_id).expect("the turn is resumed from what was stored");
+        assert_eq!(decoded.transcript.of_turn(turn_id).len(), 1, "with what it said, in the transcript (issue 260)");
+        assert_eq!(decoded.turn.as_ref().map(|t| t.work.context.transcript), Some(decoded.transcript.digest()), "its context names the transcript's head");
+        let context = decoded.turn.as_ref().map(|t| t.work.context.clone()).unwrap_or_default();
+        assert!(crate::context::ContextResolver::of(&decoded).resolve(&context, turn_id, ActorId::default()).is_some(), "so a resumed turn's next call resolves");
         assert_eq!(decoded.turn.map(|t| t.work.turn_id), waiting.turn.map(|t| t.work.turn_id), "as the same turn");
     }
 
@@ -677,22 +681,23 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_turn_recorded_continues_the_transcript_and_the_history_and_ends_finished() {
+    fn a_turn_says_into_the_transcript_and_the_history_and_ends_finished() {
         let mut state = a_state_that_heard("add 1 and 2", Classification::CHANNEL_DEFAULT);
         begin(&mut state, Vec::new());
-        let mut turn = state.turn.take().expect("a turn was begun");
-        let turn_id = turn.work.turn_id;
-        turn.push(Message { internal: true, ..said("thinking", Classification::CHANNEL_DEFAULT) });
+        let turn_id = state.turn.as_ref().expect("a turn was begun").work.turn_id;
+        state.said(Message { internal: true, ..said("thinking", Classification::CHANNEL_DEFAULT) });
+        let produced_from = state.turn.as_ref().unwrap().work.context.clone();
         let answer = said("3", Classification::CHANNEL_DEFAULT);
         assert!(answer.turn_id.is_none(), "built without it");
-        turn.push(answer.clone());
-        let produced_from = turn.entries[1].context.clone();
-        let expected = turn.entries.last().map(|e| e.node.digest);
+        state.said(answer.clone());
+        assert_eq!(produced_from.transcript, state.transcript.entries().nth(1).map(|n| n.digest), "said after the step, from the transcript with it");
+        assert_eq!(state.turn.as_ref().unwrap().work.context.transcript, state.transcript.digest(), "the context moved on to the head");
+        assert_eq!(state.recorded_context_of(answer.id), Some((produced_from.clone(), turn_id)), "recorded as it is said (issue 260)");
         let note = NoteChange::Add { id: crate::note::NoteId(1), text: "sums".to_string(), classification: Classification::CHANNEL_DEFAULT };
 
-        assert!(state.record_turn(turn_id, ActorId::default(), turn.entries, vec![note], Vec::new()), "a note changed");
-        assert_eq!(state.transcript.entries().nth(2).map(|n| n.digest), expected, "the turn's messages have the digests they were given");
-        assert_eq!(state.transcript.entries().count(), 4, "and are followed by the turn's end");
+        state.turn = None;
+        assert!(state.finish_turn(turn_id, ActorId::default(), vec![note], Vec::new()), "a note changed");
+        assert_eq!(state.transcript.entries().count(), 4, "the turn's messages, followed by its end");
         assert!(matches!(state.transcript.last().map(|n| &n.entry), Some(TranscriptEntry::TurnFinished { turn_id: t, .. }) if *t == turn_id));
         assert!(matches!(state.history.last().map(|n| &n.entry), Some(HistoryEntry::TurnFinished { turn_id: t, .. }) if *t == turn_id));
         assert_eq!(state.history.messages().iter().map(|m| m.content.clone().unwrap_or_default()).collect::<Vec<_>>(), ["add 1 and 2", "thinking", "3"], "an internal step too (issue 258)");
@@ -707,11 +712,10 @@ pub(crate) mod tests {
     fn a_turn_given_up_keeps_what_it_said_and_ends_given_up() {
         let mut state = a_state_that_heard("mail bob", Classification::CHANNEL_DEFAULT);
         begin(&mut state, Vec::new());
-        let mut turn = state.turn.take().expect("a turn was begun");
-        turn.push(said("mailing", Classification::CHANNEL_DEFAULT));
+        state.said(said("mailing", Classification::CHANNEL_DEFAULT));
 
-        let turn_id = turn.work.turn_id;
-        state.give_up_turn(turn_id, ActorId::default(), turn.entries, GivenUpReason::Stopped);
+        let turn_id = state.turn.take().expect("a turn was begun").work.turn_id;
+        state.give_up_turn(turn_id, ActorId::default(), GivenUpReason::Stopped);
         let contents = |messages: Vec<Message>| messages.iter().map(|m| m.content.clone().unwrap_or_default()).collect::<Vec<_>>();
         assert_eq!(contents(state.transcript.messages()), ["mail bob", "mailing"], "what it said is not unsaid");
         assert_eq!(contents(state.history.messages()), ["mail bob", "mailing"]);
@@ -720,7 +724,7 @@ pub(crate) mod tests {
         assert!(matches!(state.transcript.last().map(|n| &n.entry), Some(TranscriptEntry::TurnGivenUp { turn_id: t, .. }) if *t == turn_id));
 
         let silent = TurnId::new();
-        state.give_up_turn(silent, ActorId::default(), Vec::new(), GivenUpReason::Stopped);
+        state.give_up_turn(silent, ActorId::default(), GivenUpReason::Stopped);
         assert!(matches!(state.history.last().map(|n| &n.entry), Some(HistoryEntry::TurnGivenUp { turn_id: t, .. }) if *t == silent), "a turn that said nothing leaves its end too");
     }
 
@@ -822,6 +826,7 @@ pub(crate) mod tests {
         let confidential = Message { classification: channel.clone(), ..make_message(id(3)) };
         state.perceive(vec![confidential.clone()], vec![confidential]);
         assert_eq!(state.turn.as_ref().map(|t| t.work.label()), Some(channel), "the turn has seen it");
+        assert_eq!(state.turn.as_ref().map(|t| t.work.context.transcript), Some(state.transcript.digest()), "and its next message follows it (issue 260)");
     }
 
     #[test]

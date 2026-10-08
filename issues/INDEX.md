@@ -332,7 +332,7 @@ argues against it, and what came out of the last attempt.
 | [241](241-turn-membership-recorded-twice.md) | done | Which messages belong to a turn is recorded twice - as the turn's id on each message and as a count in its `ContextRef` - and read by different rules. |
 | [248](248-validated-text-fields.md) | done | Text fields are `String`s checked by whoever writes them, if at all, so a field can hold what its rules forbid and a new writer has to remember the check. |
 | [257](257-facet-and-components-in-two-modules.md) | done | A facet's trait and the components that provide it live in two sibling modules, `foo` and `foo_impl`, with no rule for what goes where. |
-| [260](260-turn-messages-into-the-transcript.md) | open | A turn keeps its messages apart from the transcript until it ends, so two places hold what an agent said and every reader puts them together. |
+| [260](260-turn-messages-into-the-transcript.md) | in progress | A turn keeps its messages apart from the transcript until it ends, so two places hold what an agent said and every reader puts them together. |
 
 ## Integrations
 

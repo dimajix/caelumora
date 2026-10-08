@@ -210,7 +210,8 @@ The `StateStore` trait (in `caelumora-model`) stores the runtime state of channe
     state, history and transcript, its public and private notes, the texts of its prompt parts by
     digest, and the part only its kind keeps:
     *   of an agent run here, the turn under way, if any (processing state, pending tool calls,
-        plan, the turn's messages, changes not yet taken over). See [AGENT-TURN.md](AGENT-TURN.md).
+        plan, changes not yet taken over; what it said is in the transcript and the history as it
+        is said, issue 260). See [AGENT-TURN.md](AGENT-TURN.md).
     *   of an external agent (issue 179), what it keeps of the remote side (`remote`, a
         `RemoteState`): the remote conversation and the tasks given to it that have not ended, with
         what came of them and was not said yet (issue 195) and the call they came of (issue 205).

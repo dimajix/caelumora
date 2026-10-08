@@ -44,8 +44,9 @@ pub enum TranscriptEntry {
 /// An agent's transcript (issue 50): the sequence of messages its context is
 /// built from - its own messages in full, with tool calls and internal
 /// steps, and what others said as it received them - and how each of its
-/// turns ended. The context of a model call adds the prompt parts and
-/// the turn's messages to it; the history is the channel's public record,
+/// turns ended - the turn under way's messages too, as they are said (issue
+/// 260). The context of a model call adds the prompt parts to it; the
+/// history is the channel's public record,
 /// which the transcript is not.
 ///
 /// A chain: every entry's digest covers it and the digest before it, so
@@ -134,9 +135,9 @@ impl Chain<TranscriptEntry> {
     /// as `modified` from now on (issue 234). `false`, and nothing is
     /// recorded, if the message is not on the active path as it stands -
     /// never given to the model, on a branch no longer active, or taken
-    /// back - or cannot be modified so (`Message::modify`). Not while a
-    /// turn is under way, as for every entry: its messages continue the
-    /// transcript as it was when it began.
+    /// back - or cannot be modified so (`Message::modify`). Taken in between
+    /// turns, as everything an agent hears: a turn under way produces its
+    /// next message from the transcript as its context names it.
     pub fn modify(&mut self, modified: Message) -> bool {
         if !self.standing(modified.id).is_some_and(|mut m| m.modify(&modified)) {
             return false;
@@ -182,6 +183,13 @@ impl Chain<TranscriptEntry> {
     /// not on it or was taken back.
     fn standing(&self, id: MessageId) -> Option<Message> {
         as_they_stand(self.entries()).find_map(|(_, m)| m.filter(|m| m.id == id))
+    }
+
+    /// The messages of the active path as they stand that the turn
+    /// `turn_id` said (`Message::turn_id`): what it said so far, as it said
+    /// it (issue 260).
+    pub fn of_turn(&self, turn_id: TurnId) -> Vec<Message> {
+        self.messages().into_iter().filter(|m| m.turn_id == Some(turn_id)).collect()
     }
 
     /// Records how a turn ended (issue 258): `TurnFinished` or

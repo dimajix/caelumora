@@ -1,7 +1,7 @@
 //! What the model of a turn is given (issues 47, 49, 63, 136, 137): the
-//! transcript continued by the turn's messages, the prompt parts placed in
-//! it - each kept once by digest - and the tools the turn offers, resolved
-//! the way a recorded message's context is.
+//! transcript, which holds the turn's messages (issue 260), the prompt
+//! parts placed in it - each kept once by digest - and the tools the turn
+//! offers, resolved the way a recorded message's context is.
 
 use super::Turn;
 use anyhow::{Context, Result};

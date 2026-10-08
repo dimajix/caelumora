@@ -1,6 +1,6 @@
 # 260 — A turn keeps its messages apart from the transcript until it ends
 
-**Status:** open
+**Status:** in progress
 **Area:** Code structure
 
 ## The problem
@@ -185,3 +185,13 @@ external agent's work, which keeps no turn under way.
   `TranscriptView` gone, `perceive` moving the turn's context on, no migration of a turn stored
   before. The mention of `ContextRef::turn_entries` above was wrong: it went with issue 241; which
   messages are a turn's is told by their `turn_id`.
+- **2026-10-08** — Step 1 done, as planned: `AgentChannelState::said` records what a turn says
+  into the transcript and the history at once and moves the turn's context on to the head;
+  `TurnState` holds no message, `TurnEntry` and `TurnState::push` are gone; `finish_turn` and
+  `give_up_turn` only end the turn; `TranscriptView` is gone, the `ContextResolver` and `usage`
+  read the transcript; `Transcript::of_turn` gives what a turn said, `commit` its answer from it;
+  `perceive` moves a turn's context on. One deviation: `begin_turn` with a turn under way only
+  warns - the `debug_assert!` planned would have failed the many tests that begin a turn on a
+  state as their setup, without finding anything. New tests: a turn stored under way resolves its
+  next context from the transcript; the agent's view shows a turn's message with its context
+  before the turn ends.

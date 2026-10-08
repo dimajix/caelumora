@@ -7,25 +7,21 @@
 //!
 //! - A turn holds a [`ContextRef`] for its next message: the transcript so
 //!   far, the prompt parts placed in it, the tools offered, the knowledge
-//!   read and the rules of the agent's model ([`ModelProfile`]). With every message it produces,
-//!   the reference as it stood for that message is kept and, when the turn
-//!   is taken over, recorded in the history.
-//! - The messages of a turn under way are not in the transcript yet, but
-//!   have the digests they will have there: a [`TranscriptView`] continues
-//!   the stored transcript with them (issue 136).
-//! - The [`ContextResolver`] resolves a reference against that view and the
-//!   prompt texts - for the next model call as for a message produced
+//!   read and the rules of the agent's model ([`ModelProfile`]). Every
+//!   message it says goes into the transcript at once, and into the history
+//!   with the reference as it stood for that message (issue 260).
+//! - The [`ContextResolver`] resolves a reference against the transcript
+//!   and the prompt texts - for the next model call as for a message produced
 //!   earlier. What the model was given and what is told as given therefore
 //!   cannot diverge.
 
 use crate::actor::ActorId;
 use crate::confidentiality::Classification;
 use crate::agent::AgentChannelState;
-use crate::turn::TurnEntry;
 use crate::chain::Node;
 use crate::digest::Digest;
 use crate::kept::Kept;
-use crate::message::{Message, MessageId, MessageRole, TokenUsage};
+use crate::message::{Message, MessageId, MessageRole};
 use crate::transcript::{as_they_stand, Transcript, TranscriptEntry};
 use crate::turn::GivenUpReason;
 use crate::tool::ToolSet;
@@ -372,53 +368,13 @@ pub struct ResolvedContext {
     pub tool_sets: Vec<ToolSet>,
 }
 
-/// An agent's transcript continued by the messages of its turn under way
-/// (issue 136), which have the digests they will have once the turn is
-/// taken over. Only the stored part is stored; the view is what references
-/// are resolved against while a turn runs.
-#[derive(Debug, Clone, Copy)]
-pub struct TranscriptView<'a> {
-    stored: &'a Transcript,
-    pending: &'a [TurnEntry],
-}
-
-impl<'a> TranscriptView<'a> {
-    /// The transcript of `state`, continued by its turn under way, if any.
-    pub fn of(state: &'a AgentChannelState) -> Self {
-        let pending = state.turn.as_ref().map(|turn| turn.entries.as_slice()).unwrap_or_default();
-        Self { stored: &state.transcript, pending }
-    }
-
-    /// What the model calls of `agent` used (issue 209): summed over its
-    /// own messages - the others' in the transcript carry their senders'
-    /// tokens - on every branch, those of turns given up included, since
-    /// their calls were made, and in the turn under way.
-    pub fn usage(&self, agent: ActorId) -> Option<TokenUsage> {
-        let stored = self.stored.all_entries().map(|node| &node.entry);
-        let pending = self.pending.iter().map(|entry| &entry.node.entry);
-        TokenUsage::of(stored.chain(pending).filter_map(TranscriptEntry::message).filter(|m| m.sender_id == agent))
-    }
-
-    /// The entries of the transcript `digest` names - `None`: the empty
-    /// one - or `None` if it is not a prefix of this one.
-    pub fn prefix(&self, digest: Option<&Digest>) -> Option<Vec<&'a Node<TranscriptEntry>>> {
-        let Some(digest) = digest else { return Some(Vec::new()) };
-        if let Some(entries) = self.stored.prefix(digest) {
-            return Some(entries);
-        }
-        let end = self.pending.iter().position(|e| &e.node.digest == digest)?;
-        Some(self.stored.entries().chain(self.pending[..=end].iter().map(|e| &e.node)).collect())
-    }
-}
-
 /// Resolves references against an agent's data in a channel - its
-/// transcript, continued by its turn under way, the texts of its prompt
-/// parts and the sets of tools it was offered - into what its model is
-/// given. One implementation for the model
+/// transcript, the texts of its prompt parts and the sets of tools it was
+/// offered - into what its model is given. One implementation for the model
 /// call and for telling afterwards what the model saw.
 #[derive(Debug, Clone, Copy)]
 pub struct ContextResolver<'a> {
-    transcript: TranscriptView<'a>,
+    transcript: &'a Transcript,
     prompts: &'a Kept<String>,
     offered_tools: &'a Kept<Vec<ToolSet>>,
 }
@@ -426,7 +382,7 @@ pub struct ContextResolver<'a> {
 impl<'a> ContextResolver<'a> {
     /// The resolver over the data of `state`.
     pub fn of(state: &'a AgentChannelState) -> Self {
-        Self { transcript: TranscriptView::of(state), prompts: &state.prompts, offered_tools: &state.offered_tools }
+        Self { transcript: &state.transcript, prompts: &state.prompts, offered_tools: &state.offered_tools }
     }
 
     /// What the model of `agent` is given, or was given, for the message
@@ -439,7 +395,11 @@ impl<'a> ContextResolver<'a> {
     /// one, a prompt or a set of tools that was never recorded, or a prompt
     /// whose entry is not in the prefix.
     pub fn resolve(&self, reference: &ContextRef, turn: TurnId, agent: ActorId) -> Option<ResolvedContext> {
-        let path: Vec<_> = as_they_stand(self.transcript.prefix(reference.transcript.as_ref())?).collect();
+        let prefix = match reference.transcript.as_ref() {
+            Some(digest) => self.transcript.prefix(digest)?,
+            None => Vec::new(),
+        };
+        let path: Vec<_> = as_they_stand(prefix).collect();
         // The turns given up because the channel was lowered below them:
         // what they read may not flow into it, and nobody released it (issue
         // 141), so the model is given which tools they called and nothing
@@ -669,7 +629,7 @@ mod tests {
     }
 
     #[test]
-    fn a_turn_under_way_is_resolved_as_its_messages_are_recorded() {
+    fn a_turn_under_way_is_resolved_from_the_transcript_it_says_into() {
         let agent = ActorId::Agent(AgentId::new());
         let own = |content: &str| Message { sender_id: agent, reasoning: Some(format!("why {content}")), ..text(content) };
         let mut state = AgentChannelState::default();
@@ -680,28 +640,30 @@ mod tests {
         // Instructions of the runtime among the turn's messages: one before
         // them, one after the first.
         place(&mut state, MessageRole::User, "step 1");
-        state.turn.as_mut().unwrap().push(own("first"));
+        let first = own("first");
+        state.said(first.clone());
         place(&mut state, MessageRole::User, "step 2");
-        state.turn.as_mut().unwrap().push(own("second"));
+        let second = own("second");
+        state.said(second.clone());
 
         let (next, turn_id) = state.turn.as_ref().map(|t| (t.work.context.clone(), t.work.turn_id)).unwrap();
-        let current = ContextResolver::of(&state).resolve(&next, turn_id, agent).expect("the view holds the turn's messages");
+        let current = ContextResolver::of(&state).resolve(&next, turn_id, agent).expect("the transcript holds the turn's messages");
         assert_eq!(contents(&current.items), ["earlier", "question", "prompt:step 1", "first", "prompt:step 2", "second"]);
         let reasoning = current.items.iter().map(|item| matches!(item, ContextItem::Conversation { message } if message.reasoning.is_some())).collect::<Vec<_>>();
         assert_eq!(reasoning, [false, false, false, true, false, true], "the turn's own reasoning, not an earlier turn's");
 
-        // What each message was produced from, kept with it, resolves - now
-        // and once the turn is in the transcript - to what the model was
-        // given for it.
-        let turn = state.turn.take().unwrap();
-        let seen = |state: &AgentChannelState, index: usize| contents(&ContextResolver::of(state).resolve(&turn.entries[index].context, turn_id, agent).expect("everything it names is here").items);
-        let mut under_way = state.clone();
-        under_way.turn = Some(turn.clone());
-        assert_eq!(seen(&under_way, 1), ["earlier", "question", "prompt:step 1", "first", "prompt:step 2"]);
-        state.transcript.extend(turn.messages().cloned().collect());
-        assert_eq!(state.transcript.digest(), turn.work.context.transcript, "the turn's digests are those of the transcript");
-        assert_eq!(seen(&state, 0), ["earlier", "question", "prompt:step 1"]);
-        assert_eq!(seen(&state, 1), ["earlier", "question", "prompt:step 1", "first", "prompt:step 2"]);
+        // What each message was produced from, recorded with it as it was
+        // said (issue 260), resolves to what the model was given for it -
+        // while the turn is under way and once it ended.
+        let seen = |state: &AgentChannelState, message: &Message| {
+            let (context, turn) = state.recorded_context_of(message.id).expect("recorded as it was said");
+            contents(&ContextResolver::of(state).resolve(&context, turn, agent).expect("everything it names is here").items)
+        };
+        assert_eq!(seen(&state, &second), ["earlier", "question", "prompt:step 1", "first", "prompt:step 2"]);
+        assert_eq!(state.transcript.digest(), next.transcript, "the turn's context names the transcript's head");
+        state.turn = None;
+        assert_eq!(seen(&state, &first), ["earlier", "question", "prompt:step 1"]);
+        assert_eq!(seen(&state, &second), ["earlier", "question", "prompt:step 1", "first", "prompt:step 2"]);
     }
 
     #[test]
@@ -716,7 +678,7 @@ mod tests {
             ..text("answer")
         };
         let mut state = AgentChannelState::default();
-        assert_eq!(TranscriptView::of(&state).usage(agent), None, "no call yet");
+        assert_eq!(state.usage(agent), None, "no call yet");
 
         state.transcript.push(call(agent, 100, 10, Some(4096)));
         state.transcript.push(call(ActorId::Agent(AgentId::new()), 5000, 500, Some(8192)));
@@ -727,9 +689,9 @@ mod tests {
         // are (`start_anew`) - counts as well.
         state.transcript.move_head(before_given.as_ref());
         begin(&mut state, ModelProfile::default());
-        state.turn.as_mut().unwrap().push(call(agent, 300, 30, None));
+        state.said(call(agent, 300, 30, None));
 
-        assert_eq!(TranscriptView::of(&state).usage(agent), Some(TokenUsage {
+        assert_eq!(state.usage(agent), Some(crate::message::TokenUsage {
             calls: 3,
             prompt_tokens: 600,
             completion_tokens: 60,

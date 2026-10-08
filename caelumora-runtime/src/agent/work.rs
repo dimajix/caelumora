@@ -3,8 +3,7 @@
 //! its remote agent - both a `Work` in the model. [`AgentWork`] is the part
 //! both kinds of agent have: who works, in which contexts and bound by what,
 //! the agent's states to read from, and its session to navigate. What only a
-//! turn has - its messages, staged changes, tool calls, the plan - is
-//! `Turn`'s.
+//! turn has - staged changes, tool calls, the plan - is `Turn`'s.
 //!
 //! Components that only read - a `PromptProvider` - are given an
 //! `AgentWork` rather than a `Turn`, so that they serve both kinds of agent.

@@ -3017,7 +3017,7 @@ mod tests {
         let stored = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
-                let has_result = state.turn.as_ref().is_some_and(|t| t.messages().any(|m| !m.tool_results.is_empty()));
+                let has_result = state.turn.as_ref().is_some_and(|t| state.transcript.of_turn(t.work.turn_id).iter().any(|m| !m.tool_results.is_empty()));
                 if has_result && state.processing_state == ActorState::Planning { break state }
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
@@ -3128,7 +3128,7 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
-                if state.turn.as_ref().is_some_and(|t| t.messages().any(|m| !m.tool_results.is_empty())) { break }
+                if state.turn.as_ref().is_some_and(|t| state.transcript.of_turn(t.work.turn_id).iter().any(|m| !m.tool_results.is_empty())) { break }
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         }).await.expect("the tool ran");
@@ -3229,7 +3229,7 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
-                if state.turn.as_ref().is_some_and(|t| t.messages().any(|m| !m.tool_results.is_empty())) { break }
+                if state.turn.as_ref().is_some_and(|t| state.transcript.of_turn(t.work.turn_id).iter().any(|m| !m.tool_results.is_empty())) { break }
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         }).await.expect("the tool ran");

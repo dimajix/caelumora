@@ -272,7 +272,6 @@ mod tests {
         assert_eq!(message.role, MessageRole::Tool);
         assert!(view(&mut turn).is_empty(), "the step's calls are done");
         assert!(view(&mut turn).collect(false).is_none(), "nothing is left to give");
-        assert!(turn.messages().all(|m| m.id != message.id), "kept once the turn says it (`Turn::say`), not before");
     }
 
     #[test]

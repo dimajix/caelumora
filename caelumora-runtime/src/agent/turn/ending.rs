@@ -36,10 +36,10 @@ pub(crate) struct CommittedTurn {
 impl Turn<'_> {
     /// Takes the completed turn over and ends it (issues 06, 17, 47, 62, 65):
     ///
-    /// - appends the messages the agent produced (`push_message`) to its
-    ///   transcript, and those that are not internal to its history, each
-    ///   with what it was produced from (issue 136) - the transcript before
-    ///   it, the prompt parts placed before it and what it had read;
+    /// - its answer is what it said that is not internal, read from the
+    ///   transcript, where each message went as it was said, and into the
+    ///   history with what it was produced from (`push_message`, issue 260);
+    /// - records its end, `TurnFinished`;
     /// - applies the changes staged to its state in this channel, anchored at
     ///   the turn's last message in the history;
     /// - applies the changes staged to its own state to that state as it is
@@ -56,11 +56,12 @@ impl Turn<'_> {
         let abandoned_calls = self.abandon_tool_calls(if cancelled { "it was cancelled" } else { "it ended" }, output).await;
         let answering = self.answering();
         let turn = self.agent_channel_state.turn.take().unwrap_or_default();
-        // Every part is used up exactly once.
-        let final_messages = turn.messages().filter(|m| !m.internal).cloned().collect();
         let turn_id = turn.work.turn_id;
-        let TurnState { entries, memory, notes, private_notes, .. } = turn;
-        let channel_state_changed = self.agent_channel_state.record_turn(turn_id, ActorId::Agent(self.agent_id), entries, notes, private_notes);
+        // What it said is in the transcript already (issue 260).
+        let final_messages = self.agent_channel_state.transcript.of_turn(turn_id).into_iter().filter(|m| !m.internal).collect();
+        // Every part is used up exactly once.
+        let TurnState { memory, notes, private_notes, .. } = turn;
+        let channel_state_changed = self.agent_channel_state.finish_turn(turn_id, ActorId::Agent(self.agent_id), notes, private_notes);
         if let Err(e) = self.agent_state.apply(memory, self.agent_channel_state.history.last_message_id()).await {
             warn!("Agent {}: the changes of its turn to its own state are lost: {:#}", self.agent_id, e);
         }
@@ -68,10 +69,9 @@ impl Turn<'_> {
     }
 
     /// Gives the turn up after it failed or was stopped, for `reason`
-    /// (issues 145, 258): its messages go into the transcript and the
-    /// history as they would when taken over, each with what it was
-    /// produced from, followed by its end, `TurnGivenUp` - what it said is
-    /// not unsaid. Nothing it staged is applied. A step whose calls do not
+    /// (issues 145, 258): what it said stays where it was said - in the
+    /// transcript and the history since it said it (issue 260) - followed by
+    /// its end, `TurnGivenUp`. Nothing it staged is applied. A step whose calls do not
     /// all have their result yet is ended first (`abandon_tool_calls`).
     ///
     /// What its tools did stays done, and its calls stand in its messages;
@@ -85,9 +85,7 @@ impl Turn<'_> {
         let abandoned_calls = self.abandon_tool_calls(reason.cause(), output).await;
         let answering = self.answering();
         let turn = self.agent_channel_state.turn.take().unwrap_or_default();
-        let turn_id = turn.work.turn_id;
-        let TurnState { entries, .. } = turn;
-        self.agent_channel_state.give_up_turn(turn_id, ActorId::Agent(self.agent_id), entries, reason);
+        self.agent_channel_state.give_up_turn(turn.work.turn_id, ActorId::Agent(self.agent_id), reason);
         (answering, abandoned_calls)
     }
 

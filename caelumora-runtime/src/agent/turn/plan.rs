@@ -173,7 +173,7 @@ mod tests {
         let started = turn.advance_plan(1);
 
         assert_eq!(turn.plan().unwrap().progress, PlanProgress::Step(1));
-        assert!(turn.messages().next().is_none(), "the instruction is no message of the turn");
+        assert!(turn.messages().is_empty(), "the instruction is no message of the turn");
         let (role, text) = given(&turn).pop().expect("the instruction is given to the model");
         assert_eq!(role, MessageRole::User, "a system message in the middle, given as a user message");
         assert!(text.contains("second"));

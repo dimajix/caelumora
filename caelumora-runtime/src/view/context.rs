@@ -118,6 +118,24 @@ mod tests {
     use caelumora_model::message::MessageRole;
 
     #[test]
+    fn a_turn_under_way_shows_what_it_said_with_what_it_was_produced_from() {
+        let actor = ActorId::Agent(AgentId::new());
+        let mut state = AgentChannelState::default();
+        let question = Message { id: MessageId::new(), role: MessageRole::User, content: Some("question".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+        state.perceive(vec![question.clone()], vec![question.clone()]);
+        state.begin_turn(Default::default(), Default::default(), Classification::CHANNEL_DEFAULT, Vec::new(), Default::default());
+        let step = Message { id: MessageId::new(), sender_id: actor, role: MessageRole::Assistant, content: Some("thinking".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+        state.said(step.clone());
+
+        // Before the turn ended (issue 260).
+        let view = AgentContextView::of(actor, state);
+        assert!(view.history().iter().any(|item| matches!(item, HistoryEntry::Said { message, .. } if message.id == step.id)), "in its history as it was said");
+        assert!(view.has_context(step.id) && view.in_transcript(step.id));
+        let seen = view.context_of(step.id).expect("what it was produced from is recorded");
+        assert!(seen.items.iter().any(|item| matches!(item, ContextItem::Conversation { message } if message.id == question.id)), "the question it answered");
+    }
+
+    #[test]
     fn a_message_context_is_found_only_for_what_the_agent_produced_and_can_still_be_resolved() {
         let actor = ActorId::Agent(AgentId::new());
         let text = |t: &str| Message { id: MessageId::new(), role: MessageRole::User, content: Some(t.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
