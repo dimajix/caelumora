@@ -168,6 +168,27 @@ interface Answer {
 }
 
 /**
+ * `usage` with the call that produced `message` added, as the server sums
+ * them (`TokenUsage::of`, issue 209) - or `null` if the message reports no
+ * tokens: a tool's result, an external agent's answer. Shown while a turn
+ * runs - the steps of a plan are many calls - and replaced by what the
+ * server read once it ended: a call whose message was not published at all
+ * is missing until then.
+ */
+function withCall(usage: TokenUsage | undefined, message: Message): TokenUsage | null {
+  if (message.prompt_tokens == null && message.completion_tokens == null) return null;
+  const prompt = message.prompt_tokens ?? 0;
+  const completion = message.completion_tokens ?? 0;
+  return {
+    calls: (usage?.calls ?? 0) + 1,
+    prompt_tokens: (usage?.prompt_tokens ?? 0) + prompt,
+    completion_tokens: (usage?.completion_tokens ?? 0) + completion,
+    last_call_tokens: prompt + completion,
+    context_size: message.context_size,
+  };
+}
+
+/**
  * `answers` with the answer of `sender` changed by `change` - added at the
  * end if it has none, so that answers keep the order they began in.
  */
@@ -223,9 +244,13 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   // so an answer that ends first is shown first, as a reload shows it.
   const [answers, setAnswers] = useState<Answer[]>([]);
   // What each agent's model calls used (issue 209), by `actorKey`: from the
-  // snapshot, and fetched again for an agent whose turn ended. Kept apart
+  // snapshot, added to by each of its calls as their messages arrive, and
+  // fetched again for an agent whose turn ended or was given up. Kept apart
   // from the channel, which is fetched again without it.
   const [usage, setUsage] = useState<Record<string, TokenUsage>>({});
+  // The messages whose calls `usage` holds already: those of the snapshot,
+  // and those added as they arrived - a message can arrive twice.
+  const countedCalls = useRef<Set<string>>(new Set());
   const isGenerating = answers.length > 0;
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>([]);
   // The pending approvals this user answered, still waiting for the decision.
@@ -562,6 +587,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
         setMessages(chatMessages(snapshot.items, nameIn(snapshot.channel)));
         setChannel(snapshot.channel);
         setUsage(Object.fromEntries(snapshot.channel.members.flatMap(m => m.usage ? [[actorKey(m.id), m.usage]] : [])));
+        countedCalls.current = new Set(snapshot.items.flatMap(item => 'said' in item && item.said.id ? [item.said.id] : []));
         setNotes(snapshot.notes ?? []);
         setPendingApprovals(snapshot.pending_approvals ?? []);
         setPendingQuestions(snapshot.pending_questions ?? []);
@@ -584,6 +610,16 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
         const answererName = envelope.context.sender_name || null;
         // The answer of the envelope's sender, if it has one, has ended.
         const answerEnded = () => setAnswers(prev => prev.filter(a => a.sender !== answerer));
+        // What the sender's calls used, as the server sums them once its
+        // turn ended - also those whose messages were not published.
+        const readUsage = () => {
+          const agent = envelope.context.sender_id;
+          const uuid = typeof agent === 'object' && 'Agent' in agent ? actorUuid(agent) : null;
+          if (!uuid) return;
+          api.getParticipant(sessionId, channelId, uuid)
+            .then(member => { if (member.usage) setUsage(prev => ({...prev, [answerer]: member.usage!})); })
+            .catch(error => reportError('Failed to read what the agent used', error));
+        };
         if (typeof actorEvent === 'string') {
           // The payload-less events have nothing to show.
         } else if (actorEvent.ResponseStarted) {
@@ -624,6 +660,15 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
             }
             return [...prev, newMsg];
           });
+          // What its call used, at once: a plan's steps are many calls of
+          // one turn, whose end would come too late for the gauge.
+          if (newMsg.id && !countedCalls.current.has(newMsg.id)) {
+            countedCalls.current.add(newMsg.id);
+            setUsage(prev => {
+              const used = withCall(prev[answerer], newMsg);
+              return used ? {...prev, [answerer]: used} : prev;
+            });
+          }
           // Its sender may go on: what streams in next is its next message.
           const turnId = newMsg.turn_id ?? null;
           setAnswers(prev => prev.map(a => a.sender === answerer ? {...a, turnId: a.turnId ?? turnId, reasoning: '', content: ''} : a));
@@ -693,14 +738,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
         } else if (actorEvent.TurnFinished) {
           // Its messages were shown as they were said.
           answerEnded();
-          // Its calls are recorded once its turn ended: what they used now.
-          const agent = envelope.context.sender_id;
-          const uuid = typeof agent === 'object' && 'Agent' in agent ? actorUuid(agent) : null;
-          if (uuid) {
-            api.getParticipant(sessionId, channelId, uuid)
-              .then(member => { if (member.usage) setUsage(prev => ({...prev, [answerer]: member.usage!})); })
-              .catch(error => reportError('Failed to read what the agent used', error));
-          }
+          readUsage();
         } else if (actorEvent.TurnGivenUp) {
           // Shown in the chat as the turn's end (issue 258), not yet part of
           // the history: gone on reload.
@@ -708,6 +746,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           const notice = givenUpNotice(turn_id, reason, envelope.context.sender_id, envelope.context.sender_name, envelope.timestamp, envelope.context.span_id);
           setMessages(prev => prev.some(m => m.id === notice.id) ? prev : [...prev, notice]);
           answerEnded();
+          readUsage();
         } else if (actorEvent.CommandExecuted) {
           // Shown, but not part of the history.
           const notice: Message = {
