@@ -241,12 +241,15 @@ else who may read it - the session's owner, say - is shown its history and no in
     …/messages/{mid}/retry`) - not of an external agent, which never answers again (issue 242). The
     agent decides: on `RetryAccepted` it is shown as answering, its message turns into a placeholder
     as it takes it back, and its new answer follows; on `RetryRejected` a notice "Not answered
-    again" says why, in this page's words for each `reason`, and is gone on reload like a failed
-    turn. An answer still under way has a retry icon of its own once its turn is known and its
+    again" says why, in this page's words for each `reason`, and is gone on reload. An answer still
+    under way has a retry icon of its own once its turn is known and its
     member's `can_retry` allows it (issue 235): `POST …/participants/{aid}/retry` with the turn.
     Refused if the answer ended meanwhile - its last message then has the icon. On `RetryAccepted`
     of a turn, the messages of that turn shown so far stay: what was said is not unsaid, and the
-    history keeps them (issue 258).
+    history keeps them (issue 258). The notice of a turn given up because it failed or the channel
+    was lowered has the retry icon too, while it is the last thing in the chat, nothing is being
+    generated and the member's `can_retry` allows it (issue 259): the same route with that turn,
+    and the agent answers anew after it.
 *   **Approvals.** A tool call that needs approval is shown to everybody, with approve and deny only
     for who may approve the agent's calls (`can_approve` of the member, issue 14); everybody else is
     told that it waits for whoever is responsible for the agent. Once this user answered, it waits

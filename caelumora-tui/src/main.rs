@@ -122,9 +122,11 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
     let mut pending_approvals: HashMap<Uuid, AgentId> = HashMap::new();
     // The last answer of an agent shown, which `/retry` asks it to give
     // again (issue 234) - or, while one is under way, that answer, by the
-    // agent and its turn (issue 235).
+    // agent and its turn (issue 235); or, after a turn given up that may be
+    // answered anew and nothing since, that turn (issue 259).
     let mut last_answer: Option<MessageId> = None;
     let mut under_way: Option<(ActorId, TurnId)> = None;
+    let mut given_up: Option<(ActorId, TurnId)> = None;
     // The questions open in the channel (issue 165), in the order they were
     // asked, and those being answered, with the responses given so far:
     // while they are, every line answers the next question.
@@ -169,6 +171,7 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                         if matches!(message.sender_id, ActorId::Agent(_)) {
                             last_answer = Some(message.id);
                         }
+                        given_up = None;
                         if let Some(content) = &message.content {
                             println!("\r{}> {}", message.sender_name, render_content(&message, content, &handles));
                         }
@@ -193,10 +196,11 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                     Some(ActorEvent::RetryRejected { reason, .. }) => {
                         println!("\r{} cannot answer again: {}", sender, reason);
                     }
-                    Some(ActorEvent::TurnGivenUp { reason, .. }) => {
+                    Some(ActorEvent::TurnGivenUp { turn_id, reason }) => {
                         if under_way.is_some_and(|(agent, _)| Some(agent) == sender_id) {
                             under_way = None;
                         }
+                        given_up = sender_id.filter(|id| matches!(id, ActorId::Agent(_)) && reason.may_be_answered_again()).map(|id| (id, turn_id));
                         match reason {
                             GivenUpReason::Failed { message } => println!("\r[error] {} could not answer: {}", sender, message),
                             GivenUpReason::Lowered { channel } => println!("\r{} gave its answer up: the channel was lowered to {}", sender, channel),
@@ -320,7 +324,7 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                             continue;
                         }
                         if input == "/retry" {
-                            let asked = match (under_way, last_answer) {
+                            let asked = match (under_way.or(given_up), last_answer) {
                                 (Some((agent, turn)), _) => user_actor.request_retry_of_turn(agent, turn).await,
                                 (None, Some(answer)) => user_actor.request_retry(answer).await,
                                 (None, None) => {

@@ -155,3 +155,8 @@ lives.
   something after; a turn that failed answered anew and kept; the refusal once something followed;
   the security suite asks the same question before the history is looked at. CHANNELS.md and
   REST-SERVER.md.
+- **2026-10-08** — Step 2 done: the web UI's notice of a turn given up, failed or lowered, has a
+  retry icon while it is the last thing in the chat, nothing is being generated and the member's
+  `can_retry` holds (`mayRetryGivenUp`, the route of the turn under way with that turn); the TUI's
+  `/retry` asks for the turn given up it was told of last, if nothing was said since. REST was done
+  in step 1. Not verified in the browser.

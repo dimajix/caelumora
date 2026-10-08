@@ -381,8 +381,8 @@ viewer may ask is part of each member's snapshot (`MemberSnapshot::can_retry`,
 `MemberView::may_retry`, issue 242): the viewer's `RetryMessage` in the channel, of an agent taking
 part whose kind answers again (`PersonalityKind::can_retry`) - not of an external agent, which
 would only refuse. So a client offers it only where it is permitted and can succeed. The TUI asks
-it, with `/retry`, of the answer under way it was told of last, else of the last answer of an agent
-it showed.
+it, with `/retry`, of the answer under way it was told of last, else of the turn given up it was
+told of last if nothing was said since (issue 259), else of the last answer of an agent it showed.
 
 ## Participants
 

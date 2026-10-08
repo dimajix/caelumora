@@ -451,6 +451,37 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
     }
   };
 
+  /**
+   * Whether the user may ask for an answer anew after the turn given up that
+   * the notice `msg` tells of (issue 259): one that failed or whose channel
+   * was lowered, while it is the last thing in the chat - as `mayRetry` has
+   * it. The agent has the last word here, too.
+   */
+  const mayRetryGivenUp = (msg: Message) =>
+    !!msg.turn_id && (msg.givenUp?.kind === 'failed' || msg.givenUp?.kind === 'lowered') && mayRetry(msg);
+
+  const retryGivenUp = async (msg: Message) => {
+    const uuid = msg.sender_id ? memberUuid(actorKey(msg.sender_id)) : undefined;
+    if (!uuid || !msg.turn_id) return;
+    try {
+      await api.retryAnswer(sessionId, channelId, uuid, msg.turn_id);
+    } catch (error) {
+      reportError('Failed to ask for another answer', error);
+    }
+  };
+
+  /** The icon on the notice of a turn given up that asks for an answer anew, where it may. */
+  const retryGivenUpAction = (msg: Message) => mayRetryGivenUp(msg) ? (
+    <button
+      onClick={() => void retryGivenUp(msg)}
+      className="p-0.5 opacity-60 hover:opacity-100 focus:opacity-100"
+      title="Ask for an answer anew"
+      aria-label="Ask for an answer anew"
+    >
+      <RotateCcw size={13} />
+    </button>
+  ) : undefined;
+
   /** Takes `msg` back on the second click; the first asks for it. */
   const takeBack = async (msg: Message) => {
     if (revoking !== msg.id) {
@@ -1033,7 +1064,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
       {msg.span_id && (
         <div className="mt-1 text-[11px] font-mono opacity-60">span_id {msg.span_id}</div>
       )}
-      <MessageFooter message={msg} />
+      <MessageFooter message={msg} actions={retryGivenUpAction(msg)} />
     </div>
   ) : msg.givenUp ? (
     <div
@@ -1045,7 +1076,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
         <span>{msg.sender_name || 'The agent'} gave its answer up</span>
       </div>
       <div className="wrap-break-word">{msg.content}</div>
-      <MessageFooter message={msg} />
+      <MessageFooter message={msg} actions={retryGivenUpAction(msg)} />
     </div>
   ) : msg.retryRejected ? (
     <div
