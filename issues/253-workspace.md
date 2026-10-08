@@ -118,3 +118,7 @@ its plan is kept in one place so that the two are read together. In short:
   scope made with each session and gone with it, files included; one of the user's scope shared by
   their sessions. Stored data: workspaces stored before load in the global scope, their names
   unique across users - delete `runtime/workspaces/` of a JSON store, and their places.
+- **2026-10-08** — Deleting and restoring the workspaces of a session's scope no longer go through
+  the `WorkspaceManager`: `scoped.rs` marks them in the store and announces them, as it does
+  agents. Only purging needs the manager, which removes the places first (`purge_lying_in`);
+  `delete_lying_in` and `restore_lying_in` are gone. No change of behaviour.

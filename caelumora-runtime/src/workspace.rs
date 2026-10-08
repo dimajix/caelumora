@@ -1,7 +1,9 @@
-//! The one owner of "a workspace and its place" (issues 251, 253): the
-//! writer of workspace documents - stored first, then announced - and the
-//! only code that holds the `TerminalProvider`s, one per configured
-//! storage. Reading the documents is the views' (`view::WorkspaceView`).
+//! The one owner of "a workspace and its place" (issues 251, 253): it
+//! makes, changes, deletes and purges workspaces - stored first, then
+//! announced - and is the only code that holds the `TerminalProvider`s,
+//! one per configured storage. Reading the documents is the views'
+//! (`view::WorkspaceView`); deleting and restoring them with what holds
+//! their scope is `scoped.rs`'s, which marks them as it marks every kind.
 //!
 //! A workspace is used in one of two ways, each checked here before
 //! anything else (issue 251, decisions 10 to 12):
@@ -17,8 +19,8 @@
 //!
 //! A workspace lies in a scope as an agent does (issue 251, decision 13):
 //! what lies in a session's scope is used within that session only
-//! (`Scope::admits`), and is deleted, restored and purged with it
-//! (`delete_lying_in`, `restore_lying_in`, `purge_lying_in`).
+//! (`Scope::admits`), and is deleted, restored and purged with it - its
+//! place removed by `purge_lying_in`.
 
 use crate::event::EventBus;
 use crate::terminal::{LocalProvider, Terminal, TerminalError, TerminalProvider};
@@ -26,7 +28,6 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::config::{StorageConfig, WorkspacesConfig};
 use caelumora_model::confidentiality::{user_roles, Classification};
 use caelumora_model::event::GlobalEvent;
-use caelumora_model::removal::Stored;
 use caelumora_model::scope::{Scope, Scoped};
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityContext, SecurityManager};
 use caelumora_model::session::{Channel, Session};
@@ -35,7 +36,6 @@ use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;
 use caelumora_model::workspace::{Workspace, WorkspaceId, WorkspaceUpdateEvent};
-use chrono::{DateTime, Utc};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
@@ -318,45 +318,6 @@ impl WorkspaceManager {
         let flows = self.security.may_publish(ctx, ctx.caller_id, inside, outside).await
             && self.security.may_publish(ctx, ctx.caller_id, outside, inside).await;
         Ok(flows.then_some(workspace))
-    }
-
-    /// Deletes the workspaces that lie in `holder` or within it - with it,
-    /// in the runtime's name: deleting `holder` was permitted.
-    ///
-    /// # Errors
-    /// Whatever the store reports; what was deleted before stays deleted.
-    pub(crate) async fn delete_lying_in(&self, holder: &Scope) -> WorkspaceResult<()> {
-        let system = SecurityContext::system();
-        let _writing = self.writing.lock().await;
-        for workspace in self.entities.list_workspaces(&system).await? {
-            if holder.contains(&workspace.scoped_name().scope) && self.entities.delete_workspace(&system, workspace.id).await? {
-                self.events.publish(GlobalEvent::WorkspaceDeleted(workspace.id), workspace.security_attributes.clone());
-            }
-        }
-        Ok(())
-    }
-
-    /// Restores the workspaces that lie in `holder` or within it and were
-    /// deleted with it - at `since` or later; one whose name was taken
-    /// meanwhile stays deleted.
-    ///
-    /// # Errors
-    /// Whatever else the store reports.
-    pub(crate) async fn restore_lying_in(&self, holder: &Scope, since: DateTime<Utc>) -> WorkspaceResult<()> {
-        let system = SecurityContext::system();
-        let _writing = self.writing.lock().await;
-        for workspace in self.entities.list_deleted_workspaces(&system).await? {
-            let with_it = workspace.deleted().is_some_and(|removal| removal.at >= since);
-            if !holder.contains(&workspace.scoped_name().scope) || !with_it {
-                continue;
-            }
-            match self.entities.restore_workspace(&system, workspace.id).await {
-                Ok(()) => self.events.publish(GlobalEvent::WorkspaceRestored(workspace.id), workspace.security_attributes.clone()),
-                Err(StoreError::NameTaken { .. }) => warn!(workspace = %workspace.id, "A workspace stays deleted: its name was taken while what holds its scope was deleted"),
-                Err(e) => return Err(e.into()),
-            }
-        }
-        Ok(())
     }
 
     /// Purges the deleted workspaces that lie in `holder` or within it,

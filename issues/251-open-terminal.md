@@ -522,9 +522,9 @@ store first, then announce) and the only code that holds the providers:
 A workspace whose storage is no longer configured is kept, listed with "its storage is not
 configured", and refused by every operation on its files.
 
-`scoped.rs` takes a session's workspaces along, through the manager - the one writer of their
-documents - which deletes, restores and purges what lies in a scope (`delete_lying_in`,
-`restore_lying_in`, `purge_lying_in`), places first when purging. `owned` refuses one of a
+`scoped.rs` takes a session's workspaces along: it marks them deleted and restores them in the
+store, as it does every kind that lies in a scope, and has the manager purge them
+(`purge_lying_in`), their places first. `owned` refuses one of a
 session's scope, `usable_in` one whose scope the session is not, and `SessionLoop::set_workspace`
 one of another session's scope (decision 14). `create_from_template` finds or makes the template's
 workspace (`template::resolve_workspace`) and takes back one it made if the session cannot be

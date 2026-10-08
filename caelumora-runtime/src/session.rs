@@ -444,7 +444,7 @@ impl SessionLoop {
         event_bus.publish(GlobalEvent::ChannelDeleted(self.id, channel_id), channel.security_attributes.clone());
         // What lies in its scope goes with it (issue 178); an agent of it
         // takes part in no other channel (`Scope::admits`).
-        if let Err(e) = delete_scoped_in(self.entities.as_ref(), event_bus, self.runtime_manager.workspace_manager(), &Scope::ChannelScope { session_id: self.id, channel_id }).await {
+        if let Err(e) = delete_scoped_in(self.entities.as_ref(), event_bus, &Scope::ChannelScope { session_id: self.id, channel_id }).await {
             warn!("Channel {} was deleted from session {}, but not what lies in its scope: {}", channel_id, self.id, e);
         }
         info!("Channel {}/{} deleted from session {} by {}", channel.name, channel_id, self.id, context.caller_id);
@@ -496,7 +496,7 @@ impl SessionLoop {
         };
         if let Some(since) = deleted_at {
             // What was deleted with it comes back with it (issue 178).
-            if let Err(e) = restore_scoped_in(self.entities.as_ref(), &self.events, self.runtime_manager.workspace_manager(), &Scope::ChannelScope { session_id: self.id, channel_id }, since).await {
+            if let Err(e) = restore_scoped_in(self.entities.as_ref(), &self.events, &Scope::ChannelScope { session_id: self.id, channel_id }, since).await {
                 warn!("Channel {} of session {} was restored, but not what lies in its scope: {}", channel_id, self.id, e);
             }
         }
@@ -875,7 +875,7 @@ impl SessionManager {
         // 178). Its agents take part in no other session (`Scope::admits`):
         // they leave nothing, and come back with its channels.
         if removed {
-            if let Err(e) = delete_scoped_in(self.entities.as_ref(), event_bus, self.runtime_manager.workspace_manager(), &Scope::SessionScope { session_id: id }).await {
+            if let Err(e) = delete_scoped_in(self.entities.as_ref(), event_bus, &Scope::SessionScope { session_id: id }).await {
                 warn!("Session {} was deleted, but not what lies in its scope: {}", id, e);
             }
         }
@@ -907,7 +907,7 @@ impl SessionManager {
         store.restore_session(context, id).await?;
         let session = store.get_session(context, id).await?;
         if let Some(since) = deleted_at {
-            if let Err(e) = restore_scoped_in(store.as_ref(), &self.events, self.runtime_manager.workspace_manager(), &Scope::SessionScope { session_id: id }, since).await {
+            if let Err(e) = restore_scoped_in(store.as_ref(), &self.events, &Scope::SessionScope { session_id: id }, since).await {
                 warn!("Session {} was restored, but not what lies in its scope: {}", id, e);
             }
         }
