@@ -553,3 +553,7 @@ the step that changes what they describe.
   answer), [262](262-stopped-turn-not-recorded-while-reflecting.md) (a removal while a turn ends
   leaves no end in the channel). Status `done`: what a turn says stays, in every chain and in the
   web UI, however the turn ends.
+- **2026-10-08** — Changed by [262](262-stopped-turn-not-recorded-while-reflecting.md): the end
+  the channel recorded itself for the turn of a removed agent, `Stopped`, in the participant's
+  name, is retracted. Only the actor that had a turn says how it ended; the channel takes what a
+  removed actor sends until its task has ended, and a turn whose agent was aborted stays open.

@@ -202,3 +202,13 @@ as it does.
   or the `TurnFinished` of a turn that was reflecting - enters the channel as its own. The record
   the channel made itself since 258 is retracted; a turn whose agent was aborted stays open.
   Planned against the code as of `ee40d42` (parts A to G).
+- **2026-10-08** — Step 1 done, as planned: `AgentActor::give_up` withdraws the requests and sends
+  `TurnGivenUp` for a stop as for any reason, the external agent tells `Ending::Stopped` as
+  `TurnGivenUp { Stopped }`; `run` keeps the actors told to stop in `Leaving` - who removed each,
+  and its task's id - takes their events until their task has ended, and announces the removal
+  from the `JoinSet`'s result (`join_next_with_id`, an aborted task's `JoinError` carrying the id
+  too) or before an actor starts under the same id; `ActorChange::Stop` carries no turn, and
+  `remove_participant` asks for none. One deviation: the window itself - a removal while the turn
+  reflects - has no test of its own, since no component of the tests holds that step; the
+  mechanism is pinned at `handle_actor_event` and through the long tool, the `Start` arm at
+  `apply_change`. Nothing to change in the frontends.

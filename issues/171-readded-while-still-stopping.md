@@ -54,3 +54,8 @@ state, silently.
   the announcement of [162](162-ui-keeps-a-removed-agents-turn.md) relied on by chance as well. And
   `run` no longer starts an actor that was removed again before it got to start it. A run id in the
   events (the second consideration) was not needed: two runs of one actor no longer overlap.
+- **2026-10-08** — Since [262](262-stopped-turn-not-recorded-while-reflecting.md) the removal is
+  announced once the old actor's task has ended, which `run` learns from its `JoinSet`; `left`
+  waits on the `TaskTracker`, so a new actor's `Start` may reach `run` before it saw the task end.
+  `run` then announces the removal before it starts the new actor, so that nothing of the new one
+  precedes it.

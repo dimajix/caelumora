@@ -120,7 +120,8 @@ enum Ending {
     /// The channel was lowered to this classification since it began: it
     /// is given up, nothing of it is published (issue 212).
     Lowered(Classification),
-    /// The actor was stopped meanwhile: nothing is published.
+    /// The actor was stopped meanwhile: the answer is given up, nothing of
+    /// it published, and the channel told (issue 262).
     Stopped,
 }
 
@@ -297,7 +298,10 @@ impl ExternalAgentActor {
                 info!("External agent {} {} gives up its answer: the channel was lowered to {}", self.id(), self.name(), channel);
                 vec![ActorEvent::TurnGivenUp { turn_id: work.turn_id, reason: GivenUpReason::Lowered { channel } }]
             }
-            Ok(Ending::Stopped) => Vec::new(),
+            Ok(Ending::Stopped) => {
+                info!("External agent {} {} gives up its answer: it was stopped", self.id(), self.name());
+                vec![ActorEvent::TurnGivenUp { turn_id: work.turn_id, reason: GivenUpReason::Stopped }]
+            }
             Err(e) => {
                 tracing::error!("External agent {} {} could not answer: {:#}", self.id(), self.name(), e);
                 vec![ActorEvent::TurnGivenUp { turn_id: work.turn_id, reason: GivenUpReason::Failed { message: failure_message(&e) } }]

@@ -92,9 +92,11 @@ pub(crate) trait Actor: Any + Debug + Send + Sync {
 
     /// Ends the actor for good, because it left the channel (issue 75) -
     /// removed from it, or the channel deleted: a turn under way is given
-    /// up, not kept for a resume (issue 145). The act that removed it
-    /// checked its permission and is who did it; stopping is its
-    /// consequence, and like `cancel` and `wakeup` knows no caller.
+    /// up, not kept for a resume (issue 145), and the channel told of its
+    /// end - a removed actor's events are taken until its task has ended
+    /// (issue 262). The act that removed it checked its permission and is
+    /// who did it; stopping is its consequence, and like `cancel` and
+    /// `wakeup` knows no caller.
     /// Synchronous like `cancel`; every actor ends its own task, one with
     /// state once that state is stored consistent. The channel waits for
     /// that and aborts the task only if it does not end by itself in time

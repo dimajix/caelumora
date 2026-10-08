@@ -209,8 +209,8 @@ reads nothing.
     answer is asked for again while under way is given up (`Retried`, issue 235): the run loop
     takes `Interrupt::Retry` after the step it cut short, as it takes a stop, gives the turn up and
     goes idle, and the request on its way begins the next turn. Its approval requests are withdrawn
-    as for a turn that failed; only a stopped agent leaves them to the approvers, which discard
-    them as it leaves.
+    as for a turn that failed - a stopped agent's too, though the approvers discard them as it
+    leaves anyway.
 
 Before every step of a turn, the agent asks whether the turn still flows into its channel as it is
 now (`ActionType::Publish` of the turn's classification, in the agent's name). Once the channel was
@@ -247,10 +247,11 @@ loaded again, the turn is resumed (issue 75):
 A turn state stored without the turn's working state cannot be resumed; the agent starts `Idle`.
 
 A deliberate end never leaves a turn in the store. `cancel` and the stop tool commit the turn. An
-agent removed from its channel is told to `stop`: it gives up a turn under way, stores itself idle
-and ends its task. The channel aborts it only if it does not - a tool that hangs, say. The agent
-announces nothing, since it has left; the channel announces its removal (`ParticipantRemoved`, see
-[CHANNELS.md](CHANNELS.md)).
+agent removed from its channel is told to `stop`: it gives up a turn under way, tells the channel
+so (`TurnGivenUp`, `Stopped`), stores itself idle and ends its task - the channel takes what it
+says until then (issue 262), and announces its removal once it has ended (`ParticipantRemoved`,
+see [CHANNELS.md](CHANNELS.md)). The channel aborts it only if it does not end - a tool that
+hangs, say.
 
 ## What an agent saw
 

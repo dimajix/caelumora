@@ -246,10 +246,12 @@ as it arrives - `CompleteMessageGenerated`, and the steps of a plan as
 event of that name: `TurnFinished`, or `TurnGivenUp` with its reason. A turn given up
 keeps what it said; only a message still streaming when it ended is lost, never having been
 complete. A message is admitted as it arrives (`admits`), so one said after the channel was lowered
-below its turn is refused, and what was said before is fitted with the rest. An agent removed while
-it answers can no longer tell the channel: `remove_participant` asks for its turn under way before
-it stops it, and the channel records that turn as given up, `Stopped`, and announces it in the
-participant's name after `ParticipantRemoved`.
+below its turn is refused, and what was said before is fitted with the rest. How a turn ended is
+told by whoever had it, also by an agent removed while it answers: the channel takes what a removed
+actor sends until its task has ended - the step it was in, and its `TurnGivenUp` as `Stopped`, or
+the `TurnFinished` of a turn that was ending - and records no end in anyone's name (issue 262). A
+turn whose agent was aborted after the grace, saying nothing, stays without an end: nobody ended
+it.
 
 Waking the channel for a message is the actor's job, too: it sends a `WakeupRequested` ahead of
 every message, in the message's span. Neither a frontend nor the channel decides that by itself
@@ -456,10 +458,11 @@ The `ChannelLoop` starts the new actor's task, tells the moderator and rebuilds 
 `MentionDirectory`; a handle that becomes ambiguous is logged, as at the start. The channel's run
 loop takes such changes over a queue and ends once its last actor has ended.
 
-A removed actor is stopped at once - an agent without finishing its turn - and its state is kept,
-for the record and for a later return. The approver answers a leaving agent's pending approvals as
-denied, so that nothing keeps waiting, and decides the others again, since who may approve them
-changed (issue 14). The approver itself cannot be removed.
+A removed actor is stopped at once - an agent without finishing its turn, which it gives up and
+says so (issue 262) - and its state is kept, for the record and for a later return. The approver
+answers a leaving agent's pending approvals as denied, so that nothing keeps waiting, and decides
+the others again, since who may approve them changed (issue 14). The approver itself cannot be
+removed.
 
 A participant added again while its old actor still ends - storing its state, at most `STOP_GRACE`
 before it is aborted - waits for it (issue 171): `ChannelLoop` keeps the task of every removed actor
@@ -468,19 +471,20 @@ little past the grace (`LEAVE_GRACE`); an actor that has not ended even then is 
 `ChannelError::StillLeaving` (REST `409`, `still_leaving`). The new actor thus loads the state as
 the old one left it, and never runs next to it. The run loop takes the events its actors sent
 before a change of its actors (`biased`), so that what the old actor sent before it ended is
-routed - or dropped, as a removed actor's - before the new one starts under the same id. An actor
-removed before the run loop started it is never started.
+routed before the new one starts under the same id. An actor removed before the run loop started
+it is never started.
 
 ### How others learn of it
 
 A leave is announced on the event bus like every change of membership (issue 73). In the channel
 itself, the removal is announced with `ActorEvent::ParticipantRemoved`, in the name of whoever
-removed the participant - `System` if the runtime did. The run loop sends it as it stops the actor,
-between the events it routes, and from then on drops whatever the actor still sends while it
-finishes its step: what the participant sent before is in the channel, nothing of it follows the
-announcement. That is how a frontend knows that a turn it shows has ended - a stopped agent
-announces nothing itself, it has left (issue 162). Like `TurnGivenUp`, every moderator forwards it
-to the users only, and it is never stored.
+removed the participant - `System` if the runtime did. The run loop sends it once the actor's task
+has ended (issue 262) - by itself, or aborted after the grace - between the events it routes, and
+at the latest before an actor starts under the same id: until then it takes what the actor still
+sends, the step it finishes and the end of its turn, and after it nothing of the actor enters the
+channel (issue 162). What the participant sent before is in the channel, nothing of it follows the
+announcement. That is how a frontend ends what an actor aborted without a word left under way.
+Like `TurnGivenUp`, every moderator forwards it to the users only, and it is never stored.
 
 A removed user's live stream of the channel ends because it is theirs: it is followed through their
 actor (`UserActor::watch`), which ends when it is stopped, so no one has to listen for the

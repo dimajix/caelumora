@@ -47,3 +47,8 @@ The user sees a turn under way that will never end, and a stop button that has n
   itself. The web UI ends the removed participant's answer and stop button and marks its calls
   without a result as abandoned. A participant added again while its old actor still stops is
   [171](171-readded-while-still-stopping.md).
+- **2026-10-08** — Changed by [262](262-stopped-turn-not-recorded-while-reflecting.md): a stopped
+  agent now announces the end of its turn itself (`TurnGivenUp`, `Stopped`), and the channel
+  takes what a removed actor sends until its task has ended. `ParticipantRemoved` follows the
+  actor's end - by itself, or aborted after the grace - and still nothing of the actor follows the
+  announcement; what the web UI ends on it is what an actor aborted without a word left under way.

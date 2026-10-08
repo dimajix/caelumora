@@ -413,13 +413,12 @@ impl AgentActor {
     /// they were said, followed by its end (issue 258) - recorded as lowered
     /// once the turn no longer flows into the channel (issue 141), whatever
     /// ended it, so that its model is given only which tools it called.
-    /// The approval requests it still waited for are withdrawn (issue 148) -
-    /// unless the agent was stopped: it left the channel, which takes
-    /// nothing from it any longer, and the approvers discard its requests as
-    /// it leaves. The channel's users are told with `TurnGivenUp`, with the
-    /// reason recorded, unless the agent was stopped; a turn asked for again
-    /// is followed by `RetryAccepted` and the new answer (issue 235).
-    /// Between turns there is nothing to give up.
+    /// The approval requests it still waited for are withdrawn (issue 148),
+    /// and the channel's users are told with `TurnGivenUp`, with the reason
+    /// recorded - also by an agent that was stopped: it is leaving the
+    /// channel, which takes what it says until its task has ended (issue
+    /// 262). A turn asked for again is followed by `RetryAccepted` and the
+    /// new answer (issue 235). Between turns there is nothing to give up.
     async fn give_up(&self, state: &mut AgentChannelState, reason: GivenUpReason, output: &dyn EventSender) {
         let Some(under_way) = state.turn.as_ref() else { return };
         // A turn that no longer flows into its channel is recorded as
@@ -434,9 +433,6 @@ impl AgentActor {
         let agent_name = self.agent_controller.name();
         let Some(turn) = self.turn(state) else { return };
         let (answering, abandoned_calls) = turn.give_up(recorded.clone(), output).await;
-        if reason == GivenUpReason::Stopped {
-            return;
-        }
         if let Err(e) = withdraw_requests(&answering, &abandoned_calls, output).await {
             warn!("Agent {} {} cannot withdraw the approval requests of its given-up turn: {:#}", self.id(), agent_name, e);
         }
@@ -953,7 +949,9 @@ impl Actor for AgentActor {
             // step it interrupted, and nowhere else (issue 152). Told to
             // stop, the actor is leaving the channel: a turn under way is
             // not resumed later, so it is given up rather than stored to be
-            // resumed (issues 75, 145).
+            // resumed (issues 75, 145), and the channel is told - its
+            // farewell, which the channel takes until its task has ended
+            // (issue 262).
             let interrupt = self.control.take_interrupt();
             if interrupt == Some(Interrupt::Stop) {
                 self.give_up(&mut state, GivenUpReason::Stopped, &*output).await;

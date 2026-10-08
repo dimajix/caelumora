@@ -23,7 +23,6 @@ use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::question::{QuestionError, QuestionId, Questions};
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::message_history::HistoryEntry;
-use caelumora_model::turn::GivenUpReason;
 use caelumora_model::work::TurnId;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Reclassified, SecurityAttributes, SecurityContext, SecurityManager};
 use caelumora_model::scope::Scope;
@@ -303,13 +302,19 @@ async fn stopped(tasks: &[TaskTracker]) -> bool {
 
 /// A change to the actors a running channel runs (issue 46), carried out by
 /// `run`, which owns their tasks.
+#[expect(clippy::large_enum_variant, reason = "a few changes in a channel's life, each taken apart at once")]
 enum ActorChange {
     Start(ChannelActor),
-    /// The actor to stop, on whose behalf it was removed - in whose name
-    /// `run` announces it (`ParticipantRemoved`, issue 162) - and the turn
-    /// it had under way, which ends with it (issue 258).
-    Stop(ActorId, SecurityContext, Option<TurnId>),
+    /// The actor to stop, and on whose behalf it was removed - in whose name
+    /// `run` announces it once its task has ended (`ParticipantRemoved`,
+    /// issues 162, 262).
+    Stop(ActorId, SecurityContext),
 }
+
+/// The actors `run` told to stop whose tasks have not ended yet (issue
+/// 262): on whose behalf each was removed, and its task - the id its
+/// `AbortHandle` names, by which `run` knows the task that ended as its.
+type Leaving = HashMap<ActorId, (SecurityContext, tokio::task::Id)>;
 
 #[derive(Debug)]
 pub struct ChannelLoop {
@@ -723,8 +728,9 @@ impl ChannelLoop {
     /// again (`left`, issue 171). The leave is announced by the
     /// `ChannelController` on the event bus (issue 73), and in the channel by
     /// `run` with a `ParticipantRemoved` in the name of `context`'s caller,
-    /// after which nothing of the participant enters the channel any more
-    /// (issue 162).
+    /// once the actor's task has ended: what it still sends until then - the
+    /// step it was in, the end of its turn - enters the channel as its own,
+    /// and nothing of it follows the announcement (issues 162, 262).
     /// Its state is kept, for the record and for when it joins again.
     ///
     /// # Errors
@@ -746,11 +752,8 @@ impl ChannelLoop {
         });
         self.moderator.remove_actor(participant);
         self.rebuild_mentions();
-        // Asked before it stops: the turn it gives up, which it can no
-        // longer tell the channel of.
-        let under_way = actor.turn_under_way();
         actor.stop();
-        let _ = self.changes_tx.send(ActorChange::Stop(participant, context.clone(), under_way));
+        let _ = self.changes_tx.send(ActorChange::Stop(participant, context.clone()));
         info!("{} left channel {}, removed by {}", participant, self.id, context.caller_id);
         Ok(())
     }
@@ -1009,25 +1012,36 @@ impl ChannelLoop {
         let (event_tx, mut event_rx) = mpsc::channel(10);
         let mut join_set = JoinSet::new();
         let mut running = self.spawn_actors(event_tx.clone(), &mut join_set);
+        let mut leaving = Leaving::new();
 
         loop {
             tokio::select! {
-                // Events before changes (issue 171): what a removed actor
-                // sent before it ended is routed - or dropped, as its
-                // sender's - before an actor that joins under its id starts.
+                // Events before changes and ended tasks (issues 171, 262):
+                // what a removed actor sent before it ended is routed before
+                // its removal is announced, and before an actor that joins
+                // under its id starts.
                 biased;
                 maybe_event = event_rx.recv() => {
-                    if self.handle_actor_event(maybe_event, &running).await {
+                    if self.handle_actor_event(maybe_event, &running, &leaving).await {
                         break;
                     }
                 }
                 Some(change) = changes_rx.recv() => {
-                    self.apply_change(change, &mut running, &event_tx, &mut join_set).await;
+                    self.apply_change(change, &mut running, &mut leaving, &event_tx, &mut join_set).await;
                 }
-                // Finished tasks are dropped as they end; once the last one
+                // Finished tasks are dropped as they end - a removed actor's
+                // with its removal announced (issue 262); once the last one
                 // is gone, the channel stops - the sender kept for actors
                 // joining later keeps the event queue from closing by itself.
-                Some(_) = join_set.join_next(), if !join_set.is_empty() => {
+                Some(ended) = join_set.join_next_with_id(), if !join_set.is_empty() => {
+                    let task = match &ended {
+                        Ok((task, _)) => *task,
+                        Err(e) => e.id(),
+                    };
+                    let left = leaving.iter().find(|(_, (_, left))| *left == task).map(|(id, _)| *id);
+                    if let Some((id, (remover, _))) = left.and_then(|id| leaving.remove_entry(&id)) {
+                        self.announce_removal(id, remover, &running).await;
+                    }
                     if join_set.is_empty() {
                         break;
                     }
@@ -1040,7 +1054,7 @@ impl ChannelLoop {
     }
 
     /// Starts or stops an actor as a participant joined or left (issue 46).
-    async fn apply_change(&self, change: ActorChange, running: &mut HashMap<ActorId, RunningActor>, event_tx: &Sender<Envelope>, join_set: &mut JoinSet<ActorId>) {
+    async fn apply_change(&self, change: ActorChange, running: &mut HashMap<ActorId, RunningActor>, leaving: &mut Leaving, event_tx: &Sender<Envelope>, join_set: &mut JoinSet<ActorId>) {
         match change {
             ActorChange::Start(joined) => {
                 // Joined before `run` started: already running. Removed
@@ -1050,58 +1064,68 @@ impl ChannelLoop {
                 let id = joined.actor.id();
                 let still_joined = self.actors.load().get(&id).is_some_and(|current| Arc::ptr_eq(&current.actor, &joined.actor));
                 if !running.contains_key(&id) && still_joined {
+                    // Its old actor has ended - `add_participant` waited for
+                    // that (`left`) - but its task's end may not have been
+                    // seen yet: the removal is announced before anything of
+                    // the new actor (issue 262).
+                    if let Some((remover, _)) = leaving.remove(&id) {
+                        self.announce_removal(id, remover, running).await;
+                    }
                     let handle = self.spawn_actor(&joined, event_tx.clone(), join_set);
                     running.insert(handle.id, handle);
                 }
             }
-            ActorChange::Stop(id, remover, under_way) => {
+            ActorChange::Stop(id, remover) => {
                 // Dropping the handle closes the actor's inbox; told to stop
                 // (`Actor::stop`), it ends its task itself once its state is
                 // stored consistent. Only if it does not - a tool that hangs -
-                // is it aborted.
-                if let Some(handle) = running.remove(&id) {
-                    let (abort_handle, task) = (handle.abort_handle.clone(), handle.task.clone());
-                    let (channel, actor) = (self.id, id);
-                    tokio::spawn(async move {
-                        if !stopped(&[task]).await {
-                            warn!("Actor {} did not stop by itself after leaving channel {}: aborted", actor, channel);
-                            abort_handle.abort();
-                        }
-                    });
-                    info!("Actor {} is stopping: it left channel {}", id, self.id);
-                }
-                // Announced here, between the events `run` routes: what the
-                // actor sent before is routed, what it sends after is not
-                // (`handle_actor_event`), so that nothing of it follows the
-                // announcement (issue 162).
-                let name = self.controllers.actor_name(remover.caller_id).await.unwrap_or_else(|e| {
-                    warn!("Cannot name {} for channel {}: {}", remover.caller_id, self.id, e);
-                    remover.caller_id.to_string()
-                });
-                let sender = EventContext::new(self.session_id, self.id, remover.caller_id, name);
-                let removed = Envelope::new(remover.clone(), sender, ActorEvent::ParticipantRemoved { participant: id });
-                self.process_envelope(removed, running).await;
-                // The turn it had under way ends with it (issue 258): what it
-                // said stays, and its end is recorded - by the channel, as the
-                // removal is the channel's act - in the participant's name,
-                // whose turn it was.
-                if let Some(turn_id) = under_way {
-                    let name = self.controllers.actor_name(id).await.unwrap_or_else(|_| id.to_string());
-                    let sender = EventContext::new(self.session_id, self.id, id, name);
-                    let stopped = Envelope::new(remover, sender, ActorEvent::TurnGivenUp { turn_id, reason: GivenUpReason::Stopped });
-                    self.process_envelope(stopped, running).await;
+                // is it aborted. Until its task has ended, what it sends is
+                // taken (`handle_actor_event`), and the removal is announced
+                // once it has (issue 262). An actor never started has nothing
+                // to say: announced at once.
+                match running.remove(&id) {
+                    Some(handle) => {
+                        let (abort_handle, task) = (handle.abort_handle.clone(), handle.task.clone());
+                        let (channel, actor) = (self.id, id);
+                        leaving.insert(id, (remover, abort_handle.id()));
+                        tokio::spawn(async move {
+                            if !stopped(&[task]).await {
+                                warn!("Actor {} did not stop by itself after leaving channel {}: aborted", actor, channel);
+                                abort_handle.abort();
+                            }
+                        });
+                        info!("Actor {} is stopping: it left channel {}", id, self.id);
+                    }
+                    None => self.announce_removal(id, remover, running).await,
                 }
             }
         }
     }
 
-    async fn handle_actor_event(&self, maybe_event: Option<Envelope>, running: &HashMap<ActorId, RunningActor>) -> bool {
+    /// Announces that `participant` left, in the name of `remover`'s caller
+    /// (`ParticipantRemoved`, issue 162) - between the events `run` routes,
+    /// once the participant's task has ended: what it sent before is in the
+    /// channel, nothing of it follows (issue 262).
+    async fn announce_removal(&self, participant: ActorId, remover: SecurityContext, running: &HashMap<ActorId, RunningActor>) {
+        let name = self.controllers.actor_name(remover.caller_id).await.unwrap_or_else(|e| {
+            warn!("Cannot name {} for channel {}: {}", remover.caller_id, self.id, e);
+            remover.caller_id.to_string()
+        });
+        let sender = EventContext::new(self.session_id, self.id, remover.caller_id, name);
+        let removed = Envelope::new(remover, sender, ActorEvent::ParticipantRemoved { participant });
+        self.process_envelope(removed, running).await;
+    }
+
+    async fn handle_actor_event(&self, maybe_event: Option<Envelope>, running: &HashMap<ActorId, RunningActor>, leaving: &Leaving) -> bool {
         if let Some(event) = maybe_event {
-            // An actor that was removed may still finish the step it was in;
-            // what it sends then no longer enters the channel (issue 162).
-            // Its sender is the actor's own: its `OriginEventSender` passes
-            // on nothing else (issue 228).
-            if !running.contains_key(&event.context.sender_id) {
+            // An actor that was removed still finishes the step it was in
+            // and ends its turn: what it sends until its task has ended
+            // enters the channel as its own (issue 262); what arrives after
+            // that - its task aborted - does not (issue 162). Its sender is
+            // the actor's own: its `OriginEventSender` passes on nothing
+            // else (issue 228).
+            let sender = event.context.sender_id;
+            if !running.contains_key(&sender) && !leaving.contains_key(&sender) {
                 debug!("Dropped {}: its sender left channel {}", event.describe(), self.id);
                 return false;
             }
@@ -3673,16 +3697,16 @@ mod tests {
             .find(|r| r.tool_name == "sleep").map(|r| r.content).unwrap_or_default();
         assert!(interrupted.contains("interrupted"), "the call that ran stays, with how it ended: {interrupted}");
 
-        // The agent left, so the channel records the end of its turn itself,
-        // after the call it said (issue 258).
+        // The agent tells the channel of its turn's end as it leaves, and
+        // the channel records it after the call it said (issues 258, 262).
         let ended = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 let last = channel.state.lock().await.history.last().map(|n| n.entry.clone());
-                if let Some(caelumora_model::message_history::HistoryEntry::TurnGivenUp { reason, .. }) = last { break reason }
+                if let Some(caelumora_model::message_history::HistoryEntry::TurnGivenUp { actor, reason, .. }) = last { break (actor, reason) }
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         }).await.expect("the channel records the turn's end");
-        assert_eq!(ended, GivenUpReason::Stopped);
+        assert_eq!(ended, (ActorId::Agent(agent), GivenUpReason::Stopped));
         assert!(channel.history().await.iter().any(|m| m.tool_calls.iter().any(|c| c.function_name == "sleep")), "what it said stays");
         running.abort();
     }
@@ -3692,7 +3716,7 @@ mod tests {
         use caelumora_model::turn::GivenUpReason;
 
         let (call, components) = a_call_needing_approval();
-        let Stuck { channel, context, agent, helper, running, .. } =
+        let Stuck { channel, context, agent, helper, mut events, running } =
             with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([call].into()))), components).await;
         settled(&helper, ActorState::WaitingForUser).await;
 
@@ -3708,6 +3732,14 @@ mod tests {
             }
         }).await.expect("the turn is given up");
         assert_eq!(crate::message::testing::given_up_turns(&stored)[0].1, GivenUpReason::Stopped);
+        // The request it waited for is withdrawn, as for any turn given up
+        // (issue 262).
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let envelope = events.recv().await.expect("the channel is running");
+                if envelope.context.sender_id == ActorId::Agent(agent) && matches!(envelope.event, ActorEvent::ApprovalRequestWithdrawn { .. }) { break }
+            }
+        }).await.expect("the approval request is withdrawn");
         running.abort();
     }
 
@@ -3803,14 +3835,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_removed_agent_abandons_its_turn_and_leaves_an_idle_state_behind() {
+    async fn a_removed_agent_gives_its_turn_up_says_so_and_leaves_an_idle_state_behind() {
+        use caelumora_model::turn::GivenUpReason;
+
         let Stuck { channel, context, agent, helper, mut events, running } = stuck_in_a_model_call().await;
 
         channel.remove_participant(&context, ActorId::Agent(agent)).await.expect("permitted");
 
-        // The turn ends without an answer - nothing is announced - and the
-        // state in the store is the one a later actor of the agent starts
-        // from: idle, with no turn to resume.
+        // The turn ends without an answer, and the agent says so itself
+        // (issue 262); the state in the store is the one a later actor of
+        // the agent starts from: idle, with no turn to resume.
         settled(&helper, ActorState::Idle).await;
         let stored = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
@@ -3821,46 +3855,108 @@ mod tests {
         }).await.expect("the idle state is stored");
         assert!(stored.turn.is_none(), "the turn was abandoned, not stored");
         assert!(stored.transcript.messages().iter().all(|m| m.sender_id != ActorId::Agent(agent)), "nothing of it was recorded");
-        while let Ok(envelope) = events.try_recv() {
-            assert!(!matches!(envelope.event, ActorEvent::TurnFinished { .. }) || envelope.context.sender_id != ActorId::Agent(agent), "a stopped agent announces no answer");
-        }
+        let farewell = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let envelope = events.recv().await.expect("the channel is running");
+                if envelope.context.sender_id != ActorId::Agent(agent) { continue }
+                match envelope.event {
+                    ActorEvent::TurnGivenUp { reason, .. } => break reason,
+                    ActorEvent::TurnFinished { .. } => panic!("a stopped agent announces no answer"),
+                    _ => {}
+                }
+            }
+        }).await.expect("the agent tells the channel it gave its turn up");
+        assert_eq!(farewell, GivenUpReason::Stopped);
         // The channel is still running: alice is still in it.
         assert!(!running.is_finished());
         running.abort();
     }
 
     #[tokio::test]
-    async fn a_removal_is_announced_in_the_channel_in_the_name_of_who_removed() {
+    async fn a_removal_is_announced_in_the_channel_in_the_name_of_who_removed_after_the_farewell() {
         let Stuck { channel, context, agent, helper, mut events, running } = stuck_in_a_model_call().await;
 
         channel.remove_participant(&context, ActorId::Agent(agent)).await.expect("permitted");
 
-        // What a frontend needs to end the turn it shows: who is gone.
-        let removed = tokio::time::timeout(Duration::from_secs(5), async {
+        // What a frontend needs to end the turn it shows: who is gone -
+        // announced once the actor's task has ended, after the end of its
+        // turn, which it tells itself (issue 262); nothing of it follows.
+        let (removed, farewell_first) = tokio::time::timeout(Duration::from_secs(5), async {
+            let mut farewell = false;
             loop {
                 let envelope = events.recv().await.expect("the channel is running");
+                if envelope.context.sender_id == ActorId::Agent(agent) && matches!(envelope.event, ActorEvent::TurnGivenUp { .. }) {
+                    farewell = true;
+                }
                 if let ActorEvent::ParticipantRemoved { participant } = envelope.event {
-                    break (envelope.context.sender_id, envelope.context.sender_name, participant);
+                    break ((envelope.context.sender_id, envelope.context.sender_name, participant), farewell);
                 }
             }
         }).await.expect("the removal is announced");
         assert_eq!(removed, (context.caller_id, "alice".to_string(), ActorId::Agent(agent)));
+        assert!(farewell_first, "the agent's farewell precedes the announcement");
         settled(&helper, ActorState::Idle).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        while let Ok(envelope) = events.try_recv() {
+            assert_ne!(envelope.context.sender_id, ActorId::Agent(agent), "nothing of it follows the announcement: {}", envelope.describe());
+        }
         running.abort();
     }
 
     #[tokio::test]
-    async fn nothing_of_a_removed_participant_enters_the_channel() {
+    async fn nothing_of_a_removed_participant_enters_the_channel_once_its_task_has_ended() {
         let alice = user("alice");
         let channel = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
         let mut events = channel.observe();
         let gone = ActorId::Agent(caelumora_model::agent::AgentId::new());
         let late = Envelope::new(SecurityContext::default(), EventContext::new(channel.session_id, channel.id, gone, "helper".to_string()), ActorEvent::TurnGivenUp { turn_id: caelumora_model::work::TurnId::new(), reason: caelumora_model::turn::GivenUpReason::Failed { message: "too late".to_string() } });
 
-        // Its actor no longer runs: it was removed while finishing a step.
-        channel.handle_actor_event(Some(late), &HashMap::new()).await;
+        // Its actor no longer runs, nor is it leaving: it was aborted.
+        channel.handle_actor_event(Some(late), &HashMap::new(), &Leaving::new()).await;
 
         assert!(events.try_recv().is_err(), "what a removed participant sends is dropped");
+    }
+
+    #[tokio::test]
+    async fn what_a_leaving_actor_sends_enters_the_channel_until_its_task_has_ended() {
+        let alice = user("alice");
+        let channel = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
+        let mut events = channel.observe();
+        let going = ActorId::Agent(caelumora_model::agent::AgentId::new());
+        let turn_id = caelumora_model::work::TurnId::new();
+        let farewell = Envelope::new(SecurityContext::default(), EventContext::new(channel.session_id, channel.id, going, "helper".to_string()), ActorEvent::TurnGivenUp { turn_id, reason: caelumora_model::turn::GivenUpReason::Stopped });
+
+        // Told to stop, its task still runs: what it says is its own (issue 262).
+        let task = tokio::spawn(async {}).id();
+        let leaving = Leaving::from([(going, (SecurityContext::default(), task))]);
+        channel.handle_actor_event(Some(farewell), &HashMap::new(), &leaving).await;
+
+        let heard = events.try_recv().expect("the farewell enters the channel");
+        assert!(matches!(heard.event, ActorEvent::TurnGivenUp { turn_id: id, .. } if id == turn_id));
+        assert_eq!(heard.context.sender_id, going);
+    }
+
+    #[tokio::test]
+    async fn a_removal_still_pending_is_announced_before_an_actor_starts_under_the_same_id() {
+        let (channel, context, agent, _) = agent_channel(Arc::new(DummySecurityManager::new()), Arc::new(NeverAnswers), Default::default()).await;
+        let mut events = channel.observe();
+        let participant = ActorId::Agent(agent);
+        let joined = channel.actors.load().get(&participant).cloned().expect("the agent takes part");
+
+        // Its old actor's task has ended - `add_participant` waited for it -
+        // but `run` has not seen that yet when the new actor's start comes.
+        let (event_tx, _event_rx) = mpsc::channel(10);
+        let mut join_set = JoinSet::new();
+        let mut running = HashMap::new();
+        let mut leaving = Leaving::from([(participant, (context.clone(), tokio::spawn(async {}).id()))]);
+        channel.apply_change(ActorChange::Start(joined), &mut running, &mut leaving, &event_tx, &mut join_set).await;
+
+        let announced = events.try_recv().expect("the removal is announced");
+        assert!(matches!(announced.event, ActorEvent::ParticipantRemoved { participant: p } if p == participant), "{}", announced.describe());
+        assert_eq!(announced.context.sender_id, context.caller_id, "in the remover's name");
+        assert!(running.contains_key(&participant), "and then the new actor runs");
+        assert!(leaving.is_empty(), "the removal is announced once");
+        join_set.abort_all();
     }
 
 
@@ -4766,8 +4862,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_external_agent_removed_while_it_answers_cancels_its_task_and_says_nothing() {
+    async fn an_external_agent_removed_while_it_answers_cancels_its_task_and_gives_its_answer_up() {
         use crate::external::ExternalEvent;
+        use caelumora_model::turn::GivenUpReason;
 
         let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
             vec![Ok(ExternalEvent::Started(task("t-1")))],
@@ -4780,13 +4877,19 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(5), async {
             while remote.cancelled.lock().unwrap().is_empty() { tokio::time::sleep(Duration::from_millis(10)).await }
         }).await.expect("the remote task is cancelled");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        while let Ok(envelope) = events.try_recv() {
-            assert!(
-                !(envelope.context.sender_id == ActorId::Agent(agent) && matches!(envelope.event, ActorEvent::TurnFinished { .. } | ActorEvent::TurnGivenUp { .. })),
-                "a stopped agent says nothing: {}", envelope.describe()
-            );
-        }
+        // It says so, as an agent does (issue 262), and answers nothing.
+        let farewell = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let envelope = events.recv().await.expect("the channel is running");
+                if envelope.context.sender_id != ActorId::Agent(agent) { continue }
+                match envelope.event {
+                    ActorEvent::TurnGivenUp { reason, .. } => break reason,
+                    ActorEvent::TurnFinished { .. } => panic!("a stopped agent answers nothing"),
+                    _ => {}
+                }
+            }
+        }).await.expect("the agent tells the channel it gave its answer up");
+        assert_eq!(farewell, GivenUpReason::Stopped);
         running.abort();
     }
 

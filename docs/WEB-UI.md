@@ -212,10 +212,11 @@ else who may read it - the session's owner, say - is shown its history and no in
     [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reasoning)). A turn given up (`TurnGivenUp`, issue 258)
     is shown in the chat with why: a failure as an alert naming what failed, any other reason as a
     notice - the channel lowered, the answer asked for again; it is not stored yet and gone on
-    reload. The channel-wide answer of a command is shown but never stored. When a participant is
-    removed, the channel says so with `ParticipantRemoved`, and nothing of it follows: its partial
-    answer and the stop button go, and its calls still without a result are shown as abandoned
-    (issue 162).
+    reload. The channel-wide answer of a command is shown but never stored. An agent removed while
+    it answers gives its turn up and says so, which is shown as any turn given up (issue 262); once
+    it has ended, the channel says so with `ParticipantRemoved`, and nothing of it follows: what
+    an agent aborted without a word left - its partial answer, the stop button, its calls still
+    without a result - goes or is shown as abandoned (issue 162).
     When a chain between agents is cut off at its limit (`ChainCutOff`), a notice "Chain cut off"
     says so, naming the agents mentioned that were not asked, and that a message of a user starts a
     new chain; like the answer of a command, it is gone on reload (issue 200).
