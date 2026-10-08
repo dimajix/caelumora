@@ -48,7 +48,7 @@ pub(crate) trait Actor: Any + Debug + Send + Sync {
     /// offer them at the start of its next turn. None for an actor that has
     /// no tools here - a user, an approver, an external agent, whose tools
     /// are its remote side's.
-    fn tool_sets(&self) -> Vec<ToolSet> {
+    async fn tool_sets(&self) -> Vec<ToolSet> {
         Vec::new()
     }
 

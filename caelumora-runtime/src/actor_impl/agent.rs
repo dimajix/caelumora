@@ -192,11 +192,13 @@ impl AgentActor {
         let classification = self.actor_runtime.channel_loop().map(|c| c.classification())
             .ok_or_else(|| anyhow!("Agent {} has no channel to take a turn in", self.id()))?;
         let Answering { event_context, security_context } = Answering::to(request, self.id(), self.agent_controller.name());
+        // Judged for whoever asked, in the channel as the turn begins.
+        let tool_sets = self.tool_executor.tool_sets(&security_context, &classification).await;
         let turn_id = state.begin_turn(
             event_context,
             security_context,
             classification,
-            self.tool_executor.tool_sets(),
+            tool_sets,
             self.llm_client.profile(),
         );
         self.control.begin_turn(turn_id);
@@ -1002,8 +1004,11 @@ impl Actor for AgentActor {
         self.control.state()
     }
 
-    fn tool_sets(&self) -> Vec<ToolSet> {
-        self.tool_executor.tool_sets()
+    async fn tool_sets(&self) -> Vec<ToolSet> {
+        // As a turn would be offered them now, in the agent's own name:
+        // who will ask is not known yet.
+        let Some(channel) = self.actor_runtime.channel_loop().map(|c| c.classification()) else { return Vec::new() };
+        self.tool_executor.tool_sets(&self.security_context, &channel).await
     }
 
     fn wakeup(&self) {

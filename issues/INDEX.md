@@ -174,7 +174,7 @@ argues against it, and what came out of the last attempt.
 | [148](148-cancelled-call-without-result.md) | done | A turn cancelled while tool calls are pending is taken over with the calls but without results, so the transcript holds calls never answered. |
 | [161](161-tools-cannot-be-interrupted.md) | done | A running tool cannot be interrupted, so a cancel waits for it and a stop during it aborts the agent without giving its turn up. |
 | [172](172-pending-approvals-not-kept.md) | done | Pending approvals live only in the approver's memory and in the event stream, so a restart or a reload leaves a turn waiting for a decision nobody can give. |
-| [180](180-outbound-flow-unchecked.md) | open | What an agent writes into the arguments of a remote MCP tool leaves the system with no confidentiality rule asked; only what comes back is checked. |
+| [180](180-outbound-flow-unchecked.md) | done | What an agent writes into the arguments of a remote MCP tool leaves the system with no confidentiality rule asked; only what comes back is checked. |
 | [194](194-tool-sets.md) | done | An agent's tools reach the model and the UI as a flat list without the grouping and purpose of the provider they come from, and the UI shows them only per message, not for the agent. |
 | [226](226-concurrent-tool-calls.md) | open | The tool calls of one step run one after the other, because every tool holds the turn while it runs, so a step of several slow calls takes the sum of their durations. |
 | [246](246-mcp-tool-hints.md) | done | An MCP server's hints on its tools - read-only, destructive - are ignored, so all tools of a server need approval alike. |

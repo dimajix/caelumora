@@ -62,6 +62,12 @@ struct McpToolConfig {
     /// component.
     #[serde(default)]
     pub description: Option<String>,
+    /// What the server is cleared for (issue 180): where the arguments of
+    /// its tools go. Its tools are not offered in a channel that may not
+    /// flow there. Left out, public: the server's word is trusted only
+    /// where it is configured.
+    #[serde(default)]
+    pub destination: Option<Classification>,
 }
 
 impl McpError {
@@ -307,6 +313,10 @@ impl ToolProvider for McpToolProvider {
         self.unavailable.clone()
     }
 
+    fn destination(&self) -> Option<Classification> {
+        Some(self.config.destination.clone().unwrap_or(Classification::PUBLIC))
+    }
+
     async fn execute(&self, name: &str, params: &Value, _answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
         let remote_name = self.strip_prefix(name)?.to_string();
         let security_context = turn.security_context().clone();
@@ -449,6 +459,7 @@ mod tests {
                 requires_approval: Approval::Never,
                 classification: None,
                 description: None,
+                destination: None,
             },
             cached_tools: vec![],
             instructions: None,
@@ -459,6 +470,15 @@ mod tests {
         let stripped = provider.strip_prefix("github-mcp__search").unwrap();
         assert_eq!(stripped, "search");
         assert!(provider.strip_prefix("unrelated_tool").is_err());
+
+        // Issue 180: the server is cleared for what is configured, public
+        // unless configured.
+        assert_eq!(provider.destination(), Some(Classification::PUBLIC));
+        let internal = Classification::general(caelumora_model::confidentiality::Confidentiality::Internal);
+        let cleared = McpToolProvider { config: McpToolConfig { destination: Some(internal.clone()), ..provider.config.clone() }, ..provider };
+        assert_eq!(cleared.destination(), Some(internal));
+        let configured: McpToolConfig = serde_json::from_value(json!({ "endpoint": { "url": "x" }, "destination": { "level": "confidential" } })).unwrap();
+        assert!(configured.destination.is_some(), "read from the params");
     }
 
     #[test]

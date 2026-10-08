@@ -78,7 +78,7 @@ impl ToolExecutor for DefaultToolExecutor {
 
     fn tool_sets(&self) -> Vec<ToolSet> {
         self.providers.iter()
-            .map(|p| ToolSet { unavailable: p.unavailable(), ..ToolSet::new(p.id.clone(), p.description(), p.tools()) })
+            .map(|p| ToolSet { unavailable: p.unavailable(), destination: p.destination(), ..ToolSet::new(p.id.clone(), p.description(), p.tools()) })
             .collect()
     }
 }

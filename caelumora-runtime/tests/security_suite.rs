@@ -1176,6 +1176,98 @@ async fn a_tool_call_is_approved_by_who_is_responsible_for_the_agent() {
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
+/// A tool whose arguments go to a remote side cleared for public alone -
+/// as an MCP server that names nothing (issue 180).
+#[derive(Debug)]
+struct Outward;
+
+#[async_trait]
+impl caelumora_runtime::tool::ToolProvider for Outward {
+    fn description(&self) -> String {
+        "sends out".to_string()
+    }
+    fn tools(&self) -> Vec<caelumora_model::tool::Tool> {
+        vec![caelumora_model::tool::Tool {
+            name: "send_out".to_string(),
+            description: "sends out".to_string(),
+            parameters: caelumora_model::tool::ToolParameters::object(Vec::<(String, caelumora_model::tool::ToolParameters)>::new(), Vec::<String>::new()),
+            requires_approval: false,
+            visibility: Default::default(),
+            classification: None,
+            presentation: Default::default(),
+        }]
+    }
+    fn destination(&self) -> Option<Classification> {
+        Some(Classification::PUBLIC)
+    }
+    async fn execute(&self, _: &str, _: &serde_json::Value, _: Option<&caelumora_model::question::Answers>, _: &mut caelumora_runtime::agent_turn::Turn) -> caelumora_runtime::tool::ToolResult<caelumora_runtime::tool::ToolOutput> {
+        panic!("a withheld tool is never run")
+    }
+}
+
+/// The door (issue 180): a tool set whose remote side the channel may not
+/// flow to is not offered there - asked as publishing what the channel
+/// holds there, for whoever asked the agent in a turn and in its owner's
+/// name for who looks at its tools - and its tools are not called by name.
+#[tokio::test]
+async fn a_tool_whose_remote_side_is_not_cleared_for_the_channel_is_not_offered_there() {
+    use caelumora_model::message::{Message, MessageRole};
+    use caelumora_model::tool::{ToolCall, ToolResultStatus, ToolVisibility};
+
+    let call = Message {
+        role: MessageRole::Assistant,
+        tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "send_out".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
+        ..Message::new(Classification::general(Confidentiality::Internal))
+    };
+    let model = Arc::new(Once(Mutex::new(Some(call))));
+    let world = World::with_kinds(|registry| {
+        registry.register(ComponentKind::new("once").provides::<dyn caelumora_runtime::llm::LLMClient>(), move |_, _| {
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn caelumora_runtime::llm::LLMClient>(Arc::<Once>::clone(&model));
+            Ok(facets)
+        });
+        registry.register(ComponentKind::new("outward").provides::<dyn caelumora_runtime::tool::ToolProvider>(), |_, _| {
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn caelumora_runtime::tool::ToolProvider>(Arc::new(Outward));
+            Ok(facets)
+        });
+    }).await;
+    let sending = Personality {
+        components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("model", "once"), ComponentDescriptor::new("outward", "outward")] },
+        ..world.personality("sending", None, &[]).await
+    };
+    world.store.update_personality(&World::system(), &sending).await.unwrap();
+    let helper = world.agent("helper", world.alice, &sending).await;
+    let session = world.shared_session(&[helper], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    let mut watch = main.user_actor(world.bob).expect("he takes part").watch();
+
+    let (answered, asked) = world.asked(async {
+        main.user_actor(world.bob).unwrap().send_message("@helper send it".to_string(), None).await.expect("sent");
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if let caelumora_model::actor::ActorEvent::CompleteMessageGenerated(message) = watch.events.recv().await.expect("the channel runs").event {
+                    if let Some(result) = message.tool_results.first() {
+                        break result.status;
+                    }
+                }
+            }
+        }).await.expect("the call is answered")
+    }).await;
+    assert_eq!(answered, ToolResultStatus::UnknownTool, "not called by its name");
+    assert!(asked.contains(&"bob as helper: Publish no".to_string()), "judged for bob, who asked: {asked:?}");
+    assert!(!asked.iter().any(|line| line.contains("CallTool")), "refused before the policy is asked of the call: {asked:?}");
+
+    let (sets, asked) = world.asked(async {
+        let view = world.manager.views(Viewer::new(World::as_user(world.alice))).session(session.id()).await.unwrap().channel(main.id()).await.unwrap();
+        view.member(ActorId::Agent(helper)).await.unwrap().tool_sets().await.unwrap()
+    }).await;
+    assert!(sets[0].tools.is_empty() && sets[0].unavailable.is_some(), "shown as unavailable: {sets:?}");
+    assert!(asked.contains(&"alice as helper: Publish no".to_string()), "as a turn would be offered them, in the agent's own name: {asked:?}");
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
 // --- External agents ---------------------------------------------------------
 
 /// A remote agent that takes every request on as a task and works on it

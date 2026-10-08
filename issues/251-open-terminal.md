@@ -1094,4 +1094,8 @@ command may come later.
   whose server runs as `user` too): start, a command, stopping when idle, finding it again from a
   later provider, stopping what was left, removing container and volume. Pulling an image was not
   tried: the published 0.14.0 is 1.4 GB.
+- **2026-10-08** — Step 8 of the plan done: the door - see issue
+  [180](180-outbound-flow-unchecked.md), now done. As part D said; `ToolSet::withheld` makes the
+  unavailable set, and the actor's `tool_sets` became asynchronous, judged in the agent's own name,
+  for who looks at an agent's tools.
 

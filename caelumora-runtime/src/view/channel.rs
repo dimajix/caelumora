@@ -504,7 +504,8 @@ impl MemberView {
         if self.former {
             return Ok(Vec::new());
         }
-        Ok(self.channel.running().and_then(|channel| channel.actor_by_id(self.id())).map(|actor| actor.tool_sets()).unwrap_or_default())
+        let Some(actor) = self.channel.running().and_then(|channel| channel.actor_by_id(self.id())) else { return Ok(Vec::new()) };
+        Ok(actor.tool_sets().await)
     }
 
     /// Whether the viewer may delete the member - an agent that exists,

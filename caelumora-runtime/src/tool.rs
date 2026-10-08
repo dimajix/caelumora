@@ -4,7 +4,7 @@ use crate::controller::{ChannelController, SessionController};
 use async_trait::async_trait;
 use caelumora_model::approval::{ApprovalRule, RuleDecision, ToolMatcher};
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityManager};
+use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityContext, SecurityManager};
 use caelumora_model::question::{Answers, Questions};
 use crate::runtime::ChannelHandle;
 use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolCallState, ToolSet, ToolVisibility, ToolResultStatus};
@@ -251,6 +251,12 @@ pub trait ToolProvider: Send + Sync + Debug {
     fn unavailable(&self) -> Option<String> {
         None
     }
+    /// Where the arguments of its calls go (issue 180): the classification
+    /// its remote side is cleared for. By default none - they stay in the
+    /// system; a provider that sends them out says where.
+    fn destination(&self) -> Option<Classification> {
+        None
+    }
 
     /// Executes a specific tool by name - with the `answers` to the
     /// questions it asked for the call (`questions`), if it asked any.
@@ -342,6 +348,12 @@ impl Admission {
             Admission::Answered(result) => ToolCallState::answered(call, result),
         }
     }
+}
+
+/// Whether `call` names a tool `turn` was offered (issue 180): a tool of a
+/// set withheld in the turn's channel, or of none, is not called by name.
+fn offered(call: &ToolCall, turn: &Turn<'_>) -> bool {
+    turn.tools().iter().any(|tool| tool.name == call.function_name)
 }
 
 /// An agent's [`ToolExecutor`] with what the runtime keeps to itself
@@ -484,6 +496,10 @@ impl GuardedToolExecutor {
     /// questions are asked once it is approved, or at once.
     pub async fn admit(&self, call: &ToolCall, turn: &Turn<'_>) -> Admission {
         let agent = turn.agent_id();
+        if !offered(call, turn) {
+            info!("Tool call '{}' by agent {} names a tool it was not offered", call.function_name, agent);
+            return Admission::Answered(self.failed(call, ToolError::UnknownTool(call.function_name.clone()), turn));
+        }
         if !self.security_manager.may_call_tool(turn.security_context(), call).await {
             info!("Tool call '{}' by agent {} forbidden by the security manager", call.function_name, agent);
             return Admission::Answered(ToolCallResult::of(call, ToolResultStatus::Forbidden, forbidden_result(), turn.label()));
@@ -520,13 +536,32 @@ impl GuardedToolExecutor {
         }
     }
 
-    pub fn tool_sets(&self) -> Vec<ToolSet> {
-        self.executor.tool_sets()
+    /// The tool sets the agent is offered in a channel classified
+    /// `channel`, acting in `context` (issue 180): a set whose destination
+    /// the channel may not flow into (`AccessQuestions::may_publish`, in the
+    /// agent's name) is offered as unavailable, without its tools - its
+    /// arguments would carry what the channel holds out of the system.
+    pub async fn tool_sets(&self, context: &SecurityContext, channel: &Classification) -> Vec<ToolSet> {
+        let mut offered = Vec::new();
+        for set in self.executor.tool_sets() {
+            let withheld = match (&set.destination, &set.unavailable) {
+                (Some(destination), None) => !self.security_manager.may_publish(context, context.caller_id, channel, destination).await,
+                _ => false,
+            };
+            if withheld {
+                debug!(set = %set.name, %channel, "Withheld a tool set whose remote side is not cleared for the channel");
+            }
+            offered.push(if withheld { set.withheld() } else { set });
+        }
+        offered
     }
 
     /// Nothing if `call` may be run now: the caller is an agent, the policy
     /// permits the call and no rule of a place denies it.
     async fn check(&self, call: &ToolCall, turn: &Turn<'_>) -> ToolResult<()> {
+        if !offered(call, turn) {
+            return Err(ToolError::UnknownTool(call.function_name.clone()));
+        }
         let security = turn.security_context();
         if security.caller_id.as_agent_id().is_none() {
             return Err(ToolError::PermissionDenied(format!("tools can only be called by agents, not by {}", security.caller_id)));
@@ -689,8 +724,14 @@ mod tests {
     /// the session and the channel are returned, for their rules to be
     /// changed.
     fn guarded_in(security: Arc<dyn SecurityManager>, requires_approval: bool, places: Places) -> (GuardedToolExecutor, Arc<SessionController>, Arc<ChannelController>) {
-        let provider: Arc<dyn ToolProvider> = Arc::new(MockToolProvider { requires_approval });
-        let tools = DefaultToolExecutor::new(vec![ComponentImpl { id: "tools".to_string(), fail_policy: Default::default(), facet: provider }]).unwrap();
+        guarding(security, vec![("tools", Arc::new(MockToolProvider { requires_approval }))], places)
+    }
+
+    /// The tools of `providers`, by their component ids, guarded by
+    /// `security` and the rules of `places`.
+    fn guarding(security: Arc<dyn SecurityManager>, providers: Vec<(&str, Arc<dyn ToolProvider>)>, places: Places) -> (GuardedToolExecutor, Arc<SessionController>, Arc<ChannelController>) {
+        let providers = providers.into_iter().map(|(id, facet)| ComponentImpl { id: id.to_string(), fail_policy: Default::default(), facet }).collect();
+        let tools = DefaultToolExecutor::new(providers).unwrap();
         let store = Arc::new(caelumora_model::store_impl::memory::MemoryStore::new());
         let session = crate::runtime::bare_session(caelumora_model::session::SessionId::new());
         let mut channel = caelumora_model::channel::Channel::build(session.id, ActorId::None, caelumora_model::value::name::Name::new("main").unwrap(), Default::default(), Classification::CHANNEL_DEFAULT, None, Vec::new());
@@ -751,7 +792,7 @@ mod tests {
 
         let mut agent_channel_state = AgentChannelState::default();
         let agent_id = AgentId::new();
-        agent_channel_state.turn = Some(caelumora_model::turn::TurnState { work: caelumora_model::work::Work { security_context: SecurityContext { caller_id: ActorId::Agent(agent_id), ..SecurityContext::default() }, ..Default::default() }, ..Default::default() });
+        agent_channel_state.turn = Some(caelumora_model::turn::TurnState { work: caelumora_model::work::Work { security_context: SecurityContext { caller_id: ActorId::Agent(agent_id), ..SecurityContext::default() }, ..Default::default() }, tools: executor.executor.tool_sets().into_iter().flat_map(|set| set.tools).collect(), ..Default::default() });
         let mut context = Turn::of(agent_id, "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached()).expect("a turn is under way");
 
         let admitted = executor.admit(&call("test_tool"), &context).await;
@@ -790,11 +831,68 @@ mod tests {
         assert!(matches!(state.status, caelumora_model::tool::ToolCallStatus::Ready { answers: None }), "to be run");
     }
 
+    /// A tool whose arguments go to a remote side cleared for
+    /// `destination` (issue 180).
+    #[derive(Debug)]
+    struct Outward {
+        destination: Classification,
+    }
+
+    #[async_trait]
+    impl ToolProvider for Outward {
+        fn description(&self) -> String {
+            "sends out".to_string()
+        }
+        fn tools(&self) -> Vec<Tool> {
+            vec![tool("send_out", false, None)]
+        }
+        fn destination(&self) -> Option<Classification> {
+            Some(self.destination.clone())
+        }
+        async fn execute(&self, _: &str, _: &Value, _: Option<&Answers>, _: &mut Turn) -> ToolResult<ToolOutput> {
+            Ok(json!({ "sent": true }).into())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_set_whose_remote_side_the_channel_may_not_flow_to_is_withheld_and_its_tools_not_called() {
+        use caelumora_model::confidentiality::Confidentiality;
+        let security: Arc<dyn SecurityManager> = Arc::new(caelumora_model::security::OwnershipSecurityManager::new());
+        let outward: Arc<dyn ToolProvider> = Arc::new(Outward { destination: Classification::general(Confidentiality::Internal) });
+        let local: Arc<dyn ToolProvider> = Arc::new(MockToolProvider { requires_approval: false });
+        let (executor, _, _) = guarding(security, vec![("outward", outward), ("local", local)], Places::default());
+        let agent = SecurityContext { caller_id: ActorId::Agent(AgentId::new()), ..SecurityContext::default() };
+
+        let internal = executor.tool_sets(&agent, &Classification::general(Confidentiality::Internal)).await;
+        assert!(internal.iter().all(|set| set.unavailable.is_none() && !set.tools.is_empty()), "offered where the channel flows to it: {internal:?}");
+        assert_eq!(internal[0].destination, Some(Classification::general(Confidentiality::Internal)), "and says where");
+
+        let confidential = executor.tool_sets(&agent, &Classification::general(Confidentiality::Confidential)).await;
+        let (outward, local) = (&confidential[0], &confidential[1]);
+        assert!(outward.tools.is_empty() && outward.unavailable.as_deref().is_some_and(|why| why.contains("not cleared for this channel")), "withheld above it: {outward:?}");
+        assert!(local.unavailable.is_none() && !local.tools.is_empty(), "a set that sends nothing out is offered");
+
+        let mut agent_channel_state = AgentChannelState {
+            turn: Some(caelumora_model::turn::TurnState {
+                work: caelumora_model::work::Work { security_context: agent, classification: Classification::general(Confidentiality::Confidential), ..Default::default() },
+                tools: confidential.into_iter().flat_map(|set| set.tools).collect(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached()).expect("a turn is under way");
+        let admitted = executor.admit(&call("send_out"), &turn).await;
+        assert!(matches!(&admitted, Admission::Answered(r) if r.status == ToolResultStatus::UnknownTool), "not called by its name: {admitted:?}");
+        let result = executor.execute(&call("send_out"), None, &mut turn, &CancellationToken::new()).await;
+        assert_eq!(result.status, ToolResultStatus::UnknownTool, "nor run, approved or not");
+        assert!(result.started_at.is_none());
+    }
+
     #[tokio::test]
     async fn only_an_agent_calls_tools() {
         let executor = executor(Arc::new(DummySecurityManager::new()));
         let mut agent_channel_state = AgentChannelState::default();
-        agent_channel_state.turn = Some(caelumora_model::turn::TurnState { work: caelumora_model::work::Work { security_context: SecurityContext { caller_id: ActorId::User(caelumora_model::user::UserId::new()), ..SecurityContext::default() }, ..Default::default() }, ..Default::default() });
+        agent_channel_state.turn = Some(caelumora_model::turn::TurnState { work: caelumora_model::work::Work { security_context: SecurityContext { caller_id: ActorId::User(caelumora_model::user::UserId::new()), ..SecurityContext::default() }, ..Default::default() }, tools: executor.executor.tool_sets().into_iter().flat_map(|set| set.tools).collect(), ..Default::default() });
         let mut context = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached()).expect("a turn is under way");
 
         let result = executor.execute(&call("test_tool"), None, &mut context, &CancellationToken::new()).await;
@@ -807,7 +905,7 @@ mod tests {
         let mut agent_channel_state = AgentChannelState::default();
         agent_channel_state.turn = Some(caelumora_model::turn::TurnState {
             work: caelumora_model::work::Work { security_context: SecurityContext { caller_id: ActorId::Agent(AgentId::new()), ..SecurityContext::default() }, ..Default::default() },
-            tools: executor.tool_sets().into_iter().flat_map(|set| set.tools).collect(),
+            tools: executor.executor.tool_sets().into_iter().flat_map(|set| set.tools).collect(),
             ..Default::default()
         });
         agent_channel_state

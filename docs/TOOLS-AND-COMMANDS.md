@@ -61,6 +61,11 @@ description and why, in general terms - and tells the model to say they are unav
 that it cannot do what they do. While every set is available it contributes nothing. A personality
 without it tells its model nothing of missing tools.
 
+A set may say where the arguments of its calls go (`ToolSet::destination`, issue 180): the
+`GuardedToolExecutor` offers it as unavailable - "its remote side is not cleared for this channel" -
+where the channel may not flow there, and answers a call of a tool the turn was not offered as
+unknown (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md#what-leaves-through-tools)).
+
 ### Tool visibility
 
 Every tool declares a `ToolVisibility` (issues 54, 133): whether the call itself is published to the

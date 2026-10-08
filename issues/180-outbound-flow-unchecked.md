@@ -1,6 +1,6 @@
 # 180 — What an agent sends to an MCP server leaves the system unchecked
 
-**Status:** open
+**Status:** done
 **Area:** Tools and approvals
 
 ## The problem
@@ -57,3 +57,13 @@ hand what it read there to any server its personality is wired to, and no rule i
   `public` for an `mcp_tool` that names none - judged in the `GuardedToolExecutor` when the turn's
   tools are assembled, with the channel's classification; a call of a tool not offered is answered
   as unknown. Implemented in a step of that plan.
+- **2026-10-08** — Done with step 8 of 251's plan, as decided: `ToolSet::destination` from
+  `ToolProvider::destination`, judged by `GuardedToolExecutor::tool_sets` with the channel the turn
+  begins in - asked as `Publish` of the channel into the destination, for whoever asked the agent,
+  and in the agent's own name where its tools are shown - a set not cleared offered as unavailable
+  without its tools, and a call of a tool not offered answered as unknown by `admit` and `check`.
+  `mcp_tool` has `destination`, `public` unless configured: an existing configuration loses its MCP
+  tools in every channel above public until it names one. `terminal_tool` declares none.
+  Reclassification during a turn stays as it is: the turn keeps its tools. Documented in
+  CONFIDENTIALITY.md (*What leaves through tools*); the suite pins it.
+

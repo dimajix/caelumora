@@ -768,6 +768,8 @@ export interface ToolSet {
   tools: Tool[];
   /** Why the source gives no tools now; absent if it does. */
   unavailable?: string;
+  /** Where the arguments of its calls go (issue 180); absent if they stay in the system. */
+  destination?: Classification;
 }
 
 /**

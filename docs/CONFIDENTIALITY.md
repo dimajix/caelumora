@@ -376,6 +376,23 @@ The channel admits a message only if its tool results may enter it too (`Channel
 Another channel reads a message by the message's classification; a released result in a message it
 may not read stays unread.
 
+### What leaves through tools
+
+What an agent writes into the arguments of a call leaves the system where the tool has a remote
+side (issue [180](../issues/180-outbound-flow-unchecked.md)). A tool set says where they go - the
+classification its remote side is cleared for (`ToolSet::destination`, from
+`ToolProvider::destination`) - and the `GuardedToolExecutor` judges it when it assembles the tools
+of a turn, with the channel the turn begins in: a set whose destination the channel may not flow
+to - asked as `ActionType::Publish` of the channel's classification into the destination, in the
+name of whoever asked the agent - is offered as unavailable, without its tools, so that the model
+and the web UI say why (issue 32), and a call of a tool the turn was not offered is answered as
+unknown, also by name. As for an external agent (179), the remote side is judged at the door, not
+per call: nothing in the channel is classified above it. An `mcp_tool` is cleared for what its
+`destination` says, `public` unless configured: the server's word is trusted only where an operator
+gave it. A set without a destination keeps its arguments in the system, or is bounded otherwise -
+`terminal_tool`'s storage by its own ceiling, the workspace by the flow rule at every call. A turn
+keeps the tools it began with; a channel raised during it re-judges them at the next turn.
+
 ### Reasoning
 
 `Message::reasoning_visibility` says who sees a message's reasoning. It is `owner` if
@@ -525,10 +542,9 @@ is complete. What is still open:
     An external agent with a memory of its own runs on, and carries what it heard into whatever it
     does next: the rules decide whether it is let in, not what it keeps
     ([179](../issues/179-external-agents-via-a2a.md)).
-*   **What leaves through tools.** What an agent writes into the arguments of a remote tool leaves
-    the system with no rule asked; only what comes back is classified
-    ([180](../issues/180-outbound-flow-unchecked.md)). A personality's roles hold such an agent back
-    as a whole.
+*   **What leaves through tools.** A tool set is judged by the destination it declares (see above);
+    a provider that sends out but declares none is not held back. `mcp_tool` declares one; a
+    future tool with a remote side has to.
 *   **The answer text.** It carries no label and is always published; the model is only told what
     not to quote ([66](../issues/66-channel-level-in-prompt.md)). Keeping private knowledge out of
     it relies on the model.

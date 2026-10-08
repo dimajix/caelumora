@@ -169,12 +169,23 @@ pub struct ToolSet {
     /// error, which may name hosts (issue 32). `None`: available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unavailable: Option<String>,
+    /// Where the arguments of its calls go (issue 180): the classification
+    /// its remote side is cleared for. `None`: they stay in the system, or
+    /// are bounded otherwise - a workspace's storage by its own ceiling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub destination: Option<Classification>,
 }
 
 impl ToolSet {
     /// The available set `name` of `tools`, for `description`.
     pub fn new(name: impl Into<String>, description: impl Into<String>, tools: Vec<Tool>) -> Self {
-        Self { name: name.into(), description: description.into(), tools, unavailable: None }
+        Self { name: name.into(), description: description.into(), tools, unavailable: None, destination: None }
+    }
+
+    /// It as it is offered in a channel its remote side is not cleared for
+    /// (issue 180): unavailable, without its tools.
+    pub fn withheld(self) -> Self {
+        Self { tools: Vec::new(), unavailable: Some("its remote side is not cleared for this channel".to_string()), ..self }
     }
 }
 
