@@ -345,3 +345,5 @@ in behaviour; the rule, in the policy; one context per piece of work. Each is re
   delegation through a second agent (`an_agent_asked_by_an_agent_acts_for_its_own_owner`), and the
   questions for the owner besides. Left open, as decided: who may ask an agent at all (an
   `AskAgent` of its owner's), and a chain once there are subagents.
+- **2026-10-08** — What step 3 found about reading another channel of the same session is issue
+  [264](264-agent-reads-channels-its-owner-may-not.md).

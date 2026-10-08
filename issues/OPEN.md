@@ -47,6 +47,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [142](142-roles.md) | in progress | Users carry roles as strings, but nothing says which roles exist or what they grant - clearances among them. |
 | [181](181-where-roles-decide.md) | open | Nobody has reviewed where a user's roles - and soon an agent's - enter a permission check; today only the clearance at a channel's door asks for them. |
 | [169](169-changing-classified-content.md) | open | Nothing says who may change something classified once it is written, or that what the writer has seen must fit into its classification. |
+| [264](264-agent-reads-channels-its-owner-may-not.md) | open | An agent reads another channel of its session by the flow rule alone, so it reads channels its owner may not, and membership hides nothing from a session's agents. |
 
 ## Tools and approvals
 

@@ -153,6 +153,7 @@ argues against it, and what came out of the last attempt.
 | [169](169-changing-classified-content.md) | open | Nothing says who may change something classified once it is written, or that what the writer has seen must fit into its classification. |
 | [198](198-security-scenarios.md) | done | Nothing says, end to end, which permissions an action needs; a member whose personality was withdrawn locks everyone out of its session, and some actions look at others before the actor's own permission. |
 | [255](255-whose-name-agents-act-in.md) | done | An agent reads in its owner's name and acts in the name of whoever asked it, one call often in both, and which applies follows from where the code sits rather than from a rule. |
+| [264](264-agent-reads-channels-its-owner-may-not.md) | open | An agent reads another channel of its session by the flow rule alone, so it reads channels its owner may not, and membership hides nothing from a session's agents. |
 
 ## Tools and approvals
 
