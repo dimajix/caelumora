@@ -23,6 +23,36 @@ export function mergeToolResults(messages: Message[]): Message[] {
   }, []);
 }
 
+/**
+ * A row of the chat: a message, or the steps of a plan (issue 258) - a run of
+ * internal messages of one turn, shown together and folded.
+ */
+export type ChatRow =
+  | {kind: 'message'; message: Message}
+  | {kind: 'steps'; turnId: string | null; messages: Message[]};
+
+/**
+ * The rows `messages` are shown as: each internal message joins the steps
+ * right before it if they are of its turn, else begins steps of its own.
+ * Tool results are merged first (`mergeToolResults`), so that a step's call
+ * and its result stay one message.
+ */
+export function chatRows(messages: Message[]): ChatRow[] {
+  const rows: ChatRow[] = [];
+  for (const message of messages) {
+    const last = rows[rows.length - 1];
+    const turnId = message.turn_id ?? null;
+    if (!message.internal) {
+      rows.push({kind: 'message', message});
+    } else if (last?.kind === 'steps' && last.turnId === turnId) {
+      last.messages.push(message);
+    } else {
+      rows.push({kind: 'steps', turnId, messages: [message]});
+    }
+  }
+  return rows;
+}
+
 // The month by name ("29. Sept. 2026, 15:24"): at the small size timestamps
 // are shown in, dots between digits are hard to make out.
 const DATE_TIME = new Intl.DateTimeFormat(undefined, {

@@ -70,7 +70,8 @@ import {type ClassValue, clsx} from 'clsx';
 import {twMerge} from 'tailwind-merge';
 import {MarkdownMessage} from './MarkdownMessage';
 import {MessageFooter, MessageView, Reasoning} from './MessageView';
-import {formatArguments, formatTimestamp, formatTokens, formatTokensShort, mergeToolResults} from '../messages';
+import {chatRows, formatArguments, formatTimestamp, formatTokens, formatTokensShort, mergeToolResults} from '../messages';
+import {PlanSteps} from './PlanSteps';
 import {TokenGauge} from './TokenGauge';
 import {HoverCard} from './HoverCard';
 import {ActionMenu, type MenuAction} from './ActionMenu';
@@ -429,7 +430,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   const mayRetry = (msg: Message) => {
     if (!participant || answers.length > 0 || !msg.id || !msg.sender_id || !mayRetryOf(actorKey(msg.sender_id))) return false;
     const last = [...messages].reverse().find(m => m.id && !m.revoked);
-    return last?.id === msg.id;
+    return last?.id === msg.id && !msg.internal;
   };
 
   const retry = async (msg: Message) => {
@@ -554,19 +555,22 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           // Where an agent stands now (issue 243), shown by its dot.
           const state = actorEvent.StateChanged;
           setChannel(prev => prev && {...prev, members: prev.members.map(m => actorKey(m.id) === answerer ? {...m, state} : m)});
-        } else if (actorEvent.PartialMessageGenerated) {
-          const partial = actorEvent.PartialMessageGenerated;
+        } else if (actorEvent.PartialMessageGenerated || actorEvent.IntermediatePartialGenerated) {
+          // A step of a plan streams in as the answer does (issue 258).
+          const partial = (actorEvent.PartialMessageGenerated ?? actorEvent.IntermediatePartialGenerated)!;
           setAnswers(prev => withAnswer(prev, answerer, answererName, a => ({
             ...a,
             turnId: a.turnId ?? partial.turn_id ?? null,
             reasoning: a.reasoning + (partial.reasoning ?? ''),
             content: a.content + (partial.content ?? ''),
           })));
-        } else if (actorEvent.CompleteMessageGenerated) {
+        } else if (actorEvent.CompleteMessageGenerated || actorEvent.IntermediateMessageGenerated) {
+          // A step of a plan is shown as any message, folded with the
+          // other steps of its turn (issue 258).
+          const newMsg = (actorEvent.CompleteMessageGenerated ?? actorEvent.IntermediateMessageGenerated)!;
           // A tool call that ended may have changed the files.
-          if (actorEvent.CompleteMessageGenerated.tool_results?.length) setWorkspaceVersion(v => v + 1);
+          if (newMsg.tool_results?.length) setWorkspaceVersion(v => v + 1);
           setMessages(prev => {
-            const newMsg = actorEvent.CompleteMessageGenerated!;
             // A message can arrive twice: in the snapshot and as an event.
             if (newMsg.id && prev.some(m => m.id === newMsg.id)) return prev;
             if (newMsg.tool_results && newMsg.tool_results.length > 0) {
@@ -582,7 +586,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
             return [...prev, newMsg];
           });
           // Its sender may go on: what streams in next is its next message.
-          const turnId = actorEvent.CompleteMessageGenerated.turn_id ?? null;
+          const turnId = newMsg.turn_id ?? null;
           setAnswers(prev => prev.map(a => a.sender === answerer ? {...a, turnId: a.turnId ?? turnId, reasoning: '', content: ''} : a));
         } else if (actorEvent.MessageModified) {
           // In its place, as the server reads it (`Message::modify`, issue
@@ -993,6 +997,158 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
     }
   };
 
+  // One message of the chat, as its kind shows it; `key` for the list it
+  // is rendered in.
+  const renderMessage = (msg: Message, key: React.Key) => msg.commandOutput ? (
+    <div
+      key={key}
+      className="max-w-[80%] p-3 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-900/60 text-gray-800 dark:text-gray-200 text-sm"
+    >
+      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider mb-1 opacity-70">
+        <ChevronRight size={14} />
+        {msg.commandOutput.private
+          ? <span><span className="font-mono normal-case">/{msg.commandOutput.command}</span> · only visible to you</span>
+          : <span>{msg.sender_name} ran <span className="font-mono normal-case">/{msg.commandOutput.command}</span></span>}
+      </div>
+      <MarkdownMessage content={msg.content ?? ''} />
+      <MessageFooter message={msg} />
+    </div>
+  ) : msg.chainCutOff ? (
+    <div
+      key={key}
+      className="max-w-[80%] p-3 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-900/60 text-gray-800 dark:text-gray-200 text-sm"
+    >
+      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider mb-1 opacity-70">
+        <Unlink size={14} />
+        <span>Chain cut off</span>
+      </div>
+      <div className="wrap-break-word">{chainCutOffText(msg.chainCutOff)}</div>
+      <MessageFooter message={msg} />
+    </div>
+  ) : msg.turnFailed ? (
+    <div
+      key={key}
+      role="alert"
+      className="max-w-[80%] p-3 rounded-lg border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-900/30 text-red-800 dark:text-red-200 text-sm"
+    >
+      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider mb-1">
+        <AlertTriangle size={14} />
+        {msg.sender_name ? `${msg.sender_name} could not answer` : 'The turn failed'}
+      </div>
+      <div className="wrap-break-word">{msg.content}</div>
+      {msg.span_id && (
+        <div className="mt-1 text-[11px] font-mono opacity-60">span_id {msg.span_id}</div>
+      )}
+      {readableAgent(msg) && (
+        <button
+          onClick={() => setHistoryOf({channelId, member: readableAgent(msg)!, givenUp: true})}
+          className="mt-2 inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-md border border-red-300 dark:border-red-700 hover:bg-red-100 dark:hover:bg-red-900/50"
+        >
+          <History size={12} />
+          What the turn did
+        </button>
+      )}
+      <MessageFooter message={msg} />
+    </div>
+  ) : msg.retryRejected ? (
+    <div
+      key={key}
+      className="max-w-[80%] p-3 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-900/60 text-gray-800 dark:text-gray-200 text-sm"
+    >
+      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider mb-1 opacity-70">
+        <RotateCcw size={14} />
+        <span>Not answered again</span>
+      </div>
+      <div className="wrap-break-word">{msg.sender_name || 'The agent'} did not answer again: {retryRefusedText(msg.retryRejected)}.</div>
+      <MessageFooter message={msg} />
+    </div>
+  ) : msg.revoked ? (
+    <div
+      key={key}
+      className={cn(
+        "max-w-[80%] p-3 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 text-sm italic",
+        msg.role === 'User' && "ml-auto",
+      )}
+    >
+      {msg.sender_name || 'Its author'} took this message back
+      <div className="mt-1 text-[11px] not-italic opacity-70" title={formatTimestamp(msg.revoked)?.full}>
+        {formatTimestamp(msg.revoked)?.short}
+      </div>
+    </div>
+  ) : editing === msg.id ? (
+    <MessageEditor
+      key={key}
+      content={msg.content ?? ''}
+      onSave={(content) => saveEdit(msg, content)}
+      onCancel={() => setEditing(null)}
+    />
+  ) : (
+    <MessageView
+      key={key}
+      message={msg}
+      members={members}
+      badges={channel && msg.classification && !sameClassification(msg.classification, channel.classification)
+        ? [`released: ${classificationLabel(msg.classification)}`]
+        : undefined}
+      actions={(mayShowContext(msg) || mayReclassify(msg) || mayChange(msg) || mayRetry(msg)) ? (
+        <>
+          {mayRetry(msg) && (
+            <button
+              onClick={() => void retry(msg)}
+              className="p-0.5 opacity-60 hover:opacity-100 focus:opacity-100"
+              title="Ask for another answer instead of this one"
+              aria-label="Ask for another answer instead of this one"
+            >
+              <RotateCcw size={13} />
+            </button>
+          )}
+          {mayChange(msg) && (
+            <button
+              onClick={() => { setRevoking(null); setEditing(msg.id!); }}
+              className="p-0.5 opacity-60 hover:opacity-100 focus:opacity-100"
+              title="Edit the message"
+              aria-label="Edit the message"
+            >
+              <Pencil size={13} />
+            </button>
+          )}
+          {mayChange(msg) && (
+            <button
+              onClick={() => void takeBack(msg)}
+              onBlur={() => setRevoking(prev => prev === msg.id ? null : prev)}
+              className={cn("p-0.5 flex items-center gap-1", revoking === msg.id ? "opacity-100 font-semibold" : "opacity-60 hover:opacity-100 focus:opacity-100")}
+              title="Take the message back - it stays in the record of who saw it"
+              aria-label={revoking === msg.id ? "Take the message back? Click again" : "Take the message back"}
+            >
+              <Undo2 size={13} />
+              {revoking === msg.id && <span>Take back?</span>}
+            </button>
+          )}
+          {mayReclassify(msg) && (
+            <button
+              onClick={() => setReclassifying({kind: 'message', message: msg})}
+              className="p-0.5 opacity-60 hover:opacity-100 focus:opacity-100"
+              title="Change the classification"
+              aria-label="Change the classification"
+            >
+              <Shield size={13} />
+            </button>
+          )}
+          {mayShowContext(msg) && (
+            <button
+              onClick={() => setContextOf({channelId, message: msg})}
+              className="p-0.5 opacity-60 hover:opacity-100 focus:opacity-100"
+              title="Show what the agent saw"
+              aria-label="Show what the agent saw"
+            >
+              <ScrollText size={13} />
+            </button>
+          )}
+        </>
+      ) : undefined}
+    />
+  );
+
   return (
     <div className="flex-1 flex overflow-hidden bg-gray-50 dark:bg-gray-800">
       <div className="flex-1 flex flex-col min-w-0">
@@ -1019,155 +1175,18 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
               </button>
             </div>
           )}
-          {mergeToolResults(messages).map((msg, idx) => msg.commandOutput ? (
-            <div
-              key={idx}
-              className="max-w-[80%] p-3 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-900/60 text-gray-800 dark:text-gray-200 text-sm"
-            >
-              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider mb-1 opacity-70">
-                <ChevronRight size={14} />
-                {msg.commandOutput.private
-                  ? <span><span className="font-mono normal-case">/{msg.commandOutput.command}</span> · only visible to you</span>
-                  : <span>{msg.sender_name} ran <span className="font-mono normal-case">/{msg.commandOutput.command}</span></span>}
-              </div>
-              <MarkdownMessage content={msg.content ?? ''} />
-              <MessageFooter message={msg} />
-            </div>
-          ) : msg.chainCutOff ? (
-            <div
-              key={idx}
-              className="max-w-[80%] p-3 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-900/60 text-gray-800 dark:text-gray-200 text-sm"
-            >
-              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider mb-1 opacity-70">
-                <Unlink size={14} />
-                <span>Chain cut off</span>
-              </div>
-              <div className="wrap-break-word">{chainCutOffText(msg.chainCutOff)}</div>
-              <MessageFooter message={msg} />
-            </div>
-          ) : msg.turnFailed ? (
-            <div
-              key={idx}
-              role="alert"
-              className="max-w-[80%] p-3 rounded-lg border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-900/30 text-red-800 dark:text-red-200 text-sm"
-            >
-              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider mb-1">
-                <AlertTriangle size={14} />
-                {msg.sender_name ? `${msg.sender_name} could not answer` : 'The turn failed'}
-              </div>
-              <div className="wrap-break-word">{msg.content}</div>
-              {msg.span_id && (
-                <div className="mt-1 text-[11px] font-mono opacity-60">span_id {msg.span_id}</div>
-              )}
-              {readableAgent(msg) && (
-                <button
-                  onClick={() => setHistoryOf({channelId, member: readableAgent(msg)!, givenUp: true})}
-                  className="mt-2 inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-md border border-red-300 dark:border-red-700 hover:bg-red-100 dark:hover:bg-red-900/50"
-                >
-                  <History size={12} />
-                  What the turn did
-                </button>
-              )}
-              <MessageFooter message={msg} />
-            </div>
-          ) : msg.retryRejected ? (
-            <div
-              key={idx}
-              className="max-w-[80%] p-3 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-900/60 text-gray-800 dark:text-gray-200 text-sm"
-            >
-              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider mb-1 opacity-70">
-                <RotateCcw size={14} />
-                <span>Not answered again</span>
-              </div>
-              <div className="wrap-break-word">{msg.sender_name || 'The agent'} did not answer again: {retryRefusedText(msg.retryRejected)}.</div>
-              <MessageFooter message={msg} />
-            </div>
-          ) : msg.revoked ? (
-            <div
-              key={idx}
-              className={cn(
-                "max-w-[80%] p-3 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 text-sm italic",
-                msg.role === 'User' && "ml-auto",
-              )}
-            >
-              {msg.sender_name || 'Its author'} took this message back
-              <div className="mt-1 text-[11px] not-italic opacity-70" title={formatTimestamp(msg.revoked)?.full}>
-                {formatTimestamp(msg.revoked)?.short}
-              </div>
-            </div>
-          ) : editing === msg.id ? (
-            <MessageEditor
-              key={idx}
-              content={msg.content ?? ''}
-              onSave={(content) => saveEdit(msg, content)}
-              onCancel={() => setEditing(null)}
-            />
-          ) : (
-            <MessageView
-              key={idx}
-              message={msg}
-              members={members}
-              badges={channel && msg.classification && !sameClassification(msg.classification, channel.classification)
-                ? [`released: ${classificationLabel(msg.classification)}`]
-                : undefined}
-              actions={(mayShowContext(msg) || mayReclassify(msg) || mayChange(msg) || mayRetry(msg)) ? (
-                <>
-                  {mayRetry(msg) && (
-                    <button
-                      onClick={() => void retry(msg)}
-                      className="p-0.5 opacity-60 hover:opacity-100 focus:opacity-100"
-                      title="Ask for another answer instead of this one"
-                      aria-label="Ask for another answer instead of this one"
-                    >
-                      <RotateCcw size={13} />
-                    </button>
-                  )}
-                  {mayChange(msg) && (
-                    <button
-                      onClick={() => { setRevoking(null); setEditing(msg.id!); }}
-                      className="p-0.5 opacity-60 hover:opacity-100 focus:opacity-100"
-                      title="Edit the message"
-                      aria-label="Edit the message"
-                    >
-                      <Pencil size={13} />
-                    </button>
-                  )}
-                  {mayChange(msg) && (
-                    <button
-                      onClick={() => void takeBack(msg)}
-                      onBlur={() => setRevoking(prev => prev === msg.id ? null : prev)}
-                      className={cn("p-0.5 flex items-center gap-1", revoking === msg.id ? "opacity-100 font-semibold" : "opacity-60 hover:opacity-100 focus:opacity-100")}
-                      title="Take the message back - it stays in the record of who saw it"
-                      aria-label={revoking === msg.id ? "Take the message back? Click again" : "Take the message back"}
-                    >
-                      <Undo2 size={13} />
-                      {revoking === msg.id && <span>Take back?</span>}
-                    </button>
-                  )}
-                  {mayReclassify(msg) && (
-                    <button
-                      onClick={() => setReclassifying({kind: 'message', message: msg})}
-                      className="p-0.5 opacity-60 hover:opacity-100 focus:opacity-100"
-                      title="Change the classification"
-                      aria-label="Change the classification"
-                    >
-                      <Shield size={13} />
-                    </button>
-                  )}
-                  {mayShowContext(msg) && (
-                    <button
-                      onClick={() => setContextOf({channelId, message: msg})}
-                      className="p-0.5 opacity-60 hover:opacity-100 focus:opacity-100"
-                      title="Show what the agent saw"
-                      aria-label="Show what the agent saw"
-                    >
-                      <ScrollText size={13} />
-                    </button>
-                  )}
-                </>
-              ) : undefined}
-            />
-          ))}
+          {chatRows(mergeToolResults(messages)).map((row, idx) => row.kind === 'message'
+            ? renderMessage(row.message, row.message.id ?? `local-${idx}`)
+            : (
+              <PlanSteps
+                key={`steps-${row.turnId}-${row.messages[0].id ?? idx}`}
+                name={row.messages[0].sender_name || 'Assistant'}
+                count={row.messages.length}
+                underWay={row.turnId !== null && answers.some(a => a.turnId === row.turnId)}
+              >
+                {row.messages.map((msg, i) => renderMessage(msg, msg.id ?? `local-${i}`))}
+              </PlanSteps>
+            ))}
           {answers.map(answer => (
             <div key={answer.sender} className="max-w-[80%] p-3 rounded-lg shadow-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-bl-none border border-gray-200 dark:border-gray-600">
               <div className="text-xs font-semibold mb-1 opacity-70 uppercase tracking-wider flex items-center gap-2">

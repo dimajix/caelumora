@@ -212,6 +212,15 @@ else who may read it - the session's owner, say - is shown its history and no in
     When a chain between agents is cut off at its limit (`ChainCutOff`), a notice "Chain cut off"
     says so, naming the agents mentioned that were not asked, and that a message of a user starts a
     new chain; like a failed turn, it is gone on reload (issue 200).
+*   **The steps of a plan** (issue 258). While an agent works through a plan, what each step says -
+    its answer, its tool calls and their results - arrives as `IntermediatePartialGenerated` and
+    `IntermediateMessageGenerated` and is shown as any partial and complete message is, a tool
+    result refreshing the workspace alike. The internal messages of one turn that follow each other
+    are one block (`PlanSteps`, `chatRows`), folded under "works on the plan": open while the turn
+    is under way, folded once it ended, unless the user opened or closed it. Its messages are
+    rendered as every other message, with their icons; none of them is offered for another answer.
+    Nothing of them is stored yet: a reload loses them, until the history keeps them (the later
+    steps of issue 258).
 *   **Changing one's own messages** (issue 234). A participant's own message has an edit icon, which
     turns it into an editor in its place (`MessageEditor`: save, cancel, Escape, Ctrl+Enter), and a
     take-back icon, which asks "Take back?" on the first click and takes the message back on the
@@ -415,7 +424,7 @@ tool with its description and parameters (issue 137) and marked, as in the tools
 needed approval, was shown to its owner only, or had its results classified. Every prompt part,
 message and knowledge read shows how it was classified - "counts as the channel" where that is not
 known - and what set the message's label, which the panel's head names, is marked in amber (issue
-170). The panel shows internal messages and tool results, which the chat hides, and the reasoning of
+170). The panel shows internal messages and tool results, which the chat folds, and the reasoning of
 the messages the model was given, marked "owner only" where it is the owner's; `MessageView` renders
 a message the same way in both. For an answer of an external agent the panel shows the messages the
 remote agent was given in the call that produced it, and nothing else (issue 205): no prompt parts,

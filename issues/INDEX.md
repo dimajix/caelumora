@@ -115,7 +115,7 @@ argues against it, and what came out of the last attempt.
 | [238](238-retry-of-an-older-answer.md) | open | Only an agent's last answer can be asked for again, and the alternatives of an answer are not kept. |
 | [239](239-reclassified-message-not-in-agents-state.md) | done | A reclassified message keeps its old classification in every agent's state, so a released message still raises the label of later answers. |
 | [245](245-session-and-channel-descriptions.md) | done | Sessions and channels have no description, so neither the users nor the agents in them learn what they are for. |
-| [258](258-what-was-said-is-lost.md) | open | What a turn said - the steps of a plan with their tool calls and results, and every message of a turn given up - is shown live but never reaches the channel's history, so what an agent did cannot be followed. |
+| [258](258-what-was-said-is-lost.md) | in progress | What a turn said - the steps of a plan with their tool calls and results, and every message of a turn given up - is shown live but never reaches the channel's history, so what an agent did cannot be followed. |
 
 ## Identity and access management
 

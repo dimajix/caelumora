@@ -1,6 +1,6 @@
 # 258 — What a turn said is lost from the history when it is internal or the turn is given up
 
-**Status:** open
+**Status:** in progress
 **Area:** Sessions and channels
 
 ## The problem
@@ -449,3 +449,8 @@ the step that changes what they describe.
   messages as a second list, but every turn's end as an entry of the history - `TurnFinished` and
   `TurnGivenUp` - and a history read as one list of items. `given_up_turns`, `GivenUpTurn` and
   `GET …/given-up-turns` go with it; `FullResponseGenerated` carries the turn's id.
+- **2026-10-08** — Step 1 done: the web UI shows the steps of a plan live. `IntermediatePartial…`
+  and `IntermediateMessageGenerated` go through the branches of the partial and the complete
+  message; `chatRows` makes a run of a turn's internal messages one `PlanSteps` block, open while
+  the turn is under way and folded once it ended. `ChatView` renders every message through one
+  `renderMessage` and keys the chat by message id; a step is not offered for another answer.

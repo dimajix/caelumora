@@ -31,7 +31,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [221](221-adding-session-participants.md) | open | A session's participants are fixed when it is created: nobody - neither a user nor an agent, existing or created from a personality - can be added to it later. |
 | [223](223-full-inbox-drops-events.md) | open | An actor whose inbox is full - an agent in a long turn in a busy channel - loses what was said, requests and approvals without anyone learning of it. |
 | [238](238-retry-of-an-older-answer.md) | open | Only an agent's last answer can be asked for again, and the alternatives of an answer are not kept. |
-| [258](258-what-was-said-is-lost.md) | open | What a turn said - the steps of a plan with their tool calls and results, and every message of a turn given up - is shown live but never reaches the channel's history, so what an agent did cannot be followed. |
+| [258](258-what-was-said-is-lost.md) | in progress | What a turn said - the steps of a plan with their tool calls and results, and every message of a turn given up - is shown live but never reaches the channel's history, so what an agent did cannot be followed. |
 
 ## Identity and access management
 

@@ -376,7 +376,10 @@ export interface Message {
    */
   classification?: Classification;
   sender_id?: ActorId;
-  /** Internal scaffolding (deliberation, plan steps, mid-plan tool steps): never shown in the chat. */
+  /**
+   * A step of a plan under way - its answer, a tool call or result - rather
+   * than the answer itself: the chat folds a turn's steps together (issue 258).
+   */
   internal?: boolean;
   /**
    * The turn of an agent that produced it (issue 235), as `ResponseStarted`
