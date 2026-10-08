@@ -63,6 +63,11 @@ which refer to the participants by name. Creating a session from a template has 
     in their scope (issue 250); the template then looks for it once more. REST (`POST /sessions`)
     and the TUI both call it.
 
+A session may have a **workspace** attached (issue 253): a tree of files that belongs to a user,
+with one classification, used by the members of those channels of the session where it and the
+channel flow both ways. Its files lie in a configured storage and are reached through a
+`Terminal`.
+
 Sessions and channels hold their users and agents by reference - `Participant::User(UserId)`,
 `Participant::Agent(AgentId)` - not as copies (issue 120). The records live in the `EntityStore`; a
 channel leaves out, with a warning, a participant whose record no longer exists, and runs without

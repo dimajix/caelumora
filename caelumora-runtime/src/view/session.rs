@@ -48,6 +48,11 @@ impl SessionView {
         &self.views
     }
 
+    /// The document, as it was when the session was reached.
+    pub(super) fn as_session(&self) -> &Arc<Session> {
+        &self.session
+    }
+
     pub fn id(&self) -> SessionId {
         self.session.id
     }

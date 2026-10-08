@@ -1,6 +1,6 @@
-//! A workspace (issue 253): a tree of files that belongs to a user, is
-//! attached to sessions and is shared by the people and agents of a
-//! session. One classification holds for the whole tree (issue 169): its
+//! A workspace (issue 253): a tree of files that belongs to a user and is
+//! attached to sessions, where the people and agents of the channels that
+//! may use it share it (issue 251, decision 10). One classification holds for the whole tree (issue 169): its
 //! files carry no label of their own. Where the files lie is the storage the
 //! workspace names - configured, not stored - and its files are no part of
 //! the document: the place is the record.
@@ -30,8 +30,6 @@ pub enum WorkspaceUpdateEvent {
     /// Reclassified as a whole: lowering releases every file in it, raising
     /// retracts nothing already read.
     ClassificationChanged(Classification),
-    /// Who may use it besides its owner, as it now stands.
-    ContributorsChanged(Vec<ActorId>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,9 +50,9 @@ pub struct Workspace {
     /// How everything in it is classified (issue 169): one container, whose
     /// files carry no label of their own.
     pub classification: Classification,
-    /// Owned by the user it was made for; its contributors may use it -
-    /// read and write its files, attach it to a session - but not change
-    /// it.
+    /// Owned by the user it was made for, without contributors: outside a
+    /// session only its owner works on it; in a session it is shared
+    /// through the channels that may use it (issue 251, decisions 10, 12).
     pub security_attributes: SecurityAttributes,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -67,7 +65,7 @@ pub struct Workspace {
 
 impl Workspace {
     /// A new workspace of `owner`, in `storage`, classified
-    /// `classification`, without contributors or a description.
+    /// `classification`, without a description.
     pub fn new(name: Name, storage: impl Into<String>, classification: Classification, owner: UserId) -> Self {
         let now = Utc::now();
         Self {
@@ -98,11 +96,15 @@ impl crate::removal::Stored for Workspace {
         self.deleted.as_ref()
     }
 
-    /// A workspace is someone's: the system's would lie in no user's scope.
+    /// A workspace is someone's - the system's would lie in no user's
+    /// scope - and shared through channels, not with contributors.
     fn validate(&self) -> Result<(), String> {
-        match self.owner() {
-            Some(_) => Ok(()),
-            None => Err("a workspace belongs to a user".to_string()),
+        if self.owner().is_none() {
+            return Err("a workspace belongs to a user".to_string());
+        }
+        match self.security_attributes.contributors.is_empty() {
+            true => Ok(()),
+            false => Err("a workspace has no contributors: it is shared through channels".to_string()),
         }
     }
 }
@@ -139,6 +141,8 @@ mod tests {
         assert_eq!(workspace.owner(), Some(alice));
         assert!(workspace.validate().is_ok());
 
+        let shared = Workspace { security_attributes: SecurityAttributes { contributors: vec![ActorId::User(UserId::new())], ..workspace.security_attributes.clone() }, ..workspace.clone() };
+        assert!(shared.validate().is_err(), "nor one with contributors");
         let systems = Workspace { security_attributes: SecurityAttributes::owned_by(ActorId::System), ..workspace };
         assert!(systems.validate().is_err(), "nobody's is not stored");
     }

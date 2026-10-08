@@ -21,6 +21,7 @@ use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId, Persona
 use caelumora_model::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
 use caelumora_model::channel::{moderation_components, Channel, HistoryAccess, Participant};
 use caelumora_model::command::default_commands;
+use caelumora_model::config::{StorageConfig, WorkspacesConfig};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_model::external_agent::{ConversationId, TaskId};
 use caelumora_model::confidentiality::{Classification, Clearance, Compartments, ConfidentialityRules, Confidentiality, Roles};
@@ -41,7 +42,9 @@ use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegi
 use caelumora_runtime::external::{ExternalAgent, ExternalAgentResult, ExternalEvent, ExternalStream, OutboundMessage};
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::session::{ChannelSpec, SessionLoop, SessionManager};
+use caelumora_runtime::terminal::{ByteStream, Terminal, WorkspacePath};
 use caelumora_runtime::view::{ViewError, Viewer};
+use caelumora_runtime::workspace::WorkspaceError;
 
 /// The ownership policy, recording every question it is asked - who asked,
 /// what, of whose entity, and what it answered - so that a test says which
@@ -103,6 +106,7 @@ fn attributes_of<'a>(action: &ActionType<'a>) -> Option<&'a SecurityAttributes> 
         | GetUser(a) | CreateUser(a) | UpdateUser(a) | DeleteUser(a)
         | GetUserProfile(a) | CreateUserProfile(a) | UpdateUserProfile(a) | DeleteUserProfile(a)
         | CancelChannel(a) | WakeChannel(a) | RetryMessage(a) | AnswerQuestion(a)
+        | GetWorkspace(a) | CreateWorkspace(a) | UpdateWorkspace(a) | DeleteWorkspace(a)
         | GetComponent(a) | CreateComponent(a) | UpdateComponent(a) | DeleteComponent(a)
         | ReadDeleted(_, a) | Restore(_, a) | Purge(_, a) => Some(a),
         _ => None,
@@ -119,6 +123,8 @@ struct World {
     alice: UserId,
     bob: UserId,
     carol: UserId,
+    /// Where the storage "main" keeps the workspaces' files.
+    files: tempfile::TempDir,
 }
 
 impl World {
@@ -137,9 +143,11 @@ impl World {
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
         let mut registry = ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
         register(&mut registry);
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), Vec::new(), registry).unwrap());
+        let files = tempfile::tempdir().unwrap();
+        let workspaces = WorkspacesConfig { storage: [("main".to_string(), StorageConfig::Local { root: files.path().to_path_buf() })].into(), ..Default::default() };
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), Vec::new(), workspaces, registry).unwrap());
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
-        let mut world = Self { policy: recorder, store, runtime, manager, alice: UserId::new(), bob: UserId::new(), carol: UserId::new() };
+        let mut world = Self { policy: recorder, store, runtime, manager, alice: UserId::new(), bob: UserId::new(), carol: UserId::new(), files };
         world.alice = world.user("alice").await;
         world.bob = world.user("bob").await;
         world.carol = world.user("carol").await;
@@ -218,6 +226,7 @@ impl World {
             channels: vec![ChannelTemplate {
                 summary: None, briefing: None, language: None,
                 approval_rules: Vec::new(),
+                uses_workspace: true,
                 name: Name::new("main").unwrap(),
                 components: quiet(),
                 classification: Classification::general(Confidentiality::Internal),
@@ -1795,3 +1804,150 @@ async fn removing_an_agent_needs_owning_the_channel() {
     assert_eq!(asked, checks(&["alice: GetChannel(alice's) yes", "alice: UpdateChannel(alice's) yes"]));
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
+
+// --- Workspaces (issues 251, 253) ---
+
+/// The content of a file to write.
+fn file(text: &'static str) -> ByteStream {
+    Box::pin(futures::stream::iter([Ok(bytes::Bytes::from_static(text.as_bytes()))]))
+}
+
+async fn read(terminal: &dyn Terminal, path: &str) -> String {
+    let (_, content) = terminal.read(&WorkspacePath::parse(path).unwrap()).await.unwrap();
+    let chunks: Vec<_> = content.collect().await;
+    String::from_utf8(chunks.into_iter().flat_map(|chunk| chunk.unwrap().to_vec()).collect()).unwrap()
+}
+
+/// A workspace is its owner's alone (issue 251, decision 12): made by a
+/// user cleared for its classification, read, changed, deleted and
+/// restored by them, by nobody else - and purged by the system, its files
+/// with it.
+#[tokio::test]
+async fn a_workspace_is_its_owners_alone() {
+    let world = World::new().await;
+    let workspaces = world.runtime.workspace_manager();
+    let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
+    let internal = Classification::general(Confidentiality::Internal);
+
+    let (made, asked) = world.asked(workspaces.create(&alice, "docs", "main", Some("Drafts"), internal.clone())).await;
+    let docs = made.expect("alice makes one");
+    assert_eq!(asked, checks(&["alice: Classify yes", "alice: JoinChannel(alice) yes", "alice: CreateWorkspace(alice's) yes"]));
+    assert!(world.files.path().join(docs.id.to_string()).is_dir(), "with its place");
+    let above = workspaces.create(&alice, "secrets", "main", None, Classification::general(Confidentiality::Confidential)).await;
+    assert!(matches!(above, Err(WorkspaceError::NotCleared)), "not above what she is cleared for: {above:?}");
+    let elsewhere = workspaces.create(&alice, "other", "nowhere", None, internal.clone()).await;
+    assert!(matches!(elsewhere, Err(WorkspaceError::UnknownStorage(_))), "nor in a storage that is not configured: {elsewhere:?}");
+
+    let views = |ctx: &SecurityContext| world.manager.views(Viewer::new(ctx.clone()));
+    assert_eq!(views(&alice).workspaces().await.unwrap().len(), 1, "hers");
+    assert!(views(&bob).workspaces().await.unwrap().is_empty(), "not his");
+    let (hidden, asked) = world.asked(views(&bob).workspace(docs.id)).await;
+    assert!(matches!(hidden, Err(ViewError::WorkspaceNotFound(_))));
+    assert_eq!(asked, checks(&["bob: GetWorkspace(alice's) no"]));
+
+    let renamed = workspaces.rename(&bob, docs.id, "mine").await;
+    assert!(matches!(renamed, Err(WorkspaceError::NotFound(_))), "bob does not rename it: {renamed:?}");
+    let (renamed, asked) = world.asked(workspaces.rename(&alice, docs.id, "notes")).await;
+    assert_eq!(renamed.expect("alice does").name, "notes");
+    assert_eq!(asked, checks(&["alice: GetWorkspace(alice's) yes", "alice: GetWorkspace(alice's) yes", "alice: UpdateWorkspace(alice's) yes"]));
+
+    assert!(!workspaces.delete(&bob, docs.id).await.unwrap(), "nothing bob could see to delete");
+    assert!(workspaces.delete(&alice, docs.id).await.unwrap());
+    assert!(matches!(workspaces.restore(&bob, docs.id).await, Err(WorkspaceError::NotFound(_))), "nor restore");
+    workspaces.restore(&alice, docs.id).await.expect("alice restores it");
+    assert!(workspaces.delete(&alice, docs.id).await.unwrap());
+    let (purged, asked) = world.asked(workspaces.purge(&alice, docs.id)).await;
+    assert!(matches!(purged, Err(WorkspaceError::Store(StoreError::PermissionDenied))), "the owner does not purge: {purged:?}");
+    assert_eq!(asked, checks(&["alice: ReadDeleted(alice's) yes", "alice: Purge(alice's) no"]));
+    assert!(world.files.path().join(docs.id.to_string()).is_dir(), "and the files stay");
+    assert!(workspaces.purge(&World::system(), docs.id).await.unwrap(), "the system does");
+    assert!(!world.files.path().join(docs.id.to_string()).exists(), "with the files");
+}
+
+/// Attaching a workspace shares it with the session's channels: its
+/// owner's act, into a session they may change (issue 251, decision 12);
+/// taking it away shares nothing and needs changing the session alone.
+#[tokio::test]
+async fn only_its_owner_attaches_a_workspace_to_a_session_they_may_change() {
+    let world = World::new().await;
+    let workspaces = world.runtime.workspace_manager();
+    let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
+    let internal = Classification::general(Confidentiality::Internal);
+    let hers = workspaces.create(&alice, "hers", "main", None, internal.clone()).await.unwrap();
+    let his = workspaces.create(&bob, "his", "main", None, internal).await.unwrap();
+    let session = world.shared_session(&[], &[]).await;
+
+    let (refused, asked) = world.asked(session.set_workspace(&bob, Some(his.id))).await;
+    assert!(denied(&refused.unwrap_err()), "bob's own, into alice's session");
+    assert_eq!(asked, checks(&["bob: UpdateSession(alice's) no"]), "refused before his workspace is asked about");
+    let (refused, asked) = world.asked(session.set_workspace(&alice, Some(his.id))).await;
+    assert!(not_found(&refused.unwrap_err()), "bob's, by alice");
+    assert_eq!(asked, checks(&["alice: UpdateSession(alice's) yes", "alice: GetWorkspace(bob's) no"]));
+
+    let (attached, asked) = world.asked(session.set_workspace(&alice, Some(hers.id))).await;
+    attached.expect("hers, into her session");
+    assert_eq!(asked, checks(&["alice: UpdateSession(alice's) yes", "alice: GetWorkspace(alice's) yes", "alice: UpdateWorkspace(alice's) yes", "alice: GetSession(alice's) yes", "alice: UpdateSession(alice's) yes"]));
+    assert_eq!(session.session().workspace, Some(hers.id));
+
+    assert!(denied(&session.set_workspace(&bob, None).await.unwrap_err()), "bob does not take it away");
+    session.set_workspace(&alice, None).await.expect("alice does");
+    assert_eq!(session.session().workspace, None);
+    world.manager.stop_session(&alice, session.id()).await.unwrap();
+}
+
+/// In a session, a workspace is used through the channels (issue 251,
+/// decisions 10, 11): by a current member - not its owner alone - where the
+/// channel uses it and it and the channel flow both ways; nobody else, and
+/// nothing says why.
+#[tokio::test]
+async fn a_workspace_is_used_in_a_channel_by_its_members_where_both_flow() {
+    let world = World::new().await;
+    let workspaces = world.runtime.workspace_manager();
+    let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
+    let docs = workspaces.create(&alice, "docs", "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
+    let session = world.shared_session(&[], &[]).await;
+    session.set_workspace(&alice, Some(docs.id)).await.unwrap();
+    let (session_id, main) = (session.id(), session.channels()[0].id());
+    let in_main = |ctx: &SecurityContext| {
+        let views = world.manager.views(Viewer::new(ctx.clone()));
+        async move { views.session(session_id).await.unwrap().channel(main).await.unwrap() }
+    };
+
+    let (usable, asked) = world.asked(async { in_main(&bob).await.workspace().await.unwrap() }).await;
+    let bobs = usable.expect("bob, a member of the channel, uses alice's workspace there");
+    assert!(asked.ends_with(&checks(&["bob: Publish yes", "bob: Publish yes"])), "both ways, not GetWorkspace: {asked:?}");
+    let terminal = bobs.terminal().await.expect("and reaches its files");
+    terminal.write(&WorkspacePath::parse("notes/a.md").unwrap(), file("from bob"), 100).await.unwrap();
+    let owned = world.manager.views(Viewer::new(alice.clone())).workspace(docs.id).await.unwrap();
+    assert_eq!(read(owned.terminal().await.unwrap().as_ref(), "notes/a.md").await, "from bob", "the same files as its owner's");
+
+    let channel = Arc::clone(&session.channels()[0]);
+    assert!(denied(&channel.update_uses_workspace(&bob, false).await.unwrap_err()), "a member does not switch it off");
+    channel.update_uses_workspace(&alice, false).await.expect("the channel's owner does");
+    assert!(in_main(&bob).await.workspace().await.unwrap().is_none(), "not where the channel does not use it");
+    assert!(matches!(bobs.terminal().await, Err(WorkspaceError::NotFound(_))), "asked again when used");
+    channel.update_uses_workspace(&alice, true).await.unwrap();
+
+    workspaces.reclassify(&alice, docs.id, Classification::PUBLIC).await.unwrap();
+    assert!(in_main(&bob).await.workspace().await.unwrap().is_none(), "not where what is seen may not flow into it");
+    world.manager.stop_session(&alice, session.id()).await.unwrap();
+}
+
+/// Who takes part in the session but not in the channel does not use the
+/// channel's workspace there - an agent of alice's waiting in the session,
+/// say.
+#[tokio::test]
+async fn a_workspace_is_not_used_in_a_channel_by_who_is_not_in_it() {
+    let world = World::new().await;
+    let global = world.personality("global", None, &[]).await;
+    let waiting = world.agent("waiting", world.alice, &global).await;
+    let alice = World::as_user(world.alice);
+    let docs = world.runtime.workspace_manager().create(&alice, "docs", "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
+    let session = world.shared_session(&[], &[waiting]).await;
+    session.set_workspace(&alice, Some(docs.id)).await.unwrap();
+    let as_agent = alice.next(ActorId::Agent(waiting));
+    let main = world.manager.views(Viewer::new(as_agent)).session(session.id()).await.unwrap().channel(session.channels()[0].id()).await.unwrap();
+    assert!(main.workspace().await.unwrap().is_none());
+    world.manager.stop_session(&alice, session.id()).await.unwrap();
+}
+

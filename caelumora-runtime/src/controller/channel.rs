@@ -89,6 +89,16 @@ impl ChannelController {
         self.update(ctx, &event).await
     }
 
+    /// Sets whether the channel uses the workspace of its session (issue
+    /// 251) on behalf of `ctx` (`UpdateChannel`).
+    ///
+    /// # Errors
+    /// Whatever the store reports, `StoreError::PermissionDenied`
+    /// included; the channel is then unchanged.
+    pub async fn update_uses_workspace(&self, ctx: &SecurityContext, uses: bool) -> StoreResult<()> {
+        self.update(ctx, &ChannelUpdateEvent::UsesWorkspaceChanged(uses)).await
+    }
+
     /// Sets what the channel restricts of the tool calls made in it (issue
     /// 13) on behalf of `ctx` (`UpdateChannel`): `rules` replace those it
     /// had. They apply to the next call of any agent in it.
@@ -204,6 +214,7 @@ impl ChannelController {
             ChannelUpdateEvent::LanguageChanged(language) => channel.language = Language::optional(language.as_deref())?,
             ChannelUpdateEvent::ApprovalRulesChanged(rules) => channel.approval_rules = rules.clone(),
             ChannelUpdateEvent::DescriptionChanged { summary, briefing } => channel.describe(summary.as_deref(), briefing.as_deref())?,
+            ChannelUpdateEvent::UsesWorkspaceChanged(uses) => channel.uses_workspace = *uses,
         }
         self.store(ctx, &channel).await?;
         let attributes = channel.security_attributes.clone();

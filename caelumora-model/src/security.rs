@@ -87,9 +87,10 @@ pub enum ActionType<'a> {
     CreateUserProfile(&'a SecurityAttributes),
     UpdateUserProfile(&'a SecurityAttributes),
     DeleteUserProfile(&'a SecurityAttributes),
-    /// Reading a workspace (issue 253), carrying its attributes - and using
-    /// it: reading and writing its files, attaching it to a session. What
-    /// its contributors may, as writing into a session is.
+    /// Reading a workspace (issue 253), carrying its attributes - and
+    /// working on its files outside a session, and attaching it to one. In
+    /// a session it is used through the channels, which decide who may
+    /// (issue 251, decision 10).
     GetWorkspace(&'a SecurityAttributes),
     ListWorkspaces,
     CreateWorkspace(&'a SecurityAttributes),
@@ -383,6 +384,11 @@ pub trait AccessQuestions {
     /// rename it, change its privacy (`UpdateSession`).
     async fn may_change_session(&self, context: &SecurityContext, session: &SecurityAttributes) -> bool;
 
+    /// Whether `context` may change a workspace with these attributes - its
+    /// name, description, classification - and attach it to a session
+    /// (`UpdateWorkspace`, issue 253).
+    async fn may_change_workspace(&self, context: &SecurityContext, workspace: &SecurityAttributes) -> bool;
+
     /// Whether the channel of `reader` may read what comes from `source` - a
     /// message, a note, or what an agent remembered there (`ReadChannel`,
     /// issues 17, 131, 133 and 134): asked in `context`, the agent's who
@@ -475,6 +481,10 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
 
     async fn may_change_session(&self, context: &SecurityContext, session: &SecurityAttributes) -> bool {
         self.check(context, ActionType::UpdateSession(session)).await
+    }
+
+    async fn may_change_workspace(&self, context: &SecurityContext, workspace: &SecurityAttributes) -> bool {
+        self.check(context, ActionType::UpdateWorkspace(workspace)).await
     }
 
     async fn may_channel_read(&self, context: &SecurityContext, reader: &Place, source: &Place) -> bool {
@@ -598,8 +608,8 @@ impl SecurityManager for DummySecurityManager {
 ///
 /// - The system (`ActorId::System`) may do everything.
 /// - Reading - which also covers using, e.g. starting a session from a
-///   template, or working on the files of a workspace - is allowed to the
-///   owner, to contributors, and to everybody
+///   template, or working on a workspace outside a session - is allowed to
+///   the owner, to contributors, and to everybody
 ///   for entities owned by the system or by no one.
 /// - Creating is allowed only with oneself as owner.
 /// - Changing, deleting and stopping are the owner's alone, and so is reading what an

@@ -96,6 +96,7 @@ fn session_template() -> SessionTemplate {
         channels: vec![ChannelTemplate {
             summary: None, briefing: None, language: None,
             approval_rules: Vec::new(),
+            uses_workspace: true,
             name: Name::new("general").unwrap(),
             components: crate::channel::moderation_components(None, Some("broadcast_policy")),
             classification: Classification::CHANNEL_DEFAULT,
@@ -127,6 +128,7 @@ fn channel() -> Channel {
     Channel {
         summary: None, briefing: None,
         approval_rules: Vec::new(),
+        uses_workspace: true,
         id: ChannelId(Uuid::new_v4()),
         session_id: SessionId(Uuid::new_v4()),
         name: Name::new("general").unwrap(),

@@ -1039,6 +1039,7 @@ mod tests {
         let channel = Channel {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
+            uses_workspace: true,
             id: ChannelId(Uuid::new_v4()),
             session_id,
             name: crate::value::name::Name::new("general").unwrap(),

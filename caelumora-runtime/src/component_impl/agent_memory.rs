@@ -259,7 +259,7 @@ mod tests {
         async fn under(policy: Arc<dyn SecurityManager>) -> Self {
             let store = Arc::new(MemoryStore::new());
             let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-            let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), Vec::new(), crate::component::ComponentRegistry::built_in(store)).unwrap());
+            let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), Vec::new(), Default::default(), crate::component::ComponentRegistry::built_in(store)).unwrap());
             Self { runtime, loops: HashMap::new() }
         }
 

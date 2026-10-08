@@ -158,6 +158,32 @@ as it is now. The snapshots of a session and a channel carry the summary always 
 with `Detail::BRIEFING`, which lists leave out. Agents are told both by a prompt part (see
 [AGENT-TURN.md](AGENT-TURN.md#what-the-session-and-channel-are-for)).
 
+### Its workspace
+
+A session may have one workspace attached (`Session::workspace`, issue
+[253](../issues/253-workspace.md)): a tree of files of a user's, shared by the session's channels
+(issue [251](../issues/251-open-terminal.md), decisions 10 to 12). Only the workspace's owner
+attaches it, to a session they may change (`SessionLoop::set_workspace`: `UpdateSession`, then
+`GetWorkspace` and `UpdateWorkspace`); whoever may change the session takes it away, which shares
+nothing. Announced as `WorkspaceChanged` of `SessionUpdateEvent`.
+
+In a session the workspace is used through a channel, by its current members - a person, or an
+agent acting there for whoever asked it - and nobody else, also not its owner from outside the
+channel. A channel uses it where
+
+*   its switch says so (`Channel::uses_workspace`, on unless its template or whoever may change the
+    channel says otherwise: `ChannelLoop::update_uses_workspace`, `UpdateChannel`,
+    `UsesWorkspaceChanged`) - what the channel is for; and
+*   the workspace and the channel flow both ways (see
+    [CONFIDENTIALITY.md](CONFIDENTIALITY.md#workspaces)) - the boundary, which the switch cannot
+    widen.
+
+So a session for a request can have a channel with the person who asked, classified below the
+workspace or with the switch off, and channels with helpers that work on its files. A view of a
+channel offers the workspace only where its viewer may use it there (`ChannelView::workspace`),
+and says nothing of it otherwise; using it asks again, of the session and the channel as they are
+then (`WorkspaceView::terminal`).
+
 ### Running channels
 
 `SessionLoop::run` starts every channel in its `JoinSet`: those the session had and those created

@@ -556,6 +556,21 @@ impl ChannelLoop {
         Ok(())
     }
 
+    /// Sets whether the channel's members work on the workspace of its
+    /// session here (issue 251) on behalf of `context`: stored first, which
+    /// is where the permission is checked (`UpdateChannel`). It permits
+    /// nothing the classifications refuse; it takes effect with the next
+    /// use.
+    ///
+    /// # Errors
+    /// `StoreError::PermissionDenied` if `context` may not change the
+    /// channel, or whatever else storing it reports.
+    pub async fn update_uses_workspace(&self, context: &SecurityContext, uses: bool) -> Result<()> {
+        self.channel.update_uses_workspace(context, uses).await?;
+        info!(channel = %self.id, uses, by = %context.caller_id, "Channel's use of the workspace changed");
+        Ok(())
+    }
+
     /// Sets what the channel restricts of the tool calls made in it (issue
     /// 13) on behalf of `context`: stored first, which is where the
     /// permission is checked (`UpdateChannel`). Its agents' next calls are
@@ -1465,10 +1480,11 @@ mod tests {
     /// A channel of `participants` with `components`, built by `registry`.
     async fn channel_built(store: Arc<MemoryStore>, participants: Vec<Participant>, security: Arc<dyn SecurityManager>, registry: crate::component::ComponentRegistry, components: caelumora_model::component::ComponentConfig) -> Arc<ChannelLoop> {
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&security)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, security, default_commands(), Default::default(), Vec::new(), registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, security, default_commands(), Default::default(), Vec::new(), Default::default(), registry).unwrap());
         let channel = Channel {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
+            uses_workspace: true,
             id: ChannelId::new(),
             session_id: SessionId::new(),
             name: Name::new("main").unwrap(),
@@ -2473,10 +2489,11 @@ mod tests {
                 fail_policy: Default::default(),
             }],
         };
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store, secrets, security, default_commands(), defaults, Vec::new(), registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store, secrets, security, default_commands(), defaults, Vec::new(), Default::default(), registry).unwrap());
         let channel = Channel {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
+            uses_workspace: true,
             id: ChannelId::new(),
             session_id: SessionId::new(),
             name: Name::new("main").unwrap(),
@@ -3705,10 +3722,11 @@ mod tests {
         );
         register_no_secrets(&mut registry);
         register_heard(&mut registry);
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store, secrets, security, default_commands(), Default::default(), Vec::new(), registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store, secrets, security, default_commands(), Default::default(), Vec::new(), Default::default(), registry).unwrap());
         let channel = Channel {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
+            uses_workspace: true,
             id: ChannelId::new(),
             session_id: SessionId::new(),
             name: Name::new("main").unwrap(),

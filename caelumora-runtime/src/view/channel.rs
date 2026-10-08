@@ -1,7 +1,7 @@
 //! A channel as its viewer reached it, and its members.
 
 use super::member::{member_state, AgentMember, MemberState};
-use super::{AgentContextView, SessionView, ViewError, ViewResult, Views};
+use super::{AgentContextView, SessionView, ViewError, ViewResult, Views, WorkspaceView};
 use crate::channel::{visible_part, ChannelLoop, VisibleHistory};
 use crate::moderator::Moderator;
 use crate::moderator_impl::ResponderPolicy;
@@ -59,6 +59,19 @@ impl ChannelView {
     /// The session the channel belongs to.
     pub fn session(&self) -> &SessionView {
         &self.session
+    }
+
+    /// The workspace of the session, if the viewer may use it in this
+    /// channel (issue 251, decision 10): as a current member, the channel
+    /// using it, and it and the channel flowing both ways. Nothing
+    /// otherwise - also not why, nor that there is one.
+    ///
+    /// # Errors
+    /// `Failed` if reading the workspace failed.
+    pub async fn workspace(&self) -> ViewResult<Option<WorkspaceView>> {
+        let usable = self.views().workspace_manager().usable_in(self.views().context(), self.session.as_session(), &self.channel).await
+            .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context("reading the session's workspace")))?;
+        Ok(usable.map(|workspace| WorkspaceView::in_channel(self.views().clone(), workspace, self.session.id(), self.channel.id)))
     }
 
     pub fn id(&self) -> ChannelId {
@@ -297,6 +310,7 @@ impl ChannelView {
             classification: self.channel.classification.clone(),
             language: self.channel.language.clone(),
             approval_rules: self.channel.approval_rules.clone(),
+            uses_workspace: self.channel.uses_workspace,
             can_change: self.may_change().await,
             members,
             former_members,

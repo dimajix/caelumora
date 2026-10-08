@@ -115,6 +115,9 @@ pub struct ChannelSnapshot {
     /// What the channel restricts of tool calls (issue 13) - shown to
     /// everyone who reads it, whose agents it binds.
     pub approval_rules: Vec<ApprovalRule>,
+    /// Whether its members work on the workspace of its session here (issue
+    /// 251), where the classifications let them.
+    pub uses_workspace: bool,
     /// Whether the viewer may rename the channel and add or remove its
     /// participants (`UpdateChannel`, issue 46).
     pub can_change: bool,
@@ -233,6 +236,21 @@ pub struct DeletedSnapshot<I> {
     /// Whether the viewer may remove it for good - never for a channel,
     /// which is purged with its session.
     pub can_purge: bool,
+}
+
+/// A workspace as the viewer sees it (issue 253): its own, in the list of
+/// workspaces, or a session's where they may use it in a channel.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkspaceSnapshot {
+    pub id: crate::workspace::WorkspaceId,
+    pub name: String,
+    /// The storage its files lie in, by its configured name.
+    pub storage: String,
+    pub description: Option<crate::value::text::Description>,
+    pub classification: Classification,
+    /// Whether the viewer may change it - rename, describe, reclassify -
+    /// and attach it to a session (`UpdateWorkspace`).
+    pub can_change: bool,
 }
 
 /// An agent as the viewer sees it in the list of agents (issue 164).

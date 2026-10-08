@@ -87,6 +87,17 @@ impl SessionController {
         self.update(ctx, event).await
     }
 
+    /// Attaches `workspace` to the session, or with `None` takes the one
+    /// attached away (issue 253), on behalf of `ctx` (`UpdateSession`), as
+    /// [`Self::update`] does. Whether the workspace may be shared is the
+    /// caller's to have asked.
+    ///
+    /// # Errors
+    /// See [`Self::update`].
+    pub async fn update_workspace(&self, ctx: &SecurityContext, workspace: Option<caelumora_model::workspace::WorkspaceId>) -> StoreResult<()> {
+        self.update(ctx, SessionUpdateEvent::WorkspaceChanged(workspace)).await
+    }
+
     /// Applies `event` on behalf of `ctx`: stored first - which is where the
     /// permission is checked (issue 11) - and only then changed live and
     /// announced.

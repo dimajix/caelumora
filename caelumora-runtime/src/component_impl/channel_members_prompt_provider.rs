@@ -292,7 +292,7 @@ mod tests {
         let store = Arc::new(MemoryStore::new());
         let policy = Arc::new(DummySecurityManager::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), Vec::new(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), Vec::new(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let system = SecurityContext::system();
 
         let (kaya, bob) = (User { id: UserId::new(), username: Name::new("Kaya").unwrap(), email: String::new(), roles: Vec::new(), deleted: None }, User { id: UserId::new(), username: Name::new("Bob").unwrap(), email: String::new(), roles: Vec::new(), deleted: None });
@@ -320,6 +320,7 @@ mod tests {
         let channel = Channel {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
+            uses_workspace: true,
             id: session.channels[0], session_id: session.id, name: Name::new("main").unwrap(), components: Default::default(),
             classification: Classification::CHANNEL_DEFAULT, language: None, history_limits: Vec::new(), participants, security_attributes: Default::default(),
             deleted: None,

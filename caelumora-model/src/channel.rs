@@ -32,9 +32,17 @@ pub enum ChannelUpdateEvent {
     ApprovalRulesChanged(Vec<ApprovalRule>),
     /// What it is for changed (issue 245), as it now stands.
     DescriptionChanged { summary: Option<String>, briefing: Option<String> },
+    /// Whether it uses the workspace of its session (issue 251).
+    UsesWorkspaceChanged(bool),
 }
 
 define_id!(ChannelId);
+
+/// Whether a channel uses its session's workspace unless it says
+/// otherwise: it does (issue 251, decision 11).
+pub(crate) fn uses_workspace_by_default() -> bool {
+    true
+}
 
 /// The components of a channel whose moderator and the policy for the
 /// moderator's slot are named by their kinds, as a request names them
@@ -87,6 +95,12 @@ pub struct Channel {
     /// rules that ask or deny, set by whoever may change the channel.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub approval_rules: Vec<ApprovalRule>,
+    /// Whether its members work on the workspace of its session here (issue
+    /// 251, decision 11): what it is for, set by whoever may change it. It
+    /// permits nothing the classifications refuse - the workspace is used
+    /// here only where it and the channel flow both ways.
+    #[serde(default = "uses_workspace_by_default")]
+    pub uses_workspace: bool,
     /// Set when it was deleted (issue 164): it stays stored, hidden from
     /// every read but those for what was deleted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -167,6 +181,7 @@ impl Channel {
             history_limits: Vec::new(),
             former: Vec::new(),
             approval_rules: Vec::new(),
+            uses_workspace: true,
             deleted: None,
         }
     }

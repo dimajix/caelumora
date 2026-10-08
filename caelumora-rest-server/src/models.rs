@@ -853,6 +853,7 @@ mod tests {
         let (alice, approver) = (ActorId::User(UserId::new()), ActorId::Approver(ApproverId(Uuid::new_v4())));
         let member = |id, name: Option<&str>| snapshot::MemberSnapshot { id, name: name.map(str::to_string), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), pending_questions: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None, introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
         let view = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(),
+            uses_workspace: true,
             id: ChannelId::new(),
             name: "main".to_string(),
             moderator: Some("policy_moderator".to_string()),
@@ -874,6 +875,7 @@ mod tests {
     #[test]
     fn what_a_place_is_for_is_left_out_where_nothing_was_said_or_read() {
         let view = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(), id: ChannelId::new(), name: "main".to_string(),
+            uses_workspace: true,
             moderator: None, responder_policy: None, classification: Classification::CHANNEL_DEFAULT, language: None, can_change: false, members: Vec::new(), former_members: Vec::new() };
         let json = serde_json::to_value(ChannelResponse::from(view.clone())).unwrap();
         assert!(json.get("summary").is_none() && json.get("briefing").is_none(), "{json}");
@@ -903,6 +905,7 @@ mod tests {
             introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None,
         };
         let channel = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(),
+            uses_workspace: true,
             id: ChannelId::new(),
             name: "main".to_string(),
             moderator: None,
@@ -942,6 +945,7 @@ mod tests {
         let left = caelumora_model::removal::Removal::now(alice);
         let member = |id, left| snapshot::MemberSnapshot { id, name: Some("x".to_string()), handle: None, can_read_context: true, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), pending_questions: Vec::new(), left, can_delete: false, turn_under_way: None, state: None, introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
         let view = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(),
+            uses_workspace: true,
             id: ChannelId::new(),
             name: "main".to_string(),
             moderator: None,

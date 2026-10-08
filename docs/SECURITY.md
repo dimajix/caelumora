@@ -45,9 +45,12 @@ preconfigured component - carries `SecurityAttributes`: an `owner_id` and a list
 *   A session and its channels are owned by the user they were created for; their users and agents
     are contributors.
 *   An agent is owned by whoever created it, and contributes to its own definition.
-*   A workspace is owned by the user it was made for, always a user (issue
-    [253](../issues/253-workspace.md)); its contributors use it - read and write its files, attach
-    it to a session - as `GetWorkspace` allows, and only its owner changes or deletes it.
+*   A workspace is owned by the user it was made for, always a user, and has no contributors (issue
+    [253](../issues/253-workspace.md)): outside a session only its owner works on it
+    (`GetWorkspace`), and only its owner changes, deletes and attaches it to a session
+    (`UpdateWorkspace`). In a session it is shared through the channels, whose members use it
+    where the channel uses it and the classifications let them (see
+    [CHANNELS.md](CHANNELS.md#its-workspace)) - no `GetWorkspace` is asked of them.
 *   Initial data belongs to the system.
 *   A `User` record belongs to the system, too (issue 94): only the user providers and the setup
     write it, so that nobody can grant themselves roles. What a user writes about themselves lives

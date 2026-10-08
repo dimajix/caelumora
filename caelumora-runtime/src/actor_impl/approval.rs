@@ -497,13 +497,14 @@ mod tests {
         let security: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&security)));
         let registry = crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, security, default_commands(), Default::default(), Vec::new(), registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, security, default_commands(), Default::default(), Vec::new(), Default::default(), registry).unwrap());
         let approver = Approver { id: ApproverId::new(), strategy };
         let mut participants: Vec<Participant> = ids.iter().map(|id| Participant::User(*id)).collect();
         participants.push(Participant::Approver(approver.clone()));
         let channel = Channel {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
+            uses_workspace: true,
             id: ChannelId::new(),
             session_id: SessionId::new(),
             name: Name::new("test").unwrap(),

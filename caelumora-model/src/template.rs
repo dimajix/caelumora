@@ -109,6 +109,10 @@ pub struct ChannelTemplate {
     /// or deny. None unless named.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub approval_rules: Vec<ApprovalRule>,
+    /// Whether the channel uses the session's workspace (issue 251): it
+    /// does unless named otherwise.
+    #[serde(default = "crate::channel::uses_workspace_by_default")]
+    pub uses_workspace: bool,
 }
 
 impl ChannelTemplate {
@@ -126,7 +130,7 @@ impl ChannelTemplate {
                 .ok_or_else(|| TemplateError::ParticipantNotFound(name.clone())))
             .collect::<TemplateResult<Vec<_>>>()?;
         let channel = Channel::build(session_id, ActorId::User(owner), self.name.clone(), self.components.clone(), self.classification.clone(), self.language.as_ref().or(language).cloned(), participants);
-        Ok(Channel { approval_rules: self.approval_rules.clone(), summary: self.summary.clone(), briefing: self.briefing.clone(), ..channel })
+        Ok(Channel { approval_rules: self.approval_rules.clone(), summary: self.summary.clone(), briefing: self.briefing.clone(), uses_workspace: self.uses_workspace, ..channel })
     }
 }
 
@@ -336,6 +340,7 @@ mod tests {
                 ChannelTemplate {
                     summary: None, briefing: None, language: None,
                     approval_rules: Vec::new(),
+                    uses_workspace: true,
                     name: Name::new("main").unwrap(),
                     components: crate::component::ComponentConfig::default(),
                     classification: Classification::CHANNEL_DEFAULT,
@@ -344,6 +349,7 @@ mod tests {
                 ChannelTemplate {
                     summary: None, briefing: None, language: None,
                     approval_rules: Vec::new(),
+                    uses_workspace: true,
                     name: Name::new("side").unwrap(),
                     components: crate::component::ComponentConfig::default(),
                     classification: Classification::CHANNEL_DEFAULT,

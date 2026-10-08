@@ -29,10 +29,12 @@ mod channel;
 mod context;
 mod member;
 mod session;
+mod workspace;
 
 pub use channel::{ChannelView, MemberView};
 pub use context::{AgentContextView, ContextError};
 pub use session::SessionView;
+pub use workspace::WorkspaceView;
 
 use crate::runtime::{ActorRuntime, RuntimeManager};
 use crate::session::{Found, SessionLoop, SessionManager};
@@ -45,6 +47,8 @@ use caelumora_model::removal::Removal;
 use caelumora_model::security::{AccessQuestions, Place, SecurityContext, SecurityManager};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::snapshot::{AgentSnapshot, DeletedSnapshot};
+use caelumora_model::workspace::WorkspaceId;
+use crate::workspace::WorkspaceManager;
 use caelumora_model::store::{EntityKind, EntityStore, StateStore, StoreResultExt};
 use crate::component::ComponentRegistry;
 use std::sync::Arc;
@@ -94,6 +98,8 @@ pub enum ViewError {
     SessionNotFound(SessionId),
     #[error("Session {session} has no channel {channel}")]
     ChannelNotFound { session: SessionId, channel: ChannelId },
+    #[error("There is no workspace {0}")]
+    WorkspaceNotFound(WorkspaceId),
     /// Asked for by name, as an agent's tools do: no such channel, or
     /// nothing in it that can be read from where the viewer reads.
     #[error("there is no channel named \"{0}\" that can be read from here")]
@@ -157,6 +163,7 @@ pub struct Views {
     entities: Arc<dyn EntityStore>,
     states: Arc<dyn StateStore>,
     components: Arc<ComponentRegistry>,
+    workspaces: Arc<WorkspaceManager>,
     running: Arc<dyn RunningSessions>,
     viewer: Viewer,
 }
@@ -168,6 +175,7 @@ impl Views {
             entities: Arc::clone(runtime.entity_store()),
             states: Arc::clone(runtime.state_store()),
             components: Arc::clone(runtime.component_registry()),
+            workspaces: Arc::clone(runtime.workspace_manager()),
             running,
             viewer,
         }
@@ -203,6 +211,10 @@ impl Views {
 
     pub(crate) fn components(&self) -> &ComponentRegistry {
         &self.components
+    }
+
+    pub(crate) fn workspace_manager(&self) -> &Arc<WorkspaceManager> {
+        &self.workspaces
     }
 
     /// Every session the viewer may read, in the order the store lists
@@ -331,6 +343,55 @@ impl Views {
                 deleted: removal,
                 can_restore: policy.may_restore(self.viewer.context(), EntityKind::Agent, attributes).await,
                 can_purge: policy.may_purge(self.viewer.context(), EntityKind::Agent, attributes).await,
+            });
+        }
+        Ok(deleted)
+    }
+
+    /// The viewer's own workspaces (issue 253), in the order the store lists
+    /// them: a workspace has no contributors, so these are the ones they
+    /// own (issue 251, decision 12).
+    ///
+    /// # Errors
+    /// `Failed` if the store cannot list them.
+    pub async fn workspaces(&self) -> ViewResult<Vec<WorkspaceView>> {
+        let workspaces = self.entities.list_workspaces(self.viewer.context()).await
+            .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context("listing the workspaces")))?;
+        Ok(workspaces.into_iter().map(|workspace| WorkspaceView::owned(self.clone(), workspace)).collect())
+    }
+
+    /// Workspace `id`, if the viewer may read it (`GetWorkspace`): its
+    /// owner.
+    ///
+    /// # Errors
+    /// `WorkspaceNotFound` if there is none they may read.
+    pub async fn workspace(&self, id: WorkspaceId) -> ViewResult<WorkspaceView> {
+        match self.entities.get_workspace(self.viewer.context(), id).await.optional() {
+            Ok(Some(workspace)) => Ok(WorkspaceView::owned(self.clone(), workspace)),
+            Ok(None) => Err(ViewError::WorkspaceNotFound(id)),
+            Err(e) => Err(ViewError::Failed(anyhow::Error::new(e).context("reading a workspace"))),
+        }
+    }
+
+    /// The workspaces the viewer deleted and may read as such (issue 253):
+    /// the trash of workspaces.
+    ///
+    /// # Errors
+    /// `Failed` if the store cannot list them.
+    pub async fn deleted_workspaces(&self) -> ViewResult<Vec<DeletedSnapshot<WorkspaceId>>> {
+        let workspaces = self.entities.list_deleted_workspaces(self.viewer.context()).await
+            .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context("listing the deleted workspaces")))?;
+        let policy = &self.security;
+        let mut deleted = Vec::with_capacity(workspaces.len());
+        for workspace in workspaces {
+            let Some(removal) = workspace.deleted.clone() else { continue };
+            let attributes = &workspace.security_attributes;
+            deleted.push(DeletedSnapshot {
+                id: workspace.id,
+                name: workspace.name.to_string(),
+                deleted: removal,
+                can_restore: policy.may_restore(self.viewer.context(), EntityKind::Workspace, attributes).await,
+                can_purge: policy.may_purge(self.viewer.context(), EntityKind::Workspace, attributes).await,
             });
         }
         Ok(deleted)
@@ -529,7 +590,7 @@ mod tests {
     fn owned_runtime_under(policy: Arc<dyn SecurityManager>) -> (Arc<MemoryStore>, Arc<SessionManager>) {
         let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), Vec::new(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), Vec::new(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         (store, Arc::new(SessionManager::new(runtime)))
     }
 
@@ -572,6 +633,7 @@ mod tests {
         Channel {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
+            uses_workspace: true,
             id: session.channels[0],
             session_id: session.id,
             name: Name::new("main").unwrap(),

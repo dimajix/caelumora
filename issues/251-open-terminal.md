@@ -266,6 +266,16 @@ Taken on 2026-10-08 by the maintainer, answering the questions above:
    stand-in for tests.
 9. **The workspace's own file tools are a later step of `terminal_tool`**, not an issue of their
    own (PLAN.md's W2).
+10. **A workspace is used in a session through its channels** (2026-10-08, before step 3): who is
+    a member of a channel in which the session's workspace may be used uses it there - a person in
+    the panel, an agent for whoever asked it there. A session for a request may have a channel
+    with the person who asked and channels with helpers behind, and only the latter work on the
+    files. The boundary is the flow rule between the workspace and the channel; the purpose is a
+    switch on the channel.
+11. **The switch: `Channel::uses_workspace`**, on by default, set by whoever may change the channel.
+    It permits nothing the flow rule refuses.
+12. **No contributors**: a workspace is its owner's. Outside a session only its owner works on it;
+    in a session it is shared through the channels. Only its owner attaches it.
 
 ## Plan
 
@@ -379,7 +389,7 @@ pub struct Workspace {
     pub storage: String,                   // the name of its storage (part A); checked against the configuration
     pub description: Option<Description>,  // what it holds, as its owner describes it
     pub classification: Classification,    // one for the whole tree (issue 169)
-    pub security_attributes: SecurityAttributes, // owner: the user; contributors: who may use it
+    pub security_attributes: SecurityAttributes, // the owner, a user; no contributors (decision 12)
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub deleted: Option<Removal>,
@@ -389,7 +399,6 @@ pub enum WorkspaceUpdateEvent {
     NameChanged(String),
     DescriptionChanged(Option<String>),
     ClassificationChanged(Classification),
-    ContributorsChanged(Vec<ActorId>),
 }
 ```
 
@@ -403,9 +412,11 @@ Option<WorkspaceId>` (`#[serde(default)]`) and `SessionUpdateEvent::WorkspaceCha
 WorkspaceId>)`. A session has at most one: its agents need no parameter to name it, the model is
 told of *the* workspace, and the panel shows one. Which channels may use it is decided per channel
 by the flow rule (B2) - a session's channels of several classifications share one workspace only
-where it flows both ways. Several per session is an extension the model allows (a list instead of
-the option) and nothing here needs. `SessionTemplate` gains nothing: a template is reusable, a
-workspace is someone's, and attaching is an act on the session.
+where it flows both ways, and only those whose switch `uses_workspace` is on (B2). Several per
+session is an extension the model allows (a list instead of the option) and nothing here needs.
+`Channel` and `ChannelTemplate` gain `uses_workspace: bool` (default `true`),
+`ChannelUpdateEvent::UsesWorkspaceChanged(bool)`. `SessionTemplate` gains nothing: a template is
+reusable, a workspace is someone's, and attaching is an act on the session.
 
 `GlobalEvent` gains `WorkspaceCreated(WorkspaceId)`, `WorkspaceUpdated(WorkspaceId,
 WorkspaceUpdateEvent)`, `WorkspaceDeleted(WorkspaceId)` and `WorkspaceRestored(WorkspaceId)`;
@@ -421,27 +432,36 @@ Stored data: nothing to delete; every new field has a default.
 Two questions, kept apart as everywhere (SECURITY.md):
 
 **Who may** - the five actions under the ownership policy, as for every kind: `CreateWorkspace`
-(with oneself as owner), `GetWorkspace` (the owner and the contributors), `UpdateWorkspace` and
-`DeleteWorkspace` (the owner), `ListWorkspaces` (filtered by `Get`), and the trash (`ReadDeleted`,
-`Restore`, `Purge` with `EntityKind::Workspace`). *Using* a workspace - reading and writing its
-files, running commands in it, attaching it to a session - is what contributors may, as writing
-into a session is: it asks `GetWorkspace`. Changing the document - name, description, contributors,
-classification - is `UpdateWorkspace`, the owner's.
+(with oneself as owner), `GetWorkspace`, `UpdateWorkspace` and `DeleteWorkspace` (the owner - a
+workspace has no contributors, decision 12), `ListWorkspaces` (filtered by `Get`), and the trash
+(`ReadDeleted`, `Restore`, `Purge` with `EntityKind::Workspace`). A workspace is used in two ways:
+
+- *Directly*, outside a session: its owner, asked as `GetWorkspace`.
+- *In a channel* of a session it is attached to (decision 10): a current member of the channel -
+  a person, or an agent, which acts there for whoever asked it - if the channel's switch is on
+  and the workspace and the channel flow both ways (below). No `GetWorkspace`: attaching shared
+  it with the session's channels, and the channel decides who is in.
+
+Attaching is the owner's alone (`UpdateWorkspace`), to a session they may change
+(`UpdateSession`); detaching only asks `UpdateSession`, since it shares nothing. Changing the
+document - name, description, classification - is `UpdateWorkspace`.
 
 **What may flow** - the workspace is one container classified W, and its files carry no label of
 their own:
 
-- *A person* reads and writes files only if cleared for W, as a member of a channel is:
+- *Its owner* works on it directly only if cleared for W, as a member of a channel is:
   `JoinChannel { participant, roles, channel: &W }`, the clearance question with the workspace in
-  the channel's place - asked when a contributor is added, when the classification is raised
-  (refused above someone in it, as for a channel), and as `may_see_channel` by the panel. Uploading
-  needs no further rule: what a cleared person puts in is theirs to classify as W.
-- *An agent* reads and writes through a channel classified L, and both directions must flow: W into
+  the channel's place - asked when the workspace is made and when it is raised. Uploading needs no
+  further rule: what a cleared person puts in is theirs to classify as W.
+- *A member of a channel*, person or agent, reads and writes through the channel, classified L,
+  and both directions must flow: W into
   L, since what a command prints reaches the channel, and L into W, since what the model puts into a
   command may be anything it saw there. `W.flows_to(L) && L.flows_to(W)`, asked as the two `Publish`
   questions the policy already answers - `may_publish(ctx, agent, &W, &L)` and `(…, &L, &W)`. With
   compartments and a read relation that is not symmetric this is stricter than equality, which is
-  right. It is asked per call by the operation (B3), and the result of a call is classified W
+  right. A member is cleared for L - asked when they joined and whenever the channel is raised -
+  so no clearance for W is asked besides. It is asked per use by the operation (B3), and the
+  result of a call is classified W
   (`ToolOutput::classified`), so that the `GuardedToolExecutor` withholds it where it does not
   flow, as for any tool.
 - *The storage has a ceiling.* A storage's terminal is a place things are sent to - a container
@@ -453,9 +473,9 @@ their own:
   cleared for, as for an external agent that names no roles - and none for `local` without a shell,
   where nothing leaves the process.
 - *Changing the classification* is the owner's act (`UpdateWorkspace`, then `Classify(new)`):
-  lowering releases the whole tree, raising re-asks the clearance of every contributor and the
-  storage's ceiling. Nothing is fitted; there are no labels inside. Who did it is the audit log's
-  (140).
+  lowering releases the whole tree, raising re-asks the owner's clearance and the storage's
+  ceiling; which channels may use it follows at their next use. Nothing is fitted; there are no
+  labels inside. Who did it is the audit log's (140).
 
 These are existing questions with a workspace, or a storage, in the place of a channel. That
 `Publish`, `JoinChannel` and `may_see_channel` name a channel where they mean a place is worth a
@@ -473,33 +493,32 @@ store first, then announce) and the only code that holds the providers:
   configured and its ceiling admit W; `Classify(new)`; the store (which asks `CreateWorkspace`);
   `provider.create(id)` - a place that cannot be made is a creation that fails, and the document is
   purged again.
-- `rename`, `describe`, `set_classification` (`UpdateWorkspace`, `Classify`; raising re-asks
-  `JoinChannel` per contributor and the storage's ceiling), `set_contributors` (`UpdateWorkspace`,
-  `JoinChannel` per newcomer).
-- `delete` (marks; the files stay), `restore`, `purge` (`provider.remove(id)`, then the document; a
-  place that cannot be removed leaves the document, so that the next purge tries again), `get`,
-  `list`, `deleted`.
-- `pub(crate) async fn terminal(ctx, id, place: Option<&Place>) -> Result<Arc<dyn Terminal>>`: the
-  one check every use of a workspace makes - `GetWorkspace`, then for a place the two flow
-  questions of B2, for a person the clearance - through `Enforcement::require`, before anything
-  else; then `provider.terminal_for(id)`. The panel's file operations and the agents' tools both go
-  through it, each with the viewer's context.
-- Files for the REST routes, over `terminal(…)`, each path made a `WorkspacePath` here - relative,
-  `Path::components` with `Normal` components only, `..`, a root or a prefix refused, UTF-8 - and
-  bounded by `max_file_bytes`: `list_files`, `read_file`, `write_file`, `delete_file`, `mkdir`.
-  What a command creates under a name that is not UTF-8 is listed lossily and cannot be opened. A
-  path that does not fit is `WorkspaceError::InvalidPath`, which names the path the user wrote,
-  never a root.
+- `rename`, `describe`, `set_classification` (`UpdateWorkspace`, `Classify`; raising re-asks the
+  owner's `JoinChannel` and the storage's ceiling).
+- `delete` (marks; the files stay), `restore`, `purge` (`Purge` asked first, then
+  `provider.remove(id)`, then the document; a place that cannot be removed leaves the document, so
+  that the next purge tries again). Reading is the views' (B4).
+- The two uses of B2, each the one check of its way, through `Enforcement::require`, before
+  anything else: `terminal_of_owner(ctx, id)` (`GetWorkspace`) and `usable_in(ctx, session,
+  channel)` - the session's workspace, if the channel belongs to the session, its switch is on,
+  the caller is a current member and both flow questions are answered yes; `None` otherwise,
+  without saying which of them failed. Then `provider.terminal_for(id)`.
+- Paths: a `WorkspacePath` is made by parsing what a caller wrote - relative, `Path::components`
+  with `Normal` components only, `..`, a root or a prefix refused, UTF-8 - so that no provider
+  ever sees one that leaves the workspace. What a command creates under a name that is not UTF-8
+  is listed lossily and cannot be opened. A path that does not fit is `TerminalError::InvalidPath`,
+  which names the path the user wrote, never a root. Writing is bounded by `max_file_bytes`.
 
 A workspace whose storage is no longer configured is kept, listed with "its storage is not
 configured", and refused by every operation on its files.
 
-`scoped.rs`: workspaces lie in a `UserScope`, so a user's deletion takes them along (`lying_in`
-with `Workspace`); sessions and channels hold none.
+`scoped.rs` needs nothing: a workspace lies in its owner's `UserScope`, and nothing deletes what
+lies in a user's scope yet; sessions and channels hold none.
 
 Attaching is the session's: `SessionLoop::set_workspace(ctx, Option<WorkspaceId>)` asks
-`UpdateSession` first, then `GetWorkspace` for one attached - the one who attaches must be able to
-use it - and changes the session through its controller (`SessionUpdateEvent::WorkspaceChanged`).
+`UpdateSession` first, then for one attached `GetWorkspace` and `UpdateWorkspace` - its owner
+shares it - and changes the session through its controller (`SessionUpdateEvent::WorkspaceChanged`).
+The switch is the channel's: `ChannelLoop::set_uses_workspace(ctx, bool)` (`UpdateChannel`).
 No flow question is asked at attaching: which channels may use it is decided per channel and turn
 (B2). A workspace deleted while attached stays named and is read as absent, with a warning, as a
 participant whose record is gone.
@@ -510,22 +529,21 @@ Reading goes through the views, for people and agents alike (SECURITY.md, *Views
 
 - `Views::workspaces() -> Vec<WorkspaceView>` (the viewer's: `ListWorkspaces` filtered by `Get`),
   `Views::workspace(id)`, `Views::deleted_workspaces()`.
-- `SessionView::workspace() -> Option<WorkspaceView>`: the attached one if the viewer may read it.
-- `WorkspaceView`: `id`, `name`, `storage`, `description`, `classification`, `owner`,
-  `has_shell` (what the storage's terminals can do, asked of the provider without starting
-  anything), `may_change` (`may_change_workspace`), `may_use_here() -> bool` - for a viewer at a
-  place, an agent in its channel, the two flow questions; for a user, the clearance -
-  `terminal() -> Result<Arc<dyn Terminal>, WorkspaceError>` (the manager's `terminal(…)` with the
-  viewer's context: a view node that hands out an operation after its check, as
-  `MemberView::context()` asks `ReadAgentContext`), and `snapshot() -> WorkspaceSnapshot { id,
-  name, storage, description, classification, owner, has_shell, can_change, can_use }`.
+- `ChannelView::workspace() -> Option<WorkspaceView>`: the session's workspace if the viewer may
+  use it in this channel (`usable_in`); nothing otherwise, also not why.
+- `WorkspaceView`: `id`, `name`, `storage`, `description`, `classification`, `may_change`
+  (`may_change_workspace`), `terminal() -> Result<Arc<dyn Terminal>, WorkspaceError>` (the
+  manager's check of the way it was reached, asked again, then the terminal: a view node that
+  hands out an operation after its check, as `MemberView::context()` asks `ReadAgentContext`),
+  and `snapshot() -> WorkspaceSnapshot { id, name, storage, description, classification,
+  can_change }`. `has_shell` comes with the shell (step 5).
 - `Views` is given the `WorkspaceManager` - it holds `entities`, `states`, `components` and
   `running` today - and `WorkspaceView` reads through it with the viewer's context; nothing of a
   storage is reachable past the view.
 
-The `Turn` needs nothing new: a tool reaches the session's workspace by
-`turn.session()?.workspace()`, as `channel_history` reaches the channels, and its terminal by
-`workspace.terminal()`. No service is added to the `ComponentContext`.
+The `Turn` needs nothing new: a tool reaches the workspace of its channel by
+`turn.session()?.channel(turn.channel_id())?.workspace()`, as `channel_history` reaches the
+channels, and its terminal by `workspace.terminal()`. No service is added to the `ComponentContext`.
 
 #### B5. REST (`caelumora-rest-server`)
 
@@ -534,20 +552,20 @@ The `Turn` needs nothing new: a tool reaches the session's workspace by
 
 | Route | Does | Asks |
 |---|---|---|
-| `GET /workspaces` | the user's workspaces, own and contributed, each with `can_change` and `can_use` | `ListWorkspaces`, `GetWorkspace` |
+| `GET /workspaces` | the user's own workspaces | `ListWorkspaces`, `GetWorkspace` |
 | `GET /workspaces/storages` | the configured storages by name, each with whether its terminals have a shell, for the picker | - |
 | `POST /workspaces` `{name, storage, description?, classification?}` | creates; `classification` defaults to the channel default | `CreateWorkspace`, `Classify`, the storage's ceiling |
 | `GET /workspaces/{id}` | the snapshot | `GetWorkspace` |
 | `PATCH /workspaces/{id}` `{name?, description?}` | renames, describes | `UpdateWorkspace` |
-| `PUT /workspaces/{id}/classification` | reclassifies | `UpdateWorkspace`, `Classify`, `JoinChannel` per contributor, the ceiling |
-| `PUT /workspaces/{id}/contributors` `[user ids]` | sets who may use it | `UpdateWorkspace`, `JoinChannel` per newcomer |
+| `PUT /workspaces/{id}/classification` | reclassifies | `UpdateWorkspace`, `Classify`, the owner's `JoinChannel`, the ceiling |
 | `DELETE /workspaces/{id}`, `POST …/restore`, `POST …/purge` | the trash, as for agents | `DeleteWorkspace`, `ReadDeleted`, `Restore`, `Purge` |
-| `GET /workspaces/{id}/files?path=` | lists a directory | `GetWorkspace`, the clearance |
+| `GET /workspaces/{id}/files?path=` | lists a directory, for its owner | `GetWorkspace` |
 | `GET /workspaces/{id}/files/{*path}` | downloads one file, streamed, as `Content-Disposition: attachment`, its media type guessed from its name (`mime_guess`), never inline - 208's rule: an HTML file would run in the web UI's origin | the same |
 | `PUT /workspaces/{id}/files/{*path}` | uploads one file: the request body is the file, bounded by a `DefaultBodyLimit` from `max_file_bytes`; parent directories are made | the same |
 | `DELETE /workspaces/{id}/files/{*path}` | removes a file or an empty directory | the same |
-| `GET /sessions/{id}/workspace` | the attached one as the viewer sees it, or `204` | `GetSession`, `GetWorkspace` |
-| `PUT /sessions/{id}/workspace` `{workspace_id}`, `DELETE /sessions/{id}/workspace` | attaches, detaches | `UpdateSession`, `GetWorkspace` |
+| `GET`, `PUT`, `DELETE /sessions/{sid}/channels/{cid}/workspace/files…` | the same four, for a member of the channel where the session's workspace may be used there | `GetChannel`, membership, both flow questions |
+| `PUT /sessions/{sid}/workspace` `{workspace_id}`, `DELETE /sessions/{sid}/workspace` | attaches, detaches | `UpdateSession`; to attach `GetWorkspace`, `UpdateWorkspace` |
+| `PUT /sessions/{sid}/channels/{cid}/uses-workspace` `{uses}` | the switch | `UpdateChannel` |
 
 No multipart at Caelumora's API: one file per request is what the panel needs, and the body is the
 file. These are the first routes that serve bytes - `Body::from_stream` for a download, the
@@ -625,8 +643,10 @@ extension of `ToolProvider` for when a second case needs it, not made here.
 `run_command`:
 
 1. `turn.session()`; none - a turn without a channel, in tests - is a failed call.
-2. `session.workspace()`: none is a failed call that says so.
-3. `workspace.terminal()` - `GetWorkspace` and the two flow questions, before anything is sent.
+2. `session.channel(channel id)?.workspace()`: none is a failed call that says so - "no workspace
+   in this channel".
+3. `workspace.terminal()` - membership, the switch and the two flow questions, before anything is
+   sent.
 4. `terminal.shell()`: none is a failed call that says so.
 5. `shell.run(scope: channel id, command, wait)`.
 6. The output cut to `max_output_bytes` from the front; the result as C2 says.
@@ -756,7 +776,7 @@ channel is lowered.
 | `session.rs` | `SessionLoop::set_workspace`; `purge_session` detaches nothing - the workspace is not the session's |
 | `controller/session.rs` | applies `WorkspaceChanged` |
 | `scoped.rs` | the three loops take the workspaces of a `UserScope` along |
-| `view/mod.rs`, `view/session.rs`, new `view/workspace.rs` | `Views::workspaces`, `SessionView::workspace`, `WorkspaceView`; `Views` holds the manager |
+| `view/mod.rs`, `view/channel.rs`, new `view/workspace.rs` | `Views::workspaces`, `ChannelView::workspace`, `WorkspaceView`; `Views` holds the manager |
 | `event.rs` | the new events' topics |
 | `tool.rs` | `GuardedToolExecutor::tool_sets` async, with the channel; `admit` and `check` refuse what was not offered |
 | `tool_impl/default_tool_executor.rs`, `tool_impl/mcp_tool.rs` | `destination`; `Approval` moved out of `mcp_tool` (H9) |
@@ -769,31 +789,29 @@ Nothing is added to `ComponentContext`: a component reaches a terminal through t
 
 ### F. Configuration
 
-One section of `AppConfig`, like the others (`deny_unknown_fields`, checked in `AppConfig::check`;
-every provider checks its own fields):
+One section of `AppConfig`, which is YAML like the others (`deny_unknown_fields`, checked in
+`AppConfig::check`; every provider checks its own fields):
 
-```toml
-[workspaces]
-max_file_bytes = 52428800          # the largest file the API takes: 50 MiB
-
-[workspaces.storage.dev]           # a storage: its workspaces are made and reached by its provider
-provider = "local"
-root = "local/workspaces"
-shell = true                       # opt-in: commands run on Caelumora's host, as its user
-destination = { level = "internal" }   # what may be put here; none for local without a shell
-
-[workspaces.storage.sandbox]
-provider = "open_terminal_shared"
-endpoint = { url = "http://open-terminal:8000", auth = { type = "bearer", secret = "OPEN_TERMINAL_API_KEY" }, timeout_secs = 10 }
-mount = "/workspaces"              # where the instance has this storage
-destination = { level = "internal" }
-
-[workspaces.storage.isolated]
-provider = "open_terminal_docker"
-image = "ghcr.io/open-webui/open-terminal:0.14.0"   # pinned: the API is 0.x
-network = "caelumora"              # the compose network Caelumora reaches the containers in
-idle_stop_secs = 900
-destination = { level = "confidential" }
+```yaml
+workspaces:
+  max_file_bytes: 52428800       # the largest file the API takes: 50 MiB
+  storage:
+    dev:                         # a storage: its workspaces are made and reached by its provider
+      provider: local
+      root: local/workspaces
+      shell: true                # opt-in: commands run on Caelumora's host, as its user
+      destination: { level: internal }   # what may be put here; none for local without a shell
+    sandbox:
+      provider: open_terminal_shared
+      endpoint: { url: "http://open-terminal:8000", auth: { type: bearer, secret: OPEN_TERMINAL_API_KEY }, timeout_secs: 10 }
+      mount: /workspaces         # where the instance has this storage
+      destination: { level: internal }
+    isolated:
+      provider: open_terminal_docker
+      image: ghcr.io/open-webui/open-terminal:0.14.0   # pinned: the API is 0.x
+      network: caelumora         # the compose network Caelumora reaches the containers in
+      idle_stop_secs: 900
+      destination: { level: confidential }
 ```
 
 The checks: a `local` storage has a `root`; a `shared` one an `endpoint` and a `mount`; a
@@ -824,7 +842,7 @@ Caelumora's own API, not the socket.
   that the word means one thing.
 - `types/index.ts`, `api/index.ts`: `Workspace`, `WorkspaceFile`, `Storage` and the requests;
   `listWorkspaces`, `listStorages`, `createWorkspace`, `updateWorkspace`,
-  `setWorkspaceClassification`, `setWorkspaceContributors`, `deleteWorkspace`,
+  `setWorkspaceClassification`, `deleteWorkspace`,
   `restoreWorkspace`, `purgeWorkspace`, `listWorkspaceFiles`, `uploadWorkspaceFile` (a `fetch`
   with the file as its body), `workspaceFileUrl` (a plain link; the cookie goes with it),
   `deleteWorkspaceFile`, `sessionWorkspace`, `setSessionWorkspace`, `clearSessionWorkspace`.
@@ -832,7 +850,7 @@ Caelumora's own API, not the socket.
 - **Workspaces** as a thing of their own, reached from the sidebar as the agents are: a list with
   name, storage, classification and owner; create (name, storage from the configured ones - with
   whether it has a shell - description, the classification picked as a channel's is), rename,
-  describe, contributors, reclassify, delete, and the trash.
+  describe, reclassify, delete, and the trash.
 - **The session's workspace**: in the session's header, the attached one, a picker to attach one of
   the user's, and detaching, where `can_change`.
 - **The workspace panel**: a third `sideTab` of `ChatView` (`'channel' | 'notes' | 'workspace'`):
@@ -868,8 +886,8 @@ where it says so.
 5. **The shell of `local` and `terminal_tool`** (A's `Shell`, C1-C7): the opt-in host shell, the
    component with its shell tools and tests against it, `workspace_prompt_provider`,
    `ToolPresentation::Shell` with its UI handler, the seed personality, TOOLS-AND-COMMANDS.md,
-   COMPONENTS.md, CONFIGURATION.md (with the warning). The security suite: a call asks `CallTool`,
-   `GetWorkspace` and `Publish` both ways. With this, the whole chain runs in `cargo test` without a
+   COMPONENTS.md, CONFIGURATION.md (with the warning). The security suite: a call asks `CallTool`
+   and `Publish` both ways. With this, the whole chain runs in `cargo test` without a
    container.
 6. **`open_terminal_shared`** (A, C3's Open Terminal paragraph, C6's `open_terminal/`, F): the
    client, the wire, the handle with files and shell, the provider, the stand-in and its tests, the
@@ -930,10 +948,9 @@ container.
   start; the image is pinned.
 - **`env` is per command**; no secret of Caelumora's goes into it, and a key goes into a header,
   resolved or generated per instance.
-- **The agent's context.** Which actor the ownership policy judges for `GetWorkspace` in a turn -
-  the initiator who asked, or the agent that calls - the security suite settles in step 3. If it is
-  the agent, attaching makes the session's agents contributors of the workspace, as a session makes
-  them its contributors; then that is the rule, written down.
+- **The agent's context.** The ownership policy judges the initiator - in a turn, whoever asked
+  the agent. In a session no `GetWorkspace` is asked (decision 10): the channel decides, and the
+  agent is its member.
 - **Issue 20.** A command is an effect nothing stages: done when done, and a turn given up does not
   undo it; the transcript tells the agent what ran (issue 145). W4 is where a workspace gets what
   the turn has - a state to go back to.
@@ -992,3 +1009,13 @@ command may come later.
   when it is made, so the door of 180 judges `mcp_tool` alone. The file tools are step 9.
 - **2026-10-08** — Step 2 of the plan done: the workspace in the model - see issue
   [253](253-workspace.md).
+- **2026-10-08** — Before step 3, decided how a workspace is used in a session (*Decisions* 10 to
+  12), from a scenario of the maintainer: a session for a request, a channel with the person who
+  asked, channels with helpers behind, and only the latter on the files. So a workspace is used
+  through the channels of the session it is attached to - membership, a switch on the channel
+  (`uses_workspace`, on by default) and the flow rule both ways - and has no contributors: outside
+  a session only its owner works on it, and only its owner attaches it. B1 to B5, C3, E, F (YAML,
+  not TOML: the configuration is YAML), G and I amended.
+- **2026-10-08** — Step 3 of the plan done: the terminal traits, the `local` provider without its
+  shell, the `WorkspaceManager`, attaching, the channel's switch, the views and the security suite
+  - see issue [253](253-workspace.md).

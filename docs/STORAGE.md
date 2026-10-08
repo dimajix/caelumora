@@ -24,6 +24,16 @@ The `EntityStore` trait (in `caelumora-model`) stores the long-lived domain enti
     the storage its files lie in; the files are no part of it, and the store does not touch them.
     A session names the workspace attached to it (`Session::workspace`), at most one.
 
+The files of workspaces lie in the configured storages (`workspaces` in
+[CONFIGURATION.md](CONFIGURATION.md)), each served by one `TerminalProvider`
+(`caelumora_runtime::terminal`), which makes and removes the place of a workspace and hands out its
+`Terminal`, the one handle to its files. The `WorkspaceManager` is the one writer of workspace
+documents and the only code that holds the providers: a workspace is made with its place, and
+purged with it - the place first, so that a place that cannot be removed leaves the document for
+the next purge. What a caller writes as a path is made a `WorkspacePath` - relative, without `..` -
+before any provider sees it, and a `local` storage follows a symbolic link only where it stays
+inside the workspace.
+
 Preconfigured components are not among them. They are runtime configuration that personalities and
 templates refer to by `kind: "ref"`, and the `ComponentStore` keeps them: a `StoredComponent` - the
 `ComponentDescriptor` with the attributes of who may use and change it - by its id, with the same

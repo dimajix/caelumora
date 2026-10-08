@@ -645,12 +645,13 @@ mod tests {
     async fn user_actor() -> (UserActor, Arc<crate::channel::ChannelLoop>) {
         let store = Arc::new(MemoryStore::new());
         let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), Vec::new(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), Vec::new(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let session_id = SessionId::new();
         let channel_runtime = ChannelRuntime::outside_a_session(Arc::clone(&runtime), Arc::new(CommandExecutor::empty(Arc::clone(runtime.security_manager()))), session_id);
         let channel = caelumora_model::channel::Channel {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
+            uses_workspace: true,
             id: ChannelId::new(),
             session_id,
             name: Name::new("main").unwrap(),

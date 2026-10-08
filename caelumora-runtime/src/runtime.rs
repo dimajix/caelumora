@@ -38,6 +38,8 @@ pub struct RuntimeManager {
     approval_rules: Arc<[ApprovalRule]>,
     /// One owner of every running agent's `AgentState` (issue 62).
     agent_states: Arc<crate::agent_state::AgentStates>,
+    /// The one owner of workspaces and their places (issue 253).
+    workspaces: Arc<crate::workspace::WorkspaceManager>,
 }
 
 /// What a channel runs with: the process-wide services of the
@@ -284,7 +286,8 @@ impl RuntimeManager {
     /// default. `component_defaults` replace built-in defaults of facets of
     /// which an agent has one (`AppConfig::component_defaults`, issue 99),
     /// an argument for the same reason, and so are `approval_rules`, what
-    /// the system restricts of tool calls (`AppConfig::approvals`, issue 13). `component_registry` holds the
+    /// the system restricts of tool calls (`AppConfig::approvals`, issue 13), and so are `workspaces`, the
+    /// storages workspaces are made in (`AppConfig::workspaces`, issue 253). `component_registry` holds the
     /// component kinds agents and sessions are built from -
     /// `ComponentRegistry::built_in`, to which a test may add stand-ins,
     /// such as a model of its own (issue 130); it is checked here.
@@ -303,6 +306,7 @@ impl RuntimeManager {
         commands: ComponentConfig,
         component_defaults: ComponentConfig,
         approval_rules: Vec<ApprovalRule>,
+        workspaces: caelumora_model::config::WorkspacesConfig,
         mut component_registry: ComponentRegistry,
     ) -> ComponentResult<Self> {
         component_registry.set_defaults(&component_defaults)?;
@@ -310,6 +314,7 @@ impl RuntimeManager {
         let event_bus = Arc::new(EventBus::new(Arc::clone(&security_manager)));
         let controller_manager = Arc::new(ControllerManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus)));
         let agent_states = Arc::new(crate::agent_state::AgentStates::new(Arc::clone(&state_store), Arc::<EventBus>::clone(&event_bus)));
+        let workspaces = Arc::new(crate::workspace::WorkspaceManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus), Arc::clone(&security_manager), &workspaces));
 
         Ok(Self {
             security_manager,
@@ -322,6 +327,7 @@ impl RuntimeManager {
             commands,
             approval_rules: approval_rules.into(),
             agent_states,
+            workspaces,
         })
     }
 
@@ -376,6 +382,11 @@ impl RuntimeManager {
         &self.agent_states
     }
 
+    /// The one owner of workspaces and their places (issue 253).
+    pub fn workspace_manager(&self) -> &Arc<crate::workspace::WorkspaceManager> {
+        &self.workspaces
+    }
+
     pub fn new_recorder(&self) -> Result<Box<dyn Recorder>> {
         Ok(Box::new(crate::recorder::BlackholeRecorder::new()))
     }
@@ -393,7 +404,7 @@ mod tests {
     fn channel_runtime() -> ChannelRuntime {
         let store = Arc::new(MemoryStore::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-        let manager = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), Vec::new(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let manager = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), Vec::new(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let commands = Arc::new(CommandExecutor::empty(Arc::clone(manager.security_manager())));
         ChannelRuntime::outside_a_session(manager, commands, SessionId::new())
     }
@@ -417,7 +428,7 @@ mod tests {
             let store = Arc::new(MemoryStore::new());
             let secrets = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
             let defaults: ComponentConfig = serde_json::from_value(defaults).unwrap();
-            RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(DummySecurityManager::new()), default_commands(), defaults, Vec::new(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store)))
+            RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(DummySecurityManager::new()), default_commands(), defaults, Vec::new(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store)))
         };
         // As in `examples/config.yaml`.
         assert!(manager(serde_json::json!([{"id": "context", "kind": "turn_context_provider"}])).is_ok());

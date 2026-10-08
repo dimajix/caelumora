@@ -249,6 +249,26 @@ change at a login, past the controllers. It is asked
 *   and for a user reading a channel (`AccessQuestions::may_see_channel`): a channel they are not
     cleared for is not found, and not listed - even for its owner.
 
+## Workspaces
+
+A workspace (issue [253](../issues/253-workspace.md)) has one classification for all its files,
+which carry none of their own: one container, as issue
+[169](../issues/169-changing-classified-content.md) proposes. Who works on it is cleared as a
+reader of a channel so classified would be:
+
+*   Its owner, outside a session: cleared for it (`JoinChannel` with the workspace in the channel's
+    place) when they make it, raise it and use it.
+*   A member of a channel classified L, in a session it is attached to, where the workspace,
+    classified W, and the channel flow both ways - W into L, since what is read there reaches the
+    channel; L into W, since what was seen in the channel may be written there. Asked as an actor
+    putting something into a place is (`Publish` of W into L and of L into W, in the member's name),
+    at every use. With compartments and a read relation that is not symmetric this is stricter than
+    equality. A member is cleared for L, so nothing else is asked.
+
+Reclassifying a workspace is its owner's (`UpdateWorkspace`, `Classify`): lowering releases every
+file in it; which channels may use it follows at their next use. Nothing in it is fitted - there is
+nothing inside to fit.
+
 ## Reading another channel
 
 Reading from another channel is decided per entry: per message of its history, per note, per memory

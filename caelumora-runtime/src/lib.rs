@@ -34,5 +34,7 @@ pub mod moderator_impl;
 pub mod seed;
 pub mod view;
 pub mod work;
+pub mod terminal;
+pub mod workspace;
 mod template;
 mod scoped;

@@ -257,6 +257,39 @@ pub struct AppConfig {
     /// What the system restricts of tool calls everywhere (issue 13).
     /// Checked when the configuration is read. None unless configured.
     pub approvals: ApprovalsConfig,
+    /// Where the files of workspaces lie (issue 253). No storage unless
+    /// configured: then no workspace can be made.
+    pub workspaces: WorkspacesConfig,
+}
+
+/// The storages workspaces are made in (issue 253), each by the name a
+/// workspace refers to it with and served by its provider, and how large a
+/// file a person may put into one.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(default, deny_unknown_fields)]
+pub struct WorkspacesConfig {
+    pub max_file_bytes: u64,
+    pub storage: BTreeMap<String, StorageConfig>,
+}
+
+/// The largest file a person may put into a workspace unless configured
+/// otherwise: 50 MiB.
+pub const DEFAULT_MAX_FILE_BYTES: u64 = 50 * 1024 * 1024;
+
+impl Default for WorkspacesConfig {
+    fn default() -> Self {
+        Self { max_file_bytes: DEFAULT_MAX_FILE_BYTES, storage: BTreeMap::new() }
+    }
+}
+
+/// A storage of workspaces, by the provider that makes and reaches the
+/// place of each (issue 251, part A).
+#[derive(Debug, Deserialize, Clone, PartialEq)]
+#[serde(tag = "provider", rename_all = "snake_case", deny_unknown_fields)]
+pub enum StorageConfig {
+    /// A directory per workspace under `root`, on Caelumora's host, read
+    /// and written by Caelumora itself.
+    Local { root: PathBuf },
 }
 
 /// The system's rules on tool calls (issue 13): each asks or denies - the
@@ -284,6 +317,7 @@ impl Default for AppConfig {
             seed: Vec::new(),
             server: ServerConfig::default(),
             approvals: ApprovalsConfig::default(),
+            workspaces: WorkspacesConfig::default(),
         }
     }
 }
@@ -450,6 +484,19 @@ persistence:
             assert_eq!(config.persistence.state_store, PersistenceBackend::Memory);
             assert_eq!(config.secrets.providers, SecretsConfig::default().providers);
             assert!(config.users.providers.is_empty(), "no user provider unless configured");
+        }
+    }
+
+    #[test]
+    fn workspaces_are_made_in_the_storages_configured() {
+        let config = AppConfig::from_yaml("workspaces:\n  max_file_bytes: 1024\n  storage:\n    main:\n      provider: local\n      root: local/workspaces\n").expect("a local storage");
+        assert_eq!(config.workspaces.max_file_bytes, 1024);
+        assert_eq!(config.workspaces.storage.get("main"), Some(&StorageConfig::Local { root: PathBuf::from("local/workspaces") }));
+        let none = AppConfig::from_yaml("{}\n").expect("nothing configured");
+        assert!(none.workspaces.storage.is_empty(), "no storage unless configured");
+        assert_eq!(none.workspaces.max_file_bytes, DEFAULT_MAX_FILE_BYTES);
+        for yaml in ["workspaces:\n  storage:\n    main:\n      provider: local\n      root: x\n      rot: y\n", "workspaces:\n  storage:\n    main:\n      provider: nfs\n"] {
+            assert!(AppConfig::from_yaml(yaml).is_err(), "{yaml:?}");
         }
     }
 
