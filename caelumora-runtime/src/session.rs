@@ -1059,7 +1059,6 @@ mod tests {
     use super::*;
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::confidentiality::Classification;
-    use caelumora_model::command::default_commands;
     use caelumora_model::channel::Channel;
     use caelumora_model::secret::SecretManager;
     use caelumora_model::security::{DummySecurityManager, SecurityAttributes};
@@ -1081,7 +1080,7 @@ mod tests {
     fn test_runtime() -> Arc<RuntimeManager> {
         let store = Arc::new(MemoryStore::new());
         let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-        Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), Vec::new(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap())
+        Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(DummySecurityManager::new()), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap())
     }
 
     fn make_session(name: &str) -> Session {
@@ -1662,7 +1661,7 @@ mod tests {
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
         let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), Vec::new(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let manager = SessionManager::new(runtime);
 
         let user = |name: &str| User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: Vec::new(), deleted: None };
@@ -1694,7 +1693,7 @@ mod tests {
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
         let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), Vec::new(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let manager = SessionManager::new(runtime);
         let user = |name: &str| User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: Vec::new(), deleted: None };
         let (alice, bob) = (user("alice"), user("bob"));
@@ -1723,7 +1722,7 @@ mod tests {
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
         let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), Vec::new(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let user = |name: &str| User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: Vec::new(), deleted: None };
         let (alice, bob) = (user("alice"), user("bob"));
@@ -1760,7 +1759,7 @@ mod tests {
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_rules(ConfidentialityRules::new(compartments)));
         let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), Vec::new(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let manager = SessionManager::new(Arc::clone(&runtime));
 
         let user = |name: &str| User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: Vec::new(), deleted: None };
@@ -1813,7 +1812,7 @@ mod tests {
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
         let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), Vec::new(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let manager = SessionManager::new(Arc::clone(&runtime));
         let user = |name: &str| User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: Vec::new(), deleted: None };
         let (alice, carol) = (user("alice"), user("carol"));
@@ -1857,7 +1856,7 @@ mod tests {
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_rules(ConfidentialityRules::new(compartments)));
         let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), Vec::new(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let alice = User { id: UserId::new(), username: Name::new("alice").unwrap(), email: String::new(), roles: Vec::new(), deleted: None };
         let alice_id = ActorId::User(alice.id);
@@ -1908,7 +1907,7 @@ mod tests {
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_rules(ConfidentialityRules::new(compartments)));
         let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), Vec::new(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let manager = SessionManager::new(Arc::clone(&runtime));
         let user = |name: &str| User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: Vec::new(), deleted: None };
         let (alice, bob) = (user("alice"), user("bob"));
@@ -1970,7 +1969,7 @@ mod tests {
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_rules(ConfidentialityRules::new(compartments).with_roles(roles)));
         let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), Vec::new(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let user = |name: &str, roles: &[&str]| User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: roles.iter().map(|r| r.to_string()).collect(), deleted: None };
         let (alice, bob) = (user("alice", &["staff", "hr"]), user("bob", &["staff"]));
@@ -2022,7 +2021,7 @@ mod tests {
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_rules(ConfidentialityRules::new(compartments).with_roles(roles)));
         let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), Vec::new(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let system = SecurityContext::system();
         let user = |name: &str, roles: &[&str]| User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: roles.iter().map(|r| r.to_string()).collect(), deleted: None };
@@ -2129,7 +2128,7 @@ mod tests {
         });
         let policy = Arc::new(DummySecurityManager::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), Vec::new(), Default::default(), registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig::default(), registry).unwrap());
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let system = SecurityContext::system();
 
@@ -2208,7 +2207,7 @@ mod tests {
         );
         let policy = Arc::new(DummySecurityManager::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), Vec::new(), Default::default(), registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig::default(), registry).unwrap());
         let manager = SessionManager::new(Arc::clone(&runtime));
         let system = SecurityContext::system();
 
@@ -2273,7 +2272,7 @@ mod tests {
         let entities = Arc::new(MemoryStore::new());
         let states = Arc::new(MemoryStore::new());
         let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&states), Arc::<MemoryStore>::clone(&entities), secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), Vec::new(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&entities))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&states), Arc::<MemoryStore>::clone(&entities), secret_manager, Arc::new(DummySecurityManager::new()), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&entities))).unwrap());
         let manager = SessionManager::new(runtime);
         let ctx = SecurityContext::default();
         let session = make_session("two-stores");
@@ -2423,7 +2422,7 @@ mod tests {
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
         let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), Vec::new(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let manager = SessionManager::new(runtime);
         let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
         let as_user = |actor| SecurityContext::new(actor, Default::default(), Default::default());
@@ -2584,7 +2583,7 @@ mod tests {
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
         let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), Vec::new(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let manager = SessionManager::new(runtime);
         let user = |name: &str| User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: Vec::new(), deleted: None };
         let (alice, bob, carol) = (user("alice"), user("bob"), user("carol"));
@@ -2617,7 +2616,7 @@ mod tests {
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
         let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), Vec::new(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let manager = SessionManager::new(runtime);
 
         let as_user = |id| SecurityContext::new(ActorId::User(id), Default::default(), Default::default());

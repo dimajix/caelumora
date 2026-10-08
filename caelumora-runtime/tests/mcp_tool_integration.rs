@@ -1,7 +1,6 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use caelumora_model::command::default_commands;
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy, StoredComponent};
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{DummySecurityManager, SecurityContext};
@@ -69,7 +68,7 @@ async fn start_test_server() -> (SocketAddr, tokio::task::JoinHandle<()>) {
 async fn build_container(params: serde_json::Value) -> ComponentContainer {
     let store = Arc::new(MemoryStore::new());
     let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-    let runtime_manager = RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), Vec::new(), Default::default(), caelumora_runtime::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap();
+    let runtime_manager = RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(DummySecurityManager::new()), &caelumora_model::config::AppConfig::default(), caelumora_runtime::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap();
     let registry = runtime_manager.component_registry();
     let context = ComponentContext::new(SecurityContext::default(), Arc::clone(runtime_manager.security_manager()), Arc::clone(runtime_manager.secret_manager()));
 
@@ -173,7 +172,7 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
         .await
         .unwrap();
 
-    let runtime_manager = RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), Vec::new(), Default::default(), caelumora_runtime::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap();
+    let runtime_manager = RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(DummySecurityManager::new()), &caelumora_model::config::AppConfig::default(), caelumora_runtime::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap();
     let registry = runtime_manager.component_registry();
     let context = ComponentContext::new(SecurityContext::default(), Arc::clone(runtime_manager.security_manager()), Arc::clone(runtime_manager.secret_manager()));
 

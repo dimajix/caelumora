@@ -395,7 +395,6 @@ pub(crate) mod testing {
     use caelumora_model::actor::{ActorId, EventContext};
     use caelumora_model::agent::{Agent, AgentChannelState, AgentId, Personality, PersonalityId};
     use caelumora_model::channel::{Channel, Participant};
-    use caelumora_model::command::default_commands;
     use caelumora_model::config::{StorageConfig, WorkspacesConfig};
     use caelumora_model::confidentiality::{Classification, Confidentiality, Visibility};
     use caelumora_model::scope::Scope;
@@ -445,7 +444,7 @@ pub(crate) mod testing {
         let internal = Classification::general(Confidentiality::Internal);
         let storage = StorageConfig::Local { root: files.path().to_path_buf(), shell: true, destination: Some(internal.clone()) };
         let workspaces = WorkspacesConfig { storage: [("dev".to_string(), storage)].into(), max_file_bytes: MAX_FILE_BYTES };
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), Vec::new(), workspaces, crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig { workspaces, ..Default::default() }, crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let system = SecurityContext::system();
 
         let owner = UserId::new();

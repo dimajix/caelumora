@@ -20,7 +20,6 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId, PersonalityKind};
 use caelumora_model::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
 use caelumora_model::channel::{moderation_components, Channel, HistoryAccess, Participant};
-use caelumora_model::command::default_commands;
 use caelumora_model::config::{StorageConfig, WorkspacesConfig};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_model::external_agent::{ConversationId, TaskId};
@@ -146,7 +145,7 @@ impl World {
         let files = tempfile::tempdir().unwrap();
         let shell = StorageConfig::Local { root: files.path().join("shell"), shell: true, destination: Some(Classification::general(Confidentiality::Internal)) };
         let workspaces = WorkspacesConfig { storage: [("main".to_string(), StorageConfig::Local { root: files.path().to_path_buf(), shell: false, destination: None }), ("shell".to_string(), shell)].into(), ..Default::default() };
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), Vec::new(), workspaces, registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig { workspaces, ..Default::default() }, registry).unwrap());
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let mut world = Self { policy: recorder, store, runtime, manager, alice: UserId::new(), bob: UserId::new(), carol: UserId::new(), files };
         world.alice = world.user("alice").await;

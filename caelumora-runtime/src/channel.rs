@@ -1421,7 +1421,6 @@ mod tests {
     use crate::command::wakeup_command::WakeupCommandProvider;
     use caelumora_model::component::ComponentFailPolicy;
     use crate::runtime::RuntimeManager;
-    use caelumora_model::command::default_commands;
     use caelumora_model::secret::SecretManager;
     use caelumora_model::security::{DummySecurityManager, SecurityAttributes, SecurityManager};
     use caelumora_model::store::memory::MemoryStore;
@@ -1481,7 +1480,7 @@ mod tests {
     /// A channel of `participants` with `components`, built by `registry`.
     async fn channel_built(store: Arc<MemoryStore>, participants: Vec<Participant>, security: Arc<dyn SecurityManager>, registry: crate::component::ComponentRegistry, components: caelumora_model::component::ComponentConfig) -> Arc<ChannelLoop> {
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&security)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, security, default_commands(), Default::default(), Vec::new(), Default::default(), registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, security, &caelumora_model::config::AppConfig::default(), registry).unwrap());
         let channel = Channel {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
@@ -2490,7 +2489,7 @@ mod tests {
                 fail_policy: Default::default(),
             }],
         };
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store, secrets, security, default_commands(), defaults, Vec::new(), Default::default(), registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store, secrets, security, &caelumora_model::config::AppConfig { component_defaults: defaults, ..Default::default() }, registry).unwrap());
         let channel = Channel {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
@@ -3723,7 +3722,7 @@ mod tests {
         );
         register_no_secrets(&mut registry);
         register_heard(&mut registry);
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store, secrets, security, default_commands(), Default::default(), Vec::new(), Default::default(), registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store, secrets, security, &caelumora_model::config::AppConfig::default(), registry).unwrap());
         let channel = Channel {
             summary: None, briefing: None,
             approval_rules: Vec::new(),

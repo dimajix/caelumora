@@ -439,7 +439,6 @@ mod tests {
     use caelumora_model::agent::{Agent, Personality, PersonalityId};
     use caelumora_model::approval::ApproverId;
     use caelumora_model::channel::{Channel, ChannelId, Participant};
-    use caelumora_model::command::default_commands;
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::secret::SecretManager;
     use caelumora_model::security::{OwnershipSecurityManager, SecurityManager};
@@ -497,7 +496,7 @@ mod tests {
         let security: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&security)));
         let registry = crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, security, default_commands(), Default::default(), Vec::new(), Default::default(), registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, security, &caelumora_model::config::AppConfig::default(), registry).unwrap());
         let approver = Approver { id: ApproverId::new(), strategy };
         let mut participants: Vec<Participant> = ids.iter().map(|id| Participant::User(*id)).collect();
         participants.push(Participant::Approver(approver.clone()));

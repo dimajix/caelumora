@@ -216,7 +216,6 @@ mod tests {
     use caelumora_model::agent::{Agent, AgentChannelState, Personality, PersonalityId};
     use caelumora_model::approval::{ApprovalStrategy, Approver, ApproverId};
     use caelumora_model::channel::{Channel, Participant};
-    use caelumora_model::command::default_commands;
     use caelumora_model::confidentiality::Visibility;
     use caelumora_model::scope::Scope;
     use caelumora_model::secret::SecretManager;
@@ -292,7 +291,7 @@ mod tests {
         let store = Arc::new(MemoryStore::new());
         let policy = Arc::new(DummySecurityManager::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), Vec::new(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let system = SecurityContext::system();
 
         let (kaya, bob) = (User { id: UserId::new(), username: Name::new("Kaya").unwrap(), email: String::new(), roles: Vec::new(), deleted: None }, User { id: UserId::new(), username: Name::new("Bob").unwrap(), email: String::new(), roles: Vec::new(), deleted: None });

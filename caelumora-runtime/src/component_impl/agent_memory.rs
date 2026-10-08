@@ -210,7 +210,6 @@ mod tests {
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::channel::Participant;
-    use caelumora_model::command::default_commands;
     use caelumora_model::confidentiality::{Classification, Confidentiality};
     use caelumora_model::privacy::{PrivacyConfig, SessionPrivacy};
     use caelumora_model::secret::SecretManager;
@@ -259,7 +258,7 @@ mod tests {
         async fn under(policy: Arc<dyn SecurityManager>) -> Self {
             let store = Arc::new(MemoryStore::new());
             let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-            let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), Vec::new(), Default::default(), crate::component::ComponentRegistry::built_in(store)).unwrap());
+            let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(store)).unwrap());
             Self { runtime, loops: HashMap::new() }
         }
 

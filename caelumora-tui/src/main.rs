@@ -437,10 +437,7 @@ async fn main() -> anyhow::Result<()> {
         Arc::clone(&entity_store),
         secret_manager,
         Arc::clone(&security_manager),
-        config.commands.clone(),
-        config.component_defaults.clone(),
-        config.approvals.rules.clone(),
-        config.workspaces.clone(),
+        &config,
         ComponentRegistry::built_in(component_store),
     )?);
     caelumora_runtime::seed::load(entity_store.as_ref(), &config.seed).await?;

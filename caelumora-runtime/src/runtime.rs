@@ -17,6 +17,7 @@ use crate::agent::state::AgentStateHandle;
 use crate::event::{EventSubscription, SubscriptionTopic};
 use crate::view::ViewsFactory;
 use caelumora_model::component::ComponentConfig;
+use caelumora_model::config::AppConfig;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{SecurityContext, SecurityManager};
 use caelumora_model::session::Session;
@@ -280,15 +281,15 @@ impl RuntimeManager {
     /// The runtime everything in a process shares. `security_manager` is the
     /// one the whole process was configured with: it decides tool calls and
     /// what may be done to a channel, so it must be the same instance the
-    /// stores were built with, not a second one made up here. `commands` are
-    /// the global user commands (`AppConfig::commands`) - likewise an
-    /// argument, so that a binary cannot drop the configured ones for a
-    /// default. `component_defaults` replace built-in defaults of facets of
-    /// which an agent has one (`AppConfig::component_defaults`, issue 99),
-    /// an argument for the same reason, and so are `approval_rules`, what
-    /// the system restricts of tool calls (`AppConfig::approvals`, issue 13), and so are `workspaces`, the
-    /// storages workspaces are made in (`AppConfig::workspaces`, issue 253). `component_registry` holds the
-    /// component kinds agents and sessions are built from -
+    /// stores were built with, not a second one made up here. Of `config`,
+    /// the runtime takes what it runs by itself, so that a binary cannot
+    /// drop a configured part for a default: the global user commands
+    /// (`commands`), the components that replace built-in defaults of facets
+    /// of which an agent has one (`component_defaults`, issue 99), what the
+    /// system restricts of tool calls (`approvals`, issue 13) and the
+    /// storages workspaces are made in (`workspaces`, issue 253).
+    /// `component_registry` holds the component kinds agents and sessions
+    /// are built from -
     /// `ComponentRegistry::built_in`, to which a test may add stand-ins,
     /// such as a model of its own (issue 130); it is checked here.
     ///
@@ -303,18 +304,15 @@ impl RuntimeManager {
         entity_store: Arc<dyn EntityStore>,
         secret_manager: Arc<SecretManager>,
         security_manager: Arc<dyn SecurityManager>,
-        commands: ComponentConfig,
-        component_defaults: ComponentConfig,
-        approval_rules: Vec<ApprovalRule>,
-        workspaces: caelumora_model::config::WorkspacesConfig,
+        config: &AppConfig,
         mut component_registry: ComponentRegistry,
     ) -> ComponentResult<Self> {
-        component_registry.set_defaults(&component_defaults)?;
+        component_registry.set_defaults(&config.component_defaults)?;
 
         let event_bus = Arc::new(EventBus::new(Arc::clone(&security_manager)));
         let controller_manager = Arc::new(ControllerManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus)));
         let agent_states = Arc::new(crate::agent::state::AgentStates::new(Arc::clone(&state_store), Arc::<EventBus>::clone(&event_bus)));
-        let workspaces = Arc::new(crate::workspace::WorkspaceManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus), Arc::clone(&security_manager), &secret_manager, &workspaces)?);
+        let workspaces = Arc::new(crate::workspace::WorkspaceManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus), Arc::clone(&security_manager), &secret_manager, &config.workspaces)?);
 
         Ok(Self {
             security_manager,
@@ -324,8 +322,8 @@ impl RuntimeManager {
             component_registry: Arc::new(component_registry),
             event_bus,
             controller_manager,
-            commands,
-            approval_rules: approval_rules.into(),
+            commands: config.commands.clone(),
+            approval_rules: config.approvals.rules.clone().into(),
             agent_states,
             workspaces,
         })
@@ -396,7 +394,6 @@ impl RuntimeManager {
 mod tests {
     use super::*;
     use caelumora_model::agent::AgentId;
-    use caelumora_model::command::default_commands;
     use caelumora_model::security::DummySecurityManager;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::user::UserId;
@@ -404,7 +401,7 @@ mod tests {
     fn channel_runtime() -> ChannelRuntime {
         let store = Arc::new(MemoryStore::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-        let manager = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), Vec::new(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let manager = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(DummySecurityManager::new()), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let commands = Arc::new(CommandExecutor::empty(Arc::clone(manager.security_manager())));
         ChannelRuntime::outside_a_session(manager, commands, SessionId::new())
     }
@@ -428,7 +425,7 @@ mod tests {
             let store = Arc::new(MemoryStore::new());
             let secrets = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
             let defaults: ComponentConfig = serde_json::from_value(defaults).unwrap();
-            RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(DummySecurityManager::new()), default_commands(), defaults, Vec::new(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store)))
+            RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(DummySecurityManager::new()), &caelumora_model::config::AppConfig { component_defaults: defaults, ..Default::default() }, crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store)))
         };
         // As in `examples/config.yaml`.
         assert!(manager(serde_json::json!([{"id": "context", "kind": "turn_context_provider"}])).is_ok());
