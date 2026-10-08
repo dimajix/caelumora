@@ -13,6 +13,15 @@ tests. Rules that belong to one subject live with it - where permission checks g
     it is not obvious from the code.
 *   **Module docs:** use `//!` at the top of new modules to describe their purpose.
 *   **Consistency:** mirror the comment frequency and style of the module you are editing.
+*   **Comments wrap at 100 characters**, as the Markdown documents do (`AGENTS.md`). Older
+    comments are wrapped narrower; they are rewrapped when they are changed anyway, not on their
+    own.
+*   **No line of prose starts with a dash.** In a doc comment, a line that begins with `- ` is a
+    list item to rustdoc, and the sentence it continues breaks apart (clippy:
+    `doc_lazy_continuation`). Wrap so that a dash ends the line before it instead.
+*   **No clippy warnings.** `cargo clippy --workspace --all-targets` stays silent. Where a lint is
+    wrong for a case, say why with `#[expect(clippy::…, reason = "…")]` on the item - `expect`
+    rather than `allow`, so that it is noticed once the lint no longer fires.
 
 ## Imports
 

@@ -220,10 +220,10 @@ mod tests {
         let now = Utc::now();
         profile.add_approval_rule(shell(RuleDecision::Deny, Some(now))).unwrap();
         profile.prune_approval_rules(now);
-        assert_eq!(profile.approval_rules(), [allow.clone()], "what expired is dropped");
+        assert_eq!(profile.approval_rules(), std::slice::from_ref(&allow), "what expired is dropped");
 
         let stored: UserProfile = serde_json::from_value(serde_json::to_value(&profile).unwrap()).unwrap();
-        assert_eq!(stored.approval_rules(), [allow.clone()], "kept with the profile");
+        assert_eq!(stored.approval_rules(), std::slice::from_ref(&allow), "kept with the profile");
         assert!(profile.remove_approval_rule(allow.id));
         assert!(!profile.remove_approval_rule(allow.id), "once");
         for _ in 0..MAX_PERSONAL_RULES {

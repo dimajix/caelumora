@@ -584,7 +584,7 @@ impl<T: SecurityManager + ?Sized> Enforcement for T {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct DummySecurityManager {
 }
 

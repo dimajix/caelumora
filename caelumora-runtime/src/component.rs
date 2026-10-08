@@ -659,8 +659,8 @@ impl ComponentContainer {
     }
 
     /// Builds the components of `config` as `from_config` does, with the
-    /// components of `defaults` as the defaults of the singles they provide
-    /// - in place of the registry's, for this container alone: for a kind of
+    /// components of `defaults` as the defaults of the singles they provide,
+    /// in place of the registry's, for this container alone: for a kind of
     /// owner whose singles want another default, such as an external agent's
     /// `ContextProvider` (issue 214).
     ///

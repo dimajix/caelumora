@@ -538,7 +538,7 @@ mod tests {
         assert!(!transcript.reclassify(id(9), public.clone()), "never given");
 
         let internal = make_message(id(1)).classification;
-        assert_eq!(classifications(transcript.messages()), [public.clone()], "as it stands");
+        assert_eq!(classifications(transcript.messages()), std::slice::from_ref(&public), "as it stands");
         let then: Vec<Message> = as_they_stand(transcript.prefix(&before).unwrap()).filter_map(|(_, m)| m).collect();
         assert_eq!(classifications(then), [internal.clone(), internal], "a digest taken before names what was given then");
 

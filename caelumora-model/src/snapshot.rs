@@ -80,8 +80,8 @@ pub struct SessionSnapshot {
     /// The channels the viewer may read, in the order of the session -
     /// with `Detail::CHANNELS`.
     pub channels: Vec<ChannelSnapshot>,
-    /// The workspace attached to it (issue 253), if the viewer may read it
-    /// - its owner, who attached it. Who uses it in a channel learns of it
+    /// The workspace attached to it (issue 253), if the viewer may read it:
+    /// its owner, who attached it. Who uses it in a channel learns of it
     /// there (`ChannelView::workspace`).
     pub workspace: Option<WorkspaceSnapshot>,
 }
@@ -183,8 +183,8 @@ pub struct MemberSnapshot {
     /// channel - only ever for agents taking part; `None` in a channel that
     /// does not run. Kept up by `ActorEvent::StateChanged`.
     pub state: Option<ActorState>,
-    /// What an agent member's model calls in the channel used (issue 209)
-    /// - with `Detail::USAGE`; `None` also for a member whose calls report
+    /// What an agent member's model calls in the channel used (issue 209),
+    /// with `Detail::USAGE`; `None` also for a member whose calls report
     /// no tokens (an external agent, a user), before its first call, and if
     /// the agent's state could not be read.
     pub usage: Option<TokenUsage>,

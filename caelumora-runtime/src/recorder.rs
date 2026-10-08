@@ -8,7 +8,7 @@ pub trait Recorder: Send + Sync + Debug {
     async fn record_receive(&mut self, event: &Envelope) -> ();
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct BlackholeRecorder {
 }
 

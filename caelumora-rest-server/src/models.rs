@@ -911,6 +911,7 @@ impl KnowledgeRefResponse {
 /// label of the message (issue 170).
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[expect(clippy::large_enum_variant, reason = "a message is the usual element, and boxing it would cost an allocation per element")]
 pub enum SeenItemResponse {
     /// A prompt part - the system prompt, notes, ... - the role it was
     /// given as, and how it was classified, `null` if that is not known.

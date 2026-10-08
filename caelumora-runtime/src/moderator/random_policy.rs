@@ -23,6 +23,12 @@ impl RandomPolicy {
     }
 }
 
+impl Default for RandomPolicy {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl ResponderPolicy for RandomPolicy {
     async fn choose(&self, _sender: ActorId, candidates: Vec<ActorId>) -> Vec<ActorId> {

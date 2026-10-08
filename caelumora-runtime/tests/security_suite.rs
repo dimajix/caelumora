@@ -829,8 +829,8 @@ async fn asked_for(world: &World, line: &str) {
     }).await.expect("asked");
 }
 
-/// alice's agent `helper`, which calls `sleep` - a call that needs approval
-/// - once it is asked, in a session alice shares with bob and he opened;
+/// alice's agent `helper`, which calls `sleep` (a call that needs approval)
+/// once it is asked, in a session alice shares with bob and he opened;
 /// with the session's main channel.
 async fn with_a_call_to_approve() -> (World, Arc<SessionLoop>, Arc<caelumora_runtime::channel::ChannelLoop>, AgentId) {
     use caelumora_model::message::{Message, MessageRole};

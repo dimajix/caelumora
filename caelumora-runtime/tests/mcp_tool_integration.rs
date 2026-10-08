@@ -11,7 +11,6 @@ use caelumora_runtime::component::{ComponentContainer, ComponentContext};
 use caelumora_runtime::tool::mcp_tool;
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::tool::ToolProvider;
-use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, ServerConfig};
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
@@ -26,19 +25,13 @@ struct EchoArgs {
     message: String,
 }
 
+/// A tool server with two tools; `#[tool_handler]` routes to them through
+/// `Self::tool_router()`.
 #[derive(Clone)]
-struct EchoServer {
-    tool_router: ToolRouter<Self>,
-}
+struct EchoServer;
 
 #[tool_router]
 impl EchoServer {
-    fn new() -> Self {
-        Self {
-            tool_router: Self::tool_router(),
-        }
-    }
-
     #[tool(description = "Echoes the provided message back", annotations(read_only_hint = true))]
     async fn echo(&self, Parameters(EchoArgs { message }): Parameters<EchoArgs>) -> Result<CallToolResult, McpError> {
         Ok(CallToolResult::success(vec![ContentBlock::text(message)]))
@@ -59,7 +52,7 @@ impl ServerHandler for EchoServer {
 
 async fn start_test_server() -> (SocketAddr, tokio::task::JoinHandle<()>) {
     let service = StreamableHttpService::new(
-        || Ok(EchoServer::new()),
+        || Ok(EchoServer),
         Arc::new(LocalSessionManager::default()),
         StreamableHttpServerConfig::default(),
     );

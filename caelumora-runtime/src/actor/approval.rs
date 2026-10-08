@@ -277,7 +277,7 @@ impl ApproverActor {
             ApprovalStrategy::Majority => {
                 if approved_count > user_count / 2 {
                     Some(ApprovalStatus::Approved)
-                } else if denied_count >= (user_count + 1) / 2 {
+                } else if denied_count >= user_count.div_ceil(2) {
                     Some(ApprovalStatus::Denied)
                 } else {
                     None

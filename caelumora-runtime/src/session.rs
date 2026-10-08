@@ -605,6 +605,7 @@ pub struct SessionManager {
 
 /// A session as [`SessionManager::find`] found it for a context that may
 /// read it: running or not, each asked about alike.
+#[expect(clippy::large_enum_variant, reason = "a value returned once and taken apart at once")]
 pub(crate) enum Found {
     /// It runs: its loop.
     Running(Arc<SessionLoop>),
@@ -1322,7 +1323,7 @@ mod tests {
         session.participants = record_users(manager, &[&owner, &other]).await;
         session.security_attributes = SecurityAttributes { owner_id, contributors: Vec::new() };
         let ctx = SecurityContext::new(owner_id, session.id, Default::default());
-        let session_loop = create(&manager, &ctx, session).await.expect("the session starts");
+        let session_loop = create(manager, &ctx, session).await.expect("the session starts");
         (session_loop, ctx, other_id)
     }
 
@@ -1734,7 +1735,7 @@ mod tests {
         let mut events = runtime.event_bus().subscribe_all();
 
         let refused = session.update_privacy(&as_user(bob.id), PrivacyConfig::SharedAudience).await.expect_err("a participant may not");
-        assert!(matches!(refused.downcast_ref::<StoreError>(), Some(StoreError::PermissionDenied { .. })), "{refused}");
+        assert!(matches!(refused.downcast_ref::<StoreError>(), Some(StoreError::PermissionDenied)), "{refused}");
         assert_eq!(session.privacy().policy, PrivacyConfig::Private, "unchanged");
 
         session.update_privacy(&as_user(alice.id), PrivacyConfig::SharedAudience).await.expect("the owner may");

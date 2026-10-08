@@ -243,11 +243,11 @@ mod tests {
 
         assert!(matches!(controller.add_approval_rule(&as_user(UserId::new()), rule.clone()).await, Err(StoreError::PermissionDenied)), "not by someone else");
         controller.add_approval_rule(&hers, rule.clone()).await.expect("hers");
-        assert_eq!(controller.profile().approval_rules(), [rule.clone()], "live");
-        assert_eq!(store.get_user_profile(&hers, user.id).await.unwrap().approval_rules(), [rule.clone()], "stored");
+        assert_eq!(controller.profile().approval_rules(), std::slice::from_ref(&rule), "live");
+        assert_eq!(store.get_user_profile(&hers, user.id).await.unwrap().approval_rules(), std::slice::from_ref(&rule), "stored");
         assert_eq!(controller.profile().introduction.as_ref().map(Introduction::as_str), Some("I run the budget."), "the rest stays");
         controller.update_profile(&hers, None, None).await.unwrap();
-        assert_eq!(controller.profile().approval_rules(), [rule.clone()], "and stays through a change of the rest");
+        assert_eq!(controller.profile().approval_rules(), std::slice::from_ref(&rule), "and stays through a change of the rest");
 
         let asking = ApprovalRule { decision: RuleDecision::Ask, ..rule.clone() };
         assert!(matches!(controller.add_approval_rule(&hers, asking).await, Err(StoreError::Validation(_))), "a person allows or denies");

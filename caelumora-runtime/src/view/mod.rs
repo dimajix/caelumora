@@ -1193,7 +1193,7 @@ use caelumora_model::turn::TurnState;
         let mut session = make_session("hers", ActorId::User(alice.id), vec![ActorId::Agent(helper.id)]);
         session.participants = record_users(&store, &[&alice]).await;
         // The agent took part, said something, and was removed.
-        let mut channel = main_channel(&session);
+        let channel = main_channel(&session);
         let system = SecurityContext::system();
         store.create_session(&system, &session).await.unwrap();
         store.create_channel(&system, &channel).await.unwrap();

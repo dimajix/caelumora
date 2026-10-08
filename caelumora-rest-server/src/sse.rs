@@ -119,7 +119,7 @@ where
 {
     let snapshot = Arc::new(snapshot);
     let first = if with_snapshot { snapshot().await.map(|value| named_event("snapshot", &value)) } else { None };
-    let resync = with_snapshot.then(|| move || {
+    let resync = with_snapshot.then_some(move || {
         let snapshot = Arc::clone(&snapshot);
         async move { snapshot().await.map(|value| named_event("snapshot", &value)) }
     });

@@ -495,7 +495,7 @@ impl JsonFileStore {
         // about, it stays. A file cannot be removed on that condition
         // atomically; whoever restores and purges at once serialises them
         // (`SessionManager`).
-        if !read_json_opt::<T>(&path).await?.is_some_and(|value| value.deleted().is_some()) {
+        if read_json_opt::<T>(&path).await?.is_none_or(|value| value.deleted().is_none()) {
             return Ok(false);
         }
         debug!("Purging {} at {}", kind.entity, path.display());

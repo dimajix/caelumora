@@ -221,8 +221,6 @@ struct OllamaChatResponse {
     #[serde(default)]
     total_duration: Option<u64>,
     #[serde(default)]
-    load_duration: Option<u64>,
-    #[serde(default)]
     prompt_eval_count: Option<u64>,
     #[serde(default)]
     prompt_eval_duration: Option<u64>,

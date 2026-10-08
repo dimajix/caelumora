@@ -49,6 +49,7 @@ pub struct PromptRef {
 /// (issue 119): a message of the conversation, or a prompt part where the
 /// `ContextProvider` placed it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[expect(clippy::large_enum_variant, reason = "a message is the usual element, and boxing it would cost an allocation per element")]
 pub enum ContextItem {
     /// A message of the conversation, as the model was given it.
     Conversation { message: Message },

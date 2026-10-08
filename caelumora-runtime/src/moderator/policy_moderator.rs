@@ -49,7 +49,7 @@ impl PolicyModerator {
         self.actors.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    async fn route_full_response(&self, event: &Envelope, messages: &Vec<Message>) -> Vec<(ActorId, Envelope)> {
+    async fn route_full_response(&self, event: &Envelope, messages: &[Message]) -> Vec<(ActorId, Envelope)> {
         // What there is to hear of it, by the rule every agent hears by
         // (issue 224): nothing, e.g. of a response of tool calls only or of
         // a turn cancelled before it said anything.
@@ -688,7 +688,7 @@ mod tests {
         let moderator = PolicyModerator::new(policy(round_robin_policy::RoundRobinPolicy::default()), DEFAULT_MAX_AGENT_HOPS);
         let agents = add_agents(&moderator);
         let user = ActorId::User(UserId::new());
-        let mut awake = vec![agents[0], agents[2]];
+        let mut awake = [agents[0], agents[2]];
         awake.sort_unstable_by_key(|id| id.id());
 
         let first = responders(&moderator.route(&message_from(user, "one", Vec::new())).await);

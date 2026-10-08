@@ -57,8 +57,8 @@ pub struct ChannelMember {
 
 /// The task of a running actor and its inbox. Owned by `run`, which keeps
 /// them apart from `ChannelLoop::actors`: that table says who takes part and
-/// is read from anywhere; this one is `run`'s, whose `JoinSet` owns the tasks
-/// - so that they end with the channel's own task - and which starts and
+/// is read from anywhere; this one is `run`'s, whose `JoinSet` owns the
+/// tasks - so that they end with the channel's own task - and which starts and
 /// stops them as `ActorChange`s tell it (issue 91).
 struct RunningActor {
     id: ActorId,
@@ -300,6 +300,7 @@ async fn stopped(tasks: &[TaskTracker]) -> bool {
 
 /// A change to the actors a running channel runs (issue 46), carried out by
 /// `run`, which owns their tasks.
+#[expect(clippy::large_enum_variant, reason = "a few changes in a channel's life, each taken apart at once")]
 enum ActorChange {
     Start(ChannelActor),
     /// The actor to stop, and on whose behalf it was removed - in whose name
@@ -1345,12 +1346,12 @@ impl ChannelLoop {
     }
     async fn record_send_event(&self, event: &Envelope) {
         let mut recorder = self.recorder.lock().await;
-        recorder.record_send(&event).await;
+        recorder.record_send(event).await;
         drop(recorder);
     }
     async fn record_receive_event(&self, event: &Envelope) {
         let mut recorder = self.recorder.lock().await;
-        recorder.record_receive(&event).await;
+        recorder.record_receive(event).await;
         drop(recorder);
     }
 }

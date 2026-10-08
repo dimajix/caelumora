@@ -971,8 +971,7 @@ mod tests {
     #[tokio::test]
     async fn only_an_agent_calls_tools() {
         let executor = executor(Arc::new(DummySecurityManager::new()));
-        let mut agent_channel_state = AgentChannelState::default();
-        agent_channel_state.turn = Some(caelumora_model::turn::TurnState { work: caelumora_model::work::Work { security_context: SecurityContext { caller_id: ActorId::User(caelumora_model::user::UserId::new()), ..SecurityContext::default() }, ..Default::default() }, tools: executor.executor.tool_sets().into_iter().flat_map(|set| set.tools).collect(), ..Default::default() });
+        let mut agent_channel_state = AgentChannelState { turn: Some(caelumora_model::turn::TurnState { work: caelumora_model::work::Work { security_context: SecurityContext { caller_id: ActorId::User(caelumora_model::user::UserId::new()), ..SecurityContext::default() }, ..Default::default() }, tools: executor.executor.tool_sets().into_iter().flat_map(|set| set.tools).collect(), ..Default::default() }), ..Default::default() };
         let mut context = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached()).expect("a turn is under way");
 
         let result = executor.execute(&call("test_tool"), None, &mut context, &CancellationToken::new()).await;
@@ -982,13 +981,14 @@ mod tests {
     /// A turn of an agent in a general internal channel, with the tools of
     /// `executor` as it began with them.
     fn agent_turn(executor: &GuardedToolExecutor) -> AgentChannelState {
-        let mut agent_channel_state = AgentChannelState::default();
-        agent_channel_state.turn = Some(caelumora_model::turn::TurnState {
-            work: caelumora_model::work::Work { security_context: SecurityContext { caller_id: ActorId::Agent(AgentId::new()), ..SecurityContext::default() }, ..Default::default() },
-            tools: executor.executor.tool_sets().into_iter().flat_map(|set| set.tools).collect(),
+        AgentChannelState {
+            turn: Some(caelumora_model::turn::TurnState {
+                work: caelumora_model::work::Work { security_context: SecurityContext { caller_id: ActorId::Agent(AgentId::new()), ..SecurityContext::default() }, ..Default::default() },
+                tools: executor.executor.tool_sets().into_iter().flat_map(|set| set.tools).collect(),
+                ..Default::default()
+            }),
             ..Default::default()
-        });
-        agent_channel_state
+        }
     }
 
     fn with_hr() -> Arc<dyn SecurityManager> {

@@ -133,8 +133,8 @@ impl Reach {
     }
 }
 
-/// What calls a rule is about: the tool by the name the model calls it by
-/// - `*` for every tool - and, per argument named, a regular expression its
+/// What calls a rule is about: the tool by the name the model calls it by -
+/// `*` for every tool - and, per argument named, a regular expression its
 /// value must match as a whole: a string as it is, any other value as its
 /// compact JSON. An argument the call lacks does not match. Reliable for
 /// arguments with a structure of their own (a channel, an id, a domain), not
@@ -183,8 +183,8 @@ impl ToolMatcher {
         Self { tool: "*".to_string(), arguments: BTreeMap::new() }
     }
 
-    /// The calls exactly like `call`: its tool, and every argument as it is
-    /// - what a rule derived from a call is offered with unless its tool
+    /// The calls exactly like `call`: its tool, and every argument as it is -
+    /// what a rule derived from a call is offered with unless its tool
     /// knows better, for the person to widen.
     pub fn exact(call: &ToolCall) -> Self {
         let arguments = match &call.arguments {
