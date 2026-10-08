@@ -260,8 +260,15 @@ impl World {
     /// them and `agents`; the session also has `waiting`, in no channel.
     /// Stored as a setup would, then opened by alice.
     async fn shared_session(&self, agents: &[AgentId], waiting: &[AgentId]) -> Arc<SessionLoop> {
+        self.session_of(&[self.bob], agents, waiting).await
+    }
+
+    /// A session of alice with `others` in it, and a channel "main" of
+    /// them all and `agents`; the session also has `waiting`, in no
+    /// channel. Stored as a setup would, then opened by alice.
+    async fn session_of(&self, others: &[UserId], agents: &[AgentId], waiting: &[AgentId]) -> Arc<SessionLoop> {
         let alice = ActorId::User(self.alice);
-        let users = [Participant::User(self.alice), Participant::User(self.bob)];
+        let users: Vec<Participant> = std::iter::once(self.alice).chain(others.iter().copied()).map(Participant::User).collect();
         let in_channel: Vec<Participant> = users.iter().cloned().chain(agents.iter().map(|a| Participant::Agent(*a))).collect();
         let in_session: Vec<Participant> = in_channel.iter().cloned().chain(waiting.iter().map(|a| Participant::Agent(*a))).collect();
         let channel = Channel::build(SessionId::new(), alice, Name::new("main").unwrap(), quiet(), Classification::general(Confidentiality::Internal), None, in_channel);
@@ -911,10 +918,11 @@ impl caelumora_runtime::tool::ToolProvider for AskingOwner {
 }
 
 /// alice's agent `helper`, which calls `asking` - a tool that asks alice,
-/// its owner, before it runs - once it is asked, in a session alice shares
-/// with bob and he opened; with the session's main channel, the questions
-/// as alice is shown them, and what bob was shown since before she asked.
-async fn with_a_call_asking(sensitive: bool) -> (World, Arc<SessionLoop>, Arc<caelumora_runtime::channel::ChannelLoop>, caelumora_model::question::QuestionRequest, caelumora_runtime::actor::user::ChannelWatch) {
+/// its owner, before it runs - once `asker` asks it, in a session alice
+/// shares with bob and he opened; with the session's main channel, the
+/// questions as alice is shown them, and what bob was shown since before
+/// it was asked.
+async fn with_a_call_asking(sensitive: bool, asker: fn(&World) -> UserId) -> (World, Arc<SessionLoop>, Arc<caelumora_runtime::channel::ChannelLoop>, caelumora_model::question::QuestionRequest, caelumora_runtime::actor::user::ChannelWatch) {
     use caelumora_model::message::{Message, MessageRole};
     use caelumora_model::tool::{ToolCall, ToolVisibility};
 
@@ -950,7 +958,7 @@ async fn with_a_call_asking(sensitive: bool) -> (World, Arc<SessionLoop>, Arc<ca
     world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let mut watch = main.user_actor(world.alice).expect("she takes part").watch();
     let his = main.user_actor(world.bob).expect("he takes part").watch();
-    main.user_actor(world.alice).unwrap().send_message("@helper ask".to_string(), None).await.expect("sent");
+    main.user_actor(asker(&world)).unwrap().send_message("@helper ask".to_string(), None).await.expect("sent");
     let caelumora_model::actor::ActorEvent::QuestionRequested(request) = shown(&mut watch, "QuestionRequested").await else { unreachable!() };
     (world, session, main, request, his)
 }
@@ -970,7 +978,7 @@ async fn questions_shown(world: &World, session: SessionId, main: ChannelId, use
 #[tokio::test]
 async fn questions_are_answered_by_whom_they_are_put_to() {
     use caelumora_model::question::{QuestionError, Response};
-    let (world, session, main, request, _) = with_a_call_asking(false).await;
+    let (world, session, main, request, _) = with_a_call_asking(false, |world| world.alice).await;
     assert_eq!(request.questions.asked(), [ActorId::User(world.alice)], "the agent's owner");
     assert_eq!(questions_shown(&world, session.id(), main.id(), world.bob).await, [request.id], "everyone taking part sees what the agent waits for");
     let name = || Some(vec![Response::Text { text: "Alice".to_string() }]);
@@ -992,7 +1000,7 @@ async fn questions_are_answered_by_whom_they_are_put_to() {
 #[tokio::test]
 async fn sensitive_questions_reach_only_whom_they_are_put_to() {
     use caelumora_model::question::{QuestionError, Response};
-    let (world, session, main, request, mut his) = with_a_call_asking(true).await;
+    let (world, session, main, request, mut his) = with_a_call_asking(true, |world| world.alice).await;
     assert_eq!(questions_shown(&world, session.id(), main.id(), world.alice).await, [request.id]);
     assert!(questions_shown(&world, session.id(), main.id(), world.bob).await.is_empty(), "not in his snapshot");
 
@@ -1003,6 +1011,17 @@ async fn sensitive_questions_reach_only_whom_they_are_put_to() {
     while let Ok(envelope) = his.events.try_recv() {
         assert!(!matches!(envelope.event, caelumora_model::actor::ActorEvent::QuestionRequested(_) | caelumora_model::actor::ActorEvent::QuestionClosed { .. }), "nothing of them reaches him: {}", envelope.event.kind());
     }
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// The owner a call's questions are put to (`Addressee::Owner`, issue 165)
+/// is the agent's owner whoever asked the agent (issue 255): bob asks
+/// alice's agent, and alice is asked - a tool that asks its owner for a
+/// password never asks whoever happens to talk to the agent.
+#[tokio::test]
+async fn questions_for_the_owner_are_put_to_the_agents_owner_whoever_asked() {
+    let (world, session, _, request, _) = with_a_call_asking(false, |world| world.bob).await;
+    assert_eq!(request.questions.asked(), [ActorId::User(world.alice)], "the agent's owner, not bob who asked");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
@@ -1216,8 +1235,9 @@ impl caelumora_runtime::tool::ToolProvider for Outward {
 
 /// The door (issue 180): a tool set whose remote side the channel may not
 /// flow to is not offered there - asked as publishing what the channel
-/// holds there, for whoever asked the agent in a turn and in its owner's
-/// name for who looks at its tools - and its tools are not called by name.
+/// holds there, with its owner's rights in a turn, asked by whoever asked
+/// it, and in its owner's name for who looks at its tools (issue 255) - and
+/// its tools are not called by name.
 #[tokio::test]
 async fn a_tool_whose_remote_side_is_not_cleared_for_the_channel_is_not_offered_there() {
     use caelumora_model::message::{Message, MessageRole};
@@ -1265,7 +1285,7 @@ async fn a_tool_whose_remote_side_is_not_cleared_for_the_channel_is_not_offered_
         }).await.expect("the call is answered")
     }).await;
     assert_eq!(answered, ToolResultStatus::UnknownTool, "not called by its name");
-    assert!(asked.contains(&"alice as helper, asked by bob: Publish no".to_string()), "judged for bob, who asked: {asked:?}");
+    assert!(asked.contains(&"alice as helper, asked by bob: Publish no".to_string()), "judged as alice, its owner, asked by bob: {asked:?}");
     assert!(!asked.iter().any(|line| line.contains("CallTool")), "refused before the policy is asked of the call: {asked:?}");
 
     let (sets, asked) = world.asked(async {
@@ -1274,6 +1294,70 @@ async fn a_tool_whose_remote_side_is_not_cleared_for_the_channel_is_not_offered_
     }).await;
     assert!(sets[0].tools.is_empty() && sets[0].unavailable.is_some(), "shown as unavailable: {sets:?}");
     assert!(asked.contains(&"alice as helper: Publish no".to_string()), "as a turn would be offered them, in the agent's own name: {asked:?}");
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+// --- In whose name an agent acts (issue 255) ---------------------------------
+
+/// A model component of the kind `kind` that answers its first call with
+/// `answer`, registered with `registry`.
+fn register_once(registry: &mut ComponentRegistry, kind: &str, answer: caelumora_model::message::Message) {
+    let model = Arc::new(Once(Mutex::new(Some(answer))));
+    registry.register(ComponentKind::new(kind).provides::<dyn caelumora_runtime::llm::LLMClient>(), move |_, _| {
+        let mut facets = ComponentFacets::empty();
+        facets.insert::<dyn caelumora_runtime::llm::LLMClient>(Arc::<Once>::clone(&model));
+        Ok(facets)
+    });
+}
+
+/// An agent asked by another agent acts for its own owner, and is recorded
+/// as asked by whoever began the conversation: carol asks bob's `relay`,
+/// which asks alice's `doer`, whose call is judged as alice and recorded as
+/// asked by carol. The agent between them lends nothing, nor does its owner:
+/// one agent mentioning another does not delegate to it.
+#[tokio::test]
+async fn an_agent_asked_by_an_agent_acts_for_its_own_owner() {
+    use caelumora_model::message::{Message, MessageRole};
+    use caelumora_model::tool::{ToolCall, ToolVisibility};
+
+    let internal = Classification::general(Confidentiality::Internal);
+    let relayed = Message { role: MessageRole::Assistant, content: Some("@doer echo it".to_string()), ..Message::new(internal.clone()) };
+    let call = Message {
+        role: MessageRole::Assistant,
+        tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "echo".to_string(), arguments: serde_json::json!({ "message": "it" }), visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
+        ..Message::new(internal)
+    };
+    let world = World::with_kinds(|registry| {
+        register_once(registry, "relaying", relayed);
+        register_once(registry, "calling", call);
+    }).await;
+    let with = |name: &'static str, components: Vec<ComponentDescriptor>| {
+        let world = &world;
+        async move {
+            let personality = Personality { components: ComponentConfig { component_nodes: components }, ..world.personality(name, None, &[]).await };
+            world.store.update_personality(&World::system(), &personality).await.unwrap();
+            personality
+        }
+    };
+    let relaying = with("relaying", vec![ComponentDescriptor::new("model", "relaying")]).await;
+    let calling = with("calling", vec![
+        ComponentDescriptor::new("model", "calling"),
+        ComponentDescriptor::new("echo", caelumora_runtime::tool::echo_tool::ECHO_TOOL_KIND),
+    ]).await;
+    let relay = world.agent("relay", world.bob, &relaying).await;
+    let doer = world.agent("doer", world.alice, &calling).await;
+    let session = world.session_of(&[world.bob, world.carol], &[relay, doer], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    world.manager.open_session(&World::as_user(world.carol), session.id()).await.expect("she opens it");
+
+    let (_, asked) = world.asked(async {
+        main.user_actor(world.carol).expect("she takes part").send_message("@relay ask doer".to_string(), None).await.expect("sent");
+        asked_for(&world, "alice as doer, asked by carol: CallTool yes").await;
+    }).await;
+    let calling: Vec<&String> = asked.iter().filter(|line| line.contains("CallTool")).collect();
+    assert!(!calling.is_empty() && calling.iter().all(|line| *line == "alice as doer, asked by carol: CallTool yes"), "judged as its owner, asked by who began it: {asked:?}");
+    assert!(asked.iter().filter(|line| line.contains("as doer")).all(|line| line.starts_with("alice as doer, asked by carol:")), "nothing of it in bob's name: {asked:?}");
+    assert!(asked.iter().any(|line| line.starts_with("bob as relay, asked by carol:")), "the relay acted for its own owner: {asked:?}");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
@@ -1371,12 +1455,13 @@ async fn calls_made(calls: &Mutex<Vec<&'static str>>, count: usize) {
     }).await.expect("the remote agent is called");
 }
 
-/// An external agent's task acts with the authority of the request that
-/// began it, as an agent's turn does (issue 211): asked by bob, the remote
-/// agent is sent his request in his name - and followed in his name after
-/// a restart, not in the name of the agent's owner.
+/// An external agent's task is done as the request that began it, as an
+/// agent's turn is (issue 211), with its owner's rights (issue 255): asked
+/// by bob, the remote agent is sent his request with alice's credential,
+/// asked by him - and followed so after a restart, whoever opened the
+/// session.
 #[tokio::test]
-async fn an_external_agents_task_is_followed_in_the_name_of_whoever_asked() {
+async fn an_external_agents_task_is_followed_for_its_owner_as_whoever_asked_began_it() {
     let calls = Arc::new(Mutex::new(Vec::new()));
     let world = with_remote_at_work(&calls, None).await;
     let remote = remote_personality(&world).await;
@@ -1390,7 +1475,7 @@ async fn an_external_agents_task_is_followed_in_the_name_of_whoever_asked() {
         calls_made(&calls, 1).await;
     }).await;
     let read_secret: Vec<&String> = asked.iter().filter(|line| line.contains("ReadSecret")).collect();
-    assert_eq!(read_secret, ["alice as hermes, asked by bob: ReadSecret yes"], "sent in the name of who asked");
+    assert_eq!(read_secret, ["alice as hermes, asked by bob: ReadSecret yes"], "with alice's credential, asked by bob");
 
     // The task is stored as begun; the session stops with it still open.
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
@@ -1407,16 +1492,17 @@ async fn an_external_agents_task_is_followed_in_the_name_of_whoever_asked() {
     }).await;
     assert_eq!(calls.lock().unwrap().as_slice(), ["send", "resume"]);
     let read_secret: Vec<&String> = asked.iter().filter(|line| line.contains("ReadSecret")).collect();
-    assert_eq!(read_secret, ["alice as hermes, asked by bob: ReadSecret yes"], "followed in his name too, whoever opened the session");
+    assert_eq!(read_secret, ["alice as hermes, asked by bob: ReadSecret yes"], "followed so too, whoever opened the session");
     world.manager.stop_session(&World::as_user(world.alice), reopened.id()).await.unwrap();
 }
 
 /// Asked several times while it answers, an agent answers once afterwards
-/// (issue 222) - with the authority of the last who asked, not of the first
-/// nor of all of them: alice's request is dropped, and the remote agent is
-/// sent the conversation in bob's name alone.
+/// (issue 222) - as asked by the last who asked, not by the first nor by
+/// all of them, and with its owner's rights (issue 255): alice's request is
+/// dropped, and the remote agent is sent the conversation as asked by bob
+/// alone.
 #[tokio::test]
-async fn an_agent_asked_by_several_while_it_answers_answers_once_in_the_name_of_the_last() {
+async fn an_agent_asked_by_several_while_it_answers_answers_once_as_asked_by_the_last() {
     let calls = Arc::new(Mutex::new(Vec::new()));
     let gate = Arc::new(tokio::sync::Semaphore::new(0));
     let world = with_remote(&calls, None, Some(Arc::clone(&gate))).await;
@@ -1452,14 +1538,14 @@ async fn an_agent_asked_by_several_while_it_answers_answers_once_in_the_name_of_
     }).await;
     assert_eq!(calls.lock().unwrap().as_slice(), ["send", "send"], "one call for all that was asked meanwhile");
     let read_secret: Vec<&String> = asked.iter().filter(|line| line.contains("ReadSecret")).collect();
-    assert_eq!(read_secret, ["alice as hermes, asked by bob: ReadSecret yes"], "in the name of the last who asked");
+    assert_eq!(read_secret, ["alice as hermes, asked by bob: ReadSecret yes"], "as asked by the last who asked");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// An external agent whose answers, as its component declares them, may no
 /// longer enter its channel once the channel was lowered is refused with
-/// every request (issue 212): asked in the name of who asks, the remote
-/// agent is not called, and the users are told.
+/// every request (issue 212): asked with its owner's rights, as asked by
+/// whoever asks, the remote agent is not called, and the users are told.
 #[tokio::test]
 async fn an_external_agent_whose_answers_no_longer_enter_its_lowered_channel_is_refused() {
     let calls = Arc::new(Mutex::new(Vec::new()));
@@ -1488,17 +1574,17 @@ async fn an_external_agent_whose_answers_no_longer_enter_its_lowered_channel_is_
     }).await;
     assert!(failed.contains("may not be published"), "{failed}");
     let publish: Vec<&String> = asked.iter().filter(|line| line.starts_with("alice as hermes, asked by bob: Publish")).collect();
-    assert_eq!(publish, ["alice as hermes, asked by bob: Publish no"], "asked in the name of who asked");
+    assert_eq!(publish, ["alice as hermes, asked by bob: Publish no"], "as its owner, asked by bob");
     assert!(calls.lock().unwrap().is_empty(), "the remote agent is not called");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// An external agent's task begun before its channel was lowered is given up
-/// as a turn is (issue 212): the remote agent is asked to cancel it in the
-/// name of who asked for it, and whether what came of it may still be
-/// published is asked in his name too.
+/// as a turn is (issue 212): the remote agent is asked to cancel it as
+/// asked by who asked for it, with its owner's rights, and so is whether
+/// what came of it may still be published.
 #[tokio::test]
-async fn lowering_a_channel_gives_up_an_external_agents_task_in_the_name_of_whoever_asked() {
+async fn lowering_a_channel_gives_up_an_external_agents_task_as_whoever_asked_began_it() {
     let calls = Arc::new(Mutex::new(Vec::new()));
     let world = with_remote_at_work(&calls, None).await;
     let remote = remote_personality(&world).await;
@@ -1525,10 +1611,10 @@ async fn lowering_a_channel_gives_up_an_external_agents_task_in_the_name_of_whoe
         }).await.expect("the users are told")
     }).await;
     assert!(failed.contains("lowered"), "{failed}");
-    let bobs: Vec<&String> = asked.iter().filter(|line| line.starts_with("alice as hermes, asked by bob")).collect();
+    let his: Vec<&String> = asked.iter().filter(|line| line.starts_with("alice as hermes, asked by bob")).collect();
     // The lowering cancels the answer, which cancels its remote task - as
     // every cancel does - and only then is asked whether it may go on.
-    assert_eq!(bobs, ["alice as hermes, asked by bob: ReadSecret yes", "alice as hermes, asked by bob: Publish no"], "cancelled, and asked whether it goes on, in his name");
+    assert_eq!(his, ["alice as hermes, asked by bob: ReadSecret yes", "alice as hermes, asked by bob: Publish no"], "cancelled, and asked whether it goes on, as he asked");
     assert_eq!(calls.lock().unwrap().as_slice(), ["send", "cancel"]);
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
@@ -2132,14 +2218,14 @@ async fn asked_for_a_call_on_the_workspace(function: &str, arguments: serde_json
     asked
 }
 
-/// That `asked` asked for an agent's call on the workspace: the call in
-/// bob's name, who asked the agent, as every call is; the workspace
-/// through the channel as the agent reads every other place - with its
-/// owner's clearance (issue 142) - its flow both ways, before anything is
-/// sent to the storage.
+/// That `asked` asked for an agent's call on the workspace: the call with
+/// alice's rights, its owner's, asked by bob, as every call is (issue 255);
+/// the workspace through the channel as the agent reads every other place -
+/// with its owner's clearance (issue 142) - its flow both ways, before
+/// anything is sent to the storage.
 fn asked_as_a_call_on_the_workspace(asked: &[String]) {
     let calling: Vec<&String> = asked.iter().filter(|line| line.contains("CallTool")).collect();
-    assert!(!calling.is_empty() && calling.iter().all(|line| *line == "alice as helper, asked by bob: CallTool yes"), "the call in bob's name, who asked: {asked:?}");
+    assert!(!calling.is_empty() && calling.iter().all(|line| *line == "alice as helper, asked by bob: CallTool yes"), "the call as its owner, asked by bob: {asked:?}");
     let reaching: Vec<&String> = asked.iter().filter(|line| line.starts_with("alice as helper:")).collect();
     assert_eq!(reaching, [
         // The channel's workspace: no GetWorkspace, the flow both ways.
@@ -2151,7 +2237,7 @@ fn asked_as_a_call_on_the_workspace(asked: &[String]) {
 
 /// An agent's command (issue 251).
 #[tokio::test]
-async fn an_agents_command_is_called_for_who_asked_and_reaches_the_workspace_through_its_channel() {
+async fn an_agents_command_is_called_for_its_owner_and_reaches_the_workspace_through_its_channel() {
     let asked = asked_for_a_call_on_the_workspace("run_command", serde_json::json!({ "command": "echo ran > ran.txt" }), "ran.txt").await;
     asked_as_a_call_on_the_workspace(&asked);
 }

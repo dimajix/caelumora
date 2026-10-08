@@ -65,7 +65,7 @@ async fn require_classification(runtime_manager: &RuntimeManager, context: &Secu
 /// 133); `refusal` otherwise - reading a channel one is not cleared for is
 /// the same as reading one that does not exist.
 async fn require_seen<E: Into<anyhow::Error> + Send>(runtime_manager: &RuntimeManager, context: &SecurityContext, channel: &Classification, refusal: impl FnOnce() -> E + Send) -> Result<()> {
-    let roles = caelumora_model::confidentiality::user_roles(runtime_manager.entity_store().as_ref(), context.initiator_id).await?;
+    let roles = caelumora_model::confidentiality::user_roles(runtime_manager.entity_store().as_ref(), context.principal_id).await?;
     if runtime_manager.security_manager().may_see_channel(context, &roles, channel).await {
         Ok(())
     } else {
@@ -104,7 +104,7 @@ pub struct ChannelSpec {
 /// # Errors
 /// Whatever reading their profile reports, except that there is none.
 async fn preferred_language(store: &dyn EntityStore, context: &SecurityContext) -> StoreResult<Option<Language>> {
-    let Some(user) = context.initiator_id.as_user_id() else { return Ok(None) };
+    let Some(user) = context.principal_id.as_user_id() else { return Ok(None) };
     let profile = store.get_user_profile(context, user).await.optional()?;
     Ok(profile.and_then(|profile| profile.preferred_language))
 }
@@ -701,7 +701,7 @@ impl SessionManager {
     /// `TemplateError` if the template cannot be made into a session;
     /// whatever creating the session reports.
     pub async fn create_from_template(&self, context: &SecurityContext, template_id: SessionTemplateId, name: Option<&str>) -> Result<Arc<SessionLoop>> {
-        let owner = context.initiator_id.as_user_id().ok_or(SessionError::OwnerNotAUser(context.initiator_id))?;
+        let owner = context.principal_id.as_user_id().ok_or(SessionError::OwnerNotAUser(context.principal_id))?;
         // Before anything is found or made for it.
         let name = Name::optional(name)?;
         let store = &self.entities;

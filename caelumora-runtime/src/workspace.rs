@@ -149,7 +149,7 @@ impl WorkspaceManager {
                 return Err(WorkspaceError::StorageNotCleared(storage.to_string()));
             }
         }
-        let roles = user_roles(self.entities.as_ref(), ctx.initiator_id).await?;
+        let roles = user_roles(self.entities.as_ref(), ctx.principal_id).await?;
         match self.security.may_see_channel(ctx, &roles, classification).await {
             true => Ok(()),
             false => Err(WorkspaceError::NotCleared),
@@ -167,7 +167,7 @@ impl WorkspaceManager {
     /// scope a workspace does not lie in - or a `TerminalError` of making
     /// the place.
     pub async fn create(&self, ctx: &SecurityContext, name: &str, scope: Scope, storage: &str, description: Option<&str>, classification: Classification) -> WorkspaceResult<Workspace> {
-        let ActorId::User(owner) = ctx.initiator_id else { return Err(WorkspaceError::OwnerNotAUser) };
+        let ActorId::User(owner) = ctx.principal_id else { return Err(WorkspaceError::OwnerNotAUser) };
         let provider = self.storages.get(storage).ok_or_else(|| WorkspaceError::UnknownStorage(storage.to_string()))?;
         let mut workspace = Workspace::new(ScopedName::new(name, scope)?, storage, classification, owner);
         workspace.description = Description::optional(description)?;
@@ -308,7 +308,7 @@ impl WorkspaceManager {
         if !workspace.name.scope.admits(&Scope::GlobalScope) {
             return Err(WorkspaceError::NotFound(id));
         }
-        let roles = user_roles(self.entities.as_ref(), ctx.initiator_id).await?;
+        let roles = user_roles(self.entities.as_ref(), ctx.principal_id).await?;
         match self.security.may_see_channel(ctx, &roles, &workspace.classification).await {
             true => Ok(workspace),
             false => Err(WorkspaceError::NotCleared),

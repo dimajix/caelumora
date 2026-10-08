@@ -102,9 +102,9 @@ impl OriginEventSender {
 
     /// Whether `event` speaks as the actor: it names the actor as its
     /// sender and as the caller of its security context, and so does every
-    /// message it carries. Who the actor acts for, the context's initiator,
-    /// may be someone else: an agent answers on behalf of whoever asked
-    /// it.
+    /// message it carries. Whose rights it has, the context's principal,
+    /// and who asked it, the initiator, may be someone else: an agent acts
+    /// with its owner's rights for whoever asked it (issue 255).
     fn speaks_as(&self, event: &Envelope) -> bool {
         event.context.sender_id == self.origin
             && event.security.caller_id == self.origin

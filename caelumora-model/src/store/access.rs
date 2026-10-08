@@ -293,7 +293,7 @@ mod tests {
     #[async_trait::async_trait]
     impl SecurityManager for OwnersAndContributors {
         async fn check(&self, ctx: &SecurityContext, action: ActionType<'_>) -> bool {
-            let me = ctx.initiator_id;
+            let me = ctx.principal_id;
             match action {
                 ActionType::GetSession(a) => a.owner_id == me || a.contributors.contains(&me),
                 ActionType::CreateSession(a) | ActionType::UpdateSession(a) | ActionType::DeleteSession(a) => a.owner_id == me,

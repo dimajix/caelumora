@@ -81,7 +81,8 @@ preconfigured component - carries `SecurityAttributes`: an `owner_id` and a list
 
 ### The ownership policy
 
-The `OwnershipSecurityManager` decides by those attributes and the context's initiator:
+The `OwnershipSecurityManager` decides by those attributes and the context's principal - a user
+themselves, an agent its owner (see [In whose name an agent acts](#in-whose-name-an-agent-acts)):
 
 *   The owner may do everything. Contributors may read and use - write into a session, cancel or
     wake a channel, ask an agent in it to answer again (`RetryMessage`, issue 234), answer the
@@ -155,53 +156,51 @@ What is not a store call asks first and acts afterwards.
 
 ## In whose name an agent acts
 
-An agent is no principal of its own: it has no roles and no clearance, and the policy judges what
-it does by a person - the initiator of the context it acts in, with the agent as its caller. Which
-person that is depends on what the agent does. An agent **knows with its owner's clearance and acts
-for whoever asked it**.
+An agent is its owner's delegate (issue [255](../issues/255-whose-name-agents-act-in.md)). It has
+no roles and no rights of its own, and whoever asks it lends it none: it acts with its owner's
+rights in all it does. It is the model of a person one turns to because they are entitled to
+something - they check the request, and carry it out with their own rights. In three parts:
 
-**What it reads and knows** is asked in its owner's name: its own context
-(`Agent::security_context`, issue [87](../issues/87-security-context-in-entities.md)), its owner as
-initiator. An agent must not see more than the person responsible for it (issue
-[142](../issues/142-roles.md)), and it passes on whatever it read to whoever it answers next (issue
-[131](../issues/131-agent-memory-bypasses-policy.md)) - so what it may read is fixed by its owner,
-not by who happens to ask. This context is the one
+1.  **The agent acts with its owner's rights.** Every context an agent acts in names it as the
+    caller and its owner as the principal - the one it speaks in when nobody asked
+    (`Agent::security_context`, issue [87](../issues/87-security-context-in-entities.md),
+    `Answering::own`) and the one of a turn, the request's continued as the agent
+    (`Answering::to`, `Turn::security_context`). The policy judges by the principal, so what the
+    agent reads - other channels, its notes and memory, the session's workspace through its channel
+    -, the tools it calls (`CallTool`), the credentials they reach with (`ReadSecret`: an MCP
+    server's token in `mcp_tool`, an external agent's through its endpoint) and the clearance it is
+    judged by are its owner's, whoever asked. An agent must not see more than the person
+    responsible for it (issue [142](../issues/142-roles.md)), and it passes on whatever it read to
+    whoever it answers next (issue [131](../issues/131-agent-memory-bypasses-policy.md)) - so what
+    it may read is fixed by its owner, not by who happens to ask.
+2.  **The owner checks the request**, where a call is admitted (`GuardedToolExecutor::admit`): the
+    policy, the owner's rules for the place - evaluated in their name, as their own answer (issue
+    13) - and the approval of the owner or their contributors, for an agent of the system the
+    channel's owner (see [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md#who-may-approve)). A
+    personality's limiting roles narrow the agent further. A tool that needs no approval is the
+    owner's approval given in advance.
+3.  **Whoever asks may ask** - today by taking part in the channel the owner put the agent into.
+    What comes of it reaches them only as the flow rule lets it into the channel.
 
-*   its views are made in (`ViewsFactory`, reached through `Turn::session`): reading another
-    channel's history and notes (`ReadChannel`, see
-    [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reading-another-channel)), its private notes, and the
-    session's workspace through its channel - the flow both ways, asked as `Publish`
-    ([CHANNELS.md](CHANNELS.md#its-workspace));
-*   its components are built with (`ComponentContext::security_context`), and in which its memory
-    decides what may be recalled in a channel;
-*   it speaks in when nobody asked it (`Answering::own`).
+Whoever asked stays in the context as its initiator: for the record, and for which request a turn
+answers (issues 211, 222) - never for rights. The questions of a call that a tool puts to the
+agent's owner (`Addressee::Owner`, issue 165) go to the owner, not to whoever asked.
 
-**What it does on someone's behalf** is asked in the name of whoever asked it: the turn's context
-(`Turn::security_context`), the request's continued as the agent (`Answering::to`). A person who
-asks another's agent to act lends it their own authority for that turn, not the owner's. This
-context is the one in which
+There is no delegation chain. An agent that mentions another does not delegate to it: the other
+answers for its own owner, bounded by the channel, with whoever began the conversation as its
+initiator. A chain is reconsidered when there are subagents.
 
-*   its answers and everything else its turn says are put into the channel (`Publish`);
-*   its tool calls are admitted (`CallTool`, asked when the call is admitted and again before it
-    runs, since a rule may have changed meanwhile), and their results admitted into the channel
-    (`may_publish`);
-*   the credentials a call or a request reaches with are read (`ReadSecret`): an MCP server's
-    token in `mcp_tool`, an external agent's through its endpoint;
-*   the questions of a call are put (the initiator's, issue 165).
+**What this accepts.** An owner who puts an agent into a channel without requiring approval lets
+every member read through it whatever the agent may read - within the channel's classification,
+since nothing flows above it. That is the consequence of the owner's check, not a gap in the rule;
+the answer is approval, rules of the place and limiting roles, not the asker's rights. Who may ask
+an agent at all could later be decided by its owner, as an action of its own.
 
-A tool call may thus ask in both names: `terminal_tool` is called for whoever asked and reaches the
-workspace as the agent reads every other place, in its owner's name. The security suite pins both
-(`an_agents_command_is_called_for_who_asked_and_reaches_the_workspace_through_its_channel`, and the
-tests of external agents, whose requests read their credential in the name of whoever asked).
-
-Who may approve a call is decided separately, by the agent's attributes: its owner and contributors,
-for an agent of the system the channel's owner (see
-[TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md#who-may-approve)).
-
-This describes the state, not a decision: which side an action falls on follows from where its code
-sits - in a view or in the turn - and whether the split is right, and how it extends to a chain of
-agents, is open (issue [255](../issues/255-whose-name-agents-act-in.md), and in general
-[12](../issues/12-user-and-agent-permissions.md)).
+The security suite pins it:
+`an_agents_command_is_called_for_its_owner_and_reaches_the_workspace_through_its_channel`, the
+tests of external agents, whose requests read their credential as the owner, asked by whoever
+asked, `an_agent_asked_by_an_agent_acts_for_its_own_owner` and
+`questions_for_the_owner_are_put_to_the_agents_owner_whoever_asked`.
 
 ## Where permission checks go
 

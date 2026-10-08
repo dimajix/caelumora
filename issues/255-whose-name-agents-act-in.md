@@ -291,3 +291,32 @@ in behaviour; the rule, in the policy; one context per piece of work. Each is re
   speaks for itself, with whoever asked as the initiator. SECURITY.md describes the three
   identities. **Stored data:** the agent channel states in the state store - a `Work` in a turn or
   an open task holds the context - are to be deleted.
+- **2026-10-08** — Step 2 done: the ownership policy judges by the principal (`me =
+  principal_id`), and so do the readers of the initiator that asked about rights - the store
+  filters' test policy, the roles for a clearance (`view/mod.rs`, `workspace.rs`, `session.rs`),
+  `may_see_channel`'s participant, the owner of what is made (`create_from_template`,
+  `template.rs`, `WorkspaceManager::create`) and the refusal's log line. The existing suite saw
+  no change in any answer - as A said, the policy hardly read the initiator for an agent -, so
+  its tests changed only in names and messages: the terminal test is
+  `an_agents_command_is_called_for_its_owner_and_reaches_the_workspace_through_its_channel`, the
+  external agents' `an_external_agents_task_is_followed_for_its_owner_as_whoever_asked_began_it`,
+  `an_agent_asked_by_several_while_it_answers_answers_once_as_asked_by_the_last` and
+  `lowering_a_channel_gives_up_an_external_agents_task_as_whoever_asked_began_it`. New in the
+  suite: `an_agent_asked_by_an_agent_acts_for_its_own_owner` (carol asks bob's agent, which asks
+  alice's: judged as alice, asked by carol) and
+  `questions_for_the_owner_are_put_to_the_agents_owner_whoever_asked`; in the model
+  `an_agent_is_judged_by_its_owner_not_by_whoever_asked_it`. SECURITY.md (*In whose name an agent
+  acts*, the ownership policy), CHANNELS.md and CONFIDENTIALITY.md say it as decided. Deviating
+  from the plan, two readers were sorted wrongly in A:
+  - **The questions of a call** (`GuardedToolExecutor::questions`) take the principal, not the
+    initiator: what a tool puts to `Addressee::Owner` is meant for the agent's owner, and went to
+    whoever asked - a tool asking its owner for a password asked bob when bob asked alice's agent.
+    This changes behaviour, and the new test fails with the old. The decision's sentence that the
+    initiator is kept "for the questions a call puts" is wrong in that; the initiator is kept for
+    the record and for which request a turn answers.
+  - **Whether the viewer takes part** (`ChannelView::shows_approvals`, and which sensitive
+    questions a member's snapshot shows) asks the caller, not the principal: it is about who
+    looks, not whose rights they have - an agent's views must never show it the questions put to
+    its owner in person. For a user the three are one, so nothing changes.
+  Reading another channel through a tool is pinned with step 3, where the views are asked in the
+  turn's context; before it, they are asked in the agent's own, which names nobody but its owner.

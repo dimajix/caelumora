@@ -74,3 +74,7 @@ To be reviewed, action by action (`ActionType` in `caelumora-model/src/security.
   wherever they decide.
 - **2026-10-02** — `user_roles` moved to `caelumora_model::confidentiality`, public, at the
   maintainer's request: the roles of a user beside the roles and clearances they are judged by.
+- **2026-10-08** — Whose roles count when an agent acts is decided in
+  [255](255-whose-name-agents-act-in.md): its owner's, as its principal, whoever asked it. The
+  roles for a clearance are read for the context's principal (`principal_id`) everywhere they are
+  looked up; a personality's limiting roles still narrow them.

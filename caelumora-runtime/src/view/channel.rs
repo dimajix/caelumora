@@ -286,9 +286,10 @@ impl ChannelView {
 
     /// Whether the viewer is shown the approvals the channel's agents wait
     /// for: as a user who takes part in it - the users decide - and reads
-    /// all of it.
+    /// all of it. Who looks, not whose rights they have: an agent is never
+    /// shown its owner's (issue 255).
     fn shows_approvals(&self) -> bool {
-        let viewer = self.views().viewer().context().initiator_id;
+        let viewer = self.views().viewer().context().caller_id;
         let takes_part = self.channel.participants.iter().any(|p| matches!(p, Participant::User(_)) && p.actor_id() == viewer);
         takes_part && self.readable == Readable::Whole
     }
@@ -646,8 +647,9 @@ impl MemberView {
             }
             if wanted.contains(Detail::APPROVALS) {
                 pending_approvals = state.pending_approvals();
-                // Sensitive questions only for those asked (issue 165).
-                let viewer = self.views().viewer().context().initiator_id;
+                // Sensitive questions only for those asked (issue 165) -
+                // in person, never to an agent of theirs.
+                let viewer = self.views().viewer().context().caller_id;
                 pending_questions = state.pending_questions().into_iter()
                     .filter(|q| q.shown_to().is_none_or(|asked| asked.contains(&viewer)))
                     .collect();

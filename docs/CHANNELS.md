@@ -176,8 +176,8 @@ of another session's scope (`SessionError::WorkspaceOutOfScope`); whoever may ch
 takes it away, which shares nothing. Announced as `WorkspaceChanged` of `SessionUpdateEvent`.
 
 In a session the workspace is used through a channel, by its current members - a person, or an
-agent acting there for whoever asked it - and nobody else, also not its owner from outside the
-channel. A channel uses it where
+agent acting there with its owner's rights, for whoever asked it - and nobody else, also not its
+owner from outside the channel. A channel uses it where
 
 *   its switch says so (`Channel::uses_workspace`, on unless its template, its creator
     (`ChannelSpec::uses_workspace`) or whoever may change the channel says otherwise:
@@ -237,9 +237,10 @@ given an `OriginEventSender`, which passes on only an envelope that speaks as th
 (`OriginEventSender::speaks_as`): one that names it as its sender (`EventContext::sender_id`), as
 the caller of its `SecurityContext`, and as the sender of every message it carries. Anything else is
 refused with `TransportError::Refused` and logged as an error - it is a bug of the actor, which
-learns of it where it happened. Who the actor acts for - the context's initiator - may be someone
-else: an agent answers on behalf of whoever asked it. What the channel says itself - a moderator's
-notice, `ParticipantRemoved` - does not come through an actor's sender.
+learns of it where it happened. Whose rights the actor has - the context's principal - and who
+asked it - the initiator - may be someone else: an agent acts with its owner's rights and answers
+whoever asked it (see [SECURITY.md](SECURITY.md#in-whose-name-an-agent-acts)). What the channel
+says itself - a moderator's notice, `ParticipantRemoved` - does not come through an actor's sender.
 
 **Nothing said is unsaid** (issue 258). The channel keeps every message it admits in its history
 as it arrives - `CompleteMessageGenerated`, and the steps of a plan as
@@ -635,9 +636,9 @@ An **actor** is anything that sends and receives events in a channel.
     events, once per run, and says what came of it on its own account. An open task is the external
     agent's counterpart of a turn (issue 211): it keeps the work of the request that began it, or
     took it up again (`OpenTask::work`) - its contexts, its bound and what it has seen - and is
-    followed, cancelled and told of in them, classified so (issue 212) - with the authority of
-    whoever asked, as a turn acts with its request's, and in the context of the answer to that
-    request (issue 45). A task stored before its work was kept acts as the agent itself; one whose
+    followed, cancelled and told of in them, classified so (issue 212) - as asked by whoever asked,
+    with its owner's rights, as a turn is, and in the context of the answer to that request (issue
+    45). A task stored before its work was kept acts as the agent itself; one whose
     channel was lowered since it began is given up. It wakes nobody and does not end a quiet
     channel: sleeping agents hear it all the same, and only an agent it mentions is woken, to answer
     it (issue 199). Only the end of a task is said: a failed task as `TurnGivenUp`, keeping nothing

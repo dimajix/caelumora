@@ -67,7 +67,7 @@ async fn agent(store: &dyn EntityStore, context: &SecurityContext, name: ScopedN
     if !personality.name.scope.admits(&name.scope) {
         return Err(TemplateError::PersonalityOutOfScope(personality.name.name).into());
     }
-    let agent = Agent::new(name.clone(), &personality, context.initiator_id);
+    let agent = Agent::new(name.clone(), &personality, context.principal_id);
     match store.create_agent(context, &agent).await {
         Ok(()) => Ok(agent.id),
         Err(taken @ StoreError::NameTaken { .. }) => match existing_agent(store, context, &name, personality_id).await? {

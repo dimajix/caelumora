@@ -554,7 +554,7 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
     }
 
     async fn may_see_channel(&self, context: &SecurityContext, roles: &[String], channel: &Classification) -> bool {
-        self.check(context, ActionType::JoinChannel { participant: context.initiator_id, roles, channel }).await
+        self.check(context, ActionType::JoinChannel { participant: context.principal_id, roles, channel }).await
     }
 
     async fn may_restore(&self, context: &SecurityContext, kind: EntityKind, attributes: &SecurityAttributes) -> bool {
@@ -594,7 +594,7 @@ impl<T: SecurityManager + ?Sized> Enforcement for T {
         if self.check(context, action).await {
             return Ok(());
         }
-        tracing::debug!("Refused {} for {}", action.describe(), context.initiator_id);
+        tracing::debug!("Refused {} for {}", action.describe(), context.principal_id);
         Err(refusal())
     }
 }
@@ -649,8 +649,10 @@ impl SecurityManager for DummySecurityManager {
 ///   the caller may read. Tool calls, secrets and commands are governed
 ///   elsewhere for now (issues 12 and 23).
 ///
-/// Who "you" are is the context's initiator: the person an action was
-/// started for, also when an agent carries it out.
+/// Who "you" are is the context's principal: the person whose rights its
+/// caller exercises - a user themselves, an agent its owner, whoever asked
+/// it (issue 255). An agent is its owner's delegate: the owner checks the
+/// request where a call is admitted, and the asker lends it nothing.
 #[derive(Debug, Default)]
 pub struct OwnershipSecurityManager {
     rules: ConfidentialityRules,
@@ -679,7 +681,7 @@ impl OwnershipSecurityManager {
 #[async_trait]
 impl SecurityManager for OwnershipSecurityManager {
     async fn check(&self, context: &SecurityContext, action: ActionType<'_>) -> bool {
-        let me = context.initiator_id;
+        let me = context.principal_id;
         if me == ActorId::System {
             return true;
         }
@@ -803,6 +805,19 @@ mod tests {
         let policy = OwnershipSecurityManager::new();
         assert!(policy.may_revoke_message(&for_alice, agent, &bobs).await, "an agent its own, acting for alice");
         assert!(!policy.may_revoke_message(&for_alice, alice, &bobs).await, "but not alice's: who said it, not whom it acts for");
+    }
+
+    #[tokio::test]
+    async fn an_agent_is_judged_by_its_owner_not_by_whoever_asked_it() {
+        let (alice, bob) = (user(), user());
+        let agent = ActorId::Agent(crate::agent::AgentId::new());
+        let hers = SecurityAttributes::owned_by(alice);
+        let policy = OwnershipSecurityManager::new();
+        let asked_by_bob = context(bob).next(agent, alice);
+        assert!(policy.check(&asked_by_bob, ActionType::GetSession(&hers)).await, "with alice's rights, whoever asked");
+        assert!(policy.check(&asked_by_bob, ActionType::UpdateSession(&hers)).await, "all of them");
+        let asked_by_alice = context(alice).next(agent, bob);
+        assert!(!policy.check(&asked_by_alice, ActionType::GetSession(&hers)).await, "asking lends nothing, not even the owner's own rights to another's agent");
     }
 
     #[tokio::test]

@@ -386,8 +386,8 @@ side (issue [180](../issues/180-outbound-flow-unchecked.md)). A tool set says wh
 classification its remote side is cleared for (`ToolSet::destination`, from
 `ToolProvider::destination`) - and the `GuardedToolExecutor` judges it when it assembles the tools
 of a turn, with the channel the turn begins in: a set whose destination the channel may not flow
-to - asked as `ActionType::Publish` of the channel's classification into the destination, in the
-name of whoever asked the agent - is offered as unavailable, without its tools, so that the model
+to - asked as `ActionType::Publish` of the channel's classification into the destination, with the
+agent's owner's rights - is offered as unavailable, without its tools, so that the model
 and the web UI say why (issue 32), and a call of a tool the turn was not offered is answered as
 unknown, also by name. As for an external agent (179), the remote side is judged at the door, not
 per call: nothing in the channel is classified above it. An `mcp_tool` is cleared for what its
