@@ -1,6 +1,6 @@
 # 262 — An agent removed while its turn ends leaves no end in the channel's history
 
-**Status:** open
+**Status:** done
 **Area:** Sessions and channels
 
 ## The problem
@@ -222,3 +222,6 @@ as it does.
   the mentions, `wakeup`, `actor_by_id`) would each have had to leave a leaving actor out.
   `ChannelLoop::leaving` stays, for `add_participant` to wait on (171). A task that ends on its
   own is now dropped from `running` as well, where before its entry stayed.
+- **2026-10-08** — Step 2, closed: every turn whose messages are in the channel's history has its
+  end there as its agent told it, also when the agent was removed while the turn ended; only a
+  turn whose agent was aborted after the grace stays without one.
