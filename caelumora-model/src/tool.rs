@@ -121,6 +121,17 @@ pub enum ToolPresentation {
     Shell,
     /// A plan (issue 263): its `summary` and its `steps`, numbered.
     Plan,
+    /// A file read (issue 251): its `path`, and the `content` of its result
+    /// as text, with the lines it covers - `start_line`, `end_line`,
+    /// `total_lines` - and where to read on (`next`).
+    FileRead,
+    /// A file written: its `path` and its `content` as text, and how many
+    /// `bytes` its result says were written.
+    FileWrite,
+    /// A replacement in a file: its `path`, its `old_text` and `new_text`
+    /// as text, whether it replaces every occurrence (`replace_all`), and
+    /// how many `replacements` its result counts.
+    FileEdit,
 }
 
 impl ToolPresentation {

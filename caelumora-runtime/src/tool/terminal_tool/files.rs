@@ -136,7 +136,7 @@ pub(super) fn tools(config: &TerminalToolConfig) -> Vec<Tool> {
                 ["path"],
             ),
             asks(READ_FILE),
-            ToolPresentation::Default,
+            ToolPresentation::FileRead,
         ),
         tool(
             GREP_FILES,
@@ -157,7 +157,7 @@ pub(super) fn tools(config: &TerminalToolConfig) -> Vec<Tool> {
             "Write a text file of the session's workspace, replacing what it held; the directories it lies in are made.".to_string(),
             ToolParameters::object([("path", string("The file, relative to the workspace's top")), ("content", string("What the file is to hold"))], ["path", "content"]),
             asks(WRITE_FILE),
-            ToolPresentation::Default,
+            ToolPresentation::FileWrite,
         ),
         tool(
             REPLACE_IN_FILE,
@@ -172,7 +172,7 @@ pub(super) fn tools(config: &TerminalToolConfig) -> Vec<Tool> {
                 ["path", "old_text", "new_text"],
             ),
             asks(REPLACE_IN_FILE),
-            ToolPresentation::Default,
+            ToolPresentation::FileEdit,
         ),
         tool(
             DELETE_FILE,
@@ -512,5 +512,14 @@ mod tests {
         assert_eq!(matcher.arguments["path"], regex::escape("docs/a.md"));
         let reading = tool.matcher(READ_FILE, &json!({ "path": "a.md", "start_line": 2 }));
         assert_eq!(reading.arguments.len(), 2, "a read is alike when exactly alike");
+    }
+
+    #[test]
+    fn reading_writing_and_replacing_are_presented_as_what_they_do_to_a_file() {
+        let presented: BTreeMap<String, ToolPresentation> = terminal_tool(json!({})).tools().into_iter().map(|t| (t.name, t.presentation)).collect();
+        assert_eq!(presented[READ_FILE], ToolPresentation::FileRead);
+        assert_eq!(presented[WRITE_FILE], ToolPresentation::FileWrite);
+        assert_eq!(presented[REPLACE_IN_FILE], ToolPresentation::FileEdit);
+        assert_eq!(presented[LIST_FILES], ToolPresentation::Default, "the others as every call");
     }
 }

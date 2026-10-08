@@ -5,7 +5,7 @@
 // their record.
 
 import React from 'react';
-import {CheckCircle2, EyeOff, MessageCircleQuestion, Terminal, Wrench, XCircle} from 'lucide-react';
+import {CheckCircle2, EyeOff, FileDiff, FilePen, FileText, MessageCircleQuestion, Terminal, Wrench, XCircle} from 'lucide-react';
 import type {Answers, QuestionResponse, ToolCall, ToolPresentation, ToolResult, ToolResultStatus, ToolVisibility} from '../types';
 import {formatArguments, formatTimestamp} from '../messages';
 
@@ -245,11 +245,147 @@ const PlanToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) => 
   );
 };
 
+/** The fields of a successful result's JSON object, or `null` for any other result. */
+function resultObject(result: ToolResult | undefined): Record<string, unknown> | null {
+  if (!result || (result.status && result.status !== 'ok')) return null;
+  return argumentsObject(result.content);
+}
+
+/** Whether `result` was emptied for the channel: its content is the owner's (issue 133). */
+function resultHidden(result: ToolResult | undefined): boolean {
+  return !!result && result.content === '' && (result.visibility?.content ?? 'channel') !== 'channel';
+}
+
+/** A field of `fields` if it is a string, else `null`. */
+function textOf(fields: Record<string, unknown> | null, key: string): string | null {
+  const value = fields?.[key];
+  return typeof value === 'string' ? value : null;
+}
+
+/** A field of `fields` if it is a number, else `null`. */
+function numberOf(fields: Record<string, unknown> | null, key: string): number | null {
+  const value = fields?.[key];
+  return typeof value === 'number' ? value : null;
+}
+
+const TEXT_TONES = {
+  plain: 'bg-white dark:bg-gray-950 border-gray-100 dark:border-gray-900',
+  removed: 'bg-red-50 dark:bg-red-950/40 border-red-100 dark:border-red-900/60',
+  added: 'bg-green-50 dark:bg-green-950/40 border-green-100 dark:border-green-900/60',
+};
+
+/**
+ * The text of a file, or a piece of it, as it is - its lines kept, a line too long for the chat
+ * wrapped at word boundaries, and a long text scrolling within its box.
+ */
+const FileTextBlock: React.FC<{text: string; tone?: keyof typeof TEXT_TONES; label?: string}> = ({text, tone = 'plain', label}) => (
+  <div className="mt-1">
+    {label && <div className="text-[11px] uppercase opacity-50 mb-0.5">{label}</div>}
+    <pre className={`text-[11px] font-mono whitespace-pre-wrap wrap-break-word max-h-80 overflow-y-auto p-1.5 rounded-sm border ${TEXT_TONES[tone]}`}>
+      {text === '' ? <span className="italic opacity-60">empty</span> : text}
+    </pre>
+  </div>
+);
+
+/** The file a call is about: its path, after an icon of what is done to it. */
+const FilePath: React.FC<{icon: React.ReactNode; path: string | null; detail?: string | null}> = ({icon, path, detail}) => (
+  <div className="flex items-start gap-1.5 text-[11px]">
+    <span className="mt-0.5 opacity-60 shrink-0">{icon}</span>
+    <span className="min-w-0">
+      <code className="font-mono break-all">{path ?? '?'}</code>
+      {detail && <span className="opacity-60"> · {detail}</span>}
+    </span>
+  </div>
+);
+
+/** What a call that did not succeed says, and nothing for one that did or has no result yet. */
+const FailedResult: React.FC<{result?: ToolResult}> = ({result}) =>
+  result && result.status && result.status !== 'ok' ? (
+    <pre className="mt-2 text-[11px] font-mono whitespace-pre-wrap wrap-break-word bg-white dark:bg-gray-950 p-1.5 rounded-sm border border-gray-100 dark:border-gray-900">
+      {toolResultText(result)}
+    </pre>
+  ) : null;
+
+/**
+ * A file read (issue 251): its path, the lines it gave - all of them, or which of how many - and
+ * their text, and where to read on if not all of it fitted.
+ */
+const FileReadToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) => {
+  if (call.arguments === null) return <span className="text-[11px] italic opacity-60">File not shown</span>;
+  const args = argumentsObject(call.arguments);
+  const read = resultObject(result);
+  const content = textOf(read, 'content');
+  const [start, end, total] = [numberOf(read, 'start_line'), numberOf(read, 'end_line'), numberOf(read, 'total_lines')];
+  const lines = start !== null && end !== null && total !== null
+    ? (start <= 1 && end >= total ? `${total} ${total === 1 ? 'line' : 'lines'}` : `lines ${start}-${end} of ${total}`)
+    : null;
+  return (
+    <>
+      <FilePath icon={<FileText size={12} />} path={textOf(read, 'path') ?? textOf(args, 'path')} detail={lines} />
+      {resultHidden(result) ? (
+        <div className="mt-2 text-[11px] italic opacity-60">Content not shown</div>
+      ) : content !== null ? (
+        <>
+          <FileTextBlock text={content} />
+          {textOf(read, 'next') && <div className="mt-1 text-[11px] opacity-60">{textOf(read, 'next')}</div>}
+        </>
+      ) : (
+        <FailedResult result={result} />
+      )}
+    </>
+  );
+};
+
+/** A file written: its path, what it is to hold, and how many bytes were written. */
+const FileWriteToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) => {
+  if (call.arguments === null) return <span className="text-[11px] italic opacity-60">File not shown</span>;
+  const args = argumentsObject(call.arguments);
+  const content = textOf(args, 'content');
+  const bytes = numberOf(resultObject(result), 'bytes');
+  return (
+    <>
+      <FilePath icon={<FilePen size={12} />} path={textOf(args, 'path')} detail={bytes !== null ? `${bytes} ${bytes === 1 ? 'byte' : 'bytes'} written` : null} />
+      {content !== null ? <FileTextBlock text={content} /> : <code className="text-[11px] font-mono break-all">{formatArguments(call.arguments)}</code>}
+      <FailedResult result={result} />
+    </>
+  );
+};
+
+/**
+ * A replacement in a file: its path, the text replaced and the text put in its place, once or
+ * everywhere, and how many places it replaced.
+ */
+const FileEditToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) => {
+  if (call.arguments === null) return <span className="text-[11px] italic opacity-60">Change not shown</span>;
+  const args = argumentsObject(call.arguments);
+  const [oldText, newText] = [textOf(args, 'old_text'), textOf(args, 'new_text')];
+  const replaced = numberOf(resultObject(result), 'replacements');
+  const how = args?.replace_all === true ? 'every occurrence' : null;
+  const detail = [how, replaced !== null ? `${replaced} ${replaced === 1 ? 'replacement' : 'replacements'}` : null].filter(Boolean).join(' · ') || null;
+  return (
+    <>
+      <FilePath icon={<FileDiff size={12} />} path={textOf(args, 'path')} detail={detail} />
+      {oldText !== null && newText !== null ? (
+        <>
+          <FileTextBlock text={oldText} tone="removed" label="Replaced" />
+          <FileTextBlock text={newText} tone="added" label="By" />
+        </>
+      ) : (
+        <code className="text-[11px] font-mono break-all">{formatArguments(call.arguments)}</code>
+      )}
+      <FailedResult result={result} />
+    </>
+  );
+};
+
 /** The handler of each presentation; one the server knows and this client does not falls back to the default. */
 const PRESENTATIONS: Record<ToolPresentation, React.FC<ToolCallContentProps>> = {
   default: DefaultToolCallContent,
   shell: ShellToolCallContent,
   plan: PlanToolCallContent,
+  file_read: FileReadToolCallContent,
+  file_write: FileWriteToolCallContent,
+  file_edit: FileEditToolCallContent,
 };
 
 interface ToolCallViewProps {

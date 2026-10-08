@@ -196,6 +196,11 @@ else who may read it - the session's owner, say - is shown its history and no in
     not know, gets the default handler: its arguments and its result as they are. The `shell`
     handler (issue 251) shows a command as a line of code, what it printed as a terminal shows it,
     and its exit code, or the id it runs under; a call that follows or ends a command names its id.
+    The `file_read`, `file_write` and `file_edit` handlers show the file's path and its text as it
+    is - its lines kept, a long line wrapped at word boundaries, a long text scrolling in its box:
+    what was read, with which lines of how many and where to read on; what was written, and how
+    many bytes; the text replaced and the text put in its place, and how many places. The `plan`
+    handler shows a plan's summary and its steps, numbered (issue 263).
     Where a result keeps the record of the questions its call asked (`answers`, issue 165), the
     frame shows each question with its answer, and who answered or declined. A question's text keeps
     its line breaks, so that an approver reads a command of several lines as it was written.
