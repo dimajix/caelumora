@@ -27,9 +27,11 @@
 //! No message of the instance is passed on: they name paths inside it.
 
 mod client;
+mod docker;
 mod shared;
 mod wire;
 
+pub(crate) use docker::DockerProvider;
 pub(crate) use shared::SharedProvider;
 
 use super::{ByteStream, CommandState, CommandStatus, FileEntry, Shell, Terminal, TerminalError, TerminalResult, WorkspacePath};

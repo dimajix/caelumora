@@ -55,6 +55,17 @@ workspaces:
         timeout_secs: 10
       mount: "/home/user/workspaces"
       destination: { level: internal }
+    # A volume and an Open Terminal container per workspace, started by
+    # Caelumora over the Docker daemon of its environment - access to which
+    # is root on the host - and stopped after idle_stop_secs unused. A
+    # workspace's commands are kept to its container, which reaches what
+    # its network reaches.
+#    isolated:
+#      provider: open_terminal_docker
+#      image: "ghcr.io/open-webui/open-terminal:0.14.0"
+#      network: bridge
+#      idle_stop_secs: 900
+#      destination: { level: confidential }
 
 # Where users and their credentials come from. Without this section nobody
 # can authenticate. `accept_any` is a development stand-in that accepts ANY

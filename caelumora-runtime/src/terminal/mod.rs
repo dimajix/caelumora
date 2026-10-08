@@ -19,7 +19,7 @@ mod local_shell;
 mod open_terminal;
 
 pub(crate) use local::LocalProvider;
-pub(crate) use open_terminal::SharedProvider;
+pub(crate) use open_terminal::{DockerProvider, SharedProvider};
 
 use async_trait::async_trait;
 use bytes::Bytes;

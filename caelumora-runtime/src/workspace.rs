@@ -24,7 +24,7 @@
 
 use crate::component::{ComponentError, ComponentResult};
 use crate::event::EventBus;
-use crate::terminal::{LocalProvider, SharedProvider, Terminal, TerminalError, TerminalProvider};
+use crate::terminal::{DockerProvider, LocalProvider, SharedProvider, Terminal, TerminalError, TerminalProvider};
 use caelumora_model::actor::ActorId;
 use caelumora_model::config::{StorageConfig, WorkspacesConfig};
 use caelumora_model::confidentiality::{user_roles, Classification};
@@ -41,6 +41,7 @@ use caelumora_model::workspace::{Workspace, WorkspaceId, WorkspaceUpdateEvent};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
@@ -106,11 +107,14 @@ impl WorkspaceManager {
     pub(crate) fn new(entities: Arc<dyn EntityStore>, events: Arc<EventBus>, security: Arc<dyn SecurityManager>, secrets: &Arc<SecretManager>, config: &WorkspacesConfig) -> ComponentResult<Self> {
         let storages = config.storage.iter()
             .map(|(name, storage)| {
+                let invalid = |e: TerminalError| ComponentError::InvalidConfig(format!("the storage '{name}' of workspaces: {e}"));
                 let provider: Arc<dyn TerminalProvider> = match storage {
                     StorageConfig::Local { root, shell, destination } => Arc::new(LocalProvider::new(root.clone(), *shell, destination.clone())),
                     StorageConfig::OpenTerminalShared { endpoint, mount, destination } => Arc::new(
-                        SharedProvider::new(endpoint.clone(), mount, destination.clone(), Arc::clone(secrets))
-                            .map_err(|e| ComponentError::InvalidConfig(format!("the storage '{name}' of workspaces: {e}")))?,
+                        SharedProvider::new(endpoint.clone(), mount, destination.clone(), Arc::clone(secrets)).map_err(invalid)?,
+                    ),
+                    StorageConfig::OpenTerminalDocker { image, network, idle_stop_secs, destination } => Arc::new(
+                        DockerProvider::new(name, image, network, Duration::from_secs(*idle_stop_secs), destination.clone()).map_err(invalid)?,
                     ),
                 };
                 Ok((name.clone(), provider))

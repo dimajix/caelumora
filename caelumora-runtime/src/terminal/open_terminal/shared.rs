@@ -5,7 +5,7 @@
 //! reaches every other: fit for a trusted team, one classification per
 //! storage.
 
-use super::client::Client;
+use super::client::{Client, Key};
 use super::OpenTerminal;
 use caelumora_model::remote::RemoteEndpoint;
 use crate::terminal::{Terminal, TerminalError, TerminalProvider, TerminalResult};
@@ -37,7 +37,7 @@ impl SharedProvider {
     /// `Unavailable` for an endpoint that is no URL.
     pub(crate) fn new(endpoint: RemoteEndpoint, mount: &str, destination: Option<Classification>, secrets: Arc<SecretManager>) -> TerminalResult<Self> {
         let mount = mount.trim_end_matches('/').to_string();
-        let client = Arc::new(Client::new(endpoint, secrets)?);
+        let client = Arc::new(Client::new(endpoint, Key::Endpoint(secrets), false)?);
         Ok(Self { client, mount, destination: destination.unwrap_or(Classification::PUBLIC) })
     }
 

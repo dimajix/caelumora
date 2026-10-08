@@ -316,6 +316,33 @@ pub enum StorageConfig {
         #[serde(default)]
         destination: Option<Classification>,
     },
+    /// A volume and an Open Terminal container per workspace, started by
+    /// Caelumora over the Docker daemon its environment names - which is
+    /// root on the host - on first use and stopped after `idle_stop_secs`
+    /// unused. A workspace's commands are kept to its container.
+    OpenTerminalDocker {
+        /// Pinned: Open Terminal's API is 0.x.
+        image: String,
+        /// The Docker network the containers are started in, which reaches
+        /// what the agents are meant to reach; Caelumora reaches them at
+        /// their address there.
+        #[serde(default = "default_docker_network")]
+        network: String,
+        #[serde(default = "default_idle_stop_secs")]
+        idle_stop_secs: u64,
+        /// What may be put into this storage; `public` unless given - a
+        /// command reaches whatever its network does.
+        #[serde(default)]
+        destination: Option<Classification>,
+    },
+}
+
+fn default_docker_network() -> String {
+    "bridge".to_string()
+}
+
+fn default_idle_stop_secs() -> u64 {
+    900
 }
 
 impl StorageConfig {
@@ -330,6 +357,18 @@ impl StorageConfig {
             Self::OpenTerminalShared { mount, .. } => {
                 if !mount.starts_with('/') || mount.contains('\0') || mount.split('/').any(|part| part == "..") {
                     return Err(format!("the mount '{mount}' is not an absolute path that stays where it says"));
+                }
+                Ok(())
+            }
+            Self::OpenTerminalDocker { image, network, idle_stop_secs, .. } => {
+                if image.trim().is_empty() {
+                    return Err("an image is needed".to_string());
+                }
+                if matches!(network.as_str(), "" | "host" | "none") || network.starts_with("container:") {
+                    return Err(format!("the network '{network}' does not give a container an address of its own"));
+                }
+                if *idle_stop_secs == 0 {
+                    return Err("idle_stop_secs must be more than 0".to_string());
                 }
                 Ok(())
             }
@@ -561,6 +600,19 @@ persistence:
             assert!(refused.contains("sandbox") && refused.contains("mount"), "{refused}");
         }
         assert!(AppConfig::from_yaml(&yaml.replace("      mount: /workspaces\n", "")).is_err(), "a mount is needed");
+    }
+
+    #[test]
+    fn a_docker_storage_names_its_image_and_takes_the_rest_by_default() {
+        let yaml = "workspaces:\n  storage:\n    isolated:\n      provider: open_terminal_docker\n      image: ghcr.io/open-webui/open-terminal:0.14.0\n";
+        let config = AppConfig::from_yaml(yaml).expect("a container per workspace");
+        let Some(StorageConfig::OpenTerminalDocker { image, network, idle_stop_secs, destination }) = config.workspaces.storage.get("isolated") else { panic!() };
+        assert_eq!((image.as_str(), network.as_str(), *idle_stop_secs, destination), ("ghcr.io/open-webui/open-terminal:0.14.0", "bridge", 900, &None));
+        for (wrong, why) in [("      network: host\n", "network"), ("      idle_stop_secs: 0\n", "idle_stop_secs")] {
+            let refused = AppConfig::from_yaml(&format!("{yaml}{wrong}")).map(|_| ()).unwrap_err().to_string();
+            assert!(refused.contains("isolated") && refused.contains(why), "{refused}");
+        }
+        assert!(AppConfig::from_yaml(&yaml.replace("ghcr.io/open-webui/open-terminal:0.14.0", "\" \"")).is_err(), "an image is needed");
     }
 
     #[test]

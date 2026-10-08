@@ -52,3 +52,8 @@ the workspace's files - a `remove_dir_all` of a purge races a command still writ
 
 - **2026-10-08** — Opened with step 5 of 251's plan, where the local shell and `terminal_tool` were
   built: a command handed back as running is kept by the shell and ended only by the model.
+- **2026-10-08** — In part: an `open_terminal_docker` storage (step 7 of 251's plan) stops a
+  workspace's container after `idle_stop_secs` unused, and with it every command in it - a command
+  handed back as running and never followed again ends then. Nothing changes for the `local` shell
+  and `open_terminal_shared`.
+

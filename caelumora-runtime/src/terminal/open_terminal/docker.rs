@@ -1,0 +1,435 @@
+//! The `open_terminal_docker` provider (issue 251, part A): a volume and an
+//! Open Terminal container per workspace, started by Caelumora over the
+//! Docker daemon its environment names (`DOCKER_HOST`, else the local
+//! socket). A workspace's commands are kept to its container; what the
+//! container's network reaches, they reach.
+//!
+//! - `create` makes the volume `caelumora-ws-<id>`; `remove` takes the
+//!   container and the volume away.
+//! - `terminal_for` starts the container on first use - the image pulled if
+//!   it is missing, the volume at `/workspace`, made writable for the
+//!   image's user, labelled with the storage and the workspace, with a key
+//!   made for it - and waits until it answers. The key lives in the
+//!   container's configuration, where only who holds the daemon reads it,
+//!   so a container outlives Caelumora and is found again after a restart.
+//! - Every container is reached directly, without a proxy, at its address
+//!   in `network`.
+//! - A task stops a container unused for `idle_stop`, and any running
+//!   container of the storage that no workspace in use here holds - one
+//!   left from an earlier run. Stopping a container ends the commands in it.
+
+use super::client::{Client, Key};
+use super::OpenTerminal;
+use crate::terminal::{Terminal, TerminalError, TerminalProvider, TerminalResult};
+use async_trait::async_trait;
+use bollard::errors::Error as DockerError;
+use bollard::exec::{CreateExecOptions, StartExecOptions};
+use bollard::models::{ContainerCreateBody, ContainerInspectResponse, HostConfig, VolumeCreateRequest};
+use bollard::query_parameters::{CreateContainerOptions, CreateImageOptions, ListContainersOptions, RemoveContainerOptions, RemoveVolumeOptions, StopContainerOptions};
+use bollard::Docker;
+use caelumora_model::confidentiality::Classification;
+use caelumora_model::remote::RemoteEndpoint;
+use caelumora_model::workspace::WorkspaceId;
+use futures::StreamExt;
+use reqwest::Method;
+use std::collections::HashMap;
+use std::sync::{Arc, Weak};
+use std::time::Duration;
+use tokio::sync::Mutex;
+use tokio_util::task::AbortOnDropHandle;
+use tracing::{info, warn};
+
+/// The label naming the storage a container or volume belongs to.
+const STORAGE_LABEL: &str = "caelumora.storage";
+/// The label naming the workspace a container or volume belongs to.
+const WORKSPACE_LABEL: &str = "caelumora.workspace";
+/// Where a container has its workspace.
+const BASE: &str = "/workspace";
+/// The port Open Terminal listens on in its image.
+const PORT: u16 = 8000;
+/// How long a container may take to answer once started - its entrypoint
+/// may install packages first.
+const START_WAIT: Duration = Duration::from_secs(120);
+/// How long a container is given to stop before it is killed.
+const STOP_GRACE_SECS: i32 = 5;
+
+/// The instance of a workspace while it runs here: its client, or none.
+type Slot = Arc<Mutex<Option<Arc<Client>>>>;
+
+#[derive(Debug)]
+pub(crate) struct DockerProvider {
+    inner: Arc<Inner>,
+}
+
+#[derive(Debug)]
+struct Inner {
+    docker: Docker,
+    storage: String,
+    image: String,
+    network: String,
+    idle_stop: Duration,
+    destination: Classification,
+    /// The workspaces used here, each with its instance while it runs.
+    slots: std::sync::Mutex<HashMap<WorkspaceId, Slot>>,
+    /// The task that stops what is not used; ends with the provider.
+    reaper: std::sync::OnceLock<AbortOnDropHandle<()>>,
+}
+
+/// The name of the container and of the volume of workspace `id`.
+fn name(id: WorkspaceId) -> String {
+    format!("caelumora-ws-{id}")
+}
+
+/// Whether `error` is the daemon saying that what was asked for is not there.
+fn missing(error: &DockerError) -> bool {
+    matches!(error, DockerError::DockerResponseServerError { status_code: 404, .. })
+}
+
+/// That the daemon failed to `what`: logged in full, told without what the
+/// daemon wrote - it names paths of the host.
+fn failed(what: &str, error: DockerError) -> TerminalError {
+    warn!("Docker could not {what}: {error}");
+    TerminalError::Unavailable(format!("Docker could not {what}"))
+}
+
+impl DockerProvider {
+    /// The provider of the storage `storage`, whose containers run `image`
+    /// in `network` and stop after `idle_stop` unused; what may be put into
+    /// it at most `destination`, `public` unless given. Starts the task that
+    /// stops what is not used - also what an earlier run left running.
+    ///
+    /// # Errors
+    /// `Unavailable` outside a Tokio runtime, or where no Docker daemon can
+    /// be addressed.
+    pub(crate) fn new(storage: &str, image: &str, network: &str, idle_stop: Duration, destination: Option<Classification>) -> TerminalResult<Self> {
+        let runtime = tokio::runtime::Handle::try_current()
+            .map_err(|_| TerminalError::Unavailable("a Docker storage needs a running runtime".to_string()))?;
+        let docker = Docker::connect_with_local_defaults().map_err(|e| failed("be addressed", e))?;
+        let inner = Arc::new(Inner {
+            docker,
+            storage: storage.to_string(),
+            image: image.to_string(),
+            network: network.to_string(),
+            idle_stop,
+            destination: destination.unwrap_or(Classification::PUBLIC),
+            slots: std::sync::Mutex::default(),
+            reaper: std::sync::OnceLock::new(),
+        });
+        let every = (idle_stop / 4).clamp(Duration::from_secs(1), Duration::from_secs(60));
+        let _ = inner.reaper.set(AbortOnDropHandle::new(runtime.spawn(reap(Arc::downgrade(&inner), every))));
+        Ok(Self { inner })
+    }
+}
+
+/// Stops, every `every`, what `inner` does not use, until it is gone.
+async fn reap(inner: Weak<Inner>, every: Duration) {
+    loop {
+        let Some(inner) = inner.upgrade() else { return };
+        inner.reap().await;
+        drop(inner);
+        tokio::time::sleep(every).await;
+    }
+}
+
+impl Inner {
+    fn labels(&self, id: WorkspaceId) -> HashMap<String, String> {
+        HashMap::from([(STORAGE_LABEL.to_string(), self.storage.clone()), (WORKSPACE_LABEL.to_string(), id.to_string())])
+    }
+
+    fn slot(&self, id: WorkspaceId) -> Slot {
+        let mut slots = self.slots.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        Arc::clone(slots.entry(id).or_default())
+    }
+
+    /// The client of workspace `id`'s instance, started if it does not run.
+    async fn instance(&self, id: WorkspaceId) -> TerminalResult<Arc<Client>> {
+        let slot = self.slot(id);
+        let mut held = slot.lock().await;
+        if let Some(client) = held.as_ref() {
+            return Ok(Arc::clone(client));
+        }
+        let client = Arc::new(self.start(id).await?);
+        *held = Some(Arc::clone(&client));
+        Ok(client)
+    }
+
+    /// Starts the container of workspace `id`, made if there is none, and
+    /// answers its client once it answers.
+    async fn start(&self, id: WorkspaceId) -> TerminalResult<Client> {
+        let name = name(id);
+        let container = match self.docker.inspect_container(&name, None).await {
+            Ok(container) => container,
+            Err(e) if missing(&e) => {
+                self.make(id).await?;
+                self.inspect(&name).await?
+            }
+            Err(e) => return Err(failed("inspect a workspace's container", e)),
+        };
+        let labels = container.config.as_ref().and_then(|c| c.labels.as_ref());
+        if labels.and_then(|l| l.get(STORAGE_LABEL)) != Some(&self.storage) {
+            warn!(workspace = %id, container = %name, "A container of a workspace's name is not of its storage");
+            return Err(TerminalError::Unavailable("a container of its name belongs to something else".to_string()));
+        }
+        let key = container.config.as_ref().and_then(|c| c.env.as_ref())
+            .and_then(|env| env.iter().find_map(|var| var.strip_prefix("OPEN_TERMINAL_API_KEY=")))
+            .filter(|key| !key.is_empty())
+            .ok_or_else(|| TerminalError::Unavailable("a workspace's container has no key".to_string()))?
+            .to_string();
+        let container = match container.state.as_ref().and_then(|s| s.running) {
+            Some(true) => container,
+            _ => {
+                info!(workspace = %id, storage = %self.storage, "Starting the container of a workspace");
+                self.docker.start_container(&name, None).await.map_err(|e| failed("start a workspace's container", e))?;
+                self.inspect(&name).await?
+            }
+        };
+        self.give_workspace(&name).await?;
+        let address = container.network_settings.as_ref()
+            .and_then(|settings| settings.networks.as_ref())
+            .and_then(|networks| networks.get(&self.network))
+            .and_then(|endpoint| endpoint.ip_address.clone())
+            .filter(|address| !address.is_empty())
+            .ok_or_else(|| TerminalError::Unavailable(format!("a workspace's container has no address in the network '{}'", self.network)))?;
+        let client = Client::new(RemoteEndpoint::new(format!("http://{address}:{PORT}")), Key::Made(key), true)?;
+        self.ready(&client).await?;
+        Ok(client)
+    }
+
+    async fn inspect(&self, name: &str) -> TerminalResult<ContainerInspectResponse> {
+        self.docker.inspect_container(name, None).await.map_err(|e| failed("inspect a workspace's container", e))
+    }
+
+    /// Makes the container of workspace `id`, with a key of its own; the
+    /// image pulled first if the daemon does not have it.
+    async fn make(&self, id: WorkspaceId) -> TerminalResult<()> {
+        let name = name(id);
+        let key = format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple());
+        let body = ContainerCreateBody {
+            image: Some(self.image.clone()),
+            env: Some(vec![format!("OPEN_TERMINAL_API_KEY={key}")]),
+            labels: Some(self.labels(id)),
+            host_config: Some(HostConfig {
+                binds: Some(vec![format!("{name}:{BASE}")]),
+                network_mode: Some(self.network.clone()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let options = || Some(CreateContainerOptions { name: Some(name.clone()), ..Default::default() });
+        match self.docker.create_container(options(), body.clone()).await {
+            Ok(_) => Ok(()),
+            Err(e) if missing(&e) => {
+                info!(image = %self.image, "Pulling the image of a Docker storage");
+                let pull = CreateImageOptions { from_image: Some(self.image.clone()), ..Default::default() };
+                let mut progress = self.docker.create_image(Some(pull), None, None);
+                while let Some(step) = progress.next().await {
+                    step.map_err(|e| failed("pull the image of the storage", e))?;
+                }
+                self.docker.create_container(options(), body).await.map(|_| ()).map_err(|e| failed("make a workspace's container", e))
+            }
+            Err(e) => Err(failed("make a workspace's container", e)),
+        }
+    }
+
+    /// Makes the workspace writable for the image's user: a volume is
+    /// made owned by root.
+    async fn give_workspace(&self, name: &str) -> TerminalResult<()> {
+        let exec = CreateExecOptions { cmd: Some(vec!["chown", "user:user", BASE]), user: Some("root"), ..Default::default() };
+        let exec = self.docker.create_exec(name, exec).await.map_err(|e| failed("prepare a workspace's container", e))?;
+        self.docker.start_exec(&exec.id, Some(StartExecOptions { detach: true, ..Default::default() })).await
+            .map_err(|e| failed("prepare a workspace's container", e))?;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let state = self.docker.inspect_exec(&exec.id).await.map_err(|e| failed("prepare a workspace's container", e))?;
+            match (state.running, state.exit_code) {
+                (Some(false), Some(0)) => return Ok(()),
+                (Some(false), code) => {
+                    warn!(container = %name, ?code, "Giving the workspace to the image's user failed");
+                    return Err(TerminalError::Unavailable("a workspace's container could not be prepared".to_string()));
+                }
+                _ if tokio::time::Instant::now() >= deadline => return Err(TerminalError::Unavailable("a workspace's container was not prepared in time".to_string())),
+                _ => tokio::time::sleep(Duration::from_millis(100)).await,
+            }
+        }
+    }
+
+    /// Waits until the instance behind `client` answers.
+    async fn ready(&self, client: &Client) -> TerminalResult<()> {
+        let deadline = tokio::time::Instant::now() + START_WAIT;
+        loop {
+            if let Ok(answer) = client.send(Method::GET, &["health"], &[], None, Duration::ZERO, |r| r).await {
+                if answer.status().is_success() {
+                    return Ok(());
+                }
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(TerminalError::Unavailable("a workspace's container did not answer in time".to_string()));
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    }
+
+    async fn stop(&self, name: &str) {
+        info!(container = %name, storage = %self.storage, "Stopping the unused container of a workspace");
+        let options = StopContainerOptions { t: Some(STOP_GRACE_SECS), ..Default::default() };
+        match self.docker.stop_container(name, Some(options)).await {
+            Ok(()) => {}
+            Err(e) if missing(&e) => {}
+            Err(e) => warn!(container = %name, "An unused container could not be stopped: {e}"),
+        }
+    }
+
+    /// Stops the containers unused for `idle_stop`, and the running ones of
+    /// the storage no workspace in use here holds.
+    async fn reap(&self) {
+        let slots: Vec<(WorkspaceId, Slot)> = self.slots.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter().map(|(id, slot)| (*id, Arc::clone(slot))).collect();
+        for (id, slot) in &slots {
+            // One being started or used right now is not idle.
+            let Ok(mut held) = slot.try_lock() else { continue };
+            if held.as_ref().is_some_and(|client| client.idle_for() >= self.idle_stop) {
+                self.stop(&name(*id)).await;
+                *held = None;
+            }
+        }
+        let filters = HashMap::from([("label".to_string(), vec![format!("{STORAGE_LABEL}={}", self.storage)])]);
+        let running = match self.docker.list_containers(Some(ListContainersOptions { filters: Some(filters), ..Default::default() })).await {
+            Ok(running) => running,
+            Err(e) => return warn!(storage = %self.storage, "The containers of a Docker storage could not be listed: {e}"),
+        };
+        for container in running {
+            let Some(id) = container.labels.as_ref().and_then(|l| l.get(WORKSPACE_LABEL)).and_then(|id| id.parse::<uuid::Uuid>().ok()).map(WorkspaceId::from) else { continue };
+            let held = slots.iter().find(|(used, _)| *used == id).map(|(_, slot)| slot);
+            let unheld = match held {
+                None => true,
+                Some(slot) => slot.try_lock().is_ok_and(|held| held.is_none()),
+            };
+            if unheld {
+                self.stop(&name(id)).await;
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl TerminalProvider for DockerProvider {
+    async fn create(&self, id: WorkspaceId) -> TerminalResult<()> {
+        let volume = VolumeCreateRequest { name: Some(name(id)), labels: Some(self.inner.labels(id)), ..Default::default() };
+        self.inner.docker.create_volume(volume).await.map(|_| ()).map_err(|e| failed("make a workspace's volume", e))
+    }
+
+    async fn remove(&self, id: WorkspaceId) -> TerminalResult<()> {
+        let slot = self.inner.slot(id);
+        let mut held = slot.lock().await;
+        *held = None;
+        let name = name(id);
+        match self.inner.docker.remove_container(&name, Some(RemoveContainerOptions { force: true, ..Default::default() })).await {
+            Ok(()) => {}
+            Err(e) if missing(&e) => {}
+            Err(e) => return Err(failed("remove a workspace's container", e)),
+        }
+        match self.inner.docker.remove_volume(&name, None::<RemoveVolumeOptions>).await {
+            Ok(()) => {}
+            Err(e) if missing(&e) => {}
+            Err(e) => return Err(failed("remove a workspace's volume", e)),
+        }
+        drop(held);
+        self.inner.slots.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).remove(&id);
+        Ok(())
+    }
+
+    async fn terminal_for(&self, id: WorkspaceId) -> TerminalResult<Arc<dyn Terminal>> {
+        let client = self.inner.instance(id).await?;
+        Ok(Arc::new(OpenTerminal { client, base: BASE.to_string(), workspace: id }))
+    }
+
+    fn has_shell(&self) -> bool {
+        true
+    }
+
+    fn destination(&self) -> Option<&Classification> {
+        Some(&self.inner.destination)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::terminal::{ByteStream, CommandStatus, WorkspacePath};
+    use bytes::Bytes;
+
+    fn path(text: &str) -> WorkspacePath {
+        WorkspacePath::parse(text).unwrap()
+    }
+
+    fn content(text: &'static str) -> ByteStream {
+        Box::pin(futures::stream::iter([Ok(Bytes::from_static(text.as_bytes()))]))
+    }
+
+    async fn running(docker: &Docker, id: WorkspaceId) -> bool {
+        docker.inspect_container(&name(id), None).await.ok().and_then(|c| c.state).and_then(|s| s.running) == Some(true)
+    }
+
+    /// The whole life of a workspace's container, against the Docker daemon
+    /// of the environment: `CAELUMORA_DOCKER_TESTS` set, the image from
+    /// `CAELUMORA_DOCKER_IMAGE` (the published 0.14.0 unless given). What it
+    /// makes, it removes.
+    #[tokio::test]
+    #[ignore = "needs a Docker daemon"]
+    async fn a_container_per_workspace_is_started_stopped_found_again_and_removed() {
+        if std::env::var_os("CAELUMORA_DOCKER_TESTS").is_none() {
+            return eprintln!("CAELUMORA_DOCKER_TESTS is not set");
+        }
+        let image = std::env::var("CAELUMORA_DOCKER_IMAGE").unwrap_or_else(|_| "ghcr.io/open-webui/open-terminal:0.14.0".to_string());
+        let storage = format!("test-{}", uuid::Uuid::new_v4().simple());
+        let provider = DockerProvider::new(&storage, &image, "bridge", Duration::from_secs(3), None).unwrap();
+        let docker = provider.inner.docker.clone();
+        let id = WorkspaceId::new();
+        provider.create(id).await.unwrap();
+
+        let terminal = provider.terminal_for(id).await.expect("started");
+        assert!(running(&docker, id).await);
+        terminal.write(&path("docs/a.md"), content("hello"), 100).await.expect("the workspace is the image user's to write");
+        let shell = terminal.shell().unwrap();
+        let started = shell.start("c", "cat docs/a.md; echo; pwd; echo \"[$OPEN_TERMINAL_API_KEY]\"; touch made").await.unwrap();
+        let state = shell.output("c", &started, 0, Duration::from_secs(10)).await.unwrap();
+        assert_eq!((state.status, state.output.as_str()), (CommandStatus::Completed, "hello\n/workspace\n[]\n"));
+
+        // Unused, it is stopped; used again, started with the same key and
+        // the same files - also by a provider of a later run.
+        tokio::time::timeout(Duration::from_secs(30), async { while running(&docker, id).await { tokio::time::sleep(Duration::from_millis(500)).await } }).await.expect("stopped when unused");
+        let later = DockerProvider::new(&storage, &image, "bridge", Duration::from_secs(600), None).unwrap();
+        drop(provider);
+        let terminal = later.terminal_for(id).await.expect("started again");
+        let listed: Vec<String> = terminal.list(&WorkspacePath::root()).await.unwrap().into_iter().map(|e| e.name).collect();
+        assert_eq!(listed, ["docs", "made"]);
+
+        later.remove(id).await.unwrap();
+        assert!(matches!(docker.inspect_container(&name(id), None).await, Err(e) if missing(&e)), "the container is gone");
+        assert!(matches!(docker.inspect_volume(&name(id)).await, Err(e) if missing(&e)), "and the volume");
+        later.remove(id).await.expect("nothing there is no error");
+    }
+
+    /// A running container of the storage that no workspace in use holds -
+    /// one an earlier run left - is stopped.
+    #[tokio::test]
+    #[ignore = "needs a Docker daemon"]
+    async fn what_an_earlier_run_left_running_is_stopped() {
+        if std::env::var_os("CAELUMORA_DOCKER_TESTS").is_none() {
+            return eprintln!("CAELUMORA_DOCKER_TESTS is not set");
+        }
+        let image = std::env::var("CAELUMORA_DOCKER_IMAGE").unwrap_or_else(|_| "ghcr.io/open-webui/open-terminal:0.14.0".to_string());
+        let storage = format!("test-{}", uuid::Uuid::new_v4().simple());
+        let earlier = DockerProvider::new(&storage, &image, "bridge", Duration::from_secs(600), None).unwrap();
+        let docker = earlier.inner.docker.clone();
+        let id = WorkspaceId::new();
+        earlier.create(id).await.unwrap();
+        earlier.terminal_for(id).await.unwrap();
+        drop(earlier);
+        assert!(running(&docker, id).await, "left running");
+
+        let later = DockerProvider::new(&storage, &image, "bridge", Duration::from_secs(600), None).unwrap();
+        tokio::time::timeout(Duration::from_secs(30), async { while running(&docker, id).await { tokio::time::sleep(Duration::from_millis(500)).await } }).await.expect("stopped at start");
+        later.remove(id).await.unwrap();
+    }
+}

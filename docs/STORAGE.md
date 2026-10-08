@@ -57,6 +57,18 @@ half written; offsets count pieces of output, not bytes; no message of the insta
 since they name paths inside it. Written against Open Terminal 0.14.0, whose API is 0.x: the
 requests and answers relied on are in `open_terminal/wire.rs`, pinned by tests against a stand-in.
 
+The `open_terminal_docker` provider (`open_terminal/docker.rs`) gives every workspace a volume
+`caelumora-ws-<id>` and an Open Terminal container of the same name, started by Caelumora over the
+Docker daemon its environment names (`DOCKER_HOST`, else the local socket) with the crate `bollard`.
+The container is made and started on first use - the image pulled if the daemon lacks it, the
+volume at `/workspace` and given to the image's user, labelled with the storage and the workspace,
+with a key made for it - and reached directly, without a proxy, at its address in `network`, once
+it answers. The key lives in the container's configuration, which only who holds the daemon reads,
+so a container outlives Caelumora and is found again after a restart. A task stops a container
+unused for `idle_stop_secs`, and any running container of the storage that no workspace in use
+holds - one an earlier run left; stopping a container ends the commands in it. Removing a
+workspace removes its container and its volume.
+
 Preconfigured components are not among them. They are runtime configuration that personalities and
 templates refer to by `kind: "ref"`, and the `ComponentStore` keeps them: a `StoredComponent` - the
 `ComponentDescriptor` with the attributes of who may use and change it - by its id, with the same

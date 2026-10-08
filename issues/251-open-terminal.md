@@ -367,7 +367,11 @@ it knows and never sees `..`.
   on the host, so Caelumora's process gains that (a launcher service with that one right is the
   later answer); the first command of a session waits for a start; after a restart of Caelumora the
   keys are gone, so containers still running - found by their label - are replaced, and orphans are
-  removed at start.
+  removed at start. (Amended in step 7: the key lives in the container's configuration, which only
+  who holds the daemon reads, and is read back from it, so a container outlives a restart and is
+  found again, not replaced; a task stops what no workspace in use holds - also what an earlier run
+  left running - and nothing is removed but with its workspace. The volume is given to the image's
+  user, who may not write a fresh one, and a container is reached without a proxy.)
 
 Where a workspace lies decides what its terminal can do, and the tools are generic over it (C):
 a storage whose terminal has no shell gives agents files alone. The provider's own configuration
@@ -974,7 +978,8 @@ container.
 - **`docker`**: the socket is root on the host; a start takes seconds, so the first command of a
   session waits and the tool's timeout allows for it; keys live in memory and a restart of
   Caelumora replaces the containers; a crash leaves orphans, found by their label and removed at
-  start; the image is pinned.
+  start; the image is pinned. (Amended in step 7, see part A: keys are read back from the
+  containers, which are found again; what runs unheld is stopped.)
 - **`env` is per command**; no secret of Caelumora's goes into it, and a key goes into a header,
   resolved or generated per instance.
 - **The agent's context.** The ownership policy judges the initiator. The call is admitted in the
@@ -1077,4 +1082,16 @@ command may come later.
   command its own key - blanked in what Caelumora starts, but readable from the server's process -
   so `X-Session-Id` keeps the tool's channels apart, not a command from the API. C3's paragraph on
   the Open Terminal shell and F's compose example amended.
+- **2026-10-08** — Step 7 of the plan done: `open_terminal_docker`
+  (`terminal/open_terminal/docker.rs`, crate `bollard` 0.21) - a volume and a container per
+  workspace, made and started on first use, the image pulled if missing, the volume given to the
+  image's user, reached without a proxy at its address in `network` (`bridge` by default), stopped
+  after `idle_stop_secs` unused. The client takes a key made for its container as well as one from
+  the secret chain. Unlike part A said, the key is read back from the container's configuration, so
+  containers are found again after a restart instead of being replaced, and the task that stops idle
+  containers also stops what an earlier run left running; nothing is removed but with its workspace.
+  Tested by hand against the local daemon under `CAELUMORA_DOCKER_TESTS` (with the image `slim`,
+  whose server runs as `user` too): start, a command, stopping when idle, finding it again from a
+  later provider, stopping what was left, removing container and volume. Pulling an image was not
+  tried: the published 0.14.0 is 1.4 GB.
 

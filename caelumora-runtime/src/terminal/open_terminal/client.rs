@@ -11,37 +11,64 @@ use caelumora_model::secret::SecretManager;
 use caelumora_model::security::SecurityContext;
 use reqwest::{Method, RequestBuilder, Response, StatusCode, Url};
 use serde::de::DeserializeOwned;
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tracing::warn;
 
 /// How long a request waits for the instance, beyond the wait it asks for,
 /// unless the endpoint says otherwise.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// The key an instance is reached with.
+pub(super) enum Key {
+    /// The one the endpoint's `auth` names, resolved through the secret
+    /// chain on every request - an instance the operator started.
+    Endpoint(Arc<SecretManager>),
+    /// One made for the instance when Caelumora started it.
+    Made(String),
+}
+
+impl std::fmt::Debug for Key {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Endpoint(_) => f.write_str("Endpoint"),
+            Self::Made(_) => f.write_str("Made(..)"),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(super) struct Client {
     endpoint: RemoteEndpoint,
     base: Url,
-    secrets: Arc<SecretManager>,
+    key: Key,
     http: reqwest::Client,
+    /// When a request was last sent.
+    used: Mutex<Instant>,
 }
 
 impl Client {
-    /// A client of the instance at `endpoint`, its key resolved through
-    /// `secrets` on every request.
+    /// A client of the instance at `endpoint`, reached with `key` - through
+    /// the proxy the environment names unless `direct`, as a container
+    /// Caelumora started is reached.
     ///
     /// # Errors
     /// `Unavailable` for a URL that is none, or a client that cannot be
     /// made.
-    pub(super) fn new(endpoint: RemoteEndpoint, secrets: Arc<SecretManager>) -> TerminalResult<Self> {
+    pub(super) fn new(endpoint: RemoteEndpoint, key: Key, direct: bool) -> TerminalResult<Self> {
         let base = Url::parse(&endpoint.url).map_err(|_| TerminalError::Unavailable("the storage's endpoint is no URL".to_string()))?;
         if base.cannot_be_a_base() {
             return Err(TerminalError::Unavailable("the storage's endpoint is no URL".to_string()));
         }
-        let http = reqwest::Client::builder().build()
+        let builder = reqwest::Client::builder();
+        let http = match direct { true => builder.no_proxy(), false => builder }.build()
             .map_err(|e| TerminalError::Unavailable(format!("no client for Open Terminal: {}", describe_request_error(e))))?;
-        Ok(Self { endpoint, base, secrets, http })
+        Ok(Self { endpoint, base, key, http, used: Mutex::new(Instant::now()) })
+    }
+
+    /// How long no request was sent.
+    pub(super) fn idle_for(&self) -> Duration {
+        self.used.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).elapsed()
     }
 
     /// The URL of `segments` below the endpoint, with `query`. A segment is
@@ -73,14 +100,18 @@ impl Client {
         wait: Duration,
         build: impl FnOnce(RequestBuilder) -> RequestBuilder,
     ) -> TerminalResult<Response> {
+        *self.used.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Instant::now();
         let mut request = self.http.request(method, self.url(segments, query))
             .timeout(self.endpoint.timeout_or(DEFAULT_TIMEOUT) + wait);
-        // The storage is the operator's, configured as the server's own
-        // keys are: its key is read in the system's name.
-        let key = self.endpoint.bearer_token(&self.secrets, &SecurityContext::system()).await.map_err(|e| {
-            warn!(endpoint = %self.endpoint.shown(), "The key of an Open Terminal storage could not be read: {e}");
-            TerminalError::Unavailable("the storage's key could not be read".to_string())
-        })?;
+        let key = match &self.key {
+            // The storage is the operator's, configured as the server's
+            // own keys are: its key is read in the system's name.
+            Key::Endpoint(secrets) => self.endpoint.bearer_token(secrets, &SecurityContext::system()).await.map_err(|e| {
+                warn!(endpoint = %self.endpoint.shown(), "The key of an Open Terminal storage could not be read: {e}");
+                TerminalError::Unavailable("the storage's key could not be read".to_string())
+            })?,
+            Key::Made(key) => Some(key.clone()),
+        };
         if let Some(key) = key {
             request = request.bearer_auth(key);
         }
