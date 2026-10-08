@@ -1852,8 +1852,8 @@ mod tests {
         let channel = Arc::clone(&hers.channels()[0]);
         let channel_runtime = ChannelRuntime::new(Arc::clone(&runtime), Arc::clone(&hers.commands), Arc::clone(&hers.session_controller));
         channel_runtime.attach(&channel);
-        let views = channel_runtime.new_actor_runtime(alice_id, hers.id(), channel.id()).views(alice_ctx.clone());
-        let session = views.session(channel.id(), channel.classification()).expect("attached to its session");
+        let views = channel_runtime.new_actor_runtime(alice_id, hers.id(), channel.id()).views();
+        let session = views.session(&alice_ctx, channel.id(), channel.classification()).expect("attached to its session");
 
         let own = session.privacy();
         assert_eq!((own.policy, own.owner), (PrivacyConfig::SameOwner, alice_id));
@@ -1905,8 +1905,8 @@ mod tests {
         let reading_from = |channel: &Arc<ChannelLoop>| {
             let channel_runtime = ChannelRuntime::new(Arc::clone(&runtime), Arc::clone(&session.commands), Arc::clone(&session.session_controller));
             channel_runtime.attach(channel);
-            let views = channel_runtime.new_actor_runtime(alice_id, session.id(), channel.id()).views(alice_ctx.clone());
-            views.session(channel.id(), channel.classification()).expect("attached to its session")
+            let views = channel_runtime.new_actor_runtime(alice_id, session.id(), channel.id()).views();
+            views.session(&alice_ctx, channel.id(), channel.classification()).expect("attached to its session")
         };
         let read = reading_from(&finance).channel_named("hr").await.expect("reachable for what was released").history().await.expect("what was released to finance");
         let texts: Vec<_> = read.messages().iter().map(|m| m.content.clone().unwrap_or_default()).collect();

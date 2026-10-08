@@ -171,7 +171,7 @@ impl ExternalAgentActor {
 
         let state = actor_runtime.load_channel_state().await?;
         let agent_state = actor_runtime.agent_state(attributes).await?;
-        let views = actor_runtime.views(security_context.clone());
+        let views = actor_runtime.views();
         Ok(Self {
             agent_id,
             agent_controller,

@@ -202,27 +202,27 @@ mod tests {
         let mut state = AgentChannelState::default();
         state.begin_turn(EventContext::new(session.id, channel.id, ActorId::None, String::new()), context.clone(), channel.classification.clone(), Vec::new(), Default::default());
         let provider = ChannelBriefingPromptProvider::new(PromptPosition::Start);
-        let prompt = told(&provider, agent.id, &session_loop, &context, &mut state).await;
+        let prompt = told(&provider, agent.id, &session_loop, &mut state).await;
         assert!(prompt.text.contains("In short: Release 2.0") && !prompt.text.contains("[About this channel]"), "{}", prompt.text);
         assert_eq!(prompt.classification, Some(Classification::PUBLIC), "a session's descriptions are public");
 
         let running = session_loop.channel_by_id(channel.id).expect("the channel runs");
         running.update_description(&system, Some("Planning"), Some("Dates are in UTC.")).await.unwrap();
-        let prompt = told(&provider, agent.id, &session_loop, &context, &mut state).await;
+        let prompt = told(&provider, agent.id, &session_loop, &mut state).await;
         let (ours, its) = (prompt.text.find("[About this session]").unwrap(), prompt.text.find("[About this channel]").unwrap());
         assert!(ours < its, "the session's first: {}", prompt.text);
         assert!(prompt.text.contains("Dates are in UTC."), "the channel's as it is now: {}", prompt.text);
         assert_eq!(prompt.classification, Some(confidential), "a channel's are classified as the channel");
 
         session_loop.update_description(&system, None, None).await.unwrap();
-        let prompt = told(&provider, agent.id, &session_loop, &context, &mut state).await;
+        let prompt = told(&provider, agent.id, &session_loop, &mut state).await;
         assert!(!prompt.text.contains("[About this session]"), "a session that says nothing any more: {}", prompt.text);
     }
 
     /// What `provider` tells agent `agent` in the turn begun in `state`.
-    async fn told(provider: &ChannelBriefingPromptProvider, agent: AgentId, session_loop: &Arc<SessionLoop>, context: &SecurityContext, state: &mut AgentChannelState) -> Prompt {
+    async fn told(provider: &ChannelBriefingPromptProvider, agent: AgentId, session_loop: &Arc<SessionLoop>, state: &mut AgentChannelState) -> Prompt {
         let turn = Turn::of(agent, "Jonathan".to_string(), state, AgentStateHandle::detached()).expect("a turn was begun")
-            .with_views(ViewsFactory::in_session(Arc::clone(session_loop), context.clone()));
+            .with_views(ViewsFactory::in_session(Arc::clone(session_loop)));
         provider.get_prompt(&turn.work()).await.unwrap()
     }
 }

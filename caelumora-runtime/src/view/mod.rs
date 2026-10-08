@@ -511,13 +511,12 @@ impl std::fmt::Debug for Views {
 }
 
 /// What an agent's views are built from, once per turn (`Turn::session`):
-/// where its session is reached, and its context. The place it reads from
-/// is completed with the turn's channel and classification when the views
-/// are built.
+/// where its session is reached. Who reads, from which channel and at which
+/// classification is the work's, given when the views are built - one
+/// context per piece of work (issue 255).
 #[derive(Clone)]
 pub struct ViewsFactory {
     root: FactoryRoot,
-    context: SecurityContext,
 }
 
 /// Where a factory reaches the agent's session.
@@ -533,33 +532,33 @@ enum FactoryRoot {
 }
 
 impl ViewsFactory {
-    pub(crate) fn of_actor(runtime: ActorRuntime, context: SecurityContext) -> Self {
-        Self { root: FactoryRoot::Actor(runtime), context }
+    pub(crate) fn of_actor(runtime: ActorRuntime) -> Self {
+        Self { root: FactoryRoot::Actor(runtime) }
     }
 
     #[cfg(test)]
-    pub(crate) fn in_session(session: Arc<SessionLoop>, context: SecurityContext) -> Self {
-        Self { root: FactoryRoot::Session(session), context }
+    pub(crate) fn in_session(session: Arc<SessionLoop>) -> Self {
+        Self { root: FactoryRoot::Session(session) }
     }
 
-    /// The agent's own session, as it reads from `channel` at
+    /// The agent's own session, as it reads in `context` from `channel` at
     /// `classification`; `None` while the channel is not attached to its
     /// session yet, or once it is gone.
-    pub(crate) fn session(&self, channel: ChannelId, classification: Classification) -> Option<SessionView> {
+    pub(crate) fn session(&self, context: &SecurityContext, channel: ChannelId, classification: Classification) -> Option<SessionView> {
         let session_loop = match &self.root {
             FactoryRoot::Actor(actor) => actor.channel_loop()?.session_loop()?,
             #[cfg(test)]
             FactoryRoot::Session(session) => Arc::clone(session),
         };
         let from = Place { channel, classification, session: session_loop.privacy() };
-        let views = session_loop.views(Viewer::from_place(self.context.clone(), from));
+        let views = session_loop.views(Viewer::from_place(context.clone(), from));
         Some(SessionView::of(views, Found::Running(session_loop)))
     }
 }
 
 impl std::fmt::Debug for ViewsFactory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ViewsFactory").field("context", &self.context).finish_non_exhaustive()
+        f.debug_struct("ViewsFactory").finish_non_exhaustive()
     }
 }
 

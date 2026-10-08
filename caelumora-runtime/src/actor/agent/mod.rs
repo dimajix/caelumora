@@ -117,7 +117,7 @@ impl AgentActor {
         }
         let agent_state = actor_runtime.agent_state(attributes).await?;
         let control = RunControl::new(agent_channel_state.processing_state, agent_channel_state.turn.as_ref().map(|t| t.work.turn_id));
-        let views = actor_runtime.views(security_context.clone());
+        let views = actor_runtime.views();
 
         Ok(AgentActor {
             agent_id,

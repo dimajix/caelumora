@@ -82,7 +82,7 @@ impl<'a> AgentWork<'a> {
     /// classification the work began with (issue 67). `None` for work
     /// outside of a channel, which reads nothing elsewhere.
     pub fn session(&self) -> Option<SessionView> {
-        self.views?.session(self.channel_id(), self.work.classification.clone())
+        self.views?.session(&self.work.security_context, self.channel_id(), self.work.classification.clone())
     }
 
     /// The agent's state in this channel as it stands: what components read

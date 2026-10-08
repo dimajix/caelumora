@@ -219,9 +219,9 @@ impl ActorRuntime {
     }
 
     /// What the actor's turns navigate (issue 163): its session, read from
-    /// its channel, asked in `context` - the actor's own (issue 131).
-    pub fn views(&self, context: SecurityContext) -> ViewsFactory {
-        ViewsFactory::of_actor(self.clone(), context)
+    /// its channel, asked in the context of each turn (issue 255).
+    pub fn views(&self) -> ViewsFactory {
+        ViewsFactory::of_actor(self.clone())
     }
 
     pub(crate) fn runtime_manager(&self) -> &Arc<RuntimeManager> {

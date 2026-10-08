@@ -31,7 +31,7 @@ use caelumora_model::question::Answers;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::memory::{Memory, MemoryId};
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
-use caelumora_model::security::{SecurityContext, SecurityManager};
+use caelumora_model::security::SecurityManager;
 use caelumora_model::tool::{Tool, ToolVisibility, ToolParameters};
 use serde_json::Value;
 use std::sync::Arc;
@@ -43,15 +43,15 @@ pub const FORGET_TOOL_NAME: &str = "forget";
 pub const RECLASSIFY_MEMORY_TOOL_NAME: &str = "reclassify_memory";
 
 pub struct AgentMemoryComponent {
-    /// The policy that decides what may be recalled, asked in
-    /// `security_context` - the agent's (issue 131).
+    /// The policy that decides what may be recalled, asked in the context
+    /// of the work it serves - the agent's, with its owner's rights (issues
+    /// 131, 255).
     security_manager: Arc<dyn SecurityManager>,
-    security_context: SecurityContext,
 }
 
 impl std::fmt::Debug for AgentMemoryComponent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AgentMemoryComponent").field("security_context", &self.security_context).finish()
+        f.debug_struct("AgentMemoryComponent").finish_non_exhaustive()
     }
 }
 
@@ -133,14 +133,14 @@ impl AgentMemoryComponent {
     async fn execute_reclassify(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
         let id: MemoryId = id_argument(params)?;
         let classification = classification_argument(params)?;
-        AgentMemory::reclassify(turn, id, classification.clone(), self.security_manager.as_ref(), &self.security_context).await?;
+        AgentMemory::reclassify(turn, id, classification.clone(), self.security_manager.as_ref()).await?;
         Ok(serde_json::json!({ "status": "reclassified", "id": id.0, "classification": classification.to_string() }))
     }
 
     /// `forget(id)`: forgets an entry that may be recalled here.
     async fn execute_forget(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
         let id: MemoryId = id_argument(params)?;
-        if AgentMemory::forget(turn, id, self.security_manager.as_ref(), &self.security_context).await {
+        if AgentMemory::forget(turn, id, self.security_manager.as_ref()).await {
             Ok(serde_json::json!({ "status": "forgotten", "id": id.0 }))
         } else {
             Err(ToolError::InvalidParameter(format!("you remember nothing numbered {id} here")))
@@ -155,7 +155,7 @@ impl PromptProvider for AgentMemoryComponent {
     }
 
     async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt> {
-        let recalled = AgentMemory::recalled(work, self.security_manager.as_ref(), &self.security_context).await;
+        let recalled = AgentMemory::recalled(work, self.security_manager.as_ref()).await;
         if recalled.is_empty() {
             return Ok(Prompt::default());
         }
@@ -189,7 +189,6 @@ pub fn register(registry: &mut ComponentRegistry) {
         |_descriptor, context| {
             let component = Arc::new(AgentMemoryComponent {
                 security_manager: Arc::clone(&context.security_manager),
-                security_context: context.security_context.clone(),
             });
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::<AgentMemoryComponent>::clone(&component));
@@ -214,7 +213,7 @@ mod tests {
     use caelumora_model::confidentiality::{Classification, Confidentiality};
     use caelumora_model::privacy::{PrivacyConfig, SessionPrivacy};
     use caelumora_model::secret::SecretManager;
-    use caelumora_model::security::{ActionType, OwnershipSecurityManager, SecurityAttributes};
+    use caelumora_model::security::{ActionType, OwnershipSecurityManager, SecurityAttributes, SecurityContext};
     use caelumora_model::session::{ChannelId, Session, SessionId};
     use caelumora_model::store::StateStore;
     use caelumora_model::store::memory::MemoryStore;
@@ -234,12 +233,32 @@ mod tests {
         ((session, ChannelId::new()), Classification::general(level))
     }
 
-    /// The component of an agent owned by `owner`, asking `policy`.
-    fn component(policy: Arc<dyn SecurityManager>, owner: ActorId) -> AgentMemoryComponent {
-        AgentMemoryComponent {
-            security_manager: policy,
-            security_context: SecurityContext::new(owner, Default::default(), Default::default()),
+    /// The component of an agent, asking `policy`, and the agent's owner:
+    /// whom its turns act for (issue 255).
+    struct Memory {
+        component: AgentMemoryComponent,
+        owner: ActorId,
+    }
+
+    impl Memory {
+        /// Begins a turn of `agent` in `state`, in channel `at`, as its actor
+        /// begins one: the agent acting with its owner's rights.
+        fn begin(&self, state: &mut AgentChannelState, at: &At, agent: AgentId) {
+            let context = SecurityContext::new(self.owner, at.0.0, at.0.1).next(ActorId::Agent(agent), self.owner);
+            state.begin_turn(in_channel(at), context, at.1.clone(), Vec::new(), Default::default());
         }
+    }
+
+    impl std::ops::Deref for Memory {
+        type Target = AgentMemoryComponent;
+        fn deref(&self) -> &AgentMemoryComponent {
+            &self.component
+        }
+    }
+
+    /// The component of an agent owned by `owner`, asking `policy`.
+    fn component(policy: Arc<dyn SecurityManager>, owner: ActorId) -> Memory {
+        Memory { component: AgentMemoryComponent { security_manager: policy }, owner }
     }
 
     async fn handle(agent: AgentId) -> Arc<AgentStateHandle> {
@@ -293,10 +312,10 @@ mod tests {
             }
         }
 
-        /// What a turn of `memory`'s agent in channel `at` navigates.
-        fn views_in(&self, at: &At, memory: &AgentMemoryComponent) -> ViewsFactory {
+        /// What a turn in channel `at` navigates.
+        fn views_in(&self, at: &At) -> ViewsFactory {
             let session = Arc::clone(self.loops.get(&at.0.0).expect("a session of the test"));
-            ViewsFactory::in_session(session, memory.security_context.clone())
+            ViewsFactory::in_session(session)
         }
     }
 
@@ -327,20 +346,20 @@ mod tests {
     /// Remembers `text` in a turn in channel `at`, and completes the turn.
     /// Remembers `text` in a turn in channel `at` that was told something
     /// classified as the channel.
-    async fn remember(memory: &AgentMemoryComponent, sessions: &Sessions, handle: &Arc<AgentStateHandle>, agent: AgentId, at: At, text: &str) {
+    async fn remember(memory: &Memory, sessions: &Sessions, handle: &Arc<AgentStateHandle>, agent: AgentId, at: At, text: &str) {
         let mut state = AgentChannelState::default();
-        state.begin_turn(in_channel(&at), Default::default(), at.1.clone(), Vec::new(), Default::default());
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(handle)).expect("a turn was begun").with_views(sessions.views_in(&at, memory));
+        memory.begin(&mut state, &at, agent);
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(handle)).expect("a turn was begun").with_views(sessions.views_in(&at));
         turn.see(&at.1);
         memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": text }), None, &mut turn).await.unwrap();
         turn.commit(false, &Discard).await;
     }
 
     /// The prompt part of another actor of `agent`, in a turn in channel `at`.
-    async fn recall(memory: &AgentMemoryComponent, sessions: &Sessions, handle: &Arc<AgentStateHandle>, agent: AgentId, at: At) -> Prompt {
+    async fn recall(memory: &Memory, sessions: &Sessions, handle: &Arc<AgentStateHandle>, agent: AgentId, at: At) -> Prompt {
         let mut state = AgentChannelState::default();
-        state.begin_turn(in_channel(&at), Default::default(), at.1.clone(), Vec::new(), Default::default());
-        let turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(handle)).expect("a turn was begun").with_views(sessions.views_in(&at, memory));
+        memory.begin(&mut state, &at, agent);
+        let turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(handle)).expect("a turn was begun").with_views(sessions.views_in(&at));
         memory.get_prompt(&turn.work()).await.unwrap()
     }
 
@@ -359,8 +378,8 @@ mod tests {
         // there ...
         let mut state = AgentChannelState::default();
         {
-            state.begin_turn(in_channel(&team), Default::default(), team.1.clone(), Vec::new(), Default::default());
-            let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun").with_views(sessions.views_in(&team, &memory));
+            memory.begin(&mut state, &team, agent);
+            let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun").with_views(sessions.views_in(&team));
             turn.see(&team.1);
             let result = memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "Kaya likes tea." }), None, &mut turn).await.unwrap();
             assert_eq!(result.value["id"], 1);
@@ -378,11 +397,11 @@ mod tests {
 
         // Forgotten only where it may be recalled.
         let mut state = AgentChannelState::default();
-        state.begin_turn(in_channel(&elsewhere), Default::default(), elsewhere.1.clone(), Vec::new(), Default::default());
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun").with_views(sessions.views_in(&elsewhere, &memory));
+        memory.begin(&mut state, &elsewhere, agent);
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun").with_views(sessions.views_in(&elsewhere));
         assert!(memory.execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn).await.is_err());
-        state.begin_turn(in_channel(&team), Default::default(), team.1.clone(), Vec::new(), Default::default());
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun").with_views(sessions.views_in(&team, &memory));
+        memory.begin(&mut state, &team, agent);
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun").with_views(sessions.views_in(&team));
         memory.execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn).await.unwrap();
         turn.commit(false, &Discard).await;
         assert!(handle.current().memory.current().is_empty());
@@ -400,8 +419,8 @@ mod tests {
         let team = channel(session, Confidentiality::Internal);
 
         let mut state = AgentChannelState::default();
-        state.begin_turn(in_channel(&team), Default::default(), team.1.clone(), Vec::new(), Default::default());
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun").with_views(sessions.views_in(&team, &memory));
+        memory.begin(&mut state, &team, agent);
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun").with_views(sessions.views_in(&team));
         memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "draft" }), None, &mut turn).await.unwrap();
         memory.execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn).await.expect("remembered in this turn");
         assert!(memory.execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn).await.is_err(), "forgotten already");
@@ -418,12 +437,12 @@ mod tests {
         let memory = component(Arc::new(OwnershipSecurityManager::new()), ActorId::User(UserId::new()));
         let at = channel(SessionId::new(), Confidentiality::Internal);
         let mut state = AgentChannelState::default();
-        state.begin_turn(in_channel(&at), Default::default(), at.1.clone(), Vec::new(), Default::default());
+        memory.begin(&mut state, &at, agent);
         let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun");
         memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "alone" }), None, &mut turn).await.unwrap();
         turn.commit(false, &Discard).await;
         assert_eq!(handle.current().memory.current()[0].origin.session, SessionPrivacy { id: at.0.0, ..SessionPrivacy::default() }, "its session, private: nobody agreed to anything");
-        state.begin_turn(in_channel(&at), Default::default(), at.1.clone(), Vec::new(), Default::default());
+        memory.begin(&mut state, &at, agent);
         let turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun");
         assert!(memory.get_prompt(&turn.work()).await.unwrap().text.is_empty(), "no session to recall in");
     }
@@ -474,8 +493,8 @@ mod tests {
         // internal remembers it as internal (issue 168) ...
         let mut state = AgentChannelState::default();
         {
-            state.begin_turn(in_channel(&confidential), Default::default(), confidential.1.clone(), Vec::new(), Default::default());
-            let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun").with_views(sessions.views_in(&confidential, &memory));
+            memory.begin(&mut state, &confidential, agent);
+            let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun").with_views(sessions.views_in(&confidential));
             turn.see(&Classification::general(Confidentiality::Internal));
             let result = memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "Kaya likes tea." }), None, &mut turn).await.unwrap();
             assert_eq!(result.classification, Some(Classification::general(Confidentiality::Internal)), "its answer as the turn");
@@ -502,12 +521,7 @@ mod tests {
         let handle = handle(agent).await;
         let compartments = Compartments::new([(Compartment::new("hr"), vec![]), (Compartment::new("finance"), vec![])]).unwrap();
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_rules(ConfidentialityRules::new(compartments)));
-        // As the agent's components are given it: its owner's, called by the agent.
-        let owner = ActorId::User(UserId::new());
-        let memory = AgentMemoryComponent {
-            security_manager: Arc::clone(&policy),
-            security_context: SecurityContext::new(owner, Default::default(), Default::default()).next(ActorId::Agent(agent), owner),
-        };
+        let memory = component(Arc::clone(&policy), ActorId::User(UserId::new()));
         let session = SessionId::new();
         let mut sessions = Sessions::under(policy).await;
         sessions.add(session, SessionPrivacy::default()).await;
@@ -519,8 +533,8 @@ mod tests {
         assert!(recall(&memory, &sessions, &handle, agent, finance.clone()).await.text.is_empty(), "HR's, not finance's");
 
         let mut state = AgentChannelState::default();
-        state.begin_turn(in_channel(&hr), Default::default(), hr.1.clone(), Vec::new(), Default::default());
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun").with_views(sessions.views_in(&hr, &memory));
+        memory.begin(&mut state, &hr, agent);
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun").with_views(sessions.views_in(&hr));
         let above = serde_json::json!({ "id": 1, "level": "confidential", "compartments": ["hr"] });
         assert!(memory.execute(RECLASSIFY_MEMORY_TOOL_NAME, &above, None, &mut turn).await.is_err(), "never above the channel");
         let unknown = serde_json::json!({ "id": 7, "level": "internal", "compartments": ["hr"] });

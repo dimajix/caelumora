@@ -320,3 +320,19 @@ in behaviour; the rule, in the policy; one context per piece of work. Each is re
     its owner in person. For a user the three are one, so nothing changes.
   Reading another channel through a tool is pinned with step 3, where the views are asked in the
   turn's context; before it, they are asked in the agent's own, which names nobody but its owner.
+- **2026-10-08** — Step 3 done: one context per piece of work. `ViewsFactory` keeps only where
+  the agent's session is reached; `ViewsFactory::session` takes the context, and
+  `AgentWork::session` passes the work's. `ActorRuntime::views` takes none. `AgentMemory`
+  (`recalled`, `find`, `forget`, `reclassify`) and `AgentNotes::reclassify` ask in the context of
+  the turn or work they are given; `agent_memory`, `notes` and `private_notes` no longer keep a
+  `SecurityContext` - it was only ever asked in during a turn. `mcp_tool` and `a2a_agent` are
+  unchanged: their credential is read in the build-time context once and in the work's at every
+  call, both with the owner as principal. The suite's workspace tests now see every question of
+  the call in one context (`alice as helper, asked by bob`), answered as before. New in the suite:
+  `an_agent_reads_another_channel_with_its_owners_rights_whoever_asked`. COMPONENTS.md, MEMORY.md
+  and SECURITY.md say what a component's own context is for. Found on the way: reading another
+  channel of the same session asks only `ReadChannel` - the flow rule between the channels'
+  classifications, by design (issue 133) - and no `GetChannel`, so under the ownership policy
+  whose rights an agent reads with does not decide it; it does for another session (privacy, issue
+  134) and for a policy that looks at the principal. bob's agent in a channel with alice reads her
+  channel "side" of the session if its classification flows into theirs.

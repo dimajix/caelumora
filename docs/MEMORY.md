@@ -111,9 +111,10 @@ notes, chosen per personality ([68](../issues/68-notes-in-agent-state.md)).
 *   **Where it is recalled.** Every entry carries the label of the turn that wrote it - the
     classification of what the turn had seen, at most its channel's
     ([CONFIDENTIALITY.md](CONFIDENTIALITY.md#what-a-turn-writes-as), issue 168) - and is recalled
-    only where that may be read. The component asks the policy in the agent's name
-    (`AccessQuestions::may_channel_read` through the `SecurityManager` of its `ComponentContext`,
-    issue 131), once per channel the entries come from. Under the ownership policy an entry is
+    only where that may be read. The component asks the policy in the context of the turn it is
+    called in - the agent's, with its owner's rights (`AccessQuestions::may_channel_read` through
+    the `SecurityManager` of its `ComponentContext`, issues 131, 255) -, once per channel the
+    entries come from. Under the ownership policy an entry is
     recalled where its own classification - the turn's label when it was written, unless it was
     reclassified - flows into the current channel's (the flow rule of issue
     133) - within the session, and beyond it only where the entry's session permits it

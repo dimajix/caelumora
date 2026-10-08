@@ -206,20 +206,20 @@ mod tests {
         let mut state = AgentChannelState::default();
         state.begin_turn(EventContext::new(session.id, channel.id, ActorId::None, String::new()), context.clone(), channel.classification.clone(), Vec::new(), Default::default());
         let provider = ChannelLanguagePromptProvider::new(PromptPosition::Start);
-        let prompt = told(&provider, agent.id, &session_loop, &context, &mut state).await;
+        let prompt = told(&provider, agent.id, &session_loop, &mut state).await;
         assert!(prompt.text.contains("\"de\""), "{}", prompt.text);
         assert_eq!(prompt.classification, Some(Classification::PUBLIC));
 
         let running = session_loop.channel_by_id(channel.id).expect("the channel runs");
         running.update_language(&system, Some("fr")).await.unwrap();
-        let prompt = told(&provider, agent.id, &session_loop, &context, &mut state).await;
+        let prompt = told(&provider, agent.id, &session_loop, &mut state).await;
         assert!(prompt.text.contains("\"fr\""), "the language as it is now: {}", prompt.text);
     }
 
     /// What `provider` tells agent `agent` in the turn begun in `state`.
-    async fn told(provider: &ChannelLanguagePromptProvider, agent: AgentId, session_loop: &Arc<SessionLoop>, context: &SecurityContext, state: &mut AgentChannelState) -> Prompt {
+    async fn told(provider: &ChannelLanguagePromptProvider, agent: AgentId, session_loop: &Arc<SessionLoop>, state: &mut AgentChannelState) -> Prompt {
         let turn = Turn::of(agent, "Jonathan".to_string(), state, AgentStateHandle::detached()).expect("a turn was begun")
-            .with_views(ViewsFactory::in_session(Arc::clone(session_loop), context.clone()));
+            .with_views(ViewsFactory::in_session(Arc::clone(session_loop)));
         provider.get_prompt(&turn.work()).await.unwrap()
     }
 }

@@ -119,10 +119,13 @@ module that holds the default kind (`component_impl`, `tool`, `llm`, `external`,
 
 `ComponentContainer::from_config` takes the registry and a `ComponentContext`. The context holds:
 
-*   the `SecurityContext` of the whole graph - for an agent's components, the agent's, in whose name
-    they ask; for a channel's, its owner's,
-*   the `SecurityManager`, for the questions a component asks in that context (`AccessQuestions`;
-    the memory asks what it may recall, issue 131),
+*   the `SecurityContext` the graph is built in - for an agent's components, the agent's own, with
+    its owner's rights; for a channel's, its owner's. What a component reads while building - an MCP
+    server's tools, with its credential - it reads in it. What it asks while a turn runs, it asks in
+    the turn's context (`Turn::security_context`, `AgentWork::security_context`): one context per
+    piece of work (issue 255),
+*   the `SecurityManager`, for the questions a component asks (`AccessQuestions`; the memory asks
+    what it may recall, issue 131),
 *   the `SecretManager`,
 *   nothing of the session: what a component reads of it - the other channels, their notes and
     histories, what its agent may recall - it reads through the `Turn` it is called with

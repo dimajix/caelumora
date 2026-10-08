@@ -165,7 +165,9 @@ something - they check the request, and carry it out with their own rights. In t
     caller and its owner as the principal - the one it speaks in when nobody asked
     (`Agent::security_context`, issue [87](../issues/87-security-context-in-entities.md),
     `Answering::own`) and the one of a turn, the request's continued as the agent
-    (`Answering::to`, `Turn::security_context`). The policy judges by the principal, so what the
+    (`Answering::to`, `Turn::security_context`). A piece of work has one context: the views a turn
+    navigates and the components it calls ask in the turn's, a component's own is only for what it
+    reads while it is built. The policy judges by the principal, so what the
     agent reads - other channels, its notes and memory, the session's workspace through its channel
     -, the tools it calls (`CallTool`), the credentials they reach with (`ReadSecret`: an MCP
     server's token in `mcp_tool`, an external agent's through its endpoint) and the clearance it is
@@ -216,7 +218,8 @@ asked:
     `can_read_context`, issue 80);
 *   by the views an agent's turn navigates and by the components, deciding what an agent may read of
     other channels or recall (see [MEMORY.md](MEMORY.md)); a component asks with the
-    `SecurityManager` and `SecurityContext` of its `ComponentContext` (issue 131);
+    `SecurityManager` of its `ComponentContext` (issue 131), in the context of the turn it is called
+    in (issue 255);
 *   by an agent, deciding what it may put up for approval;
 *   by the approver, deciding whom it waits for (`may_approve`, issue 14); an answer it checks as
     the operation it counts for, with `Enforcement::require`.

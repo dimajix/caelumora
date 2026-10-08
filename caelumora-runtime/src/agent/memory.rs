@@ -33,8 +33,9 @@ pub struct AgentMemory;
 impl AgentMemory {
     /// What may be recalled in `turn`'s channel: entries written in a
     /// channel it may read, as the memory is now - without the turn's own
-    /// changes. Whether it may is asked of `security` in `context`, the
-    /// agent's (`AccessQuestions::may_channel_read`, issue 131), once per
+    /// changes. Whether it may is asked of `security` in the work's context -
+    /// the agent's, with its owner's rights (`AccessQuestions::may_channel_read`,
+    /// issues 131, 255), once per
     /// channel, classification and session the entries come with; the
     /// turn's channel is judged by the classification the turn began with.
     ///
@@ -43,7 +44,8 @@ impl AgentMemory {
     /// now permit it - looked up through the turn's views. Of a session
     /// that is gone, the one it had decides; one that cannot be looked up
     /// recalls nothing. A turn in no session recalls nothing.
-    pub async fn recalled(work: &AgentWork<'_>, security: &dyn SecurityManager, context: &SecurityContext) -> Vec<Memory> {
+    pub async fn recalled(work: &AgentWork<'_>, security: &dyn SecurityManager) -> Vec<Memory> {
+        let context = work.security_context();
         let Some(own) = work.session() else { return Vec::new() };
         let Some(here) = own.views().viewer().place().cloned() else { return Vec::new() };
         let memory = work.agent_state().current().memory.current();
@@ -145,21 +147,21 @@ impl AgentMemory {
     /// the agent's to change here: remembered earlier in this turn, or one
     /// that may be recalled here - asked of the policy for this entry alone,
     /// as in [`recalled`](Self::recalled).
-    pub async fn find(turn: &Turn<'_>, id: MemoryId, security: &dyn SecurityManager, context: &SecurityContext) -> Option<Memory> {
+    pub async fn find(turn: &Turn<'_>, id: MemoryId, security: &dyn SecurityManager) -> Option<Memory> {
         let entry = Self::effective(turn).get(id)?.clone();
         let Some(stored) = turn.agent_state().current().memory.current().into_iter().find(|m| m.id == id) else {
             return Some(entry);
         };
         let own = turn.session()?;
         let here = own.views().viewer().place()?.clone();
-        Self::may_recall(&stored, &here, own.views(), &mut Vec::new(), security, context).await.then_some(entry)
+        Self::may_recall(&stored, &here, own.views(), &mut Vec::new(), security, turn.security_context()).await.then_some(entry)
     }
 
     /// Forgets entry `id` - one the turn may change (see
     /// [`find`](Self::find)) - when the turn completes. Returns whether
     /// there was one.
-    pub async fn forget(turn: &mut Turn<'_>, id: MemoryId, security: &dyn SecurityManager, context: &SecurityContext) -> bool {
-        if Self::find(turn, id, security, context).await.is_none() {
+    pub async fn forget(turn: &mut Turn<'_>, id: MemoryId, security: &dyn SecurityManager) -> bool {
+        if Self::find(turn, id, security).await.is_none() {
             return false;
         }
         let origin = Self::origin(turn);
@@ -169,7 +171,7 @@ impl AgentMemory {
 
     /// Reclassifies entry `id` as `classification` (issue 133) - one the
     /// turn may change (see [`find`](Self::find)) - if the policy lets the
-    /// agent (`ActionType::Reclassify`, asked in `context`, the agent's):
+    /// agent (`ActionType::Reclassify`, asked in the turn's context):
     /// never above the turn's channel. Taken over when the turn completes;
     /// from then on the entry is recalled where its new classification may
     /// be read.
@@ -177,9 +179,9 @@ impl AgentMemory {
     /// # Errors
     /// `InvalidParameter` if there is no such entry here, `PermissionDenied`
     /// if the policy refuses.
-    pub async fn reclassify(turn: &mut Turn<'_>, id: MemoryId, classification: Classification, security: &dyn SecurityManager, context: &SecurityContext) -> ToolResult<()> {
+    pub async fn reclassify(turn: &mut Turn<'_>, id: MemoryId, classification: Classification, security: &dyn SecurityManager) -> ToolResult<()> {
         let here = turn.classification();
-        let Some(current) = Self::find(turn, id, security, context).await.map(|m| m.classification) else {
+        let Some(current) = Self::find(turn, id, security).await.map(|m| m.classification) else {
             return Err(ToolError::InvalidParameter(format!("there is no entry #{id} you remember here")));
         };
         let action = ActionType::Reclassify {
@@ -188,7 +190,7 @@ impl AgentMemory {
             new: &classification,
             channel: &here,
         };
-        security.require(context, action, || ToolError::PermissionDenied(format!("reclassifying entry #{id} as {classification}"))).await?;
+        security.require(turn.security_context(), action, || ToolError::PermissionDenied(format!("reclassifying entry #{id} as {classification}"))).await?;
         let origin = Self::origin(turn);
         turn.stage_memory(MemoryChange::Reclassify { id, classification }, origin);
         Ok(())

@@ -17,7 +17,7 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentChannelState;
 use caelumora_model::turn::TurnState;
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::security::{ActionType, Enforcement, Reclassified, SecurityContext, SecurityManager};
+use caelumora_model::security::{ActionType, Enforcement, Reclassified, SecurityManager};
 use caelumora_model::digest::Digest;
 use caelumora_model::ledger::Staged;
 use caelumora_model::note::{Note, NoteChain, NoteChange, NoteId, NoteOrigin, Notes};
@@ -103,14 +103,14 @@ impl AgentNotes {
 
     /// Reclassifies note `id` as `classification` (issue 133) - one of the
     /// current notes, or one noted earlier in this turn, and not revoked -
-    /// if the policy lets the agent (`ActionType::Reclassify`, asked in
-    /// `context`, the agent's): never above the channel. Taken over when the
-    /// turn completes.
+    /// if the policy lets the agent (`ActionType::Reclassify`, asked in the
+    /// turn's context): never above the channel. Taken over when the turn
+    /// completes.
     ///
     /// # Errors
     /// `InvalidParameter` if there is no such note, `PermissionDenied` if
     /// the policy refuses.
-    pub async fn reclassify(turn: &mut Turn<'_>, kind: NoteKind, id: NoteId, classification: Classification, security: &dyn SecurityManager, context: &SecurityContext) -> ToolResult<()> {
+    pub async fn reclassify(turn: &mut Turn<'_>, kind: NoteKind, id: NoteId, classification: Classification, security: &dyn SecurityManager) -> ToolResult<()> {
         let Some(current) = Self::effective(turn, kind).get(id).map(|n| n.classification.clone()) else {
             return Err(ToolError::InvalidParameter(format!("you have no note #{id}; only your own current notes can be reclassified")));
         };
@@ -121,7 +121,7 @@ impl AgentNotes {
             new: &classification,
             channel: &channel,
         };
-        security.require(context, action, || ToolError::PermissionDenied(format!("reclassifying note #{id} as {classification}"))).await?;
+        security.require(turn.security_context(), action, || ToolError::PermissionDenied(format!("reclassifying note #{id} as {classification}"))).await?;
         turn.stage_note(kind, NoteChange::Reclassify { id, classification });
         Ok(())
     }

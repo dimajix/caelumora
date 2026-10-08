@@ -427,7 +427,7 @@ pub(crate) mod testing {
             let channel = &self.session.channels()[0];
             state.begin_turn(EventContext::new(self.session.id(), channel.id(), ActorId::None, String::new()), self.context.clone(), channel.classification(), Vec::new(), Default::default());
             Turn::of(self.agent, "Jonathan".to_string(), state, AgentStateHandle::detached()).expect("a turn was begun")
-                .with_views(ViewsFactory::in_session(Arc::clone(&self.session), self.context.clone()))
+                .with_views(ViewsFactory::in_session(Arc::clone(&self.session)))
         }
 
         /// Where the workspace's files lie on the host.

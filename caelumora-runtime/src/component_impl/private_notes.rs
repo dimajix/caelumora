@@ -32,7 +32,7 @@ use caelumora_model::session::ChannelId;
 use caelumora_model::digest::Digest;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::note::{Note, NoteId};
-use caelumora_model::security::{SecurityContext, SecurityManager};
+use caelumora_model::security::SecurityManager;
 use caelumora_model::tool::{Tool, ToolVisibility, ToolParameters};
 use serde_json::Value;
 use std::sync::Arc;
@@ -47,9 +47,9 @@ pub const RECLASSIFY_PRIVATE_NOTE_TOOL_NAME: &str = "reclassify_private_note";
 #[derive(Debug)]
 pub struct PrivateNotesComponent {
     /// The policy that decides whether a note may be reclassified, asked in
-    /// `security_context` - the agent's (issues 131, 133).
+    /// the turn's context - the agent's, with its owner's rights (issues
+    /// 131, 133, 255).
     security_manager: Arc<dyn SecurityManager>,
-    security_context: SecurityContext,
 }
 
 #[async_trait]
@@ -131,7 +131,7 @@ impl PrivateNotesComponent {
     async fn execute_reclassify_private_note(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
         let id: NoteId = id_argument(params)?;
         let classification = classification_argument(params)?;
-        AgentNotes::reclassify(turn, NoteKind::Private, id, classification.clone(), self.security_manager.as_ref(), &self.security_context).await?;
+        AgentNotes::reclassify(turn, NoteKind::Private, id, classification.clone(), self.security_manager.as_ref()).await?;
         Ok(serde_json::json!({ "status": "reclassified", "id": id.0, "classification": classification.to_string() }))
     }
 
@@ -217,7 +217,6 @@ pub fn register(registry: &mut ComponentRegistry) {
         |_descriptor, context| {
             let component = Arc::new(PrivateNotesComponent {
                 security_manager: Arc::clone(&context.security_manager),
-                security_context: context.security_context.clone(),
             });
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::<PrivateNotesComponent>::clone(&component));
@@ -254,10 +253,7 @@ mod tests {
     #[tokio::test]
     async fn private_notes_are_numbered_apart_from_public_ones_and_taken_over_with_the_turn() {
         let mut state = AgentChannelState::default();
-        let tools = PrivateNotesComponent {
-            security_manager: Arc::new(caelumora_model::security::DummySecurityManager::new()),
-            security_context: Default::default(),
-        };
+        let tools = PrivateNotesComponent { security_manager: Arc::new(caelumora_model::security::DummySecurityManager::new()) };
         let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached());
         AgentNotes::note(&mut turn, NoteKind::Public, "public".to_string());
         let noted = tools.execute(NOTE_PRIVATE_TOOL_NAME, &serde_json::json!({ "text": "secret" }), None, &mut turn).await.unwrap();

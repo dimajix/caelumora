@@ -1361,6 +1361,51 @@ async fn an_agent_asked_by_an_agent_acts_for_its_own_owner() {
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
+/// An agent reads another channel with its owner's rights, whoever asked
+/// it (issue 255): bob asks alice's `reader` to read her channel "side",
+/// which he may not read himself - the agent reads it as alice, asked by
+/// bob, and as far as the flow rule lets it into the channel he asked in
+/// (`ReadChannel`, decided by the channels' classifications, not by who
+/// takes part in them - issue 133). What the decision accepts: her agent,
+/// asked without approval, lets every member read through it what it may.
+#[tokio::test]
+async fn an_agent_reads_another_channel_with_its_owners_rights_whoever_asked() {
+    use caelumora_model::message::{Message, MessageRole};
+    use caelumora_model::tool::{ToolCall, ToolVisibility};
+
+    let internal = Classification::general(Confidentiality::Internal);
+    let call = Message {
+        role: MessageRole::Assistant,
+        tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "read_history".to_string(), arguments: serde_json::json!({ "channel": "side" }), visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
+        ..Message::new(internal)
+    };
+    let world = World::with_kinds(|registry| register_once(registry, "reading", call)).await;
+    let reading = Personality {
+        components: ComponentConfig { component_nodes: vec![
+            ComponentDescriptor::new("model", "reading"),
+            ComponentDescriptor::new("history", caelumora_runtime::component_impl::channel_history::CHANNEL_HISTORY_KIND),
+        ] },
+        ..world.personality("reading", None, &[]).await
+    };
+    world.store.update_personality(&World::system(), &reading).await.unwrap();
+    let reader = world.agent("reader", world.alice, &reading).await;
+    let session = world.shared_session(&[reader], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let side = session.create_channel(&World::as_user(world.alice), ChannelSpec { name: "side".to_string(), components: quiet(), participants: vec![], classification: None, language: None, uses_workspace: None }).await.expect("hers alone");
+    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    let his = world.manager.views(Viewer::new(World::as_user(world.bob))).session(session.id()).await.unwrap();
+    assert!(his.channel(side.id()).await.is_err(), "not his to read");
+
+    let (_, asked) = world.asked(async {
+        main.user_actor(world.bob).expect("he takes part").send_message("@reader what is on side?".to_string(), None).await.expect("sent");
+        asked_for(&world, "alice as reader, asked by bob: ReadChannel yes").await;
+    }).await;
+    let readers: Vec<&String> = asked.iter().filter(|line| line.contains("as reader")).collect();
+    assert!(readers.iter().all(|line| line.starts_with("alice as reader, asked by bob:")), "with her rights, asked by him: {asked:?}");
+    assert!(readers.iter().any(|line| line.contains("ReadChannel")), "as the flow rule lets it into his channel: {asked:?}");
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
 // --- External agents ---------------------------------------------------------
 
 /// A remote agent that takes every request on as a task and works on it
@@ -2218,21 +2263,21 @@ async fn asked_for_a_call_on_the_workspace(function: &str, arguments: serde_json
     asked
 }
 
-/// That `asked` asked for an agent's call on the workspace: the call with
-/// alice's rights, its owner's, asked by bob, as every call is (issue 255);
-/// the workspace through the channel as the agent reads every other place -
-/// with its owner's clearance (issue 142) - its flow both ways, before
-/// anything is sent to the storage.
+/// That `asked` asked for an agent's call on the workspace: all of it in
+/// one context (issue 255) - the call and the workspace with alice's
+/// rights, its owner's, asked by bob - and the workspace through the
+/// channel as the agent reads every other place, with its owner's
+/// clearance (issue 142): no `GetWorkspace`, its terminal reached through
+/// the session, its flow both ways, before anything is sent to the
+/// storage.
 fn asked_as_a_call_on_the_workspace(asked: &[String]) {
     let calling: Vec<&String> = asked.iter().filter(|line| line.contains("CallTool")).collect();
     assert!(!calling.is_empty() && calling.iter().all(|line| *line == "alice as helper, asked by bob: CallTool yes"), "the call as its owner, asked by bob: {asked:?}");
-    let reaching: Vec<&String> = asked.iter().filter(|line| line.starts_with("alice as helper:")).collect();
-    assert_eq!(reaching, [
-        // The channel's workspace: no GetWorkspace, the flow both ways.
-        "alice as helper: Publish yes", "alice as helper: Publish yes",
-        // Its terminal, reached again through session and channel.
-        "alice as helper: GetSession(alice's) yes", "alice as helper: Publish yes", "alice as helper: Publish yes",
-    ], "the workspace as the agent reads every other place, in its owner's name (issue 142)");
+    let agents: Vec<&String> = asked.iter().filter(|line| line.contains("as helper")).collect();
+    assert!(agents.iter().all(|line| line.starts_with("alice as helper, asked by bob:") && line.ends_with(" yes")), "one context for all the turn does: {asked:?}");
+    let reaching: Vec<&String> = agents.iter().copied().filter(|line| line.contains("GetSession") || line.contains("GetWorkspace")).collect();
+    assert_eq!(reaching, ["alice as helper, asked by bob: GetSession(alice's) yes"], "its terminal through the session, the channel's workspace without GetWorkspace");
+    assert!(agents.iter().filter(|line| line.contains("Publish")).count() >= 4, "the flow both ways, for the workspace and its terminal: {asked:?}");
 }
 
 /// An agent's command (issue 251).
