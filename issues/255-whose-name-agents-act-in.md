@@ -1,6 +1,6 @@
 # 255 — Agents read in their owner's name and act in the name of whoever asked them
 
-**Status:** open
+**Status:** done
 **Area:** Identity & access management
 
 ## The problem
@@ -336,3 +336,12 @@ in behaviour; the rule, in the policy; one context per piece of work. Each is re
   whose rights an agent reads with does not decide it; it does for another session (privacy, issue
   134) and for a policy that looks at the principal. bob's agent in a channel with alice reads her
   channel "side" of the session if its classification flows into theirs.
+- **2026-10-08** — Closed (step 4). Both points of *Done when* hold: whose rights an agent asks
+  with is decided once - by the policy, by the context's principal - and written down in
+  SECURITY.md (*In whose name an agent acts*); the security suite pins reading another channel
+  (`an_agent_reads_another_channel_with_its_owners_rights_whoever_asked`), the workspace and a
+  tool call (`an_agents_command_is_called_for_its_owner_and_reaches_the_workspace_through_its_channel`,
+  `an_agents_file_tool_asks_what_a_command_asks`), a credential (the external agents' tests) and a
+  delegation through a second agent (`an_agent_asked_by_an_agent_acts_for_its_own_owner`), and the
+  questions for the owner besides. Left open, as decided: who may ask an agent at all (an
+  `AskAgent` of its owner's), and a chain once there are subagents.

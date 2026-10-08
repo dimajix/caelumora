@@ -1,6 +1,6 @@
 # 12 — Combining user permissions with agent permissions
 
-**Status:** open
+**Status:** done
 **Area:** Identity & access management
 
 ## The problem
@@ -80,3 +80,9 @@ hold credentials of their own, which is half the point of an `mcp_tool` componen
   a chain is reconsidered with subagents. `ReadSecret` is the owner's: a credential belongs to
   the agent's configuration, and bob using alice's agent uses her token, as decided. Implemented
   with 255's plan; this issue closes with it.
+- **2026-10-08** — Done with [255](255-whose-name-agents-act-in.md)'s plan: a `SecurityContext`
+  names the caller, its principal - a user themselves, an agent its owner - and the initiator,
+  and the ownership policy judges by the principal; `delegation_ids` is gone. One correction to
+  the entry above: the questions a call puts to the agent's owner (`Addressee::Owner`) go to the
+  principal, not to the initiator - they had gone to whoever asked, which is fixed. The initiator
+  is kept for the record and for which request a turn answers.

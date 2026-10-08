@@ -126,7 +126,7 @@ argues against it, and what came out of the last attempt.
 |---|---|---|
 | [10](10-user-authentication.md) | in progress | There is no authentication at all; the REST server fabricates its own `SecurityContext` and `DummySecurityManager` approves everything. |
 | [11](11-agent-ownership.md) | done | `SecurityAttributes` carries an `owner_id` that nothing enforces — every agent, session and template is effectively global. |
-| [12](12-user-and-agent-permissions.md) | open | When an agent acts for a user, two sets of rights are involved and there is no rule for combining them. |
+| [12](12-user-and-agent-permissions.md) | done | When an agent acts for a user, two sets of rights are involved and there is no rule for combining them. |
 | [23](23-acls-in-security-attributes.md) | open | `SecurityAttributes` holds only an unused `owner_id` — there is no way to grant an actor or a role any right on any entity. |
 | [24](24-opa-security-manager.md) | open | `DummySecurityManager` is the only implementation; deployment-specific policy has no home outside the compiled binary. |
 | [25](25-file-user-backend.md) | in progress | There is no source of identities to authenticate against; a hand-edited user file is the smallest one, and defines the provider seam. |
@@ -152,7 +152,7 @@ argues against it, and what came out of the last attempt.
 | [168](168-turn-label-as-high-water-mark.md) | done | A turn writes under its channel's classification even when everything it saw was classified lower, so what it remembers is lost to lower channels. |
 | [169](169-changing-classified-content.md) | open | Nothing says who may change something classified once it is written, or that what the writer has seen must fit into its classification. |
 | [198](198-security-scenarios.md) | done | Nothing says, end to end, which permissions an action needs; a member whose personality was withdrawn locks everyone out of its session, and some actions look at others before the actor's own permission. |
-| [255](255-whose-name-agents-act-in.md) | open | An agent reads in its owner's name and acts in the name of whoever asked it, one call often in both, and which applies follows from where the code sits rather than from a rule. |
+| [255](255-whose-name-agents-act-in.md) | done | An agent reads in its owner's name and acts in the name of whoever asked it, one call often in both, and which applies follows from where the code sits rather than from a rule. |
 
 ## Tools and approvals
 
