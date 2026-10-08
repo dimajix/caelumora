@@ -179,7 +179,8 @@ impl ApproverActor {
 
         let new_event = ActorEvent::ApprovalRequested(request);
         let new_context = context.next(self.id, self.name());
-        let new_security = security.next(self.id);
+        // It speaks for itself, about the call of whoever asked (issue 255).
+        let new_security = security.next(self.id, self.id);
         let envelope = Envelope::new(new_security, new_context, new_event);
 
         output.send(envelope).await.context("Failed to send approval request")?;
@@ -225,7 +226,7 @@ impl ApproverActor {
         }
         let Some(p) = pending.remove(&id) else { return Ok(()) };
         let context = p.event_context.next(self.id, self.name());
-        let envelope = Envelope::new(p.security_context.next(self.id), context, ActorEvent::ApprovalRequestWithdrawn { id });
+        let envelope = Envelope::new(p.security_context.next(self.id, self.id), context, ActorEvent::ApprovalRequestWithdrawn { id });
         output.send(envelope).await.context("Failed to announce a withdrawn approval request")?;
         Ok(())
     }
@@ -314,7 +315,7 @@ impl ApproverActor {
         };
 
         let context = p.event_context.next(self.id, self.name());
-        let envelope = Envelope::new(p.security_context.next(self.id), context, event);
+        let envelope = Envelope::new(p.security_context.next(self.id, self.id), context, event);
 
         output.send(envelope).await.context("Failed to send decision")?;
         Ok(())

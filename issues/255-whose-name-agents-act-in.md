@@ -279,3 +279,15 @@ in behaviour; the rule, in the policy; one context per piece of work. Each is re
   read their credential at build time in the owner's name and at call time in the asker's; the
   comment of `GuardedToolExecutor::questions` believes the initiator is the owner. A plan is
   written (*Plan*), in three steps: the context's shape, the rule, one context per work.
+- **2026-10-08** — Step 1 done: `SecurityContext` carries `principal_id` instead of
+  `delegation_ids`; `new` sets caller, principal and initiator to one actor, `next(caller,
+  principal)` continues a context. `Agent::security_context` and `Answering::to` give an agent its
+  owner as principal - `Answering::to` and `reject_retries` take it, both actors pass the
+  principal of their own context. The suite's recorder prints `principal as caller, asked by
+  initiator`; seven tests changed in the names they record, none in an answer. Deviating from the
+  plan (C4): the approver still continues the context it forwards and announces in, as
+  `next(approver, approver)` - the transport admits an envelope only from the actor it names as
+  its caller (`OriginEventSender::speaks_as`). Without a chain it appends itself to nothing; it
+  speaks for itself, with whoever asked as the initiator. SECURITY.md describes the three
+  identities. **Stored data:** the agent channel states in the state store - a `Work` in a turn or
+  an open task holds the context - are to be deleted.

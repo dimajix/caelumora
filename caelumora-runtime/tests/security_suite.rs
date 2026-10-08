@@ -45,9 +45,11 @@ use caelumora_runtime::terminal::{ByteStream, Terminal, WorkspacePath};
 use caelumora_runtime::view::{ViewError, Viewer};
 use caelumora_runtime::workspace::WorkspaceError;
 
-/// The ownership policy, recording every question it is asked - who asked,
-/// what, of whose entity, and what it answered - so that a test says which
-/// permissions an action needs (issue 198).
+/// The ownership policy, recording every question it is asked - who acted
+/// with whose rights and for whom, what, of whose entity, and what it
+/// answered - so that a test says which permissions an action needs (issue
+/// 198). Recorded as `principal as caller, asked by initiator`, each part
+/// only where it differs from the one before (issue 255).
 #[derive(Debug)]
 struct Recorder {
     policy: OwnershipSecurityManager,
@@ -83,9 +85,13 @@ impl Recorder {
 impl SecurityManager for Recorder {
     async fn check(&self, context: &SecurityContext, action: ActionType<'_>) -> bool {
         let allowed = self.policy.check(context, action).await;
-        let who = match (context.initiator_id, context.caller_id) {
-            (initiator, caller) if caller == initiator || caller == ActorId::None => self.name(initiator),
-            (initiator, caller) => format!("{} as {}", self.name(initiator), self.name(caller)),
+        let acting = match (context.principal_id, context.caller_id) {
+            (principal, caller) if caller == principal || caller == ActorId::None => self.name(principal),
+            (principal, caller) => format!("{} as {}", self.name(principal), self.name(caller)),
+        };
+        let who = match context.initiator_id {
+            initiator if initiator == context.principal_id => acting,
+            initiator => format!("{acting}, asked by {}", self.name(initiator)),
         };
         let answer = if allowed { "yes" } else { "no" };
         self.asked.lock().unwrap().push(format!("{who}: {} {answer}", self.label(&action)));
@@ -1259,7 +1265,7 @@ async fn a_tool_whose_remote_side_is_not_cleared_for_the_channel_is_not_offered_
         }).await.expect("the call is answered")
     }).await;
     assert_eq!(answered, ToolResultStatus::UnknownTool, "not called by its name");
-    assert!(asked.contains(&"bob as helper: Publish no".to_string()), "judged for bob, who asked: {asked:?}");
+    assert!(asked.contains(&"alice as helper, asked by bob: Publish no".to_string()), "judged for bob, who asked: {asked:?}");
     assert!(!asked.iter().any(|line| line.contains("CallTool")), "refused before the policy is asked of the call: {asked:?}");
 
     let (sets, asked) = world.asked(async {
@@ -1384,7 +1390,7 @@ async fn an_external_agents_task_is_followed_in_the_name_of_whoever_asked() {
         calls_made(&calls, 1).await;
     }).await;
     let read_secret: Vec<&String> = asked.iter().filter(|line| line.contains("ReadSecret")).collect();
-    assert_eq!(read_secret, ["bob as hermes: ReadSecret yes"], "sent in the name of who asked");
+    assert_eq!(read_secret, ["alice as hermes, asked by bob: ReadSecret yes"], "sent in the name of who asked");
 
     // The task is stored as begun; the session stops with it still open.
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
@@ -1401,7 +1407,7 @@ async fn an_external_agents_task_is_followed_in_the_name_of_whoever_asked() {
     }).await;
     assert_eq!(calls.lock().unwrap().as_slice(), ["send", "resume"]);
     let read_secret: Vec<&String> = asked.iter().filter(|line| line.contains("ReadSecret")).collect();
-    assert_eq!(read_secret, ["bob as hermes: ReadSecret yes"], "followed in his name too, whoever opened the session");
+    assert_eq!(read_secret, ["alice as hermes, asked by bob: ReadSecret yes"], "followed in his name too, whoever opened the session");
     world.manager.stop_session(&World::as_user(world.alice), reopened.id()).await.unwrap();
 }
 
@@ -1446,7 +1452,7 @@ async fn an_agent_asked_by_several_while_it_answers_answers_once_in_the_name_of_
     }).await;
     assert_eq!(calls.lock().unwrap().as_slice(), ["send", "send"], "one call for all that was asked meanwhile");
     let read_secret: Vec<&String> = asked.iter().filter(|line| line.contains("ReadSecret")).collect();
-    assert_eq!(read_secret, ["bob as hermes: ReadSecret yes"], "in the name of the last who asked");
+    assert_eq!(read_secret, ["alice as hermes, asked by bob: ReadSecret yes"], "in the name of the last who asked");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
@@ -1481,8 +1487,8 @@ async fn an_external_agent_whose_answers_no_longer_enter_its_lowered_channel_is_
         }).await.expect("the users are told")
     }).await;
     assert!(failed.contains("may not be published"), "{failed}");
-    let publish: Vec<&String> = asked.iter().filter(|line| line.starts_with("bob as hermes: Publish")).collect();
-    assert_eq!(publish, ["bob as hermes: Publish no"], "asked in the name of who asked");
+    let publish: Vec<&String> = asked.iter().filter(|line| line.starts_with("alice as hermes, asked by bob: Publish")).collect();
+    assert_eq!(publish, ["alice as hermes, asked by bob: Publish no"], "asked in the name of who asked");
     assert!(calls.lock().unwrap().is_empty(), "the remote agent is not called");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
@@ -1519,10 +1525,10 @@ async fn lowering_a_channel_gives_up_an_external_agents_task_in_the_name_of_whoe
         }).await.expect("the users are told")
     }).await;
     assert!(failed.contains("lowered"), "{failed}");
-    let bobs: Vec<&String> = asked.iter().filter(|line| line.starts_with("bob as hermes")).collect();
+    let bobs: Vec<&String> = asked.iter().filter(|line| line.starts_with("alice as hermes, asked by bob")).collect();
     // The lowering cancels the answer, which cancels its remote task - as
     // every cancel does - and only then is asked whether it may go on.
-    assert_eq!(bobs, ["bob as hermes: ReadSecret yes", "bob as hermes: Publish no"], "cancelled, and asked whether it goes on, in his name");
+    assert_eq!(bobs, ["alice as hermes, asked by bob: ReadSecret yes", "alice as hermes, asked by bob: Publish no"], "cancelled, and asked whether it goes on, in his name");
     assert_eq!(calls.lock().unwrap().as_slice(), ["send", "cancel"]);
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
@@ -2072,7 +2078,7 @@ async fn a_workspace_is_not_used_in_a_channel_by_who_is_not_in_it() {
     let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
     let session = world.shared_session(&[], &[waiting]).await;
     session.set_workspace(&alice, Some(docs.id)).await.unwrap();
-    let as_agent = alice.next(ActorId::Agent(waiting));
+    let as_agent = alice.next(ActorId::Agent(waiting), ActorId::User(world.alice));
     let main = world.manager.views(Viewer::new(as_agent)).session(session.id()).await.unwrap().channel(session.channels()[0].id()).await.unwrap();
     assert!(main.workspace().await.unwrap().is_none());
     world.manager.stop_session(&alice, session.id()).await.unwrap();
@@ -2133,7 +2139,7 @@ async fn asked_for_a_call_on_the_workspace(function: &str, arguments: serde_json
 /// sent to the storage.
 fn asked_as_a_call_on_the_workspace(asked: &[String]) {
     let calling: Vec<&String> = asked.iter().filter(|line| line.contains("CallTool")).collect();
-    assert!(!calling.is_empty() && calling.iter().all(|line| *line == "bob as helper: CallTool yes"), "the call in bob's name, who asked: {asked:?}");
+    assert!(!calling.is_empty() && calling.iter().all(|line| *line == "alice as helper, asked by bob: CallTool yes"), "the call in bob's name, who asked: {asked:?}");
     let reaching: Vec<&String> = asked.iter().filter(|line| line.starts_with("alice as helper:")).collect();
     assert_eq!(reaching, [
         // The channel's workspace: no GetWorkspace, the flow both ways.

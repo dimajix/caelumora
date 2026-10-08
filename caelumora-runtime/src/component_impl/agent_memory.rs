@@ -503,9 +503,10 @@ mod tests {
         let compartments = Compartments::new([(Compartment::new("hr"), vec![]), (Compartment::new("finance"), vec![])]).unwrap();
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_rules(ConfidentialityRules::new(compartments)));
         // As the agent's components are given it: its owner's, called by the agent.
+        let owner = ActorId::User(UserId::new());
         let memory = AgentMemoryComponent {
             security_manager: Arc::clone(&policy),
-            security_context: SecurityContext::new(ActorId::User(UserId::new()), Default::default(), Default::default()).next(ActorId::Agent(agent)),
+            security_context: SecurityContext::new(owner, Default::default(), Default::default()).next(ActorId::Agent(agent), owner),
         };
         let session = SessionId::new();
         let mut sessions = Sessions::under(policy).await;

@@ -116,9 +116,10 @@ pub(crate) struct Answering {
 
 impl Answering {
     /// The contexts of `request`, continued in the name of the actor `id`,
-    /// called `name`.
-    pub(crate) fn to(request: &Envelope, id: ActorId, name: String) -> Self {
-        Self { event_context: request.context.next(id, name), security_context: request.security.next(id) }
+    /// called `name`, with the rights of `principal` - an agent's owner's
+    /// (issue 255). Whoever sent the request stays its initiator.
+    pub(crate) fn to(request: &Envelope, id: ActorId, name: String, principal: ActorId) -> Self {
+        Self { event_context: request.context.next(id, name), security_context: request.security.next(id, principal) }
     }
 
     /// The contexts of the actor `id`, called `name`, speaking of itself
@@ -149,14 +150,14 @@ impl Answering {
 }
 
 /// Tells whoever asked each of `retries` that the agent `own`, called
-/// `name`, does not answer again, for `reason` (issue 234) - in the
-/// contexts of each request, as an answer to it. One that cannot be sent is
-/// logged.
-async fn reject_retries(retries: Vec<Envelope>, reason: RetryRefused, own: ActorId, name: &str, output: &dyn EventSender) {
+/// `name` and acting with the rights of `principal`, does not answer again,
+/// for `reason` (issue 234) - in the contexts of each request, as an answer
+/// to it. One that cannot be sent is logged.
+async fn reject_retries(retries: Vec<Envelope>, reason: RetryRefused, own: ActorId, name: &str, principal: ActorId, output: &dyn EventSender) {
     for retry in retries {
         let Some(target) = retry_target(&retry) else { continue };
         let rejected = ActorEvent::RetryRejected { target, reason };
-        if let Err(e) = Answering::to(&retry, own, name.to_string()).send(rejected, output).await {
+        if let Err(e) = Answering::to(&retry, own, name.to_string(), principal).send(rejected, output).await {
             warn!("Agent {} cannot reject a request to answer again: {:#}", own, e);
         }
     }

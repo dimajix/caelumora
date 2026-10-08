@@ -175,11 +175,13 @@ pub struct Agent {
 }
 
 impl Agent {
-    /// The context the agent acts in, in the channel `channel` of session
-    /// `session` (issue 87): on behalf of its owner, continued in its own
-    /// name - whose authority it acts with is not stored with it.
+    /// The context the agent acts in when nobody asked it, in the channel
+    /// `channel` of session `session` (issue 87): its owner's, continued in
+    /// its own name with its owner's rights (issue 255) - whose authority it
+    /// acts with is not stored with it.
     pub fn security_context(&self, session: crate::session::SessionId, channel: crate::session::ChannelId) -> SecurityContext {
-        SecurityContext::new(self.security_attributes.owner_id, session, channel).next(ActorId::Agent(self.id))
+        let owner = self.security_attributes.owner_id;
+        SecurityContext::new(owner, session, channel).next(ActorId::Agent(self.id), owner)
     }
 
     /// A new agent of `personality`, owned by `owner` - whoever creates it.

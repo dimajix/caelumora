@@ -263,7 +263,7 @@ impl ExternalAgentActor {
         if let Err(e) = self.actor_runtime.store_channel_state(state).await {
             warn!("External agent {} cannot store what it heard: {:#}", self.id(), e);
         }
-        reject_retries(retries, caelumora_model::agent::RetryRefused::Elsewhere, self.id(), &self.name(), output).await;
+        reject_retries(retries, caelumora_model::agent::RetryRefused::Elsewhere, self.id(), &self.name(), self.security_context.principal_id, output).await;
         request
     }
 
@@ -273,7 +273,7 @@ impl ExternalAgentActor {
     /// answer, never the actor. Without a channel there is nobody to
     /// answer.
     async fn respond(&self, state: &mut AgentChannelState, request: &Envelope, output: &dyn EventSender) {
-        let answering = Answering::to(request, self.id(), self.name());
+        let answering = Answering::to(request, self.id(), self.name(), self.security_context.principal_id);
         let Some(channel) = self.actor_runtime.channel_loop() else {
             warn!("External agent {} has no channel to answer in", self.id());
             return;

@@ -310,7 +310,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         let tools = NotesComponent {
             security_manager: Arc::new(caelumora_model::security::OwnershipSecurityManager::new()),
-            security_context: SecurityContext::default().next(ActorId::Agent(agent)),
+            security_context: SecurityContext::default().next(ActorId::Agent(agent), ActorId::None),
         };
         let mut turn = Turn::begun(agent, "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached());
         tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "tea" }), None, &mut turn).await.unwrap();

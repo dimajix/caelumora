@@ -306,21 +306,36 @@ pub trait Secured {
     fn security_attributes(&self) -> &SecurityAttributes;
 }
 
+/// Who acts, with whose rights, and for whom (issue 255): what every
+/// operation is asked in.
+///
+/// - `caller_id` is who acts - a user, an agent, the system.
+/// - `principal_id` is the person whose rights the caller exercises: a user
+///   themselves, an agent its owner, the system itself. An agent is its
+///   owner's delegate in all it does.
+/// - `initiator_id` is who caused it - whoever asked the agent, or its owner
+///   when nobody did: for the record and for the questions of a call, never
+///   for rights.
+///
+/// An empty context names nobody and has no rights.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecurityContext {
     pub initiator_id: ActorId,
     pub caller_id: ActorId,
-    pub delegation_ids: Vec<ActorId>,
+    pub principal_id: ActorId,
     pub session_id: SessionId,
     pub channel_id: ChannelId
 }
 
 impl SecurityContext {
-    pub fn new(initiator: ActorId, session_id: SessionId, channel_id: ChannelId) -> Self {
+    /// The context of `actor` acting for themselves, in the channel
+    /// `channel_id` of session `session_id`: caller, principal and initiator
+    /// at once.
+    pub fn new(actor: ActorId, session_id: SessionId, channel_id: ChannelId) -> Self {
         Self {
-            initiator_id: initiator,
-            caller_id: initiator,
-            delegation_ids: vec![initiator],
+            initiator_id: actor,
+            caller_id: actor,
+            principal_id: actor,
             session_id,
             channel_id
         }
@@ -333,14 +348,14 @@ impl SecurityContext {
         Self::new(ActorId::System, SessionId::default(), ChannelId::default())
     }
 
-    pub fn next(&self, caller_id: ActorId) -> Self {
-        let mut delegation_ids = self.delegation_ids.clone();
-        delegation_ids.push(caller_id);
-
+    /// This context continued by `caller_id`, acting with the rights of
+    /// `principal_id` - an agent taking up a request, with its owner's - for
+    /// the same initiator, in the same place.
+    pub fn next(&self, caller_id: ActorId, principal_id: ActorId) -> Self {
         Self {
             initiator_id: self.initiator_id,
             caller_id,
-            delegation_ids,
+            principal_id,
             session_id: self.session_id,
             channel_id: self.channel_id
         }
@@ -784,7 +799,7 @@ mod tests {
             assert_eq!(allows(who, ActionType::RevokeMessage { author, channel: &bobs }).await, allowed, "taken back by {who}");
         }
         let agent = ActorId::Agent(crate::agent::AgentId::new());
-        let for_alice = context(alice).next(agent);
+        let for_alice = context(alice).next(agent, alice);
         let policy = OwnershipSecurityManager::new();
         assert!(policy.may_revoke_message(&for_alice, agent, &bobs).await, "an agent its own, acting for alice");
         assert!(!policy.may_revoke_message(&for_alice, alice, &bobs).await, "but not alice's: who said it, not whom it acts for");

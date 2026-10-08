@@ -11,9 +11,12 @@ mentioned here are listed in [CONFIGURATION.md](CONFIGURATION.md).
 Security is handled through a context that travels with every operation and explicit checks against
 it.
 
-*   **`SecurityContext`** carries the initiator and the sender of an event, and the session and
-    channel it happens in. The initiator is the person an action was started for, also when an agent
-    carries it out (see [In whose name an agent acts](#in-whose-name-an-agent-acts)).
+*   **`SecurityContext`** carries three identities, and the session and channel an action happens
+    in: the *caller*, who acts - a user, an agent, the system; the *principal*, whose rights the
+    caller exercises - a user themselves, an agent its owner; and the *initiator*, who caused it -
+    whoever asked an agent, or its owner when nobody did (issue
+    [255](../issues/255-whose-name-agents-act-in.md), see
+    [In whose name an agent acts](#in-whose-name-an-agent-acts)). There is no delegation chain.
 *   **`SecurityManager`** is the trait that authorizes actions: `check(context, action)`.
 *   **`ActionType`** enumerates every securable action (`GetAgent`, `UpdateSession`,
     `ListPersonalities`, `CancelChannel`, ...). An action on a stored entity carries the entity's

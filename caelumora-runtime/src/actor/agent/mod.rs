@@ -182,7 +182,7 @@ impl AgentActor {
     ) -> Result<()> {
         let classification = self.actor_runtime.channel_loop().map(|c| c.classification())
             .ok_or_else(|| anyhow!("Agent {} has no channel to take a turn in", self.id()))?;
-        let Answering { event_context, security_context } = Answering::to(request, self.id(), self.agent_controller.name());
+        let Answering { event_context, security_context } = Answering::to(request, self.id(), self.agent_controller.name(), self.security_context.principal_id);
         // Judged for whoever asked, in the channel as the turn begins.
         let tool_sets = self.tool_executor.tool_sets(&security_context, &classification).await;
         let turn_id = state.begin_turn(
@@ -320,7 +320,7 @@ impl AgentActor {
         let of_given_up = given_up_for.map(RetryTarget::Turn);
         let judged = retries.iter().rposition(|retry| retry_target(retry) == of_given_up).or(retries.len().checked_sub(1));
         let judged = judged.map(|at| retries.remove(at));
-        reject_retries(retries, RetryRefused::AskedAgain, self.id(), &self.agent_controller.name(), output).await;
+        reject_retries(retries, RetryRefused::AskedAgain, self.id(), &self.agent_controller.name(), self.security_context.principal_id, output).await;
         let mut accepted = None;
         if let Some(retry) = judged {
             let span = crate::logging::envelope_span(&retry.context, retry.event.kind());
@@ -367,7 +367,7 @@ impl AgentActor {
     /// Otherwise it says why with `RetryRejected`.
     async fn retry(&self, state: &mut AgentChannelState, request: &Envelope, given_up_for: Option<TurnId>, output: &dyn EventSender) -> Result<bool> {
         let Some(target) = retry_target(request) else { return Ok(false) };
-        let answering = Answering::to(request, self.id(), self.agent_controller.name());
+        let answering = Answering::to(request, self.id(), self.agent_controller.name(), self.security_context.principal_id);
         let can = match target {
             RetryTarget::Turn(turn) if Some(turn) == given_up_for => Ok(Vec::new()),
             // Its last turn given up: answered anew after it, nothing taken

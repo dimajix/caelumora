@@ -329,7 +329,7 @@ mod tests {
         store.create_channel(&system, &channel).await.unwrap();
         let session_loop = SessionLoop::new(session.clone(), vec![channel.clone()], Arc::clone(&runtime)).await.unwrap();
 
-        let context = SecurityContext::default().next(ActorId::Agent(jonathan.id));
+        let context = SecurityContext::default().next(ActorId::Agent(jonathan.id), ActorId::None);
         let mut state = AgentChannelState::default();
         state.begin_turn(EventContext::new(session.id, channel.id, ActorId::None, String::new()), context.clone(), channel.classification.clone(), Vec::new(), Default::default());
         let turn = Turn::of(jonathan.id, "Jonathan".to_string(), &mut state, AgentStateHandle::detached()).expect("a turn was begun")
