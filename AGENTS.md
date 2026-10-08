@@ -41,7 +41,8 @@ numbers are never reused.
 
 [issues/OPEN.md](issues/OPEN.md) lists only the issues that are open or in progress. It is generated
 from the index by `issues/open.sh` and never edited by hand; the pre-commit hook in `.githooks`
-keeps it up to date, once a clone has it enabled (`git config core.hooksPath .githooks`).
+keeps it up to date, once a clone has it enabled (`git config core.hooksPath .githooks`). The same
+hook refuses a commit of Rust code while `cargo clippy --workspace --all-targets` warns.
 
 ## Rules for every change
 

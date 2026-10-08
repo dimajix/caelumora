@@ -1,15 +1,23 @@
 #!/bin/sh
-# Keeps issues/OPEN.md in step with issues/INDEX.md: whenever the index is
-# part of a commit, OPEN.md is generated from the index as it is staged and
-# added to the commit. Enabled per clone with `git config core.hooksPath .githooks`.
+# Two checks before a commit, enabled per clone with `git config core.hooksPath .githooks`:
+#
+# - issues/OPEN.md is kept in step with issues/INDEX.md: whenever the index is part of a commit,
+#   OPEN.md is generated from the index as it is staged and added to the commit.
+# - Clippy stays silent (docs/CODING-GUIDELINES.md): whenever Rust code or a Cargo manifest is part
+#   of a commit, `cargo clippy --workspace --all-targets -- -D warnings` must pass, or the commit
+#   is refused. It checks the working tree, so changes that are not staged count too.
+#
+# `git commit --no-verify` skips both.
 set -eu
 
-if git diff --cached --quiet -- issues/INDEX.md; then
-    exit 0
+if ! git diff --cached --quiet -- issues/INDEX.md; then
+    staged=$(mktemp)
+    trap 'rm -f "$staged"' EXIT
+    git show :issues/INDEX.md > "$staged"
+    issues/open.sh "$staged"
+    git add issues/OPEN.md
 fi
 
-staged=$(mktemp)
-trap 'rm -f "$staged"' EXIT
-git show :issues/INDEX.md > "$staged"
-issues/open.sh "$staged"
-git add issues/OPEN.md
+if ! git diff --cached --quiet -- '*.rs' '*Cargo.toml' Cargo.lock; then
+    cargo clippy --workspace --all-targets --quiet -- -D warnings
+fi

@@ -19,9 +19,11 @@ tests. Rules that belong to one subject live with it - where permission checks g
 *   **No line of prose starts with a dash.** In a doc comment, a line that begins with `- ` is a
     list item to rustdoc, and the sentence it continues breaks apart (clippy:
     `doc_lazy_continuation`). Wrap so that a dash ends the line before it instead.
-*   **No clippy warnings.** `cargo clippy --workspace --all-targets` stays silent. Where a lint is
-    wrong for a case, say why with `#[expect(clippy::…, reason = "…")]` on the item - `expect`
-    rather than `allow`, so that it is noticed once the lint no longer fires.
+*   **No clippy warnings.** `cargo clippy --workspace --all-targets` stays silent; the pre-commit
+    hook in `.githooks` refuses a commit of Rust code otherwise, once a clone has it enabled
+    (`git config core.hooksPath .githooks`). Where a lint is wrong for a case, say why with
+    `#[expect(clippy::…, reason = "…")]` on the item - `expect` rather than `allow`, so that it is
+    noticed once the lint no longer fires.
 
 ## Imports
 
