@@ -79,6 +79,7 @@ impl Turn<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transport::Discard;
     use crate::agent::turn::tests::seen;
     use caelumora_model::actor::EventContext;
     use caelumora_model::security::SecurityContext;
@@ -117,7 +118,7 @@ mod tests {
             turn.push_message(first.clone());
             assert_eq!(reasoning_of(&turn.full_context().unwrap().0), [false, false, true], "only the turn's own reasoning");
             turn.push_message(second.clone());
-            turn.commit(false).await;
+            turn.commit(false, &Discard).await;
         }
 
         // What was recorded says what the model was given - not what the
@@ -162,7 +163,7 @@ mod tests {
             assert_eq!(given[0].role, MessageRole::System);
             turn.push_message(first.clone());
             turn.push_message(second.clone());
-            turn.commit(false).await;
+            turn.commit(false, &Discard).await;
         }
 
         assert_eq!(order(&seen(&state, agent, first.id).expect("the agent produced it")),
@@ -185,7 +186,7 @@ mod tests {
             turn.record_knowledge(read.clone());
             turn.record_knowledge(read.clone());
             turn.push_message(after.clone());
-            turn.commit(false).await;
+            turn.commit(false, &Discard).await;
         }
         let knowledge_of = |id| state.recorded_context_of(id).unwrap().0.knowledge;
         assert!(knowledge_of(before.id).is_empty(), "produced before the read");
@@ -224,7 +225,7 @@ mod tests {
             for message in messages {
                 turn.push_message((*message).clone());
             }
-            futures::executor::block_on(turn.commit(false));
+            futures::executor::block_on(turn.commit(false, &Discard));
         };
         take_turn(&mut state, vec![tool("echo", false), tool("notes", true)], &[&first, &second]);
         take_turn(&mut state, Vec::new(), &[&third]);

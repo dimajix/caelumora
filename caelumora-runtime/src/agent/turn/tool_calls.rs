@@ -151,10 +151,11 @@ impl<'t> ToolCalls<'t> {
 
     /// Ends the step as its turn ends (issue 148): answers every call not
     /// yet finished as not executed, `because` - why the turn ended - and
-    /// keeps the tool message as `collect` does, so that no call is left
+    /// makes the tool message as `collect` does, so that no call is left
     /// unanswered and the results of those that ran are kept. Returns the
-    /// calls it abandoned as they stood before, still waiting or ready.
-    pub(crate) fn abandon(&mut self, because: &str, internal: bool) -> Vec<ToolCallState> {
+    /// calls it abandoned as they stood before, still waiting or ready, and
+    /// the tool message for the turn to say, if the step had calls.
+    pub(crate) fn abandon(&mut self, because: &str, internal: bool) -> (Vec<ToolCallState>, Option<Message>) {
         // A fixed text of the runtime's: as the turn (issue 168).
         let label = self.turn.work.label();
         let mut abandoned = Vec::new();
@@ -164,15 +165,14 @@ impl<'t> ToolCalls<'t> {
             let result = ToolCallResult::of(&call.tool_call, ToolResultStatus::NotExecuted, content, label.clone());
             finish(call, result);
         }
-        self.collect(internal);
-        abandoned
+        (abandoned, self.collect(internal))
     }
 
     /// Once every call has its result: the tool message that gives them to
-    /// the model, kept in the turn - `internal` like the step that made the
-    /// calls - and the step's calls done. `None` while a call still waits
-    /// for its approval, and for a step without calls: there is nothing to
-    /// give.
+    /// the model, for the turn to say (`Turn::say`) - `internal` like the
+    /// step that made the calls - and the step's calls done. `None` while a
+    /// call still waits for its approval, and for a step without calls:
+    /// there is nothing to give.
     pub(crate) fn collect(&mut self, internal: bool) -> Option<Message> {
         if self.is_empty() || self.turn.tool_calls.iter().any(|c| !c.is_finished()) {
             return None;
@@ -199,7 +199,6 @@ impl<'t> ToolCalls<'t> {
             turn_id: Some(self.turn.work.turn_id),
             ..Message::new(self.turn.work.label())
         };
-        self.turn.push(message.clone());
         Some(message)
     }
 }
@@ -273,7 +272,7 @@ mod tests {
         assert_eq!(message.role, MessageRole::Tool);
         assert!(view(&mut turn).is_empty(), "the step's calls are done");
         assert!(view(&mut turn).collect(false).is_none(), "nothing is left to give");
-        assert_eq!(turn.messages().last().map(|m| m.id), Some(message.id), "the turn keeps it for the model");
+        assert!(turn.messages().all(|m| m.id != message.id), "kept once the turn says it (`Turn::say`), not before");
     }
 
     #[test]

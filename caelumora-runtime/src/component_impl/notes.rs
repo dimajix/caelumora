@@ -273,6 +273,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transport::Discard;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::message::MessageId;
 
@@ -320,7 +321,7 @@ mod tests {
         let public_with_compartments = serde_json::json!({ "id": 1, "level": "public", "compartments": ["hr"] });
         assert!(matches!(tools.execute(RECLASSIFY_NOTE_TOOL_NAME, &public_with_compartments, None, &mut turn).await, Err(ToolError::InvalidParameter(_))));
         tools.execute(RECLASSIFY_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1, "level": "public" }), None, &mut turn).await.expect("released");
-        turn.commit(false).await;
+        turn.commit(false, &Discard).await;
         assert_eq!(state.notes.current()[0].classification, Classification::general(Confidentiality::Public));
     }
 
@@ -338,14 +339,14 @@ mod tests {
             assert!(AgentNotes::current(&turn.work(), NoteKind::Public).is_empty(), "not before the turn completes");
             let unknown = tools.execute(REVOKE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 7 }), None, &mut turn).await;
             assert!(matches!(unknown, Err(ToolError::InvalidParameter(_))), "not one of its notes");
-            assert!(turn.commit(false).await.channel_state_changed, "the turn changed notes");
+            assert!(turn.commit(false, &Discard).await.channel_state_changed, "the turn changed notes");
             assert_eq!(state.notes.current().iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["tea"]);
         }
         {
             let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached());
             tools.execute(REVOKE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn).await.unwrap();
             tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "coffee" }), None, &mut turn).await.unwrap();
-            turn.commit(false).await;
+            turn.commit(false, &Discard).await;
             let notes = state.notes.current();
             assert_eq!(notes.iter().map(|n| (n.id.0, n.text.as_str())).collect::<Vec<_>>(), [(2, "coffee")], "a new number for the new version");
         }
@@ -355,7 +356,7 @@ mod tests {
             let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached());
             tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "lost" }), None, &mut turn).await.unwrap();
             let turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached());
-            assert!(!turn.commit(false).await.channel_state_changed);
+            assert!(!turn.commit(false, &Discard).await.channel_state_changed);
         }
     }
 
@@ -374,7 +375,7 @@ mod tests {
             assert!(matches!(again, Err(ToolError::InvalidParameter(_))), "revoked already");
             let revoked = tools.execute(RECLASSIFY_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1, "level": "public" }), None, &mut turn).await;
             assert!(matches!(revoked, Err(ToolError::InvalidParameter(_))), "a revoked note is not reclassified");
-            turn.commit(false).await;
+            turn.commit(false, &Discard).await;
             assert!(state.notes.current().is_empty());
         }
         let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached());

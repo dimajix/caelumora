@@ -230,6 +230,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transport::Discard;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::message::MessageId;
 
@@ -262,7 +263,7 @@ mod tests {
         let noted = tools.execute(NOTE_PRIVATE_TOOL_NAME, &serde_json::json!({ "text": "secret" }), None, &mut turn).await.unwrap();
         assert_eq!(noted.value["id"], 1, "its own numbering");
         assert!(AgentNotes::current(&turn.work(), NoteKind::Private).is_empty(), "not before the turn completes");
-        assert!(turn.commit(false).await.channel_state_changed, "the channel state changed");
+        assert!(turn.commit(false, &Discard).await.channel_state_changed, "the channel state changed");
         assert_eq!(state.private_notes.current().iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["secret"]);
         assert_eq!(state.notes.current().iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["public"], "the chains are apart");
 
@@ -271,7 +272,7 @@ mod tests {
         let unknown = tools.execute(REVOKE_PRIVATE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 9 }), None, &mut turn).await;
         assert!(matches!(unknown, Err(ToolError::InvalidParameter(_))));
         tools.execute(REVOKE_PRIVATE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn).await.unwrap();
-        assert!(turn.commit(false).await.channel_state_changed, "private notes are part of the channel state too");
+        assert!(turn.commit(false, &Discard).await.channel_state_changed, "private notes are part of the channel state too");
         assert!(state.private_notes.current().is_empty());
     }
 }

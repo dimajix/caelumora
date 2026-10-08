@@ -295,9 +295,38 @@ impl<'a> Turn<'a> {
     /// turn's contexts (`Answering::send`): messages without what only the
     /// agent's owner sees (issues 54, 133). The agent keeps the full
     /// messages in its context; an event with nothing left to show is not
-    /// sent.
-    pub async fn send_event(&self, event: ActorEvent, output: &dyn EventSender) -> Result<()> {
+    /// sent. Only the actor holds `output`: what the turn says reaches the
+    /// channel through it alone, never through a component the turn is
+    /// handed to.
+    pub(crate) async fn send_event(&self, event: ActorEvent, output: &dyn EventSender) -> Result<()> {
         self.answering().send(event, output).await
+    }
+
+    /// Says `message`: keeps it in the turn and publishes it, the one way
+    /// a turn's complete message reaches the channel (issue 258) - the
+    /// model's, a step's tool message, the one answering the calls the turn
+    /// abandoned. Kept before it is sent, so that a failed send loses
+    /// nothing of the turn.
+    pub(crate) async fn say(&mut self, message: Message, output: &dyn EventSender) -> Result<()> {
+        self.push_message(message.clone());
+        self.send_event(event_for(message, false), output).await
+    }
+
+    /// Shows `partial`, a message still streaming in: published, not kept.
+    pub(crate) async fn show(&self, partial: Message, output: &dyn EventSender) -> Result<()> {
+        self.send_event(event_for(partial, true), output).await
+    }
+}
+
+/// The event that publishes `message`: internal messages (plan steps)
+/// are intermediate, the others what the channel shows as the answer;
+/// `partial` for a streamed chunk.
+fn event_for(message: Message, partial: bool) -> ActorEvent {
+    match (message.internal, partial) {
+        (true, true) => ActorEvent::IntermediatePartialGenerated(message),
+        (false, true) => ActorEvent::PartialMessageGenerated(message),
+        (true, false) => ActorEvent::IntermediateMessageGenerated(message),
+        (false, false) => ActorEvent::CompleteMessageGenerated(message),
     }
 }
 

@@ -454,3 +454,12 @@ the step that changes what they describe.
   message; `chatRows` makes a run of a turn's internal messages one `PlanSteps` block, open while
   the turn is under way and folded once it ended. `ChatView` renders every message through one
   `renderMessage` and keys the chat by message id; a step is not offered for another answer.
+- **2026-10-08** — Step 2 done: `Turn::say` keeps a complete message in the turn and publishes it,
+  `Turn::show` publishes a partial one; `event_for` moved beside them. The model's message, a
+  step's tool message and the tool message of abandoned calls go through `say`, so the last is
+  published live now - the one change in behaviour. `ToolCalls::collect` and `abandon` make the
+  message and no longer keep it. Decided with the maintainer how the output reaches the turn's end:
+  as a parameter of `commit` and `give_up` (`give_up` is async now), as of `send_event` - not held
+  by the turn, which is handed to every component working in it, none of which is to speak in the
+  agent's name; nor by the actor ending the step itself, which would split the turn's end in two.
+  `send_event` is `pub(crate)` now. A failed send while abandoning is logged; the message is kept.

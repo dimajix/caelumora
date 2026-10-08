@@ -184,14 +184,3 @@ fn lowered_message(name: &str, channel: &caelumora_model::confidentiality::Class
     format!("The channel's classification was lowered to {channel} while {name} was answering; the answer was discarded.")
 }
 
-/// The event that publishes `message`: internal messages (plan steps)
-/// are intermediate, the others what the channel shows as the answer;
-/// `partial` for a streamed chunk.
-fn event_for(message: Message, partial: bool) -> ActorEvent {
-    match (message.internal, partial) {
-        (true, true) => ActorEvent::IntermediatePartialGenerated(message),
-        (false, true) => ActorEvent::PartialMessageGenerated(message),
-        (true, false) => ActorEvent::IntermediateMessageGenerated(message),
-        (false, false) => ActorEvent::CompleteMessageGenerated(message),
-    }
-}

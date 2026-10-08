@@ -1,7 +1,7 @@
 mod run_control;
 
 use super::intake::{catch_up, take_in};
-use super::{event_for, failure_message, lowered_message, reject_retries, retry_target};
+use super::{failure_message, lowered_message, reject_retries, retry_target};
 use crate::message::apply_stage_processors;
 use crate::actor::{Actor, Answering};
 use run_control::{Interrupt, RunControl};
@@ -137,23 +137,10 @@ impl AgentActor {
         })
     }
 
-    /// A complete message as it leaves the agent - through the emit
-    /// processors - and becomes part of the turn. `None` if the processors
-    /// dropped it.
-    async fn respond_complete(
-        &self,
-        message: Message,
-        turn: &mut Turn<'_>,
-    ) -> Option<Message> {
-        let msg = self.respond_partial(message, turn).await?;
-        turn.push_message(msg.clone());
-        Some(msg)
-    }
-
-    /// A message as it leaves the agent, through the emit processors; a
-    /// partial one is only shown, not kept. `None` if the processors
-    /// dropped it.
-    async fn respond_partial(
+    /// A message as it leaves the agent, through the emit processors - a
+    /// complete one to be said, a partial one only shown. `None` if the
+    /// processors dropped it.
+    async fn respond(
         &self,
         message: Message,
         turn: &mut Turn<'_>,
@@ -281,7 +268,7 @@ impl AgentActor {
         let turn = self.turn_under_way(state)?;
         // Read before the turn is taken over, which ends it.
         let next = if cancelled { ActorState::Idle } else { turn.requested_state().unwrap_or(ActorState::Idle) };
-        let CommittedTurn { final_messages, channel_state_changed, answering, abandoned_calls } = turn.commit(cancelled).await;
+        let CommittedTurn { final_messages, channel_state_changed, answering, abandoned_calls } = turn.commit(cancelled, output).await;
         self.store_channel_state(state).await;
         if channel_state_changed {
             self.actor_runtime.announce_channel_state_changed();
@@ -445,7 +432,7 @@ impl AgentActor {
         };
         let stays = reason != GivenUpReason::Stopped;
         let Some(turn) = self.turn(state) else { return };
-        let (answering, abandoned_calls) = turn.give_up(reason, names_only);
+        let (answering, abandoned_calls) = turn.give_up(reason, names_only, output).await;
         if !stays {
             return;
         }
@@ -624,16 +611,16 @@ impl AgentActor {
             match event {
                 MessageEvent::Partial(mut message) => {
                     stamp(&mut message, turn, self.reasoning_visibility, false);
-                    if let Some(msg) = self.respond_partial(message, turn).await {
-                        turn.send_event(event_for(msg, true), output).await?;
+                    if let Some(msg) = self.respond(message, turn).await {
+                        turn.show(msg, output).await?;
                     }
                 }
                 MessageEvent::Complete(mut message) => {
                     stamp(&mut message, turn, self.reasoning_visibility, true);
                     self.request_approvals(&message.tool_calls, turn, output).await?;
                     let converged = message.tool_calls.is_empty();
-                    if let Some(msg) = self.respond_complete(message, turn).await {
-                        turn.send_event(event_for(msg, false), output).await?;
+                    if let Some(msg) = self.respond(message, turn).await {
+                        turn.say(msg, output).await?;
                     }
                     // An answer without tool calls ends a step of a plan -
                     // the next one begins with another model call - or the
@@ -690,7 +677,7 @@ impl AgentActor {
         // plan - mirrors the same internal/final rule applied to the
         // assistant message that triggered it.
         if let Some(tool_message) = turn.tool_calls().collect(progress_before.is_some()) {
-            turn.send_event(event_for(tool_message, false), output).await?;
+            turn.say(tool_message, output).await?;
 
             // A plan was just created, or extended after already reaching
             // Finalizing, by a create_plan call in this batch (progress only

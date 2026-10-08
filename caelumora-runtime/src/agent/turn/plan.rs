@@ -122,6 +122,7 @@ fn plan_finalize_instruction(plan: &Plan) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transport::Discard;
     use crate::agent::turn::tests::seen;
     use caelumora_model::actor::ActorId;
     use caelumora_model::actor::EventContext;
@@ -221,7 +222,7 @@ mod tests {
             use MessageRole::{Assistant, System, User};
             assert_eq!(roles, [System, User, System, Assistant, System], "a model that keeps them in place is given system messages");
             turn.push_message(answer.clone());
-            turn.commit(false).await;
+            turn.commit(false, &Discard).await;
         }
 
         let recorded = seen(&state, agent, answer.id).expect("the agent produced it");

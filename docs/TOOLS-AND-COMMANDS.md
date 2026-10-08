@@ -374,8 +374,8 @@ Every call ends with a result the model can act on (issue 15).
     `interrupted_result`).
 *   No call is left without a result. A turn that ends while calls of its step have none - cancelled
     while waiting for an approval, given up - answers them as `not_executed`, saying why the turn
-    ended, and keeps the tool message with the results of those that did run (`ToolCalls::abandon`,
-    issue 148).
+    ended, and says the tool message with the results of those that did run (`ToolCalls::abandon`,
+    issues 148, 258).
 
 A call that ran also records when: `ToolCallResult::started_at` and `finished_at`, set by the
 executor around the tool's own run (not the checks before it) - `finished_at` is when an

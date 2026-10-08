@@ -46,6 +46,23 @@ pub trait EventSender: Send + Sync {
     fn try_send(&self, event: Envelope) -> TransportResult<()>;
 }
 
+/// An output that drops what it is sent: for tests of what an actor does
+/// besides sending.
+#[cfg(test)]
+pub(crate) struct Discard;
+
+#[cfg(test)]
+#[async_trait]
+impl EventSender for Discard {
+    async fn send(&self, _event: Envelope) -> TransportResult<()> {
+        Ok(())
+    }
+
+    fn try_send(&self, _event: Envelope) -> TransportResult<()> {
+        Ok(())
+    }
+}
+
 /// A test on an event, for `EventReceiver::recv_matching`. Spelt with its
 /// lifetime bound for every reference, so that `async_trait` does not bind it
 /// to one lifetime of the future.

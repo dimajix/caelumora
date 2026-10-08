@@ -202,6 +202,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transport::Discard;
     use crate::agent::state::{AgentStateHandle, AgentStates};
     use crate::runtime::RuntimeManager;
     use crate::session::SessionLoop;
@@ -332,7 +333,7 @@ mod tests {
         let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(handle)).expect("a turn was begun").with_views(sessions.views_in(&at, memory));
         turn.see(&at.1);
         memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": text }), None, &mut turn).await.unwrap();
-        turn.commit(false).await;
+        turn.commit(false, &Discard).await;
     }
 
     /// The prompt part of another actor of `agent`, in a turn in channel `at`.
@@ -364,7 +365,7 @@ mod tests {
             let result = memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "Kaya likes tea." }), None, &mut turn).await.unwrap();
             assert_eq!(result.value["id"], 1);
             assert!(turn.agent_state().current().memory.current().is_empty(), "not before the turn completes");
-            turn.commit(false).await;
+            turn.commit(false, &Discard).await;
         }
 
         // ... which another actor of the agent recalls in a channel that may
@@ -383,7 +384,7 @@ mod tests {
         state.begin_turn(in_channel(&team), Default::default(), team.1.clone(), Vec::new(), Default::default());
         let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun").with_views(sessions.views_in(&team, &memory));
         memory.execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn).await.unwrap();
-        turn.commit(false).await;
+        turn.commit(false, &Discard).await;
         assert!(handle.current().memory.current().is_empty());
     }
 
@@ -406,7 +407,7 @@ mod tests {
         assert!(memory.execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn).await.is_err(), "forgotten already");
         let forgotten = memory.execute(RECLASSIFY_MEMORY_TOOL_NAME, &serde_json::json!({ "id": 1, "level": "public" }), None, &mut turn).await;
         assert!(matches!(forgotten, Err(ToolError::InvalidParameter(_))), "a forgotten entry is not reclassified");
-        turn.commit(false).await;
+        turn.commit(false, &Discard).await;
         assert!(handle.current().memory.current().is_empty());
     }
 
@@ -420,7 +421,7 @@ mod tests {
         state.begin_turn(in_channel(&at), Default::default(), at.1.clone(), Vec::new(), Default::default());
         let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun");
         memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "alone" }), None, &mut turn).await.unwrap();
-        turn.commit(false).await;
+        turn.commit(false, &Discard).await;
         assert_eq!(handle.current().memory.current()[0].origin.session, SessionPrivacy { id: at.0.0, ..SessionPrivacy::default() }, "its session, private: nobody agreed to anything");
         state.begin_turn(in_channel(&at), Default::default(), at.1.clone(), Vec::new(), Default::default());
         let turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun");
@@ -478,7 +479,7 @@ mod tests {
             turn.see(&Classification::general(Confidentiality::Internal));
             let result = memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "Kaya likes tea." }), None, &mut turn).await.unwrap();
             assert_eq!(result.classification, Some(Classification::general(Confidentiality::Internal)), "its answer as the turn");
-            turn.commit(false).await;
+            turn.commit(false, &Discard).await;
         }
         let remembered = handle.current().memory.current();
         assert_eq!(remembered[0].classification, Classification::general(Confidentiality::Internal));
@@ -525,7 +526,7 @@ mod tests {
         assert!(matches!(memory.execute(RECLASSIFY_MEMORY_TOOL_NAME, &unknown, None, &mut turn).await, Err(ToolError::InvalidParameter(_))));
         let released = serde_json::json!({ "id": 1, "level": "internal", "compartments": ["hr", "finance"] });
         memory.execute(RECLASSIFY_MEMORY_TOOL_NAME, &released, None, &mut turn).await.expect("the agent releases what it remembers");
-        turn.commit(false).await;
+        turn.commit(false, &Discard).await;
 
         let there = recall(&memory, &sessions, &handle, agent, finance).await;
         assert!(there.text.contains("The budget is tight."), "released to finance: {}", there.text);

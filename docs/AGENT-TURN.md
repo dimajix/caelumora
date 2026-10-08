@@ -75,7 +75,12 @@ issue 222), then commits once:
 
 Every message that leaves the agent passes its `EmitOutProcessor`s first, of which there is no
 implementation yet (issue 99), and is published through `Turn::send_event`, which leaves out what
-only the agent's owner may see (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
+only the agent's owner may see (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)). A complete message
+is *said* (`Turn::say`, issue 258): kept in the turn, then published - the model's message, the
+tool message of a step, and the tool message that answers the calls a turn abandons as it ends,
+so that the channel learns of every message the turn keeps as it is made. A partial one is only
+shown (`Turn::show`). Both take the actor's output as a parameter: the turn is handed to every
+component working in it, and none of them is to speak in the agent's name.
 
 When a plan is in progress (`create_plan`), the messages of its steps are *internal*: they are
 published as intermediate messages, kept in the transcript, but not in the history. The answer after
