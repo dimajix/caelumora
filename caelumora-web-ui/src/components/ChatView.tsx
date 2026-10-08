@@ -652,8 +652,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           const closed = actorEvent.QuestionClosed.id;
           setPendingQuestions(prev => prev.filter(q => q.id !== closed));
           setAnsweredQuestions(prev => prev.filter(id => id !== closed));
-        } else if (actorEvent.FullResponseGenerated) {
-          //setMessages(prev => [...prev, ...actorEvent.FullResponseGenerated!]);
+        } else if (actorEvent.TurnFinished) {
+          // Its messages were shown as they were said.
           answerEnded();
           // Its calls are recorded once its turn ended: what they used now.
           const agent = envelope.context.sender_id;

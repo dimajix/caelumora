@@ -1242,7 +1242,7 @@ impl ChannelLoop {
         };
         match &mut event.event {
             ActorEvent::CompleteMessageGenerated(m) | ActorEvent::IntermediateMessageGenerated(m) | ActorEvent::MessageModified(m) => resolve(m),
-            ActorEvent::FullResponseGenerated { messages: msgs, .. } => msgs.iter_mut().for_each(resolve),
+            ActorEvent::TurnFinished { messages: msgs, .. } => msgs.iter_mut().for_each(resolve),
             _ => {}
         }
         event
@@ -1349,7 +1349,7 @@ impl ChannelLoop {
                 state.history.push(message.clone(), None);
                 true
             }
-            ActorEvent::FullResponseGenerated { turn_id: Some(turn_id), .. } => {
+            ActorEvent::TurnFinished { turn_id, .. } => {
                 state.history.end_turn(HistoryEntry::TurnFinished { turn_id: *turn_id, at: envelope.timestamp });
                 true
             }
@@ -1781,7 +1781,7 @@ mod tests {
             EventContext { sender_id: ActorId::User(alice.id), ..EventContext::default() },
             event,
         );
-        let said = || from_alice(ActorEvent::FullResponseGenerated { turn_id: None, messages: vec![Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)] });
+        let said = || from_alice(ActorEvent::TurnFinished { turn_id: caelumora_model::work::TurnId::new(), messages: vec![Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)] });
         let delivered = |rx: &mut mpsc::Receiver<Envelope>| {
             let mut kinds = Vec::new();
             while let Ok(envelope) = rx.try_recv() { kinds.push(envelope.event.kind()); }
@@ -1790,14 +1790,14 @@ mod tests {
 
         channel.cancel(&context).await.expect("permitted");
         channel.route_event(&actors, said()).await;
-        assert_eq!(delivered(&mut rx), ["FullResponseGenerated"], "what was said still arrives, but nobody is asked");
+        assert_eq!(delivered(&mut rx), ["TurnFinished"], "what was said still arrives, but nobody is asked");
 
         // A message alone does not wake it: its sender asks for that, as a
         // user's actor does with every message (issue 90).
         channel.route_event(&actors, from_alice(ActorEvent::WakeupRequested)).await;
         delivered(&mut rx); // this test's moderator forwards the request, too
         channel.route_event(&actors, said()).await;
-        assert_eq!(delivered(&mut rx), ["FullResponseGenerated", "ResponseRequested"], "woken, the channel asks again");
+        assert_eq!(delivered(&mut rx), ["TurnFinished", "ResponseRequested"], "woken, the channel asks again");
     }
 
     #[tokio::test]
@@ -1842,7 +1842,7 @@ mod tests {
         let said = Envelope::new(
             SecurityContext::default(),
             EventContext { sender_id: bob, ..EventContext::default() },
-            ActorEvent::FullResponseGenerated { turn_id: None, messages: vec![Message::new(Classification::CHANNEL_DEFAULT)] },
+            ActorEvent::TurnFinished { turn_id: caelumora_model::work::TurnId::new(), messages: vec![Message::new(Classification::CHANNEL_DEFAULT)] },
         );
 
         channel.route_event(&actors, said).await;
@@ -1867,7 +1867,7 @@ mod tests {
             let mut context = EventContext { sender_id: self.0, ..EventContext::default() };
             context.agent_hops = 1;
             let said = Message { sender_id: self.0, role: caelumora_model::message::MessageRole::Assistant, content: Some("and you?".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
-            let _ = tx.send(Envelope::new(SecurityContext::default().next(self.0), context, ActorEvent::FullResponseGenerated { turn_id: None, messages: vec![said] })).await;
+            let _ = tx.send(Envelope::new(SecurityContext::default().next(self.0), context, ActorEvent::TurnFinished { turn_id: caelumora_model::work::TurnId::new(), messages: vec![said] })).await;
             while rx.recv().await.is_some() {}
             Ok(())
         }
@@ -2006,7 +2006,7 @@ mod tests {
         let said = Envelope::new(
             context.clone(),
             EventContext { sender_id: ActorId::User(alice.id), ..EventContext::default() },
-            ActorEvent::FullResponseGenerated { turn_id: None, messages: vec![Message::new(Classification::CHANNEL_DEFAULT)] },
+            ActorEvent::TurnFinished { turn_id: caelumora_model::work::TurnId::new(), messages: vec![Message::new(Classification::CHANNEL_DEFAULT)] },
         );
         channel.route_event(&HashMap::new(), said).await;
         assert!(other.woken.load(Ordering::SeqCst), "the channel is not quiet: the next message is answered");
@@ -2033,7 +2033,7 @@ mod tests {
         let said = || Envelope::new(
             context.clone(),
             EventContext { sender_id: ActorId::User(alice.id), ..EventContext::default() },
-            ActorEvent::FullResponseGenerated { turn_id: None, messages: vec![Message::new(Classification::CHANNEL_DEFAULT)] },
+            ActorEvent::TurnFinished { turn_id: caelumora_model::work::TurnId::new(), messages: vec![Message::new(Classification::CHANNEL_DEFAULT)] },
         );
 
         channel.route_event(&HashMap::new(), said()).await;
@@ -2353,7 +2353,7 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 let envelope = events.recv().await.expect("the channel is running");
-                if envelope.context.sender_id == ActorId::User(alice_id) && matches!(envelope.event, ActorEvent::FullResponseGenerated { .. }) {
+                if envelope.context.sender_id == ActorId::User(alice_id) && matches!(envelope.event, ActorEvent::CompleteMessageGenerated(_)) {
                     break;
                 }
             }
@@ -2619,7 +2619,7 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 let envelope = events.recv().await.expect("the channel is running");
-                if envelope.context.sender_id == ActorId::User(alice) && matches!(envelope.event, ActorEvent::FullResponseGenerated { .. }) {
+                if envelope.context.sender_id == ActorId::User(alice) && matches!(envelope.event, ActorEvent::CompleteMessageGenerated(_)) {
                     break;
                 }
             }
@@ -2660,7 +2660,7 @@ mod tests {
             let mut said = 0;
             while said < queued.len() {
                 let envelope = events.recv().await.expect("the channel is running");
-                if envelope.context.sender_id == ActorId::User(alice) && matches!(envelope.event, ActorEvent::FullResponseGenerated { .. }) {
+                if envelope.context.sender_id == ActorId::User(alice) && matches!(envelope.event, ActorEvent::CompleteMessageGenerated(_)) {
                     said += 1;
                 }
             }
@@ -2853,7 +2853,7 @@ mod tests {
                 let envelope = events.recv().await.expect("the channel is running");
                 if envelope.context.sender_id != ActorId::Agent(agent) { continue }
                 match envelope.event {
-                    ActorEvent::FullResponseGenerated { messages, .. } => break messages,
+                    ActorEvent::TurnFinished { messages, .. } => break messages,
                     ActorEvent::IntermediateMessageGenerated(m) => seen.push(format!("intermediate:{}", m.content.unwrap_or_default())),
                     // Not the plan's call nor the tool's result: they say nothing.
                     ActorEvent::CompleteMessageGenerated(m) => seen.extend(m.content.map(|c| format!("complete:{c}"))),
@@ -2940,7 +2940,7 @@ mod tests {
                 let envelope = events.recv().await.expect("the channel is running");
                 if envelope.context.sender_id != ActorId::Agent(agent) { continue }
                 match envelope.event {
-                    ActorEvent::FullResponseGenerated { messages, .. } => break messages,
+                    ActorEvent::TurnFinished { messages, .. } => break messages,
                     ActorEvent::CompleteMessageGenerated(m) | ActorEvent::IntermediateMessageGenerated(m) => shown.push(m.turn_id),
                     _ => {}
                 }
@@ -3520,7 +3520,7 @@ mod tests {
             loop {
                 let envelope = events.recv().await.expect("the channel is running");
                 if envelope.context.sender_id == ActorId::Agent(agent) {
-                    if let ActorEvent::FullResponseGenerated { messages, .. } = envelope.event { break messages }
+                    if let ActorEvent::TurnFinished { messages, .. } = envelope.event { break messages }
                 }
             }
         }).await.expect("the cancelled turn ends without waiting for the tool");
@@ -3622,7 +3622,7 @@ mod tests {
             loop {
                 let envelope = events.recv().await.expect("the channel is running");
                 if envelope.context.sender_id == ActorId::Agent(agent) {
-                    if let ActorEvent::FullResponseGenerated { messages, .. } = envelope.event { break messages }
+                    if let ActorEvent::TurnFinished { messages, .. } = envelope.event { break messages }
                 }
             }
         }).await.expect("the turn ends without an approval");
@@ -3653,12 +3653,12 @@ mod tests {
         let ended = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 let envelope = events.recv().await.expect("the channel is running");
-                if envelope.context.sender_id == agent_id && matches!(envelope.event, ActorEvent::FullResponseGenerated { .. }) {
+                if envelope.context.sender_id == agent_id && matches!(envelope.event, ActorEvent::TurnFinished { .. }) {
                     break envelope;
                 }
             }
         }).await.expect("the cancelled turn ends without the model");
-        assert!(matches!(ended.event, ActorEvent::FullResponseGenerated { ref messages, .. } if messages.is_empty()));
+        assert!(matches!(ended.event, ActorEvent::TurnFinished { ref messages, .. } if messages.is_empty()));
         settled(&helper, ActorState::Idle).await;
         running.abort();
     }
@@ -3676,7 +3676,7 @@ mod tests {
             loop {
                 let envelope = followed.recv().await.expect("the user's actor runs");
                 if envelope.context.sender_id == ActorId::Agent(agent) {
-                    if let ActorEvent::FullResponseGenerated { messages, .. } = envelope.event { break messages }
+                    if let ActorEvent::TurnFinished { messages, .. } = envelope.event { break messages }
                 }
             }
         }).await.expect("the user learns that the answer ended");
@@ -3704,7 +3704,7 @@ mod tests {
         assert!(stored.turn.is_none(), "the turn was abandoned, not stored");
         assert!(stored.transcript.messages().iter().all(|m| m.sender_id != ActorId::Agent(agent)), "nothing of it was recorded");
         while let Ok(envelope) = events.try_recv() {
-            assert!(!matches!(envelope.event, ActorEvent::FullResponseGenerated { .. }) || envelope.context.sender_id != ActorId::Agent(agent), "a stopped agent announces no answer");
+            assert!(!matches!(envelope.event, ActorEvent::TurnFinished { .. }) || envelope.context.sender_id != ActorId::Agent(agent), "a stopped agent announces no answer");
         }
         // The channel is still running: alice is still in it.
         assert!(!running.is_finished());
@@ -4244,7 +4244,7 @@ mod tests {
             loop {
                 let envelope = events.recv().await.expect("the channel is running");
                 if envelope.context.sender_id == ActorId::Agent(agent) {
-                    if let ActorEvent::FullResponseGenerated { messages, .. } = envelope.event { break messages }
+                    if let ActorEvent::TurnFinished { messages, .. } = envelope.event { break messages }
                 }
             }
         }).await.expect("the agent answers")
@@ -4386,12 +4386,12 @@ mod tests {
                     ActorEvent::StateChanged(ActorState::Idle) => { told.push("Idle"); break told }
                     ActorEvent::StateChanged(state) => told.push(if state == ActorState::Planning { "Planning" } else { "other" }),
                     ActorEvent::ResponseStarted { .. } => told.push("ResponseStarted"),
-                    ActorEvent::FullResponseGenerated { .. } => told.push("FullResponseGenerated"),
+                    ActorEvent::TurnFinished { .. } => told.push("TurnFinished"),
                     _ => {}
                 }
             }
         }).await.expect("it answers and is idle again");
-        assert_eq!(told, ["Planning", "ResponseStarted", "FullResponseGenerated", "Idle"]);
+        assert_eq!(told, ["Planning", "ResponseStarted", "TurnFinished", "Idle"]);
         running.abort();
     }
 
@@ -4414,7 +4414,7 @@ mod tests {
                 match envelope.event {
                     ActorEvent::ResponseStarted { turn_id } => started = Some(turn_id),
                     ActorEvent::PartialMessageGenerated(m) => partial = m.turn_id,
-                    ActorEvent::FullResponseGenerated { messages, .. } => break (started, partial, messages),
+                    ActorEvent::TurnFinished { messages, .. } => break (started, partial, messages),
                     _ => {}
                 }
             }
@@ -4453,7 +4453,7 @@ mod tests {
             let mut said = 0;
             while said < queued.len() {
                 let envelope = events.recv().await.expect("the channel is running");
-                if envelope.context.sender_id == ActorId::User(alice) && matches!(envelope.event, ActorEvent::FullResponseGenerated { .. }) {
+                if envelope.context.sender_id == ActorId::User(alice) && matches!(envelope.event, ActorEvent::CompleteMessageGenerated(_)) {
                     said += 1;
                 }
             }
@@ -4665,7 +4665,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
         while let Ok(envelope) = events.try_recv() {
             assert!(
-                !(envelope.context.sender_id == ActorId::Agent(agent) && matches!(envelope.event, ActorEvent::FullResponseGenerated { .. } | ActorEvent::TurnGivenUp { .. })),
+                !(envelope.context.sender_id == ActorId::Agent(agent) && matches!(envelope.event, ActorEvent::TurnFinished { .. } | ActorEvent::TurnGivenUp { .. })),
                 "a stopped agent says nothing: {}", envelope.describe()
             );
         }
@@ -4744,7 +4744,7 @@ mod tests {
             while answers.len() < 2 {
                 let envelope = events.recv().await.expect("the channel is running");
                 if envelope.context.sender_id != ActorId::Agent(agent) { continue }
-                if let ActorEvent::FullResponseGenerated { messages, .. } = envelope.event {
+                if let ActorEvent::TurnFinished { messages, .. } = envelope.event {
                     answers.push((envelope.context, messages));
                 }
             }
@@ -4786,7 +4786,7 @@ mod tests {
                 if envelope.context.sender_id != ActorId::Agent(agent) { continue }
                 match envelope.event {
                     ActorEvent::WakeupRequested => woke = true,
-                    ActorEvent::FullResponseGenerated { messages, .. } => break messages,
+                    ActorEvent::TurnFinished { messages, .. } => break messages,
                     _ => {}
                 }
             }
@@ -4815,7 +4815,7 @@ mod tests {
             let mut contexts = Vec::new();
             while contexts.len() < 2 {
                 let envelope = events.recv().await.expect("the channel is running");
-                if envelope.context.sender_id == ActorId::Agent(agent) && matches!(envelope.event, ActorEvent::FullResponseGenerated { .. }) {
+                if envelope.context.sender_id == ActorId::Agent(agent) && matches!(envelope.event, ActorEvent::TurnFinished { .. }) {
                     contexts.push(envelope.context);
                 }
             }
@@ -4877,7 +4877,7 @@ mod tests {
                 }
                 match envelope.event {
                     ActorEvent::PartialMessageGenerated(m) => partials.push(m.classification),
-                    ActorEvent::FullResponseGenerated { messages, .. } => break messages,
+                    ActorEvent::TurnFinished { messages, .. } => break messages,
                     _ => {}
                 }
             }
@@ -4937,8 +4937,15 @@ mod tests {
         let mut events = channel.observe();
         let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
 
-        let said = answered(&mut events, agent).await;
-        assert_eq!(said[0].content.as_deref(), Some("Finished while you were away."), "what it did meanwhile, unasked");
+        let said = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let envelope = events.recv().await.expect("the channel is running");
+                if envelope.context.sender_id != ActorId::Agent(agent) { continue }
+                if let ActorEvent::CompleteMessageGenerated(message) = envelope.event { break message }
+            }
+        }).await.expect("the agent speaks");
+        assert_eq!(said.content.as_deref(), Some("Finished while you were away."), "what it did meanwhile, unasked");
+        assert!(said.turn_id.is_none(), "of no turn: answered by itself (issue 258)");
         let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
         assert_eq!(state.remote.open_tasks.iter().map(|t| t.task.clone()).collect::<Vec<_>>(), vec![task("t-asking")], "the one that asked back waits for the next request");
         assert!(remote.sent.lock().unwrap().is_empty(), "nothing was sent to it");
@@ -5091,7 +5098,7 @@ mod tests {
     fn said_anything(events: &mut tokio::sync::broadcast::Receiver<Envelope>, agent: caelumora_model::agent::AgentId) -> bool {
         std::iter::from_fn(|| events.try_recv().ok()).any(|envelope| {
             envelope.context.sender_id == ActorId::Agent(agent)
-                && matches!(envelope.event, ActorEvent::CompleteMessageGenerated(_) | ActorEvent::FullResponseGenerated { .. })
+                && matches!(envelope.event, ActorEvent::CompleteMessageGenerated(_) | ActorEvent::TurnFinished { .. })
         })
     }
 

@@ -467,7 +467,12 @@ export interface ActorEvent {
   QuestionRequested?: QuestionRequest;
   /** The agent no longer waits for the answers to questions `id`: answered, declined, or its turn ended. */
   QuestionClosed?: { id: string; shown_to?: ActorId[] | null };
-  FullResponseGenerated?: Message[];
+  /**
+   * The turn `turn_id` ended with its answer, `messages` (issue 258), each
+   * said before as a `CompleteMessageGenerated`. A message said outside of
+   * any turn - a user's - has no end.
+   */
+  TurnFinished?: { turn_id: string; messages: Message[] };
   IntermediatePartialGenerated?: Message;
   IntermediateMessageGenerated?: Message;
   PlanStepStarted?: PlanStepEvent;

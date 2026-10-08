@@ -242,8 +242,8 @@ notice, `ParticipantRemoved` - does not come through an actor's sender.
 
 **Nothing said is unsaid** (issue 258). The channel keeps every message it admits in its history
 as it arrives - `CompleteMessageGenerated`, and the steps of a plan as
-`IntermediateMessageGenerated` - and records how each turn ended after its messages: `TurnFinished`
-from the `FullResponseGenerated` that names the turn, `TurnGivenUp` with its reason. A turn given up
+`IntermediateMessageGenerated` - and records how each turn ended after its messages, from the
+event of that name: `TurnFinished`, or `TurnGivenUp` with its reason. A turn given up
 keeps what it said; only a message still streaming when it ended is lost, never having been
 complete. A message is admitted as it arrives (`admits`), so one said after the channel was lowered
 below its turn is refused, and what was said before is fitted with the rest. An agent removed while
@@ -491,7 +491,7 @@ the whole channel rather than one per actor.
 UI's stop button. It is an operation on the channel, like renaming or deleting it, not an act of
 taking part: the policy decides who may, and nobody has to be a participant for it (issue 102).
 
-It is not a kill. The agent reflects, emits `FullResponseGenerated` so that
+It is not a kill. The agent reflects, emits `TurnFinished` so that
 observers stop waiting - the users get it even when the turn said nothing (issue 225) - and returns
 to a normal state with its history intact. A model call in flight, however, is dropped rather than
 awaited: `Actor::cancel` is synchronous, leaves the agent's run loop an interrupt and cancels the
@@ -596,7 +596,7 @@ An **actor** is anything that sends and receives events in a channel.
     active path is what the remote agent has not heard yet - what a failed send did not give is
     given with the next one, and a restart gives nothing twice - and what each call gave stays as a
     branch from its root. It publishes what comes back: pieces as `PartialMessageGenerated`, the
-    answer as `FullResponseGenerated`, a task the remote agent failed as `TurnGivenUp`. A question
+    answer as `TurnFinished`, a task the remote agent failed as `TurnGivenUp`. A question
     back from the remote agent is its answer; the next request continues that task, which is done as
     that request's work from then on, whatever the remote agent tells of it (issue 213). A cancel
     cancels the remote task and publishes what came so far - unless the cancel came from lowering
@@ -693,9 +693,11 @@ The built-in moderator, `policy_moderator` (the default), routes the way every c
 *   every message said (`CompleteMessageGenerated`) goes, as it was said, to every other
     participant: to the users always, to the agents if there is something to hear in it
     (`Message::is_heard`, issues 224, 258) - each agent takes in its words itself;
-*   the end of an answer (`FullResponseGenerated`, with the turn's id) goes to the users, who learn
-    so that an answer ended even when it said nothing (issue 225), and is what the moderator
-    decides from whom to ask to respond; the agents heard its messages as they were said;
+*   whom to ask to respond is decided when an answer is complete (issue 258): for a message said
+    outside of any turn - a user's, one an external agent says unasked - as it is said; for the
+    messages of a turn at its end, `TurnFinished`, which goes to the users too, who learn so that
+    an answer ended even when it said nothing (issue 225). The decision follows from the messages
+    - whether a turn is theirs - never from the kind of their sender;
 *   how an answer comes about - `ResponseStarted`, partial messages, intermediate ones, plan steps -
     goes to the users, not to the agents (issue 220); so does where an agent stands,
     `StateChanged` (issue 243), and how a turn was given up, `TurnGivenUp`;

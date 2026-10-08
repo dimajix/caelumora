@@ -255,7 +255,7 @@ impl AgentActor {
     /// (the audit/user-facing trail - see `ChannelLoop::append_history` and
     /// `channel.history()`) only keeps genuinely final messages.
     ///
-    /// The turn is taken over and stored before its `FullResponseGenerated`
+    /// The turn is taken over and stored before its `TurnFinished`
     /// announces its end (issue 65): whoever reacts to it - another agent
     /// whose turn it starts, a user interface reloading notes - reads the
     /// state as the turn left it. A change of the agent's state in the
@@ -275,7 +275,7 @@ impl AgentActor {
             self.actor_runtime.announce_channel_state_changed();
         }
         withdraw_requests(&answering, &abandoned_calls, output).await?;
-        answering.send(ActorEvent::FullResponseGenerated { turn_id: Some(turn_id), messages: final_messages }, output).await?;
+        answering.send(ActorEvent::TurnFinished { turn_id, messages: final_messages }, output).await?;
         debug!("Agent {} {} ended its turn{}", self.id(), self.agent_controller.name(), if cancelled { ", cancelled" } else { "" });
         Ok(next)
     }

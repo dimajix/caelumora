@@ -19,7 +19,7 @@ use tracing::warn;
 #[derive(Debug)]
 pub(crate) struct CommittedTurn {
     /// The messages that are not internal: the turn's answer, for
-    /// `FullResponseGenerated`.
+    /// `TurnFinished`.
     pub(crate) final_messages: Vec<Message>,
     /// Whether the agent's state in the channel changed, to be announced
     /// once stored.

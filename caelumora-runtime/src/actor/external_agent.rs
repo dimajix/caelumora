@@ -823,11 +823,13 @@ fn notice(was: &Message, now: Option<&Message>, at: chrono::DateTime<Utc>) -> Me
     }
 }
 
-/// The events that publish an answer of the work `turn_id`: the message, if
-/// there is one, and the end of the response.
+/// The events that publish an answer: the message, if there is one, and -
+/// of the work `turn_id` - the end of the turn. What it says unasked is of
+/// no turn, and answered by itself (issue 258).
 fn answered(turn_id: Option<TurnId>, message: Option<Message>) -> Vec<ActorEvent> {
     let complete = message.clone().map(ActorEvent::CompleteMessageGenerated);
-    complete.into_iter().chain([ActorEvent::FullResponseGenerated { turn_id, messages: message.into_iter().collect() }]).collect()
+    let finished = turn_id.map(|turn_id| ActorEvent::TurnFinished { turn_id, messages: message.into_iter().collect() });
+    complete.into_iter().chain(finished).collect()
 }
 
 /// Whether what a remote agent brings in itself - classified `brought`, as

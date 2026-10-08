@@ -596,8 +596,8 @@ async fn a_message_is_modified_and_taken_back_by_its_author_alone() {
     let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
     let mut watch = bob.watch();
     alice.send_message("helo".to_string(), None).await.expect("sent");
-    let ActorEvent::FullResponseGenerated { messages: said, .. } = shown(&mut watch, "FullResponseGenerated").await else { unreachable!() };
-    let said = said[0].id;
+    let ActorEvent::CompleteMessageGenerated(said) = shown(&mut watch, "CompleteMessageGenerated").await else { unreachable!() };
+    let said = said.id;
 
     let (refused, asked) = world.asked(bob.modify_message(said, "bob's".to_string(), None)).await;
     assert!(denied(&refused.expect_err("not his")));
@@ -639,15 +639,15 @@ async fn a_message_is_reclassified_by_its_author_or_the_channels_owner() {
     let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
     let (mut hers, mut his) = (alice.watch(), bob.watch());
     alice.send_message("from alice".to_string(), None).await.expect("sent");
-    let ActorEvent::FullResponseGenerated { messages: said, .. } = shown(&mut his, "FullResponseGenerated").await else { unreachable!() };
-    let alices = said[0].id;
+    let ActorEvent::CompleteMessageGenerated(said) = shown(&mut his, "CompleteMessageGenerated").await else { unreachable!() };
+    let alices = said.id;
     bob.send_message("from bob".to_string(), None).await.expect("sent");
     // Her actor shows her what she says, too; his message is what the
     // channel routes to her.
     let bobs = loop {
-        let ActorEvent::FullResponseGenerated { messages: said, .. } = shown(&mut hers, "FullResponseGenerated").await else { unreachable!() };
-        if said[0].sender_id == ActorId::User(world.bob) {
-            break said[0].id;
+        let ActorEvent::CompleteMessageGenerated(said) = shown(&mut hers, "CompleteMessageGenerated").await else { unreachable!() };
+        if said.sender_id == ActorId::User(world.bob) {
+            break said.id;
         }
     };
     let public = Classification::general(Confidentiality::Public);
@@ -692,9 +692,9 @@ async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
     let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
     let mut watch = bob.watch();
     alice.send_message("hello".to_string(), None).await.expect("sent");
-    let ActorEvent::FullResponseGenerated { messages: said, .. } = shown(&mut watch, "FullResponseGenerated").await else { unreachable!() };
+    let ActorEvent::CompleteMessageGenerated(said) = shown(&mut watch, "CompleteMessageGenerated").await else { unreachable!() };
 
-    let (refused, asked) = world.asked(bob.request_retry(said[0].id)).await;
+    let (refused, asked) = world.asked(bob.request_retry(said.id)).await;
     assert!(matches!(refused.expect_err("no agent said it").downcast_ref::<ChannelError>(), Some(ChannelError::NotAnAgentsMessage { .. })));
     assert_eq!(asked, checks(&["bob: RetryMessage(alice's) yes"]), "his to ask, as a participant");
     let (refused, asked) = world.asked(bob.request_retry_of_turn(ActorId::User(world.alice), TurnId::new())).await;
@@ -1424,7 +1424,9 @@ async fn an_agent_asked_by_several_while_it_answers_answers_once_in_the_name_of_
         main.user_actor(world.alice).expect("she takes part").send_message("@hermes and this".to_string(), None).await.expect("she asks");
         main.user_actor(world.bob).expect("he takes part").send_message("@hermes and that".to_string(), None).await.expect("he asks");
         let said_by = |envelope: &caelumora_model::actor::Envelope, sender: ActorId| envelope.context.sender_id == sender
-            && matches!(envelope.event, caelumora_model::actor::ActorEvent::FullResponseGenerated { .. });
+            && matches!(envelope.event, caelumora_model::actor::ActorEvent::CompleteMessageGenerated(_));
+        let finished_by = |envelope: &caelumora_model::actor::Envelope, sender: ActorId| envelope.context.sender_id == sender
+            && matches!(envelope.event, caelumora_model::actor::ActorEvent::TurnFinished { .. });
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
             while !said_by(&events.recv().await.expect("the channel runs"), ActorId::User(world.bob)) {}
         }).await.expect("his message is said");
@@ -1432,7 +1434,7 @@ async fn an_agent_asked_by_several_while_it_answers_answers_once_in_the_name_of_
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
             let mut answers = 0;
             while answers < 2 {
-                answers += usize::from(said_by(&events.recv().await.expect("the channel runs"), ActorId::Agent(hermes)));
+                answers += usize::from(finished_by(&events.recv().await.expect("the channel runs"), ActorId::Agent(hermes)));
             }
         }).await.expect("it answers the first request and then the rest");
         // A further answer would call the remote agent right away.

@@ -520,3 +520,12 @@ the step that changes what they describe.
   together with users sending only `CompleteMessageGenerated` - the moderator deciding on a user's
   message directly, a user having no turns - so that the event always names a turn; as a step of
   its own after this one.
+- **2026-10-08** — Step 5b, decided with the maintainer: `FullResponseGenerated` is renamed
+  `TurnFinished { turn_id, messages }`, its turn's id mandatory, named as the history's entry. Of
+  two ways for a user's message, which has no turn, the maintainer weighed giving users one-message
+  turns and deciding on the message itself, the moderator never deciding by the kind of the
+  sender; chosen: the moderator decides from the message - one said outside of any turn
+  (`turn_id: None`) is answered as it is said, the messages of a turn at its `TurnFinished`. So a
+  user's actor sends `CompleteMessageGenerated` alone, an external agent's message said unasked has
+  no end either, and no turn is made up for either. The moderator's two ways in share one
+  decision (`ask`). Also corrected here: the comment at `Message::internal`, due in step 3.

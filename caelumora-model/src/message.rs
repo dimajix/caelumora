@@ -47,12 +47,11 @@ pub struct Message {
     pub tool_results: Vec<ToolCallResult>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub metadata: HashMap<String, String>,
-    /// True for messages that are internal agent scaffolding - deliberation
-    /// chatter, the answers to plan steps, mid-plan tool calls/results - rather
-    /// than a genuine final answer. Kept in `Transcript` (this agent's
-    /// own future-turn LLM input, which needs the full detail) but excluded
-    /// from `MessageHistory` and end-of-turn `FullResponseGenerated`
-    /// broadcasts (the user-facing/audit trail).
+    /// True for a step of a plan under way - its answer, a tool call or
+    /// result - rather than the answer itself. Kept like every message, in
+    /// the transcript and both histories (issue 258); but no other
+    /// participant hears it (`is_heard`), and it is not part of the answer a
+    /// `TurnFinished` carries.
     pub internal: bool,
     /// The turn that produced it (issue 235) - an agent's turn, or the work
     /// of an external agent (`Work::turn_id`) - so that which messages of an

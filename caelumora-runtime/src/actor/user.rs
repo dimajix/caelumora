@@ -199,14 +199,14 @@ impl UserActor {
         // answer declines every question put to the user (issue 165) -
         // before it, so that the agent asking goes on and then hears it.
         // Then the request to wake the channel's agents for it - the
-        // channel does not wake by itself (issue 90).
+        // channel does not wake by itself (issue 90). Said outside of any
+        // turn, the message is answered by itself (issue 258).
         let span_id = Uuid::new_v4();
         for (id, agent_id) in self.take_open_questions() {
             self.send(self.envelope(ActorEvent::QuestionDeclined { id, agent_id }, span_id)).await?;
         }
         self.send(self.envelope(ActorEvent::WakeupRequested, span_id)).await?;
-        self.send(self.envelope(ActorEvent::CompleteMessageGenerated(msg.clone()), span_id)).await?;
-        self.send(self.envelope(ActorEvent::FullResponseGenerated { turn_id: None, messages: vec![msg] }, span_id)).await?;
+        self.send(self.envelope(ActorEvent::CompleteMessageGenerated(msg), span_id)).await?;
         Ok(span_id)
     }
 
@@ -691,16 +691,15 @@ mod tests {
         let mut rx = actor.user_rx.lock().await;
         let wakeup = rx.recv().await.expect("WakeupRequested");
         let complete = rx.recv().await.expect("CompleteMessageGenerated");
-        let full = rx.recv().await.expect("FullResponseGenerated");
         assert!(matches!(wakeup.event, ActorEvent::WakeupRequested), "the wakeup first, so that the agents are awake when the message comes");
-        assert!(matches!(complete.event, ActorEvent::CompleteMessageGenerated(_)));
-        assert!(matches!(full.event, ActorEvent::FullResponseGenerated { .. }));
-        for envelope in [&wakeup, &complete, &full] {
+        assert!(matches!(&complete.event, ActorEvent::CompleteMessageGenerated(m) if m.turn_id.is_none()), "said outside of any turn, answered by itself (issue 258)");
+        assert!(rx.try_recv().is_err(), "and nothing else: there is no turn to end");
+        for envelope in [&wakeup, &complete] {
             assert_eq!(envelope.context.span_id, span_id, "one user action, one span");
             assert_eq!(envelope.context.sender_id, actor.id());
             assert_eq!(envelope.context.channel_id, actor.channel_id);
         }
-        assert_ne!(complete.context.event_id, full.context.event_id, "two events, two event ids");
+        assert_ne!(wakeup.context.event_id, complete.context.event_id, "two events, two event ids");
     }
 
     #[tokio::test]
@@ -711,7 +710,7 @@ mod tests {
         actor.send_message("hello".to_string(), None).await.unwrap();
 
         let shown: Vec<&str> = std::iter::from_fn(|| following.try_recv().ok()).map(|e| e.event.kind()).collect();
-        assert_eq!(shown, ["CompleteMessageGenerated", "FullResponseGenerated"], "what it said, not the request to wake the channel (issue 220)");
+        assert_eq!(shown, ["CompleteMessageGenerated"], "what it said, not the request to wake the channel (issue 220)");
 
         actor.send_approval(ApprovalResponse::new(Default::default(), Default::default()), true).await.unwrap();
         assert_eq!(following.try_recv().map(|e| e.event.kind()).ok(), Some("ApprovalGranted"), "everything it sends");

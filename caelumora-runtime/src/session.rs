@@ -2175,7 +2175,7 @@ mod tests {
         let ActorEvent::ResponseStarted { turn_id } = started.await else { unreachable!() };
         assert_eq!(member().await.turn_under_way, Some(turn_id), "the turn its start announced");
 
-        let ended = shown(&mut events, "FullResponseGenerated");
+        let ended = shown(&mut events, "TurnFinished");
         channel.cancel_actor(&alice_ctx, agent).await.unwrap();
         ended.await;
         assert_eq!(member().await.turn_under_way, None, "over once it ended");
@@ -2240,7 +2240,7 @@ mod tests {
                 tokio::time::timeout(std::time::Duration::from_secs(5), async {
                     loop {
                         let envelope = events.recv().await.expect("the channel is running");
-                        if envelope.context.sender_id == ActorId::Agent(hermes.id) && matches!(envelope.event, ActorEvent::FullResponseGenerated { .. }) { break }
+                        if envelope.context.sender_id == ActorId::Agent(hermes.id) && matches!(envelope.event, ActorEvent::TurnFinished { .. }) { break }
                     }
                 }).await.expect("the agent answers")
             }

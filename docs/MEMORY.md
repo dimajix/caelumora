@@ -62,7 +62,7 @@ the channel.
     other: both changes are taken over, and its number is used up.
 *   **Announcing.** The agent then stores its channel state and announces
     `GlobalEvent::AgentChannelStateChanged` - with the channel's attributes, without content -
-    before `FullResponseGenerated` ends the turn. Whoever reacts to the end of the turn thus reads
+    before `TurnFinished` ends the turn. Whoever reacts to the end of the turn thus reads
     the state it left.
 *   **Reading.** Others read published notes from the agents' states in the `StateStore`
     (`ChannelView::notes`), so only notes of finished turns are ever seen.

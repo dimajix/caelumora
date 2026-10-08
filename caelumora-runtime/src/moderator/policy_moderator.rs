@@ -49,18 +49,21 @@ impl PolicyModerator {
         self.actors.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    async fn route_full_response(&self, event: &Envelope, messages: &[Message]) -> Vec<(ActorId, Envelope)> {
+    /// Whom to ask to respond to the answer `messages` of `event` - a turn
+    /// that finished, or a message said outside of any turn (issue 258) -
+    /// and, at the limit of a chain, the notice that nobody is.
+    async fn ask(&self, event: &Envelope, messages: &[Message]) -> Vec<(ActorId, Envelope)> {
         // What there is to hear of it, by the rule every agent hears by
         // (issue 224): nothing, e.g. of a response of tool calls only or of
         // a turn cancelled before it said anything.
         let heard = messages.iter().any(Message::is_heard);
-        let (mut routes, mentioned, candidates, users) = {
+        let (mentioned, candidates, users) = {
             let actors = self.actors();
-            (actors.forward_routes(event, messages), actors.mentioned_responders(messages), actors.actor_candidates(messages), actors.user_ids())
+            (actors.mentioned_responders(messages), actors.actor_candidates(messages), actors.user_ids())
         };
+        let mut routes = Vec::new();
         if !heard {
-            // Nothing anyone could answer: the users learn that the answer
-            // ended, and nobody is asked.
+            // Nothing anyone could answer: nobody is asked.
             return routes;
         }
 
@@ -113,8 +116,12 @@ impl PolicyModerator {
 impl Moderator for PolicyModerator {
     async fn route(&self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
         match &event.event {
-            ActorEvent::FullResponseGenerated { messages, .. } => {
-                self.route_full_response(event, messages).await
+            // The end of a turn: the users learn that it ended, even when it
+            // said nothing (issue 225), and whoever is to respond is asked.
+            ActorEvent::TurnFinished { messages, .. } => {
+                let mut routes = self.actors().forward_routes(event, messages);
+                routes.extend(self.ask(event, messages).await);
+                routes
             }
             ActorEvent::ApprovalRequested(_) |
             ActorEvent::ApprovalGranted(_) |
@@ -146,9 +153,15 @@ impl Moderator for PolicyModerator {
                 self.actors().route_to_users(event)
             }
             // A message said: the users see it, and the agents hear it if
-            // there is anything to hear (issues 224, 258).
+            // there is anything to hear (issues 224, 258). One of no turn -
+            // a user's - is answered by itself; one of a turn with the turn's
+            // end. The kind of its sender does not matter.
             ActorEvent::CompleteMessageGenerated(message) => {
-                self.actors().route_said(event, message)
+                let mut routes = self.actors().route_said(event, message);
+                if message.turn_id.is_none() {
+                    routes.extend(self.ask(event, std::slice::from_ref(message)).await);
+                }
+                routes
             }
             // How an answer comes about - streamed, step by step - is for
             // the users watching (issue 220); the agents hear what is said.
@@ -444,7 +457,7 @@ mod tests {
     /// The end of the answer `content` of `sender_id`, whom the moderator
     /// decides from whom to ask.
     fn message_from(sender_id: ActorId, content: &str, mentions: Vec<ActorId>) -> Envelope {
-        envelope(sender_id, ActorEvent::FullResponseGenerated { turn_id: None, messages: vec![text_from(sender_id, content, mentions)] })
+        envelope(sender_id, ActorEvent::TurnFinished { turn_id: caelumora_model::work::TurnId::new(), messages: vec![text_from(sender_id, content, mentions)] })
     }
 
     /// The message `content` of `sender_id` as it is said (issue 258).
@@ -470,7 +483,7 @@ mod tests {
     /// Who learns that an answer ended.
     fn told_of_the_end(decision: &[(ActorId, Envelope)]) -> HashSet<ActorId> {
         decision.iter()
-            .filter(|(_, e)| matches!(e.event, ActorEvent::FullResponseGenerated { .. }))
+            .filter(|(_, e)| matches!(e.event, ActorEvent::TurnFinished { .. }))
             .map(|(id, _)| *id)
             .collect()
     }
@@ -652,7 +665,7 @@ mod tests {
         let recipients: HashSet<ActorId> = told.iter().map(|(id, ..)| *id).collect();
         assert_eq!(recipients, HashSet::from([user, agents[0], agents[2]]), "the users, the sender and whom it mentioned - not agents[1]");
         assert!(told.iter().all(|(_, sender, hops, not_asked)| *sender == ActorId::System && *hops == 2 && *not_asked == vec![agents[2]]));
-        let ActorEvent::FullResponseGenerated { messages, .. } = &event.event else { unreachable!() };
+        let ActorEvent::TurnFinished { messages, .. } = &event.event else { unreachable!() };
         assert!(decision.iter().any(|(_, e)| matches!(&e.event, ActorEvent::ChainCutOff { message, .. } if *message == messages[0].id)), "it names the message cut off");
 
         let decision = moderator.route(&hops_from(agents[0], 2, Vec::new())).await;
@@ -784,6 +797,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_message_of_no_turn_is_answered_by_itself_and_one_of_a_turn_with_the_turn_s_end() {
+        for moderator in moderators() {
+            let agents = add_agents(&moderator);
+            let user = ActorId::User(UserId::new());
+            let mention = || vec![agents[2]];
+
+            // Whoever said it - a user, or an agent speaking unasked - a
+            // message of no turn asks whom it mentions (issue 258).
+            for sender in [user, agents[0]] {
+                let decision = moderator.route(&said_from(sender, "@c?", mention())).await;
+                assert_eq!(responders(&decision), vec![agents[2]], "{:?}: {sender:?} said it outside of a turn", moderator);
+            }
+
+            // Within a turn it asks nobody yet: the turn's end does.
+            let turn = caelumora_model::work::TurnId::new();
+            let in_turn = Message { turn_id: Some(turn), ..text_from(agents[0], "@c?", mention()) };
+            let decision = moderator.route(&envelope(agents[0], ActorEvent::CompleteMessageGenerated(in_turn.clone()))).await;
+            assert!(responders(&decision).is_empty(), "{:?}: not before the turn ended", moderator);
+            let decision = moderator.route(&envelope(agents[0], ActorEvent::TurnFinished { turn_id: turn, messages: vec![in_turn] })).await;
+            assert_eq!(responders(&decision), vec![agents[2]], "{:?}: at its end", moderator);
+        }
+    }
+
+    #[tokio::test]
     async fn a_message_reaches_the_agents_if_it_is_heard_and_the_end_of_an_answer_the_users_alone() {
         use caelumora_model::tool::{ToolCall, ToolCallResult, ToolVisibility};
         let classified = caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT;
@@ -794,7 +831,7 @@ mod tests {
             let (sender, user) = (agents[0], ActorId::User(UserId::new()));
             moderator.add_actor(Arc::new(TestActor { id: user, state: ActorState::Idle }));
             let said = |message: &Message| envelope(sender, ActorEvent::CompleteMessageGenerated(message.clone()));
-            let ended = |messages: Vec<Message>| envelope(sender, ActorEvent::FullResponseGenerated { turn_id: None, messages });
+            let ended = |messages: Vec<Message>| envelope(sender, ActorEvent::TurnFinished { turn_id: caelumora_model::work::TurnId::new(), messages });
             let calling = Message { sender_id: sender, role: MessageRole::Assistant, content: Some("Let me check.".to_string()), tool_calls: vec![call.clone()], ..Message::new(classified.clone()) };
             let tool = Message { sender_id: sender, role: MessageRole::Tool, content: Some("done".to_string()), tool_results: vec![result.clone()], ..Message::new(classified.clone()) };
             let silent = Message { content: None, ..calling.clone() };

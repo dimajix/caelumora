@@ -67,7 +67,7 @@ issue 222), then commits once:
     and it waits on. Other events stay queued until the turn is over. See
     [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md) for approvals and questions.
 *   **`Reflecting`** takes the turn over (`Turn::commit`), stores the state and announces the
-    end with `FullResponseGenerated`. The agent then lands in the state a tool requested (`Sleeping`
+    end with `TurnFinished`. The agent then lands in the state a tool requested (`Sleeping`
     after `stop` or `bye`) or in `Idle`.
 *   **`Cancelling`** is entered when the channel cancels the turn. It takes the turn over like
     `Reflecting` - so observers learn that generation stopped - and returns to `Idle`. Calls of the
@@ -181,7 +181,7 @@ reads nothing.
         own state;
     *   it clears the working state, so that none of it is stored with the channel state.
 
-    It returns a `CommittedTurn`: the final messages for `FullResponseGenerated`, whether the
+    It returns a `CommittedTurn`: the final messages for `TurnFinished`, whether the
     channel state changed, the contexts the turn's last events are sent in, and the tool calls it
     abandoned.
 *   **`Turn::give_up`** gives up a turn that failed, was stopped or asked for again (issues 145,
@@ -218,7 +218,7 @@ the turn over after a cancel - and the users are told with `TurnGivenUp` (issue 
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
 
 Both use the turn up and hand back the contexts it had as an `Answering` (`crate::actor`), which
-sends the turn's last event - `FullResponseGenerated`, or `TurnGivenUp { turn_id, reason }` for
+sends the turn's last event - `TurnFinished`, or `TurnGivenUp { turn_id, reason }` for
 every reason but a stop, the agent having left (issue 258) - with the publication the turn had, and
 withdraws the approval requests of the calls it abandoned. An external agent publishes
 its answers through the same `Answering`.
