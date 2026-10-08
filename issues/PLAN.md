@@ -31,6 +31,8 @@ the tool declares. Three gaps stand out:
 1.  **There is nothing to work on.** No workspace, no file, no artifact; what tools and external
     agents produce besides text is dropped (208). The one issue that asks for a workspace brings
     it from outside (251) - see [block B1](#b1-workspace-and-artifacts---the-missing-subject).
+    *Since 2026-10-08:* a workspace exists (253, 251) - files people and agents share, a shell in
+    a container - but keeps no versions (256), and artifacts are still dropped (208).
 2.  **A session ends at the context window** (16), and working on files reaches it fast: tool
     results are the bulk of a context.
 3.  **Nobody can log in for real.** `accept_any` is the only user provider (25), so the server
@@ -57,11 +59,14 @@ one, and one issue that brings a workspace from outside:
 
 | No. | What it contributes | State |
 |---|---|---|
-| [251](251-open-terminal.md) | Open Terminal: a container with files, a shell and processes, reached over REST; a component of its own with approval by kind of tool, long commands followed, a kill on interruption. | open, options laid out, recommendation B |
-| [208](208-generated-artifacts.md) | An `ArtifactStore` for binary content, references in messages, download, a panel. | open, well specified |
+| [253](253-workspace.md) | The workspace of Caelumora's own: a user's tree of files in a configured storage, used in a session through its channels, in the web UI. | done |
+| [251](251-open-terminal.md) | Open Terminal: a container with files, a shell and processes, reached over REST; a component of its own with approval by kind of tool, long commands followed, a kill on interruption. | done - as the executor over 253, with `terminal_tool` and its file tools |
+| [208](208-generated-artifacts.md) | An `ArtifactStore` for binary content, references in messages, download, a panel. | open, well specified; now: an artifact as a file of the session's workspace |
 | [169](169-changing-classified-content.md) | The rule for changing something classified from several places: fixed container, the writer's label must flow into it, every change records where it was made. | open, proposal complete |
-| [180](180-outbound-flow-unchecked.md) | What an agent sends out is checked by no rule; the proposal: a tool set whose remote side is not cleared for a channel is not offered there. | open, a question |
-| [247](247-tool-own-matcher.md) | A matcher that understands a shell command, so that "and from now on" does not allow chained commands. | open, waits for its first tool - 251 is it |
+| [180](180-outbound-flow-unchecked.md) | What an agent sends out is checked by no rule; the proposal: a tool set whose remote side is not cleared for a channel is not offered there. | done |
+| [247](247-tool-own-matcher.md) | A matcher that understands a shell command, so that "and from now on" does not allow chained commands. | open, its first tool exists (`run_command`) - next |
+| [256](256-workspace-versions.md) | Versions of a workspace: what was overwritten can be taken back, who changed what is recorded. | open - W4 |
+| [254](254-commands-run-unbounded.md) | A command handed back as running runs until the model ends it. | open; in part for `open_terminal_docker` |
 | [20](20-transactional-effects.md) | Tools declare whether they have an effect or only read; what a crash in the middle means. | open, a question |
 | [19](19-memory-tiers.md), [MEMORY.md](../docs/MEMORY.md) | The term: *workspace - documents several channels edit together; outside the branches, every change an effect.* | a table row |
 | [166](166-memory-as-topic-documents.md) | Notes that "Caelumora has no file system for agents". | - |
@@ -82,7 +87,7 @@ one, and one issue that brings a workspace from outside:
     workspace is something to operate.
 
 251 can still come first, as the quick way to try agents on files, as long as its file tools are
-understood as interim.
+understood as interim. *Decided 2026-10-08 (251, decision 4): inside - and built so.*
 
 **One rule for all of them.** A workspace of classification W may be offered in a channel only
 where it flows both ways: its content into the channel, and what the agent saw there into the
@@ -90,9 +95,9 @@ workspace - W1's flow rule, 251's "L = W", 180's clearance at the door. It is de
 for workspaces, MCP servers and Open Terminal alike.
 
 W1 and W3 are issue [253](253-workspace.md), planned together with 251 (in 251's *Plan*), and W2 is
-a step of that plan; W4 is still to be opened, its number assigned when it is created:
+a step of that plan - all three done; W4 is issue [256](256-workspace-versions.md):
 
-*   **W1 - What a workspace is** (architecture decision, first; now 253). A tree of files with
+*   **W1 - What a workspace is** (architecture decision, first; now 253, done). A tree of files with
     `SecurityAttributes` and one classification (169's fixed container), in a scope like the
     scoped definitions - of a session, or of a user and attached to sessions. To decide: where it
     is kept (a `WorkspaceStore` trait; a plain directory as the first implementation, so that Open
@@ -102,14 +107,16 @@ a step of that plan; W4 is still to be opened, its number assigned when it is cr
     agent writes are both named binary content with a producer and a classification. Two stores
     and two panels for them would be the repeated logic AGENTS.md warns of. Recommended: one
     store; a generated artifact is a file that a message refers to.
-*   **W2 - Tools for agents** (now a step of 251's plan, as file tools of `terminal_tool`): list,
+*   **W2 - Tools for agents** (a step of 251's plan, done, as file tools of `terminal_tool`): list,
     read (with ranges), search, write, edit by replacement, move, delete. Reads are recorded as
     knowledge (`KnowledgeRef`), writes are staged or effects (20), writing needs approval unless a
     rule allows it - the tools propose rules by path (`ToolProvider::matcher`).
-*   **W3 - The users' side** (now 253): upload and download, a workspace panel in the web UI,
-    attaching a file to a message, a diff presentation for write calls (a `ToolPresentation` of
-    its own).
-*   **W4 - Versions**: a workspace does not branch with the conversation, so asking for an answer
+*   **W3 - The users' side** (now 253, done in part): upload and download, a workspace panel in
+    the web UI, attaching a file to a message, a diff presentation for write calls (a
+    `ToolPresentation` of its own). Attaching a file to a message and the diff presentation are not
+    built, and no issue holds them yet.
+*   **W4 - Versions** (now [256](256-workspace-versions.md)): a workspace does not branch with the
+    conversation, so asking for an answer
     again cannot take back an agent's bad edit. Each file keeps its versions with who wrote them
     from which turn (169), and a version can be restored - around commands too, if Open Terminal
     runs on the workspace. Without this, write tools are not safe to hand out.
@@ -119,7 +126,8 @@ a step of that plan; W4 is still to be opened, its number assigned when it is cr
 Order: decide **169**, the small part of **20** (tools declare *reads* or *has an effect*;
 at-least-once made visible, nothing more), and **W1 with 208, 180 and the role of 251** together →
 the refactoring of **226** (see B3) → W2 → **251** as the executor, with **247** → W3 → W4 → the
-rest of 208 (A2A and MCP parts taken in).
+rest of 208 (A2A and MCP parts taken in). *As built:* W1, W3 in part, 180, 251 and W2 are done,
+226 was not needed first; what remains is **247** → **W4 (256)** → the rest of W3 → 208.
 
 ### B2. Sessions that last: context and memory
 
@@ -203,7 +211,8 @@ Each milestone leaves the system usable; decisions come before the code that dep
     the administrator role of 125; 221; 227.
 3.  **A workspace.** Decide 169, the small part of 20, and W1 together with 208, 180 and the role
     of Open Terminal (251); refactor `ToolProvider::execute` (226, first step); then W2, 251 as the
-    executor with 247, W3, W4, and the artifacts of 208.
+    executor with 247, W3, W4, and the artifacts of 208. *Done: W1, W2, W3 in part, 180, 251;
+    open: 247, W4 (256), the rest of W3, 208, 169, 20.*
 4.  **Sessions that last.** 16 with `/compact`, 58; 126. If reading files hits the context window
     earlier, the tool-result rule of 16 moves into milestone 3.
 
@@ -220,18 +229,19 @@ vLLM and hosted models without touching anything else.
 The plan stands on assumptions the maintainer should confirm or correct:
 
 1.  **The target.** One server, a small trusted team, local models - or is a deployment in an
-    organisation (LDAP, Postgres, several instances) part of the *first* release? That would
-    pull 03, 04, 27 forward and push the workspace back.
-2.  **What a workspace holds.** Documents the agents write and revise (text, Markdown, data) - or
-    also code that is to be built and run? With 251 the second is no longer a project of its own:
-    Open Terminal brings the sandbox. Either way the workspace should be a real directory from the
-    start.
-3.  **Whose workspace.** One per session, created with it - or a thing of its own that a user
-    owns and attaches to several sessions (a project)? The second is the more useful and the
-    larger one.
-4.  **Open Terminal: the workspace, or the executor over ours?** The first is quicker, the second
-    gives files an owner, versions and a place in the web UI (see B1). Recommended: the second,
-    with 251 possibly first as an interim.
+    organisation (LDAP, Postgres, several instances) part of the *first* release? That would pull
+    03, 04, 27 forward and push the workspace back.
+2.  **What a workspace holds.** *Answered by building both: files, and a shell where the storage
+    gives one.* Documents the agents write and revise (text, Markdown, data) - or also code that is
+    to be built and run? With 251 the second is no longer a project of its own: Open Terminal brings
+    the sandbox. Either way the workspace should be a real directory from the start.
+3.  **Whose workspace.** *Answered (251, decisions 12 to 14): a user's, in a scope, attached to
+    sessions - or one of a session's own scope.* One per session, created with it - or a thing of
+    its own that a user owns and attaches to several sessions (a project)? The second is the more
+    useful and the larger one.
+4.  **Open Terminal: the workspace, or the executor over ours?** *Answered: the executor.* The first
+    is quicker, the second gives files an owner, versions and a place in the web UI (see B1).
+    Recommended: the second, with 251 possibly first as an interim.
 5.  **Models.** Is Ollama enough for the first release, or is a second client part of it?
 
 ## Every open issue, by section
@@ -239,9 +249,9 @@ The plan stands on assumptions the maintainer should confirm or correct:
 | Section | Issues |
 |---|---|
 | A - small | 07, 218, 223 |
-| B1 - workspace | 20 (part), 169, 180, 208, 247, 251, 253, new W4 |
+| B1 - workspace | 20 (part), 169, 208, 247, 254, 256 |
 | B2 - context and memory | 16, 22, 55, 58, 65, 166, 169 |
 | B3 - tools | 126, 226 |
 | B4 - sessions and team | 07, 10, 25, 140, 142, 221, 227, 125 (part) |
 | C - not now | 03, 04, 20, 26, 27, 42, 122, 124, 125, 139, 143, 181, 182, 237, 238, 252 |
-| D - questionable | 05, 12, 18, 19, 21, 23, 24, 57, 59, 173 |
+| D - questionable | 05, 12, 18, 19, 21, 23, 24, 57, 59, 173, 255 |

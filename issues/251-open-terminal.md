@@ -1,6 +1,6 @@
 # 251 — Agents have no workspace to run commands and keep files in
 
-**Status:** in progress
+**Status:** done
 **Area:** Integrations
 
 ## The problem
@@ -1109,3 +1109,12 @@ command may come later.
   the context panel and over REST (`workspace_id`). A rule derived from an approved change covers
   the file by its path alone. `WorkspaceView::max_file_bytes` bounds a write as an upload is. The
   suite pins that a file tool asks what a command asks.
+- **2026-10-08** — Step 10, the last of the plan: issue [256](256-workspace-versions.md) opened for
+  versions (PLAN.md's W4); 247 and 208 updated with what this work gave them. Tool sets that depend
+  on the session were not opened: they still have one case alone - `terminal_tool` offers its shell
+  tools where the workspace's storage has none, and every tool where the channel has no workspace,
+  and says so when called (C2). Issue 251 is done: an agent runs commands in an Open Terminal
+  workspace and reads and writes its files, approved by kind of tool, the command shown whole,
+  long commands followed, an interrupted call killing its command; a workspace is not offered
+  where its classification does not flow, and the agent is told so; the documents describe it.
+  Next, as the plan says: 247.

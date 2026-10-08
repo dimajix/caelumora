@@ -116,3 +116,11 @@ A2A is the first producer, not the shape of the design.
 
 - **2026-10-03** — Issue created. Found: `a2a_agent` and `mcp_tool` keep only text parts today;
   everything else they receive is dropped.
+- **2026-10-08** — The workspace exists (issue [253](253-workspace.md), with 251): named files
+  of a user's, in a configured storage, one classification for all of them, used in a session
+  through its channels, uploaded and downloaded over REST - a download always an attachment,
+  `application/octet-stream`, `nosniff`, never shown inline - and in the web UI. PLAN.md's
+  recommendation for this issue becomes concrete: an artifact a remote agent or tool generates is a
+  file written into the session's workspace, where the channel uses one, and the message refers to
+  it by workspace and path, with the digest of its content. What becomes of an artifact in a
+  channel without a workspace, and whether a workspace is made for it, is still to be decided.

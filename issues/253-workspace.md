@@ -1,6 +1,6 @@
 # 253 — Agents and people have no workspace to keep files in
 
-**Status:** in progress
+**Status:** done
 **Area:** Context and knowledge
 
 ## The problem
@@ -134,4 +134,9 @@ its plan is kept in one place so that the two are read together. In short:
   and bounds what it takes (`destination`): `WorkspaceManager::create` and `reclassify` refuse a
   workspace above it (`WorkspaceError::StorageNotCleared`, asked as `Publish` into the
   destination); snapshots and the REST responses say `has_shell`. Stored data: unchanged.
-
+- **2026-10-08** — Done with 251's plan. As *Done when* asks, but for sharing with contributors: a
+  workspace has none, its owner's alone outside a session and shared through the channels of the
+  session it is attached to (251, decision 12). Agents use it with `terminal_tool` - its files and,
+  where the storage gives one, a shell - on `local`, `open_terminal_shared` and
+  `open_terminal_docker` storages. Versions are issue [256](256-workspace-versions.md); in whose
+  name an agent reaches it, issue [255](255-whose-name-agents-act-in.md).

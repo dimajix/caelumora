@@ -83,14 +83,8 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [65](65-generic-component-state.md) | open | The state of notes is hard-wired into the agent state, the turn, the stores and REST, so every further kind of component state needs changes to the core and branching must be taught each one. |
 | [22](22-skill-management.md) | open | Skills do not exist: there is no unit of procedural knowledge below a personality, and no rule for who may load one into a turn. |
 | [166](166-memory-as-topic-documents.md) | open | Agent memory is a flat list of one-line entries, all of them in every prompt, with nothing to group, revise or fetch them by topic. |
-| [253](253-workspace.md) | in progress | Nothing in Caelumora holds a file: agents and people have no workspace to keep, share and work on files in, and an executor would have to own them. |
+| [256](256-workspace-versions.md) | open | A workspace has no versions: what a person, a file tool or a command overwrote cannot be taken back, and who changed what is not recorded. |
 | [237](237-erasing-a-message.md) | open | A message written by mistake can be taken back but not erased: it stays in every participant's record and in the contexts built on it. |
-
-## Integrations
-
-| No. | Status | Issue |
-|---|---|---|
-| [251](251-open-terminal.md) | in progress | Agents have no workspace to run commands and keep files in, and Open Terminal, which offers one, is reachable only as an MCP server without approval by kind of tool, interruption or a channel's scope. |
 
 ## Open architecture questions
 

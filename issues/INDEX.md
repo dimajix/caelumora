@@ -253,7 +253,8 @@ argues against it, and what came out of the last attempt.
 | [92](92-ledger-for-notes-and-memory.md) | done | `NoteChain` and `MemoryChain` are the same type written twice. |
 | [156](156-notes-and-memory-staged-scans.md) | done | Notes and memory answer "the chain with this turn's changes" with eight hand-written scans instead of the fold the chains already have. |
 | [166](166-memory-as-topic-documents.md) | open | Agent memory is a flat list of one-line entries, all of them in every prompt, with nothing to group, revise or fetch them by topic. |
-| [253](253-workspace.md) | in progress | Nothing in Caelumora holds a file: agents and people have no workspace to keep, share and work on files in, and an executor would have to own them. |
+| [253](253-workspace.md) | done | Nothing in Caelumora holds a file: agents and people have no workspace to keep, share and work on files in, and an executor would have to own them. |
+| [256](256-workspace-versions.md) | open | A workspace has no versions: what a person, a file tool or a command overwrote cannot be taken back, and who changed what is not recorded. |
 | [98](98-context-provider-facet.md) | done | `ContextProvider` is a facet with one implementation, and a second one would silently overwrite the first. |
 | [101](101-chain-component-helpers.md) | done | The three chain components copy their helpers, and `AgentNotes`/`AgentMemory` are constructed only to be called once. |
 | [117](117-message-prev-id.md) | done | `Message::prev_id` is excluded from the digest because the chain owns it, yet two places still set it. |
@@ -344,7 +345,7 @@ argues against it, and what came out of the last attempt.
 | [213](213-external-task-taken-up-keeps-old-work.md) | done | An external agent's task taken up again by a later call keeps the work of the call that began it - its authority, envelope, bound and context - unless the remote agent tells the task as begun again. |
 | [217](217-external-agent-reasoning.md) | rejected | What an external agent reports while it works is dropped, so its messages carry no reasoning and the chat shows nothing until it answers. |
 | [236](236-external-agent-not-told-of-changes.md) | done | A remote agent is not told when a message it was given is modified or taken back, so it goes on answering the old version. |
-| [251](251-open-terminal.md) | in progress | Agents have no workspace to run commands and keep files in, and Open Terminal, which offers one, is reachable only as an MCP server without approval by kind of tool, interruption or a channel's scope. |
+| [251](251-open-terminal.md) | done | Agents have no workspace to run commands and keep files in, and Open Terminal, which offers one, is reachable only as an MCP server without approval by kind of tool, interruption or a channel's scope. |
 
 ## Open architecture questions
 

@@ -43,3 +43,9 @@ command is not matched by a rule for its first part.
 
 - **2026-10-06** — Opened when issue [13](13-approval-modes.md) was closed: its step 3, waiting for
   a tool with such an argument.
+- **2026-10-08** — Its first tool exists: `run_command` of `terminal_tool` (issue
+  [251](251-open-terminal.md)), whose `command` is a shell command line. It proposes
+  `ToolMatcher::exact` today, so a rule derived from an approved command covers that command
+  alone. The file tools of the same component propose a matcher of their own already - a change of
+  a file by its path alone (`ToolProvider::matcher`) - the structured case this issue names as
+  reliable. Next is the shell matcher for `run_command`.
