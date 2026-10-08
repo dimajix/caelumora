@@ -64,3 +64,19 @@ hold credentials of their own, which is half the point of an `mcp_tool` componen
 - **2026-10-08** — A concrete case opened as [255](255-whose-name-agents-act-in.md): today an agent
   reads in its owner's name (its views) and acts in the name of whoever asked it (its turn), one
   tool call often in both. SECURITY.md (*In whose name an agent acts*) describes that state.
+- **2026-10-08** — Decided with the maintainer, in [255](255-whose-name-agents-act-in.md)
+  (*Decision*): the **grant**, not the intersection. An agent is its owner's delegate and acts
+  with its owner's rights in all it does; the user is permitted to *ask* it - by being in the
+  channel the owner put it into, later perhaps by an `AskAgent` - and the owner checks the request
+  where `GuardedToolExecutor::admit` runs the policy, their rules for the place and the approval.
+  The intersection was rejected because it is the wrong model: one turns to the person entitled
+  to something, who checks the request and carries it out with their own rights. The confused
+  deputy is answered by that check, not by the asker's rights; what remains - an agent without
+  approval lets every member of its channel read through it, within the channel's classification
+  - is accepted and written down. The audit side (05) is served by the initiator, which the
+  context keeps for the record and for the questions of a call. The *done when* is narrowed with
+  it: the `SecurityManager` combines two identities, the principal of the caller and the
+  initiator, not a chain - `delegation_ids` records a conversation, not a commission, and goes;
+  a chain is reconsidered with subagents. `ReadSecret` is the owner's: a credential belongs to
+  the agent's configuration, and bob using alice's agent uses her token, as decided. Implemented
+  with 255's plan; this issue closes with it.

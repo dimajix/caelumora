@@ -72,6 +72,191 @@ is a concrete case of), [142](142-roles.md) (an agent's clearance is its owner's
 [181](181-where-roles-decide.md) (where roles enter a check),
 [213](213-external-task-taken-up-keeps-old-work.md) (whose authority an external task keeps).
 
+## Decision
+
+An agent is its owner's delegate. It acts with its owner's rights in everything it does - what it
+reads, what it calls, the credentials it reaches with, the clearance it is judged by - and whoever
+asks it lends it nothing. This is the model of a person one turns to because they are entitled to
+something: they check the request, and carry it out with their own rights. The three parts of it:
+
+1.  **The agent acts with its owner's rights.** The policy judges every action of an agent by the
+    person responsible for its caller - the *principal* - and the context carries that person.
+    The asker never enters a rights check.
+2.  **The owner checks the request.** That has a place already: `GuardedToolExecutor::admit`, where
+    the policy, the owner's rules for the place (issue 13, evaluated in their name) and the
+    approval by the owner or their contributors (issue 14) decide one after the other, and a
+    personality's limiting roles narrow the agent. A tool that needs no approval is the owner's
+    approval given in advance.
+3.  **The asker may ask.** Today by being a member of the channel the owner put the agent into;
+    an explicit `AskAgent` would refine this sentence, not change the rule. The answer reaches the
+    asker only as the flow rule lets it into the channel.
+
+Who asked stays in the context, as its initiator: for the questions a call puts (issue 165), for
+the record, for a later `AskAgent` - never for rights. Issues 211 and 222 speak of the initiator
+and stay true as written.
+
+**No chain.** `delegation_ids` goes: nobody reads it, and what it records - the actors whose
+message caused the next turn - is a conversation between members, not a commission. An agent that
+mentions another does not delegate to it; the other answers for its own owner, bounded by the
+channel. A chain is reconsidered when there are subagents, and 12's rule over "the full delegation
+chain" is narrowed to two identities, principal and initiator, deliberately.
+
+**What this accepts.** An owner who puts an agent into a channel without approval lets every
+member read through it whatever the agent may read, within the channel's classification. That is
+a consequence of 2, not a gap in 1: the answer to it is approval, rules and limiting roles, not
+the asker's rights. SECURITY.md says so.
+
+## Plan
+
+Written against the code as of `63affb0`. Three steps: the shape of the context, without a change
+in behaviour; the rule, in the policy; one context per piece of work. Each is reviewed on its own.
+
+### A. What the code shows
+
+- **The policy hardly reads the initiator for an agent.** In `OwnershipSecurityManager::check`
+  (`caelumora-model/src/security.rs`) `CallTool`, `ReadSecret`, `ShowCommand` and
+  `ExecuteCommand` are `true`; `ReadChannel` decides by the two `Place`s alone; `Publish`,
+  `ModifyMessage` and `RevokeMessage` by the caller; clearances come as roles from the runtime
+  (`Member::clearances`, always the owner's). The initiator decides `Get*`, `Update*`, `Delete*`,
+  `ReadDeleted`, `Restore` - for an agent's views that is `GetSession`. So the split is mostly a
+  record in the security suite and a contract for other policies, and the rule is cheap; the
+  plumbing is what costs.
+- **Who reads `initiator_id` outside the policy**, and for which of the two questions:
+  - *rights*: the store filters (`store/access.rs`), the roles for a clearance (`view/mod.rs`
+    `user_roles`, `workspace.rs` twice, `session.rs` `require_cleared` and `preferred_language`),
+    the owner of what is created (`session.rs` `create_session`, `template.rs`, `workspace.rs`),
+    whether a viewer takes part (`view/channel.rs` `shows_approvals` and once more);
+  - *who asked*: the questions of a call (`tool/mod.rs` `questions`, whose comment believes the
+    initiator is the owner), the participants of a new channel (`session.rs` `create_channel`,
+    the creator first).
+- **Nobody reads `delegation_ids`.** It is extended at three places: `Answering::to`
+  (`actor/mod.rs`), `Agent::security_context` (`agent.rs`), and the approver, which appends itself
+  to the agent's turn context when it forwards a request and announces a decision
+  (`actor/approval.rs`, three times) - a copy of `EventContext::next` onto the security context.
+  An envelope travels through the channel unchanged.
+- **One context per work is nearly there.** `Work` (`caelumora-model/src/work.rs`) holds the
+  turn's `security_context`, stored in `TurnState` and `OpenTask`; `AgentWork::security_context`
+  and `Turn::security_context` read it. The agent's own context is used for: `ViewsFactory`, built
+  once per actor (`actor/agent/mod.rs`, `actor/external_agent.rs`, `ActorRuntime::views`);
+  `ComponentContext::security_context`, which `agent_memory`, `notes` and `private_notes` keep as
+  a field and ask with (`recalled`, `forget`, `reclassify`), and which `mcp_tool` and
+  `a2a_agent` read their credential with at build time while `mcp_tool::execute` and
+  `A2aClient` read it in the work's; `Answering::own`; `take_in`'s perceive processors.
+- **The suite's recorder** (`tests/security_suite.rs`, `Recorder::check`) prints
+  `initiator as caller`.
+
+### B. The model (`caelumora-model`)
+
+1.  `SecurityContext { initiator_id, caller_id, principal_id, session_id, channel_id }`:
+    `principal_id` is the person whose rights the caller exercises - a user themselves, an agent
+    its owner, the system itself. `delegation_ids` is removed. `new(actor, session, channel)` sets
+    all three ids to `actor`; `next(caller, principal)` replaces `next(caller)`. The doc comment
+    says which field answers which question. `Agent::security_context` becomes
+    `new(owner, session, channel).next(Agent(id), owner)`.
+2.  The policy (step 2): `let me = context.principal_id`. Nothing else in `check` changes - the
+    confidentiality actions and the caller-bound ones already do not look at the initiator. The
+    doc comment of `OwnershipSecurityManager` ("who *you* are is the context's initiator") says
+    principal instead, and why.
+3.  `ActionType` is unchanged: the decision is not per action any more. The doc comment of
+    `ReadSecret` says whose credential it is.
+
+### C. The runtime (`caelumora-runtime`)
+
+4.  **The approver** (step 1) no longer calls `next` on the security context it forwards and
+    announces in; the event context keeps its `next`. The approver is not a delegate, it answers.
+5.  **`Answering::to`** (step 1) takes the owner besides the agent's id - `to(request, id, name,
+    owner)` or the agent's attributes - and continues the request's context with
+    `next(Agent(id), owner)`. Both actors pass what they hold (`agent_controller`,
+    `self.security_context.principal_id`). `Answering::own` is unchanged.
+6.  **Readers of `initiator_id` for rights** (step 2) read `principal_id`: the store filters, the
+    roles lookups, the owner of what is created, `shows_approvals`. For a user's context nothing
+    changes; for an agent's turn context the roles become the owner's, as the agent's own context
+    had them. The two readers for *who asked* stay with `initiator_id`; the comment in
+    `tool/mod.rs` `questions` is corrected.
+7.  **One context per work** (step 3): the views an agent's turn navigates are built in the work's
+    context. `ViewsFactory` loses its `context` field; `AgentWork::session` passes
+    `self.work.security_context`, `ViewsFactory::session(context, channel, classification)`.
+    `agent_memory`, `notes` and `private_notes` ask `recalled`, `find`, `forget` and `reclassify`
+    with the work's context, which they are handed anyway, instead of the field - the field stays
+    for what is decided when the component is built. `mcp_tool` and `a2a_agent` are unchanged:
+    they read their credential at build time in the agent's own context and at call time in the
+    work's, and from step 2 on both have the same principal. `take_in` and `Answering::own` keep
+    the actor's own context: nobody asked.
+8.  **The log** (step 2): a refusal is logged by `ActionType::describe` as before; the recorder
+    of the suite (E) is where the identities show.
+
+### D. The frontends
+
+- Nothing. The REST server and the TUI build a user's context with `new`, which sets the
+  principal; the web UI sees no context.
+
+### E. Tests
+
+9.  **The recorder** prints `principal as caller` and, where the initiator differs, `, asked by
+    initiator` - so that a test reads `alice as helper, asked by bob: CallTool yes`.
+10. **Tests that change what an action asks** (step 2), reviewed as such:
+    `an_agents_command_is_called_for_who_asked_and_reaches_the_workspace_through_its_channel`
+    and `an_agents_file_tool_asks_what_a_command_asks` (`asked_as_a_call_on_the_workspace`: the
+    call and the workspace both in alice's name, asked by bob);
+    `an_external_agents_task_is_followed_in_the_name_of_whoever_asked`,
+    `an_agent_asked_by_several_while_it_answers_answers_once_in_the_name_of_the_last` and the
+    cancelled task's test (`ReadSecret` in alice's name, asked by bob, by the last who asked):
+    renamed to say what they pin now - the asker is recorded, the owner is judged.
+11. **New in the suite** (step 2), for the *done when*: a delegation through a second agent -
+    carol asks alice's agent, which mentions bob's agent, whose tool call is judged as bob,
+    asked by carol; reading another channel through a tool, judged as the owner; and the
+    questions of a call put to the asker, not the owner.
+12. **Unit tests** that build a context with `next(agent)` (`security.rs`, `view/mod.rs`,
+    `workspace.rs`, `channel.rs`, the component tests, `external_agent.rs` in the model) pass
+    the owner; `tool/mod.rs`'s tests that set only `caller_id` set `principal_id` where the
+    policy is the ownership one.
+13. Step 1 ends with the suite unchanged but for the recorder: the proof that the shape alone
+    changes no behaviour.
+
+### F. Documents
+
+- SECURITY.md: *The security model* (what the three ids of a `SecurityContext` answer); *In whose
+  name an agent acts* rewritten as decided - the three parts, what it accepts, and that
+  `GuardedToolExecutor::admit` is where the owner checks; the ownership policy's bullet on who
+  "you" are; *Not decided yet* loses nothing, `AskAgent` is named as a refinement.
+- CHANNELS.md: *its workspace* ("an agent acting there for whoever asked it"), the transport's
+  paragraph on who an actor acts for, and the external agent's open task ("with the authority of
+  whoever asked") say owner and asker apart.
+- CONFIDENTIALITY.md, *What leaves through tools*: the tool sets are judged in the owner's name.
+- STORAGE.md: what `Work` keeps, if it names the fields.
+- Issues: this one and [12](12-user-and-agent-permissions.md) (history, done), and
+  [181](181-where-roles-decide.md) (whose roles count when an agent acts: its owner's, by this
+  decision - a history entry).
+
+### G. Steps
+
+1.  **The shape** (B1, C4, C5, E9, E12, E13): `principal_id` in, `delegation_ids` out, the
+    approver no longer a delegate. No behaviour changes; the policy still judges by the
+    initiator. **Stored data:** `Work` is stored in the state store, in every
+    `AgentChannelState` with a turn or an open task - the agent channel states are to be deleted.
+2.  **The rule** (B2, B3, C6, C8, E10, E11, F): the policy and the rights readers judge by the
+    principal. The suite's changed tests are the review of what changes.
+3.  **One context** (C7): views and components ask in the work's context; the agent's own context
+    is only where nobody asked. No behaviour changes after step 2, since both contexts then
+    carry the owner as principal; the step removes the second way of reaching a context.
+4.  **Close**: history here and in 12 and 181, status `done`.
+
+### H. What to watch
+
+- **`tool_sets` at the start of a turn** (`request_response`) is judged in the turn's context:
+  from step 2 on as the owner, so a set is withheld or offered alike whoever asks.
+- **`ExternalAgentActor::acting_for`** keeps a task's stored work context; a task stored before
+  step 1 does not load (G1).
+- **Where the principal is `None`.** `SecurityContext::default()` has none, as it has no
+  initiator: no rights, as before. A channel's and a session's components are built in a context
+  of their owner (`ChannelLoop::new`, `new_command_executor`) - `new`, so the principal is set.
+- **The user actor's context** is what its answers carry and the approver checks
+  (`ApproveToolCall`); `new` sets the principal, nothing else to do.
+- **`transport/memory.rs`** compares the caller of an envelope with its origin; unchanged.
+- **`RemoteState` is `Eq` over `Work`**, hence over the context: the new field takes part.
+- **The recorder's names** come from the users and agents the test world knows; a principal is
+  always one of them.
+
 ## Done when
 
 - It is decided, per kind of action, in whose name an agent asks - and the decision is in
@@ -85,3 +270,12 @@ is a concrete case of), [142](142-roles.md) (an agent's clearance is its owner's
   [251](251-open-terminal.md) showed a command called in the asker's name and its workspace reached
   in the owner's. The current model was written down in SECURITY.md (*In whose name an agent acts*)
   as it is, not as decided.
+- **2026-10-08** — Decided with the maintainer (*Decision*): the agent is its owner's delegate and
+  acts with its owner's rights in all it does; the owner checks the request (`admit`), the asker
+  may ask and is recorded as the initiator, never judged. Against the intersection: one turns to
+  the person entitled, who checks and acts with their own rights - cutting the rights to what
+  both may is the wrong model. Found on the way: `delegation_ids` is read by nobody and records a
+  conversation, not a commission; the approver appends itself to it; `mcp_tool` and `a2a_agent`
+  read their credential at build time in the owner's name and at call time in the asker's; the
+  comment of `GuardedToolExecutor::questions` believes the initiator is the owner. A plan is
+  written (*Plan*), in three steps: the context's shape, the rule, one context per work.
