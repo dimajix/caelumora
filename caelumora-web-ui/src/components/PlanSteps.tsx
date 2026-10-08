@@ -1,5 +1,6 @@
 // A step of a plan an agent works through (issues 258, 263): its answers, tool calls and results,
-// folded under one toggle headed by the step, as reasoning is folded.
+// and the answer that streams in, folded under one toggle headed by the step, as reasoning is
+// folded.
 
 import React, {useState} from 'react';
 import {ChevronDown, ChevronRight, ListChecks} from 'lucide-react';
@@ -14,11 +15,13 @@ interface PlanStepsProps {
   count: number;
   /** Whether it is the step its turn is in now: open then, folded once the turn moved on. */
   underWay: boolean;
-  /** The messages, as the chat renders them. */
+  /** Whether an answer of the step streams in, shown after its messages - also before it has any. */
+  streaming: boolean;
+  /** The messages, and the answer that streams in, as the chat renders them. */
   children: React.ReactNode;
 }
 
-export const PlanSteps: React.FC<PlanStepsProps> = ({name, step, count, underWay, children}) => {
+export const PlanSteps: React.FC<PlanStepsProps> = ({name, step, count, underWay, streaming, children}) => {
   // What the user chose, if they did: it outweighs whether the step runs.
   const [chosen, setChosen] = useState<boolean | null>(null);
   const open = chosen ?? underWay;
@@ -44,7 +47,7 @@ export const PlanSteps: React.FC<PlanStepsProps> = ({name, step, count, underWay
             : <span className="opacity-70"> · {count} {count === 1 ? 'message' : 'messages'}</span>}
         </span>
       </button>
-      {open && count > 0 && (
+      {open && (count > 0 || streaming) && (
         <div className="mt-2 pl-3 border-l-2 border-gray-200 dark:border-gray-600 space-y-4">
           {children}
         </div>

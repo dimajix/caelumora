@@ -165,6 +165,8 @@ interface Answer {
   turnId: string | null;
   reasoning: string;
   content: string;
+  /** Whether what streams in is a step of a plan (issue 263), shown in the step's block. */
+  internal: boolean;
 }
 
 /**
@@ -204,7 +206,7 @@ function nameIn(channel: ChannelResponse | null): (actor: ActorId) => string | u
 function withAnswer(answers: Answer[], sender: string, name: string | null, change: (answer: Answer) => Answer): Answer[] {
   const index = answers.findIndex(a => a.sender === sender);
   if (index < 0) {
-    return [...answers, change({sender, name, turnId: null, reasoning: '', content: ''})];
+    return [...answers, change({sender, name, turnId: null, reasoning: '', content: '', internal: false})];
   }
   return answers.map((a, i) => i === index ? change({...a, name: name ?? a.name}) : a);
 }
@@ -595,7 +597,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
         // The answers under way as the snapshot found them (issue 240): what
         // streamed before is not kept, what follows streams in.
         setAnswers(snapshot.channel.members.flatMap(m => m.turn_under_way
-          ? [{sender: actorKey(m.id), name: m.name, turnId: m.turn_under_way, reasoning: '', content: ''}]
+          ? [{sender: actorKey(m.id), name: m.name, turnId: m.turn_under_way, reasoning: '', content: '', internal: false}]
           : []));
       } catch (e) {
         reportError('Failed to read the channel state', e);
@@ -633,9 +635,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
         } else if (actorEvent.PartialMessageGenerated || actorEvent.IntermediatePartialGenerated) {
           // A step of a plan streams in as the answer does (issue 258).
           const partial = (actorEvent.PartialMessageGenerated ?? actorEvent.IntermediatePartialGenerated)!;
+          const internal = !!actorEvent.IntermediatePartialGenerated;
           setAnswers(prev => withAnswer(prev, answerer, answererName, a => ({
             ...a,
             turnId: a.turnId ?? partial.turn_id ?? null,
+            internal,
             reasoning: a.reasoning + (partial.reasoning ?? ''),
             content: a.content + (partial.content ?? ''),
           })));
@@ -1216,6 +1220,48 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   // The row of each turn's step that came last: the step it is in now, open
   // while the turn is under way (issue 263).
   const currentSteps = new Map(rows.flatMap((row, i) => row.kind === 'steps' ? [[row.turnId, i] as const] : []));
+  // An answer that streams in a step of a plan is shown in the step's block;
+  // where its turn has none - a snapshot without the step's mark - below,
+  // with every other answer.
+  const inStep = (answer: Answer) => answer.internal && currentSteps.has(answer.turnId);
+
+  const renderAnswer = (answer: Answer) => (
+    <div key={answer.sender} className="max-w-[80%] p-3 rounded-lg shadow-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-bl-none border border-gray-200 dark:border-gray-600">
+      <div className="text-xs font-semibold mb-1 opacity-70 uppercase tracking-wider flex items-center gap-2">
+        <span>{answer.name || 'Assistant'}</span>
+        <span className="inline-flex items-center gap-1.5 normal-case font-normal text-blue-500 dark:text-blue-400">
+          <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
+          generating…
+        </span>
+        <span className="ml-auto inline-flex items-center gap-1">
+          {answer.turnId && mayRetryOf(answer.sender) && (
+            <button
+              type="button"
+              onClick={() => void retryAnswer(answer)}
+              className="p-0.5 rounded-sm text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+              title="Ask for another answer instead of this one"
+              aria-label="Ask for another answer instead of this one"
+            >
+              <RotateCcw size={12} />
+            </button>
+          )}
+          {mayCancelOf(answer.sender) && (
+            <button
+              type="button"
+              onClick={() => void stopAnswer(answer.sender)}
+              className="p-0.5 rounded-sm text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
+              title="Stop this answer alone"
+              aria-label="Stop this answer alone"
+            >
+              <Square size={12} fill="currentColor" />
+            </button>
+          )}
+        </span>
+      </div>
+      {answer.reasoning && <Reasoning text={answer.reasoning} thinking={!answer.content} />}
+      {answer.content && <MarkdownMessage content={answer.content} />}
+    </div>
+  );
 
   return (
     <div className="flex-1 flex overflow-hidden bg-gray-50 dark:bg-gray-800">
@@ -1234,54 +1280,24 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           )}
           {rows.map((row, idx) => row.kind === 'message'
             ? renderMessage(row.message, row.message.id ?? `local-${idx}`)
-            : (
-              <PlanSteps
-                key={`steps-${row.turnId}-${row.step?.step_index ?? ''}-${row.messages[0]?.id ?? idx}`}
-                name={row.sender || 'Assistant'}
-                step={row.step}
-                count={row.messages.length}
-                underWay={row.turnId !== null && answers.some(a => a.turnId === row.turnId) && currentSteps.get(row.turnId) === idx}
-              >
-                {row.messages.map((msg, i) => renderMessage(msg, msg.id ?? `local-${i}`))}
-              </PlanSteps>
-            ))}
-          {answers.map(answer => (
-            <div key={answer.sender} className="max-w-[80%] p-3 rounded-lg shadow-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-bl-none border border-gray-200 dark:border-gray-600">
-              <div className="text-xs font-semibold mb-1 opacity-70 uppercase tracking-wider flex items-center gap-2">
-                <span>{answer.name || 'Assistant'}</span>
-                <span className="inline-flex items-center gap-1.5 normal-case font-normal text-blue-500 dark:text-blue-400">
-                  <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
-                  generating…
-                </span>
-                <span className="ml-auto inline-flex items-center gap-1">
-                  {answer.turnId && mayRetryOf(answer.sender) && (
-                    <button
-                      type="button"
-                      onClick={() => void retryAnswer(answer)}
-                      className="p-0.5 rounded-sm text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
-                      title="Ask for another answer instead of this one"
-                      aria-label="Ask for another answer instead of this one"
-                    >
-                      <RotateCcw size={12} />
-                    </button>
-                  )}
-                  {mayCancelOf(answer.sender) && (
-                    <button
-                      type="button"
-                      onClick={() => void stopAnswer(answer.sender)}
-                      className="p-0.5 rounded-sm text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
-                      title="Stop this answer alone"
-                      aria-label="Stop this answer alone"
-                    >
-                      <Square size={12} fill="currentColor" />
-                    </button>
-                  )}
-                </span>
-              </div>
-              {answer.reasoning && <Reasoning text={answer.reasoning} thinking={!answer.content} />}
-              {answer.content && <MarkdownMessage content={answer.content} />}
-            </div>
-          ))}
+            : (() => {
+              const current = currentSteps.get(row.turnId) === idx;
+              const streaming = current ? answers.filter(a => a.turnId === row.turnId && inStep(a)) : [];
+              return (
+                <PlanSteps
+                  key={`steps-${row.turnId}-${row.step?.step_index ?? ''}-${row.messages[0]?.id ?? idx}`}
+                  name={row.sender || 'Assistant'}
+                  step={row.step}
+                  count={row.messages.length}
+                  underWay={row.turnId !== null && current && answers.some(a => a.turnId === row.turnId)}
+                  streaming={streaming.length > 0}
+                >
+                  {row.messages.map((msg, i) => renderMessage(msg, msg.id ?? `local-${i}`))}
+                  {streaming.map(renderAnswer)}
+                </PlanSteps>
+              );
+            })())}
+          {answers.filter(answer => !inStep(answer)).map(renderAnswer)}
           <div ref={messagesEndRef} />
         </div>
 
