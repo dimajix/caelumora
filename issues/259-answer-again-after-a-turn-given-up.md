@@ -146,3 +146,12 @@ lives.
   names the agent's last turn given up as well; `NotUnderWay` becomes `TurnNotRetryable`. The
   maintainer confirmed the two proposals: `Failed` and `Lowered` only, and only while nothing
   followed the turn's end.
+- **2026-10-08** — Step 1 done: `GivenUpReason::may_be_answered_again`,
+  `MessageHistory::turn_given_up_last` and `AgentChannelState::answers_again_after` in the model;
+  `ChannelLoop::retryable_turn` for the user's actor, the delivery delivering a turn given up
+  without interrupting it, and the agent accepting it in `retry`. `ChannelError::NotUnderWay` is
+  `TurnNotRetryable`, and with it REST's `409 turn_not_retryable` - in this step rather than the
+  next, since the code names the error. Tests: the rule in the model for every reason and with
+  something after; a turn that failed answered anew and kept; the refusal once something followed;
+  the security suite asks the same question before the history is looked at. CHANNELS.md and
+  REST-SERVER.md.

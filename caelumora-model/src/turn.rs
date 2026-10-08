@@ -37,6 +37,14 @@ pub enum GivenUpReason {
 }
 
 impl GivenUpReason {
+    /// Whether the agent may be asked to answer anew after a turn given up
+    /// so (issue 259): one that failed or whose channel was lowered below
+    /// it. One asked for again is answered anew already; one stopped belongs
+    /// to an agent that left.
+    pub fn may_be_answered_again(&self) -> bool {
+        matches!(self, GivenUpReason::Failed { .. } | GivenUpReason::Lowered { .. })
+    }
+
     /// Why the turn was given up, as its agent is told: "… because it
     /// failed". A fixed text, which says nothing of the conversation.
     pub fn cause(&self) -> &'static str {

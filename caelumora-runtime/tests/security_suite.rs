@@ -677,8 +677,9 @@ async fn a_message_is_reclassified_by_its_author_or_the_channels_owner() {
 /// as alice - asked as `RetryMessage` of the channel before anything of the
 /// message is looked at but that it is there. Whether the agent answers
 /// again is its own to decide; a message no agent said is refused after
-/// the question. An answer under way (issue 235) is asked for again under
-/// the same question, asked before anything of the agent is looked at.
+/// the question. An answer under way (issue 235), or the agent's last turn
+/// given up (issue 259), is asked for again under the same question, asked
+/// before anything of the agent or the history is looked at.
 /// It is offered of an agent by the same question (issue 242).
 #[tokio::test]
 async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
@@ -700,6 +701,9 @@ async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
     let (refused, asked) = world.asked(bob.request_retry_of_turn(ActorId::User(world.alice), TurnId::new())).await;
     assert!(matches!(refused.expect_err("no agent answers").downcast_ref::<ChannelError>(), Some(ChannelError::NotAParticipant { .. })));
     assert_eq!(asked, checks(&["bob: RetryMessage(alice's) yes"]), "an answer under way by the same question");
+    let (refused, asked) = world.asked(bob.request_retry_of_turn(ActorId::Agent(helper), TurnId::new())).await;
+    assert!(matches!(refused.expect_err("neither under way nor given up").downcast_ref::<ChannelError>(), Some(ChannelError::TurnNotRetryable { .. })));
+    assert_eq!(asked, checks(&["bob: RetryMessage(alice's) yes"]), "a turn given up by the same question, before the history is looked at (issue 259)");
     let view = world.manager.views(Viewer::new(World::as_user(world.bob))).session(session.id()).await.unwrap().channel(main.id()).await.unwrap();
     let member = view.member(ActorId::Agent(helper)).await.expect("the agent is a member");
     let (offered, asked) = world.asked(member.may_retry()).await;

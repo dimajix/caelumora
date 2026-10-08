@@ -370,7 +370,9 @@ impl AgentActor {
         let answering = Answering::to(request, self.id(), self.agent_controller.name());
         let can = match target {
             RetryTarget::Turn(turn) if Some(turn) == given_up_for => Ok(Vec::new()),
-            RetryTarget::Turn(_) => Err(RetryRefused::Ended),
+            // Its last turn given up: answered anew after it, nothing taken
+            // back (issue 259).
+            RetryTarget::Turn(turn) => state.answers_again_after(turn).map(|()| Vec::new()),
             RetryTarget::Message(message) => state.retried(message, self.id()),
         };
         let taken_back = match can {
@@ -396,8 +398,9 @@ impl AgentActor {
     /// Ends the turn under way in `state` after `error`: logs the full
     /// error, gives the turn up (issue 145) - its messages stay, nothing it
     /// staged is applied - and tells the channel with `TurnGivenUp`, so that
-    /// users see what went wrong instead of a turn that never ends. An error before a turn began is logged
-    /// only: there is no turn to end, nor a request to answer in.
+    /// users see what went wrong instead of a turn that never ends. An error
+    /// before a turn began is logged only: there is no turn to end, nor a
+    /// request to answer in.
     async fn fail_turn(&self, state: &mut AgentChannelState, error: &anyhow::Error, output: &dyn EventSender) {
         let agent_name = self.agent_controller.name();
         tracing::error!("Turn of agent {} {} failed: {:#}", self.id(), agent_name, error);

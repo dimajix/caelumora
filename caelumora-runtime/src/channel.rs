@@ -112,10 +112,11 @@ pub enum ChannelError {
     /// of its message (issue 234).
     #[error("message {message} of channel {channel} is not one of an agent in it")]
     NotAnAgentsMessage { message: MessageId, channel: ChannelId },
-    /// An answer is asked for again while under way only as long as its
-    /// turn is under way (issue 235).
-    #[error("turn {turn} is not under way in channel {channel}")]
-    NotUnderWay { turn: TurnId, channel: ChannelId },
+    /// A turn is asked for again only while it is under way (issue 235),
+    /// or as the agent's last turn, given up for a failure or a lowering,
+    /// with nothing after it (issue 259).
+    #[error("turn {turn} can be asked for again in channel {channel} neither as under way nor as the last one given up")]
+    TurnNotRetryable { turn: TurnId, channel: ChannelId },
     /// A participant not cleared for the channel's classification - to
     /// join it, or for the classification it would be raised to (issue
     /// 133).
@@ -960,6 +961,21 @@ impl ChannelLoop {
         self.actor_by_id(actor)?.turn_under_way()
     }
 
+    /// Whether the turn `turn` of `author` can be asked for again: under
+    /// way (issue 235), or `author`'s last turn, given up for a reason that
+    /// may be answered again and with nothing after it in the channel's
+    /// history (issue 259).
+    pub(crate) async fn retryable_turn(&self, author: ActorId, turn: TurnId) -> bool {
+        self.turn_under_way(author) == Some(turn) || self.given_up_last(author, turn).await
+    }
+
+    /// Whether `turn` is `author`'s last turn given up, which may be
+    /// answered anew after (issue 259).
+    async fn given_up_last(&self, author: ActorId, turn: TurnId) -> bool {
+        let state = self.state.lock().await;
+        state.history.turn_given_up_last(author).is_some_and(|(last, reason)| last == turn && reason.may_be_answered_again())
+    }
+
     /// The actor `user` acts through in this channel, or `None` if they are
     /// not a participant of it.
     ///
@@ -1313,12 +1329,14 @@ impl ChannelLoop {
             // An answer under way asked for again (issue 235): its turn is
             // ended before the request is delivered, so that the agent finds
             // it given up as it takes the request in - and only if it is
-            // still the turn under way. Otherwise there is nothing left to
-            // answer again, and the request is dropped: its sender asked
-            // before, and its users see the answer end.
+            // still the turn under way. A turn given up already is delivered
+            // as it is, if it is the agent's last (issue 259). Otherwise
+            // there is nothing to answer again, and the request is dropped:
+            // its sender asked before, and its users see the answer end.
             if let ActorEvent::RetryRequested { target: RetryTarget::Turn(turn), .. } = &target_event.event {
-                if !self.actor_by_id(target_id).is_some_and(|actor| actor.retry_turn(*turn)) {
-                    warn!(to = %target_id, "Dropped {}: turn {} is not under way", event_desc, turn);
+                let interrupted = self.actor_by_id(target_id).is_some_and(|actor| actor.retry_turn(*turn));
+                if !interrupted && !self.given_up_last(target_id, *turn).await {
+                    warn!(to = %target_id, "Dropped {}: turn {} is neither under way nor the last given up", event_desc, turn);
                     continue;
                 }
             }
@@ -2351,7 +2369,7 @@ mod tests {
         assert_eq!(channel.turn_under_way(ActorId::Agent(agent)), Some(turn), "the turn its start announced");
         let alice = channel.user_actor(alice_of(&context)).unwrap();
         let error = |result: anyhow::Result<uuid::Uuid>| result.expect_err("refused").downcast::<ChannelError>().expect("a channel's error");
-        assert!(matches!(error(alice.request_retry_of_turn(ActorId::Agent(agent), TurnId::new()).await), ChannelError::NotUnderWay { .. }), "not another turn");
+        assert!(matches!(error(alice.request_retry_of_turn(ActorId::Agent(agent), TurnId::new()).await), ChannelError::TurnNotRetryable { .. }), "not another turn");
 
         alice.request_retry_of_turn(ActorId::Agent(agent), turn).await.expect("asked");
         assert!(matches!(shown_by(&mut events, agent, "RetryAccepted").await, ActorEvent::RetryAccepted { target } if target == RetryTarget::Turn(turn)));
@@ -2365,7 +2383,7 @@ mod tests {
         assert!(seen[1].iter().any(|c| c.contains("hello")), "asked about what the given-up turn was asked: {:?}", seen[1]);
         let history: Vec<_> = channel.history().await.into_iter().filter_map(|m| m.content).collect();
         assert_eq!(history, ["hello", "second"], "nothing of the given-up turn reached the channel");
-        assert!(matches!(error(alice.request_retry_of_turn(ActorId::Agent(agent), turn).await), ChannelError::NotUnderWay { .. }), "and it is over");
+        assert!(matches!(error(alice.request_retry_of_turn(ActorId::Agent(agent), turn).await), ChannelError::TurnNotRetryable { .. }), "and it is over");
         running.abort();
     }
 
@@ -3023,6 +3041,80 @@ mod tests {
             }
         }).await.expect("stored in Planning, with the tool's result");
         assert!(stored.turn.is_some_and(|t| t.tool_calls.is_empty()), "the calls of the step are done");
+        running.abort();
+    }
+
+    /// A model that fails where its script says `None`, and answers where
+    /// it says `Some`; it waits for ever once the script is done.
+    #[derive(Debug)]
+    struct FailsWhere(std::sync::Mutex<std::collections::VecDeque<Option<Message>>>);
+
+    #[async_trait::async_trait]
+    impl crate::llm::LLMClient for FailsWhere {
+        async fn chat_completion(&self, _: &[Message], _: &[caelumora_model::tool::Tool])
+            -> futures::stream::BoxStream<'static, crate::llm::LLMResult<caelumora_model::message::MessageEvent>>
+        {
+            match self.0.lock().unwrap().pop_front() {
+                Some(Some(answer)) => Box::pin(futures::stream::iter([Ok(caelumora_model::message::MessageEvent::Complete(answer))])),
+                Some(None) => Box::pin(futures::stream::iter([Err(crate::llm::LLMError::Backend {
+                    endpoint: "test".to_string(), model: "test".to_string(), message: "gone".to_string(),
+                })])),
+                None => Box::pin(futures::stream::pending()),
+            }
+        }
+
+        fn profile(&self) -> caelumora_model::context::ModelProfile {
+            Default::default()
+        }
+    }
+
+    /// The turn the agent `agent` gives up next, by its `TurnGivenUp`.
+    async fn given_up_turn(events: &mut tokio::sync::broadcast::Receiver<Envelope>, agent: caelumora_model::agent::AgentId) -> TurnId {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let envelope = events.recv().await.expect("the channel is running");
+                if envelope.context.sender_id != ActorId::Agent(agent) { continue }
+                if let ActorEvent::TurnGivenUp { turn_id, .. } = envelope.event { break turn_id }
+            }
+        }).await.expect("the turn is given up")
+    }
+
+    #[tokio::test]
+    async fn a_turn_that_failed_is_answered_anew_on_request_and_stays() {
+        use caelumora_model::message::MessageRole;
+        let answer = Message { role: MessageRole::Assistant, content: Some("second try".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+        let Stuck { channel, context, agent, mut events, running, .. } =
+            with_an_agent(Arc::new(FailsWhere(std::sync::Mutex::new([None, Some(answer)].into()))), Default::default()).await;
+        let failed = given_up_turn(&mut events, agent).await;
+
+        let alice = channel.user_actor(alice_of(&context)).unwrap();
+        alice.request_retry_of_turn(ActorId::Agent(agent), failed).await.expect("its last turn, given up as failed (issue 259)");
+        assert!(matches!(shown_by(&mut events, agent, "RetryAccepted").await, ActorEvent::RetryAccepted { target } if target == RetryTarget::Turn(failed)));
+        let said: Vec<_> = answered(&mut events, agent).await.into_iter().filter_map(|m| m.content).collect();
+        assert_eq!(said, ["second try"], "answered anew after it");
+
+        let ended: Vec<_> = channel.state.lock().await.history.items().into_iter().filter_map(|item| match item {
+            HistoryEntry::TurnGivenUp { turn_id, .. } => Some(turn_id),
+            _ => None,
+        }).collect();
+        assert_eq!(ended, [failed], "the turn given up stays, with its end");
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn a_turn_given_up_is_not_asked_for_again_once_something_followed_it() {
+        let Stuck { channel, context, agent, mut events, running, .. } =
+            with_an_agent(Arc::new(FailsWhere(std::sync::Mutex::new([None].into()))), Default::default()).await;
+        let failed = given_up_turn(&mut events, agent).await;
+        let alice = channel.user_actor(alice_of(&context)).unwrap();
+        alice.send_message("are you there?".to_string(), None).await.unwrap();
+        // The message is in the channel's history once it was routed.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while channel.history().await.len() < 2 { tokio::time::sleep(Duration::from_millis(10)).await }
+        }).await.expect("the message is said");
+
+        let refused = alice.request_retry_of_turn(ActorId::Agent(agent), failed).await;
+        assert!(matches!(refused.expect_err("refused").downcast_ref::<ChannelError>(), Some(ChannelError::TurnNotRetryable { .. })), "the conversation moved on");
         running.abort();
     }
 
@@ -4219,7 +4311,7 @@ mod tests {
         let Stuck { channel, context, agent, running, .. } = with_an_external_agent(Arc::clone(&remote)).await;
         assert_eq!(channel.turn_under_way(ActorId::Agent(agent)), None, "it has no turn here to give up");
         let refused = channel.user_actor(alice_of(&context)).unwrap().request_retry_of_turn(ActorId::Agent(agent), TurnId::new()).await;
-        assert!(matches!(refused.expect_err("refused").downcast_ref::<ChannelError>(), Some(ChannelError::NotUnderWay { .. })));
+        assert!(matches!(refused.expect_err("refused").downcast_ref::<ChannelError>(), Some(ChannelError::TurnNotRetryable { .. })));
         running.abort();
     }
 

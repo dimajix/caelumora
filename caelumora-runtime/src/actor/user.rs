@@ -337,17 +337,19 @@ impl UserActor {
 
     /// Asks the agent `author` to answer again instead of its answer under
     /// way, its turn `turn` (issue 235). Asked here (`RetryMessage`, as for
-    /// a message), and the turn looked at: only the turn under way can be
-    /// asked for again, and the user learns at once if it is over. The
-    /// channel ends that turn as it delivers the request - if it is still
-    /// the one under way, else it drops it - and the agent answers anew
-    /// with `RetryAccepted`; this returns once the request is on its way,
-    /// with a `WakeupRequested` ahead of it, as `request_retry` sends.
+    /// a message), and the turn looked at: the turn under way, or the
+    /// agent's last turn given up for a failure or a lowering, with nothing
+    /// after it (issue 259) - the user learns at once if it is neither. The
+    /// channel ends a turn under way as it delivers the request - if it is
+    /// still the one under way, else it drops it - and the agent answers
+    /// anew with `RetryAccepted`; this returns once the request is on its
+    /// way, with a `WakeupRequested` ahead of it, as `request_retry` sends.
     ///
     /// # Errors
     /// `ChannelError::Forbidden` if this user may not ask it, before
     /// anything else is looked at; `NotAParticipant` if `author` is no agent
-    /// of the channel; `NotUnderWay` if `turn` is not its turn under way;
+    /// of the channel; `TurnNotRetryable` if `turn` can be asked for again
+    /// neither so;
     /// an error if the channel is gone.
     pub async fn request_retry_of_turn(&self, author: ActorId, turn: TurnId) -> anyhow::Result<Uuid> {
         use crate::channel::ChannelError;
@@ -357,8 +359,8 @@ impl UserActor {
         if author.as_agent_id().is_none() || !channel_loop.actor_ids().contains(&author) {
             return Err(ChannelError::NotAParticipant { participant: author, channel: self.channel_id }.into());
         }
-        if channel_loop.turn_under_way(author) != Some(turn) {
-            return Err(ChannelError::NotUnderWay { turn, channel: self.channel_id }.into());
+        if !channel_loop.retryable_turn(author, turn).await {
+            return Err(ChannelError::TurnNotRetryable { turn, channel: self.channel_id }.into());
         }
         self.send_retry(RetryTarget::Turn(turn), author).await
     }

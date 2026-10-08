@@ -376,6 +376,28 @@ impl AgentChannelState {
         turn_id
     }
 
+    /// Whether the agent answers anew after its turn `turn`, given up (issue
+    /// 259): the turn's end is the last thing on the active path of the
+    /// transcript, and it was given up for a reason that may be answered
+    /// again (`GivenUpReason::may_be_answered_again`). Nothing is taken
+    /// back: what the turn said stays.
+    ///
+    /// # Errors
+    /// `NotLast` if something followed the turn's end; `Ended` if it was
+    /// given up for another reason, or taken over; `NotItsAnswer` if the
+    /// transcript holds no end of that turn.
+    pub fn answers_again_after(&self, turn: TurnId) -> Result<(), RetryRefused> {
+        let ended = |entry: &TranscriptEntry| entry.ended_turn() == Some(turn);
+        match self.transcript.last().map(|node| &node.entry) {
+            Some(TranscriptEntry::TurnGivenUp { turn_id, reason, .. }) if *turn_id == turn => {
+                if reason.may_be_answered_again() { Ok(()) } else { Err(RetryRefused::Ended) }
+            }
+            Some(entry) if ended(entry) => Err(RetryRefused::Ended),
+            _ if self.transcript.entries().any(|node| ended(&node.entry)) => Err(RetryRefused::NotLast),
+            _ => Err(RetryRefused::NotItsAnswer),
+        }
+    }
+
     /// Takes the turn `turn_id` over (issues 06, 17, 258): its changes to
     /// the agent's `notes` and `private_notes` here, anchored at its last
     /// message, and its end, `TurnFinished`, after what it said - which is
@@ -726,6 +748,37 @@ pub(crate) mod tests {
         let silent = TurnId::new();
         state.give_up_turn(silent, ActorId::default(), GivenUpReason::Stopped);
         assert!(matches!(state.history.last().map(|n| &n.entry), Some(HistoryEntry::TurnGivenUp { turn_id: t, .. }) if *t == silent), "a turn that said nothing leaves its end too");
+    }
+
+    #[test]
+    fn an_agent_answers_anew_after_its_last_turn_given_up_for_a_failure_or_a_lowering() {
+        let given_up = |reason: GivenUpReason| {
+            let mut state = a_state_that_heard("hello", Classification::CHANNEL_DEFAULT);
+            begin(&mut state, Vec::new());
+            let turn = state.turn.take().expect("a turn was begun").work.turn_id;
+            state.give_up_turn(turn, ActorId::default(), reason);
+            (state, turn)
+        };
+        let (state, turn) = given_up(GivenUpReason::Failed { message: "boom".to_string() });
+        assert_eq!(state.answers_again_after(turn), Ok(()), "a turn that failed, though it said nothing");
+        assert_eq!(state.answers_again_after(TurnId::new()), Err(RetryRefused::NotItsAnswer), "no turn of its own");
+        let lowered = given_up(GivenUpReason::Lowered { channel: Classification::PUBLIC });
+        assert_eq!(lowered.0.answers_again_after(lowered.1), Ok(()));
+        for reason in [GivenUpReason::Stopped, GivenUpReason::Retried] {
+            let (state, turn) = given_up(reason.clone());
+            assert_eq!(state.answers_again_after(turn), Err(RetryRefused::Ended), "{reason:?}");
+        }
+
+        let (mut state, turn) = given_up(GivenUpReason::Failed { message: "boom".to_string() });
+        let later = said("are you there?", Classification::CHANNEL_DEFAULT);
+        state.perceive(vec![later.clone()], vec![later]);
+        assert_eq!(state.answers_again_after(turn), Err(RetryRefused::NotLast), "something followed it");
+
+        let mut state = a_state_that_heard("hello", Classification::CHANNEL_DEFAULT);
+        begin(&mut state, Vec::new());
+        let turn = state.turn.take().expect("a turn was begun").work.turn_id;
+        state.finish_turn(turn, ActorId::default(), Vec::new(), Vec::new());
+        assert_eq!(state.answers_again_after(turn), Err(RetryRefused::Ended), "taken over, not given up");
     }
 
     /// `state` as a store holds it, and the live state marked stored.

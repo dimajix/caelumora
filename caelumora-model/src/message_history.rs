@@ -80,6 +80,16 @@ impl Chain<HistoryEntry> {
             .collect()
     }
 
+    /// The turn of `author` given up, and why, if its end is the last thing
+    /// on the active path (issue 259): what may be asked for anew as long as
+    /// nothing followed it.
+    pub fn turn_given_up_last(&self, author: ActorId) -> Option<(TurnId, GivenUpReason)> {
+        match self.last().map(|node| &node.entry) {
+            Some(HistoryEntry::TurnGivenUp { turn_id, actor, reason, .. }) if *actor == author => Some((*turn_id, reason.clone())),
+            _ => None,
+        }
+    }
+
     /// The message `id` as it stands - on whichever branch - or `None` if
     /// it was never said here.
     pub fn message(&self, id: MessageId) -> Option<Message> {
@@ -252,6 +262,20 @@ mod tests {
     use crate::confidentiality::Confidentiality;
     use crate::digest::message_chain;
     use crate::message::tests::{id, make_message};
+
+    #[test]
+    fn a_turn_given_up_is_found_while_its_end_is_the_last_thing() {
+        let (agent, other) = (ActorId::Agent(crate::agent::AgentId::new()), ActorId::Agent(crate::agent::AgentId::new()));
+        let turn = TurnId::new();
+        let mut history = MessageHistory::default();
+        history.push(make_message(id(1)), None);
+        assert_eq!(history.turn_given_up_last(agent), None, "no turn ended");
+        history.end_turn(HistoryEntry::TurnGivenUp { turn_id: turn, actor: agent, reason: GivenUpReason::Stopped, at: Utc::now() });
+        assert_eq!(history.turn_given_up_last(agent), Some((turn, GivenUpReason::Stopped)));
+        assert_eq!(history.turn_given_up_last(other), None, "another agent's");
+        history.push(make_message(id(2)), None);
+        assert_eq!(history.turn_given_up_last(agent), None, "something followed it");
+    }
 
     #[test]
     fn its_items_are_the_messages_as_they_stand_and_how_turns_ended() {
