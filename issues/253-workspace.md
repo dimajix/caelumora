@@ -26,11 +26,14 @@ the files it was only meant to run on.
 - A **workspace** belongs to a user, is attached to sessions, and is one tree of files with one
   classification (169's fixed container) and the ownership of every stored kind: an owner and
   contributors, a trash, a name unique per user.
-- Its files lie in a directory Caelumora owns, so that everything that works on them - uploads and
-  downloads, an executor such as Open Terminal, tools of Caelumora's own later - works on the same
-  files. It is not bound to any one of them.
-- People upload, download, list and delete files in the web UI; a channel uses a workspace only
-  where its classification flows both ways; agents learn which workspaces they have.
+- It lies in a *storage*, a named place configured once, served by one `TerminalProvider` that
+  makes its place and hands out its `Terminal`: the one handle through which its files are read
+  and written and, where the terminal has a `Shell`, commands run - a local directory, an Open
+  Terminal instance, a container per workspace. Everything that works on a workspace holds that
+  handle; the tools of agents are generic over it (`terminal_tool`).
+- A session has at most one workspace, shared by all its channels.
+- People upload, download, list and delete files in the web UI; a channel uses the workspace only
+  where its classification flows both ways; agents learn which workspace they have.
 
 ## Considerations
 
@@ -40,24 +43,27 @@ REST API offer, how the web UI shows it, and the steps - is in issue 251's plan,
 its plan is kept in one place so that the two are read together. In short:
 
 - **One kind, built like every kind:** `Workspace` in `caelumora-model`, with `Scoped` in its
-  owner's `UserScope`; `Session::workspaces` lists what is attached; nothing in a template.
+  owner's `UserScope` and the name of its storage; `Session::workspace` names the one attached;
+  nothing in a template.
 - **Two questions apart:** who may - the five actions of the kind, contributors *use* as they write
   into a session; what may flow - the workspace is one container classified W, a person cleared for
   W as for a channel, a channel L using it only where W flows into L and L into W, asked as the
   flow questions the policy has.
 - **One owner in the runtime:** a `WorkspaceManager` held by the `RuntimeManager`, the one writer
-  of the documents and the only code that touches the directory; the views reach it
-  (`WorkspaceView`) for people and agents alike; attaching is the session's.
-- **Not in it:** the workspace's own tools (W2), versions and a state to go back to (W4), a
-  container started per workspace (251, A2), artifacts (208).
+  of the documents and the only code that holds the providers - one per storage; the views reach
+  it (`WorkspaceView`, with `terminal()` after the check) for people and agents alike; attaching
+  is the session's. A storage's `destination` bounds the classification a workspace in it may
+  have.
+- **Not in it:** versions and a state to go back to (W4), several workspaces per session,
+  artifacts (208). The workspace's own file tools (W2) are a step of 251's plan.
 
 ## Done when
 
 - A user creates a workspace, shares it with contributors, attaches it to a session, uploads and
   downloads files in the web UI, and deletes, restores and purges it; the security suite covers
   every act.
-- A session's agents are told which workspaces they have and may use in their channel, and an
-  executor runs on the same files a person uploaded.
+- A session's agents are told which workspace they have and whether they may use it in their
+  channel, and a toolbox runs on the same files a person uploaded.
 - STORAGE.md, SECURITY.md, CONFIDENTIALITY.md, CHANNELS.md, CONFIGURATION.md, REST-SERVER.md and
   WEB-UI.md describe it; ARCHITECTURE.md names it in the domain.
 
@@ -66,3 +72,7 @@ its plan is kept in one place so that the two are read together. In short:
 - **2026-10-08** — Opened from the plan of issue [251](251-open-terminal.md), where the workspace
   was decided as a thing of Caelumora's own - a user's, attached to sessions, not bound to Open
   Terminal - and planned with its executor. It is PLAN.md's W1 and W3.
+- **2026-10-08** — Reshaped with 251's plan: three layers (storage, access, toolbox), at most one
+  workspace per session.
+- **2026-10-08** — Reshaped again with 251's plan: one `TerminalProvider` per storage, the
+  `Terminal` as the one handle for files and commands, the file tools a step of `terminal_tool`.

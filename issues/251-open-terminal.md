@@ -250,56 +250,114 @@ Taken on 2026-10-08 by the maintainer, answering the questions above:
    [253](253-workspace.md).
 5. **Not bound to Open Terminal:** a workspace is a directory Caelumora owns. Open Terminal is the
    first way into it; tools of Caelumora's own may be a second, in an issue of their own (W2). So
-   the files lie where Caelumora can reach them, and a container is given them - mounted, in this
-   plan; started by Caelumora for one workspace, in the step after it (plan, part A).
+   it is reached in three layers (plan, part A): a *storage*, where the files lie; an *access*,
+   how Caelumora reads and writes them - `local`, or an Open Terminal's file API; and a *toolbox*,
+   what agents do with it - Open Terminal's shell now, tools of our own later. Not every
+   implementation of one layer serves every one of another, and the configuration says which do.
+6. **One workspace per session**, shared by all its channels, at most. Several per session is an
+   extension the model allows and nothing needs now.
+7. **A terminal is a configured service**, referred to by name, so that its endpoint and key stand
+   in one place - superseded by 8.
+8. **One trait pair per storage** (2026-10-08, later): `TerminalProvider` makes and removes a
+   workspace's place and hands out its `Terminal`, the one handle for files and - as a capability,
+   `Shell` - commands; `terminal_tool` is one generic toolbox over it, knowing no provider. The
+   access layer and the service that owned the instances fold into this: the same handle for the
+   same workspace is structural. `local` is a provider too, with a shell on the host as an opt-in
+   stand-in for tests.
+9. **The workspace's own file tools are a later step of `terminal_tool`**, not an issue of their
+   own (PLAN.md's W2).
 
 ## Plan
 
 The plan has two subjects with one owner each: the workspace (issue [253](253-workspace.md); parts
-B, E, F and G below) and the executor over it (this issue; parts C and D). They are planned together
-because the second cannot be built without the first, and implemented in the steps of part H, each
-reviewable on its own. Names of types and functions are proposals for the implementation to keep
-or to better; what is fixed is where a responsibility lies.
+B, E, F and G below) and the terminal it is reached through - Open Terminal being its first remote
+implementation (this issue; parts A, C and D). They are planned together because the second cannot
+be built without the first, and implemented in the steps of part H, each reviewable on its own.
+Names of types and functions are proposals for the implementation to keep or to better; what is
+fixed is where a responsibility lies.
 
-### A. Where Open Terminal is integrated
+### A. A workspace is reached through its terminal
 
-Caelumora owns the files. A workspace is a directory `<root>/<workspace id>/` under the configured
-`workspaces.root`, on Caelumora's host or in a volume it has. Everything that works on a workspace
-works on that directory: Caelumora itself - uploads and downloads now, tools of its own later - and
-an Open Terminal container that has it mounted. Open Terminal is reached as it is today, over its
-REST API, with one difference: every command is given the workspace's directory as its `cwd`.
+Every workspace lies in a **storage**: a named place, configured once (`[workspaces.storage.
+<name>]`), of which the workspace names only the name - no path is in a document or at the REST
+API. Each storage is served by exactly one **`TerminalProvider`**, which makes and removes the
+place of a workspace in it and hands out the **`Terminal`** of a workspace: the one handle through
+which its files are read and written and, if the terminal has one, its **`Shell`** runs commands.
+Whatever works on a workspace - the panel, uploads and downloads, the tools of agents - holds that
+handle; nothing else reaches the files.
 
-How the container gets the directory decides how far the isolation goes:
+```rust
+#[async_trait]
+pub(crate) trait TerminalProvider: Send + Sync + Debug {
+    async fn create(&self, id: WorkspaceId) -> TerminalResult<()>;              // the workspace's place: a directory, a volume
+    async fn remove(&self, id: WorkspaceId) -> TerminalResult<()>;              // on purge, with everything in it
+    async fn terminal_for(&self, id: WorkspaceId) -> TerminalResult<Arc<dyn Terminal>>; // the same handle for the same workspace
+    fn destination(&self) -> Option<&Classification>;                           // what may be put into this storage (B2)
+}
 
-- **A1. A shared container, started outside Caelumora** - this plan. `docker compose` starts one
-  Open Terminal next to Caelumora and mounts `workspaces.root` at a path the component is told
-  (`mount`); the component maps `<root>/<id>` to `<mount>/<id>`. Caelumora starts and stops
-  nothing. The container sees every workspace under the root, whatever its classification, and
-  nothing in it keeps a command in one workspace from reading another: it is no boundary. That
-  fits the plan's target - one server, a trusted team - and only where every workspace the
-  container can see may be seen by everyone who can run a command in it; in practice, one
-  classification for the root a container mounts. The door (part D) keeps a container classified
-  `internal` out of a `confidential` channel, but not a `confidential` workspace out of the
-  `internal` container's mount. With several classifications, one container per classification is
-  needed, each mounting a root of its own; `workspaces.root` is one directory in this plan, and a
-  root per classification is the extension if that is wanted before A2.
-- **A2. A container per workspace, started by Caelumora** - the step after, an issue of its own.
-  Caelumora talks to the Docker daemon (crate `bollard`), starts an Open Terminal container for a
-  workspace when it is first used, mounting that directory alone, with an API key generated for
-  it, stops it when idle and removes it when the workspace is purged. Real isolation between
-  workspaces, and the only way the workspaces one component serves can differ in classification.
-  Its costs: access to the Docker socket is root on the host, so Caelumora's process gains that;
-  the lifecycle - pull, start, health, idle stop, removal, what a restart of Caelumora does - is to
-  be operated; the endpoint and the key are dynamic.
+#[async_trait]
+pub(crate) trait Terminal: Send + Sync + Debug {
+    async fn list(&self, dir: &WorkspacePath) -> TerminalResult<Vec<FileEntry>>;  // name, is_dir, size, modified
+    async fn stat(&self, path: &WorkspacePath) -> TerminalResult<FileEntry>;
+    async fn read(&self, path: &WorkspacePath) -> TerminalResult<(u64, ByteStream)>;
+    async fn write(&self, path: &WorkspacePath, content: ByteStream, limit: u64) -> TerminalResult<()>;
+    async fn delete(&self, path: &WorkspacePath) -> TerminalResult<()>;          // a file, or an empty directory
+    async fn mkdir(&self, path: &WorkspacePath) -> TerminalResult<()>;
+    async fn move_entry(&self, from: &WorkspacePath, to: &WorkspacePath) -> TerminalResult<()>;
+    fn shell(&self) -> Option<Arc<dyn Shell>>;                                  // the capability, or not
+}
 
-The component is cut so that A2 changes only where it finds the terminal of a workspace (C6): A1 is
-a terminal configured once, A2 one found - or started - per workspace. Nothing else in the
-component, nothing in the workspace and nothing in the UI knows the difference.
+#[async_trait]
+pub(crate) trait Shell: Send + Sync + Debug {
+    async fn run(&self, scope: &str, command: &str, wait: Duration) -> TerminalResult<CommandState>;
+    async fn output(&self, scope: &str, id: &str, offset: u64, wait: Duration) -> TerminalResult<CommandState>;
+    async fn kill(&self, scope: &str, id: &str) -> TerminalResult<CommandState>;
+}
+```
+
+A `CommandState` is `{ id, status: Completed(exit_code) | Running | Killed | Failed, output: String,
+next_offset, truncated }`. A command runs in the workspace's directory and is seen only under the
+`scope` it was started with - the tool passes the channel's id, so that a command started in one
+channel is not seen from another. A `WorkspacePath` is a workspace's id and a path inside it, made
+only by the `WorkspaceManager` (B3): relative, normalised, UTF-8; an implementation prepends what
+it knows and never sees `..`.
+
+**The providers**, chosen per storage by `provider`:
+
+- **`local`** - a directory per workspace under `root`, read and written with `std::fs`, streaming;
+  `create` is `mkdir`, `remove` is `remove_dir_all`. A symbolic link is followed only if its
+  target stays inside (`canonicalize` and a prefix check). Its shell is off unless `shell = true`:
+  then commands run on Caelumora's host, as its user, in the workspace's directory
+  (`tokio::process::Command`, `kill_on_drop`, a process group of their own, output bounded) - a
+  shell on the host is everything the server process may do, so it is opt-in, warned about in
+  CONFIGURATION.md, and meant for development and as the stand-in `cargo test` runs the whole chain
+  against without a container.
+- **`open_terminal_shared`** - one Open Terminal instance, started outside Caelumora, that has the
+  storage mounted at `mount`; the terminal of a workspace is that instance with the path
+  `<mount>/<id>`. Files through its `/files/*` API, the shell through `/execute`. No boundary
+  between the workspaces of the storage: a command in one can read every other under the mount.
+  Fit for one server and a trusted team, where every workspace of the storage may be seen by
+  everyone who can run a command in it - one classification per storage, and a storage per
+  classification where there are several.
+- **`open_terminal_docker`** - a volume and a container per workspace, started by Caelumora over the
+  Docker daemon (crate `bollard`): `create` makes the volume, `terminal_for` starts the container on
+  first use - image pinned, the volume at `/workspace`, labelled with the workspace's id, with an
+  API key generated for it and kept in memory - stops it after `idle_stop_secs`, and `remove` takes
+  container and volume away. Real isolation between workspaces. Its costs: the Docker socket is root
+  on the host, so Caelumora's process gains that (a launcher service with that one right is the
+  later answer); the first command of a session waits for a start; after a restart of Caelumora the
+  keys are gone, so containers still running - found by their label - are replaced, and orphans are
+  removed at start.
+
+Where a workspace lies decides what its terminal can do, and the tools are generic over it (C):
+a storage whose terminal has no shell gives agents files alone. The provider's own configuration
+is all `AppConfig::check` checks; there is no table of what fits what.
 
 Weighed and not taken: Open Terminal's multi-user mode (`X-User-Id`) separates homes, not
 workspaces, and is no boundary by its own word; the "Terminals" orchestrator needs an enterprise
 license; a container per *agent* separates the wrong thing - a workspace is shared by the agents
-and the people of a session.
+and the people of a session; two traits for files and for the instance, with a manager between
+them to make both use the same container - the one handle makes that structural instead.
 
 ### B. The workspace (issue 253)
 
@@ -318,6 +376,7 @@ pub struct Workspace {
     pub id: WorkspaceId,
     #[serde(flatten)]
     pub name: ScopedName,                  // in its owner's UserScope: unique per user
+    pub storage: String,                   // the name of its storage (part A); checked against the configuration
     pub description: Option<Description>,  // what it holds, as its owner describes it
     pub classification: Classification,    // one for the whole tree (issue 169)
     pub security_attributes: SecurityAttributes, // owner: the user; contributors: who may use it
@@ -334,13 +393,20 @@ pub enum WorkspaceUpdateEvent {
 }
 ```
 
-What it does *not* hold: where its files are - derived, the root is configuration and the directory
-is the id; no path is stored or shown, as no path goes into a message - which sessions it is
-attached to, which is the session's business, and its files: the directory is the record.
+What it does *not* hold: where its files are - the storage is named, the place is the id; no path
+is stored or shown, as no path goes into a message - which session it is attached to, which is the
+session's business, and its files: the place is the record. The storage is fixed when the
+workspace is made; moving one to another storage is copying, not in this plan.
 
-`Session` gains `workspaces: Vec<WorkspaceId>` (`#[serde(default)]`, as `channels`) and
-`SessionUpdateEvent::WorkspacesChanged(Vec<WorkspaceId>)`. `SessionTemplate` gains nothing: a
-template is reusable, a workspace is someone's, and attaching is an act on the session.
+**One workspace per session, shared by its channels.** `Session` gains `workspace:
+Option<WorkspaceId>` (`#[serde(default)]`) and `SessionUpdateEvent::WorkspaceChanged(Option<
+WorkspaceId>)`. A session has at most one: its agents need no parameter to name it, the model is
+told of *the* workspace, and the panel shows one. Which channels may use it is decided per channel
+by the flow rule (B2) - a session's channels of several classifications share one workspace only
+where it flows both ways. Several per session is an extension the model allows (a list instead of
+the option) and nothing here needs. `SessionTemplate` gains nothing: a template is reusable, a
+workspace is someone's, and attaching is an act on the session.
+
 `GlobalEvent` gains `WorkspaceCreated(WorkspaceId)`, `WorkspaceUpdated(WorkspaceId,
 WorkspaceUpdateEvent)`, `WorkspaceDeleted(WorkspaceId)` and `WorkspaceRestored(WorkspaceId)`;
 `EventBus::publish` routes them to `All` - a topic of their own comes when something subscribes to
@@ -358,9 +424,9 @@ Two questions, kept apart as everywhere (SECURITY.md):
 (with oneself as owner), `GetWorkspace` (the owner and the contributors), `UpdateWorkspace` and
 `DeleteWorkspace` (the owner), `ListWorkspaces` (filtered by `Get`), and the trash (`ReadDeleted`,
 `Restore`, `Purge` with `EntityKind::Workspace`). *Using* a workspace - reading and writing its
-files, attaching it to a session - is what contributors may, as writing into a session is: it asks
-`GetWorkspace`. Changing the document - name, description, contributors, classification - is
-`UpdateWorkspace`, the owner's.
+files, running commands in it, attaching it to a session - is what contributors may, as writing
+into a session is: it asks `GetWorkspace`. Changing the document - name, description, contributors,
+classification - is `UpdateWorkspace`, the owner's.
 
 **What may flow** - the workspace is one container classified W, and its files carry no label of
 their own:
@@ -378,57 +444,65 @@ their own:
   right. It is asked per call by the operation (B3), and the result of a call is classified W
   (`ToolOutput::classified`), so that the `GuardedToolExecutor` withholds it where it does not
   flow, as for any tool.
+- *The storage has a ceiling.* A storage's terminal is a place things are sent to - a container
+  with a network, a host with a shell - and its `destination` says what may be put into it: W must
+  flow into it, asked as `Publish` is, when a workspace is created in the storage and when it is
+  raised. By transitivity, what an agent sends through a channel L into a workspace W in that
+  storage flows into its destination too, so no question is asked per call for it. The defaults:
+  `public` for a provider with a remote side or a shell - the operator says what the place is
+  cleared for, as for an external agent that names no roles - and none for `local` without a shell,
+  where nothing leaves the process.
 - *Changing the classification* is the owner's act (`UpdateWorkspace`, then `Classify(new)`):
-  lowering releases the whole tree, raising re-asks the clearance of every contributor. Nothing is
-  fitted; there are no labels inside. Who did it is the audit log's (140).
+  lowering releases the whole tree, raising re-asks the clearance of every contributor and the
+  storage's ceiling. Nothing is fitted; there are no labels inside. Who did it is the audit log's
+  (140).
 
-These are existing questions with a workspace in the place of a channel. That `Publish`,
-`JoinChannel` and `may_see_channel` name a channel where they mean a place is worth a rename once
-180 and 169 settle what a place is; it is not done here. New `ActionType` variants: the five of the
-kind, nothing else.
+These are existing questions with a workspace, or a storage, in the place of a channel. That
+`Publish`, `JoinChannel` and `may_see_channel` name a channel where they mean a place is worth a
+rename once 180 and 169 settle what a place is; it is not done here. New `ActionType` variants: the
+five of the kind, nothing else.
 
 #### B3. The runtime: `WorkspaceManager` (`caelumora-runtime/src/workspace.rs`)
 
-One owner of "a workspace and its directory", held by the `RuntimeManager` - made with the entity
-store, the event bus, the security manager and the `workspaces` configuration - the one writer of
-workspace documents (under a lock per id: store first, then announce) and the only code that
-touches the directory:
+One owner of "a workspace and its place", held by the `RuntimeManager` - made with the entity
+store, the event bus, the security manager and the `workspaces` configuration, from which it builds
+one `TerminalProvider` per storage - the one writer of workspace documents (under a lock per id:
+store first, then announce) and the only code that holds the providers:
 
-- `create(ctx, name, description, classification) -> Workspace`: `Classify(new)`, the store (which
-  asks `CreateWorkspace`), `mkdir`; a directory that cannot be made is a creation that fails, and
-  the document is purged again.
+- `create(ctx, name, storage, description, classification) -> Workspace`: the storage must be
+  configured and its ceiling admit W; `Classify(new)`; the store (which asks `CreateWorkspace`);
+  `provider.create(id)` - a place that cannot be made is a creation that fails, and the document is
+  purged again.
 - `rename`, `describe`, `set_classification` (`UpdateWorkspace`, `Classify`; raising re-asks
-  `JoinChannel` per contributor), `set_contributors` (`UpdateWorkspace`, `JoinChannel` per
-  newcomer).
-- `delete` (marks; the directory stays), `restore`, `purge` (removes the directory, then the
-  document; a directory that cannot be removed leaves the document, so that the next purge tries
-  again), `get`, `list`, `deleted`.
-- Files, each asking `GetWorkspace` and the clearance first: `list_files(ctx, id, path) ->
-  Vec<FileEntry { name, is_dir, size, modified }>`, `read_file(ctx, id, path) -> (size, stream)`,
-  `write_file(ctx, id, path, stream)` (bounded by `max_file_bytes`, written under a temporary name
-  and renamed), `delete_file`, `mkdir`.
-- `pub(crate) fn require_usable(ctx, id, place: Option<&Place>)`: `GetWorkspace`, then for a place
-  the two flow questions of B2, for a person the clearance - the one check every use of a workspace
-  makes, the executor's and W2's tools' alike, through `Enforcement::require`, before anything
-  else.
-- `pub(crate) fn directory(id) -> PathBuf` for what runs on the directory, after `require_usable`.
+  `JoinChannel` per contributor and the storage's ceiling), `set_contributors` (`UpdateWorkspace`,
+  `JoinChannel` per newcomer).
+- `delete` (marks; the files stay), `restore`, `purge` (`provider.remove(id)`, then the document; a
+  place that cannot be removed leaves the document, so that the next purge tries again), `get`,
+  `list`, `deleted`.
+- `pub(crate) async fn terminal(ctx, id, place: Option<&Place>) -> Result<Arc<dyn Terminal>>`: the
+  one check every use of a workspace makes - `GetWorkspace`, then for a place the two flow
+  questions of B2, for a person the clearance - through `Enforcement::require`, before anything
+  else; then `provider.terminal_for(id)`. The panel's file operations and the agents' tools both go
+  through it, each with the viewer's context.
+- Files for the REST routes, over `terminal(…)`, each path made a `WorkspacePath` here - relative,
+  `Path::components` with `Normal` components only, `..`, a root or a prefix refused, UTF-8 - and
+  bounded by `max_file_bytes`: `list_files`, `read_file`, `write_file`, `delete_file`, `mkdir`.
+  What a command creates under a name that is not UTF-8 is listed lossily and cannot be opened. A
+  path that does not fit is `WorkspaceError::InvalidPath`, which names the path the user wrote,
+  never a root.
 
-Paths: every path is relative to the workspace and normalised - `Path::components` with `Normal`
-components only; `..`, a root or a prefix is refused - and opened with the directory as the base;
-a symbolic link is followed only if its target stays inside (`canonicalize` and a prefix check). A
-name is a UTF-8 `Normal` component; what a command creates under another name is listed lossily
-and cannot be opened by the API. A path that does not fit is `WorkspaceError::InvalidPath`, which
-names the path the user wrote, never the root.
+A workspace whose storage is no longer configured is kept, listed with "its storage is not
+configured", and refused by every operation on its files.
 
 `scoped.rs`: workspaces lie in a `UserScope`, so a user's deletion takes them along (`lying_in`
 with `Workspace`); sessions and channels hold none.
 
-Attaching is the session's: `SessionLoop::attach_workspace(ctx, id)` and `detach_workspace` ask
-`UpdateSession` first, then `GetWorkspace` - the one who attaches must be able to use it - and
-change the session through its controller (`SessionUpdateEvent::WorkspacesChanged`). No flow
-question is asked at attaching: which channels may use it is decided per channel and turn (B2). A
-workspace deleted while attached stays in the list and is left out wherever the list is read, with
-a warning, as a participant whose record is gone.
+Attaching is the session's: `SessionLoop::set_workspace(ctx, Option<WorkspaceId>)` asks
+`UpdateSession` first, then `GetWorkspace` for one attached - the one who attaches must be able to
+use it - and changes the session through its controller (`SessionUpdateEvent::WorkspaceChanged`).
+No flow question is asked at attaching: which channels may use it is decided per channel and turn
+(B2). A workspace deleted while attached stays named and is read as absent, with a warning, as a
+participant whose record is gone.
 
 #### B4. The views
 
@@ -436,21 +510,22 @@ Reading goes through the views, for people and agents alike (SECURITY.md, *Views
 
 - `Views::workspaces() -> Vec<WorkspaceView>` (the viewer's: `ListWorkspaces` filtered by `Get`),
   `Views::workspace(id)`, `Views::deleted_workspaces()`.
-- `SessionView::workspaces() -> Vec<WorkspaceView>`: the attached ones the viewer may read, absent
-  ones left out.
-- `WorkspaceView`: `id`, `name`, `description`, `classification`, `owner`, `may_change`
-  (`may_change_workspace`), `may_use_here() -> bool` - for a viewer at a place, an agent in its
-  channel, the two flow questions; for a user, the clearance - `require_usable() -> Result<(),
-  WorkspaceError>` (the manager's check, as `MemberView::context()` asks `ReadAgentContext`),
-  `files(path)`, `read(path)`, and `snapshot() -> WorkspaceSnapshot { id, name, description,
-  classification, owner, can_change, can_use }`.
+- `SessionView::workspace() -> Option<WorkspaceView>`: the attached one if the viewer may read it.
+- `WorkspaceView`: `id`, `name`, `storage`, `description`, `classification`, `owner`,
+  `has_shell` (what the storage's terminals can do, asked of the provider without starting
+  anything), `may_change` (`may_change_workspace`), `may_use_here() -> bool` - for a viewer at a
+  place, an agent in its channel, the two flow questions; for a user, the clearance -
+  `terminal() -> Result<Arc<dyn Terminal>, WorkspaceError>` (the manager's `terminal(…)` with the
+  viewer's context: a view node that hands out an operation after its check, as
+  `MemberView::context()` asks `ReadAgentContext`), and `snapshot() -> WorkspaceSnapshot { id,
+  name, storage, description, classification, owner, has_shell, can_change, can_use }`.
 - `Views` is given the `WorkspaceManager` - it holds `entities`, `states`, `components` and
-  `running` today - and `WorkspaceView` reads through it with the viewer's context; nothing of the
-  directory is reachable past the view. Writes do not go through a view: a route calls the manager,
-  which checks.
+  `running` today - and `WorkspaceView` reads through it with the viewer's context; nothing of a
+  storage is reachable past the view.
 
-The `Turn` needs nothing new: a tool reaches the session's workspaces by
-`turn.session()?.workspaces()`, as `channel_history` reaches the channels.
+The `Turn` needs nothing new: a tool reaches the session's workspace by
+`turn.session()?.workspace()`, as `channel_history` reaches the channels, and its terminal by
+`workspace.terminal()`. No service is added to the `ComponentContext`.
 
 #### B5. REST (`caelumora-rest-server`)
 
@@ -460,25 +535,28 @@ The `Turn` needs nothing new: a tool reaches the session's workspaces by
 | Route | Does | Asks |
 |---|---|---|
 | `GET /workspaces` | the user's workspaces, own and contributed, each with `can_change` and `can_use` | `ListWorkspaces`, `GetWorkspace` |
-| `POST /workspaces` `{name, description?, classification?}` | creates; `classification` defaults to the channel default | `CreateWorkspace`, `Classify` |
+| `GET /workspaces/storages` | the configured storages by name, each with whether its terminals have a shell, for the picker | - |
+| `POST /workspaces` `{name, storage, description?, classification?}` | creates; `classification` defaults to the channel default | `CreateWorkspace`, `Classify`, the storage's ceiling |
 | `GET /workspaces/{id}` | the snapshot | `GetWorkspace` |
 | `PATCH /workspaces/{id}` `{name?, description?}` | renames, describes | `UpdateWorkspace` |
-| `PUT /workspaces/{id}/classification` | reclassifies | `UpdateWorkspace`, `Classify`, `JoinChannel` per contributor |
+| `PUT /workspaces/{id}/classification` | reclassifies | `UpdateWorkspace`, `Classify`, `JoinChannel` per contributor, the ceiling |
 | `PUT /workspaces/{id}/contributors` `[user ids]` | sets who may use it | `UpdateWorkspace`, `JoinChannel` per newcomer |
 | `DELETE /workspaces/{id}`, `POST …/restore`, `POST …/purge` | the trash, as for agents | `DeleteWorkspace`, `ReadDeleted`, `Restore`, `Purge` |
 | `GET /workspaces/{id}/files?path=` | lists a directory | `GetWorkspace`, the clearance |
 | `GET /workspaces/{id}/files/{*path}` | downloads one file, streamed, as `Content-Disposition: attachment`, its media type guessed from its name (`mime_guess`), never inline - 208's rule: an HTML file would run in the web UI's origin | the same |
 | `PUT /workspaces/{id}/files/{*path}` | uploads one file: the request body is the file, bounded by a `DefaultBodyLimit` from `max_file_bytes`; parent directories are made | the same |
 | `DELETE /workspaces/{id}/files/{*path}` | removes a file or an empty directory | the same |
-| `GET /sessions/{id}/workspaces` | the attached ones as the viewer sees them | `GetSession`, `GetWorkspace` each |
-| `POST /sessions/{id}/workspaces` `{workspace_id}`, `DELETE …/workspaces/{wid}` | attaches, detaches | `UpdateSession`, `GetWorkspace` |
+| `GET /sessions/{id}/workspace` | the attached one as the viewer sees it, or `204` | `GetSession`, `GetWorkspace` |
+| `PUT /sessions/{id}/workspace` `{workspace_id}`, `DELETE /sessions/{id}/workspace` | attaches, detaches | `UpdateSession`, `GetWorkspace` |
 
-No multipart: one file per request is what the panel needs, and the body is the file. These are the
-first routes that serve bytes - `Body::from_stream` for a download, the request's data stream for an
-upload. Error codes: `workspace_not_found` (also for one not readable), `workspace_forbidden`,
-`invalid_path` (400), `file_too_large` (413), `not_cleared` (403).
+No multipart at Caelumora's API: one file per request is what the panel needs, and the body is the
+file. These are the first routes that serve bytes - `Body::from_stream` for a download, the
+request's data stream for an upload - and they stream through the terminal, so a file of
+`max_file_bytes` is never held in memory. Error codes: `workspace_not_found` (also for one not
+readable), `workspace_forbidden`, `invalid_path` (400), `file_too_large` (413), `not_cleared`
+(403), `storage_unavailable` (503: the terminal failed - the instance down, the directory gone).
 
-On the global stream: the four `Workspace…` events and `SessionUpdated(…, WorkspacesChanged)`.
+On the global stream: the four `Workspace…` events and `SessionUpdated(…, WorkspaceChanged)`.
 Nothing announces a changed file - commands change files outside Caelumora's knowledge - so the
 panel reloads when it is opened and after a tool call of the channel finished.
 
@@ -487,108 +565,114 @@ panel reloads when it is opened and after a tool call of the channel finished.
 No workspace in the seed: workspaces are someone's, and the seed is the system's. A personality in
 `examples/seed.yaml` gets the component (C); a template nothing.
 
-### C. The component `open_terminal_tool`
+### C. The component `terminal_tool`
+
+One generic toolbox over `Terminal`, knowing no provider: what its tools can do is what the
+session's workspace's terminal can do.
 
 #### C1. Configuration
 
 ```json
-{ "id": "terminal", "kind": "open_terminal_tool", "params": {
-    "terminal": {
-      "endpoint": { "url": "http://open-terminal:8000", "auth": { "type": "bearer", "secret": "OPEN_TERMINAL_API_KEY" }, "timeout_secs": 10 },
-      "mount": "/workspaces"
-    },
+{ "id": "shell", "kind": "terminal_tool", "params": {
     "max_wait_secs": 60,
     "max_output_bytes": 65536,
     "requires_approval": true,
-    "destination": { "level": "internal" },
-    "description": "A shell in the session's workspace." } }
+    "description": "The session's workspace: a shell in it." } }
 ```
 
-- `terminal`: where the container is and where it has the workspace root (A1). `endpoint` is a
-  `RemoteEndpoint` as every remote component writes it; its timeout bounds every request, not a
-  command's run.
 - `max_wait_secs` (default 60, at most 300 - Open Terminal's own bound): how long one call follows
   a command before it hands it back as running.
 - `max_output_bytes` (default 64 KiB): what of the output a result may hold; the rest is cut from
   the front, and the result says so.
-- `requires_approval` (`true` by default, or `false`): for `run_command`. `command_output` and
-  `kill_command` concern only a command the agent started and was approved for, and never ask; so
-  there is no `"unless_read_only"` here - nothing else of this component reads - and the field is
-  a `bool`, a deliberate difference to `mcp_tool`.
-- `destination` (optional): the classification of the container itself, what may be sent to it,
-  for the door (D). Without it, the container is cleared for public only, as an external agent that
-  names no roles.
+- `requires_approval` (`true` by default, `false`, or `"unless_read_only"` once the file tools are
+  there, H9): for the tools that change something - `run_command` and, later, the writing file
+  tools. `command_output` and `kill_command` concern only a command the agent started and was
+  approved for, and never ask. The `Approval` enum of `mcp_tool` moves to a shared place when the
+  file tools come (H9), not before.
 - `description`: of the tool set (issue 194); a text is built in.
+- No `destination`: where the arguments go is the workspace's storage, bounded when the workspace
+  was made (B2), so the door (D) has nothing to judge for this set - its `destination` is `None`.
 
 Unknown fields are refused (`deny_unknown_fields`).
 
 #### C2. The tools
 
+The first version offers the shell; the file tools follow in a step of their own (H9):
+
 | Tool | Parameters | Approval | Does |
 |---|---|---|---|
-| `run_command` | `command` (string); `workspace` (string, optional: its name - needed when the session has several usable here); `wait_secs` (optional, at most `max_wait_secs`) | as configured | Runs a shell command in the workspace's directory and follows it for `wait_secs`; answers with the output so far and the exit code if it ended, else with the command's id |
+| `run_command` | `command` (string); `wait_secs` (optional, at most `max_wait_secs`) | as configured | Runs a shell command in the session's workspace and follows it for `wait_secs`; answers with the output so far and the exit code if it ended, else with the command's id |
 | `command_output` | `id`; `offset` (optional, from the last result); `wait_secs` (optional) | no | New output of a running command since `offset`, waiting up to `wait_secs` for it to end |
 | `kill_command` | `id` | no | Ends a command that still runs |
+| *later (H9)* `list_files`, `read_file`, `grep_files` | paths, a pattern, ranges | none under `"unless_read_only"` | Over `Terminal`, with what was read recorded as knowledge (`KnowledgeSource::Workspace`) |
+| *later (H9)* `write_file`, `replace_in_file`, `delete_file` | path, content or old and new text | as configured | Over `Terminal`; the matcher proposes the path |
 
-The result of each is a JSON object `{ id, status: "completed" | "running" | "killed" | "failed",
-exit_code?, output, next_offset, truncated, workspace }`, classified as the workspace; `output` is
+The result of a shell tool is a JSON object `{ id, status: "completed" | "running" | "killed" |
+"failed", exit_code?, output, next_offset, truncated }`, classified as the workspace; `output` is
 the command's text, stdout and stderr in the order they came. A command still running says so and
-what to call next. The tool set's description tells the model that commands run in a directory
-that persists across turns and calls, that every command starts in the workspace's directory - a
+what to call next. The tool set's description tells the model that commands run in the session's
+workspace, a directory that persists across turns and calls, that every command starts in it - a
 `cd` does not carry over - and that long commands are followed with `command_output`.
 
-Left out on purpose, as before: Open Terminal's file endpoints (the workspace's own tools are W2;
-the model has the shell), `/ports`, `/skills`, `/files/view`, the PTY, the notebooks.
+Every tool is offered whenever the component is; a call that the workspace's terminal cannot serve
+fails clearly - "the session has no workspace"; "the workspace's terminal has no shell" - and the
+prompt part (C7) tells the model beforehand what it has. Offering only what the terminal can do
+would need tool sets that depend on the session (`ToolProvider::tools` sees no turn); that is an
+extension of `ToolProvider` for when a second case needs it, not made here.
 
 #### C3. A call
 
 `run_command`:
 
 1. `turn.session()`; none - a turn without a channel, in tests - is a failed call.
-2. The workspace: `session.workspaces()`, of them those with `may_use_here()`; the one named, or
-   the only one, or a failed call that says what there is ("the session has no workspace that may
-   be used in this channel"; "name one of: docs, data").
-3. `workspace.require_usable()` - `GetWorkspace` and the two flow questions, as W2's tools will
-   ask them - before anything is sent.
-4. `POST /execute?wait={wait}&tail=…` with `{ command, cwd: "{mount}/{id}", env: { TERM: "dumb",
-   NO_COLOR: "1", CAELUMORA_WORKSPACE: "{mount}/{id}" } }`, the headers `Authorization: Bearer …`
-   (the secret resolved per call, never kept) and `X-Session-Id: {channel id}`. Open Terminal runs
-   the command in a PTY: `TERM=dumb` keeps colours and cursor movement out of the output, and
-   carriage returns are stripped.
-5. The answer's entries (`{type: stdout | stderr | output, data}`) are joined; `log_path`, an
-   absolute path inside the container, is dropped; what exceeds `max_output_bytes` is cut from the
-   front.
-6. A command that ended within `wait` is `completed` with its exit code; one still running is
-   `running` with its id and `next_offset`.
+2. `session.workspace()`: none is a failed call that says so.
+3. `workspace.terminal()` - `GetWorkspace` and the two flow questions, before anything is sent.
+4. `terminal.shell()`: none is a failed call that says so.
+5. `shell.run(scope: channel id, command, wait)`.
+6. The output cut to `max_output_bytes` from the front; the result as C2 says.
 
-`command_output(id, offset)`: `GET /execute/{id}/status?offset={offset}&wait={wait}` with the same
-headers - Open Terminal answers 404 for a process started under another `X-Session-Id`. The
-provider keeps no state between calls (as `mcp_tool` keeps none): every result carries
-`next_offset`, and the model hands it back. A process Open Terminal has forgotten - it drops a
-process five minutes after it ended - is `failed` with "no longer known; its output was given when
-it ended".
+`command_output(id, offset)`: `shell.output(scope, id, offset, wait)`. The provider keeps no state
+between calls (as `mcp_tool` keeps none): every result carries `next_offset`, and the model hands
+it back. A command the shell no longer knows is `failed` with "no longer known; its output was
+given when it ended".
 
-`kill_command(id)`: `DELETE /execute/{id}`, then `status?wait=2` for the exit code.
+`kill_command(id)`: `shell.kill(scope, id)`.
 
-Errors are `ToolError::ExecutionFailed` with the endpoint shown without credentials
-(`RemoteEndpoint::shown`, `redact_in`), a 4xx or 5xx body shortened. A container unreachable at
-call time is a failed call, not an unavailable set: the set was offered, and the next call may
-succeed.
+Errors of the terminal are `ToolError::ExecutionFailed` with what the `TerminalError` says - an
+endpoint shown without credentials (`RemoteEndpoint::shown`, `redact_in`), a body shortened,
+never a path of the host. A terminal unreachable at call time is a failed call, not an unavailable
+set: the set was offered, and the next call may succeed.
+
+**The Open Terminal shell** (`open_terminal/client.rs`, behind `Shell`): `POST /execute?wait=
+{wait}&tail=…` with `{ command, cwd: "<mount or /workspace>/<id>", env: { TERM: "dumb", NO_COLOR:
+"1", CAELUMORA_WORKSPACE: … } }`, the headers `Authorization: Bearer …` (the key resolved per call
+through the secret chain for `shared`, the generated one for `docker`) and `X-Session-Id: {scope}` -
+Open Terminal answers 404 for a process asked for under another one. It runs the command in a PTY:
+`TERM=dumb` keeps colours and cursor movement out, carriage returns are stripped. The entries
+(`{type: stdout | stderr | output, data}`) are joined; `log_path`, a path inside the container, is
+dropped. `output` is `GET /execute/{id}/status?offset=&wait=`; a process Open Terminal has
+forgotten - it drops one five minutes after it ended - is `Failed`. `kill` is `DELETE
+/execute/{id}`, then `status?wait=2` for the exit code. The files are `/files/list`, `/files/view`
+(the bytes), `/files/upload` (multipart), `/files/delete`, `/files/mkdir`, `/files/move`; `create`
+is `/files/mkdir`, `remove` is `/files/delete`.
+
+**The local shell** (`terminal/local.rs`): `bash -c` in the workspace's directory, a process group
+of its own, `kill_on_drop`, output read into a bounded buffer per command, commands kept by
+`(scope, id)` until five minutes after they ended, as Open Terminal keeps them.
 
 #### C4. Interruption
 
 A call dropped at an `await` (issue 161) drops its request; the command would run on. This tool
-kills it: a guard holding the client, the id and the headers sends `DELETE /execute/{id}` from its
-`Drop`, in a task of its own bounded by five seconds, which the drop does not await. It is the one
-thing a dropped tool does after its future is gone - a deliberate exception to "everything a tool
-starts is bound to its future", documented in TOOLS-AND-COMMANDS.md with why: a command left
-running keeps writing into the workspace after the turn that started it is gone. A `run_command`
-that handed its command back as `running` kills nothing: the model chose to let it run, and
-`kill_command` ends it.
+kills it: a guard holding the `Arc<dyn Shell>`, the scope and the id calls `kill` from its `Drop`,
+in a task of its own bounded by five seconds, which the drop does not await. It is the one thing a
+dropped tool does after its future is gone - a deliberate exception to "everything a tool starts is
+bound to its future", documented in TOOLS-AND-COMMANDS.md with why: a command left running keeps
+writing into the workspace after the turn that started it is gone. A `run_command` that handed its
+command back as `running` kills nothing: the model chose to let it run, and `kill_command` ends it.
 
 #### C5. Approval, description, matcher
 
-- `describe(name, params)`: what the approver reads - "Run in workspace 'docs':" and the command
+- `describe(name, params)`: what the approver reads - "Run in the workspace:" and the command
   verbatim on a line of its own, never shortened. `command_output` and `kill_command` are never put
   up.
 - `matcher`: the default, `ToolMatcher::exact`, in this plan; the shell matcher is issue 247, with
@@ -599,40 +683,42 @@ that handed its command back as `running` kills nothing: the model chose to let 
 
 #### C6. Module layout
 
-`caelumora-runtime/src/tool_impl/open_terminal/`, split as `a2a_agent/` is (issue 210):
-
-- `mod.rs`: the kind (`OPEN_TERMINAL_TOOL_KIND`), the configuration, `OpenTerminalProvider`
-  (`ToolProvider`), `register`, and the tests against an axum stand-in that answers `/execute` and
-  `/execute/{id}/status` as Open Terminal does.
-- `client.rs`: `Terminal { endpoint: RemoteEndpoint, mount: String, http: reqwest::Client,
-  secret_manager }` with `run(cwd, command, wait)`, `output(id, offset, wait)` and `kill(id)`, each
-  given the security context (for the secret) and the channel id (for the header); the kill guard.
-  This is the seam for A2: the provider asks `terminal_for(workspace)`, which answers the one
-  configured (A1) or the one found or started for the workspace (A2).
-- `wire.rs`: Open Terminal's request and answer shapes - `ExecRequest`, the answers of `/execute`
-  and `/status`, an output entry - `pub(super)`, with the version they were read from (0.14.0) in
-  the module doc.
-
-The errors: a `TerminalError` in `client.rs` (connect, status, timeout, unknown process), described
-through `describe_request_error`, mapped to `ToolError::ExecutionFailed` in `mod.rs`.
+- `caelumora-runtime/src/terminal/`: `mod.rs` with the three traits, `WorkspacePath`, `FileEntry`,
+  `CommandState`, `TerminalError` (in `user_message`) and the construction of a provider from its
+  configuration; `local.rs`; `open_terminal/mod.rs` (what `shared` and `docker` share: the handle
+  with the files and the shell over one instance), `open_terminal/shared.rs`,
+  `open_terminal/docker.rs` (`bollard`), `open_terminal/client.rs` (`reqwest`, the headers, the
+  key, errors through `describe_request_error`) and `open_terminal/wire.rs` (Open Terminal's
+  request and answer shapes, `pub(super)`, with the version they were read from, 0.14.0, in the
+  module doc - the API is 0.x).
+- `caelumora-runtime/src/workspace.rs`: the `WorkspaceManager` (B3).
+- `caelumora-runtime/src/tool_impl/terminal_tool.rs`: the component (C1-C5), with its tests
+  against the `local` provider with its shell on - no network, no container.
+- `caelumora-runtime/src/component_impl/workspace_prompt_provider.rs` (C7).
+- Tests of `open_terminal`: the client against an axum stand-in that answers `/execute`,
+  `/execute/{id}/status` and the `/files/*` used, as Open Terminal 0.14.0 does; `docker` by hand,
+  or under an environment flag where a daemon is there, never in plain `cargo test`.
 
 #### C7. What the model is told
 
 `workspace_prompt_provider` (`component_impl/`, a `PromptProvider`, built with the security manager
-and context as `notes` is): a part `[Your workspaces]` listing the session's workspaces usable in
-this channel, each by name, classification and description ("as its owner describes it"), or that
-none is attached - so that the model does not try. It is not part of the Open Terminal component:
-W2's tools need the same part, and a personality with both gets it once. It reads through the
-turn's views at the start of every turn, is public (names and descriptions are, as a briefing's),
-and goes to `Start` by default.
+and context as `notes` is): a part `[Your workspace]` naming the session's workspace by name,
+classification and description ("as its owner describes it"), whether it may be used in this
+channel, and what its terminal can do ("it has a shell"; "files only") - or that the session has
+none, so that the model does not try. It is not part of `terminal_tool`: it says what is there,
+whatever toolbox a personality has, and a personality with several gets it once. It reads through
+the turn's views at the start of every turn, is public (names and descriptions are, as a
+briefing's), and goes to `Start` by default.
 
 ### D. The door (issue 180)
 
-What a tool sends out is judged where tools are offered, once per turn, not per call:
+What a tool with a fixed remote side sends out is judged where tools are offered, once per turn,
+not per call:
 
 - `ToolSet` gains `destination: Option<Classification>` - where the arguments of its calls go;
-  `None`: they stay in the system. `ToolProvider` gains `fn destination(&self) ->
-  Option<Classification> { None }`, and `DefaultToolExecutor::tool_sets` copies it.
+  `None`: they stay in the system, or are bounded otherwise. `ToolProvider` gains `fn
+  destination(&self) -> Option<Classification> { None }`, and `DefaultToolExecutor::tool_sets`
+  copies it.
 - `GuardedToolExecutor::tool_sets` becomes `async fn tool_sets(&self, context: &SecurityContext,
   channel: &Classification)`: a set whose destination the channel does not flow into
   (`may_publish(ctx, agent, &L, &D)`, the one flow question) is offered as unavailable - "its
@@ -646,9 +732,9 @@ What a tool sends out is judged where tools are offered, once per turn, not per 
 - `mcp_tool` gains `destination`, default `public`, as an external personality that names no roles:
   the server's word is trusted only where configured. Existing configurations lose their MCP tools
   in every channel above public until they name one; the summary of the step says so.
-- `open_terminal_tool`'s `destination` is C1's. The workspace adds its two flow questions per call
-  (B2), which the door does not replace: the container's ceiling and the workspace's classification
-  are two things.
+- `terminal_tool` declares none: its remote side is the workspace's storage, whose ceiling bounds
+  the workspace when it is made (B2), and the workspace bounds the channel per call. Two rules
+  with one effect, each where its subject is.
 
 The check is in the guard, not in a provider. 180's question "per agent or per tool set" is
 answered: per set, by what the set declares. Whether sets are judged again when a channel is raised
@@ -659,78 +745,106 @@ channel is lowered.
 
 | Where | What |
 |---|---|
-| `caelumora-model`: `session.rs` | `Session::workspaces`, `SessionUpdateEvent::WorkspacesChanged` |
+| `caelumora-model`: `session.rs` | `Session::workspace`, `SessionUpdateEvent::WorkspaceChanged` |
 | `store.rs`, `store_impl/*` | `EntityKind::Workspace`, the store methods, the `Actions` const, the suite |
 | `security.rs` | five `ActionType` variants, `describe`, `OwnershipSecurityManager::check`, `AccessQuestions::may_change_workspace` |
 | `event.rs` | four `GlobalEvent` variants |
 | `tool.rs` | `ToolSet::destination`, `ToolPresentation::Shell` |
-| `config.rs` | the `workspaces` section |
+| `config.rs` | the section `workspaces` with its storages, each provider's fields, their checks |
+| `context.rs` | `KnowledgeSource::Workspace` (H9) |
 | `caelumora-runtime`: `runtime.rs` | holds the `WorkspaceManager`; `RuntimeManager::new` takes the section |
-| `session.rs` | `SessionLoop::attach_workspace`, `detach_workspace`; `purge_session` detaches nothing - the workspace is not the session's |
-| `controller/session.rs` | applies `WorkspacesChanged` |
+| `session.rs` | `SessionLoop::set_workspace`; `purge_session` detaches nothing - the workspace is not the session's |
+| `controller/session.rs` | applies `WorkspaceChanged` |
 | `scoped.rs` | the three loops take the workspaces of a `UserScope` along |
-| `view/mod.rs`, `view/session.rs`, new `view/workspace.rs` | `Views::workspaces`, `SessionView::workspaces`, `WorkspaceView`; `Views` holds the manager |
+| `view/mod.rs`, `view/session.rs`, new `view/workspace.rs` | `Views::workspaces`, `SessionView::workspace`, `WorkspaceView`; `Views` holds the manager |
 | `event.rs` | the new events' topics |
 | `tool.rs` | `GuardedToolExecutor::tool_sets` async, with the channel; `admit` and `check` refuse what was not offered |
-| `tool_impl/default_tool_executor.rs`, `tool_impl/mcp_tool.rs` | `destination` |
+| `tool_impl/default_tool_executor.rs`, `tool_impl/mcp_tool.rs` | `destination`; `Approval` moved out of `mcp_tool` (H9) |
 | `actor_impl/agent.rs` | `request_response` and `Actor::tool_sets` pass the channel's classification |
 | `error.rs` | `WorkspaceError` and `TerminalError` in `user_message` |
 | `caelumora-rest-server` | `routes/workspaces.rs`, `Subject::Workspace`, `models.rs`, the router, the body limit; `AppState` unchanged - the manager is reached through the runtime manager |
 | `caelumora-web-ui` | part G |
 
+Nothing is added to `ComponentContext`: a component reaches a terminal through the views.
+
 ### F. Configuration
 
-A section of `AppConfig` like the others (`deny_unknown_fields`, checked in `AppConfig::check`):
+One section of `AppConfig`, like the others (`deny_unknown_fields`, checked in `AppConfig::check`;
+every provider checks its own fields):
 
 ```toml
 [workspaces]
-root = "local/workspaces"   # where the directories are; made if missing
-max_file_bytes = 52428800   # the largest file the API takes: 50 MiB
+max_file_bytes = 52428800          # the largest file the API takes: 50 MiB
+
+[workspaces.storage.dev]           # a storage: its workspaces are made and reached by its provider
+provider = "local"
+root = "local/workspaces"
+shell = true                       # opt-in: commands run on Caelumora's host, as its user
+destination = { level = "internal" }   # what may be put here; none for local without a shell
+
+[workspaces.storage.sandbox]
+provider = "open_terminal_shared"
+endpoint = { url = "http://open-terminal:8000", auth = { type = "bearer", secret = "OPEN_TERMINAL_API_KEY" }, timeout_secs = 10 }
+mount = "/workspaces"              # where the instance has this storage
+destination = { level = "internal" }
+
+[workspaces.storage.isolated]
+provider = "open_terminal_docker"
+image = "ghcr.io/open-webui/open-terminal:0.14.0"   # pinned: the API is 0.x
+network = "caelumora"              # the compose network Caelumora reaches the containers in
+idle_stop_secs = 900
+destination = { level = "confidential" }
 ```
 
-Next to Caelumora, in an example `examples/docker-compose.yml`:
+The checks: a `local` storage has a `root`; a `shared` one an `endpoint` and a `mount`; a
+`docker` one an `image`; `destination` where a provider needs one and the operator gave none is
+`public`. No storage configured is fine: workspaces are then refused with "no storage is
+configured".
+
+For `shared`, an example `examples/docker-compose.yml`:
 
 ```yaml
 open-terminal:
-  image: ghcr.io/open-webui/open-terminal:0.14.0   # pinned: the API is 0.x
-  user: "${UID}:${GID}"                            # files it writes are Caelumora's to read and remove
+  image: ghcr.io/open-webui/open-terminal:0.14.0
   environment:
     OPEN_TERMINAL_API_KEY_FILE: /run/secrets/open_terminal_api_key
     OPEN_TERMINAL_FILE_BROWSER_ROOT: /workspaces
   volumes:
-    - ./local/workspaces:/workspaces
+    - workspaces:/workspaces       # a volume only the instance sees; Caelumora reaches the files through it
 ```
 
 The key is `OPEN_TERMINAL_API_KEY` in `local/secrets.json`, the file chain, and the container reads
-the same value. The container's network reaches what the agents are meant to reach - not
-Caelumora's own API, not the Docker socket: a compose network of its own, which Caelumora reaches
-and not the other way round.
+the same value. For `docker`, the daemon's socket is given to Caelumora's container or process, and
+the containers are started in `network`, which reaches what the agents are meant to reach - not
+Caelumora's own API, not the socket.
 
 ### G. The web UI
 
 - `App.tsx`'s layout component is called `Workspace` today; it is renamed (`Layout`) first, so
   that the word means one thing.
-- `types/index.ts`, `api/index.ts`: `Workspace`, `WorkspaceFile` and the requests;
-  `listWorkspaces`, `createWorkspace`, `updateWorkspace`, `setWorkspaceClassification`,
-  `setWorkspaceContributors`, `deleteWorkspace`, `restoreWorkspace`, `purgeWorkspace`,
-  `listWorkspaceFiles`, `uploadWorkspaceFile` (a `fetch` with the file as its body),
-  `workspaceFileUrl` (a plain link; the cookie goes with it), `deleteWorkspaceFile`,
-  `sessionWorkspaces`, `attachWorkspace`, `detachWorkspace`. `globalEvents.ts`: selectors for the
-  four events and for `WorkspacesChanged`.
+- `types/index.ts`, `api/index.ts`: `Workspace`, `WorkspaceFile`, `Storage` and the requests;
+  `listWorkspaces`, `listStorages`, `createWorkspace`, `updateWorkspace`,
+  `setWorkspaceClassification`, `setWorkspaceContributors`, `deleteWorkspace`,
+  `restoreWorkspace`, `purgeWorkspace`, `listWorkspaceFiles`, `uploadWorkspaceFile` (a `fetch`
+  with the file as its body), `workspaceFileUrl` (a plain link; the cookie goes with it),
+  `deleteWorkspaceFile`, `sessionWorkspace`, `setSessionWorkspace`, `clearSessionWorkspace`.
+  `globalEvents.ts`: selectors for the four events and for `WorkspaceChanged`.
 - **Workspaces** as a thing of their own, reached from the sidebar as the agents are: a list with
-  name, classification and owner; create (name, description, the classification picked as a
-  channel's is), rename, describe, contributors, reclassify, delete, and the trash.
-- **A session's workspaces**: in the session's header, the attached ones and a picker to attach one
-  of the user's, and to detach, where `can_change`.
+  name, storage, classification and owner; create (name, storage from the configured ones - with
+  whether it has a shell - description, the classification picked as a channel's is), rename,
+  describe, contributors, reclassify, delete, and the trash.
+- **The session's workspace**: in the session's header, the attached one, a picker to attach one of
+  the user's, and detaching, where `can_change`.
 - **The workspace panel**: a third `sideTab` of `ChatView` (`'channel' | 'notes' | 'workspace'`):
-  the session's workspaces as the viewer sees them, a directory listing with breadcrumbs, upload (a
+  the session's workspace as the viewer sees it, a directory listing with breadcrumbs, upload (a
   file input; drag and drop later), download (a link), delete. It reloads when opened and when a
-  tool call of the channel finished. A workspace not usable here is greyed, with its classification
-  as the reason.
+  tool call of the channel finished. A workspace not usable in this channel is shown greyed, with
+  its classification as the reason; a session without one says so and offers the picker where
+  `can_change`.
 - **The `shell` presentation** (`ToolCallView.tsx`, `PRESENTATIONS.shell`): the command as one line
-  of code with the workspace's name; the output as a terminal block - monospace, scrolling, cut as
-  the result says; the exit code; "running" with the id while the status says so. The approval card
-  shows the command the same way.
+  of code; the output as a terminal block - monospace, scrolling, cut as the result says; the exit
+  code; "running" with the id while the status says so. The approval card shows the command the
+  same way.
 - `docs/WEB-UI.md` describes the three.
 
 ### H. Steps
@@ -741,60 +855,81 @@ where it says so.
 1. **Issue 253 opened** from part B, with this plan (done with the plan); PLAN.md's W1 and W3 point
    to it.
 2. **The workspace in the model** (B1, B2's actions, E's model rows): the type, the traits, the
-   stores, the suite, the events, `Session::workspaces`. No behaviour yet; reviewable as a model
+   stores, the suite, the events, `Session::workspace`. No behaviour yet; reviewable as a model
    change.
-3. **The `WorkspaceManager` and the views** (B3, B4, F): the section, the manager with its directory
-   and file operations, attaching on the `SessionLoop`, `scoped.rs`, the views and snapshots.
-   Tests: the manager's path rules, one per refusal; the security suite - who may create, read,
-   change, delete, restore, purge, attach, read and write files, and that a stranger sees nothing.
+3. **The terminal traits, the `local` provider and the manager** (A's traits, `local` without its
+   shell, B3, B4, F for `local`): the section, `terminal/mod.rs` and `local.rs`, the
+   `WorkspaceManager` with its file operations, attaching on the `SessionLoop`, `scoped.rs`, the
+   views and snapshots. Tests: the path rules, one per refusal; the security suite - who may
+   create, read, change, delete, restore, purge, attach, read and write files, and that a stranger
+   sees nothing.
 4. **REST and the web UI for workspaces** (B5, G without the shell presentation): the routes and
    DTOs, then the list, the session header and the panel. Two commits: REST, then UI.
-5. **The component** (C): `tool_impl/open_terminal/` with its stand-in tests,
-   `workspace_prompt_provider`, `ToolPresentation::Shell` with its UI handler, the seed personality,
-   `examples/docker-compose.yml`, TOOLS-AND-COMMANDS.md, COMPONENTS.md, CONFIGURATION.md. The
-   security suite: a call asks `CallTool`, `GetWorkspace` and `Publish` both ways. A run against a
-   real container is made by hand, with the key from `local/secrets.json`; it is not in `cargo
-   test`.
-6. **The door** (D): `destination` on sets and providers, the guard, the refusal of what was not
-   offered, `mcp_tool.destination`, CONFIDENTIALITY.md and TOOLS-AND-COMMANDS.md, the suite. Changes
-   behaviour for MCP configurations that name no `destination`.
-7. **Issues opened** at the end: A2 (a container per workspace, started by Caelumora); W2 (the
-   workspace's own tools: reading through `WorkspaceView`, writing through the manager, what was
-   read recorded as knowledge - a `KnowledgeSource::Workspace`); W4 (versions: a snapshot around
-   every command and every write); 247 updated with this tool as its first user; 208 updated - an
-   artifact as a file in a workspace of the channel. Then 247.
+5. **The shell of `local` and `terminal_tool`** (A's `Shell`, C1-C7): the opt-in host shell, the
+   component with its shell tools and tests against it, `workspace_prompt_provider`,
+   `ToolPresentation::Shell` with its UI handler, the seed personality, TOOLS-AND-COMMANDS.md,
+   COMPONENTS.md, CONFIGURATION.md (with the warning). The security suite: a call asks `CallTool`,
+   `GetWorkspace` and `Publish` both ways. With this, the whole chain runs in `cargo test` without a
+   container.
+6. **`open_terminal_shared`** (A, C3's Open Terminal paragraph, C6's `open_terminal/`, F): the
+   client, the wire, the handle with files and shell, the provider, the stand-in and its tests, the
+   compose example. A run against a real instance is made by hand, with the key from
+   `local/secrets.json`.
+7. **`open_terminal_docker`** (A): `bollard`, the volume and the container per workspace, the
+   label, the key, idle stop, removal, orphans at start; tests under an environment flag;
+   CONFIGURATION.md on the socket and the network. Can be moved back without anything waiting for
+   it.
+8. **The door** (D): `destination` on sets and providers, the guard, the refusal of what was not
+   offered, `mcp_tool.destination`, CONFIDENTIALITY.md and TOOLS-AND-COMMANDS.md, the suite.
+   Independent of 5 to 7; changes behaviour for MCP configurations that name no `destination`.
+9. **The file tools of `terminal_tool`** (C2's later rows): `list_files`, `read_file`,
+   `grep_files`, `write_file`, `replace_in_file`, `delete_file` over `Terminal`;
+   `KnowledgeSource::Workspace` and what was read recorded as knowledge; `"unless_read_only"`,
+   with `Approval` moved out of `mcp_tool` first as a step without behaviour change; the matcher
+   proposing the path; the suite. What PLAN.md calls W2.
+10. **Issues opened** at the end: W4 (versions: a snapshot around every command and every write,
+    through the shell where the terminal has one); 247 updated with this tool as its first user;
+    208 updated - an artifact as a file in the session's workspace; tool sets that depend on the
+    session, if a second case wants them (C2). Then 247.
 
-Step 6 can come before 5; nothing in 5 depends on it. Steps 2 to 4 are the workspace alone, useful
-without Open Terminal: files people share with a session, for W2's tools to read later.
+Steps 2 to 4 are the workspace alone, useful without any shell: files people share with a session.
+Step 5 gives agents a shell wherever the operator trusts the host with one; 6 and 7 move it into a
+container.
 
 ### I. What to watch
 
-- **Paths.** Everything the API takes is relative and normalised; nothing of the root is ever in a
-  message, an error or a response. The manager's tests try `..`, an absolute path, a prefix, a
-  symbolic link out of the tree, a name with a NUL byte.
-- **Ownership of files on disk.** The container writes as its user, and Caelumora must read and
-  remove what it wrote. The compose example runs the container as Caelumora's uid; `entrypoint.sh`
-  tolerates it (`chown … || true`). A deployment that cannot do so needs the root group-writable
-  and a umask - a note in CONFIGURATION.md, not code.
-- **No boundary between workspaces in A1** (part A): a command in one workspace can read every
-  other under the mount. CONFIDENTIALITY.md says so next to the workspace's classification; A2 is
-  the answer.
-- **The container reaches the network.** A command can `curl` anything the container reaches,
-  Caelumora's API included, and what the model saw in the channel can leave through it. The door
-  (D) judges the channel against the container's `destination`; the network is the operator's (F).
-  180's "not only MCP" is this.
+- **The host shell** (`local` with `shell = true`) is Caelumora's own user running what a model
+  wrote; `requires_approval` and the rules of a place are all that stands between. Off by default,
+  warned about in CONFIGURATION.md, meant for development and tests.
+- **Paths.** Everything the API takes is relative and normalised by the manager before any
+  provider sees it; nothing of a root is ever in a message, an error or a response. The manager's
+  tests try `..`, an absolute path, a prefix, a symbolic link out of the tree (`local`), a name
+  with a NUL byte.
+- **Isolation is the provider's** (part A): none between the workspaces of a `shared` storage, a
+  container each with `docker`, Caelumora's own process with `local`. CONFIDENTIALITY.md says so
+  next to the workspace's classification.
+- **A terminal reaches the network.** A command can `curl` anything its instance reaches,
+  Caelumora's API included, and what the model saw in the channel can leave through it. The
+  storage's ceiling bounds what may be put there (B2); the network is the operator's (F). 180's
+  "not only MCP" is this.
 - **The kill on drop** runs after the tool's future is gone (C4): bounded, logged, never awaited;
   the only such thing, and documented.
-- **Output.** A PTY: `TERM=dumb`, carriage returns stripped, bounded by `max_output_bytes` from the
-  front, `truncated` said; binary output is read as lossy UTF-8.
+- **Output.** A PTY at Open Terminal: `TERM=dumb`, carriage returns stripped; everywhere bounded by
+  `max_output_bytes` from the front, `truncated` said; binary output is read as lossy UTF-8.
 - **Open Terminal forgets a process five minutes after it ended**, and its `wait` is at most 300 s:
-  `max_wait_secs` is bounded by that, and a forgotten process is a clear failure.
-- **The same `X-Session-Id` for every request about one command**, or Open Terminal answers 404. It
-  is the channel's id, so a command started in one channel is not seen from another.
-- **The API is 0.x**: `wire.rs` names the version; a changed answer is a failed call naming the
-  field, never a panic; the stand-in tests pin what is relied on.
-- **`env` is per command**; no secret of Caelumora's goes into it, and the API key goes into a
-  header, resolved per call.
+  `max_wait_secs` is bounded by that, the local shell keeps the same five minutes, and a forgotten
+  command is a clear failure.
+- **The same scope for every request about one command**, or Open Terminal answers 404. It is the
+  channel's id; file operations send none.
+- **The API is 0.x**, and the panel depends on it as much as the shell does: `wire.rs` names the
+  version; a changed answer is a failed call naming the field, never a panic; the stand-in tests
+  pin what is relied on.
+- **`docker`**: the socket is root on the host; a start takes seconds, so the first command of a
+  session waits and the tool's timeout allows for it; keys live in memory and a restart of
+  Caelumora replaces the containers; a crash leaves orphans, found by their label and removed at
+  start; the image is pinned.
+- **`env` is per command**; no secret of Caelumora's goes into it, and a key goes into a header,
+  resolved or generated per instance.
 - **The agent's context.** Which actor the ownership policy judges for `GetWorkspace` in a turn -
   the initiator who asked, or the agent that calls - the security suite settles in step 3. If it is
   the agent, attaching makes the session's agents contributors of the workspace, as a session makes
@@ -807,9 +942,10 @@ without Open Terminal: files people share with a session, for W2's tools to read
 
 ### J. Not in this plan
 
-A2 (a container per workspace), W2 (the workspace's own tools), W4 (versions), 247 (the shell
-matcher), 208 (artifacts), `X-User-Id`, several files in one upload, an editor in the UI, Open
-Terminal's interactive terminal in the UI, the TUI - it shows nothing of workspaces; a `/workspaces`
+W4 (versions), several workspaces per session, moving a workspace to another storage, tool sets
+that depend on the session, 247 (the shell matcher), 208 (artifacts), `X-User-Id`, a launcher
+service in place of the Docker socket, several files in one upload, an editor in the UI, Open
+Terminal's interactive terminal in the UI, the TUI - it shows nothing of workspaces; a `/workspace`
 command may come later.
 
 ## Done when
@@ -841,3 +977,16 @@ command may come later.
   sessions, and which is not bound to Open Terminal. The plan written (*Plan*), from the sources of
   Open Terminal 0.14.0 and of the model, runtime, REST server and web UI; the workspace opened as
   issue [253](253-workspace.md). Nothing implemented yet.
+- **2026-10-08** — The plan rewritten on three layers the maintainer named - storage, access,
+  toolbox - with a terminal as a configured service used by two of them, and with at most one
+  workspace per session, shared by its channels (*Decisions* 5 to 7). The workspace no longer
+  needs a directory on Caelumora's host: `WorkspaceAccess` has a `local` and an `open_terminal`
+  implementation, and a storage says who sees it where. Mount, uid and "a container per
+  workspace" moved from the component to the storage and the terminal.
+- **2026-10-08** — Rewritten once more, on the maintainer's proposal to fold the access layer and
+  the instances into one `TerminalProvider`/`Terminal` pair with `Shell` as a capability
+  (*Decisions* 8 and 9): one provider per storage - `local`, `open_terminal_shared`,
+  `open_terminal_docker` - and one generic `terminal_tool`. The compatibility table, the
+  `terminals` section and the extension of `ComponentContext` are gone; a component reaches the
+  terminal through `WorkspaceView::terminal()`. The storage's `destination` bounds a workspace
+  when it is made, so the door of 180 judges `mcp_tool` alone. The file tools are step 9.

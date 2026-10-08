@@ -89,8 +89,8 @@ where it flows both ways: its content into the channel, and what the agent saw t
 workspace - W1's flow rule, 251's "L = W", 180's clearance at the door. It is decided once, in 180,
 for workspaces, MCP servers and Open Terminal alike.
 
-W1 and W3 are issue [253](253-workspace.md), planned together with 251 (in 251's *Plan*); W2 and
-W4 are still to be opened, their numbers assigned when they are created:
+W1 and W3 are issue [253](253-workspace.md), planned together with 251 (in 251's *Plan*), and W2 is
+a step of that plan; W4 is still to be opened, its number assigned when it is created:
 
 *   **W1 - What a workspace is** (architecture decision, first; now 253). A tree of files with
     `SecurityAttributes` and one classification (169's fixed container), in a scope like the
@@ -102,10 +102,10 @@ W4 are still to be opened, their numbers assigned when they are created:
     agent writes are both named binary content with a producer and a classification. Two stores
     and two panels for them would be the repeated logic AGENTS.md warns of. Recommended: one
     store; a generated artifact is a file that a message refers to.
-*   **W2 - Tools for agents**: a component `workspace_tools` (a `ToolProvider`): list, read (with
-    ranges), search, write, edit by replacement, move, delete. Reads are recorded as knowledge
-    (`KnowledgeRef`), writes are staged or effects (20), writing needs approval unless a rule
-    allows it - the tools propose rules by path (`ToolProvider::matcher`).
+*   **W2 - Tools for agents** (now a step of 251's plan, as file tools of `terminal_tool`): list,
+    read (with ranges), search, write, edit by replacement, move, delete. Reads are recorded as
+    knowledge (`KnowledgeRef`), writes are staged or effects (20), writing needs approval unless a
+    rule allows it - the tools propose rules by path (`ToolProvider::matcher`).
 *   **W3 - The users' side** (now 253): upload and download, a workspace panel in the web UI,
     attaching a file to a message, a diff presentation for write calls (a `ToolPresentation` of
     its own).
@@ -239,7 +239,7 @@ The plan stands on assumptions the maintainer should confirm or correct:
 | Section | Issues |
 |---|---|
 | A - small | 07, 218, 223 |
-| B1 - workspace | 20 (part), 169, 180, 208, 247, 251, 253, new W2 and W4 |
+| B1 - workspace | 20 (part), 169, 180, 208, 247, 251, 253, new W4 |
 | B2 - context and memory | 16, 22, 55, 58, 65, 166, 169 |
 | B3 - tools | 126, 226 |
 | B4 - sessions and team | 07, 10, 25, 140, 142, 221, 227, 125 (part) |
