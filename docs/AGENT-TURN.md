@@ -89,7 +89,7 @@ answer, are prompt parts placed among the turn's messages, not messages (see [In
 turn](#instructions-within-a-turn)).
 
 An error in one of the turn's states ends the turn, not the agent: the agent logs it, gives the turn
-up (`Turn::give_up`), emits `TurnFailed` and returns to `Idle` (see
+up (`Turn::give_up`), emits `TurnGivenUp` with the reason `Failed` and returns to `Idle` (see
 [CODING-GUIDELINES.md](CODING-GUIDELINES.md)).
 
 **Where it stands is announced** (issue 243): the agent tells the users its state as it changes,
@@ -211,12 +211,13 @@ reads nothing.
 Before every step of a turn, the agent asks whether the turn still flows into its channel as it is
 now (`ActionType::Publish` of the turn's classification, in the agent's name). Once the channel was
 lowered below it, the turn is given up as `Lowered`, whatever it was about to do - run a tool, take
-the turn over after a cancel - and the users are told with `TurnFailed` (issue 141, see
+the turn over after a cancel - and the users are told with `TurnGivenUp` (issue 141, see
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
 
 Both use the turn up and hand back the contexts it had as an `Answering` (`crate::actor`), which
-sends the turn's last event - `FullResponseGenerated` or `TurnFailed` - with the publication the
-turn had, and withdraws the approval requests of the calls it abandoned. An external agent publishes
+sends the turn's last event - `FullResponseGenerated`, or `TurnGivenUp { turn_id, reason }` for
+every reason but a stop, the agent having left (issue 258) - with the publication the turn had, and
+withdraws the approval requests of the calls it abandoned. An external agent publishes
 its answers through the same `Answering`.
 
 ### Storing and resuming

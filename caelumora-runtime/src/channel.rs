@@ -3013,7 +3013,7 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 let envelope = events.recv().await.expect("the channel is running");
-                if envelope.context.sender_id == ActorId::Agent(agent) && matches!(envelope.event, ActorEvent::TurnFailed { .. }) { break }
+                if envelope.context.sender_id == ActorId::Agent(agent) && matches!(envelope.event, ActorEvent::TurnGivenUp { .. }) { break }
             }
         }).await.expect("the turn fails");
         settled(&helper, ActorState::Idle).await;
@@ -3131,16 +3131,25 @@ mod tests {
         (calculate, components)
     }
 
-    /// The `TurnFailed` the agent `agent` sends next.
-    async fn turn_failed(events: &mut tokio::sync::broadcast::Receiver<Envelope>, agent: caelumora_model::agent::AgentId) -> String {
+    /// Why the agent `agent` gave its next turn up, as its `TurnGivenUp`
+    /// says: what its users are told of a failure, else the cause - with
+    /// the channel, if it was lowered.
+    async fn turn_given_up(events: &mut tokio::sync::broadcast::Receiver<Envelope>, agent: caelumora_model::agent::AgentId) -> String {
+        use caelumora_model::turn::GivenUpReason;
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 let envelope = events.recv().await.expect("the channel is running");
-                if envelope.context.sender_id == ActorId::Agent(agent) {
-                    if let ActorEvent::TurnFailed { message } = envelope.event { break message }
+                if envelope.context.sender_id != ActorId::Agent(agent) { continue }
+                if let ActorEvent::TurnGivenUp { reason, .. } = envelope.event {
+                    let cause = reason.cause();
+                    break match reason {
+                        GivenUpReason::Failed { message } => message,
+                        GivenUpReason::Lowered { channel } => format!("{cause} to {channel}"),
+                        GivenUpReason::Stopped | GivenUpReason::Retried => cause.to_string(),
+                    };
                 }
             }
-        }).await.expect("the turn fails")
+        }).await.expect("the turn is given up")
     }
 
     #[tokio::test]
@@ -3166,7 +3175,7 @@ mod tests {
 
         // The model call is interrupted, and the turn given up rather than
         // taken over: the users are told, nothing of it is in the history.
-        let told = turn_failed(&mut events, agent).await;
+        let told = turn_given_up(&mut events, agent).await;
         assert!(told.contains("lowered"), "{told}");
         settled(&helper, ActorState::Idle).await;
         let stored = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
@@ -3200,7 +3209,7 @@ mod tests {
 
         channel.reclassify(&context, Classification::general(Confidentiality::Public)).await.expect("permitted");
 
-        turn_failed(&mut events, agent).await;
+        turn_given_up(&mut events, agent).await;
         settled(&helper, ActorState::Idle).await;
         running.abort();
     }
@@ -3419,6 +3428,7 @@ mod tests {
         let turn = channel.turn_under_way(ActorId::Agent(agent)).expect("under way");
         channel.user_actor(alice_of(&context)).unwrap().request_retry_of_turn(ActorId::Agent(agent), turn).await.expect("asked");
 
+        assert_eq!(turn_given_up(&mut events, agent).await, "your answer was asked for again", "the users learn why the turn ended (issue 258)");
         let said = |messages: Vec<Message>| messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
         assert_eq!(said(answered(&mut events, agent).await), ["never given"], "the tool is interrupted, and the next turn answers");
         let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
@@ -3674,7 +3684,7 @@ mod tests {
         let channel = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
         let mut events = channel.observe();
         let gone = ActorId::Agent(caelumora_model::agent::AgentId::new());
-        let late = Envelope::new(SecurityContext::default(), EventContext::new(channel.session_id, channel.id, gone, "helper".to_string()), ActorEvent::TurnFailed { message: "too late".to_string() });
+        let late = Envelope::new(SecurityContext::default(), EventContext::new(channel.session_id, channel.id, gone, "helper".to_string()), ActorEvent::TurnGivenUp { turn_id: caelumora_model::work::TurnId::new(), reason: caelumora_model::turn::GivenUpReason::Failed { message: "too late".to_string() } });
 
         // Its actor no longer runs: it was removed while finishing a step.
         channel.handle_actor_event(Some(late), &HashMap::new()).await;
@@ -4423,12 +4433,12 @@ mod tests {
         ]));
         let Stuck { channel, context, agent, mut events, running, .. } = with_an_external_agent(remote).await;
 
-        let failed = turn_failed(&mut events, agent).await;
+        let failed = turn_given_up(&mut events, agent).await;
         assert!(failed.contains("hermes could not answer: out of coffee"), "{failed}");
 
         let alice = channel.user_actor(alice_of(&context)).unwrap();
         alice.send_message("Still there?".to_string(), None).await.unwrap();
-        let unreachable = turn_failed(&mut events, agent).await;
+        let unreachable = turn_given_up(&mut events, agent).await;
         assert!(unreachable.contains("cannot reach the external agent at https://agent.example"), "{unreachable}");
         let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
         assert!(state.remote.open_tasks.is_empty(), "the failed task ended");
@@ -4443,7 +4453,7 @@ mod tests {
             vec![Ok(ExternalEvent::Message("Back again.".to_string())), Ok(ExternalEvent::Completed)],
         ]).unreachable_for(1));
         let Stuck { channel, context, agent, mut events, running, .. } = with_an_external_agent(Arc::clone(&remote)).await;
-        let unreachable = turn_failed(&mut events, agent).await;
+        let unreachable = turn_given_up(&mut events, agent).await;
         assert!(unreachable.contains("cannot reach the external agent"), "{unreachable}");
 
         let alice = channel.user_actor(alice_of(&context)).unwrap();
@@ -4529,7 +4539,7 @@ mod tests {
         ]).unreachable_for(1));
         let built = external_channel(Arc::clone(&remote), external_components_with_prompts(), |_| None).await.expect("the external agent can be run");
         let Stuck { channel, context, agent, mut events, running, .. } = start(built).await;
-        turn_failed(&mut events, agent).await;
+        turn_given_up(&mut events, agent).await;
 
         channel.user_actor(alice_of(&context)).unwrap().send_message("Still there?".to_string(), None).await.unwrap();
         answered(&mut events, agent).await;
@@ -4602,7 +4612,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
         while let Ok(envelope) = events.try_recv() {
             assert!(
-                !(envelope.context.sender_id == ActorId::Agent(agent) && matches!(envelope.event, ActorEvent::FullResponseGenerated(_) | ActorEvent::TurnFailed { .. })),
+                !(envelope.context.sender_id == ActorId::Agent(agent) && matches!(envelope.event, ActorEvent::FullResponseGenerated(_) | ActorEvent::TurnGivenUp { .. })),
                 "a stopped agent says nothing: {}", envelope.describe()
             );
         }
@@ -4964,7 +4974,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         channel.reclassify(&context, Classification::general(Confidentiality::Public)).await.expect("permitted");
-        let told = turn_failed(&mut events, agent).await;
+        let told = turn_given_up(&mut events, agent).await;
         assert!(told.contains("lowered"), "{told}");
         settled(&helper, ActorState::Idle).await;
         assert_eq!(remote.cancelled.lock().unwrap().as_slice(), &[task("t-1")], "the remote task is cancelled");
@@ -4983,7 +4993,7 @@ mod tests {
         let mut events = channel.observe();
         let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
 
-        let told = turn_failed(&mut events, agent).await;
+        let told = turn_given_up(&mut events, agent).await;
         assert!(told.contains("lowered"), "{told}");
         let calls: Vec<&str> = remote.called_as.lock().unwrap().iter().map(|(call, _)| *call).collect();
         assert_eq!(calls, ["cancel"], "cancelled, not followed");
@@ -5042,7 +5052,7 @@ mod tests {
         let mut events = channel.observe();
         let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
 
-        let failed = turn_failed(&mut events, agent).await;
+        let failed = turn_given_up(&mut events, agent).await;
         assert!(failed.contains("hermes could not finish: out of coffee"), "{failed}");
         let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
         assert!(state.remote.open_tasks.is_empty(), "the failed task ended");

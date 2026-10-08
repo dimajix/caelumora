@@ -142,7 +142,7 @@ never above its channel, and only with configured compartments.
         they ended, classified as the channel is now: what it read after the lowering, or in a step
         it did not complete, was never released (see
         [AGENT-TURN.md](AGENT-TURN.md#beginning-and-ending-a-turn)). A turn that no longer flows is
-        recorded so whatever ended it - asked for again, stopped. The users get a `TurnFailed`
+        recorded so whatever ended it - asked for again, stopped. The users get a `TurnGivenUp`
         saying why.
     *   an external agent's work is given up the same way (issue 212): an answer under way, which
         the lowering cancels, publishes nothing of what came so far; an open task begun before is
@@ -234,7 +234,7 @@ the channel - never above the channel as it was when the work began (`Work::labe
 `Classification::join_within`). A declaration does not lower what it was given: a remote agent
 declared public, told what is internal, answers internal. Whether what it brings in itself may
 enter the channel is asked when it joins and again with every request; a request it may not answer
-in the channel as it is now - lowered since - is answered with `TurnFailed`, and the remote agent
+in the channel as it is now - lowered since - is answered with `TurnGivenUp`, and the remote agent
 is not called.
 
 The question is `ActionType::JoinChannel { participant, roles, channel }`: the channel knows the

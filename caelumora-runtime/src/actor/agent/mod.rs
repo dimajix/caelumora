@@ -1,7 +1,7 @@
 mod run_control;
 
 use super::intake::{catch_up, take_in};
-use super::{failure_message, lowered_message, reject_retries, retry_target};
+use super::{failure_message, reject_retries, retry_target};
 use crate::message::apply_stage_processors;
 use crate::actor::{Actor, Answering};
 use run_control::{Interrupt, RunControl};
@@ -393,10 +393,9 @@ impl AgentActor {
     }
 
     /// Ends the turn under way in `state` after `error`: logs the full
-    /// error, gives the turn up (issue 145) - its messages stay as a branch
-    /// no longer active, nothing it staged is applied - and tells the
-    /// channel with `TurnFailed`, so that users see what went wrong instead
-    /// of a turn that never ends. An error before a turn began is logged
+    /// error, gives the turn up (issue 145) - its messages stay, nothing it
+    /// staged is applied - and tells the channel with `TurnGivenUp`, so that
+    /// users see what went wrong instead of a turn that never ends. An error before a turn began is logged
     /// only: there is no turn to end, nor a request to answer in.
     async fn fail_turn(&self, state: &mut AgentChannelState, error: &anyhow::Error, output: &dyn EventSender) {
         let agent_name = self.agent_controller.name();
@@ -413,10 +412,10 @@ impl AgentActor {
     /// The approval requests it still waited for are withdrawn (issue 148) -
     /// unless the agent was stopped: it left the channel, which takes
     /// nothing from it any longer, and the approvers discard its requests as
-    /// it leaves. The channel's users are told with `TurnFailed` where it
-    /// failed or was lowered; a turn asked for again is followed by
-    /// `RetryAccepted` and the new answer (issue 235). Between turns there
-    /// is nothing to give up.
+    /// it leaves. The channel's users are told with `TurnGivenUp`, with the
+    /// reason recorded, unless the agent was stopped; a turn asked for again
+    /// is followed by `RetryAccepted` and the new answer (issue 235).
+    /// Between turns there is nothing to give up.
     async fn give_up(&self, state: &mut AgentChannelState, reason: GivenUpReason, output: &dyn EventSender) {
         let Some(under_way) = state.turn.as_ref() else { return };
         // A turn that no longer flows into its channel is recorded as
@@ -427,23 +426,17 @@ impl AgentActor {
             TurnFlow::Lowered(channel) => GivenUpReason::Lowered { channel },
             TurnFlow::Flows | TurnFlow::NoChannel => reason.clone(),
         };
+        let turn_id = under_way.work.turn_id;
         let agent_name = self.agent_controller.name();
-        let told = match &reason {
-            GivenUpReason::Failed { message } => Some(message.clone()),
-            GivenUpReason::Lowered { channel } => Some(lowered_message(&agent_name, channel)),
-            GivenUpReason::Stopped | GivenUpReason::Retried => None,
-        };
-        let stays = reason != GivenUpReason::Stopped;
         let Some(turn) = self.turn(state) else { return };
-        let (answering, abandoned_calls) = turn.give_up(recorded, output).await;
-        if !stays {
+        let (answering, abandoned_calls) = turn.give_up(recorded.clone(), output).await;
+        if reason == GivenUpReason::Stopped {
             return;
         }
         if let Err(e) = withdraw_requests(&answering, &abandoned_calls, output).await {
             warn!("Agent {} {} cannot withdraw the approval requests of its given-up turn: {:#}", self.id(), agent_name, e);
         }
-        let Some(message) = told else { return };
-        if let Err(e) = answering.send(ActorEvent::TurnFailed { message }, output).await {
+        if let Err(e) = answering.send(ActorEvent::TurnGivenUp { turn_id, reason: recorded }, output).await {
             warn!("Agent {} {} cannot report its given-up turn: {:#}", self.id(), agent_name, e);
         }
     }
@@ -662,6 +655,10 @@ impl AgentActor {
         // as the assistant message that triggered it), not the state that
         // call itself just brought about.
         let progress_before = turn.plan_progress();
+        // The calls are internal as the message that made them is (`stamp`):
+        // a step of a plan, not its final answer - one made while
+        // finalizing is not, as its message is not.
+        let internal = turn.in_plan_step();
         // A cancel or stop interrupts the call under way, and no further call
         // is started (issue 161); those left without a result are abandoned
         // as the turn ends. What happens to the turn is the run loop's: it
@@ -679,7 +676,7 @@ impl AgentActor {
         // the real answer) when it's not part of executing an in-progress
         // plan - mirrors the same internal/final rule applied to the
         // assistant message that triggered it.
-        if let Some(tool_message) = turn.tool_calls().collect(progress_before.is_some()) {
+        if let Some(tool_message) = turn.tool_calls().collect(internal) {
             turn.say(tool_message, output).await?;
 
             // A plan was just created, or extended after already reaching

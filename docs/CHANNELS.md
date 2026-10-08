@@ -460,8 +460,8 @@ removed the participant - `System` if the runtime did. The run loop sends it as 
 between the events it routes, and from then on drops whatever the actor still sends while it
 finishes its step: what the participant sent before is in the channel, nothing of it follows the
 announcement. That is how a frontend knows that a turn it shows has ended - a stopped agent
-announces nothing itself, it has left (issue 162). Like `TurnFailed`, every moderator forwards it to
-the users only, and it is never stored.
+announces nothing itself, it has left (issue 162). Like `TurnGivenUp`, every moderator forwards it
+to the users only, and it is never stored.
 
 A removed user's live stream of the channel ends because it is theirs: it is followed through their
 actor (`UserActor::watch`), which ends when it is stopped, so no one has to listen for the
@@ -586,7 +586,7 @@ An **actor** is anything that sends and receives events in a channel.
     active path is what the remote agent has not heard yet - what a failed send did not give is
     given with the next one, and a restart gives nothing twice - and what each call gave stays as a
     branch from its root. It publishes what comes back: pieces as `PartialMessageGenerated`, the
-    answer as `FullResponseGenerated`, a task the remote agent failed as `TurnFailed`. A question
+    answer as `FullResponseGenerated`, a task the remote agent failed as `TurnGivenUp`. A question
     back from the remote agent is its answer; the next request continues that task, which is done as
     that request's work from then on, whatever the remote agent tells of it (issue 213). A cancel
     cancels the remote task and publishes what came so far - unless the cancel came from lowering
@@ -613,7 +613,7 @@ An **actor** is anything that sends and receives events in a channel.
     request (issue 45). A task stored before its work was kept acts as the agent itself; one whose
     channel was lowered since it began is given up. It wakes nobody and does not end a quiet
     channel: sleeping agents hear it all the same, and only an agent it mentions is woken, to answer
-    it (issue 199). Only the end of a task is said: a failed task as `TurnFailed`, keeping nothing
+    it (issue 199). Only the end of a task is said: a failed task as `TurnGivenUp`, keeping nothing
     of what came before, and a stream that breaks before the task ends says nothing - the task stays
     open and is followed again on the next run. While it answers a request, what its other tasks
     send waits. What it heard and said is all that is known of it, kept in its `AgentChannelState`

@@ -515,7 +515,7 @@ found by trying names. Whatever the command does is checked on its own as well: 
 A command answers the issuer alone (`/help`) or the whole channel (`/wakeup`).
 
 *   A channel-wide answer is announced by the issuer's `UserActor` as `ActorEvent::CommandExecuted`.
-    Every moderator forwards it to the users only; like `TurnFailed`, it is shown but never stored.
+    Every moderator forwards it to the users only; it is shown but never stored.
 *   `UserActor::execute_command` returns the answer in both cases, because the channel never routes
     an envelope back to its sender.
 *   The REST response carries the answer only when it is private, since the web UI receives the

@@ -26,7 +26,7 @@
 //! when the channel was lowered since.
 
 use super::intake::{catch_up, take_in};
-use super::{failure_message, lowered_message, reject_retries};
+use super::{failure_message, reject_retries};
 use crate::actor::{Actor, Answering};
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::agent::state::AgentStateHandle;
@@ -49,6 +49,7 @@ use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_model::context::PromptPart;
 use caelumora_model::agent::AgentChannelState;
 use caelumora_model::external_agent::{OpenTaskState, TaskId};
+use caelumora_model::turn::GivenUpReason;
 use caelumora_model::work::{TurnId, Work};
 use caelumora_model::message::{Message, MessageId, MessageRole};
 use caelumora_model::transcript::TranscriptEntry;
@@ -266,14 +267,22 @@ impl ExternalAgentActor {
     }
 
     /// Answers the `ResponseRequested` in `request`. Whatever happens, the
-    /// answer ends here: published, failed with `TurnFailed`, or - stopped -
-    /// not at all; and the state is stored. An error ends the answer, never
-    /// the actor.
+    /// answer ends here: published, given up with `TurnGivenUp`, or -
+    /// stopped - not at all; and the state is stored. An error ends the
+    /// answer, never the actor. Without a channel there is nobody to
+    /// answer.
     async fn respond(&self, state: &mut AgentChannelState, request: &Envelope, output: &dyn EventSender) {
         let answering = Answering::to(request, self.id(), self.name());
+        let Some(channel) = self.actor_runtime.channel_loop() else {
+            warn!("External agent {} has no channel to answer in", self.id());
+            return;
+        };
+        // The work of this exchange, as a turn: bound by the channel as it
+        // is now (issue 212), and how it ends is told as its turn's end.
+        let mut work = Work::new(answering.event_context.clone(), answering.security_context.clone(), channel.classification());
         let token = self.begin();
         self.go_to(ActorState::Planning, output).await;
-        let ending = self.exchange(state, &answering, &token, output).await;
+        let ending = self.exchange(state, &answering, &mut work, &token, output).await;
         if let Err(e) = self.actor_runtime.store_channel_state(state).await {
             warn!("External agent {} cannot store its state in its channel: {:#}", self.id(), e);
         }
@@ -282,16 +291,16 @@ impl ExternalAgentActor {
             Ok(Ending::Answered(message)) => answered(message.map(|message| *message)),
             Ok(Ending::Failed(reason)) => {
                 info!("External agent {} {} failed its task: {}", self.id(), self.name(), reason);
-                vec![ActorEvent::TurnFailed { message: format!("{} could not answer: {reason}", self.name()) }]
+                vec![ActorEvent::TurnGivenUp { turn_id: work.turn_id, reason: GivenUpReason::Failed { message: format!("{} could not answer: {reason}", self.name()) } }]
             }
             Ok(Ending::Lowered(channel)) => {
                 info!("External agent {} {} gives up its answer: the channel was lowered to {}", self.id(), self.name(), channel);
-                vec![ActorEvent::TurnFailed { message: lowered_message(&self.name(), &channel) }]
+                vec![ActorEvent::TurnGivenUp { turn_id: work.turn_id, reason: GivenUpReason::Lowered { channel } }]
             }
             Ok(Ending::Stopped) => Vec::new(),
             Err(e) => {
                 tracing::error!("External agent {} {} could not answer: {:#}", self.id(), self.name(), e);
-                vec![ActorEvent::TurnFailed { message: failure_message(&e) }]
+                vec![ActorEvent::TurnGivenUp { turn_id: work.turn_id, reason: GivenUpReason::Failed { message: failure_message(&e) } }]
             }
         };
         answering.send_all(events, output).await;
@@ -304,15 +313,12 @@ impl ExternalAgentActor {
         &self,
         state: &mut AgentChannelState,
         answering: &Answering,
+        work: &mut Work,
         token: &CancellationToken,
         output: &dyn EventSender,
     ) -> Result<Ending> {
-        let channel = self.actor_runtime.channel_loop()
-            .ok_or_else(|| anyhow!("external agent {} has no channel to answer in", self.id()))?;
-        // The work of this exchange, as a turn: bound by the channel as it
-        // is now, and written as what it has seen - what the remote agent
+        // `work` is written as what it has seen - what the remote agent
         // brings in itself, and all it was given in this channel (issue 212).
-        let mut work = Work::new(answering.event_context.clone(), answering.security_context.clone(), channel.classification());
         answering.send(ActorEvent::ResponseStarted { turn_id: work.turn_id }, output).await?;
         // How it is given what was said, recorded with the context of what
         // comes of it, so that the context is resolved as it was given
@@ -343,7 +349,7 @@ impl ExternalAgentActor {
             debug!("External agent {} has nothing new to give; nothing to ask", self.id());
             return Ok(Ending::Answered(None));
         }
-        let prompts = self.prompts_to_give(state, &mut work).await?;
+        let prompts = self.prompts_to_give(state, work).await?;
         let mut parts = Vec::with_capacity(prompts.len());
         for (_, part) in &prompts {
             // Part of the context of what comes of this call; seen already.
@@ -368,7 +374,7 @@ impl ExternalAgentActor {
         // The task that asked back is taken up by this call, whether or not
         // the remote agent tells it as begun again (issue 213).
         if let Some(asked) = &answers {
-            self.begin_task(state, asked, &work).await;
+            self.begin_task(state, asked, work).await;
         }
 
         let mut task = answers;
@@ -385,7 +391,7 @@ impl ExternalAgentActor {
                     }
                     // A lowering cancels the channel's actors: what came so
                     // far is then not published, but given up (issue 212).
-                    if let Some(channel) = self.lowered(&work).await {
+                    if let Some(channel) = self.lowered(work).await {
                         return Ok(Ending::Lowered(channel));
                     }
                     break;
@@ -419,7 +425,7 @@ impl ExternalAgentActor {
                 Step::Continue => {}
                 // The task it began, done as this work from now on.
                 Step::Started(started) => {
-                    self.begin_task(state, &started, &work).await;
+                    self.begin_task(state, &started, work).await;
                     task = Some(started);
                 }
                 // Shown as it is written, to whoever waits for the answer.
@@ -432,7 +438,7 @@ impl ExternalAgentActor {
             }
         }
 
-        Ok(Ending::Answered(self.record(state, answer, work.label(), Some(&work)).map(Box::new)))
+        Ok(Ending::Answered(self.record(state, answer, work.label(), Some(work)).map(Box::new)))
     }
 
     /// Records `task` as begun - or, asked back before, taken up again - by
@@ -552,7 +558,8 @@ impl ExternalAgentActor {
             ),
         };
         let events = match outcome {
-            Err(reason) => vec![ActorEvent::TurnFailed { message: format!("{} could not finish: {reason}", self.name()) }],
+            // A task nobody asked for is work of its own.
+            Err(reason) => vec![ActorEvent::TurnGivenUp { turn_id: work.as_ref().map_or_else(TurnId::new, |w| w.turn_id), reason: GivenUpReason::Failed { message: format!("{} could not finish: {reason}", self.name()) } }],
             // Nobody asked: it says nothing if it has nothing to say.
             Ok(answer) => match self.record(state, answer, label, work.as_ref()) {
                 Some(message) => answered(Some(message)),
@@ -594,7 +601,7 @@ impl ExternalAgentActor {
         if let Err(e) = self.actor_runtime.store_channel_state(state).await {
             warn!("External agent {} cannot store its state in its channel: {:#}", self.id(), e);
         }
-        self.speaking_for(work).send_all(vec![ActorEvent::TurnFailed { message: lowered_message(&self.name(), &channel) }], output).await;
+        self.speaking_for(work).send_all(vec![ActorEvent::TurnGivenUp { turn_id: work.turn_id, reason: GivenUpReason::Lowered { channel } }], output).await;
     }
 
     /// The authority the open `task` is done with: that of the request that

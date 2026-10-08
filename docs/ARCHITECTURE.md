@@ -96,9 +96,9 @@ The path of one message shows how the parts fit together:
 5.  **Observers are told.** The channel's events reach the participants' live streams; changes to
     entities are announced on the event bus, which the web UI follows.
 
-A turn that fails ends the turn, not the agent: it is reported as `TurnFailed` and the agent returns
-to idle. A turn cut off by a crash is resumed when the agent is loaded again. Every turn has an id,
-which `ResponseStarted` announces and every message of the turn carries (issue 235).
+A turn that fails ends the turn, not the agent: it is reported as `TurnGivenUp` and the agent
+returns to idle. A turn cut off by a crash is resumed when the agent is loaded again. Every turn has
+an id, which `ResponseStarted` announces and every message of the turn carries (issue 235).
 
 What was said can be changed afterwards, but never rewritten (issue 234): its author modifies or
 takes back a message, and every store that holds it records the change after it, so that what an

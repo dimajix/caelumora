@@ -490,3 +490,14 @@ the step that changes what they describe.
   reads the active path until step 6; the history panel shows a given-up turn's messages in its
   block alone. Stored data: agent channel states holding a turn given up before this step do not
   read and have to be deleted.
+- **2026-10-08** — Step 4 done: `ActorEvent::TurnGivenUp { turn_id, reason }` replaces
+  `TurnFailed`, sent by an agent for every reason but a stop - newly for a turn asked for again -
+  with the reason recorded, and by the external agent for a failed or lowered answer or task;
+  `lowered_message` went, the users' interfaces word the reason. The external agent makes its work
+  in `respond` rather than in `exchange`, so that every end of its answer knows the turn's id;
+  without a channel it answers nothing, there being nobody to tell. A failed task nobody asked for
+  is told with an id of its own. The moderator routes the event to the users alone; the web UI
+  shows a failure as before and any other reason as a notice (`givenUpText`, shared with the
+  history panel), the TUI prints the reason. Along with it, as proposed in step 2: a step's tool
+  message is internal as the message that made its calls is (`Turn::in_plan_step`), no longer
+  whenever a plan exists - a call made while finalizing was internal in its result alone.

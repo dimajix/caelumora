@@ -1,6 +1,7 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {
   AlertTriangle,
+  Ban,
   ChevronDown,
   ChevronRight,
   Gauge,
@@ -70,7 +71,7 @@ import {type ClassValue, clsx} from 'clsx';
 import {twMerge} from 'tailwind-merge';
 import {MarkdownMessage} from './MarkdownMessage';
 import {MessageFooter, MessageView, Reasoning} from './MessageView';
-import {chatRows, formatArguments, formatTimestamp, formatTokens, formatTokensShort, mergeToolResults} from '../messages';
+import {chatRows, formatArguments, givenUpText, formatTimestamp, formatTokens, formatTokensShort, mergeToolResults} from '../messages';
 import {PlanSteps} from './PlanSteps';
 import {TokenGauge} from './TokenGauge';
 import {HoverCard} from './HoverCard';
@@ -666,21 +667,24 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
               .then(member => { if (member.usage) setUsage(prev => ({...prev, [answerer]: member.usage!})); })
               .catch(error => reportError('Failed to read what the agent used', error));
           }
-        } else if (actorEvent.TurnFailed) {
-          // Shown in the chat, but not part of the history: gone on reload.
-          const failed: Message = {
+        } else if (actorEvent.TurnGivenUp) {
+          // Shown in the chat as the turn's end (issue 258), not yet part of
+          // the history: gone on reload.
+          const {turn_id, reason} = actorEvent.TurnGivenUp;
+          const givenUp: Message = {
             role: 'System',
-            content: actorEvent.TurnFailed.message,
+            content: givenUpText(reason),
             sender_id: envelope.context.sender_id,
             sender_name: envelope.context.sender_name,
-            turnFailed: true,
+            turn_id,
+            givenUp: reason,
             span_id: envelope.context.span_id,
             timestamp: envelope.timestamp,
           };
-          setMessages(prev => [...prev, failed]);
+          setMessages(prev => [...prev, givenUp]);
           answerEnded();
         } else if (actorEvent.CommandExecuted) {
-          // Like a failed turn: shown, but not part of the history.
+          // Shown, but not part of the history.
           const notice: Message = {
             role: 'System',
             content: actorEvent.CommandExecuted.output,
@@ -1025,7 +1029,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
       <div className="wrap-break-word">{chainCutOffText(msg.chainCutOff)}</div>
       <MessageFooter message={msg} />
     </div>
-  ) : msg.turnFailed ? (
+  ) : msg.givenUp?.kind === 'failed' ? (
     <div
       key={key}
       role="alert"
@@ -1043,6 +1047,27 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
         <button
           onClick={() => setHistoryOf({channelId, member: readableAgent(msg)!, givenUp: true})}
           className="mt-2 inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-md border border-red-300 dark:border-red-700 hover:bg-red-100 dark:hover:bg-red-900/50"
+        >
+          <History size={12} />
+          What the turn did
+        </button>
+      )}
+      <MessageFooter message={msg} />
+    </div>
+  ) : msg.givenUp ? (
+    <div
+      key={key}
+      className="max-w-[80%] p-3 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-900/60 text-gray-800 dark:text-gray-200 text-sm"
+    >
+      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider mb-1 opacity-70">
+        <Ban size={14} />
+        <span>{msg.sender_name || 'The agent'} gave its answer up</span>
+      </div>
+      <div className="wrap-break-word">{msg.content}</div>
+      {readableAgent(msg) && (
+        <button
+          onClick={() => setHistoryOf({channelId, member: readableAgent(msg)!, givenUp: true})}
+          className="mt-2 inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-md border border-gray-300 dark:border-gray-600 hover:bg-gray-200 dark:hover:bg-gray-800"
         >
           <History size={12} />
           What the turn did

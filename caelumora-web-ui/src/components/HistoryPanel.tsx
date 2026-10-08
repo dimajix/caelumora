@@ -9,14 +9,14 @@
 
 import React, {useEffect, useState} from 'react';
 import {ChevronDown, ChevronRight, History, ScrollText, Undo2, X} from 'lucide-react';
-import type {ChannelMember, GivenUpReason, GivenUpTurn, HistoryMessage, Message} from '../types';
+import type {ChannelMember, GivenUpTurn, HistoryMessage, Message} from '../types';
 import {classificationLabel} from '../confidentiality';
 import {clsx as cn} from 'clsx';
 import {api} from '../api';
 import {actorUuid} from '../mention';
 import {ApiRequestError, reportError} from '../errors';
 import {MessageView} from './MessageView';
-import {formatTimestamp, mergeToolResults} from '../messages';
+import {formatTimestamp, givenUpText, mergeToolResults} from '../messages';
 
 /** How many of the latest messages are shown before "show earlier". */
 const SHOWN_AT_FIRST = 20;
@@ -69,20 +69,6 @@ function rowsOf(history: HistoryMessage[], turns: GivenUpTurn[]): Row[] {
   flush();
   rows.push(...turnRows(undefined));
   return rows;
-}
-
-/** Why a turn was given up, for its heading. */
-function reasonText(reason: GivenUpReason): string {
-  switch (reason.kind) {
-    case 'failed':
-      return `It failed: ${reason.message}`;
-    case 'lowered':
-      return `The channel was lowered to ${classificationLabel(reason.channel)} while it ran.`;
-    case 'stopped':
-      return 'The agent was stopped, leaving the channel.';
-    case 'retried':
-      return 'Its answer was asked for again while it was under way.';
-  }
 }
 
 export const HistoryPanel: React.FC<HistoryPanelProps> = ({sessionId, channelId, member, members, version, openLatestGivenUp, onShowContext, onClose}) => {
@@ -168,7 +154,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({sessionId, channelId,
           <span className="flex-1">
             <span className="font-semibold">Turn given up</span>
             {at && <span className="opacity-70" title={at.full}> · {at.short}</span>}
-            <span className="block">{reasonText(turn.reason)}</span>
+            <span className="block">{givenUpText(turn.reason)}</span>
           </span>
         </button>
         {expanded && (

@@ -205,13 +205,17 @@ else who may read it - the session's owner, say - is shown its history and no in
     `turn_under_way` of its member (issues 235, 240); what streamed before is not shown. The stop
     button stays while any agent answers. Reasoning that is the owner's never reaches the chat, and
     reasoning held back while the agent could still make a call whose content is the owner's
-    arrives only with the complete message (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reasoning)). A failed turn and the channel-wide
-    answer of a command are shown in the chat but never stored. When a participant is removed, the
-    channel says so with `ParticipantRemoved`, and nothing of it follows: its partial answer and the
-    stop button go, and its calls still without a result are shown as abandoned (issue 162).
+    arrives only with the complete message (see
+    [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reasoning)). A turn given up (`TurnGivenUp`, issue 258)
+    is shown in the chat with why: a failure as an alert naming what failed, any other reason as a
+    notice - the channel lowered, the answer asked for again; it is not stored yet and gone on
+    reload. The channel-wide answer of a command is shown but never stored. When a participant is
+    removed, the channel says so with `ParticipantRemoved`, and nothing of it follows: its partial
+    answer and the stop button go, and its calls still without a result are shown as abandoned
+    (issue 162).
     When a chain between agents is cut off at its limit (`ChainCutOff`), a notice "Chain cut off"
     says so, naming the agents mentioned that were not asked, and that a message of a user starts a
-    new chain; like a failed turn, it is gone on reload (issue 200).
+    new chain; like the answer of a command, it is gone on reload (issue 200).
 *   **The steps of a plan** (issue 258). While an agent works through a plan, what each step says -
     its answer, its tool calls and their results - arrives as `IntermediatePartialGenerated` and
     `IntermediateMessageGenerated` and is shown as any partial and complete message is, a tool
@@ -446,7 +450,7 @@ history where they stand: after the message the server names as `after`, first i
 last if the history does not hold it. The history holds their messages too (issue 258); they are
 shown in the turn's block alone. Each is a folded block with why it ended - failed,
 stopped, or the channel lowered - and when; opened, it shows the turn's messages with their tool
-calls and results, each with its context where it is recorded. A failed turn's notice in the chat
+calls and results, each with its context where it is recorded. A given-up turn's notice in the chat
 offers "What the turn did" for an agent whose context the user may read, which opens the history
 panel with the latest turn given up unfolded. A turn given up because the agent was removed from
 the channel is shown in its history panel, offered among the former members (issue 164).

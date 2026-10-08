@@ -146,11 +146,12 @@ A new error type meant for users must meet the rules above and be added to `user
 
 If an error occurs while an `AgentActor` is in a turn - an unreachable model, a fail-closed
 component, a failing tool executor - the agent logs it, discards the turn's unfinished work, emits
-`ActorEvent::TurnFailed { message }` and returns to `Idle`. Don't let a turn-time error escape
-`AgentActor::run`.
+`ActorEvent::TurnGivenUp` with `GivenUpReason::Failed { message }` and returns to `Idle`. Don't
+let a turn-time error escape `AgentActor::run`.
 
-Moderators forward `TurnFailed` to the users, whose actors pass it on to the UI. It is never
-written to the history, so it cannot end up in a model's context. Errors the model *should* see are
+Moderators forward `TurnGivenUp` to the users, whose actors pass it on to the UI. The failure's
+message is not given to a model: what it is told of a turn given up is a fixed text of the
+runtime's, with the reason (issue 258). Errors the model *should* see are
 the subject of [15](../issues/15-disallowed-tool-errors-to-llm.md).
 
 ### REST errors

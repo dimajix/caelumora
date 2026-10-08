@@ -7,6 +7,7 @@ use crate::question::{QuestionId, QuestionRequest, Response};
 use crate::security::SecurityContext;
 use crate::session::SessionId;
 use crate::user::UserId;
+use crate::turn::GivenUpReason;
 use crate::work::TurnId;
 use chrono::{DateTime, Utc};
 use derive_more::Display;
@@ -136,23 +137,26 @@ pub enum ActorEvent {
         total_steps: usize,
         description: String,
     },
-    /// The agent's turn was aborted by an error, e.g. an unreachable LLM
-    /// backend or a failing component. The agent is idle again and takes the
-    /// next request. `message` is meant for users: it names what failed (a
-    /// component, an endpoint) but carries no file paths or secret values;
-    /// the full error is in the log under the envelope's `span_id`.
+    /// The agent's turn `turn_id` was given up for `reason` (issues 145,
+    /// 258): it failed - an unreachable LLM backend, a failing component -,
+    /// the channel was lowered below it, or its answer was asked for again.
+    /// The agent is idle again and takes the next request. The message of
+    /// a failure is meant for users: it names what failed (a component, an
+    /// endpoint) but carries no file paths or secret values; the full error
+    /// is in the log under the envelope's `span_id`. A stopped agent sends
+    /// none: it has left the channel.
     ///
-    /// Not part of the conversation: it is shown to users but never written
-    /// to the history, so it does not end up in a model's context.
-    TurnFailed {
-        message: String,
+    /// Shown to users; not heard by the agents.
+    TurnGivenUp {
+        turn_id: TurnId,
+        reason: GivenUpReason,
     },
     /// A user ran a command whose answer concerns everybody in the channel,
     /// e.g. `/wakeup` (issue 28). The envelope's sender is the user who ran
     /// it; `command` is its name without the slash, `output` what it answered.
     ///
-    /// Like `TurnFailed`, shown to users and never written to the history:
-    /// commands address the system, not the agents.
+    /// Shown to users and never written to the history: commands address
+    /// the system, not the agents.
     CommandExecuted {
         command: String,
         output: String,
@@ -163,7 +167,7 @@ pub enum ActorEvent {
     /// runs in it: nothing of the participant follows, so whatever of it was
     /// under way - a turn, a call of a tool - has ended.
     ///
-    /// Like `TurnFailed`, shown to users and never written to the history.
+    /// Shown to users and never written to the history.
     ParticipantRemoved {
         participant: ActorId,
     },
@@ -175,8 +179,7 @@ pub enum ActorEvent {
     /// `ActorId::System`, to the users of the channel and to the agents
     /// involved: the sender of the response and those it mentioned.
     ///
-    /// Like `TurnFailed`, never written to the history; an agent takes no
-    /// note of it.
+    /// Never written to the history; an agent takes no note of it.
     ChainCutOff {
         message: MessageId,
         max_agent_hops: u32,
@@ -223,8 +226,7 @@ pub enum ActorEvent {
     /// The agent answers again instead of `target` (issues 234, 235): it
     /// takes back what it replaces (`MessageRevoked`) - nothing of a turn
     /// that was under way, which it gave up - and answers in a turn of its
-    /// own. Like `TurnFailed`, shown to users and never written to the
-    /// history.
+    /// own. Shown to users and never written to the history.
     RetryAccepted {
         target: RetryTarget,
     },
@@ -315,7 +317,7 @@ impl ActorEvent {
             ActorEvent::IntermediateMessageGenerated(_) => "IntermediateMessageGenerated",
             ActorEvent::PlanStepStarted { .. } => "PlanStepStarted",
             ActorEvent::PlanStepFinished { .. } => "PlanStepFinished",
-            ActorEvent::TurnFailed { .. } => "TurnFailed",
+            ActorEvent::TurnGivenUp { .. } => "TurnGivenUp",
             ActorEvent::CommandExecuted { .. } => "CommandExecuted",
             ActorEvent::ParticipantRemoved { .. } => "ParticipantRemoved",
             ActorEvent::ChainCutOff { .. } => "ChainCutOff",
@@ -437,8 +439,8 @@ impl Envelope {
             ActorEvent::PlanStepFinished { step_index, total_steps, .. } => {
                 format!("PlanStepFinished(sender_id={}, sender_name={}, step={}/{})", ctx.sender_id, ctx.sender_name, step_index + 1, total_steps)
             }
-            ActorEvent::TurnFailed { message } => {
-                format!("TurnFailed(sender_id={}, sender_name={}, message={})", ctx.sender_id, ctx.sender_name, message)
+            ActorEvent::TurnGivenUp { turn_id, reason } => {
+                format!("TurnGivenUp(sender_id={}, sender_name={}, turn_id={}, reason={})", ctx.sender_id, ctx.sender_name, turn_id, reason.cause())
             }
             ActorEvent::CommandExecuted { command, .. } => {
                 format!("CommandExecuted(sender_id={}, sender_name={}, command={})", ctx.sender_id, ctx.sender_name, command)

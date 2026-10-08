@@ -129,7 +129,7 @@ impl Moderator for PolicyModerator {
             ActorEvent::QuestionClosed { .. } => {
                 self.actors().route_question_events(event)
             }
-            ActorEvent::TurnFailed { .. } | ActorEvent::CommandExecuted { .. } | ActorEvent::ParticipantRemoved { .. } => {
+            ActorEvent::TurnGivenUp { .. } | ActorEvent::CommandExecuted { .. } | ActorEvent::ParticipantRemoved { .. } => {
                 self.actors().route_to_users(event)
             }
             // A change to what was said reaches everyone who may hold the
@@ -274,7 +274,7 @@ impl ModeratorActors {
         self.agent_actors.contains_key(&agent).then(|| (agent, event.clone())).into_iter().collect()
     }
 
-    /// Forwards `event` to every user in the channel, e.g. a `TurnFailed`
+    /// Forwards `event` to every user in the channel, e.g. a `TurnGivenUp`
     /// or a streamed part of an answer, which concern the users watching
     /// and none of the other agents.
     fn route_to_users(&self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
@@ -708,7 +708,7 @@ mod tests {
             let agents = add_agents(&moderator);
             let user = ActorId::User(UserId::new());
             moderator.add_actor(Arc::new(TestActor { id: user, state: ActorState::Idle }));
-            let event = envelope(agents[0], ActorEvent::TurnFailed { message: "boom".to_string() });
+            let event = envelope(agents[0], ActorEvent::TurnGivenUp { turn_id: caelumora_model::work::TurnId::new(), reason: caelumora_model::turn::GivenUpReason::Failed { message: "boom".to_string() } });
 
             let decision = moderator.route(&event).await;
 

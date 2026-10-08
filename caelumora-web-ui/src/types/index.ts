@@ -404,9 +404,10 @@ export interface Message {
    * back keeps its place without what it said.
    */
   revoked?: string;
-  // UI only: a failed turn shown in the chat (never sent by the server as a
-  // message), with the `span_id` under which the error is in the server log.
-  turnFailed?: boolean;
+  // UI only: a turn given up, shown in the chat (issue 258; not yet sent by
+  // the server as part of the history), with the `span_id` under which a
+  // failure is in the server log.
+  givenUp?: GivenUpReason;
   span_id?: string;
   // UI only: the answer to a user command (never part of the history).
   // `command` is its name; `private` if only the issuer sees it.
@@ -472,7 +473,8 @@ export interface ActorEvent {
   PlanStepStarted?: PlanStepEvent;
   PlanStepFinished?: PlanStepEvent;
   /** An agent's turn was aborted by an error; the agent is idle again. */
-  TurnFailed?: { message: string };
+  /** An agent gave its turn up (issues 145, 258); a stopped agent sends none. */
+  TurnGivenUp?: { turn_id: string; reason: GivenUpReason };
   /** A user ran a command whose answer concerns the whole channel (issue 28). */
   CommandExecuted?: { command: string; output: string };
   /**

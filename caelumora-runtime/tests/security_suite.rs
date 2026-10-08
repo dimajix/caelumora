@@ -1465,8 +1465,11 @@ async fn an_external_agent_whose_answers_no_longer_enter_its_lowered_channel_is_
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
             loop {
                 let envelope = events.recv().await.expect("the channel runs");
-                if let caelumora_model::actor::ActorEvent::TurnFailed { message } = envelope.event {
-                    break message;
+                if let caelumora_model::actor::ActorEvent::TurnGivenUp { reason, .. } = envelope.event {
+                    break match reason {
+                        caelumora_model::turn::GivenUpReason::Failed { message } => message,
+                        other => other.cause().to_string(),
+                    };
                 }
             }
         }).await.expect("the users are told")
@@ -1500,8 +1503,11 @@ async fn lowering_a_channel_gives_up_an_external_agents_task_in_the_name_of_whoe
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
             loop {
                 let envelope = events.recv().await.expect("the channel runs");
-                if let caelumora_model::actor::ActorEvent::TurnFailed { message } = envelope.event {
-                    break message;
+                if let caelumora_model::actor::ActorEvent::TurnGivenUp { reason, .. } = envelope.event {
+                    break match reason {
+                        caelumora_model::turn::GivenUpReason::Failed { message } => message,
+                        other => other.cause().to_string(),
+                    };
                 }
             }
         }).await.expect("the users are told")

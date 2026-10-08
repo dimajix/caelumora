@@ -1,6 +1,7 @@
 // Helpers for showing messages, shared by the chat and the context panel.
 
-import type {Message, TokenUsage} from './types';
+import type {GivenUpReason, Message, TokenUsage} from './types';
+import {classificationLabel} from './confidentiality';
 
 export function formatArguments(args: unknown): string {
   return typeof args === 'string' ? args : JSON.stringify(args);
@@ -21,6 +22,20 @@ export function mergeToolResults(messages: Message[]): Message[] {
     }
     return [...acc, msg];
   }, []);
+}
+
+/** Why a turn was given up (issues 145, 258), in this page's words. */
+export function givenUpText(reason: GivenUpReason): string {
+  switch (reason.kind) {
+    case 'failed':
+      return `It failed: ${reason.message}`;
+    case 'lowered':
+      return `The channel was lowered to ${classificationLabel(reason.channel)} while it ran.`;
+    case 'stopped':
+      return 'The agent was stopped, leaving the channel.';
+    case 'retried':
+      return 'Its answer was asked for again while it was under way.';
+  }
 }
 
 /**

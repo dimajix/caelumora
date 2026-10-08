@@ -195,7 +195,9 @@ bare string for the few without anything to carry (`"ResponseRequested"`, `"Wake
 agent's answer begins with `{"ResponseStarted": {"turn_id": …}}`, and every message of it, partial
 or complete, carries the same `turn_id` (issue 235) - also the messages of a channel's history, so
 that a client tells which messages are one answer, and which answer is under way after a reload, by
-the id rather than by who sent what when.
+the id rather than by who sent what when. A turn given up ends with
+`{"TurnGivenUp": {"turn_id": …, "reason": {"kind": "failed", "message": …}}}` - or a `kind` of
+`lowered` with the `channel`, or `retried`; a stopped agent sends none (issue 258).
 
 ### Who follows a channel
 

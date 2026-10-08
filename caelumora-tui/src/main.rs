@@ -7,6 +7,7 @@ use caelumora_model::mention::mention_spans;
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::question::{Question, QuestionId, QuestionRequest, Response};
 use caelumora_model::security::SecurityContext;
+use caelumora_model::turn::GivenUpReason;
 use caelumora_model::user::{User, UserId};
 use caelumora_model::value::name::Name;
 use caelumora_model::work::TurnId;
@@ -192,11 +193,15 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                     Some(ActorEvent::RetryRejected { reason, .. }) => {
                         println!("\r{} cannot answer again: {}", sender, reason);
                     }
-                    Some(ActorEvent::TurnFailed { message }) => {
+                    Some(ActorEvent::TurnGivenUp { reason, .. }) => {
                         if under_way.is_some_and(|(agent, _)| Some(agent) == sender_id) {
                             under_way = None;
                         }
-                        println!("\r[error] An agent could not answer: {}", message);
+                        match reason {
+                            GivenUpReason::Failed { message } => println!("\r[error] {} could not answer: {}", sender, message),
+                            GivenUpReason::Lowered { channel } => println!("\r{} gave its answer up: the channel was lowered to {}", sender, channel),
+                            GivenUpReason::Stopped | GivenUpReason::Retried => println!("\r{} gave its answer up: {}", sender, reason.cause()),
+                        }
                     }
                     Some(ActorEvent::CommandExecuted { command, output }) => {
                         println!("\r{} ran /{}: {}", sender, command, output);
