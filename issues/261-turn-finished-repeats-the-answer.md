@@ -35,3 +35,8 @@ it means, and a reader has to know which copy counts.
 
 - **2026-10-08** — Opened when closing [258](258-what-was-said-is-lost.md), which renamed the event
   and kept its payload for the moderator.
+- **2026-10-08** — Since [260](260-turn-messages-into-the-transcript.md), what a turn said is in
+  the agent's transcript as it is said, `Transcript::of_turn` gives it, and `commit` reads the
+  answer from there. The channel's history holds the same messages by their `turn_id` - which is
+  what the second option, the channel handing the moderator the turn's messages at its end, would
+  read.

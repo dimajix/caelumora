@@ -89,12 +89,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [256](256-workspace-versions.md) | open | A workspace has no versions: what a person, a file tool or a command overwrote cannot be taken back, and who changed what is not recorded. |
 | [237](237-erasing-a-message.md) | open | A message written by mistake can be taken back but not erased: it stays in every participant's record and in the contexts built on it. |
 
-## Code structure
-
-| No. | Status | Issue |
-|---|---|---|
-| [260](260-turn-messages-into-the-transcript.md) | in progress | A turn keeps its messages apart from the transcript until it ends, so two places hold what an agent said and every reader puts them together. |
-
 ## Open architecture questions
 
 | No. | Status | Issue |

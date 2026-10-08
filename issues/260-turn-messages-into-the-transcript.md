@@ -1,6 +1,6 @@
 # 260 — A turn keeps its messages apart from the transcript until it ends
 
-**Status:** in progress
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -195,3 +195,6 @@ external agent's work, which keeps no turn under way.
   state as their setup, without finding anything. New tests: a turn stored under way resolves its
   next context from the transcript; the agent's view shows a turn's message with its context
   before the turn ends.
+- **2026-10-08** — Step 2, closed: a turn's messages are in the agent's transcript and history
+  from the moment they are said, and `TurnState` holds no message.
+  [261](261-turn-finished-repeats-the-answer.md) notes what this gives it.
