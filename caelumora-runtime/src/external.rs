@@ -75,7 +75,7 @@ impl ExternalEvent {
 
 /// A failure talking to the remote agent - not the remote agent failing a
 /// task, which is `ExternalEvent::Failed`. Every variant names the endpoint,
-/// with any credentials stripped from it (`remote::redact_endpoint`), so
+/// with any credentials stripped from it (`caelumora_model::remote::redact_endpoint`), so
 /// that the message is actionable on its own; it is shown to users when a
 /// response fails (issue 02).
 #[derive(Debug, thiserror::Error)]

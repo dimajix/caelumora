@@ -28,6 +28,8 @@ regex = "1.12"
 # The JSON store reads and writes files asynchronously, and keeps names
 # unique under a lock per kind (issue 250).
 tokio = { version = "1.53.1", features = ["fs", "io-util", "sync"] }
+# The URL of a remote endpoint, parsed to show it without credentials.
+url = "2.5"
 
 [dev-dependencies]
 tokio = { version = "1.53.1", features = ["macros", "rt", "sync"] }

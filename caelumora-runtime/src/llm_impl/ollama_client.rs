@@ -38,7 +38,8 @@
 use super::control_tokens::ControlTokens;
 use crate::component::{ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::llm::{unlabelled_message, LLMClient, LLMError, LLMResult};
-use crate::remote::{describe_chain, describe_request_error, RemoteEndpoint};
+use crate::remote::{describe_chain, describe_request_error};
+use caelumora_model::remote::RemoteEndpoint;
 use async_stream::stream;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;

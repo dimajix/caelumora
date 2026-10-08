@@ -23,7 +23,7 @@ use self::translation::{wire_message, Translation, ACCEPTED_OUTPUT_MODES};
 use self::wire::{method, SendConfiguration, SendMessageParams, StreamResponse, TaskParams, WireTask, TASK_NOT_CANCELABLE};
 use crate::component::{ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::external::{ExternalAgent, ExternalAgentResult, ExternalStream, OutboundMessage};
-use crate::remote::RemoteEndpoint;
+use caelumora_model::remote::RemoteEndpoint;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{ModelProfile, SenderFormat, SenderStyle};

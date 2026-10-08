@@ -6,7 +6,8 @@
 use super::wire::{is_version_1, AgentCard, RpcError, RpcRequest, RpcResponse, StreamResponse, A2A_VERSION, CARD_PATH, JSONRPC_BINDING};
 use crate::component::ComponentError;
 use crate::external::{ExternalAgentError, ExternalAgentResult};
-use crate::remote::{describe_chain, describe_request_error, redact_endpoint, RemoteEndpoint};
+use crate::remote::{describe_chain, describe_request_error};
+use caelumora_model::remote::{redact_endpoint, RemoteEndpoint};
 use arc_swap::ArcSwapOption;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::SecurityContext;

@@ -2,7 +2,7 @@ use crate::agent_turn::Turn;
 use caelumora_model::question::Answers;
 use caelumora_model::confidentiality::Classification;
 use crate::component::{ComponentError, ComponentFacets, ComponentRegistry, ComponentKind};
-use crate::remote::RemoteEndpoint;
+use caelumora_model::remote::RemoteEndpoint;
 use crate::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::secret::{SecretError, SecretManager};
@@ -407,7 +407,7 @@ mod tests {
         assert_eq!(config.endpoint.url, "http://127.0.0.1:1234/mcp");
         assert_eq!(config.timeout(), Duration::from_secs(5));
         match config.endpoint.auth {
-            Some(crate::remote::RemoteAuthConfig::Bearer { secret }) => assert_eq!(secret, "MY_TOKEN"),
+            Some(caelumora_model::remote::RemoteAuthConfig::Bearer { secret }) => assert_eq!(secret, "MY_TOKEN"),
             _ => panic!("Expected Bearer auth"),
         }
     }

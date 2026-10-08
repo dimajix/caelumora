@@ -24,6 +24,7 @@ pub mod memory;
 pub mod plan;
 pub mod question;
 pub mod privacy;
+pub mod remote;
 pub mod session;
 pub mod store;
 pub mod removal;
