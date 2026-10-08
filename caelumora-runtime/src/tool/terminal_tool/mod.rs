@@ -22,7 +22,7 @@
 mod files;
 mod shell;
 
-use crate::agent_turn::Turn;
+use crate::agent::turn::Turn;
 use crate::component::{ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::terminal::TerminalError;
 use crate::tool::{ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};

@@ -13,7 +13,7 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::SecurityAttributes;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::StoreResult;
-use crate::agent_state::AgentStateHandle;
+use crate::agent::state::AgentStateHandle;
 use crate::event::{EventSubscription, SubscriptionTopic};
 use crate::view::ViewsFactory;
 use caelumora_model::component::ComponentConfig;
@@ -37,7 +37,7 @@ pub struct RuntimeManager {
     /// (`AppConfig::approvals`, issue 13).
     approval_rules: Arc<[ApprovalRule]>,
     /// One owner of every running agent's `AgentState` (issue 62).
-    agent_states: Arc<crate::agent_state::AgentStates>,
+    agent_states: Arc<crate::agent::state::AgentStates>,
     /// The one owner of workspaces and their places (issue 253).
     workspaces: Arc<crate::workspace::WorkspaceManager>,
 }
@@ -313,7 +313,7 @@ impl RuntimeManager {
 
         let event_bus = Arc::new(EventBus::new(Arc::clone(&security_manager)));
         let controller_manager = Arc::new(ControllerManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus)));
-        let agent_states = Arc::new(crate::agent_state::AgentStates::new(Arc::clone(&state_store), Arc::<EventBus>::clone(&event_bus)));
+        let agent_states = Arc::new(crate::agent::state::AgentStates::new(Arc::clone(&state_store), Arc::<EventBus>::clone(&event_bus)));
         let workspaces = Arc::new(crate::workspace::WorkspaceManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus), Arc::clone(&security_manager), &secret_manager, &workspaces)?);
 
         Ok(Self {
@@ -378,7 +378,7 @@ impl RuntimeManager {
     }
 
     /// The owner of every running agent's `AgentState` (issue 62).
-    pub fn agent_states(&self) -> &Arc<crate::agent_state::AgentStates> {
+    pub fn agent_states(&self) -> &Arc<crate::agent::state::AgentStates> {
         &self.agent_states
     }
 

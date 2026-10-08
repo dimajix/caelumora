@@ -13,7 +13,7 @@
 use crate::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::context::{titled, Prompt, PromptPosition, PromptProvider};
 use crate::view::WorkspaceView;
-use crate::work::AgentWork;
+use crate::agent::work::AgentWork;
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;

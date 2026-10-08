@@ -1,10 +1,10 @@
 //! The `create_plan_tool` component: the `create_plan` tool, and the planning
 //! prompt that nudges the model towards it (extended planning).
 
-use crate::agent_turn::Turn;
+use crate::agent::turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::context::{titled, Prompt, PromptProvider};
-use crate::work::AgentWork;
+use crate::agent::work::AgentWork;
 use crate::tool::{arguments, ToolOutput, ToolProvider, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -190,7 +190,7 @@ mod tests {
     async fn create_plan_tool_execute_stores_the_parsed_plan() {
         let provider = CreatePlanToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached());
 
         let params = json!({
             "summary": "Investigate and fix the bug",
@@ -213,7 +213,7 @@ mod tests {
     async fn create_plan_tool_execute_appends_steps_to_a_plan_mid_step() {
         let provider = CreatePlanToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached());
 
         turn.set_plan(PlanState {
             progress: PlanProgress::Step(0),
@@ -243,7 +243,7 @@ mod tests {
     async fn create_plan_tool_execute_resumes_a_finalizing_plan_when_steps_are_added() {
         let provider = CreatePlanToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached());
 
         turn.set_plan(PlanState {
             progress: PlanProgress::Finalizing,
@@ -271,7 +271,7 @@ mod tests {
     async fn create_plan_tool_execute_rejects_malformed_arguments() {
         let provider = CreatePlanToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached());
 
         let result = provider.execute(CREATE_PLAN_TOOL_NAME, &json!({}), None, &mut turn).await;
         assert!(matches!(result, Err(ToolError::InvalidParameter(_))), "the model is asked to correct the call: {result:?}");
@@ -298,7 +298,7 @@ mod tests {
     #[tokio::test]
     async fn create_plan_tool_contributes_the_planning_system_prompt() {
         let mut state = caelumora_model::agent::AgentChannelState::default();
-        let turn = Turn::begun(Default::default(), String::new(), &mut state, crate::agent_state::AgentStateHandle::detached());
+        let turn = Turn::begun(Default::default(), String::new(), &mut state, crate::agent::state::AgentStateHandle::detached());
         let prompt = CreatePlanToolProvider.get_prompt(&turn.work()).await.expect("prompt should be available");
         assert_eq!(prompt.text, format!("[Planning]\n{PLANNING_SYSTEM_PROMPT}\n"), "under a title of its own (issue 249)");
     }

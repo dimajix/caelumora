@@ -102,10 +102,10 @@ external agent announces `Planning` and `Idle` as its answer begins and ends.
 
 The agent's state in its channel is its `AgentChannelState`: its `MessageHistory`, its `Transcript`,
 its notes and the texts of its prompt parts. Its own state across channels is its `AgentState`. A
-step of the cycle works on a `Turn` (`caelumora_runtime::agent_turn`), the handle to both. Its
+step of the cycle works on a `Turn` (`caelumora_runtime::agent::turn`), the handle to both. Its
 module holds the handle and what components work with in `mod.rs`, and the rest of a turn's logic
 in a file per subject: `ending.rs` takes a turn over or gives it up, `context.rs` builds what the
-model is given, `plan.rs` moves the plan on.
+model is given, `plan.rs` moves the plan on, `tool_calls.rs` keeps the books of a step's tool calls.
 
 What a turn does to the agent's state when it begins and ends is a rule of that state, kept with
 it in the model: `AgentChannelState::begin_turn`, `record_turn` - its messages into transcript and
@@ -234,7 +234,7 @@ alone. When the agent is loaded again, the turn is resumed (issue 75):
 *   `Cancelling` ends the turn.
 *   `ExecutingTools` is the exception. A tool may have run without its result being stored, and
     running it again would repeat its effect (issue 20). So every call that was ready to run is
-    answered as *not executed* (`prepare_resume` in `actor/agent.rs`), the tool message is
+    answered as *not executed* (`prepare_resume` in `actor/agent/mod.rs`), the tool message is
     built from that, and the model decides again.
 
 A turn state stored without the turn's working state cannot be resumed; the agent starts `Idle`.
@@ -410,7 +410,7 @@ and fixed in the turn (`TurnState::tools`, flat, issue 137) like its classificat
 - a resumed turn keeps them. The model is told of a tool only its name, description and parameters -
 the backend sends no more (`LLMClient::chat_completion`); whether its calls need approval, who sees
 them and how its results are classified stay with the runtime, which labels the model's answer
-(`label` in `actor/agent.rs`) and puts its calls up for approval (`GuardedToolExecutor::admit`)
+(`label` in `actor/agent/mod.rs`) and puts its calls up for approval (`GuardedToolExecutor::admit`)
 by the same `Tool`s. A tool that changes or disappears during a turn is offered as it is from the
 next turn on; a call of one that is gone fails as unknown.
 

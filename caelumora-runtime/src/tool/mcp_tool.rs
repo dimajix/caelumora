@@ -1,4 +1,4 @@
-use crate::agent_turn::Turn;
+use crate::agent::turn::Turn;
 use caelumora_model::question::Answers;
 use caelumora_model::confidentiality::Classification;
 use crate::component::{ComponentError, ComponentFacets, ComponentRegistry, ComponentKind};

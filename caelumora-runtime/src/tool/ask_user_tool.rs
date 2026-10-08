@@ -7,7 +7,7 @@
 //! runtime's (see `ToolProvider::questions`). Its questions are never
 //! sensitive: their answers go to the model.
 
-use crate::agent_turn::Turn;
+use crate::agent::turn::Turn;
 use crate::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::tool::{arguments, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
@@ -147,7 +147,7 @@ mod tests {
     async fn its_result_is_the_answers_as_given() {
         let tool = AskUserToolProvider;
         let mut state = AgentChannelState::default();
-        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut state, crate::agent_state::AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut state, crate::agent::state::AgentStateHandle::detached());
         let params = serde_json::json!({ "questions": [{ "header": "Name", "question": "Who?" }, { "header": "Ok", "question": "Go on?", "choices": [{ "label": "yes" }, { "label": "no" }] }], "ask": ["@alice"] });
         let questions = tool.questions(ASK_USER_TOOL_NAME, &params).unwrap().expect("it asks");
         let answers = Answers {

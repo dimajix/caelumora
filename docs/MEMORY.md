@@ -21,8 +21,8 @@ All three kinds of memory work alike:
 *   **Commit, don't write.** A tool stages its change on the turn; the change is applied by
     `Turn::commit` when the turn completes, and a turn that fails leaves none (issue 65).
 *   **The logic is a wrapper around the turn.** `Turn` knows nothing of notes or memory.
-    `agent_notes::AgentNotes` and `agent_memory::AgentMemory` hold the logic, and the components use
-    them.
+    `agent::notes::AgentNotes` and `agent::memory::AgentMemory` hold the logic, and the components
+    use them.
 *   **Every read is recorded** as knowledge (see [Recording what was
     read](#recording-what-was-read)).
 *   **Written without approval.** What an entry says may rest on a claim the model did not verify -

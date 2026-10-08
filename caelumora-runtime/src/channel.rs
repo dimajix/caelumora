@@ -3769,7 +3769,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl crate::context::PromptProvider for Heard {
-        async fn get_prompt(&self, work: &crate::work::AgentWork<'_>) -> Result<crate::context::Prompt> {
+        async fn get_prompt(&self, work: &crate::agent::work::AgentWork<'_>) -> Result<crate::context::Prompt> {
             Ok(crate::context::Prompt::from(format!("[Heard]\n{}", work.agent_channel_state().history.messages().len())))
         }
     }
@@ -3811,7 +3811,7 @@ mod tests {
                 presentation: Default::default(),
             }]
         }
-        async fn execute(&self, _name: &str, _params: &serde_json::Value, answers: Option<&caelumora_model::question::Answers>, _turn: &mut crate::agent_turn::Turn) -> crate::tool::ToolResult<crate::tool::ToolOutput> {
+        async fn execute(&self, _name: &str, _params: &serde_json::Value, answers: Option<&caelumora_model::question::Answers>, _turn: &mut crate::agent::turn::Turn) -> crate::tool::ToolResult<crate::tool::ToolOutput> {
             let answers = answers.ok_or_else(|| crate::tool::ToolError::ExecutionFailed("no answers".to_string()))?;
             if self.sensitive {
                 return Ok(serde_json::json!({ "received": answers.responses.len() }).into());

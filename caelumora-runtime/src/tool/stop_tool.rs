@@ -1,7 +1,7 @@
 //! The `stop_tool` component: tools with which an agent ends its part in a
 //! conversation - `stop`, `bye` and `silence`.
 
-use crate::agent_turn::Turn;
+use crate::agent::turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
@@ -102,7 +102,7 @@ mod tests {
     async fn test_stop_tool() {
         let provider = StopToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached());
 
         let result = provider.execute(STOP_TOOL_NAME, &json!({}), None, &mut turn).await.unwrap();
         assert_eq!(result.value["status"], "stopped");

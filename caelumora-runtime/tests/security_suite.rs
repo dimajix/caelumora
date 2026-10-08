@@ -888,7 +888,7 @@ impl caelumora_runtime::tool::ToolProvider for AskingOwner {
             presentation: Default::default(),
         }]
     }
-    async fn execute(&self, _: &str, _: &serde_json::Value, answers: Option<&caelumora_model::question::Answers>, _: &mut caelumora_runtime::agent_turn::Turn) -> caelumora_runtime::tool::ToolResult<caelumora_runtime::tool::ToolOutput> {
+    async fn execute(&self, _: &str, _: &serde_json::Value, answers: Option<&caelumora_model::question::Answers>, _: &mut caelumora_runtime::agent::turn::Turn) -> caelumora_runtime::tool::ToolResult<caelumora_runtime::tool::ToolOutput> {
         Ok(serde_json::json!({ "answered": answers.is_some() }).into())
     }
     fn questions(&self, _: &str, _: &serde_json::Value) -> caelumora_runtime::tool::ToolResult<Option<caelumora_model::question::Questions>> {
@@ -1200,7 +1200,7 @@ impl caelumora_runtime::tool::ToolProvider for Outward {
     fn destination(&self) -> Option<Classification> {
         Some(Classification::PUBLIC)
     }
-    async fn execute(&self, _: &str, _: &serde_json::Value, _: Option<&caelumora_model::question::Answers>, _: &mut caelumora_runtime::agent_turn::Turn) -> caelumora_runtime::tool::ToolResult<caelumora_runtime::tool::ToolOutput> {
+    async fn execute(&self, _: &str, _: &serde_json::Value, _: Option<&caelumora_model::question::Answers>, _: &mut caelumora_runtime::agent::turn::Turn) -> caelumora_runtime::tool::ToolResult<caelumora_runtime::tool::ToolOutput> {
         panic!("a withheld tool is never run")
     }
 }

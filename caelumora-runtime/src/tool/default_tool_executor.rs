@@ -4,7 +4,7 @@
 //! `GuardedToolExecutor` hands it only calls the policy permits, and makes
 //! what the model is told of the result.
 
-use crate::agent_turn::Turn;
+use crate::agent::turn::Turn;
 use crate::component::{ComponentError, ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry, ComponentResult};
 use crate::tool::{ToolError, ToolExecutor, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
@@ -147,7 +147,7 @@ mod tests {
     async fn a_call_runs_with_the_tool_that_provides_it_and_an_unknown_one_is_reported() {
         let executor = DefaultToolExecutor::new(vec![component("tools")]).unwrap();
         let mut agent_channel_state = agent_state();
-        let mut context = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached()).expect("a turn is under way");
+        let mut context = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached()).expect("a turn is under way");
 
         let output = executor.execute(&call("test_tool"), None, &mut context).await.unwrap();
         assert_eq!(output.value, json!({"result": "ok"}));
@@ -188,7 +188,7 @@ mod tests {
         assert!(matches!(executor.questions(&call("does_not_exist")), Err(ToolError::UnknownTool(_))));
 
         let mut agent_channel_state = agent_state();
-        let mut context = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached()).expect("a turn is under way");
+        let mut context = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached()).expect("a turn is under way");
         let questions = executor.questions(&call("asking_tool")).unwrap().expect("it asks");
         let answers = Answers::declined(questions, ActorId::None, "alice".to_string());
         let output = executor.execute(&call("asking_tool"), Some(&answers), &mut context).await.unwrap();

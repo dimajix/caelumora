@@ -18,7 +18,7 @@
 
 use crate::component::{flag_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::context::{titled, Prompt, PromptPosition, PromptProvider};
-use crate::work::AgentWork;
+use crate::agent::work::AgentWork;
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
@@ -206,9 +206,9 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_turn::Turn;
+    use crate::agent::turn::Turn;
     use caelumora_model::value::name::{Name, ScopedName};
-    use crate::agent_state::AgentStateHandle;
+    use crate::agent::state::AgentStateHandle;
     use crate::runtime::RuntimeManager;
     use crate::session::SessionLoop;
     use crate::view::ViewsFactory;

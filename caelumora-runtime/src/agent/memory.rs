@@ -13,8 +13,8 @@
 //! come from - it reads through the turn's views (`Turn::session`, issue
 //! 163).
 
-use crate::agent_turn::Turn;
-use crate::work::AgentWork;
+use crate::agent::turn::Turn;
+use crate::agent::work::AgentWork;
 use crate::tool::{ToolError, ToolResult};
 use caelumora_model::actor::ActorId;
 use caelumora_model::digest::Digest;

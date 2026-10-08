@@ -9,7 +9,7 @@
 //! Components that only read - a `PromptProvider` - are given an
 //! `AgentWork` rather than a `Turn`, so that they serve both kinds of agent.
 
-use crate::agent_state::AgentStateHandle;
+use crate::agent::state::AgentStateHandle;
 use crate::view::{SessionView, ViewsFactory};
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::confidentiality::Classification;

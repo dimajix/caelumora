@@ -7,7 +7,7 @@
 
 use super::Turn;
 use crate::actor::Answering;
-use crate::tool_calls::ToolCalls;
+use crate::agent::turn::tool_calls::ToolCalls;
 use caelumora_model::turn::TurnState;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::message::{executed_calls, Message};
@@ -159,9 +159,9 @@ impl Turn<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_notes::NoteKind;
-    use crate::agent_state::AgentStateHandle;
-    use crate::agent_turn::tests::message;
+    use crate::agent::notes::NoteKind;
+    use crate::agent::state::AgentStateHandle;
+    use crate::agent::turn::tests::message;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::message::MessageId;
     use caelumora_model::message::MessageRole;
@@ -171,7 +171,7 @@ mod tests {
     fn a_turn_that_called<'a>(state: &'a mut AgentChannelState, tool: &str, ran: bool) -> Turn<'a> {
         use caelumora_model::note::{NoteChange, NoteId};
         use caelumora_model::tool::{ToolCall, ToolCallResult, ToolResultStatus, ToolVisibility};
-        let mut turn = Turn::begun(AgentId::default(), String::new(), state, crate::agent_state::AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::default(), String::new(), state, crate::agent::state::AgentStateHandle::detached());
         let call = ToolCall { id: Some("1".to_string()), function_name: tool.to_string(), arguments: serde_json::json!({ "to": "bob" }), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
         let mut result = ToolCallResult::of(&call, ToolResultStatus::Ok, "sent".to_string(), Classification::CHANNEL_DEFAULT);
         result.started_at = ran.then(chrono::Utc::now);
@@ -235,7 +235,7 @@ mod tests {
     fn a_turn_with_an_open_step(state: &mut AgentChannelState) -> Turn<'_> {
         use caelumora_model::approval::ToolMatcher;
         use caelumora_model::tool::{ToolCallState, ToolResultStatus, ToolVisibility};
-        let mut turn = Turn::begun(AgentId::default(), String::new(), state, crate::agent_state::AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::default(), String::new(), state, crate::agent::state::AgentStateHandle::detached());
         let call = |id: &str, name: &str| ToolCall { id: Some(id.to_string()), function_name: name.to_string(), arguments: serde_json::json!({ "to": "bob" }), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
         let calls = vec![call("1", "send_mail"), call("2", "delete")];
         turn.push_message(Message { id: MessageId::new(), role: MessageRole::Assistant, tool_calls: calls.clone(), ..Message::new(Classification::CHANNEL_DEFAULT) });
@@ -286,7 +286,7 @@ mod tests {
     #[test]
     fn a_turn_given_up_before_it_said_anything_leaves_nothing() {
         let mut state = a_state_with("hello");
-        let turn = Turn::begun(AgentId::default(), String::new(), &mut state, crate::agent_state::AgentStateHandle::detached());
+        let turn = Turn::begun(AgentId::default(), String::new(), &mut state, crate::agent::state::AgentStateHandle::detached());
         turn.give_up(GivenUpReason::Stopped, None);
         assert!(state.transcript.given_up_turns().is_empty());
         assert_eq!(state.transcript.entries().len(), 1);

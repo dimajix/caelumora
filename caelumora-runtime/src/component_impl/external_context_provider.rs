@@ -11,7 +11,7 @@
 
 use crate::component::{ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry};
 use crate::context::{ContextProvider, PromptProvider};
-use crate::work::AgentWork;
+use crate::agent::work::AgentWork;
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::context::{KnowledgeRef, PromptPart};
@@ -68,7 +68,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_state::AgentStateHandle;
+    use crate::agent::state::AgentStateHandle;
     use crate::component_impl::static_system_prompt_provider::StaticSystemPromptProvider;
     use crate::context::PromptPosition;
     use caelumora_model::agent::{AgentChannelState, AgentId};

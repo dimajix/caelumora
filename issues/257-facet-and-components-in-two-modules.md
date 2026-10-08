@@ -56,3 +56,7 @@ it, its implementations as its submodules (`std::io`, `tokio::sync`, `serde::de:
   like `llm`, so a module of its own beside it rather than one under an `agent` module.
   `external/mod.rs` holds `ExternalAgent` and `register_all`, `a2a_agent/` is its submodule.
   `component_impl` is the one `_impl` module left.
+- **2026-10-08** — In the same pass, with the maintainer, the runtime's `agent_` files became one
+  module `agent`: `turn` (with `tool_calls`, which only the turn uses), `state`, `notes`, `memory`
+  and `work`, which both kinds of agent share. `agent_run_control` is the `AgentActor`'s alone and
+  went to `actor::agent::run_control`.

@@ -5,7 +5,7 @@
 //! parameter `seconds` (default 5) - at most `MAX_SECONDS`, and needs no
 //! approval unless the parameter `requires_approval` says so.
 
-use crate::agent_turn::Turn;
+use crate::agent::turn::Turn;
 use crate::component::{flag_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::tool::{arguments, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
@@ -107,7 +107,7 @@ mod tests {
     async fn sleep_waits_as_long_as_it_is_told_within_its_limit() {
         let tool = SleepToolProvider { seconds: 0.05, requires_approval: false };
         let mut state = AgentChannelState::default();
-        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut state, crate::agent_state::AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut state, crate::agent::state::AgentStateHandle::detached());
 
         let started = std::time::Instant::now();
         let slept = tool.execute(SLEEP_TOOL_NAME, &Value::Null, None, &mut turn).await.unwrap();

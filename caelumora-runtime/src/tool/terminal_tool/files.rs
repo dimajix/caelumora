@@ -15,7 +15,7 @@
 //! changed the file in between is overwritten.
 
 use super::{failed, tool, TerminalToolConfig};
-use crate::agent_turn::Turn;
+use crate::agent::turn::Turn;
 use crate::terminal::{ByteStream, FileEntry, Terminal, TerminalError, WorkspacePath};
 use crate::tool::{arguments, ToolError, ToolResult};
 use crate::view::WorkspaceView;

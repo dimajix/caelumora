@@ -3,7 +3,7 @@
 //! `AgentState`, not in one channel.
 //!
 //! It translates the tools `remember` and `forget` and renders the prompt
-//! part; the logic is `crate::agent_memory::AgentMemory`. Changes are applied
+//! part; the logic is `crate::agent::memory::AgentMemory`. Changes are applied
 //! to the agent's state as it is when the turn completes
 //! (`Turn::commit`), so that actors of the same agent in
 //! other channels and sessions neither lose nor overwrite them. The prompt
@@ -19,11 +19,11 @@
 //! own, seen by its owner in the context panel only. Its entries are
 //! numbered differently from notes, on purpose: see `AgentMemory::remember`.
 
-use crate::agent_memory::AgentMemory;
-use crate::agent_turn::Turn;
+use crate::agent::memory::AgentMemory;
+use crate::agent::turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::context::{render_sections, Prompt, PromptPosition, PromptProvider, Section};
-use crate::work::AgentWork;
+use crate::agent::work::AgentWork;
 use crate::tool::{classification_argument, id_argument, reclassify_parameters, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -202,7 +202,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_state::{AgentStateHandle, AgentStates};
+    use crate::agent::state::{AgentStateHandle, AgentStates};
     use crate::runtime::RuntimeManager;
     use crate::session::SessionLoop;
     use crate::tool::ToolError;

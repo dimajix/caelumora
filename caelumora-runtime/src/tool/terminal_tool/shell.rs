@@ -10,7 +10,7 @@
 //! is the model's to end.
 
 use super::{failed, tool, TerminalToolConfig};
-use crate::agent_turn::Turn;
+use crate::agent::turn::Turn;
 use crate::terminal::{CommandState, CommandStatus, Shell, Terminal};
 use crate::tool::{arguments, ToolError, ToolResult};
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation};

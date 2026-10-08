@@ -3,7 +3,7 @@
 //! every `PromptProvider` of the agent, placed around its transcript
 //! (issues 47, 99). The default `ContextProvider` of an agent run here.
 
-use crate::work::AgentWork;
+use crate::agent::work::AgentWork;
 use caelumora_model::context::{KnowledgeRef, PromptPart};
 use crate::component::{ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry};
 use crate::context::{ContextProvider, PromptPosition, PromptProvider};
@@ -101,8 +101,8 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_state::AgentStateHandle;
-    use crate::agent_turn::Turn;
+    use crate::agent::state::AgentStateHandle;
+    use crate::agent::turn::Turn;
     use caelumora_model::component::ComponentFailPolicy;
     use crate::component_impl::static_system_prompt_provider::StaticSystemPromptProvider;
     use caelumora_model::agent::{AgentChannelState, AgentId};
@@ -140,7 +140,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl PromptProvider for Unavailable {
-        async fn get_prompt(&self, _work: &crate::work::AgentWork<'_>) -> anyhow::Result<crate::context::Prompt> {
+        async fn get_prompt(&self, _work: &crate::agent::work::AgentWork<'_>) -> anyhow::Result<crate::context::Prompt> {
             Err(anyhow::anyhow!("unavailable"))
         }
     }

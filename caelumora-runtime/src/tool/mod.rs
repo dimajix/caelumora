@@ -13,7 +13,7 @@ pub mod sleep_tool;
 pub mod stop_tool;
 pub mod terminal_tool;
 
-use crate::agent_turn::Turn;
+use crate::agent::turn::Turn;
 use crate::component::{ComponentImpl, ComponentRegistry};
 use crate::controller::{ChannelController, SessionController};
 use async_trait::async_trait;
@@ -647,7 +647,7 @@ pub fn register_all(registry: &mut ComponentRegistry) {
 mod tests {
     use super::*;
     use crate::tool::default_tool_executor::DefaultToolExecutor;
-    use crate::agent_turn::Turn;
+    use crate::agent::turn::Turn;
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::{AgentChannelState, AgentId};
 
@@ -823,7 +823,7 @@ mod tests {
         let security: Arc<dyn SecurityManager> = Arc::new(DummySecurityManager::new());
         let admitted = |executor: GuardedToolExecutor| async move {
             let mut agent_channel_state = agent_turn(&executor);
-            let turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached()).expect("a turn is under way");
+            let turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached()).expect("a turn is under way");
             executor.admit(&call("test_tool"), &turn).await
         };
 
@@ -843,7 +843,7 @@ mod tests {
     async fn a_rule_that_denies_set_while_a_call_waits_refuses_it_when_run() {
         let (executor, session, _channel) = guarded_in(Arc::new(DummySecurityManager::new()), true, Places::default());
         let mut agent_channel_state = agent_turn(&executor);
-        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached()).expect("a turn is under way");
+        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached()).expect("a turn is under way");
         assert!(matches!(executor.admit(&call("test_tool"), &turn).await, Admission::Ask { .. }));
 
         // As if set in another instance, and announced.
@@ -861,7 +861,7 @@ mod tests {
         let mut agent_channel_state = AgentChannelState::default();
         let agent_id = AgentId::new();
         agent_channel_state.turn = Some(caelumora_model::turn::TurnState { work: caelumora_model::work::Work { security_context: SecurityContext { caller_id: ActorId::Agent(agent_id), ..SecurityContext::default() }, ..Default::default() }, tools: executor.executor.tool_sets().into_iter().flat_map(|set| set.tools).collect(), ..Default::default() });
-        let mut context = Turn::of(agent_id, "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached()).expect("a turn is under way");
+        let mut context = Turn::of(agent_id, "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached()).expect("a turn is under way");
 
         let admitted = executor.admit(&call("test_tool"), &context).await;
         assert!(matches!(admitted, Admission::Answered(ref r) if r.status == ToolResultStatus::Forbidden), "refused before anyone is asked: {admitted:?}");
@@ -875,7 +875,7 @@ mod tests {
     async fn a_call_is_asked_for_run_or_answered_at_once_as_it_can_succeed() {
         let asking = executor(Arc::new(DummySecurityManager::new()));
         let mut agent_channel_state = agent_turn(&asking);
-        let turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached()).expect("a turn is under way");
+        let turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached()).expect("a turn is under way");
         assert!(matches!(asking.admit(&call("test_tool"), &turn).await, Admission::Ask { description, explicit: false, .. } if description == "desc"), "its tool requires approval");
         match asking.admit(&call("does_not_exist"), &turn).await {
             Admission::Answered(result) => {
@@ -887,12 +887,12 @@ mod tests {
 
         let refusing = executor(Arc::new(DenyAllSecurityManager));
         let mut agent_channel_state = agent_turn(&refusing);
-        let turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached()).expect("a turn is under way");
+        let turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached()).expect("a turn is under way");
         assert!(matches!(refusing.admit(&call("test_tool"), &turn).await, Admission::Answered(r) if r.status == ToolResultStatus::Forbidden), "first the policy");
 
         let running = guarded(Arc::new(DummySecurityManager::new()), false, Places::default());
         let mut agent_channel_state = agent_turn(&running);
-        let turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached()).expect("a turn is under way");
+        let turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached()).expect("a turn is under way");
         let admitted = running.admit(&call("test_tool"), &turn).await;
         assert!(matches!(admitted, Admission::Run), "no approval needed");
         let state = admitted.state(call("test_tool"));
@@ -948,7 +948,7 @@ mod tests {
             }),
             ..Default::default()
         };
-        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached()).expect("a turn is under way");
+        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached()).expect("a turn is under way");
         let admitted = executor.admit(&call("send_out"), &turn).await;
         assert!(matches!(&admitted, Admission::Answered(r) if r.status == ToolResultStatus::UnknownTool), "not called by its name: {admitted:?}");
         let result = executor.execute(&call("send_out"), None, &mut turn, &CancellationToken::new()).await;
@@ -973,7 +973,7 @@ mod tests {
         let executor = executor(Arc::new(DummySecurityManager::new()));
         let mut agent_channel_state = AgentChannelState::default();
         agent_channel_state.turn = Some(caelumora_model::turn::TurnState { work: caelumora_model::work::Work { security_context: SecurityContext { caller_id: ActorId::User(caelumora_model::user::UserId::new()), ..SecurityContext::default() }, ..Default::default() }, tools: executor.executor.tool_sets().into_iter().flat_map(|set| set.tools).collect(), ..Default::default() });
-        let mut context = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached()).expect("a turn is under way");
+        let mut context = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached()).expect("a turn is under way");
 
         let result = executor.execute(&call("test_tool"), None, &mut context, &CancellationToken::new()).await;
         assert_eq!(result.status, ToolResultStatus::Forbidden, "whatever the policy says");
@@ -1000,7 +1000,7 @@ mod tests {
     async fn a_call_runs_is_timed_and_classified_as_the_channel_unless_it_says_otherwise() {
         let executor = executor(with_hr());
         let mut agent_channel_state = agent_turn(&executor);
-        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached()).expect("a turn is under way");
+        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached()).expect("a turn is under way");
 
         let result = executor.execute(&call("test_tool"), None, &mut turn, &CancellationToken::new()).await;
         assert_eq!(result.status, ToolResultStatus::Ok);
@@ -1021,7 +1021,7 @@ mod tests {
     async fn a_call_still_running_when_its_turn_ends_is_interrupted_and_counts_as_run() {
         let executor = executor(Arc::new(DummySecurityManager::new()));
         let mut agent_channel_state = agent_turn(&executor);
-        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached()).expect("a turn is under way");
+        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached()).expect("a turn is under way");
         let cancelled = CancellationToken::new();
         let ending = cancelled.clone();
         tokio::spawn(async move {
@@ -1043,7 +1043,7 @@ mod tests {
     async fn a_result_that_may_not_flow_into_the_channel_never_reaches_the_model() {
         let executor = executor(with_hr());
         let mut agent_channel_state = agent_turn(&executor);
-        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached()).expect("a turn is under way");
+        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached()).expect("a turn is under way");
 
         for name in ["hr_tool", "configured_tool"] {
             let result = executor.execute(&call(name), None, &mut turn, &CancellationToken::new()).await;
@@ -1062,7 +1062,7 @@ mod tests {
         if let Some(turn) = agent_channel_state.turn.as_mut() {
             turn.work.classification = hr();
         }
-        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached()).expect("a turn is under way");
+        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached()).expect("a turn is under way");
         let result = executor.execute(&call("hr_tool"), None, &mut turn, &CancellationToken::new()).await;
         assert_eq!(result.status, ToolResultStatus::Ok);
         assert_eq!(result.classification, hr(), "as the tool classified it");

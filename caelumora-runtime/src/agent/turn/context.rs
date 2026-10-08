@@ -79,7 +79,7 @@ impl Turn<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_turn::tests::seen;
+    use crate::agent::turn::tests::seen;
     use caelumora_model::actor::EventContext;
     use caelumora_model::security::SecurityContext;
     use caelumora_model::agent::{AgentChannelState, AgentId};
@@ -112,7 +112,7 @@ mod tests {
         let reasoning_of = |messages: &[Message]| messages.iter().map(|m| m.reasoning.is_some()).collect::<Vec<_>>();
         {
             state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::default(), Vec::new(), profile(ReasoningHistory::CurrentTurn));
-            let mut turn = Turn::of(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached()).expect("a turn was begun");
+            let mut turn = Turn::of(agent, "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached()).expect("a turn was begun");
             turn.set_context(Vec::new());
             turn.push_message(first.clone());
             assert_eq!(reasoning_of(&turn.full_context().unwrap().0), [false, false, true], "only the turn's own reasoning");
@@ -134,7 +134,7 @@ mod tests {
         // still not another agent's.
         let third = thought(ActorId::Agent(agent), "third");
         state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::default(), Vec::new(), profile(ReasoningHistory::Always));
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached()).expect("a turn was begun");
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached()).expect("a turn was begun");
         turn.set_context(Vec::new());
         turn.push_message(third);
         assert_eq!(reasoning_of(&turn.full_context().unwrap().0), [true, false, true, true, true]);
@@ -155,7 +155,7 @@ mod tests {
             ContextItem::Conversation { message } => message.content.clone().unwrap_or_default(),
         }).collect::<Vec<_>>();
         {
-            let mut turn = Turn::begun(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
+            let mut turn = Turn::begun(agent, "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached());
             turn.set_context(vec![system()]);
             let (given, _) = turn.full_context().unwrap();
             assert_eq!(given.len(), 2, "the prompt is given to the model as a message");
@@ -180,7 +180,7 @@ mod tests {
             classification: None,
         };
         {
-            let mut turn = Turn::begun(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
+            let mut turn = Turn::begun(agent, "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached());
             turn.push_message(before.clone());
             turn.record_knowledge(read.clone());
             turn.record_knowledge(read.clone());
@@ -193,7 +193,7 @@ mod tests {
 
         // The same prompt in another turn is kept once.
         {
-            let mut turn = Turn::begun(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
+            let mut turn = Turn::begun(agent, "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached());
             turn.set_context(vec![system()]);
         }
         assert_eq!(state.prompts.len(), 1);
@@ -218,7 +218,7 @@ mod tests {
         let take_turn = |state: &mut AgentChannelState, tools: Vec<Tool>, messages: &[&Message]| {
             let sets = if tools.is_empty() { Vec::new() } else { vec![ToolSet::new("tools", "some tools", tools.clone())] };
             state.begin_turn(Default::default(), Default::default(), Default::default(), sets, Default::default());
-            let mut turn = Turn::of(agent, "agent".to_string(), state, crate::agent_state::AgentStateHandle::detached()).expect("a turn was begun");
+            let mut turn = Turn::of(agent, "agent".to_string(), state, crate::agent::state::AgentStateHandle::detached()).expect("a turn was begun");
             let (_, offered) = turn.full_context().unwrap();
             assert_eq!(offered, tools, "the model is offered what the turn began with");
             for message in messages {

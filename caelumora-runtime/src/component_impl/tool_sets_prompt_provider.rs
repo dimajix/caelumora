@@ -12,7 +12,7 @@
 
 use crate::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::context::{render_sections, Prompt, PromptPosition, PromptProvider, Section};
-use crate::work::AgentWork;
+use crate::agent::work::AgentWork;
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
@@ -72,8 +72,8 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_state::AgentStateHandle;
-    use crate::agent_turn::Turn;
+    use crate::agent::state::AgentStateHandle;
+    use crate::agent::turn::Turn;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::tool::{Tool, ToolParameters};
 

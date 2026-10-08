@@ -10,8 +10,8 @@
 //! components use it; anything else that works with an agent's notes in a
 //! turn uses it too.
 
-use crate::agent_turn::Turn;
-use crate::work::AgentWork;
+use crate::agent::turn::Turn;
+use crate::agent::work::AgentWork;
 use crate::tool::{ToolError, ToolResult};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentChannelState;

@@ -1,9 +1,11 @@
+mod run_control;
+
 use super::intake::{catch_up, take_in};
 use super::{event_for, failure_message, lowered_message, reject_retries, retry_target};
 use crate::message::apply_stage_processors;
 use crate::actor::{Actor, Answering};
-use crate::agent_run_control::{Interrupt, RunControl};
-use crate::agent_turn::{CommittedTurn, Turn, MAX_MODEL_CALLS};
+use run_control::{Interrupt, RunControl};
+use crate::agent::turn::{CommittedTurn, Turn, MAX_MODEL_CALLS};
 use crate::view::ViewsFactory;
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::context::ContextProvider;
@@ -15,7 +17,7 @@ use crate::transport::{EventReceiver, EventSender};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, RetryTarget};
-use crate::agent_state::AgentStateHandle;
+use crate::agent::state::AgentStateHandle;
 use caelumora_model::agent::{AgentChannelState, AgentId, Personality, RetryRefused};
 use caelumora_model::turn::TurnState;
 use caelumora_model::work::TurnId;

@@ -122,7 +122,7 @@ fn plan_finalize_instruction(plan: &Plan) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_turn::tests::seen;
+    use crate::agent::turn::tests::seen;
     use caelumora_model::actor::ActorId;
     use caelumora_model::actor::EventContext;
     use caelumora_model::confidentiality::Classification;
@@ -165,7 +165,7 @@ mod tests {
     fn advance_plan_moves_to_the_next_step_when_one_remains() {
         let mut state = AgentChannelState::default();
         state.transcript.push(Message { role: MessageRole::User, content: Some("do it".to_string()), ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) });
-        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut state, crate::agent_state::AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut state, crate::agent::state::AgentStateHandle::detached());
         turn.set_context(Vec::new());
         turn.set_plan(plan_of(&["first", "second"]));
 
@@ -187,7 +187,7 @@ mod tests {
     #[test]
     fn advance_plan_finalizes_once_steps_are_exhausted() {
         let mut state = AgentChannelState::default();
-        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut state, crate::agent_state::AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut state, crate::agent::state::AgentStateHandle::detached());
         turn.set_plan(plan_of(&["first", "second"]));
 
         let started = turn.advance_plan(2);
@@ -209,7 +209,7 @@ mod tests {
         let keeps_system = ModelProfile { system_messages: SystemMessages::Anywhere, ..ModelProfile::default() };
         {
             state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::default(), Vec::new(), keeps_system);
-            let mut turn = Turn::of(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached()).expect("a turn was begun");
+            let mut turn = Turn::of(agent, "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached()).expect("a turn was begun");
             turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification: None, source: None }]);
             turn.set_plan(plan_of(&["only"]));
             turn.advance_plan(0);
@@ -234,7 +234,7 @@ mod tests {
         assert_eq!(state.transcript.messages().len(), 3, "the instructions are not in the transcript");
 
         state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::default(), Vec::new(), keeps_system);
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached()).expect("a turn was begun");
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached()).expect("a turn was begun");
         turn.set_context(Vec::new());
         assert_eq!(given(&turn).len(), 3, "a later turn is not given them");
     }
@@ -242,7 +242,7 @@ mod tests {
     #[test]
     fn advance_plan_finalizes_immediately_for_an_empty_plan() {
         let mut state = AgentChannelState::default();
-        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut state, crate::agent_state::AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut state, crate::agent::state::AgentStateHandle::detached());
         turn.set_plan(plan_of(&[]));
 
         assert!(turn.advance_plan(0).is_none());
@@ -252,7 +252,7 @@ mod tests {
     #[test]
     fn plan_round_trips_through_set_and_take() {
         let mut agent_channel_state = AgentChannelState::default();
-        let mut ctx = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+        let mut ctx = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached());
 
         assert!(ctx.plan_progress().is_none());
 
@@ -267,7 +267,7 @@ mod tests {
     #[test]
     fn a_converged_answer_finishes_its_step_and_the_last_one_asks_for_the_final_answer() {
         let mut state = AgentChannelState::default();
-        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut state, crate::agent_state::AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut state, crate::agent::state::AgentStateHandle::detached());
         assert!(turn.plan_converged().is_empty(), "no plan, nothing to move on");
         turn.set_plan(plan_of(&["first", "second"]));
         assert!(turn.in_plan_step());
@@ -285,12 +285,12 @@ mod tests {
     #[test]
     fn a_new_turn_clears_a_stale_plan() {
         let mut agent_channel_state = AgentChannelState::default();
-        let mut ctx = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+        let mut ctx = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached());
 
         ctx.set_plan(make_plan_state());
         assert!(ctx.plan().is_some());
 
-        let ctx = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+        let ctx = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached());
         assert!(ctx.plan().is_none());
     }
 }

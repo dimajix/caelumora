@@ -1,7 +1,7 @@
 //! The `calculator_tool` component: a tool that evaluates mathematical
 //! expressions.
 
-use crate::agent_turn::Turn;
+use crate::agent::turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::tool::{arguments, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
@@ -78,7 +78,7 @@ mod tests {
     async fn test_calculator_tool() {
         let provider = CalculatorToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached());
 
         let cases = vec![
             ("2 + 2", 4.0),
@@ -101,7 +101,7 @@ mod tests {
     async fn test_calculator_tool_invalid_expression() {
         let provider = CalculatorToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached());
 
         let params = json!({ "expression": "invalid" });
         let result = provider.execute(CALCULATE_TOOL_NAME, &params, None, &mut turn).await;

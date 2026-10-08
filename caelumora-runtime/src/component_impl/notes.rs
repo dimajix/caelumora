@@ -2,7 +2,7 @@
 //! remember in a channel, and is given what every agent of the channel noted.
 //!
 //! Its tools `note` and `revoke_note` change the agent's own notes - taken
-//! over when the turn completes, see `crate::agent_notes::AgentNotes`;
+//! over when the turn completes, see `crate::agent::notes::AgentNotes`;
 //! `read_notes` reads
 //! the notes of another channel of the session, or of all it may read. Every
 //! read is recorded as a `KnowledgeRef` with the turn's messages. Its prompt part
@@ -10,11 +10,11 @@
 //! input (`PromptPosition::BeforeTurnInput`), not in the system prompt, so
 //! that changing notes do not invalidate the prompt cache (issue 47).
 
-use crate::agent_notes::{AgentNotes, NoteKind};
-use crate::agent_turn::Turn;
+use crate::agent::notes::{AgentNotes, NoteKind};
+use crate::agent::turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::context::{render_sections, Prompt, PromptPosition, PromptProvider, Section};
-use crate::work::AgentWork;
+use crate::agent::work::AgentWork;
 use caelumora_model::question::Answers;
 use caelumora_model::snapshot::PublishedNotes;
 use crate::tool::{arguments, classification_argument, id_argument, reclassify_parameters, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
@@ -311,7 +311,7 @@ mod tests {
             security_manager: Arc::new(caelumora_model::security::OwnershipSecurityManager::new()),
             security_context: SecurityContext::default().next(ActorId::Agent(agent)),
         };
-        let mut turn = Turn::begun(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
+        let mut turn = Turn::begun(agent, "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached());
         tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "tea" }), None, &mut turn).await.unwrap();
         let above = serde_json::json!({ "id": 1, "level": "strictly_confidential" });
         assert!(matches!(tools.execute(RECLASSIFY_NOTE_TOOL_NAME, &above, None, &mut turn).await, Err(ToolError::PermissionDenied(_))), "never above the channel");
@@ -332,7 +332,7 @@ mod tests {
             security_context: Default::default(),
         };
         {
-            let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
+            let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached());
             let noted = tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "tea" }), None, &mut turn).await.unwrap();
             assert_eq!(noted.value["id"], 1);
             assert!(AgentNotes::current(&turn.work(), NoteKind::Public).is_empty(), "not before the turn completes");
@@ -342,7 +342,7 @@ mod tests {
             assert_eq!(state.notes.current().iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["tea"]);
         }
         {
-            let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
+            let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached());
             tools.execute(REVOKE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn).await.unwrap();
             tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "coffee" }), None, &mut turn).await.unwrap();
             turn.commit(false).await;
@@ -352,9 +352,9 @@ mod tests {
         {
             // A turn that does not complete publishes nothing: the next one
             // starts without its changes.
-            let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
+            let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached());
             tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "lost" }), None, &mut turn).await.unwrap();
-            let turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
+            let turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached());
             assert!(!turn.commit(false).await.channel_state_changed);
         }
     }
@@ -367,7 +367,7 @@ mod tests {
             security_context: Default::default(),
         };
         {
-            let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
+            let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached());
             tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "draft" }), None, &mut turn).await.unwrap();
             tools.execute(REVOKE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn).await.expect("noted in this turn");
             let again = tools.execute(REVOKE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn).await;
@@ -377,7 +377,7 @@ mod tests {
             turn.commit(false).await;
             assert!(state.notes.current().is_empty());
         }
-        let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached());
         let noted = tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "final" }), None, &mut turn).await.unwrap();
         assert_eq!(noted.value["id"], 2);
     }

@@ -387,8 +387,8 @@ impl WorkspaceManager {
 /// workspace attached that its storage gives a shell.
 #[cfg(test)]
 pub(crate) mod testing {
-    use crate::agent_state::AgentStateHandle;
-    use crate::agent_turn::Turn;
+    use crate::agent::state::AgentStateHandle;
+    use crate::agent::turn::Turn;
     use crate::runtime::RuntimeManager;
     use crate::session::SessionLoop;
     use crate::view::ViewsFactory;

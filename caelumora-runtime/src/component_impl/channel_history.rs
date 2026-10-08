@@ -5,7 +5,7 @@
 //! (`Turn::session`, issues 133, 163); every read is recorded as a
 //! `KnowledgeRef` with the turn's messages.
 
-use crate::agent_turn::Turn;
+use crate::agent::turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::tool::{arguments, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
