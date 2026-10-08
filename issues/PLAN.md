@@ -89,9 +89,10 @@ where it flows both ways: its content into the channel, and what the agent saw t
 workspace - W1's flow rule, 251's "L = W", 180's clearance at the door. It is decided once, in 180,
 for workspaces, MCP servers and Open Terminal alike.
 
-Issues to open (numbers to be assigned when they are created):
+W1 and W3 are issue [253](253-workspace.md), planned together with 251 (in 251's *Plan*); W2 and
+W4 are still to be opened, their numbers assigned when they are created:
 
-*   **W1 - What a workspace is** (architecture decision, first). A tree of files with
+*   **W1 - What a workspace is** (architecture decision, first; now 253). A tree of files with
     `SecurityAttributes` and one classification (169's fixed container), in a scope like the
     scoped definitions - of a session, or of a user and attached to sessions. To decide: where it
     is kept (a `WorkspaceStore` trait; a plain directory as the first implementation, so that Open
@@ -105,8 +106,9 @@ Issues to open (numbers to be assigned when they are created):
     ranges), search, write, edit by replacement, move, delete. Reads are recorded as knowledge
     (`KnowledgeRef`), writes are staged or effects (20), writing needs approval unless a rule
     allows it - the tools propose rules by path (`ToolProvider::matcher`).
-*   **W3 - The users' side**: upload and download, a workspace panel in the web UI, attaching a
-    file to a message, a diff presentation for write calls (a `ToolPresentation` of its own).
+*   **W3 - The users' side** (now 253): upload and download, a workspace panel in the web UI,
+    attaching a file to a message, a diff presentation for write calls (a `ToolPresentation` of
+    its own).
 *   **W4 - Versions**: a workspace does not branch with the conversation, so asking for an answer
     again cannot take back an agent's bad edit. Each file keeps its versions with who wrote them
     from which turn (169), and a version can be restored - around commands too, if Open Terminal
@@ -237,7 +239,7 @@ The plan stands on assumptions the maintainer should confirm or correct:
 | Section | Issues |
 |---|---|
 | A - small | 07, 218, 223 |
-| B1 - workspace | 20 (part), 169, 180, 208, 247, 251, new W1-W4 |
+| B1 - workspace | 20 (part), 169, 180, 208, 247, 251, 253, new W2 and W4 |
 | B2 - context and memory | 16, 22, 55, 58, 65, 166, 169 |
 | B3 - tools | 126, 226 |
 | B4 - sessions and team | 07, 10, 25, 140, 142, 221, 227, 125 (part) |

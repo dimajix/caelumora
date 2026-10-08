@@ -52,3 +52,8 @@ hand what it read there to any server its personality is wired to, and no rule i
 
 - **2026-10-02** — Opened while deciding the confidentiality of external agents (issue 179), which
   made visible that MCP arguments leave the system with no rule asked.
+- **2026-10-08** — Decided as part of issue [251](251-open-terminal.md)'s plan (part D): per tool
+  set, by what the set declares - `ToolSet::destination`, the classification its arguments go to,
+  `public` for an `mcp_tool` that names none - judged in the `GuardedToolExecutor` when the turn's
+  tools are assembled, with the channel's classification; a call of a tool not offered is answered
+  as unknown. Implemented in a step of that plan.
