@@ -276,6 +276,15 @@ Taken on 2026-10-08 by the maintainer, answering the questions above:
     It permits nothing the flow rule refuses.
 12. **No contributors**: a workspace is its owner's. Outside a session only its owner works on it;
     in a session it is shared through the channels. Only its owner attaches it.
+13. **A workspace lies in a scope** (2026-10-08, before step 4), as an agent does: a `ScopedName`
+    in a session's scope, its owner's or the global one - not a channel's. The scope is the name
+    space and the life, not the owner: a workspace is a user's wherever it lies. A session template
+    may name one (`WorkspaceTemplate`): found in its scope, if in the storage the template names,
+    or made there, and attached - in the session's scope one for every session, in the owner's or
+    the global one shared by every session that finds it.
+14. **What lies in a session's scope is used in that session alone** (`Scope::admits`), as an
+    agent: not attached to another session, not used directly by its owner outside it, and
+    deleted, restored and purged with its session, its files too.
 
 ## Plan
 
@@ -385,7 +394,7 @@ define_id!(WorkspaceId);
 pub struct Workspace {
     pub id: WorkspaceId,
     #[serde(flatten)]
-    pub name: ScopedName,                  // in its owner's UserScope: unique per user
+    pub name: ScopedName,                  // in a session's scope, its owner's or the global one (decision 13)
     pub storage: String,                   // the name of its storage (part A); checked against the configuration
     pub description: Option<Description>,  // what it holds, as its owner describes it
     pub classification: Classification,    // one for the whole tree (issue 169)
@@ -415,8 +424,9 @@ by the flow rule (B2) - a session's channels of several classifications share on
 where it flows both ways, and only those whose switch `uses_workspace` is on (B2). Several per
 session is an extension the model allows (a list instead of the option) and nothing here needs.
 `Channel` and `ChannelTemplate` gain `uses_workspace: bool` (default `true`),
-`ChannelUpdateEvent::UsesWorkspaceChanged(bool)`. `SessionTemplate` gains nothing: a template is
-reusable, a workspace is someone's, and attaching is an act on the session.
+`ChannelUpdateEvent::UsesWorkspaceChanged(bool)`. `SessionTemplate` gains `workspace:
+Option<WorkspaceTemplate { name, scope, storage, classification, description }>` (decision 13),
+found or made as the session is made, as its agents are.
 
 `GlobalEvent` gains `WorkspaceCreated(WorkspaceId)`, `WorkspaceUpdated(WorkspaceId,
 WorkspaceUpdateEvent)`, `WorkspaceDeleted(WorkspaceId)` and `WorkspaceRestored(WorkspaceId)`;
@@ -512,8 +522,13 @@ store first, then announce) and the only code that holds the providers:
 A workspace whose storage is no longer configured is kept, listed with "its storage is not
 configured", and refused by every operation on its files.
 
-`scoped.rs` needs nothing: a workspace lies in its owner's `UserScope`, and nothing deletes what
-lies in a user's scope yet; sessions and channels hold none.
+`scoped.rs` takes a session's workspaces along, through the manager - the one writer of their
+documents - which deletes, restores and purges what lies in a scope (`delete_lying_in`,
+`restore_lying_in`, `purge_lying_in`), places first when purging. `owned` refuses one of a
+session's scope, `usable_in` one whose scope the session is not, and `SessionLoop::set_workspace`
+one of another session's scope (decision 14). `create_from_template` finds or makes the template's
+workspace (`template::resolve_workspace`) and takes back one it made if the session cannot be
+created.
 
 Attaching is the session's: `SessionLoop::set_workspace(ctx, Option<WorkspaceId>)` asks
 `UpdateSession` first, then for one attached `GetWorkspace` and `UpdateWorkspace` - its owner
@@ -881,6 +896,9 @@ where it says so.
    views and snapshots. Tests: the path rules, one per refusal; the security suite - who may
    create, read, change, delete, restore, purge, attach, read and write files, and that a stranger
    sees nothing.
+3b. **The workspace's scope and the template** (decisions 13, 14): `ScopedName`, the scopes a
+    workspace lies in, `WorkspaceTemplate`, finding or making it with the session, the rule of
+    `Scope::admits`, deleting, restoring and purging with the session; the suite.
 4. **REST and the web UI for workspaces** (B5, G without the shell presentation): the routes and
    DTOs, then the list, the session header and the panel. Two commits: REST, then UI.
 5. **The shell of `local` and `terminal_tool`** (A's `Shell`, C1-C7): the opt-in host shell, the
@@ -1019,3 +1037,6 @@ command may come later.
 - **2026-10-08** — Step 3 of the plan done: the terminal traits, the `local` provider without its
   shell, the `WorkspaceManager`, attaching, the channel's switch, the views and the security suite
   - see issue [253](253-workspace.md).
+- **2026-10-08** — Before step 4, on the maintainer's proposal: a workspace lies in a scope as an
+  agent does, and a template may name one (*Decisions* 13 and 14). Done as step 3b - see issue
+  [253](253-workspace.md).

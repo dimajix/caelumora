@@ -46,6 +46,10 @@ pub enum TemplateError {
     /// scope the agent would not lie in (issue 178).
     #[error("the personality '{0}' cannot make an agent outside the session or channel it lies in")]
     PersonalityOutOfScope(Name),
+    /// The workspace the template names exists in the scope it asks for,
+    /// but in another storage (issue 251): neither reused nor replaced.
+    #[error("the workspace '{0}' already exists where the template asks for it, in another storage")]
+    WorkspaceNameTaken(Name),
 }
 
 pub type TemplateResult<T> = Result<T, TemplateError>;
@@ -173,10 +177,43 @@ pub struct SessionTemplate {
     /// 13): rules that ask or deny. None unless named.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub approval_rules: Vec<ApprovalRule>,
+    /// The workspace sessions made from it have (issue 251), found or made
+    /// as they are made and attached to them; none unless named.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<WorkspaceTemplate>,
     /// Set when it was deleted (issue 164): it stays stored, hidden from
     /// every read but those for what was deleted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deleted: Option<Removal>,
+}
+
+/// The workspace of a template's sessions (issue 251, decision 13): found
+/// by its name in `scope` as an agent is - in the owner's scope or the
+/// global one, reused by every session that finds it - or made there; in a
+/// session's scope, made for every session anew and gone with it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceTemplate {
+    pub name: Name,
+    pub scope: ScopeTemplate,
+    /// The storage it is made in, by its configured name.
+    pub storage: String,
+    /// How it is classified when it is made; `internal` without
+    /// compartments unless named. One found keeps its own.
+    #[serde(default)]
+    pub classification: Classification,
+    /// What it holds, when it is made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<Description>,
+}
+
+impl WorkspaceTemplate {
+    /// Its name where it lies for the session `session_id` of `owner`.
+    ///
+    /// # Errors
+    /// `TemplateError::UnsupportedScope` for a group scope.
+    pub fn scoped_name(&self, session_id: SessionId, owner: UserId) -> TemplateResult<ScopedName> {
+        Ok(ScopedName { name: self.name.clone(), scope: self.scope.instantiate(session_id, owner)? })
+    }
 }
 
 /// A template lies in a user's scope or everywhere (issue 178): one of a
@@ -327,6 +364,7 @@ mod tests {
         SessionTemplate {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
+            workspace: None,
             security_attributes: Default::default(),
             id: SessionTemplateId(Uuid::new_v4()),
             name: ScopedName::new("pairing", Scope::GlobalScope).unwrap(),

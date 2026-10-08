@@ -131,6 +131,7 @@ pub enum Subject {
     Cancel,
     Command,
     Context,
+    Workspace,
 }
 
 impl Subject {
@@ -142,6 +143,7 @@ impl Subject {
             Subject::Cancel => "cancel_forbidden",
             Subject::Command => "command_forbidden",
             Subject::Context => "context_forbidden",
+            Subject::Workspace => "workspace_forbidden",
         }
     }
 
@@ -153,6 +155,7 @@ impl Subject {
             Subject::Cancel => "cancel_failed",
             Subject::Command => "command_failed",
             Subject::Context => "context_failed",
+            Subject::Workspace => "workspace_failed",
         }
     }
 }
@@ -179,6 +182,9 @@ impl ApiError {
         use caelumora_runtime::session::SessionError;
         use caelumora_runtime::view::{ContextError, ViewError};
         use caelumora_model::template::TemplateError;
+        use caelumora_model::store::StoreError;
+        use caelumora_runtime::terminal::TerminalError;
+        use caelumora_runtime::workspace::WorkspaceError;
 
         let detail = error.to_string();
         let bad_request = |code| Self::new(StatusCode::BAD_REQUEST, code, detail.clone());
@@ -203,11 +209,31 @@ impl ApiError {
                 ViewError::Failed(_) => {}
             }
         }
+        if let Some(e) = error.downcast_ref::<WorkspaceError>() {
+            match e {
+                WorkspaceError::NotFound(_) => return Self::not_found("workspace_not_found", detail),
+                WorkspaceError::UnknownStorage(_) => return bad_request("unknown_storage"),
+                WorkspaceError::ClassificationRefused => return bad_request("invalid_classification"),
+                WorkspaceError::NotCleared => return Self::forbidden("not_cleared", detail),
+                WorkspaceError::Invalid(e) => return Self::invalid_value(e),
+                WorkspaceError::Terminal(e) => return Self::of_terminal(e),
+                WorkspaceError::Store(StoreError::NotFound { .. }) => return Self::not_found("workspace_not_found", detail),
+                WorkspaceError::Store(StoreError::NameTaken { .. }) => return Self::conflict("name_taken", detail),
+                WorkspaceError::Store(StoreError::PermissionDenied) => return Self::forbidden(subject.forbidden(), format!("{} is not permitted", capitalize(action))),
+                // A caller that is no user, or the store broke: not the
+                // client's request.
+                WorkspaceError::OwnerNotAUser | WorkspaceError::Store(_) => {}
+            }
+        }
+        if let Some(e) = error.downcast_ref::<TerminalError>() {
+            return Self::of_terminal(e);
+        }
         if let Some(e) = error.downcast_ref::<SessionError>() {
             match e {
                 SessionError::ChannelNotFound { .. } => return Self::not_found("channel_not_found", detail),
                 SessionError::InvalidModerator(_) | SessionError::NotAParticipant { .. }
                 | SessionError::ClassificationRefused(_) => return bad_request("invalid_channel"),
+                SessionError::WorkspaceOutOfScope(_) => return bad_request("workspace_out_of_scope"),
                 // A caller that is no user: not the client's request.
                 SessionError::OwnerNotAUser(_) => {}
             }
@@ -246,6 +272,9 @@ impl ApiError {
         if is_not_found(&error, "agent") {
             return Self::not_found("agent_not_found", user_message(&error).unwrap_or(detail));
         }
+        if is_not_found(&error, "workspace") {
+            return Self::not_found("workspace_not_found", user_message(&error).unwrap_or(detail));
+        }
         // Of every kind alike (issue 250), wherever it was found out.
         if error.chain().any(|e| matches!(e.downcast_ref(), Some(caelumora_model::store::StoreError::NameTaken { .. }))) {
             return Self::conflict("name_taken", user_message(&error).unwrap_or(detail));
@@ -261,6 +290,27 @@ impl ApiError {
             return Self::forbidden(subject.forbidden(), detail);
         }
         Self::internal(subject.failed(), action, &error)
+    }
+}
+
+impl ApiError {
+    /// What working on the files of a workspace failed with (issue 253): a
+    /// path or a file that does not fit is the client's; a storage that
+    /// failed is unavailable. Every message names no more of a path than
+    /// the client wrote.
+    fn of_terminal(error: &caelumora_runtime::terminal::TerminalError) -> Self {
+        use caelumora_runtime::terminal::TerminalError;
+        let detail = error.to_string();
+        match error {
+            TerminalError::InvalidPath(_) => Self::new(StatusCode::BAD_REQUEST, "invalid_path", detail),
+            TerminalError::NotFound(_) => Self::not_found("file_not_found", detail),
+            TerminalError::Exists(_) => Self::conflict("file_exists", detail),
+            TerminalError::IsADirectory(_) => Self::conflict("is_a_directory", detail),
+            TerminalError::NotADirectory(_) => Self::conflict("not_a_directory", detail),
+            TerminalError::NotEmpty(_) => Self::conflict("directory_not_empty", detail),
+            TerminalError::TooLarge { .. } => Self::new(StatusCode::PAYLOAD_TOO_LARGE, "file_too_large", detail),
+            TerminalError::Unavailable(_) => Self::unavailable("storage_unavailable", detail),
+        }
     }
 }
 

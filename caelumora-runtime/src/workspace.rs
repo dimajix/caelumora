@@ -7,12 +7,18 @@
 //! anything else (issue 251, decisions 10 to 12):
 //!
 //! - *directly*, by its owner, outside a session (`owned`): `GetWorkspace`,
-//!   and the owner cleared for its classification;
+//!   and the owner cleared for its classification - not one that lies in
+//!   a session's scope, which is used within its session alone;
 //! - *in a channel* of the session it is attached to (`usable_in`): by a
 //!   current member of the channel, if the channel uses the workspace and
 //!   the workspace and the channel flow both ways - what a command prints
 //!   reaches the channel, and what was seen there may go into a command.
 //!   No `GetWorkspace`: attaching shared it with the session's channels.
+//!
+//! A workspace lies in a scope as an agent does (issue 251, decision 13):
+//! what lies in a session's scope is used within that session only
+//! (`Scope::admits`), and is deleted, restored and purged with it
+//! (`delete_lying_in`, `restore_lying_in`, `purge_lying_in`).
 
 use crate::event::EventBus;
 use crate::terminal::{LocalProvider, Terminal, TerminalError, TerminalProvider};
@@ -20,13 +26,16 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::config::{StorageConfig, WorkspacesConfig};
 use caelumora_model::confidentiality::{user_roles, Classification};
 use caelumora_model::event::GlobalEvent;
+use caelumora_model::removal::Stored;
+use caelumora_model::scope::{Scope, Scoped};
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityContext, SecurityManager};
 use caelumora_model::session::{Channel, Session};
 use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResultExt};
-use caelumora_model::value::name::Name;
+use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;
 use caelumora_model::workspace::{Workspace, WorkspaceId, WorkspaceUpdateEvent};
+use chrono::{DateTime, Utc};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
@@ -122,19 +131,20 @@ impl WorkspaceManager {
         }
     }
 
-    /// Makes a workspace of the user `ctx` acts for, in `storage`: the
-    /// document, then its place there. A place that cannot be made leaves
-    /// no document.
+    /// Makes a workspace of the user `ctx` acts for, of `name` in `scope`,
+    /// in `storage`: the document, then its place there. A place that
+    /// cannot be made leaves no document.
     ///
     /// # Errors
     /// `OwnerNotAUser`, `UnknownStorage`, `Invalid` for a name or
     /// description that does not fit, `ClassificationRefused`, `NotCleared`,
-    /// a `StoreError` - `NameTaken` among them - or a `TerminalError` of
-    /// making the place.
-    pub async fn create(&self, ctx: &SecurityContext, name: &str, storage: &str, description: Option<&str>, classification: Classification) -> WorkspaceResult<Workspace> {
+    /// a `StoreError` - `NameTaken` among them, and `Validation` for a
+    /// scope a workspace does not lie in - or a `TerminalError` of making
+    /// the place.
+    pub async fn create(&self, ctx: &SecurityContext, name: &str, scope: Scope, storage: &str, description: Option<&str>, classification: Classification) -> WorkspaceResult<Workspace> {
         let ActorId::User(owner) = ctx.initiator_id else { return Err(WorkspaceError::OwnerNotAUser) };
         let provider = self.storages.get(storage).ok_or_else(|| WorkspaceError::UnknownStorage(storage.to_string()))?;
-        let mut workspace = Workspace::new(Name::new(name)?, storage, classification, owner);
+        let mut workspace = Workspace::new(ScopedName::new(name, scope)?, storage, classification, owner);
         workspace.description = Description::optional(description)?;
         self.require_classification(ctx, &workspace.classification).await?;
 
@@ -194,7 +204,7 @@ impl WorkspaceManager {
         let _writing = self.writing.lock().await;
         let mut workspace = self.entities.get_workspace(ctx, id).await.map_err(store_error(id))?;
         match &event {
-            WorkspaceUpdateEvent::NameChanged(name) => workspace.name = Name::new(name)?,
+            WorkspaceUpdateEvent::NameChanged(name) => workspace.name = ScopedName::new(name, workspace.name.scope.clone())?,
             WorkspaceUpdateEvent::DescriptionChanged(description) => workspace.description = Description::optional(description.as_deref())?,
             WorkspaceUpdateEvent::ClassificationChanged(classification) => {
                 self.require_classification(ctx, classification).await?;
@@ -268,6 +278,10 @@ impl WorkspaceManager {
     /// else the store reports.
     pub(crate) async fn owned(&self, ctx: &SecurityContext, id: WorkspaceId) -> WorkspaceResult<Workspace> {
         let workspace = self.entities.get_workspace(ctx, id).await.map_err(store_error(id))?;
+        // Outside every session: what lies in one's scope is used in it alone.
+        if !workspace.name.scope.admits(&Scope::GlobalScope) {
+            return Err(WorkspaceError::NotFound(id));
+        }
         let roles = user_roles(self.entities.as_ref(), ctx.initiator_id).await?;
         match self.security.may_see_channel(ctx, &roles, &workspace.classification).await {
             true => Ok(workspace),
@@ -296,10 +310,71 @@ impl WorkspaceManager {
             warn!(session = %session.id, workspace = %id, "The workspace attached to a session is gone");
             return Ok(None);
         };
+        if !workspace.name.scope.admits(&Scope::SessionScope { session_id: session.id }) {
+            warn!(session = %session.id, workspace = %id, "A workspace of another session's scope is attached to a session");
+            return Ok(None);
+        }
         let (inside, outside) = (&workspace.classification, &channel.classification);
         let flows = self.security.may_publish(ctx, ctx.caller_id, inside, outside).await
             && self.security.may_publish(ctx, ctx.caller_id, outside, inside).await;
         Ok(flows.then_some(workspace))
+    }
+
+    /// Deletes the workspaces that lie in `holder` or within it - with it,
+    /// in the runtime's name: deleting `holder` was permitted.
+    ///
+    /// # Errors
+    /// Whatever the store reports; what was deleted before stays deleted.
+    pub(crate) async fn delete_lying_in(&self, holder: &Scope) -> WorkspaceResult<()> {
+        let system = SecurityContext::system();
+        let _writing = self.writing.lock().await;
+        for workspace in self.entities.list_workspaces(&system).await? {
+            if holder.contains(&workspace.scoped_name().scope) && self.entities.delete_workspace(&system, workspace.id).await? {
+                self.events.publish(GlobalEvent::WorkspaceDeleted(workspace.id), workspace.security_attributes.clone());
+            }
+        }
+        Ok(())
+    }
+
+    /// Restores the workspaces that lie in `holder` or within it and were
+    /// deleted with it - at `since` or later; one whose name was taken
+    /// meanwhile stays deleted.
+    ///
+    /// # Errors
+    /// Whatever else the store reports.
+    pub(crate) async fn restore_lying_in(&self, holder: &Scope, since: DateTime<Utc>) -> WorkspaceResult<()> {
+        let system = SecurityContext::system();
+        let _writing = self.writing.lock().await;
+        for workspace in self.entities.list_deleted_workspaces(&system).await? {
+            let with_it = workspace.deleted().is_some_and(|removal| removal.at >= since);
+            if !holder.contains(&workspace.scoped_name().scope) || !with_it {
+                continue;
+            }
+            match self.entities.restore_workspace(&system, workspace.id).await {
+                Ok(()) => self.events.publish(GlobalEvent::WorkspaceRestored(workspace.id), workspace.security_attributes.clone()),
+                Err(StoreError::NameTaken { .. }) => warn!(workspace = %workspace.id, "A workspace stays deleted: its name was taken while what holds its scope was deleted"),
+                Err(e) => return Err(e.into()),
+            }
+        }
+        Ok(())
+    }
+
+    /// Purges the deleted workspaces that lie in `holder` or within it,
+    /// their places first.
+    ///
+    /// # Errors
+    /// `UnknownStorage`, a `TerminalError` of removing a place, or whatever
+    /// the store reports; what was purged before stays purged.
+    pub(crate) async fn purge_lying_in(&self, holder: &Scope) -> WorkspaceResult<()> {
+        let system = SecurityContext::system();
+        let _writing = self.writing.lock().await;
+        for workspace in self.entities.list_deleted_workspaces(&system).await? {
+            if holder.contains(&workspace.scoped_name().scope) {
+                self.provider(&workspace)?.remove(workspace.id).await?;
+                self.entities.purge_workspace(&system, workspace.id).await?;
+            }
+        }
+        Ok(())
     }
 
     /// The terminal of `workspace`, which one of the two ways of using it

@@ -1,15 +1,17 @@
 //! What lies in a scope goes with what holds it (issue 178): the
-//! personalities, session templates and agents of a session's scope - and
-//! of the scopes of its channels - are deleted with the session, restored
-//! with it and purged with it; those of a channel's scope are deleted and
-//! restored with the channel. `SessionManager` and `SessionLoop` are the
-//! callers.
+//! personalities, session templates, agents and workspaces of a session's
+//! scope - and of the scopes of its channels - are deleted with the
+//! session, restored with it and purged with it, a workspace with its
+//! place (issue 251); those of a channel's scope are deleted and restored
+//! with the channel. `SessionManager` and `SessionLoop` are the callers;
+//! the workspaces are their manager's to write.
 //!
 //! All of it is done in the runtime's name: deleting, restoring or purging
 //! what holds the scope was permitted, and what lies in it may be another's
 //! to delete by the policy - a contributor's agent in the owner's session.
 
 use crate::event::EventBus;
+use crate::workspace::WorkspaceManager;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::removal::Stored;
 use caelumora_model::scope::{Scoped, Scope};
@@ -25,7 +27,7 @@ use tracing::warn;
 ///
 /// # Errors
 /// Whatever the store reports; what was deleted before stays deleted.
-pub(crate) async fn delete_scoped_in(store: &dyn EntityStore, events: &EventBus, holder: &Scope) -> StoreResult<()> {
+pub(crate) async fn delete_scoped_in(store: &dyn EntityStore, events: &EventBus, workspaces: &WorkspaceManager, holder: &Scope) -> anyhow::Result<()> {
     let system = SecurityContext::system();
     for personality in lying_in(store.list_personalities(&system).await?, holder) {
         store.delete_personality(&system, personality.id).await?;
@@ -37,6 +39,7 @@ pub(crate) async fn delete_scoped_in(store: &dyn EntityStore, events: &EventBus,
         store.delete_agent(&system, agent.id).await?;
         events.publish(GlobalEvent::AgentDeleted(agent.id), agent.security_attributes.clone());
     }
+    workspaces.delete_lying_in(holder).await?;
     Ok(())
 }
 
@@ -49,7 +52,7 @@ pub(crate) async fn delete_scoped_in(store: &dyn EntityStore, events: &EventBus,
 /// # Errors
 /// Whatever else the store reports; what was restored before stays
 /// restored.
-pub(crate) async fn restore_scoped_in(store: &dyn EntityStore, events: &EventBus, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()> {
+pub(crate) async fn restore_scoped_in(store: &dyn EntityStore, events: &EventBus, workspaces: &WorkspaceManager, holder: &Scope, since: DateTime<Utc>) -> anyhow::Result<()> {
     let system = SecurityContext::system();
     for personality in deleted_with(store.list_deleted_personalities(&system).await?, holder, since) {
         unless_taken(store.restore_personality(&system, personality.id).await, "personality", &personality.name)?;
@@ -62,6 +65,7 @@ pub(crate) async fn restore_scoped_in(store: &dyn EntityStore, events: &EventBus
             events.publish(GlobalEvent::AgentRestored(agent.id), agent.security_attributes.clone());
         }
     }
+    workspaces.restore_lying_in(holder, since).await?;
     Ok(())
 }
 
@@ -79,11 +83,12 @@ fn unless_taken(restored: StoreResult<()>, kind: &str, name: &ScopedName) -> Sto
 }
 
 /// Purges what lies in `holder` or within it and is deleted, and the
-/// agents' state with them, as `SessionManager::purge_agent` does.
+/// agents' state with them, as `SessionManager::purge_agent` does, and
+/// the workspaces' places.
 ///
 /// # Errors
-/// Whatever the stores report.
-pub(crate) async fn purge_scoped_in(store: &dyn EntityStore, states: &dyn StateStore, holder: &Scope) -> StoreResult<()> {
+/// Whatever the stores or the workspaces' storages report.
+pub(crate) async fn purge_scoped_in(store: &dyn EntityStore, states: &dyn StateStore, workspaces: &WorkspaceManager, holder: &Scope) -> anyhow::Result<()> {
     let system = SecurityContext::system();
     for personality in lying_in(store.list_deleted_personalities(&system).await?, holder) {
         store.purge_personality(&system, personality.id).await?;
@@ -95,6 +100,7 @@ pub(crate) async fn purge_scoped_in(store: &dyn EntityStore, states: &dyn StateS
         store.purge_agent(&system, agent.id).await?;
         states.delete_agent_state(agent.id).await?;
     }
+    workspaces.purge_lying_in(holder).await?;
     Ok(())
 }
 

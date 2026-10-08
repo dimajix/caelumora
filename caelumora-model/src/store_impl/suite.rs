@@ -86,6 +86,7 @@ fn session_template() -> SessionTemplate {
     SessionTemplate {
         summary: None, briefing: None,
         approval_rules: Vec::new(),
+        workspace: None,
         security_attributes: Default::default(),
         commands: Default::default(),
         privacy: Default::default(),
@@ -154,7 +155,17 @@ fn user(username: &str) -> User {
 }
 
 fn workspace(owner: UserId) -> Workspace {
-    Workspace::new(Name::new("docs").unwrap(), "main", Classification::CHANNEL_DEFAULT, owner)
+    workspace_named(ScopedName::new("docs", Scope::UserScope { user_id: owner }).unwrap())
+}
+
+/// A workspace of `name`, owned by the user whose scope it lies in, else by
+/// another.
+fn workspace_named(name: ScopedName) -> Workspace {
+    let owner = match name.scope {
+        Scope::UserScope { user_id } => user_id,
+        _ => UserId::new(),
+    };
+    Workspace::new(name, "main", Classification::CHANNEL_DEFAULT, owner)
 }
 
 fn component() -> StoredComponent {
@@ -216,7 +227,7 @@ pub(crate) async fn entity_store_behaves(store: &dyn EntityStore) {
         create_user, get_user, update_user, delete_user, list_users);
     lifecycle!(store, UserProfile::new(UserId::new(), None), |v: &UserProfile| v.user_id(), introduction = Some(Introduction::new("renamed").unwrap()), "user_profile",
         create_user_profile, get_user_profile, update_user_profile, delete_user_profile, list_user_profiles);
-    lifecycle!(store, workspace(UserId::new()), |v: &Workspace| v.id, name, "workspace",
+    lifecycle!(store, workspace(UserId::new()), |v: &Workspace| v.id, name.name, "workspace",
         create_workspace, get_workspace, update_workspace, delete_workspace, list_workspaces);
 
     let ctx = SecurityContext::default();
@@ -246,16 +257,9 @@ pub(crate) async fn entity_store_behaves(store: &dyn EntityStore) {
     found_by_name!(store, |name| Agent::new(name, &personality(), crate::actor::ActorId::None), "agent",
         create_agent, delete_agent, find_agent_by_name);
 
-    // A workspace lies in its owner's scope, which it is found in alone.
-    let (alice, bob) = (UserId::new(), UserId::new());
-    let (hers, his) = (workspace(alice), workspace(bob));
-    store.create_workspace(&ctx, &hers).await.expect("workspace: create");
-    store.create_workspace(&ctx, &his).await.expect("workspace: the name is free in another user's scope");
-    let found = store.find_workspace_by_name(&ctx, &ScopedName::new("DOCS", Scope::UserScope { user_id: alice }).unwrap()).await.expect("workspace: found by name");
-    assert_eq!(found.id, hers.id, "workspace: the one in her scope, compared as names are");
-    let elsewhere = store.find_workspace_by_name(&ctx, &ScopedName::new("docs", Scope::GlobalScope).unwrap()).await;
-    assert!(matches!(elsewhere, Err(StoreError::NotFound { entity: "workspace", .. })), "workspace: not in a scope it does not lie in, got {elsewhere:?}");
-    let nobodys = store.create_workspace(&ctx, &Workspace { security_attributes: Default::default(), ..workspace(alice) }).await;
+    found_by_name!(store, workspace_named, "workspace",
+        create_workspace, delete_workspace, find_workspace_by_name);
+    let nobodys = store.create_workspace(&ctx, &Workspace { security_attributes: Default::default(), ..workspace(UserId::new()) }).await;
     assert!(matches!(nobodys, Err(StoreError::Validation(_))), "workspace: one that belongs to no user is not stored, got {nobodys:?}");
 }
 
@@ -316,9 +320,9 @@ pub(crate) async fn names_are_unique(store: &dyn EntityStore) {
     unique_by_name!(store, user, rename: |value: User, name| User { username: Name::new(name).unwrap(), ..value }, "user",
         create_user, update_user, delete_user, restore_user);
     let (alice, bob) = (UserId::new(), UserId::new());
-    unique_by_name!(store, |name| Workspace { name: Name::new(name).unwrap(), id: WorkspaceId::new(), ..workspace(alice) },
-        elsewhere: |name| Workspace { name: Name::new(name).unwrap(), id: WorkspaceId::new(), ..workspace(bob) },
-        rename: |value: Workspace, name| Workspace { name: Name::new(name).unwrap(), ..value }, "workspace",
+    unique_by_name!(store, |name| Workspace { name: in_scope(name, &global), id: WorkspaceId::new(), ..workspace(alice) },
+        elsewhere: |name| Workspace { name: in_scope(name, &Scope::UserScope { user_id: bob }), id: WorkspaceId::new(), ..workspace(bob) },
+        rename: |value: Workspace, name| Workspace { name: in_scope(name, &value.name.scope), ..value }, "workspace",
         create_workspace, update_workspace, delete_workspace, restore_workspace);
 
     // Moved into a scope where its name is taken.

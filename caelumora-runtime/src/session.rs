@@ -47,6 +47,10 @@ pub enum SessionError {
     /// configured, or one the policy does not let the creator give.
     #[error("A channel cannot be classified {0}: a compartment is not configured or may not be given")]
     ClassificationRefused(Classification),
+    /// The workspace lies in another session's scope, and is used within
+    /// that session alone (issue 251, `Scope::admits`).
+    #[error("The workspace {0} lies in another session's scope")]
+    WorkspaceOutOfScope(caelumora_model::workspace::WorkspaceId),
 }
 
 /// Nothing if `context` may give a channel `classification`
@@ -253,20 +257,25 @@ impl SessionLoop {
     /// attached away (issue 253), on behalf of `context`. Whoever may change
     /// the session asks first (`UpdateSession`); to attach one, it must be
     /// theirs to share (`GetWorkspace`, `UpdateWorkspace` - its owner,
-    /// issue 251, decision 12). Taking it away shares nothing and asks no
-    /// more. Its channels use it as their classifications and switches let
-    /// them, from their next use.
+    /// issue 251, decision 12) and lie where this session may use it - not
+    /// in another session's scope. Taking it away shares nothing and asks
+    /// no more. Its channels use it as their classifications and switches
+    /// let them, from their next use.
     ///
     /// # Errors
     /// `StoreError::PermissionDenied` if `context` may not change the
     /// session or share the workspace, `StoreError::NotFound` if there is
-    /// no workspace they may read, or whatever else storing reports.
+    /// no workspace they may read, `SessionError::WorkspaceOutOfScope`, or
+    /// whatever else storing reports.
     pub async fn set_workspace(&self, context: &SecurityContext, workspace: Option<caelumora_model::workspace::WorkspaceId>) -> Result<()> {
         let session = self.session();
         self.security.require(context, ActionType::UpdateSession(&session.security_attributes), || StoreError::PermissionDenied).await?;
         if let Some(id) = workspace {
             let shared = self.entities.get_workspace(context, id).await?;
             self.security.require(context, ActionType::UpdateWorkspace(&shared.security_attributes), || StoreError::PermissionDenied).await?;
+            if !shared.name.scope.admits(&Scope::SessionScope { session_id: self.id }) {
+                return Err(SessionError::WorkspaceOutOfScope(id).into());
+            }
         }
         self.session_controller.update_workspace(context, workspace).await?;
         info!(session = %self.id, workspace = ?workspace, by = %context.caller_id, "Session's workspace changed");
@@ -435,7 +444,7 @@ impl SessionLoop {
         event_bus.publish(GlobalEvent::ChannelDeleted(self.id, channel_id), channel.security_attributes.clone());
         // What lies in its scope goes with it (issue 178); an agent of it
         // takes part in no other channel (`Scope::admits`).
-        if let Err(e) = delete_scoped_in(self.entities.as_ref(), event_bus, &Scope::ChannelScope { session_id: self.id, channel_id }).await {
+        if let Err(e) = delete_scoped_in(self.entities.as_ref(), event_bus, self.runtime_manager.workspace_manager(), &Scope::ChannelScope { session_id: self.id, channel_id }).await {
             warn!("Channel {} was deleted from session {}, but not what lies in its scope: {}", channel_id, self.id, e);
         }
         info!("Channel {}/{} deleted from session {} by {}", channel.name, channel_id, self.id, context.caller_id);
@@ -487,7 +496,7 @@ impl SessionLoop {
         };
         if let Some(since) = deleted_at {
             // What was deleted with it comes back with it (issue 178).
-            if let Err(e) = restore_scoped_in(self.entities.as_ref(), &self.events, &Scope::ChannelScope { session_id: self.id, channel_id }, since).await {
+            if let Err(e) = restore_scoped_in(self.entities.as_ref(), &self.events, self.runtime_manager.workspace_manager(), &Scope::ChannelScope { session_id: self.id, channel_id }, since).await {
                 warn!("Channel {} of session {} was restored, but not what lies in its scope: {}", channel_id, self.id, e);
             }
         }
@@ -694,8 +703,26 @@ impl SessionManager {
         let participants = crate::template::resolve_participants(store.as_ref(), context, &template, id, owner).await?;
         let name = name.unwrap_or_else(|| template.name.name.clone());
         let language = preferred_language(store.as_ref(), context).await?;
-        let (session, channels) = template.build(id, owner, name, language.as_ref(), participants)?;
-        self.create_session(context, session, channels).await
+        let (mut session, channels) = template.build(id, owner, name, language.as_ref(), participants)?;
+        let workspaces = self.runtime_manager.workspace_manager();
+        let workspace = match &template.workspace {
+            Some(wanted) => Some(crate::template::resolve_workspace(workspaces, store.as_ref(), context, wanted, id, owner).await?),
+            None => None,
+        };
+        session.workspace = workspace.as_ref().map(|(found, _)| *found);
+        match self.create_session(context, session, channels).await {
+            Ok(session_loop) => Ok(session_loop),
+            Err(e) => {
+                // One made for this session goes with what failed.
+                if let Some((made, true)) = workspace {
+                    let system = SecurityContext::system();
+                    if let Err(cleanup) = async { workspaces.delete(&system, made).await?; workspaces.purge(&system, made).await }.await {
+                        warn!(workspace = %made, "The workspace made for a session that could not be created stays: {cleanup}");
+                    }
+                }
+                Err(e)
+            }
+        }
     }
 
     /// Create a brand-new session with its `channels`: persist them - the
@@ -848,7 +875,7 @@ impl SessionManager {
         // 178). Its agents take part in no other session (`Scope::admits`):
         // they leave nothing, and come back with its channels.
         if removed {
-            if let Err(e) = delete_scoped_in(self.entities.as_ref(), event_bus, &Scope::SessionScope { session_id: id }).await {
+            if let Err(e) = delete_scoped_in(self.entities.as_ref(), event_bus, self.runtime_manager.workspace_manager(), &Scope::SessionScope { session_id: id }).await {
                 warn!("Session {} was deleted, but not what lies in its scope: {}", id, e);
             }
         }
@@ -880,7 +907,7 @@ impl SessionManager {
         store.restore_session(context, id).await?;
         let session = store.get_session(context, id).await?;
         if let Some(since) = deleted_at {
-            if let Err(e) = restore_scoped_in(store.as_ref(), &self.events, &Scope::SessionScope { session_id: id }, since).await {
+            if let Err(e) = restore_scoped_in(store.as_ref(), &self.events, self.runtime_manager.workspace_manager(), &Scope::SessionScope { session_id: id }, since).await {
                 warn!("Session {} was restored, but not what lies in its scope: {}", id, e);
             }
         }
@@ -919,7 +946,7 @@ impl SessionManager {
             state_store.delete_channel_state(channel_id).await?;
         }
         // And what lay in its scope and in its channels' (issue 178).
-        purge_scoped_in(store.as_ref(), state_store.as_ref(), &Scope::SessionScope { session_id: id }).await?;
+        purge_scoped_in(store.as_ref(), state_store.as_ref(), self.runtime_manager.workspace_manager(), &Scope::SessionScope { session_id: id }).await?;
         self.starts.remove(&id);
         info!("Session {} purged by {}", id, context.caller_id);
         Ok(())
@@ -1377,6 +1404,7 @@ mod tests {
         let template = SessionTemplate {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
+            workspace: None,
             id: SessionTemplateId::new(),
             name: ScopedName::new("pairing", Default::default()).unwrap(),
             description: None,

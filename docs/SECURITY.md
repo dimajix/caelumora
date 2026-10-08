@@ -47,7 +47,8 @@ preconfigured component - carries `SecurityAttributes`: an `owner_id` and a list
 *   An agent is owned by whoever created it, and contributes to its own definition.
 *   A workspace is owned by the user it was made for, always a user, and has no contributors (issue
     [253](../issues/253-workspace.md)): outside a session only its owner works on it
-    (`GetWorkspace`), and only its owner changes, deletes and attaches it to a session
+    (`GetWorkspace`) - not on one that lies in a session's scope, which is used within that session
+    alone - and only its owner changes, deletes and attaches it to a session
     (`UpdateWorkspace`). In a session it is shared through the channels, whose members use it
     where the channel uses it and the classifications let them (see
     [CHANNELS.md](CHANNELS.md#its-workspace)) - no `GetWorkspace` is asked of them.

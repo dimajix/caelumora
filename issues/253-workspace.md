@@ -106,3 +106,15 @@ its plan is kept in one place so that the two are read together. In short:
   CONFIDENTIALITY.md, SECURITY.md, STORAGE.md and ARCHITECTURE.md. `scoped.rs` needed nothing:
   nothing deletes what lies in a user's scope yet. Stored data: none to delete - every new field
   has a default.
+- **2026-10-08** — Step 3b (251, *Decisions* 13 and 14): `Workspace::name` is a `ScopedName` again,
+  in a session's scope, its owner's or the global one (`validate`: not a channel's or a group's,
+  no other user's), so the deviation of step 2 is taken back. `SessionTemplate::workspace`, a
+  `WorkspaceTemplate`, found or made by `create_from_template` (`template::resolve_workspace`) and
+  attached, taken back if the session cannot be created; `TemplateError::WorkspaceNameTaken` for
+  one of its name in another storage. What lies in a session's scope is used in it alone:
+  `SessionError::WorkspaceOutOfScope` when attached elsewhere, refused to its owner outside it. The
+  `WorkspaceManager` deletes, restores and purges what lies in a scope, and `scoped.rs` hands it
+  a session's. `WorkspaceManager::create` takes the scope. The suite: a workspace of a session's
+  scope made with each session and gone with it, files included; one of the user's scope shared by
+  their sessions. Stored data: workspaces stored before load in the global scope, their names
+  unique across users - delete `runtime/workspaces/` of a JSON store, and their places.

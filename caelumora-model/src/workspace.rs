@@ -11,7 +11,7 @@ use crate::removal::Removal;
 use crate::scope::{Scope, Scoped};
 use crate::security::{Secured, SecurityAttributes};
 use crate::user::UserId;
-use crate::value::name::{Name, ScopedName};
+use crate::value::name::ScopedName;
 use crate::value::text::Description;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -35,10 +35,13 @@ pub enum WorkspaceUpdateEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Workspace {
     pub id: WorkspaceId,
-    /// What it is called, unique among its owner's workspaces (issue 250):
-    /// it lies in its owner's scope, derived from the owner as a channel's
-    /// is from its session, so that the two cannot disagree.
-    pub name: Name,
+    /// What it is found by and where it lies (issue 251, decision 13): a
+    /// session's scope - made with the session and gone with it -, its
+    /// owner's - reused across their sessions - or the global one; its
+    /// name unique there (issue 250). The scope says where it is found,
+    /// not whose it is: it is its owner's wherever it lies.
+    #[serde(flatten)]
+    pub name: ScopedName,
     /// The name of the storage its files lie in, as the configuration names
     /// it; fixed when the workspace is made. No path: where the storage is
     /// is configuration, and the workspace's place in it is its id.
@@ -64,9 +67,9 @@ pub struct Workspace {
 
 
 impl Workspace {
-    /// A new workspace of `owner`, in `storage`, classified
-    /// `classification`, without a description.
-    pub fn new(name: Name, storage: impl Into<String>, classification: Classification, owner: UserId) -> Self {
+    /// A new workspace of `owner`, of `name` where it lies, in `storage`,
+    /// classified `classification`, without a description.
+    pub fn new(name: ScopedName, storage: impl Into<String>, classification: Classification, owner: UserId) -> Self {
         let now = Utc::now();
         Self {
             id: WorkspaceId::new(),
@@ -96,15 +99,20 @@ impl crate::removal::Stored for Workspace {
         self.deleted.as_ref()
     }
 
-    /// A workspace is someone's - the system's would lie in no user's
-    /// scope - and shared through channels, not with contributors.
+    /// A workspace is a user's - the system's everybody could use - shared
+    /// through channels, not with contributors, and lies in a session's
+    /// scope, its owner's or the global one: not in a channel's, since a
+    /// session's channels share one.
     fn validate(&self) -> Result<(), String> {
-        if self.owner().is_none() {
-            return Err("a workspace belongs to a user".to_string());
+        let Some(owner) = self.owner() else { return Err("a workspace belongs to a user".to_string()) };
+        if !self.security_attributes.contributors.is_empty() {
+            return Err("a workspace has no contributors: it is shared through channels".to_string());
         }
-        match self.security_attributes.contributors.is_empty() {
-            true => Ok(()),
-            false => Err("a workspace has no contributors: it is shared through channels".to_string()),
+        match &self.name.scope {
+            Scope::SessionScope { .. } | Scope::GlobalScope => Ok(()),
+            Scope::UserScope { user_id } if *user_id == owner => Ok(()),
+            Scope::UserScope { .. } => Err("a workspace lies in no other user's scope than its owner's".to_string()),
+            Scope::ChannelScope { .. } | Scope::GroupScope { .. } => Err("a workspace lies in a session's scope, its owner's or the global one".to_string()),
         }
     }
 }
@@ -123,8 +131,7 @@ impl Secured for Workspace {
 
 impl Scoped for Workspace {
     fn scoped_name(&self) -> ScopedName {
-        let scope = self.owner().map_or(Scope::GlobalScope, |user_id| Scope::UserScope { user_id });
-        ScopedName { name: self.name.clone(), scope }
+        self.name.clone()
     }
 }
 
@@ -132,24 +139,40 @@ impl Scoped for Workspace {
 mod tests {
     use super::*;
     use crate::removal::Stored;
+    use crate::session::{ChannelId, SessionId};
+
+    fn named(scope: Scope) -> ScopedName {
+        ScopedName::new("Docs", scope).unwrap()
+    }
 
     #[test]
-    fn a_workspace_lies_in_its_owners_scope_and_belongs_to_a_user() {
+    fn a_workspace_lies_in_a_session_s_scope_its_owner_s_or_the_global_one() {
         let alice = UserId::new();
-        let workspace = Workspace::new(Name::new("Docs").unwrap(), "main", Classification::CHANNEL_DEFAULT, alice);
-        assert_eq!(workspace.scoped_name().scope, Scope::UserScope { user_id: alice }, "derived from the owner");
-        assert_eq!(workspace.owner(), Some(alice));
-        assert!(workspace.validate().is_ok());
+        let session_id = SessionId::new();
+        for scope in [Scope::SessionScope { session_id }, Scope::UserScope { user_id: alice }, Scope::GlobalScope] {
+            let workspace = Workspace::new(named(scope.clone()), "main", Classification::CHANNEL_DEFAULT, alice);
+            assert_eq!(workspace.scoped_name().scope, scope);
+            assert!(workspace.validate().is_ok(), "{scope:?}");
+        }
+        for scope in [Scope::UserScope { user_id: UserId::new() }, Scope::ChannelScope { session_id, channel_id: ChannelId::new() }, Scope::GroupScope { group_id: uuid::Uuid::new_v4() }] {
+            assert!(Workspace::new(named(scope.clone()), "main", Classification::CHANNEL_DEFAULT, alice).validate().is_err(), "not in {scope:?}");
+        }
+    }
 
+    #[test]
+    fn a_workspace_belongs_to_a_user_and_has_no_contributors() {
+        let alice = UserId::new();
+        let workspace = Workspace::new(named(Scope::GlobalScope), "main", Classification::CHANNEL_DEFAULT, alice);
+        assert_eq!(workspace.owner(), Some(alice));
         let shared = Workspace { security_attributes: SecurityAttributes { contributors: vec![ActorId::User(UserId::new())], ..workspace.security_attributes.clone() }, ..workspace.clone() };
-        assert!(shared.validate().is_err(), "nor one with contributors");
+        assert!(shared.validate().is_err(), "not one with contributors");
         let systems = Workspace { security_attributes: SecurityAttributes::owned_by(ActorId::System), ..workspace };
-        assert!(systems.validate().is_err(), "nobody's is not stored");
+        assert!(systems.validate().is_err(), "nor nobody's");
     }
 
     #[test]
     fn a_workspace_is_written_without_what_it_does_not_have() {
-        let workspace = Workspace::new(Name::new("Docs").unwrap(), "main", Classification::CHANNEL_DEFAULT, UserId::new());
+        let workspace = Workspace::new(named(Scope::GlobalScope), "main", Classification::CHANNEL_DEFAULT, UserId::new());
         let written = serde_json::to_value(&workspace).unwrap();
         assert!(written.get("description").is_none() && written.get("deleted").is_none(), "{written}");
         let read: Workspace = serde_json::from_value(written).unwrap();

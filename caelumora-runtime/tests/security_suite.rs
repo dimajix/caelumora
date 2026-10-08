@@ -34,14 +34,14 @@ use caelumora_model::security::{ActionType, OwnershipSecurityManager, Reclassifi
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::store::{EntityStore, StateStore, StoreError};
 use caelumora_model::store_impl::memory::MemoryStore;
-use caelumora_model::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
+use caelumora_model::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId, TemplateError, WorkspaceTemplate};
 use caelumora_model::user::{User, UserId, UserProfile};
 use caelumora_model::work::TurnId;
 use caelumora_runtime::channel::ChannelError;
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use caelumora_runtime::external::{ExternalAgent, ExternalAgentResult, ExternalEvent, ExternalStream, OutboundMessage};
 use caelumora_runtime::runtime::RuntimeManager;
-use caelumora_runtime::session::{ChannelSpec, SessionLoop, SessionManager};
+use caelumora_runtime::session::{ChannelSpec, SessionError, SessionLoop, SessionManager};
 use caelumora_runtime::terminal::{ByteStream, Terminal, WorkspacePath};
 use caelumora_runtime::view::{ViewError, Viewer};
 use caelumora_runtime::workspace::WorkspaceError;
@@ -216,6 +216,7 @@ impl World {
         let template = SessionTemplate {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
+            workspace: None,
             id: SessionTemplateId::new(),
             name: ScopedName::new(format!("with-{agent}"), Scope::GlobalScope).unwrap(),
             description: None,
@@ -1829,13 +1830,13 @@ async fn a_workspace_is_its_owners_alone() {
     let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
     let internal = Classification::general(Confidentiality::Internal);
 
-    let (made, asked) = world.asked(workspaces.create(&alice, "docs", "main", Some("Drafts"), internal.clone())).await;
+    let (made, asked) = world.asked(workspaces.create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", Some("Drafts"), internal.clone())).await;
     let docs = made.expect("alice makes one");
     assert_eq!(asked, checks(&["alice: Classify yes", "alice: JoinChannel(alice) yes", "alice: CreateWorkspace(alice's) yes"]));
     assert!(world.files.path().join(docs.id.to_string()).is_dir(), "with its place");
-    let above = workspaces.create(&alice, "secrets", "main", None, Classification::general(Confidentiality::Confidential)).await;
+    let above = workspaces.create(&alice, "secrets", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Confidential)).await;
     assert!(matches!(above, Err(WorkspaceError::NotCleared)), "not above what she is cleared for: {above:?}");
-    let elsewhere = workspaces.create(&alice, "other", "nowhere", None, internal.clone()).await;
+    let elsewhere = workspaces.create(&alice, "other", Scope::UserScope { user_id: world.alice }, "nowhere", None, internal.clone()).await;
     assert!(matches!(elsewhere, Err(WorkspaceError::UnknownStorage(_))), "nor in a storage that is not configured: {elsewhere:?}");
 
     let views = |ctx: &SecurityContext| world.manager.views(Viewer::new(ctx.clone()));
@@ -1848,7 +1849,7 @@ async fn a_workspace_is_its_owners_alone() {
     let renamed = workspaces.rename(&bob, docs.id, "mine").await;
     assert!(matches!(renamed, Err(WorkspaceError::NotFound(_))), "bob does not rename it: {renamed:?}");
     let (renamed, asked) = world.asked(workspaces.rename(&alice, docs.id, "notes")).await;
-    assert_eq!(renamed.expect("alice does").name, "notes");
+    assert_eq!(renamed.expect("alice does").name.name, "notes");
     assert_eq!(asked, checks(&["alice: GetWorkspace(alice's) yes", "alice: GetWorkspace(alice's) yes", "alice: UpdateWorkspace(alice's) yes"]));
 
     assert!(!workspaces.delete(&bob, docs.id).await.unwrap(), "nothing bob could see to delete");
@@ -1873,8 +1874,8 @@ async fn only_its_owner_attaches_a_workspace_to_a_session_they_may_change() {
     let workspaces = world.runtime.workspace_manager();
     let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
     let internal = Classification::general(Confidentiality::Internal);
-    let hers = workspaces.create(&alice, "hers", "main", None, internal.clone()).await.unwrap();
-    let his = workspaces.create(&bob, "his", "main", None, internal).await.unwrap();
+    let hers = workspaces.create(&alice, "hers", Scope::UserScope { user_id: world.alice }, "main", None, internal.clone()).await.unwrap();
+    let his = workspaces.create(&bob, "his", Scope::UserScope { user_id: world.bob }, "main", None, internal).await.unwrap();
     let session = world.shared_session(&[], &[]).await;
 
     let (refused, asked) = world.asked(session.set_workspace(&bob, Some(his.id))).await;
@@ -1904,7 +1905,7 @@ async fn a_workspace_is_used_in_a_channel_by_its_members_where_both_flow() {
     let world = World::new().await;
     let workspaces = world.runtime.workspace_manager();
     let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
-    let docs = workspaces.create(&alice, "docs", "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
+    let docs = workspaces.create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
     let session = world.shared_session(&[], &[]).await;
     session.set_workspace(&alice, Some(docs.id)).await.unwrap();
     let (session_id, main) = (session.id(), session.channels()[0].id());
@@ -1942,12 +1943,79 @@ async fn a_workspace_is_not_used_in_a_channel_by_who_is_not_in_it() {
     let global = world.personality("global", None, &[]).await;
     let waiting = world.agent("waiting", world.alice, &global).await;
     let alice = World::as_user(world.alice);
-    let docs = world.runtime.workspace_manager().create(&alice, "docs", "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
+    let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
     let session = world.shared_session(&[], &[waiting]).await;
     session.set_workspace(&alice, Some(docs.id)).await.unwrap();
     let as_agent = alice.next(ActorId::Agent(waiting));
     let main = world.manager.views(Viewer::new(as_agent)).session(session.id()).await.unwrap().channel(session.channels()[0].id()).await.unwrap();
     assert!(main.workspace().await.unwrap().is_none());
     world.manager.stop_session(&alice, session.id()).await.unwrap();
+}
+
+/// A template of the system whose sessions have a workspace "files" in
+/// `scope`, in `storage`.
+async fn template_with_workspace(world: &World, scope: ScopeTemplate, storage: &str) -> SessionTemplateId {
+    let global = world.personality(&format!("global-{storage}"), None, &[]).await;
+    let id = world.template(None, &[], &format!("helper-{storage}"), global.id).await;
+    let mut template = world.store.get_session_template(&World::system(), id).await.unwrap();
+    template.workspace = Some(WorkspaceTemplate { name: Name::new("files").unwrap(), scope, storage: storage.to_string(), classification: Classification::general(Confidentiality::Internal), description: None });
+    world.store.update_session_template(&World::system(), &template).await.unwrap();
+    id
+}
+
+/// A session made from a template that names a workspace in the session's
+/// scope gets one of its own, made with it and attached (issue 251,
+/// decision 13) - its owner's - which is used in that session alone and
+/// goes with it: deleted, restored and purged with it, its files too.
+#[tokio::test]
+async fn a_workspace_of_a_session_s_scope_is_made_with_it_and_goes_with_it() {
+    let world = World::new().await;
+    let alice = World::as_user(world.alice);
+    let template = template_with_workspace(&world, ScopeTemplate::SessionScope, "main").await;
+    let first = world.manager.create_from_template(&alice, template, None).await.expect("a session with its workspace");
+    let second = world.manager.create_from_template(&alice, template, None).await.unwrap();
+    let (mine, others) = (first.session().workspace.expect("attached"), second.session().workspace.expect("attached"));
+    assert_ne!(mine, others, "one for every session");
+    let made = world.store.get_workspace(&alice, mine).await.expect("hers");
+    assert_eq!(made.name.scope, Scope::SessionScope { session_id: first.id() });
+
+    let owned = world.manager.views(Viewer::new(alice.clone())).workspace(mine).await.unwrap();
+    assert!(matches!(owned.terminal().await, Err(WorkspaceError::NotFound(_))), "not used outside its session, not even by its owner");
+    let refused = second.set_workspace(&alice, Some(mine)).await.unwrap_err();
+    assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::WorkspaceOutOfScope(_))), "nor attached to another session: {refused}");
+
+    world.manager.delete_session(&alice, first.id()).await.unwrap();
+    assert!(world.store.get_deleted_workspace(&alice, mine).await.is_ok(), "deleted with it");
+    world.manager.restore_session(&alice, first.id()).await.unwrap();
+    assert!(world.store.get_workspace(&alice, mine).await.is_ok(), "restored with it");
+    world.manager.delete_session(&alice, first.id()).await.unwrap();
+    world.manager.purge_session(&World::system(), first.id()).await.unwrap();
+    assert!(!world.files.path().join(mine.to_string()).exists(), "purged with it, its files too");
+    assert!(world.files.path().join(others.to_string()).is_dir(), "the other session's stays");
+    world.manager.stop_session(&alice, second.id()).await.unwrap();
+}
+
+/// A template that names a workspace in its owner's scope finds it there:
+/// every session of the user made from it shares the one (issue 251,
+/// decision 13); one of that name in another storage is neither reused
+/// nor replaced.
+#[tokio::test]
+async fn a_workspace_of_the_user_s_scope_is_found_by_every_session_of_theirs() {
+    let world = World::new().await;
+    let alice = World::as_user(world.alice);
+    let template = template_with_workspace(&world, ScopeTemplate::UserScope, "main").await;
+    let first = world.manager.create_from_template(&alice, template, None).await.unwrap();
+    let second = world.manager.create_from_template(&alice, template, None).await.unwrap();
+    assert_eq!(first.session().workspace, second.session().workspace, "the same one");
+    let bobs = world.manager.create_from_template(&World::as_user(world.bob), template, None).await.unwrap();
+    assert_ne!(bobs.session().workspace, first.session().workspace, "bob's own");
+
+    let elsewhere = template_with_workspace(&world, ScopeTemplate::UserScope, "other").await;
+    let refused = world.manager.create_from_template(&alice, elsewhere, None).await.unwrap_err();
+    assert!(matches!(refused.downcast_ref::<TemplateError>(), Some(TemplateError::WorkspaceNameTaken(_))), "{refused}");
+    for session in [first, second] {
+        world.manager.stop_session(&alice, session.id()).await.unwrap();
+    }
+    world.manager.stop_session(&World::as_user(world.bob), bobs.id()).await.unwrap();
 }
 

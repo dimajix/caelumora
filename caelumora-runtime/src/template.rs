@@ -10,8 +10,10 @@ use caelumora_model::value::name::ScopedName;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::{EntityStore, StoreError, StoreResultExt};
-use caelumora_model::template::{ParticipantRequest, SessionTemplate, TemplateError, TemplateResult};
+use caelumora_model::template::{ParticipantRequest, SessionTemplate, TemplateError, TemplateResult, WorkspaceTemplate};
 use caelumora_model::user::UserId;
+use caelumora_model::workspace::WorkspaceId;
+use crate::workspace::{WorkspaceError, WorkspaceManager};
 
 /// The participants of `template` for the session `session_id` of `owner`,
 /// each with its name in the template, found or made as `context`.
@@ -92,6 +94,47 @@ async fn existing_agent(store: &dyn EntityStore, context: &SecurityContext, name
     }
 }
 
+/// The workspace `template` names for the session `session_id` of
+/// `owner` (issue 251, decision 13): the one of its name in exactly its
+/// scope, if it is in the storage the template names, or a new one there,
+/// made as `context` - with whether it was made. As an agent is found or
+/// made: if another makes it meanwhile, it is looked up once more.
+///
+/// # Errors
+/// `TemplateError::WorkspaceNameTaken` if the one of its name is in
+/// another storage, `UnsupportedScope` for a group scope; a
+/// `WorkspaceError` of making it - `NameTaken` if the one of its name lies
+/// where `context` may not read it; whatever else the store reports.
+pub(crate) async fn resolve_workspace(workspaces: &WorkspaceManager, store: &dyn EntityStore, context: &SecurityContext, template: &WorkspaceTemplate, session_id: SessionId, owner: UserId) -> anyhow::Result<(WorkspaceId, bool)> {
+    let name = template.scoped_name(session_id, owner)?;
+    if let Some(found) = existing_workspace(store, context, &name, template).await? {
+        return Ok((found, false));
+    }
+    let description = template.description.as_ref().map(|d| d.as_str());
+    match workspaces.create(context, name.name.as_str(), name.scope.clone(), &template.storage, description, template.classification.clone()).await {
+        Ok(made) => Ok((made.id, true)),
+        Err(taken @ WorkspaceError::Store(StoreError::NameTaken { .. })) => match existing_workspace(store, context, &name, template).await? {
+            Some(found) => Ok((found, false)),
+            None => Err(taken.into()),
+        },
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// The workspace of `name` if there is one the caller may read and it is
+/// in the storage `template` names; `None` if there is none.
+///
+/// # Errors
+/// `TemplateError::WorkspaceNameTaken` if it is in another storage;
+/// whatever the store reports - never "none" for a lookup that failed.
+async fn existing_workspace(store: &dyn EntityStore, context: &SecurityContext, name: &ScopedName, template: &WorkspaceTemplate) -> anyhow::Result<Option<WorkspaceId>> {
+    match store.find_workspace_by_name(context, name).await.optional()? {
+        Some(workspace) if workspace.storage == template.storage => Ok(Some(workspace.id)),
+        Some(_) => Err(TemplateError::WorkspaceNameTaken(name.name.clone()).into()),
+        None => Ok(None),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,6 +164,7 @@ mod tests {
         SessionTemplate {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
+            workspace: None,
             id: SessionTemplateId::new(),
             name: ScopedName::new("pairing", Default::default()).unwrap(),
             description: None,

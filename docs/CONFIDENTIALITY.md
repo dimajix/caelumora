@@ -256,8 +256,9 @@ which carry none of their own: one container, as issue
 [169](../issues/169-changing-classified-content.md) proposes. Who works on it is cleared as a
 reader of a channel so classified would be:
 
-*   Its owner, outside a session: cleared for it (`JoinChannel` with the workspace in the channel's
-    place) when they make it, raise it and use it.
+*   Its owner, outside a session - unless it lies in a session's scope: cleared for it
+    (`JoinChannel` with the workspace in the channel's place) when they make it, raise it and use
+    it.
 *   A member of a channel classified L, in a session it is attached to, where the workspace,
     classified W, and the channel flow both ways - W into L, since what is read there reaches the
     channel; L into W, since what was seen in the channel may be written there. Asked as an actor

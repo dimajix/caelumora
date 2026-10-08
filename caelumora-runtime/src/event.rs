@@ -390,7 +390,7 @@ mod tests {
         let mut carols = bus.subscribe_as(as_user(carol));
         let mut everything = bus.subscribe_all();
 
-        let mut workspace = caelumora_model::workspace::Workspace::new(caelumora_model::value::name::Name::new("docs").unwrap(), "main", Default::default(), alice);
+        let mut workspace = caelumora_model::workspace::Workspace::new(caelumora_model::value::name::ScopedName::new("docs", caelumora_model::scope::Scope::UserScope { user_id: alice }).unwrap(), "main", Default::default(), alice);
         workspace.security_attributes.contributors.push(ActorId::User(bob));
         let attributes = workspace.security_attributes.clone();
         bus.publish(GlobalEvent::WorkspaceCreated(workspace.id), attributes.clone());

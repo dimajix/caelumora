@@ -162,10 +162,18 @@ with `Detail::BRIEFING`, which lists leave out. Agents are told both by a prompt
 
 A session may have one workspace attached (`Session::workspace`, issue
 [253](../issues/253-workspace.md)): a tree of files of a user's, shared by the session's channels
-(issue [251](../issues/251-open-terminal.md), decisions 10 to 12). Only the workspace's owner
-attaches it, to a session they may change (`SessionLoop::set_workspace`: `UpdateSession`, then
-`GetWorkspace` and `UpdateWorkspace`); whoever may change the session takes it away, which shares
-nothing. Announced as `WorkspaceChanged` of `SessionUpdateEvent`.
+(issue [251](../issues/251-open-terminal.md), decisions 10 to 13). A template may name it
+(`SessionTemplate::workspace`, a `WorkspaceTemplate`): found by its name in the scope the template
+asks for, if it is in the storage the template names - another is an error - or made there by the
+session's owner, as an agent of a template is. Its scope decides its life: one in the session's
+scope is made for every session anew, used within it alone (`Scope::admits`) and deleted,
+restored and purged with it, its files too; one in the owner's scope or the global one is found by
+every session of theirs that names it.
+
+Otherwise only the workspace's owner attaches it, to a session they may change
+(`SessionLoop::set_workspace`: `UpdateSession`, then `GetWorkspace` and `UpdateWorkspace`) - not one
+of another session's scope (`SessionError::WorkspaceOutOfScope`); whoever may change the session
+takes it away, which shares nothing. Announced as `WorkspaceChanged` of `SessionUpdateEvent`.
 
 In a session the workspace is used through a channel, by its current members - a person, or an
 agent acting there for whoever asked it - and nobody else, also not its owner from outside the
@@ -182,7 +190,8 @@ So a session for a request can have a channel with the person who asked, classif
 workspace or with the switch off, and channels with helpers that work on its files. A view of a
 channel offers the workspace only where its viewer may use it there (`ChannelView::workspace`),
 and says nothing of it otherwise; using it asks again, of the session and the channel as they are
-then (`WorkspaceView::terminal`).
+then (`WorkspaceView::terminal`). Its owner works on it outside a session too, unless it lies in a
+session's scope.
 
 ### Running channels
 
