@@ -53,3 +53,8 @@ and what they returned - although those effects remain.
 
   Not covered: a turn given up because the agent was removed cannot be shown once it has left, since
   the panel is offered for members only - noted in [164](164-soft-deletion-and-former-members.md).
+- **2026-10-08** — Changed by [258](258-what-was-said-is-lost.md): a turn given up is no longer a
+  branch of its own, so `GET …/given-up-turns` and the folded blocks are gone. Its messages stand in
+  the agent's history - and in the channel's, so in the chat - followed by its end, which the
+  history panel and the chat both show where it ended, with why. The chat's "What the turn did" went
+  with it: what the turn did is in the chat.

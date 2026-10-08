@@ -64,3 +64,11 @@ classified below the channel and admitted.
   (before, both waited for a decision, and a stopped agent was aborted with its turn left in its
   state). The web UI's release warning for a channel says that answers being written are discarded.
   Refusing a lowering while a turn runs is not needed any more.
+- **2026-10-08** — Changed by [258](258-what-was-said-is-lost.md): a turn given up as lowered no
+  longer becomes a dead branch. What it said before the lowering stays, in the agent's chains and in
+  the channel's history, fitted with the rest; what it says afterwards is refused at the gate as
+  before. Its model is no longer told by name which tools ran: the `ContextResolver` gives the
+  messages of a turn given up as `Lowered` only as which tools they called and how they ended,
+  classified as the channel is now - the same withholding, read from the record rather than stored
+  as a message. A turn that no longer flows is recorded as lowered whatever ended it. Users are told
+  with `TurnGivenUp`, which replaced `TurnFailed`.

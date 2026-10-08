@@ -31,7 +31,9 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [221](221-adding-session-participants.md) | open | A session's participants are fixed when it is created: nobody - neither a user nor an agent, existing or created from a personality - can be added to it later. |
 | [223](223-full-inbox-drops-events.md) | open | An actor whose inbox is full - an agent in a long turn in a busy channel - loses what was said, requests and approvals without anyone learning of it. |
 | [238](238-retry-of-an-older-answer.md) | open | Only an agent's last answer can be asked for again, and the alternatives of an answer are not kept. |
-| [258](258-what-was-said-is-lost.md) | in progress | What a turn said - the steps of a plan with their tool calls and results, and every message of a turn given up - is shown live but never reaches the channel's history, so what an agent did cannot be followed. |
+| [259](259-answer-again-after-a-turn-given-up.md) | open | An agent cannot be asked to answer again after a turn it gave up: the turn's end makes its last message not the last, and a turn that ended is no turn under way. |
+| [261](261-turn-finished-repeats-the-answer.md) | open | `TurnFinished` carries the answer the channel already has from the messages said, only for the moderator to decide whom to ask. |
+| [262](262-stopped-turn-not-recorded-while-reflecting.md) | open | An agent removed while its turn ends leaves the turn's messages in the channel's history without an end. |
 
 ## Identity and access management
 
@@ -86,6 +88,12 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [166](166-memory-as-topic-documents.md) | open | Agent memory is a flat list of one-line entries, all of them in every prompt, with nothing to group, revise or fetch them by topic. |
 | [256](256-workspace-versions.md) | open | A workspace has no versions: what a person, a file tool or a command overwrote cannot be taken back, and who changed what is not recorded. |
 | [237](237-erasing-a-message.md) | open | A message written by mistake can be taken back but not erased: it stays in every participant's record and in the contexts built on it. |
+
+## Code structure
+
+| No. | Status | Issue |
+|---|---|---|
+| [260](260-turn-messages-into-the-transcript.md) | open | A turn keeps its messages apart from the transcript until it ends, so two places hold what an agent said and every reader puts them together. |
 
 ## Open architecture questions
 

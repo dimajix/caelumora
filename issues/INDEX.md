@@ -115,7 +115,10 @@ argues against it, and what came out of the last attempt.
 | [238](238-retry-of-an-older-answer.md) | open | Only an agent's last answer can be asked for again, and the alternatives of an answer are not kept. |
 | [239](239-reclassified-message-not-in-agents-state.md) | done | A reclassified message keeps its old classification in every agent's state, so a released message still raises the label of later answers. |
 | [245](245-session-and-channel-descriptions.md) | done | Sessions and channels have no description, so neither the users nor the agents in them learn what they are for. |
-| [258](258-what-was-said-is-lost.md) | in progress | What a turn said - the steps of a plan with their tool calls and results, and every message of a turn given up - is shown live but never reaches the channel's history, so what an agent did cannot be followed. |
+| [258](258-what-was-said-is-lost.md) | done | What a turn said - the steps of a plan with their tool calls and results, and every message of a turn given up - is shown live but never reaches the channel's history, so what an agent did cannot be followed. |
+| [259](259-answer-again-after-a-turn-given-up.md) | open | An agent cannot be asked to answer again after a turn it gave up: the turn's end makes its last message not the last, and a turn that ended is no turn under way. |
+| [261](261-turn-finished-repeats-the-answer.md) | open | `TurnFinished` carries the answer the channel already has from the messages said, only for the moderator to decide whom to ask. |
+| [262](262-stopped-turn-not-recorded-while-reflecting.md) | open | An agent removed while its turn ends leaves the turn's messages in the channel's history without an end. |
 
 ## Identity and access management
 
@@ -329,6 +332,7 @@ argues against it, and what came out of the last attempt.
 | [241](241-turn-membership-recorded-twice.md) | done | Which messages belong to a turn is recorded twice - as the turn's id on each message and as a count in its `ContextRef` - and read by different rules. |
 | [248](248-validated-text-fields.md) | done | Text fields are `String`s checked by whoever writes them, if at all, so a field can hold what its rules forbid and a new writer has to remember the check. |
 | [257](257-facet-and-components-in-two-modules.md) | done | A facet's trait and the components that provide it live in two sibling modules, `foo` and `foo_impl`, with no rule for what goes where. |
+| [260](260-turn-messages-into-the-transcript.md) | open | A turn keeps its messages apart from the transcript until it ends, so two places hold what an agent said and every reader puts them together. |
 
 ## Integrations
 

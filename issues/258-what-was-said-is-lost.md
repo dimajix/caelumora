@@ -1,6 +1,6 @@
 # 258 — What a turn said is lost from the history when it is internal or the turn is given up
 
-**Status:** in progress
+**Status:** done
 **Area:** Sessions and channels
 
 ## The problem
@@ -543,3 +543,13 @@ the step that changes what they describe.
   nothing, since the steps of a plan fold once their turn is no longer under way; its "What the turn
   did" goes. The history panel shows the agent's items, a turn given up marked where it ended.
   `MessageHistory::items` matches folded messages to their nodes by digest, not by message id.
+- **2026-10-08** — Step 7, closed. The issues whose decisions this changed say so under their
+  history: [141](141-turn-during-reclassification.md), [145](145-ended-turns-leave-a-record.md),
+  [146](146-show-given-up-turns.md), [235](235-retry-of-an-answer-under-way.md), and
+  [223](223-full-inbox-drops-events.md) for the load on an inbox. Opened from part J and from what
+  came up: [259](259-answer-again-after-a-turn-given-up.md) (answering again after a turn given
+  up), [260](260-turn-messages-into-the-transcript.md) (a turn's messages into the transcript as
+  they are said), [261](261-turn-finished-repeats-the-answer.md) (`TurnFinished` repeats the
+  answer), [262](262-stopped-turn-not-recorded-while-reflecting.md) (a removal while a turn ends
+  leaves no end in the channel). Status `done`: what a turn says stays, in every chain and in the
+  web UI, however the turn ends.

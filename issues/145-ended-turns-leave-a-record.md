@@ -138,3 +138,10 @@ cancelling needs an end that records what the turn did without taking it into th
   while waiting for an approval did not see the stop until a decision came, and was aborted by its
   channel before, with its turn left in its state instead of given up. Waiting now ends on the
   turn's cancellation token too, so the turn is given up at once.
+- **2026-10-08** — Superseded in its mechanism by [258](258-what-was-said-is-lost.md), with the
+  maintainer: nothing said is unsaid. A turn given up keeps its messages on the active path of the
+  transcript and in the histories - the channel's too - followed by its end, `TurnGivenUp` with the
+  reason, also when it said nothing; it no longer branches, and `TranscriptEntry::GivenUp` with
+  its `end` is gone. The agent sees its calls and their results instead of a message telling of
+  them (`told_of_executed` is gone); the `ContextResolver` words why the turn ended. What this
+  issue asked for holds as before: every turn's calls are recorded, however it ended.

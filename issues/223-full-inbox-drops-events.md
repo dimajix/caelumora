@@ -69,3 +69,7 @@ included, but an agent's turn is what holds a queue up for minutes.
   again. A dropped change is lost for good: catching up (`MessageHistory::missing_from`) finds
   messages an actor lacks, not changes it missed, so its store keeps the old version while the
   channel's shows the new. Whatever this issue decides for messages has to hold for changes as well.
+- **2026-10-08** — Since [258](258-what-was-said-is-lost.md), an agent hears what others say as
+  each message is said (`CompleteMessageGenerated`) rather than once per answer: more events per
+  inbox, and a full inbox now drops a message rather than an answer. Catching up finds dropped
+  messages as before; the decision whom to ask still comes once per turn, with its end.

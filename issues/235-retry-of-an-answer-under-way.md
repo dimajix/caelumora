@@ -459,3 +459,10 @@ ended, and its answer is replaced as a completed one is.
 
   ARCHITECTURE.md, which has no section *Terms* as the plan said, has the turn's id and the stop
   and retry of an answer under way in *How a message travels*.
+- **2026-10-08** — Changed by [258](258-what-was-said-is-lost.md): an answer under way asked for
+  again keeps what it said - in the agent's chains and in the channel's history, followed by its
+  end with the reason `Retried` - and the new answer follows it rather than replacing it. The users
+  are told with `TurnGivenUp`; the web UI no longer takes the turn's messages off the screen. The
+  rule this issue rested on, that nothing of a turn under way is in the history, holds no more;
+  nothing had to be taken back all the same, since what was said stays. Asking again after a turn
+  given up is [259](259-answer-again-after-a-turn-given-up.md).
