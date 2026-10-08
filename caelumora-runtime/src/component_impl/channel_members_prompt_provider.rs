@@ -312,6 +312,7 @@ mod tests {
         let session = Session {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
+            workspace: None,
             id: SessionId::new(), name: caelumora_model::value::name::Name::new("s").unwrap(), participants: participants.clone(), channels: vec![ChannelId::new()],
             commands: Default::default(), privacy: Default::default(), created_at: now, updated_at: now, security_attributes: Default::default(),
             deleted: None,

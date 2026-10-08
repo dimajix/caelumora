@@ -41,3 +41,4 @@ pub mod secret_impl;
 pub mod user_provider;
 pub mod user_provider_impl;
 pub mod snapshot;
+pub mod workspace;

@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 use crate::value::name::Name;
 use crate::value::text::{Briefing, Summary};
 use crate::value::ValueError;
+use crate::workspace::WorkspaceId;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,6 +21,9 @@ pub enum SessionUpdateEvent {
     ApprovalRulesChanged(Vec<ApprovalRule>),
     /// What it is for changed (issue 245), as it now stands.
     DescriptionChanged { summary: Option<String>, briefing: Option<String> },
+    /// A workspace was attached, or the one attached taken away (issue
+    /// 253), as it now stands.
+    WorkspaceChanged(Option<WorkspaceId>),
 }
 
 define_id!(SessionId);
@@ -54,6 +58,11 @@ pub struct Session {
     /// template when it was created and set by whoever may change it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub approval_rules: Vec<ApprovalRule>,
+    /// The workspace its people and agents share in all its channels (issue
+    /// 253), at most one; attached by whoever may change the session. Which
+    /// of its channels may use it, the workspace's classification decides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<WorkspaceId>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub security_attributes: SecurityAttributes,

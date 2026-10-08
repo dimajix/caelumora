@@ -19,8 +19,8 @@ use uuid::Uuid;
 
 /// Where a personality, a session template or an agent lies: the name
 /// space it is found in by name (issue 177). A channel's name space is its
-/// session's scope, a user's the global one (issue 250); neither stores a
-/// scope of its own.
+/// session's scope, a user's the global one (issue 250), a workspace's its
+/// owner's (issue 253); none of them stores a scope of its own.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Scope {
     /// A channel, by id: a renamed channel keeps what lies in it (issue
@@ -85,8 +85,8 @@ impl Scope {
 
 /// What lies in a scope and is found there by its name, which is unique of
 /// its kind in that scope (issue 250): a personality, a session template,
-/// an agent - and a channel, whose scope is its session, and a user, who
-/// lies in the global one. A kind is either `Scoped` or has no unique name
+/// an agent - and a channel, whose scope is its session, a user, who lies
+/// in the global one, and a workspace, which lies in its owner's. A kind is either `Scoped` or has no unique name
 /// at all.
 pub trait Scoped {
     /// Its name and the scope it lies in; made when asked by a kind that

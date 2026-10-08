@@ -255,6 +255,7 @@ pub(crate) fn bare_session(session_id: SessionId) -> Session {
         commands: Default::default(),
         privacy: Default::default(),
         approval_rules: Vec::new(),
+        workspace: None,
         created_at: now,
         updated_at: now,
         security_attributes: Default::default(),

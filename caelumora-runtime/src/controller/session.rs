@@ -171,6 +171,7 @@ impl SessionController {
             SessionUpdateEvent::PrivacyChanged(privacy) => session.privacy = *privacy,
             SessionUpdateEvent::ApprovalRulesChanged(rules) => session.approval_rules = rules.clone(),
             SessionUpdateEvent::DescriptionChanged { summary, briefing } => session.describe(summary.as_deref(), briefing.as_deref())?,
+            SessionUpdateEvent::WorkspaceChanged(workspace) => session.workspace = *workspace,
         }
         Ok(session)
     }
@@ -186,6 +187,7 @@ mod tests {
         Session {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
+            workspace: None,
             commands: Default::default(),
             privacy: Default::default(),
             id: SessionId::new(),

@@ -2,6 +2,7 @@ use crate::agent::{AgentId, AgentUpdateEvent};
 use crate::channel::{ChannelId, ChannelUpdateEvent};
 use crate::session::{SessionId, SessionUpdateEvent};
 use crate::user::{UserId, UserProfile, UserUpdateEvent};
+use crate::workspace::{WorkspaceId, WorkspaceUpdateEvent};
 use crate::security::SecurityAttributes;
 use serde::{Deserialize, Serialize};
 
@@ -50,11 +51,20 @@ pub enum GlobalEvent {
     /// Published with the profile's attributes: only its user, and the
     /// runtime, receive it.
     UserProfileUpdated(UserId, UserProfile),
+    /// About a workspace (issue 253), which belongs to a user, not to a
+    /// session it is attached to. Published with the workspace's attributes:
+    /// its owner and contributors receive them.
+    WorkspaceCreated(WorkspaceId),
+    WorkspaceUpdated(WorkspaceId, WorkspaceUpdateEvent),
+    WorkspaceDeleted(WorkspaceId),
+    /// A deleted workspace was restored, with its files (issue 164).
+    WorkspaceRestored(WorkspaceId),
 }
 
 pub trait EventPublisher: Send + Sync + std::fmt::Debug {
     /// Publishes `event` about an entity with these `attributes` - the
-    /// session's, channel's, agent's or user's the event is about (issue 39).
+    /// session's, channel's, agent's, user's or workspace's the event is
+    /// about (issue 39).
     /// They decide who may receive it; they are not part of the event.
     fn publish(&self, event: GlobalEvent, attributes: SecurityAttributes);
 }

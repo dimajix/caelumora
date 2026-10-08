@@ -19,6 +19,10 @@ The `EntityStore` trait (in `caelumora-model`) stores the long-lived domain enti
     language they prefer (issue 56) and their answers to tool calls given in advance (issue 13).
     One `UserProfile` per user, stored under the user's id; see [SECURITY.md](SECURITY.md#ownership)
     for why it is not part of the `User` record.
+*   **Workspaces**: a tree of files a user owns and attaches to sessions (issue
+    [253](../issues/253-workspace.md)), with one classification for all of it. The document names
+    the storage its files lie in; the files are no part of it, and the store does not touch them.
+    A session names the workspace attached to it (`Session::workspace`), at most one.
 
 Preconfigured components are not among them. They are runtime configuration that personalities and
 templates refer to by `kind: "ref"`, and the `ComponentStore` keeps them: a `StoredComponent` - the
@@ -30,7 +34,8 @@ in `components/` of its directory.
 
 Every entity has a name, and the fields that mean something for it (issue 177):
 
-*   **What is a scope** - a session, a channel, a user - has a name only.
+*   **What is a scope** - a session, a channel, a user - has a name only, and so has a workspace,
+    which lies in its owner's scope without storing it.
 *   **What lies in a scope** - a personality, a session template, an agent - has a name and a
     `Scope`: where it is found by name (issue [178](../issues/178-scoped-lookup-by-name.md)). The
     store finds one by its `ScopedName`, in exactly its scope (`find_personality_by_name`,
@@ -49,10 +54,11 @@ Every entity has a name, and the fields that mean something for it (issue 177):
 Of one kind, a name is unique in its name space, and the store keeps it so (issue
 [250](../issues/250-unique-names-per-name-space.md)). What is `Scoped` says its name and the scope
 it lies in: a personality, a session template, an agent their own; a channel its name in its
-session's scope; a user their username in the global scope. None of it is created, renamed, moved
-into another scope or restored under a name another of its kind has there - compared as names are
-- and the store answers `StoreError::NameTaken` (REST `409 name_taken`). A session has a name, but
-no unique one.
+session's scope; a user their username in the global scope; a workspace its name in its owner's
+scope - one that belongs to no user is not stored (`Stored::validate`). None of it is created,
+renamed, moved into another scope or restored under a name another of its kind has there - compared
+as names are - and the store answers `StoreError::NameTaken` (REST `409 name_taken`). A session has
+a name, but no unique one.
 
 *   The check reads every one of the kind that is not deleted, also those the caller may not read
     (`store_impl::access::name_free`; see [SECURITY.md](SECURITY.md#how-stores-check)). What is
@@ -103,17 +109,15 @@ file per document.
 
 ### Deleted entities
 
-What a user deletes is to be kept, marked, and removed for good only by a purge - an
-administrator's act or a retention policy's (issues
-[164](../issues/164-soft-deletion-and-former-members.md),
-[07](../issues/07-session-deletion-audit.md)).
-The stores are generic over `Stored` (`caelumora_model::removal`), which asks every kind whether
-it was deleted. The kinds that deleting is to mark implement `Deletable` and carry `deleted:
-Option<Removal>` - who deleted it and when: sessions, channels, agents, users, user profiles,
-personalities and session templates. The field is written only when set, so documents stored before
-it load unchanged. A preconfigured component in the `ComponentStore` is not marked: it is reached
-only through the personalities and templates that refer to it, and hidden with them; it is deleted
-for good.
+What a user deletes is to be kept, marked, and removed for good only by a purge - an administrator's
+act or a retention policy's (issues [164](../issues/164-soft-deletion-and-former-members.md),
+[07](../issues/07-session-deletion-audit.md)). The stores are generic over `Stored`
+(`caelumora_model::removal`), which asks every kind whether it was deleted. The kinds that deleting
+is to mark implement `Deletable` and carry `deleted: Option<Removal>` - who deleted it and when:
+sessions, channels, agents, users, user profiles, personalities, session templates and workspaces.
+The field is written only when set, so documents stored before it load unchanged. A preconfigured
+component in the `ComponentStore` is not marked: it is reached only through the personalities and
+templates that refer to it, and hidden with them; it is deleted for good.
 
 A document that carries the mark is not there for the five operations, before anything is asked
 (`store_impl::access`): it is not read, not listed, not found by name, not changed and not deleted

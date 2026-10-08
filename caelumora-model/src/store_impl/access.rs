@@ -257,6 +257,15 @@ pub(crate) const USER_PROFILES: Actions = Actions {
     delete: |a| ActionType::DeleteUserProfile(a),
 };
 
+pub(crate) const WORKSPACES: Actions = Actions {
+    entity: EntityKind::Workspace,
+    get: |a| ActionType::GetWorkspace(a),
+    list: ActionType::ListWorkspaces,
+    create: |a| ActionType::CreateWorkspace(a),
+    update: |a| ActionType::UpdateWorkspace(a),
+    delete: |a| ActionType::DeleteWorkspace(a),
+};
+
 pub(crate) const COMPONENTS: Actions = Actions {
     entity: EntityKind::Component,
     get: |a| ActionType::GetComponent(a),
@@ -302,6 +311,7 @@ mod tests {
         Session {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
+            workspace: None,
             id: SessionId::new(),
             name: crate::value::name::Name::new("s").unwrap(),
             participants: Vec::new(),

@@ -126,7 +126,7 @@ impl TextRule for IntroductionRule {
 pub type Introduction = Text<IntroductionRule>;
 
 /// What a personality or a session template is, for whoever chooses one: a
-/// catalogue line.
+/// catalogue line; what a workspace holds, as its owner describes it.
 pub enum DescriptionRule {}
 
 impl TextRule for DescriptionRule {

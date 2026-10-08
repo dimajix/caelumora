@@ -11,6 +11,7 @@ use crate::session::{Session, SessionId};
 use crate::template::{SessionTemplate, SessionTemplateId};
 use crate::user::{User, UserId, UserProfile};
 use crate::value::name::ScopedName;
+use crate::workspace::{Workspace, WorkspaceId};
 
 
 #[derive(Debug, thiserror::Error)]
@@ -93,6 +94,7 @@ pub enum EntityKind {
     Channel,
     User,
     UserProfile,
+    Workspace,
     Component,
 }
 
@@ -107,6 +109,7 @@ impl EntityKind {
             EntityKind::Channel => "channel",
             EntityKind::User => "user",
             EntityKind::UserProfile => "user_profile",
+            EntityKind::Workspace => "workspace",
             EntityKind::Component => "component",
         }
     }
@@ -131,7 +134,8 @@ impl std::fmt::Display for EntityKind {
 /// over `list_x`.
 ///
 /// What is `Scoped` - personalities, session templates, agents, channels,
-/// users - has a name unique of its kind in its scope (issue 250): `create`,
+/// users, workspaces - has a name unique of its kind in its scope (issue
+/// 250): `create`,
 /// `update` and `restore` refuse one that another has there (`NameTaken`),
 /// checked against every one of the kind that is not deleted, also those
 /// the caller may not read, in the same step as the write. Sessions have
@@ -233,6 +237,19 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn purge_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool>;
     async fn get_deleted_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<UserProfile>;
     async fn list_deleted_user_profiles(&self, ctx: &SecurityContext) -> StoreResult<Vec<UserProfile>>;
+
+    // Workspaces (issue 253) - their files are no part of the document, and
+    // whoever purges one removes them.
+    async fn create_workspace(&self, ctx: &SecurityContext, value: &Workspace) -> StoreResult<()>;
+    async fn get_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace>;
+    async fn update_workspace(&self, ctx: &SecurityContext, value: &Workspace) -> StoreResult<()>;
+    async fn delete_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<bool>;
+    async fn list_workspaces(&self, ctx: &SecurityContext) -> StoreResult<Vec<Workspace>>;
+    async fn restore_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<()>;
+    async fn purge_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<bool>;
+    async fn get_deleted_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace>;
+    async fn list_deleted_workspaces(&self, ctx: &SecurityContext) -> StoreResult<Vec<Workspace>>;
+    async fn find_workspace_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Workspace>;
 }
 
 /// The preconfigured components: runtime configuration that personalities
@@ -308,6 +325,7 @@ mod tests {
         let session1 = Session {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
+            workspace: None,
             commands: Default::default(),
             privacy: Default::default(),
             id: SessionId(Uuid::new_v4()),
@@ -322,6 +340,7 @@ mod tests {
         let session2 = Session {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
+            workspace: None,
             commands: Default::default(),
             privacy: Default::default(),
             id: SessionId(Uuid::new_v4()),

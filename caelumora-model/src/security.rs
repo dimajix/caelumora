@@ -87,6 +87,16 @@ pub enum ActionType<'a> {
     CreateUserProfile(&'a SecurityAttributes),
     UpdateUserProfile(&'a SecurityAttributes),
     DeleteUserProfile(&'a SecurityAttributes),
+    /// Reading a workspace (issue 253), carrying its attributes - and using
+    /// it: reading and writing its files, attaching it to a session. What
+    /// its contributors may, as writing into a session is.
+    GetWorkspace(&'a SecurityAttributes),
+    ListWorkspaces,
+    CreateWorkspace(&'a SecurityAttributes),
+    /// Changing a workspace - its name, description, classification,
+    /// contributors - with its attributes as stored.
+    UpdateWorkspace(&'a SecurityAttributes),
+    DeleteWorkspace(&'a SecurityAttributes),
     /// Ending the current turn of every agent in a channel, carrying the
     /// channel's attributes.
     CancelChannel(&'a SecurityAttributes),
@@ -218,6 +228,11 @@ impl ActionType<'_> {
             ActionType::CreateUserProfile(_) => "CreateUserProfile".into(),
             ActionType::UpdateUserProfile(_) => "UpdateUserProfile".into(),
             ActionType::DeleteUserProfile(_) => "DeleteUserProfile".into(),
+            ActionType::GetWorkspace(_) => "GetWorkspace".into(),
+            ActionType::ListWorkspaces => "ListWorkspaces".into(),
+            ActionType::CreateWorkspace(_) => "CreateWorkspace".into(),
+            ActionType::UpdateWorkspace(_) => "UpdateWorkspace".into(),
+            ActionType::DeleteWorkspace(_) => "DeleteWorkspace".into(),
             ActionType::CancelChannel(_) => "CancelChannel".into(),
             ActionType::WakeChannel(_) => "WakeChannel".into(),
             ActionType::RetryMessage(_) => "RetryMessage".into(),
@@ -583,7 +598,8 @@ impl SecurityManager for DummySecurityManager {
 ///
 /// - The system (`ActorId::System`) may do everything.
 /// - Reading - which also covers using, e.g. starting a session from a
-///   template - is allowed to the owner, to contributors, and to everybody
+///   template, or working on the files of a workspace - is allowed to the
+///   owner, to contributors, and to everybody
 ///   for entities owned by the system or by no one.
 /// - Creating is allowed only with oneself as owner.
 /// - Changing, deleting and stopping are the owner's alone, and so is reading what an
@@ -651,6 +667,7 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::GetComponent(a)
             | ActionType::GetUser(a)
             | ActionType::GetUserProfile(a)
+            | ActionType::GetWorkspace(a)
             | ActionType::CancelChannel(a)
             | ActionType::WakeChannel(a)
             | ActionType::RetryMessage(a)
@@ -685,6 +702,7 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::CreateChannel(a)
             | ActionType::CreateUser(a)
             | ActionType::CreateUserProfile(a)
+            | ActionType::CreateWorkspace(a)
             | ActionType::CreateComponent(a) => a.owner_id == me && me != ActorId::None,
             ActionType::UpdatePersonality(a)
             | ActionType::DeletePersonality(a)
@@ -702,6 +720,8 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::DeleteUser(a)
             | ActionType::UpdateUserProfile(a)
             | ActionType::DeleteUserProfile(a)
+            | ActionType::UpdateWorkspace(a)
+            | ActionType::DeleteWorkspace(a)
             | ActionType::UpdateComponent(a)
             | ActionType::DeleteComponent(a)
             | ActionType::ReadDeleted(_, a)
@@ -716,6 +736,7 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::ListChannels
             | ActionType::ListUsers
             | ActionType::ListUserProfiles
+            | ActionType::ListWorkspaces
             | ActionType::ListComponents => true,
             ActionType::ShowCommand(_)
             | ActionType::ExecuteCommand(_)

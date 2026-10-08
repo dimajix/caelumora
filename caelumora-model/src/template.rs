@@ -237,6 +237,7 @@ impl SessionTemplate {
             commands: self.commands.clone(),
             privacy: self.privacy,
             approval_rules: self.approval_rules.clone(),
+            workspace: None,
             created_at: now,
             updated_at: now,
             security_attributes,

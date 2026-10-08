@@ -1,6 +1,6 @@
 # 253 — Agents and people have no workspace to keep files in
 
-**Status:** open
+**Status:** in progress
 **Area:** Context and knowledge
 
 ## The problem
@@ -76,3 +76,14 @@ its plan is kept in one place so that the two are read together. In short:
   workspace per session.
 - **2026-10-08** — Reshaped again with 251's plan: one `TerminalProvider` per storage, the
   `Terminal` as the one handle for files and commands, the file tools a step of `terminal_tool`.
+- **2026-10-08** — The workspace in the model (251's plan, step 2): `Workspace` and `WorkspaceId`
+  (`caelumora_model::workspace`), `Stored` with `validate` - a workspace belongs to a user -,
+  `Deletable`, `Scoped`; `EntityKind::Workspace`; the actions `GetWorkspace`, `ListWorkspaces`,
+  `CreateWorkspace`, `UpdateWorkspace`, `DeleteWorkspace` under the ownership policy; the ten
+  store methods in both stores (`runtime/workspaces/` of the JSON store), checked by the store
+  suite - lifecycle, found by name in the owner's scope, unique by name per owner, refused without
+  a user as owner; `Session::workspace` and `SessionUpdateEvent::WorkspaceChanged`, applied by the
+  session's controller; the four `Workspace…` events, received by whoever may read the workspace.
+  Different from the plan: the name is a `Name`, not a `ScopedName`; the scope is derived from the
+  owner, as a channel's is from its session, so that the two cannot disagree. Nothing uses it yet.
+  Stored data: none to delete - every new field has a default.

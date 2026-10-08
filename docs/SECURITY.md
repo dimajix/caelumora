@@ -38,13 +38,16 @@ A policy defined outside the binary is [24](../issues/24-opa-security-manager.md
 
 ## Ownership
 
-Every stored entity - session, channel, agent, personality, session template, preconfigured
-component - carries `SecurityAttributes`: an `owner_id` and a list of `contributors` (issue 11).
-This is the one place ownership is recorded.
+Every stored entity - session, channel, agent, personality, session template, workspace,
+preconfigured component - carries `SecurityAttributes`: an `owner_id` and a list of `contributors`
+(issue 11). This is the one place ownership is recorded.
 
 *   A session and its channels are owned by the user they were created for; their users and agents
     are contributors.
 *   An agent is owned by whoever created it, and contributes to its own definition.
+*   A workspace is owned by the user it was made for, always a user (issue
+    [253](../issues/253-workspace.md)); its contributors use it - read and write its files, attach
+    it to a session - as `GetWorkspace` allows, and only its owner changes or deletes it.
 *   Initial data belongs to the system.
 *   A `User` record belongs to the system, too (issue 94): only the user providers and the setup
     write it, so that nobody can grant themselves roles. What a user writes about themselves lives

@@ -5,11 +5,12 @@ use crate::removal::{Deletable, Removal, Stored};
 use crate::scope::Scoped;
 use crate::security::SecurityManager;
 use crate::value::name::ScopedName;
-use crate::store_impl::access::{name_free, Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, USERS, USER_PROFILES};
+use crate::store_impl::access::{name_free, Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, USERS, USER_PROFILES, WORKSPACES};
 use crate::session::{Session, SessionId};
 use crate::store::{ComponentStore, EntityKind, EntityStore, Journaled, StateStore, StoreError, StoreResult};
 use crate::template::{SessionTemplate, SessionTemplateId};
 use crate::user::{User, UserId, UserProfile};
+use crate::workspace::{Workspace, WorkspaceId};
 use async_trait::async_trait;
 use tracing::{debug, info, warn};
 use serde::de::DeserializeOwned;
@@ -55,7 +56,7 @@ impl JsonFileStore {
             root,
             security_manager,
             journal_floor: DEFAULT_JOURNAL_FLOOR,
-            name_locks: [EntityKind::Personality, EntityKind::SessionTemplate, EntityKind::Agent, EntityKind::Channel, EntityKind::User]
+            name_locks: [EntityKind::Personality, EntityKind::SessionTemplate, EntityKind::Agent, EntityKind::Channel, EntityKind::User, EntityKind::Workspace]
                 .into_iter().map(|kind| (kind, Mutex::new(()))).collect(),
         };
         store.ensure_layout()?;
@@ -82,6 +83,7 @@ impl JsonFileStore {
             self.channels_dir(),
             self.users_dir(),
             self.user_profiles_dir(),
+            self.workspaces_dir(),
             self.agent_states_dir(),
             self.agent_channel_states_dir(),
             self.channel_states_dir(),
@@ -112,6 +114,10 @@ impl JsonFileStore {
 
     fn user_profiles_dir(&self) -> PathBuf {
         self.root.join("runtime").join("user_profiles")
+    }
+
+    fn workspaces_dir(&self) -> PathBuf {
+        self.root.join("runtime").join("workspaces")
     }
 
     fn sessions_dir(&self) -> PathBuf {
@@ -165,6 +171,10 @@ impl JsonFileStore {
 
     fn user_profile_path(&self, id: UserId) -> PathBuf {
         self.user_profiles_dir().join(format!("{id}.json"))
+    }
+
+    fn workspace_path(&self, id: WorkspaceId) -> PathBuf {
+        self.workspaces_dir().join(format!("{id}.json"))
     }
 
     fn agent_channel_state_path(&self, agent_id: AgentId, channel_id: ChannelId) -> PathBuf {
@@ -737,6 +747,39 @@ impl EntityStore for JsonFileStore {
     async fn list_deleted_user_profiles(&self, ctx: &SecurityContext) -> StoreResult<Vec<UserProfile>> {
         self.list_deleted_dir(ctx, &USER_PROFILES, self.user_profiles_dir()).await
     }
+
+    // Workspaces (issue 253) - the documents; their files lie in their
+    // storage.
+    async fn create_workspace(&self, ctx: &SecurityContext, value: &Workspace) -> StoreResult<()> {
+        self.create_named_file(ctx, &WORKSPACES, self.workspace_path(value.id), value.id.to_string(), value).await
+    }
+    async fn get_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace> {
+        self.get_file(ctx, &WORKSPACES, self.workspace_path(id), id.to_string()).await
+    }
+    async fn update_workspace(&self, ctx: &SecurityContext, value: &Workspace) -> StoreResult<()> {
+        self.update_named_file(ctx, &WORKSPACES, self.workspace_path(value.id), value.id.to_string(), value).await
+    }
+    async fn delete_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<bool> {
+        self.delete_file::<Workspace>(ctx, &WORKSPACES, self.workspace_path(id)).await
+    }
+    async fn list_workspaces(&self, ctx: &SecurityContext) -> StoreResult<Vec<Workspace>> {
+        self.list_dir(ctx, &WORKSPACES, self.workspaces_dir()).await
+    }
+    async fn restore_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<()> {
+        self.restore_named_file::<Workspace>(ctx, &WORKSPACES, self.workspace_path(id), id.to_string()).await
+    }
+    async fn purge_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<bool> {
+        self.purge_file::<Workspace>(ctx, &WORKSPACES, self.workspace_path(id)).await
+    }
+    async fn get_deleted_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace> {
+        self.get_deleted_file(ctx, &WORKSPACES, self.workspace_path(id), id.to_string()).await
+    }
+    async fn list_deleted_workspaces(&self, ctx: &SecurityContext) -> StoreResult<Vec<Workspace>> {
+        self.list_deleted_dir(ctx, &WORKSPACES, self.workspaces_dir()).await
+    }
+    async fn find_workspace_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Workspace> {
+        self.find_dir(ctx, &WORKSPACES, self.workspaces_dir(), name).await
+    }
 }
 
 /// Preconfigured components, kept like the entities (issue 164).
@@ -904,6 +947,7 @@ mod tests {
         let session = Session {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
+            workspace: None,
             id: SessionId(Uuid::new_v4()), name: crate::value::name::Name::new("old").unwrap(), participants: Vec::new(), channels: Vec::new(),
             commands: Default::default(), privacy: Default::default(), created_at: Utc::now(), updated_at: Utc::now(),
             security_attributes: SecurityAttributes::default(), deleted: None,
@@ -1011,6 +1055,7 @@ mod tests {
         let session = Session {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
+            workspace: None,
             commands: Default::default(),
             privacy: Default::default(),
             id: session_id,
@@ -1063,6 +1108,7 @@ mod tests {
         let s1 = Session {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
+            workspace: None,
             commands: Default::default(),
             privacy: Default::default(),
             id: SessionId(Uuid::new_v4()),

@@ -1,6 +1,6 @@
 # 251 — Agents have no workspace to run commands and keep files in
 
-**Status:** open
+**Status:** in progress
 **Area:** Integrations
 
 ## The problem
@@ -990,3 +990,5 @@ command may come later.
   `terminals` section and the extension of `ComponentContext` are gone; a component reaches the
   terminal through `WorkspaceView::terminal()`. The storage's `destination` bounds a workspace
   when it is made, so the door of 180 judges `mcp_tool` alone. The file tools are step 9.
+- **2026-10-08** — Step 2 of the plan done: the workspace in the model - see issue
+  [253](253-workspace.md).

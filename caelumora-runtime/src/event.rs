@@ -49,6 +49,7 @@ impl PublishedEvent {
             GlobalEvent::AgentCreated(..) | GlobalEvent::AgentUpdated(..) | GlobalEvent::AgentDeleted(..) | GlobalEvent::AgentRestored(..) => ActionType::GetAgent(attributes),
             GlobalEvent::UserCreated(_) | GlobalEvent::UserUpdated(..) | GlobalEvent::UserDeleted(_) => ActionType::GetUser(attributes),
             GlobalEvent::UserProfileUpdated(..) => ActionType::GetUserProfile(attributes),
+            GlobalEvent::WorkspaceCreated(_) | GlobalEvent::WorkspaceUpdated(..) | GlobalEvent::WorkspaceDeleted(_) | GlobalEvent::WorkspaceRestored(_) => ActionType::GetWorkspace(attributes),
             _ => ActionType::GetSession(attributes),
         }
     }
@@ -256,6 +257,9 @@ impl EventBus {
                 topics_to_notify.push(SubscriptionTopic::Session(*sid));
                 topics_to_notify.push(SubscriptionTopic::Channel(*cid));
             }
+            // No topic of their own until something follows one workspace
+            // (issue 253): `All`, and whoever may read it.
+            GlobalEvent::WorkspaceCreated(_) | GlobalEvent::WorkspaceUpdated(..) | GlobalEvent::WorkspaceDeleted(_) | GlobalEvent::WorkspaceRestored(_) => {}
         }
 
         for topic in topics_to_notify {
@@ -375,6 +379,27 @@ mod tests {
 
         assert_eq!(drain(&mut alices).await.len(), 1, "hers");
         assert!(drain(&mut bobs).await.is_empty(), "not his, although her user record is everybody's");
+    }
+
+    #[tokio::test]
+    async fn a_workspace_s_events_reach_whoever_may_use_it() {
+        let bus = EventBus::new(Arc::new(OwnershipSecurityManager::new()));
+        let (alice, bob, carol) = (UserId::new(), UserId::new(), UserId::new());
+        let mut alices = bus.subscribe_as(as_user(alice));
+        let mut bobs = bus.subscribe_as(as_user(bob));
+        let mut carols = bus.subscribe_as(as_user(carol));
+        let mut everything = bus.subscribe_all();
+
+        let mut workspace = caelumora_model::workspace::Workspace::new(caelumora_model::value::name::Name::new("docs").unwrap(), "main", Default::default(), alice);
+        workspace.security_attributes.contributors.push(ActorId::User(bob));
+        let attributes = workspace.security_attributes.clone();
+        bus.publish(GlobalEvent::WorkspaceCreated(workspace.id), attributes.clone());
+        bus.publish(GlobalEvent::WorkspaceDeleted(workspace.id), attributes);
+
+        assert_eq!(drain(&mut alices).await.len(), 2, "its owner");
+        assert_eq!(drain(&mut bobs).await.len(), 2, "a contributor");
+        assert!(drain(&mut carols).await.is_empty(), "nobody else");
+        assert_eq!(drain(&mut everything).await.len(), 2, "and the runtime, on `All`");
     }
 
     #[tokio::test]

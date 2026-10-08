@@ -12,7 +12,8 @@ use crate::removal::{Deletable, Removal, Stored};
 use crate::scope::Scoped;
 use crate::value::name::ScopedName;
 use crate::security::{DummySecurityManager, SecurityManager};
-use crate::store_impl::access::{name_free, Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, USERS, USER_PROFILES};
+use crate::store_impl::access::{name_free, Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, USERS, USER_PROFILES, WORKSPACES};
+use crate::workspace::{Workspace, WorkspaceId};
 use std::fmt::Display;
 use std::hash::Hash;
 
@@ -26,6 +27,7 @@ pub struct MemoryStore {
     channels: RwLock<HashMap<ChannelId, Channel>>,
     users: RwLock<HashMap<UserId, User>>,
     user_profiles: RwLock<HashMap<UserId, UserProfile>>,
+    workspaces: RwLock<HashMap<WorkspaceId, Workspace>>,
     agent_states: RwLock<HashMap<AgentId, AgentState>>,
     agent_channel_states: RwLock<HashMap<(AgentId, ChannelId), AgentChannelState>>,
     channel_states: RwLock<HashMap<ChannelId, ChannelState>>,
@@ -56,6 +58,7 @@ impl MemoryStore {
             channels: Default::default(),
             users: Default::default(),
             user_profiles: Default::default(),
+            workspaces: Default::default(),
             agent_states: Default::default(),
             agent_channel_states: Default::default(),
             channel_states: Default::default(),
@@ -470,6 +473,38 @@ impl EntityStore for MemoryStore {
     }
     async fn list_deleted_user_profiles(&self, ctx: &SecurityContext) -> StoreResult<Vec<UserProfile>> {
         self.list_deleted_in(ctx, &self.user_profiles, &USER_PROFILES).await
+    }
+
+    // Workspaces (issue 253)
+    async fn create_workspace(&self, ctx: &SecurityContext, value: &Workspace) -> StoreResult<()> {
+        self.create_named_in(ctx, &self.workspaces, &WORKSPACES, value.id, value).await
+    }
+    async fn get_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace> {
+        self.get_in(ctx, &self.workspaces, &WORKSPACES, &id).await
+    }
+    async fn update_workspace(&self, ctx: &SecurityContext, value: &Workspace) -> StoreResult<()> {
+        self.update_named_in(ctx, &self.workspaces, &WORKSPACES, value.id, value).await
+    }
+    async fn delete_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<bool> {
+        self.delete_in(ctx, &self.workspaces, &WORKSPACES, id).await
+    }
+    async fn list_workspaces(&self, ctx: &SecurityContext) -> StoreResult<Vec<Workspace>> {
+        self.list_in(ctx, &self.workspaces, &WORKSPACES).await
+    }
+    async fn restore_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<()> {
+        self.restore_named_in(ctx, &self.workspaces, &WORKSPACES, id).await
+    }
+    async fn purge_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<bool> {
+        self.purge_in(ctx, &self.workspaces, &WORKSPACES, &id).await
+    }
+    async fn get_deleted_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace> {
+        self.get_deleted_in(ctx, &self.workspaces, &WORKSPACES, &id).await
+    }
+    async fn list_deleted_workspaces(&self, ctx: &SecurityContext) -> StoreResult<Vec<Workspace>> {
+        self.list_deleted_in(ctx, &self.workspaces, &WORKSPACES).await
+    }
+    async fn find_workspace_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Workspace> {
+        self.find_in(ctx, &self.workspaces, &WORKSPACES, name).await
     }
 }
 

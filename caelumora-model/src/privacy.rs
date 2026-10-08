@@ -165,6 +165,7 @@ mod tests {
         let session = Session {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
+            workspace: None,
             id: Default::default(),
             name: crate::value::name::Name::new("s").unwrap(),
             participants: vec![Participant::User(bob), Participant::Agent(Default::default())],
