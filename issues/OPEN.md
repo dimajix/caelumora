@@ -31,7 +31,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [221](221-adding-session-participants.md) | open | A session's participants are fixed when it is created: nobody - neither a user nor an agent, existing or created from a personality - can be added to it later. |
 | [223](223-full-inbox-drops-events.md) | open | An actor whose inbox is full - an agent in a long turn in a busy channel - loses what was said, requests and approvals without anyone learning of it. |
 | [238](238-retry-of-an-older-answer.md) | open | Only an agent's last answer can be asked for again, and the alternatives of an answer are not kept. |
-| [259](259-answer-again-after-a-turn-given-up.md) | open | An agent cannot be asked to answer again after a turn it gave up: the turn's end makes its last message not the last, and a turn that ended is no turn under way. |
+| [259](259-answer-again-after-a-turn-given-up.md) | in progress | An agent cannot be asked to answer again after a turn it gave up: the turn's end makes its last message not the last, and a turn that ended is no turn under way. |
 | [261](261-turn-finished-repeats-the-answer.md) | open | `TurnFinished` carries the answer the channel already has from the messages said, only for the moderator to decide whom to ask. |
 | [262](262-stopped-turn-not-recorded-while-reflecting.md) | open | An agent removed while its turn ends leaves the turn's messages in the channel's history without an end. |
 
