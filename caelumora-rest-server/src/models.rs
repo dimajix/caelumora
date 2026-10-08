@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use caelumora_model::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
 use caelumora_model::confidentiality::{Classification, Compartment};
 use caelumora_model::message::{Message, TokenUsage};
+use caelumora_model::message_history::HistoryEntry;
 use caelumora_model::value::language::Language;
 use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
@@ -203,12 +204,12 @@ impl<I> From<snapshot::DeletedSnapshot<I>> for DeletedResponse<I> {
 }
 
 /// The state of a channel when a stream connects: its members and the end of
-/// its history. Older messages are fetched over REST - `has_more` says there
-/// are some.
+/// its history, as items - messages and how turns ended (issue 258). Older
+/// ones are fetched over REST - `has_more` says there are some.
 #[derive(Debug, Serialize)]
 pub struct ChannelSnapshot {
     pub channel: ChannelResponse,
-    pub messages: Vec<Message>,
+    pub items: Vec<HistoryItemResponse<Message>>,
     pub has_more: bool,
     /// The notes every agent of the channel published (issue 17); a change
     /// is announced as `AgentChannelStateChanged` on the event stream, and
@@ -228,7 +229,7 @@ impl ChannelSnapshot {
     /// The snapshot of a channel's stream: `channel`, whose agent members
     /// carry their notes and pending approvals - listed beside the channel,
     /// as the API has them - and the end of its history.
-    pub fn of(mut channel: snapshot::ChannelSnapshot, messages: Vec<Message>, has_more: bool) -> Self {
+    pub fn of(mut channel: snapshot::ChannelSnapshot, items: Vec<HistoryItemResponse<Message>>, has_more: bool) -> Self {
         let mut notes = Vec::new();
         let (mut pending_approvals, mut pending_questions) = (Vec::new(), Vec::new());
         for member in &mut channel.members {
@@ -239,7 +240,7 @@ impl ChannelSnapshot {
             pending_approvals.append(&mut member.pending_approvals);
             pending_questions.append(&mut member.pending_questions);
         }
-        Self { channel: channel.into(), messages, has_more, notes, pending_approvals, pending_questions }
+        Self { channel: channel.into(), items, has_more, notes, pending_approvals, pending_questions }
     }
 }
 
@@ -731,18 +732,30 @@ pub struct CommandReplyResponse {
     pub output: Option<String>,
 }
 
-/// A turn an agent gave up (issue 145): why and when, and the messages it
-/// had produced, which stay in the agent's history where they were said
-/// (issue 258). What each of them was produced from is its context, as for
-/// any message of the agent. `after` is the message of the agent's history
-/// the turn follows, where it is shown (issue 146); `None` if it began
-/// before anything was said.
+/// An item of a history (issue 258), as the API gives it: a message said -
+/// `M`, the channel's `Message` or an agent's `HistoryMessageResponse` - or
+/// how a turn ended, and whose it was. Written as an object named by its
+/// kind: `{"said": …}`, `{"turn_finished": {…}}`, `{"turn_given_up": {…}}`.
 #[derive(Debug, Serialize)]
-pub struct GivenUpTurnResponse {
-    pub reason: caelumora_model::turn::GivenUpReason,
-    pub at: chrono::DateTime<chrono::Utc>,
-    pub after: Option<caelumora_model::message::MessageId>,
-    pub messages: Vec<HistoryMessageResponse>,
+#[serde(rename_all = "snake_case")]
+pub enum HistoryItemResponse<M> {
+    Said(M),
+    TurnFinished { turn_id: TurnId, actor: ActorId, at: DateTime<Utc> },
+    TurnGivenUp { turn_id: TurnId, actor: ActorId, reason: caelumora_model::turn::GivenUpReason, at: DateTime<Utc> },
+}
+
+impl<M> HistoryItemResponse<M> {
+    /// The item `entry` of a history (`MessageHistory::items`), its message
+    /// given as `said` makes it; `None` for an entry a reader of a history
+    /// is not given - a change, which the message it changed holds.
+    pub fn of(entry: HistoryEntry, said: impl FnOnce(Message) -> M) -> Option<Self> {
+        match entry {
+            HistoryEntry::Said { message, .. } => Some(Self::Said(said(message))),
+            HistoryEntry::TurnFinished { turn_id, actor, at } => Some(Self::TurnFinished { turn_id, actor, at }),
+            HistoryEntry::TurnGivenUp { turn_id, actor, reason, at } => Some(Self::TurnGivenUp { turn_id, actor, reason, at }),
+            HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. } => None,
+        }
+    }
 }
 
 /// A message of an agent's history (issue 207) - offered to it or said by
@@ -973,19 +986,16 @@ mod tests {
     }
 
     #[test]
-    fn a_turn_given_up_is_answered_with_its_reason_place_and_messages() {
+    fn a_history_is_given_as_its_messages_and_how_turns_ended() {
         use caelumora_model::turn::GivenUpReason;
-        let after = caelumora_model::message::MessageId::new();
-        let turn = GivenUpTurnResponse {
-            reason: GivenUpReason::Failed { message: "boom".to_string() },
-            at: chrono::Utc::now(),
-            after: Some(after),
-            messages: vec![HistoryMessageResponse { message: Message::new(Classification::CHANNEL_DEFAULT), has_context: true, in_transcript: true }],
-        };
-        let json = serde_json::to_value(turn).unwrap();
-        assert_eq!(json["reason"], serde_json::json!({ "kind": "failed", "message": "boom" }));
-        assert_eq!(json["after"], serde_json::json!(after));
-        assert_eq!(json["messages"][0]["has_context"], true);
+        let (turn, actor) = (TurnId::new(), ActorId::default());
+        let said = HistoryItemResponse::of(HistoryEntry::Said { message: Message::new(Classification::CHANNEL_DEFAULT), context: None }, |m| m).unwrap();
+        assert!(serde_json::to_value(said).unwrap()["said"]["id"].is_string(), "the message itself");
+        let given_up = HistoryItemResponse::<Message>::of(HistoryEntry::TurnGivenUp { turn_id: turn, actor, reason: GivenUpReason::Failed { message: "boom".to_string() }, at: chrono::Utc::now() }, |m| m).unwrap();
+        let json = serde_json::to_value(given_up).unwrap();
+        assert_eq!(json["turn_given_up"]["reason"], serde_json::json!({ "kind": "failed", "message": "boom" }));
+        assert_eq!(json["turn_given_up"]["turn_id"], serde_json::json!(turn));
+        assert!(HistoryItemResponse::<Message>::of(HistoryEntry::Fitted { channel: Classification::PUBLIC }, |m| m).is_none(), "a change is in the message it changed");
     }
 
     #[test]

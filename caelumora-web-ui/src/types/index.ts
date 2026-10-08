@@ -242,7 +242,8 @@ export interface ToolResult {
 /** The state of a channel when an event stream connects (issue 34). */
 export interface ChannelSnapshot {
   channel: ChannelResponse;
-  messages: Message[];
+  /** The end of its history: messages, and how turns ended (issue 258). */
+  items: HistoryItem<Message>[];
   /** Whether the history is longer than the snapshot; the rest comes over REST. */
   has_more: boolean;
   /** The notes every agent of the channel published (issue 17). */
@@ -741,16 +742,14 @@ export type GivenUpReason =
   | {kind: 'retried'};
 
 /**
- * A turn an agent gave up (issues 145, 146): why and when, the message of
- * its history it follows (null if it began before anything was said), and
- * its messages, which the agent's history holds as well (issue 258).
+ * An item of a history (issue 258): a message said - `M`, a `Message` of the
+ * channel or a `HistoryMessage` of an agent - or how a turn ended, and whose
+ * it was.
  */
-export interface GivenUpTurn {
-  reason: GivenUpReason;
-  at: string;
-  after: string | null;
-  messages: HistoryMessage[];
-}
+export type HistoryItem<M> =
+  | {said: M}
+  | {turn_finished: {turn_id: string; actor: ActorId; at: string}}
+  | {turn_given_up: {turn_id: string; actor: ActorId; reason: GivenUpReason; at: string}};
 
 /** What an agent's model saw when it produced a message (issues 06, 47). */
 export interface MessageContextResponse {

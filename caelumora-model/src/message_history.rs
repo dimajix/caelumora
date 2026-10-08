@@ -4,9 +4,11 @@
 //! said (issue 234) and how turns ended (issue 258) - read into the messages
 //! as they stand (issue 197).
 
+use crate::actor::ActorId;
 use crate::chain::Chain;
 use crate::confidentiality::Classification;
 use crate::context::ContextRef;
+use crate::digest::Digest;
 use crate::work::TurnId;
 use crate::message::{Message, MessageId};
 use crate::turn::GivenUpReason;
@@ -37,11 +39,13 @@ pub enum HistoryEntry {
     /// The channel was classified `channel`, and every message said so far
     /// fits into it from here on (`Classification::fitted_into`).
     Fitted { channel: Classification },
-    /// The turn `turn_id` ended at `at` and was taken over (issue 258).
-    TurnFinished { turn_id: TurnId, at: DateTime<Utc> },
-    /// The turn `turn_id` was given up at `at`, for `reason` (issue 258):
-    /// what it said before stays said.
-    TurnGivenUp { turn_id: TurnId, reason: GivenUpReason, at: DateTime<Utc> },
+    /// The turn `turn_id` of `actor` ended at `at` and was taken over
+    /// (issue 258).
+    TurnFinished { turn_id: TurnId, actor: ActorId, at: DateTime<Utc> },
+    /// The turn `turn_id` of `actor` was given up at `at`, for `reason`
+    /// (issue 258): what it said before stays said. Whose turn it was is
+    /// recorded, since a turn may end before it said anything.
+    TurnGivenUp { turn_id: TurnId, actor: ActorId, reason: GivenUpReason, at: DateTime<Utc> },
 }
 
 /// The conversation as it happened - a chain like a `Transcript`. What it
@@ -65,10 +69,10 @@ impl Chain<HistoryEntry> {
     /// `TurnFinished` and `TurnGivenUp`. No other entry occurs: what changes
     /// a message is in the message, a fitting in every message.
     pub fn items(&self) -> Vec<HistoryEntry> {
-        let mut folded: HashMap<MessageId, Message> = self.fold().into_iter().map(|m| (m.id, m)).collect();
+        let mut folded: HashMap<Digest, Message> = self.fold_nodes().into_iter().collect();
         self.entries()
             .filter_map(|node| match &node.entry {
-                HistoryEntry::Said { message, context } => folded.remove(&message.id)
+                HistoryEntry::Said { context, .. } => folded.remove(&node.digest)
                     .map(|message| HistoryEntry::Said { message, context: context.clone() }),
                 end @ (HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. }) => Some(end.clone()),
                 HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. } => None,
@@ -86,31 +90,36 @@ impl Chain<HistoryEntry> {
     /// said: every message said, with every reclassification, modification
     /// and revocation since applied to it.
     fn fold(&self) -> Vec<Message> {
-        let mut messages: Vec<Message> = Vec::new();
+        self.fold_nodes().into_iter().map(|(_, message)| message).collect()
+    }
+
+    /// `fold`, each message with the digest of the node that said it.
+    fn fold_nodes(&self) -> Vec<(Digest, Message)> {
+        let mut messages: Vec<(Digest, Message)> = Vec::new();
         let mut at: HashMap<MessageId, usize> = HashMap::new();
         for node in self.all_entries() {
             match &node.entry {
                 HistoryEntry::Said { message, .. } => {
                     at.insert(message.id, messages.len());
-                    messages.push(message.clone());
+                    messages.push((node.digest, message.clone()));
                 }
                 HistoryEntry::Reclassified { message, classification } => {
                     if let Some(&i) = at.get(message) {
-                        messages[i].reclassify(classification);
+                        messages[i].1.reclassify(classification);
                     }
                 }
                 HistoryEntry::Modified { message } => {
                     if let Some(&i) = at.get(&message.id) {
-                        messages[i].modify(message);
+                        messages[i].1.modify(message);
                     }
                 }
                 HistoryEntry::Revoked { message, at: when } => {
                     if let Some(&i) = at.get(message) {
-                        messages[i].revoke(*when);
+                        messages[i].1.revoke(*when);
                     }
                 }
                 HistoryEntry::Fitted { channel } => {
-                    for message in &mut messages {
+                    for (_, message) in &mut messages {
                         message.classification = message.classification.fitted_into(channel);
                     }
                 }
@@ -251,10 +260,10 @@ mod tests {
         let mut history = MessageHistory::default();
         history.push(make_message(id(1)), None);
         history.push(Message { turn_id: Some(finished), ..make_message(id(2)) }, None);
-        history.end_turn(HistoryEntry::TurnFinished { turn_id: finished, at });
+        history.end_turn(HistoryEntry::TurnFinished { turn_id: finished, actor: ActorId::default(), at });
         history.modify(Message { content: Some("changed".to_string()), ..make_message(id(1)) });
         history.push(Message { turn_id: Some(given_up), ..make_message(id(3)) }, None);
-        history.end_turn(HistoryEntry::TurnGivenUp { turn_id: given_up, reason: GivenUpReason::Stopped, at });
+        history.end_turn(HistoryEntry::TurnGivenUp { turn_id: given_up, actor: ActorId::default(), reason: GivenUpReason::Stopped, at });
         history.fit_into(&Classification::CHANNEL_DEFAULT);
 
         let items = history.items();

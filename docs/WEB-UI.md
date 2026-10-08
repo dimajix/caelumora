@@ -180,7 +180,10 @@ not one made for another session, or taking it away.
 `ChatView` shows one channel. Only a participant follows it live, over the channel's stream; anyone
 else who may read it - the session's owner, say - is shown its history and no input.
 
-*   **History.** The snapshot holds the last 20 messages; older ones are fetched on request. A
+*   **History.** The snapshot holds the last 20 items of the history; older ones are fetched on
+    request (`GET …/history`). Its messages are shown, and a turn given up as the notice the chat
+    shows live, named for its turn so that it is shown once (`chatMessages`, `givenUpNotice`, issue
+    258); a turn that finished shows nothing of its own. A
     message is shown with its tool calls, their status, their result and how long they took
     (`MessageView`); a call that is not public is marked with how far it may travel (issues 54, 61,
     100). A message's reasoning, where the server hands it out, is folded above its content under
@@ -444,12 +447,8 @@ marked "not passed on"; a message whose context is recorded opens it in the cont
 closing that returns to the history. The history is loaded again whenever the channel's messages
 change.
 
-The turns the agent gave up (issue 146, `GET …/actors/{aid}/given-up-turns`) are folded into the
-history where they stand: after the message the server names as `after`, first if it names none,
-last if the history does not hold it. The history holds their messages too (issue 258); they are
-shown in the turn's block alone. Each is a folded block with why it ended - failed,
-stopped, or the channel lowered - and when; opened, it shows the turn's messages with their tool
-calls and results, each with its context where it is recorded. A given-up turn's notice in the chat
-offers "What the turn did" for an agent whose context the user may read, which opens the history
-panel with the latest turn given up unfolded. A turn given up because the agent was removed from
-the channel is shown in its history panel, offered among the former members (issue 164).
+A turn the agent gave up (issues 146, 258) is marked where it ended, after what it said: why -
+failed, stopped, the channel lowered, asked for again - and when, as the history's items say. Its
+messages stand among the others, each with its context where it is recorded. A turn given up
+because the agent was removed from the channel is shown in its history panel, offered among the
+former members (issue 164).

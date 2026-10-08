@@ -6,7 +6,7 @@ import type {
   ChannelMember,
   ChannelResponse,
   Command,
-  GivenUpTurn,
+  HistoryItem,
   HistoryMessage,
   CommandReply,
   MessageContextResponse,
@@ -249,9 +249,10 @@ export const api = {
     return res.json();
   },
 
-  async getMessages(sessionId: string, channelId: string): Promise<Message[]> {
-    const res = await request(`/sessions/${sessionId}/channels/${channelId}/messages`);
-    await ensureOk(res, 'Failed to fetch messages');
+  /** The channel's history as the user may see it: messages, and how turns ended (issue 258). */
+  async getHistory(sessionId: string, channelId: string): Promise<HistoryItem<Message>[]> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/history`);
+    await ensureOk(res, 'Failed to fetch the history');
     return res.json();
   },
 
@@ -369,7 +370,7 @@ export const api = {
   },
 
   /** All that was offered to actor `actorUuid` in the channel and what it said itself (issue 207). */
-  async getAgentHistory(sessionId: string, channelId: string, actorUuid: string): Promise<HistoryMessage[]> {
+  async getAgentHistory(sessionId: string, channelId: string, actorUuid: string): Promise<HistoryItem<HistoryMessage>[]> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/actors/${actorUuid}/history`);
     await ensureOk(res, 'Failed to fetch the history');
     return res.json();
@@ -386,13 +387,6 @@ export const api = {
   async getPrivateNotes(sessionId: string, agentUuid: string): Promise<PrivateNotes[]> {
     const res = await request(`/sessions/${sessionId}/actors/${agentUuid}/private_notes`);
     await ensureOk(res, 'Failed to fetch the private notes');
-    return res.json();
-  },
-
-  /** The turns actor `actorUuid` gave up in the channel, oldest first (issues 145, 146). */
-  async getGivenUpTurns(sessionId: string, channelId: string, actorUuid: string): Promise<GivenUpTurn[]> {
-    const res = await request(`/sessions/${sessionId}/channels/${channelId}/actors/${actorUuid}/given-up-turns`);
-    await ensureOk(res, 'Failed to fetch the turns given up');
     return res.json();
   },
 

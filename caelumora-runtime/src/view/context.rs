@@ -11,9 +11,10 @@ use caelumora_model::agent::AgentChannelState;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{ContextResolver, ResolvedContext};
 use caelumora_model::digest::Digest;
-use caelumora_model::message::{Message, MessageId};
+use caelumora_model::message::MessageId;
 use caelumora_model::note::Note;
-use caelumora_model::transcript::{GivenUpTurn, Transcript};
+use caelumora_model::message_history::HistoryEntry;
+use caelumora_model::transcript::Transcript;
 
 /// The state of an agent in a channel, reached by whom may read what the
 /// agent saw: from the store, where it is written after every step - the
@@ -73,11 +74,12 @@ impl AgentContextView {
     }
 
     /// All that was offered to the agent in the channel and what it said
-    /// itself (issue 207), as the messages stand now: the conversation as
-    /// it heard it, for the agent as a whole - what of it each of its
-    /// messages was produced from is that message's context.
-    pub fn history(&self) -> Vec<Message> {
-        self.state.history.messages()
+    /// itself (issue 207), as the messages stand now, and how its turns
+    /// ended (issue 258): the conversation as it heard it, for the agent as
+    /// a whole - what of it each of its messages was produced from is that
+    /// message's context.
+    pub fn history(&self) -> Vec<HistoryEntry> {
+        self.state.history.items()
     }
 
     /// Whether the agent produced the message `message` and what it saw
@@ -94,11 +96,6 @@ impl AgentContextView {
         self.state.transcript.all_entries().any(|n| n.entry.message().is_some_and(|m| m.id == message))
     }
 
-    /// The turns the agent gave up in the channel, with their messages
-    /// (issue 145).
-    pub fn given_up_turns(&self) -> Vec<GivenUpTurn> {
-        self.state.transcript.given_up_turns()
-    }
 }
 
 /// Why a message's context cannot be shown. The messages are meant for
@@ -114,6 +111,7 @@ pub enum ContextError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::message::Message;
     use caelumora_model::agent::AgentId;
     use caelumora_model::context::{ContextItem, ContextRef, PromptRef};
     use caelumora_model::digest::prompt;
@@ -143,7 +141,11 @@ mod tests {
         assert!(matches!(view.context_of(question.id), Err(ContextError::NotRecorded { .. })), "someone else wrote it");
         assert_eq!(view.classification_of(answer.id), Some(Classification::CHANNEL_DEFAULT), "the label it was written with");
         assert_eq!(view.classification_of(MessageId::new()), None);
-        let heard: Vec<MessageId> = view.history().iter().map(|m| m.id).collect();
+        let said = |items: Vec<HistoryEntry>| items.into_iter().filter_map(|item| match item {
+            HistoryEntry::Said { message, .. } => Some(message.id),
+            _ => None,
+        }).collect::<Vec<MessageId>>();
+        let heard = said(view.history());
         assert_eq!(heard, vec![question.id, answer.id], "all it heard and said (issue 207)");
         assert!(view.has_context(answer.id) && !view.has_context(question.id));
         assert!(view.in_transcript(question.id));
@@ -153,7 +155,7 @@ mod tests {
         let dropped = text("dropped");
         heard_only.perceive(vec![dropped.clone()], Vec::new());
         let view = AgentContextView::of(actor, heard_only);
-        assert!(view.history().iter().any(|m| m.id == dropped.id));
+        assert!(said(view.history()).contains(&dropped.id));
         assert!(!view.in_transcript(dropped.id) && view.in_transcript(answer.id));
 
         // A prompt part is told with how it was classified (issue 170).

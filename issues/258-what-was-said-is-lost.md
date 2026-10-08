@@ -529,3 +529,17 @@ the step that changes what they describe.
   user's actor sends `CompleteMessageGenerated` alone, an external agent's message said unasked has
   no end either, and no turn is made up for either. The moderator's two ways in share one
   decision (`ask`). Also corrected here: the comment at `Message::internal`, due in step 3.
+- **2026-10-08** — Step 6 done, decided with the maintainer: the turns' ends in a history name whose
+  turn it was (`actor`), since a turn may end before it said anything and a reader of the channel
+  would else not know whose it was; `record_turn` and `give_up_turn` take the agent's id.
+  `VisibleHistory` holds `items`, cut by `HistoryStart` alike, with `messages()` for what reads only
+  what was said; read from another channel entry by entry it holds no turn's end, which would tell
+  of work whose messages are not released. REST: `HistoryItemResponse<M>` - `said`,
+  `turn_finished`, `turn_given_up` - in the snapshot as `items`, from `GET …/history`, which
+  replaces `GET …/messages`, and from an agent's history; `GET …/given-up-turns`,
+  `GivenUpTurnResponse`, `Transcript::given_up_turns` and `GivenUpTurn` are gone. The web UI keeps
+  its chat as messages rather than items, as proposed: a turn given up from the history becomes the
+  same notice the chat shows live (`givenUpNotice`, named for its turn), a turn that finished shows
+  nothing, since the steps of a plan fold once their turn is no longer under way; its "What the turn
+  did" goes. The history panel shows the agent's items, a turn given up marked where it ended.
+  `MessageHistory::items` matches folded messages to their nodes by digest, not by message id.

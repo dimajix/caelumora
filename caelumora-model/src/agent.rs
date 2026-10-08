@@ -353,9 +353,10 @@ impl AgentChannelState {
     /// into the transcript and the history - each with what it was produced
     /// from, internal steps too (issue 258) - followed by its end,
     /// `TurnFinished`; and its changes to the agent's `notes` and
-    /// `private_notes` here, anchored at its last message. Returns whether
-    /// there were changes to the notes.
-    pub fn record_turn(&mut self, turn_id: TurnId, entries: Vec<TurnEntry>, notes: Vec<NoteChange>, private_notes: Vec<NoteChange>) -> bool {
+    /// `private_notes` here, anchored at its last message. `actor` is the
+    /// agent, whose turn it was. Returns whether there were changes to the
+    /// notes.
+    pub fn record_turn(&mut self, turn_id: TurnId, actor: ActorId, entries: Vec<TurnEntry>, notes: Vec<NoteChange>, private_notes: Vec<NoteChange>) -> bool {
         self.record_messages(entries);
         // What branching (issue 08) will find the changes by: the turn's
         // last message, and the transcript as the turn left it.
@@ -370,7 +371,7 @@ impl AgentChannelState {
         }
         let at = chrono::Utc::now();
         self.transcript.end_turn(TranscriptEntry::TurnFinished { turn_id, at });
-        self.history.end_turn(HistoryEntry::TurnFinished { turn_id, at });
+        self.history.end_turn(HistoryEntry::TurnFinished { turn_id, actor, at });
         changed
     }
 
@@ -379,11 +380,11 @@ impl AgentChannelState {
     /// each with what it was produced from, followed by its end,
     /// `TurnGivenUp` - also for a turn that said nothing. What it said is not
     /// unsaid; what it staged is not applied.
-    pub fn give_up_turn(&mut self, turn_id: TurnId, entries: Vec<TurnEntry>, reason: GivenUpReason) {
+    pub fn give_up_turn(&mut self, turn_id: TurnId, actor: ActorId, entries: Vec<TurnEntry>, reason: GivenUpReason) {
         self.record_messages(entries);
         let at = chrono::Utc::now();
         self.transcript.end_turn(TranscriptEntry::TurnGivenUp { turn_id, reason: reason.clone(), at });
-        self.history.end_turn(HistoryEntry::TurnGivenUp { turn_id, reason, at });
+        self.history.end_turn(HistoryEntry::TurnGivenUp { turn_id, actor, reason, at });
     }
 
     /// Keeps the messages of a turn's `entries` in the transcript and the
@@ -689,7 +690,7 @@ pub(crate) mod tests {
         let expected = turn.entries.last().map(|e| e.node.digest);
         let note = NoteChange::Add { id: crate::note::NoteId(1), text: "sums".to_string(), classification: Classification::CHANNEL_DEFAULT };
 
-        assert!(state.record_turn(turn_id, turn.entries, vec![note], Vec::new()), "a note changed");
+        assert!(state.record_turn(turn_id, ActorId::default(), turn.entries, vec![note], Vec::new()), "a note changed");
         assert_eq!(state.transcript.entries().nth(2).map(|n| n.digest), expected, "the turn's messages have the digests they were given");
         assert_eq!(state.transcript.entries().count(), 4, "and are followed by the turn's end");
         assert!(matches!(state.transcript.last().map(|n| &n.entry), Some(TranscriptEntry::TurnFinished { turn_id: t, .. }) if *t == turn_id));
@@ -710,19 +711,17 @@ pub(crate) mod tests {
         turn.push(said("mailing", Classification::CHANNEL_DEFAULT));
 
         let turn_id = turn.work.turn_id;
-        state.give_up_turn(turn_id, turn.entries, GivenUpReason::Stopped);
+        state.give_up_turn(turn_id, ActorId::default(), turn.entries, GivenUpReason::Stopped);
         let contents = |messages: Vec<Message>| messages.iter().map(|m| m.content.clone().unwrap_or_default()).collect::<Vec<_>>();
         assert_eq!(contents(state.transcript.messages()), ["mail bob", "mailing"], "what it said is not unsaid");
         assert_eq!(contents(state.history.messages()), ["mail bob", "mailing"]);
         assert!(matches!(state.history.last().map(|n| &n.entry), Some(HistoryEntry::TurnGivenUp { turn_id: t, reason: GivenUpReason::Stopped, .. }) if *t == turn_id));
         assert_eq!(state.transcript.all_entries().count(), state.transcript.entries().count(), "nothing branches");
-        let given_up = state.transcript.given_up_turns();
-        assert_eq!(given_up.len(), 1);
-        assert_eq!(given_up[0].turn_id, turn_id);
-        assert_eq!(contents(given_up[0].messages.clone()), ["mailing"]);
+        assert!(matches!(state.transcript.last().map(|n| &n.entry), Some(TranscriptEntry::TurnGivenUp { turn_id: t, .. }) if *t == turn_id));
 
-        state.give_up_turn(TurnId::new(), Vec::new(), GivenUpReason::Stopped);
-        assert_eq!(state.transcript.given_up_turns().len(), 2, "a turn that said nothing leaves its end too");
+        let silent = TurnId::new();
+        state.give_up_turn(silent, ActorId::default(), Vec::new(), GivenUpReason::Stopped);
+        assert!(matches!(state.history.last().map(|n| &n.entry), Some(HistoryEntry::TurnGivenUp { turn_id: t, .. }) if *t == silent), "a turn that said nothing leaves its end too");
     }
 
     /// `state` as a store holds it, and the live state marked stored.

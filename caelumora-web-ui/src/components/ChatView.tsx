@@ -71,7 +71,7 @@ import {type ClassValue, clsx} from 'clsx';
 import {twMerge} from 'tailwind-merge';
 import {MarkdownMessage} from './MarkdownMessage';
 import {MessageFooter, MessageView, Reasoning} from './MessageView';
-import {chatRows, formatArguments, givenUpText, formatTimestamp, formatTokens, formatTokensShort, mergeToolResults} from '../messages';
+import {chatMessages, chatRows, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, mergeToolResults} from '../messages';
 import {PlanSteps} from './PlanSteps';
 import {TokenGauge} from './TokenGauge';
 import {HoverCard} from './HoverCard';
@@ -173,6 +173,15 @@ interface Answer {
  * `answers` with the answer of `sender` changed by `change` - added at the
  * end if it has none, so that answers keep the order they began in.
  */
+/**
+ * Whose name an actor has in `channel` - a member's, or one's that left
+ * (issue 164) - to name whose turn was given up (issue 258).
+ */
+function nameIn(channel: ChannelResponse | null): (actor: ActorId) => string | undefined {
+  return actor => [...(channel?.members ?? []), ...(channel?.former_members ?? [])]
+    .find(m => actorKey(m.id) === actorKey(actor))?.name;
+}
+
 function withAnswer(answers: Answer[], sender: string, name: string | null, change: (answer: Answer) => Answer): Answer[] {
   const index = answers.findIndex(a => a.sender === sender);
   if (index < 0) {
@@ -253,7 +262,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   const [revoking, setRevoking] = useState<string | null>(null);
   // The agent whose history is shown, with the channel it belongs to (issue
   // 207); a context opened from it is shown on top and returns to it.
-  const [historyOf, setHistoryOf] = useState<{channelId: string; member: ChannelMember; givenUp?: boolean} | null>(null);
+  const [historyOf, setHistoryOf] = useState<{channelId: string; member: ChannelMember} | null>(null);
   // What is shown of one member: its tools (issue 194), its private notes
   // (issue 233) or who it is (issue 244) - one at a time.
   const [memberPanel, setMemberPanel] = useState<{channelId: string; member: ChannelMember; shows: 'tools' | 'privateNotes' | 'profile'} | null>(null);
@@ -388,9 +397,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
       const reclassified = reclassifiedChannel(event);
       if (!reclassified || reclassified.channelId !== channelId) return;
       setChannel(prev => prev && {...prev, classification: reclassified.classification});
-      api.getMessages(sessionId, channelId)
-        .then(data => {
-          const now = new Map(data.map(m => [m.id, m.classification]));
+      api.getHistory(sessionId, channelId)
+        .then(items => {
+          const now = new Map(items.flatMap(item => 'said' in item ? [[item.said.id, item.said.classification]] : []));
           setMessages(prev => prev.map(m => (m.id && now.get(m.id)) ? {...m, classification: now.get(m.id)} : m));
         })
         .catch(error => reportError('Failed to load the messages', error));
@@ -521,7 +530,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
     const handleSnapshot = (data: string) => {
       try {
         const snapshot: ChannelSnapshot = JSON.parse(data);
-        setMessages(snapshot.messages);
+        setMessages(chatMessages(snapshot.items, nameIn(snapshot.channel)));
         setChannel(snapshot.channel);
         setUsage(Object.fromEntries(snapshot.channel.members.flatMap(m => m.usage ? [[actorKey(m.id), m.usage]] : [])));
         setNotes(snapshot.notes ?? []);
@@ -667,17 +676,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           // Shown in the chat as the turn's end (issue 258), not yet part of
           // the history: gone on reload.
           const {turn_id, reason} = actorEvent.TurnGivenUp;
-          const givenUp: Message = {
-            role: 'System',
-            content: givenUpText(reason),
-            sender_id: envelope.context.sender_id,
-            sender_name: envelope.context.sender_name,
-            turn_id,
-            givenUp: reason,
-            span_id: envelope.context.span_id,
-            timestamp: envelope.timestamp,
-          };
-          setMessages(prev => [...prev, givenUp]);
+          const notice = givenUpNotice(turn_id, reason, envelope.context.sender_id, envelope.context.sender_name, envelope.timestamp, envelope.context.span_id);
+          setMessages(prev => prev.some(m => m.id === notice.id) ? prev : [...prev, notice]);
           answerEnded();
         } else if (actorEvent.CommandExecuted) {
           // Shown, but not part of the history.
@@ -734,8 +734,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
     // (issue 104); anyone else who may read it sees its history as it is.
     if (!participant) {
       let cancelled = false;
-      api.getMessages(sessionId, channelId)
-        .then(history => { if (!cancelled) setMessages(history); })
+      // With the channel as it is now, which names whose turns ended.
+      Promise.all([api.getChannel(sessionId, channelId), api.getHistory(sessionId, channelId)])
+        .then(([found, items]) => { if (!cancelled) setMessages(chatMessages(items, nameIn(found))); })
         .catch(error => reportError('Failed to load the messages', error));
       return () => { cancelled = true; };
     }
@@ -761,7 +762,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   const loadFullHistory = async () => {
     setIsLoadingHistory(true);
     try {
-      const data = await api.getMessages(sessionId, channelId);
+      const data = chatMessages(await api.getHistory(sessionId, channelId), nameIn(channel));
       setMessages(prev => {
         // Keep anything that arrived after the history was read.
         const known = new Set(data.map(m => m.id));
@@ -881,13 +882,6 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
     });
     const whom = names.length > 0 ? `${names.join(', ')} ${names.length === 1 ? 'was' : 'were'} not asked` : 'no agent was asked';
     return `The chain between agents reached its limit of ${maxAgentHops} ${maxAgentHops === 1 ? 'hop' : 'hops'}, so ${whom} to respond. A message from a user starts a new chain.`;
-  };
-
-  /** The sender of `msg`, if it is a member whose context the user may read (issue 146). */
-  const readableAgent = (msg: Message): ChannelMember | undefined => {
-    if (!msg.sender_id) return undefined;
-    const sender = actorKey(msg.sender_id);
-    return members.find(m => actorKey(m.id) === sender && m.can_read_context);
   };
 
   /** Whether the user may see the context of `msg`: a stored message of an agent they may read (issue 41). */
@@ -1039,15 +1033,6 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
       {msg.span_id && (
         <div className="mt-1 text-[11px] font-mono opacity-60">span_id {msg.span_id}</div>
       )}
-      {readableAgent(msg) && (
-        <button
-          onClick={() => setHistoryOf({channelId, member: readableAgent(msg)!, givenUp: true})}
-          className="mt-2 inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-md border border-red-300 dark:border-red-700 hover:bg-red-100 dark:hover:bg-red-900/50"
-        >
-          <History size={12} />
-          What the turn did
-        </button>
-      )}
       <MessageFooter message={msg} />
     </div>
   ) : msg.givenUp ? (
@@ -1060,15 +1045,6 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
         <span>{msg.sender_name || 'The agent'} gave its answer up</span>
       </div>
       <div className="wrap-break-word">{msg.content}</div>
-      {readableAgent(msg) && (
-        <button
-          onClick={() => setHistoryOf({channelId, member: readableAgent(msg)!, givenUp: true})}
-          className="mt-2 inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-md border border-gray-300 dark:border-gray-600 hover:bg-gray-200 dark:hover:bg-gray-800"
-        >
-          <History size={12} />
-          What the turn did
-        </button>
-      )}
       <MessageFooter message={msg} />
     </div>
   ) : msg.retryRejected ? (
@@ -1525,7 +1501,6 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           member={historyOf.member}
           members={members}
           version={messages.length}
-          openLatestGivenUp={historyOf.givenUp}
           onShowContext={message => setContextOf({channelId, message})}
           onClose={() => setHistoryOf(null)}
         />

@@ -3,6 +3,7 @@
 use super::member::{member_state, AgentMember, MemberState};
 use super::{AgentContextView, SessionView, ViewError, ViewResult, Views, WorkspaceView};
 use crate::channel::{visible_part, ChannelLoop, VisibleHistory};
+use caelumora_model::message_history::HistoryEntry;
 use crate::moderator::Moderator;
 use crate::moderator::ResponderPolicy;
 use caelumora_model::actor::{ActorId, ActorState};
@@ -188,7 +189,7 @@ impl ChannelView {
         }
         let not_found = || ViewError::MemberNotFound { channel: self.channel.id, actor };
         let ActorId::Agent(agent) = actor else { return Err(not_found()) };
-        if !self.history().await?.messages.iter().any(|m| m.sender_id == actor) {
+        if !self.history().await?.messages().iter().any(|m| m.sender_id == actor) {
             return Err(not_found());
         }
         Ok(MemberView::of_former(self.clone(), Participant::Agent(agent), None).await)
@@ -220,20 +221,25 @@ impl ChannelView {
                     }
                 };
                 let start = self.channel.history_limits.iter().find(|l| l.participant == actor).map(|l| l.start);
-                VisibleHistory { messages: visible_part(start, state.history.messages()), digest: state.history.digest(), start }
+                VisibleHistory { items: visible_part(start, state.history.items()), digest: state.history.digest(), start }
             }
         };
         if self.readable == Readable::Released {
-            let mut released = Vec::with_capacity(history.messages.len());
-            for message in history.messages {
-                if self.may_read_entry(&message.classification).await {
-                    released.push(message);
+            // The messages released, and nothing of how turns ended: that
+            // would tell of work in the channel whose messages are not
+            // released (issue 258).
+            let mut released = Vec::with_capacity(history.items.len());
+            for item in history.items {
+                if let HistoryEntry::Said { message, .. } = &item {
+                    if self.may_read_entry(&message.classification).await {
+                        released.push(item);
+                    }
                 }
             }
             if released.is_empty() {
                 return Err(self.nothing_released());
             }
-            history.messages = released;
+            history.items = released;
         }
         Ok(history)
     }

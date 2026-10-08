@@ -647,10 +647,10 @@ impl ChannelLoop {
     pub async fn visible_history(&self, participant: ActorId) -> VisibleHistory {
         let (history, digest) = {
             let state = self.state.lock().await;
-            (state.history.messages(), state.history.digest())
+            (state.history.items(), state.history.digest())
         };
         let start = self.history_start_of(participant);
-        VisibleHistory { messages: visible_part(start, history), digest, start }
+        VisibleHistory { items: visible_part(start, history), digest, start }
     }
 
     /// Where `participant`'s view of the history begins; `None`: all of it.
@@ -695,7 +695,7 @@ impl ChannelLoop {
 
         let started = async {
             let actor = Self::create_actor(Arc::clone(&self.channel), &member, &self.runtime).await?;
-            actor.catch_up(visible_part(self.history_start_of(participant), messages)).await?;
+            actor.catch_up(self.visible_history(participant).await.messages()).await?;
             Ok::<_, anyhow::Error>(actor)
         }.await;
         let actor: Arc<dyn Actor> = match started {
@@ -1350,11 +1350,11 @@ impl ChannelLoop {
                 true
             }
             ActorEvent::TurnFinished { turn_id, .. } => {
-                state.history.end_turn(HistoryEntry::TurnFinished { turn_id: *turn_id, at: envelope.timestamp });
+                state.history.end_turn(HistoryEntry::TurnFinished { turn_id: *turn_id, actor: envelope.context.sender_id, at: envelope.timestamp });
                 true
             }
             ActorEvent::TurnGivenUp { turn_id, reason } => {
-                state.history.end_turn(HistoryEntry::TurnGivenUp { turn_id: *turn_id, reason: reason.clone(), at: envelope.timestamp });
+                state.history.end_turn(HistoryEntry::TurnGivenUp { turn_id: *turn_id, actor: envelope.context.sender_id, reason: reason.clone(), at: envelope.timestamp });
                 true
             }
             // Admitted, so they apply (`admits_change`, issue 234).
@@ -1386,8 +1386,9 @@ impl ChannelLoop {
 /// `ChannelLoop::visible_history` gives it.
 #[derive(Debug, Clone)]
 pub struct VisibleHistory {
-    /// The messages they see, from `start` on.
-    pub messages: Vec<Message>,
+    /// What they see, from `start` on: the messages said, each as it
+    /// stands, and how turns ended (`MessageHistory::items`, issue 258).
+    pub items: Vec<HistoryEntry>,
     /// The digest of the channel's history at the time: up to where it was
     /// read. It names the whole chain, so it is recorded with `start`.
     pub digest: Option<caelumora_model::digest::Digest>,
@@ -1395,8 +1396,23 @@ pub struct VisibleHistory {
     pub start: Option<HistoryStart>,
 }
 
+impl VisibleHistory {
+    /// The messages of it alone, for what reads only what was said.
+    pub fn messages(&self) -> Vec<Message> {
+        self.items.iter().filter_map(said).cloned().collect()
+    }
+}
+
+/// The message of `item`, if it is one said.
+fn said(item: &HistoryEntry) -> Option<&Message> {
+    match item {
+        HistoryEntry::Said { message, .. } => Some(message),
+        _ => None,
+    }
+}
+
 /// `history` as seen from `start`: all of it if there is none.
-pub(crate) fn visible_part(start: Option<HistoryStart>, history: Vec<Message>) -> Vec<Message> {
+pub(crate) fn visible_part(start: Option<HistoryStart>, history: Vec<HistoryEntry>) -> Vec<HistoryEntry> {
     match start {
         Some(start) => visible_from(start, history),
         None => history,
@@ -1426,12 +1442,12 @@ fn history_start(access: HistoryAccess, history: &[Message], now: chrono::DateTi
 
 /// The part of `history` visible from `start` - nothing if the message it
 /// begins at is not there, rather than more than was granted.
-fn visible_from(start: HistoryStart, history: Vec<Message>) -> Vec<Message> {
+fn visible_from(start: HistoryStart, history: Vec<HistoryEntry>) -> Vec<HistoryEntry> {
     let (id, skip) = match start {
         HistoryStart::From(id) => (id, 0),
         HistoryStart::After(id) => (id, 1),
     };
-    match history.iter().position(|m| m.id == id) {
+    match history.iter().position(|item| said(item).is_some_and(|m| m.id == id)) {
         Some(index) => history.into_iter().skip(index + skip).collect(),
         None => Vec::new(),
     }
@@ -1601,12 +1617,22 @@ mod tests {
         history.iter().map(|m| m.id).collect()
     }
 
+    /// `messages` as the items of a history.
+    fn said(messages: &[Message]) -> Vec<HistoryEntry> {
+        messages.iter().map(|message| HistoryEntry::Said { message: message.clone(), context: None }).collect()
+    }
+
+    /// The ids of the messages of `items`.
+    fn ids_of(items: &[HistoryEntry]) -> Vec<caelumora_model::message::MessageId> {
+        items.iter().filter_map(super::said).map(|m| m.id).collect()
+    }
+
     fn granted(access: HistoryAccess, history: &[Message], now: chrono::DateTime<chrono::Utc>) -> Vec<caelumora_model::message::MessageId> {
-        let messages = match history_start(access, history, now) {
-            Some(start) => visible_from(start, history.to_vec()),
-            None => history.to_vec(),
+        let items = match history_start(access, history, now) {
+            Some(start) => visible_from(start, said(history)),
+            None => said(history),
         };
-        ids(&messages)
+        ids_of(&items)
     }
 
     #[test]
@@ -1638,8 +1664,8 @@ mod tests {
         let mut later = daily(now);
         let start = HistoryStart::After(later[1].id);
         later.push(Message { id: caelumora_model::message::MessageId::new(), ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) });
-        assert_eq!(ids(&visible_from(start, later.clone())), ids(&later[2..]), "messages sent after joining stay visible");
-        assert!(visible_from(HistoryStart::From(caelumora_model::message::MessageId::new()), later).is_empty(),
+        assert_eq!(ids_of(&visible_from(start, said(&later))), ids(&later[2..]), "messages sent after joining stay visible");
+        assert!(visible_from(HistoryStart::From(caelumora_model::message::MessageId::new()), said(&later)).is_empty(),
                 "an unknown start shows nothing rather than everything");
     }
 
@@ -3060,10 +3086,10 @@ mod tests {
         // The turn's messages stay where they were said, followed by its end
         // (issue 258); what the model saw for them can still be told.
         let seen = crate::view::AgentContextView::of(ActorId::Agent(agent), stored.clone());
-        let turns = seen.given_up_turns();
+        let turns = crate::message::testing::given_up_turns(&stored);
         assert_eq!(turns.len(), 1);
-        assert!(matches!(turns[0].reason, GivenUpReason::Failed { .. }));
-        let roles: Vec<_> = turns[0].messages.iter().map(|m| m.role).collect();
+        assert!(matches!(turns[0].1, GivenUpReason::Failed { .. }));
+        let roles: Vec<_> = turns[0].2.iter().map(|m| m.role).collect();
         assert_eq!(roles, [MessageRole::Assistant, MessageRole::Tool], "the call and its result");
         assert!(seen.context_of(calculate.id).is_ok(), "the call's context is resolved");
         assert!(stored.transcript.messages().iter().any(|m| m.id == calculate.id), "in the transcript");
@@ -3111,12 +3137,12 @@ mod tests {
 
         let turns = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
-                let turns = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap().transcript.given_up_turns();
+                let turns = crate::message::testing::given_up_turns(&channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap());
                 if !turns.is_empty() { break turns }
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         }).await.expect("the turn is given up");
-        assert_eq!(turns[0].reason, GivenUpReason::Stopped);
+        assert_eq!(turns[0].1, GivenUpReason::Stopped);
         running.abort();
     }
 
@@ -3217,9 +3243,9 @@ mod tests {
         assert!(told.contains("lowered"), "{told}");
         settled(&helper, ActorState::Idle).await;
         let stored = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
-        let turns = stored.transcript.given_up_turns();
+        let turns = crate::message::testing::given_up_turns(&stored);
         assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0].reason, GivenUpReason::Lowered { channel: public.clone() });
+        assert_eq!(turns[0].1, GivenUpReason::Lowered { channel: public.clone() });
         // What it said before the lowering was held by the channel: it stays,
         // fitted into the channel as it is now (issue 258).
         let said = channel.history().await.into_iter().find(|m| m.id == calculate.id).expect("said before the lowering");
@@ -3473,11 +3499,11 @@ mod tests {
         let said = |messages: Vec<Message>| messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
         assert_eq!(said(answered(&mut events, agent).await), ["never given"], "the tool is interrupted, and the next turn answers");
         let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
-        let given_up = state.transcript.given_up_turns();
+        let given_up = crate::message::testing::given_up_turns(&state);
         assert_eq!(given_up.len(), 1, "the turn is kept as given up");
-        assert_eq!(given_up[0].reason, caelumora_model::turn::GivenUpReason::Retried);
-        assert_eq!(given_up[0].turn_id, turn);
-        assert!(given_up[0].messages.iter().any(|m| m.tool_calls.iter().any(|c| c.function_name == "sleep")), "the call that ran stays");
+        assert_eq!(given_up[0].1, caelumora_model::turn::GivenUpReason::Retried);
+        assert_eq!(given_up[0].0, turn);
+        assert!(given_up[0].2.iter().any(|m| m.tool_calls.iter().any(|c| c.function_name == "sleep")), "the call that ran stays");
         let told: Vec<_> = given_next(&state, agent).into_iter().filter_map(|m| m.content).filter(|c| c.contains("given up")).collect();
         assert!(told.iter().any(|c| c.contains("asked for again")), "the model is told why the turn was given up: {told:?}");
         let history: Vec<_> = channel.history().await.into_iter().filter_map(|m| m.content).collect();
@@ -3546,11 +3572,11 @@ mod tests {
         let stored = tokio::time::timeout(STOP_GRACE, async {
             loop {
                 let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
-                if state.turn.is_none() && !state.transcript.given_up_turns().is_empty() { break state }
+                if state.turn.is_none() && !crate::message::testing::given_up_turns(&state).is_empty() { break state }
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         }).await.expect("the turn is given up before the grace runs out");
-        assert_eq!(stored.transcript.given_up_turns()[0].reason, GivenUpReason::Stopped);
+        assert_eq!(crate::message::testing::given_up_turns(&stored)[0].1, GivenUpReason::Stopped);
         let interrupted = stored.transcript.messages().iter().flat_map(|m| m.tool_results.clone())
             .find(|r| r.tool_name == "sleep").map(|r| r.content).unwrap_or_default();
         assert!(interrupted.contains("interrupted"), "the call that ran stays, with how it ended: {interrupted}");
@@ -3585,11 +3611,11 @@ mod tests {
         let stored = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
-                if state.turn.is_none() && !state.transcript.given_up_turns().is_empty() { break state }
+                if state.turn.is_none() && !crate::message::testing::given_up_turns(&state).is_empty() { break state }
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         }).await.expect("the turn is given up");
-        assert_eq!(stored.transcript.given_up_turns()[0].reason, GivenUpReason::Stopped);
+        assert_eq!(crate::message::testing::given_up_turns(&stored)[0].1, GivenUpReason::Stopped);
         running.abort();
     }
 

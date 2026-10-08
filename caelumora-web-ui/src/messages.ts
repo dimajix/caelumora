@@ -1,6 +1,6 @@
 // Helpers for showing messages, shared by the chat and the context panel.
 
-import type {GivenUpReason, Message, TokenUsage} from './types';
+import type {ActorId, GivenUpReason, HistoryItem, Message, TokenUsage} from './types';
 import {classificationLabel} from './confidentiality';
 
 export function formatArguments(args: unknown): string {
@@ -36,6 +36,41 @@ export function givenUpText(reason: GivenUpReason): string {
     case 'retried':
       return 'Its answer was asked for again while it was under way.';
   }
+}
+
+/**
+ * The notice of a turn given up (issues 145, 258), as the chat shows it -
+ * live and from the history alike, named for its turn so that it is shown
+ * once: whose turn it was, why, and when.
+ */
+export function givenUpNotice(turnId: string, reason: GivenUpReason, actor: ActorId, name: string | undefined, at: string, spanId?: string): Message {
+  return {
+    id: `turn-given-up:${turnId}`,
+    role: 'System',
+    content: givenUpText(reason),
+    sender_id: actor,
+    sender_name: name,
+    turn_id: turnId,
+    givenUp: reason,
+    span_id: spanId,
+    timestamp: at,
+  };
+}
+
+/**
+ * The chat's messages for `items` of a channel's history (issue 258): each
+ * message said, and the notice of a turn given up - whose, as `nameOf`
+ * names them. A turn that finished shows nothing of its own.
+ */
+export function chatMessages(items: HistoryItem<Message>[], nameOf: (actor: ActorId) => string | undefined): Message[] {
+  return items.flatMap((item): Message[] => {
+    if ('said' in item) return [item.said];
+    if ('turn_given_up' in item) {
+      const {turn_id, actor, reason, at} = item.turn_given_up;
+      return [givenUpNotice(turn_id, reason, actor, nameOf(actor), at)];
+    }
+    return [];
+  });
 }
 
 /**

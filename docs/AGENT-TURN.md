@@ -362,8 +362,8 @@ What stands is read from the entries, by one rule, kept with the message (`Messa
     reclassified, since it says nothing that could be released.
 
 The transcript's messages are read in one place, `transcript::as_they_stand`: every entry of a path
-with its message as it stands at the end of that path. `messages`, the `ContextResolver` and
-`given_up_turns` read through it. Since a change is applied only within the path that holds it, a
+with its message as it stands at the end of that path. `messages` and the `ContextResolver` read
+through it. Since a change is applied only within the path that holds it, a
 `ContextRef` taken before the change resolves to the message as the model saw it then, and one
 taken after to what stands. A prompt part placed after a message taken back stays where it was: the
 entry is still there. What is about every entry ever added - the tokens used, whether a message
@@ -382,8 +382,7 @@ message by what it said as it was first given (`Transcript::message`), shortened
 became of it: `[changed an earlier message "..."; it now reads:] ...` or `[took back an earlier
 message "..."; it no longer stands.]`. A notice not given yet is modified rather than followed by a
 second one, so the remote agent is told once, of the message as it stands. A notice is never in a
-history, and a reader that takes a message not internal for one the history holds as well passes it
-over (`given_up_turns`). The transcript records it word for word, so what a call was given is
+history. The transcript records it word for word, so what a call was given is
 resolved as it was. A reclassification is not told; the remote agent knows no labels. A notice only
 tells: the remote agent decides what to make of it, and nothing in its wording asks it to disregard
 something, which a filter of the remote side may take for an injection.
@@ -792,15 +791,15 @@ only one of them produced it.
     answer for, `in_transcript(message_id)` which reached the transcript: not those the perceive
     processors dropped (issue 196); one they changed keeps its id and counts as passed on. The
     transcript itself is not shown on its own: what of it the model was given is the context of
-    each message. And
-*   `given_up_turns()`, the turns the agent gave up in the channel (issue 145): each with its
-    reason, time and messages. The context of each of those messages is asked for like that of any
-    other.
+    each message. The history is read as its items (`MessageHistory::items`, issue 258): the
+    messages, and how each of the agent's turns ended - a turn given up with its reason, after what
+    it said, whose messages' contexts are asked for like those of any other.
 
 Of an external agent (issue 179) the view is the same, over the same `AgentChannelState` (issue
-206): its transcript is what the remote agent was given; its notes, private notes, given-up turns
-and pending approvals are empty, since it keeps none; and `context_of` answers with what the remote
-agent was given in the call that produced the message (issue
+206): its transcript is what the remote agent was given; its notes, private notes and pending
+approvals are empty, and its history holds no turn of its own, since it keeps none; and
+`context_of` answers with what the remote agent was given in the call that produced the message
+(issue
 [205](../issues/205-external-agent-message-context.md)), as described above.
 
 REST exposes it as `GET /sessions/{id}/channels/{cid}/actors/{aid}/messages/{mid}/context`. It
@@ -812,11 +811,7 @@ a workspace (`source` `"workspace"`) with its `workspace_id` - and the tools off
 of their set. Every prompt part and every knowledge read carries its
 `classification` (`null` if not known), and every item and knowledge read `sets_label`: whether it
 set the message's label (issue 170, `LabelCauses` in the REST server; the rule is in
-[CONFIDENTIALITY.md](CONFIDENTIALITY.md)). `GET …/actors/{aid}/given-up-turns` lists the turns
-given up, oldest first, and answers `403 context_forbidden` alike. Each names, as `after`, the last
-message before it that is not internal (`GivenUpTurn::after`) - one the agent's history holds as
-well, where a client shows the turn (issue 146) - and gives its messages with `has_context` and
-`in_transcript` like the history.
+[CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
 
 So that a client offers this only where it works, every member of a channel response carries
 `can_read_context`, decided for the requesting user when the channel's snapshot is taken (see

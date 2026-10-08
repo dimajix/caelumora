@@ -9,6 +9,7 @@ use super::Turn;
 use crate::actor::Answering;
 use crate::agent::turn::tool_calls::ToolCalls;
 use crate::transport::EventSender;
+use caelumora_model::actor::ActorId;
 use caelumora_model::turn::TurnState;
 use caelumora_model::message::Message;
 use caelumora_model::tool::ToolCallState;
@@ -59,7 +60,7 @@ impl Turn<'_> {
         let final_messages = turn.messages().filter(|m| !m.internal).cloned().collect();
         let turn_id = turn.work.turn_id;
         let TurnState { entries, memory, notes, private_notes, .. } = turn;
-        let channel_state_changed = self.agent_channel_state.record_turn(turn_id, entries, notes, private_notes);
+        let channel_state_changed = self.agent_channel_state.record_turn(turn_id, ActorId::Agent(self.agent_id), entries, notes, private_notes);
         if let Err(e) = self.agent_state.apply(memory, self.agent_channel_state.history.last_message_id()).await {
             warn!("Agent {}: the changes of its turn to its own state are lost: {:#}", self.agent_id, e);
         }
@@ -86,7 +87,7 @@ impl Turn<'_> {
         let turn = self.agent_channel_state.turn.take().unwrap_or_default();
         let turn_id = turn.work.turn_id;
         let TurnState { entries, .. } = turn;
-        self.agent_channel_state.give_up_turn(turn_id, entries, reason);
+        self.agent_channel_state.give_up_turn(turn_id, ActorId::Agent(self.agent_id), entries, reason);
         (answering, abandoned_calls)
     }
 
@@ -159,9 +160,9 @@ mod tests {
         assert_eq!(state.transcript.messages().len(), 3, "what it said is not unsaid (issue 258)");
         assert_eq!(state.history.messages().len(), 3, "in the history as well");
         assert_eq!(state.transcript.all_entries().count(), 4, "followed by its end, and nothing branches");
-        let turns = state.transcript.given_up_turns();
+        let turns = crate::message::testing::given_up_turns(&state);
         assert_eq!(turns.len(), 1);
-        assert_eq!((turns[0].reason.clone(), turns[0].messages.len()), (GivenUpReason::Stopped, 2));
+        assert_eq!((turns[0].1.clone(), turns[0].2.len()), (GivenUpReason::Stopped, 2));
         assert!(state.notes.current().is_empty(), "the note it staged is not taken over");
     }
 
@@ -245,8 +246,8 @@ mod tests {
         let turn = a_turn_with_an_open_step(&mut state);
         turn.give_up(GivenUpReason::Failed { message: "boom".to_string() }, &Discard).await;
 
-        let turns = state.transcript.given_up_turns();
-        let answered: Vec<_> = turns[0].messages.last().unwrap().tool_results.iter().map(|r| r.status).collect();
+        let turns = crate::message::testing::given_up_turns(&state);
+        let answered: Vec<_> = turns[0].2.last().unwrap().tool_results.iter().map(|r| r.status).collect();
         assert_eq!(answered, [ToolResultStatus::Ok, ToolResultStatus::NotExecuted], "no call is left without a result");
     }
 
@@ -255,8 +256,8 @@ mod tests {
         let mut state = a_state_with("hello");
         let turn = Turn::begun(AgentId::default(), String::new(), &mut state, crate::agent::state::AgentStateHandle::detached());
         turn.give_up(GivenUpReason::Stopped, &Discard).await;
-        assert_eq!(state.transcript.given_up_turns().len(), 1, "one rule for every turn (issue 258)");
-        assert!(state.transcript.given_up_turns()[0].messages.is_empty());
+        assert_eq!(crate::message::testing::given_up_turns(&state).len(), 1, "one rule for every turn (issue 258)");
+        assert!(crate::message::testing::given_up_turns(&state)[0].2.is_empty());
         assert_eq!(state.transcript.entries().len(), 2);
     }
 

@@ -6,6 +6,7 @@
 //! one place, with a version tag in front of it, so that the scheme can
 //! change without old and new digests ever being mistaken for each other.
 
+use crate::actor::ActorId;
 use crate::confidentiality::Classification;
 use crate::message::{Message, MessageId};
 use crate::message_history::HistoryEntry;
@@ -241,18 +242,21 @@ pub fn transcript_chain(previous: Option<&Digest>, entry: &TranscriptEntry) -> D
         TranscriptEntry::Modified { message } => message_modified(previous, message),
         TranscriptEntry::Revoked { message, .. } => message_revoked(previous, *message),
         TranscriptEntry::Reclassified { message, classification } => message_reclassified(previous, *message, classification),
-        TranscriptEntry::TurnFinished { turn_id, .. } => turn_ended("caelumora.transcript-turn-finished.v1", previous, *turn_id, None),
-        TranscriptEntry::TurnGivenUp { turn_id, reason, .. } => turn_ended("caelumora.transcript-turn-given-up.v1", previous, *turn_id, Some(reason)),
+        TranscriptEntry::TurnFinished { turn_id, .. } => turn_ended("caelumora.transcript-turn-finished.v1", previous, *turn_id, None, None),
+        TranscriptEntry::TurnGivenUp { turn_id, reason, .. } => turn_ended("caelumora.transcript-turn-given-up.v1", previous, *turn_id, None, Some(reason)),
     }
 }
 
 /// The digest of a chain ending in the end of the turn `turn` (issue 258),
-/// in `scheme`: the turn and, if it was given up, the `reason` - not the
-/// time.
-fn turn_ended(scheme: &str, previous: Option<&Digest>, turn: TurnId, reason: Option<&GivenUpReason>) -> Digest {
+/// in `scheme`: the turn, whose it was if the chain records it, and, if it
+/// was given up, the `reason` - not the time.
+fn turn_ended(scheme: &str, previous: Option<&Digest>, turn: TurnId, actor: Option<&ActorId>, reason: Option<&GivenUpReason>) -> Digest {
     let mut e = Encoder::new(scheme);
     e.opt_digest(previous);
     e.bytes(turn.0.as_bytes());
+    if let Some(actor) = actor {
+        e.json(&to_json(actor));
+    }
     if let Some(reason) = reason {
         e.json(&to_json(reason));
     }
@@ -278,8 +282,8 @@ pub fn history_chain(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest 
             e.json(&to_json(channel));
             e.finish()
         }
-        HistoryEntry::TurnFinished { turn_id, .. } => turn_ended("caelumora.history-turn-finished.v1", previous, *turn_id, None),
-        HistoryEntry::TurnGivenUp { turn_id, reason, .. } => turn_ended("caelumora.history-turn-given-up.v1", previous, *turn_id, Some(reason)),
+        HistoryEntry::TurnFinished { turn_id, actor, .. } => turn_ended("caelumora.history-turn-finished.v1", previous, *turn_id, Some(actor), None),
+        HistoryEntry::TurnGivenUp { turn_id, actor, reason, .. } => turn_ended("caelumora.history-turn-given-up.v1", previous, *turn_id, Some(actor), Some(reason)),
     }
 }
 

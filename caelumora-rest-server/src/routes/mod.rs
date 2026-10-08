@@ -131,10 +131,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/sessions/{id}/actors/{aid}/private_notes", get(sessions::agent_private_notes))
         .route("/sessions/{id}/channels", get(channels::list_channels).post(channels::create_channel))
         .route("/sessions/{id}/channels/{cid}", get(channels::get_channel).delete(channels::delete_channel))
-        .route(
-            "/sessions/{id}/channels/{cid}/messages",
-            get(channels::get_channel_messages).post(channels::send_message),
-        )
+        .route("/sessions/{id}/channels/{cid}/history", get(channels::get_channel_history))
+        .route("/sessions/{id}/channels/{cid}/messages", axum::routing::post(channels::send_message))
         .route("/sessions/{id}/channels/{cid}/classification", axum::routing::put(channels::reclassify_channel))
         .route("/sessions/{id}/channels/{cid}/language", axum::routing::put(channels::set_channel_language))
         .route("/sessions/{id}/channels/{cid}/approval-rules", axum::routing::put(channels::update_channel_approval_rules))
@@ -165,7 +163,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/sessions/{id}/channels/{cid}/actors/{aid}/messages/{mid}/context",
             get(channels::message_context),
         )
-        .route("/sessions/{id}/channels/{cid}/actors/{aid}/given-up-turns", get(channels::given_up_turns))
         .route("/sessions/{id}/channels/{cid}/actors/{aid}/history", get(channels::agent_history))
         .route("/sessions/{id}/channels/{cid}/actors/{aid}/tools", get(channels::agent_tools))
         .route(

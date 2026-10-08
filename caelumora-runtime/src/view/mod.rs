@@ -708,7 +708,7 @@ mod tests {
         let texts = |messages: Vec<Message>| messages.into_iter().filter_map(|m| m.content).collect::<Vec<_>>();
         assert_eq!(texts(seen.transcript().messages()), ["later"], "what it is given next, not what it was given or answered");
         assert_eq!(seen.private_notes(), (Vec::new(), None), "an external agent writes none");
-        assert!(seen.given_up_turns().is_empty());
+        assert!(!seen.history().iter().any(|item| matches!(item, caelumora_model::message_history::HistoryEntry::TurnGivenUp { .. })));
         let context = seen.context_of(answer.id).expect("what the call was given (issue 205)");
         assert_eq!(context.items.len(), 1, "the messages of the one call, no prompt parts");
         assert!(matches!(&context.items[0], caelumora_model::context::ContextItem::Conversation { message } if message.id == question.id));
@@ -909,10 +909,10 @@ mod tests {
         };
         let for_alice = reach(as_user(alice.id)).await;
         let texts = |messages: &[Message]| messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
-        assert_eq!(texts(&for_alice.history().await.unwrap().messages), ["first", "second"]);
-        assert_eq!(texts(&reach(as_user(bob.id)).await.history().await.unwrap().messages), ["second"], "bob joined after the first");
+        assert_eq!(texts(&for_alice.history().await.unwrap().messages()), ["first", "second"]);
+        assert_eq!(texts(&reach(as_user(bob.id)).await.history().await.unwrap().messages()), ["second"], "bob joined after the first");
         let as_helper = Viewer::new(SecurityContext::new(ActorId::User(alice.id), session.id, channel.id).next(ActorId::Agent(helper.id)));
-        assert_eq!(texts(&reach(as_helper).await.history().await.unwrap().messages), ["second"], "the agent reads with its own limit, not its owner's");
+        assert_eq!(texts(&reach(as_helper).await.history().await.unwrap().messages()), ["second"], "the agent reads with its own limit, not its owner's");
         let notes = for_alice.notes().await.unwrap();
         assert_eq!(notes.len(), 1);
         assert_eq!((notes[0].agent, notes[0].name.as_str(), notes[0].notes[0].text.as_str()), (ActorId::Agent(helper.id), "Helper", "noted"));
@@ -1139,6 +1139,8 @@ use caelumora_model::turn::TurnState;
         let said = |t: &str, classification: &Classification| Message { id: MessageId::new(), content: Some(t.to_string()), ..Message::new(classification.clone()) };
         let mut state = ChannelState::new(secret.id);
         state.history.extend(vec![said("the plan", &secret.classification), said("the date", &public.classification)]);
+        let ended = caelumora_model::message_history::HistoryEntry::TurnGivenUp { turn_id: caelumora_model::work::TurnId::new(), actor: ActorId::Agent(helper.id), reason: caelumora_model::turn::GivenUpReason::Stopped, at: chrono::Utc::now() };
+        state.history.end_turn(ended);
         store.put_channel_state(secret.id, &mut state).await.unwrap();
         let mut agent_state = caelumora_model::agent::AgentChannelState::default();
         let note = |id, text: &str, classification: &Classification| Change::Add { id: NoteId(id), text: text.to_string(), classification: classification.clone() };
@@ -1156,13 +1158,15 @@ use caelumora_model::turn::TurnState;
             Viewer::from_place(context, from)
         };
         let names = |channels: Vec<ChannelView>| channels.iter().map(|c| c.name().to_string()).collect::<Vec<_>>();
-        let texts = |history: crate::channel::VisibleHistory| history.messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
+        let texts = |history: crate::channel::VisibleHistory| history.messages().iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
 
         let from_team = manager.views(reading_from(&team)).session(session.id).await.unwrap();
         assert_eq!(names(from_team.channels().await), ["public", "team"], "as a whole: what is public, and itself");
         assert_eq!(names(from_team.all_channels().await), ["public", "team", "secret", "hr"], "the rest entry by entry");
         let secret_from_team = from_team.channel_named("secret").await.expect("reachable for what was released");
-        assert_eq!(texts(secret_from_team.history().await.unwrap()), ["the date"]);
+        let released = secret_from_team.history().await.unwrap();
+        assert_eq!(released.items.len(), 1, "nothing of how turns ended: it would tell of work whose messages are not released (issue 258)");
+        assert_eq!(texts(released), ["the date"]);
         let notes = secret_from_team.notes().await.unwrap();
         assert_eq!(notes[0].notes.iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["noted openly"]);
         let refused = secret_from_team.member(ActorId::Agent(helper.id)).await.unwrap().context().await.expect_err("not as a whole");
@@ -1176,7 +1180,9 @@ use caelumora_model::turn::TurnState;
         assert_eq!(names(from_secret.channels().await), ["public", "team", "secret"], "confidential reads internal; HR's never a general channel");
         assert_eq!(texts(from_secret.channel_named("team").await.unwrap().history().await.unwrap()), ["internal"]);
         let whole = from_secret.channel(secret.id).await.unwrap();
-        assert_eq!(texts(whole.history().await.unwrap()), ["the plan", "the date"], "a channel reads itself as a whole");
+        let history = whole.history().await.unwrap();
+        assert_eq!(history.items.len(), 3, "its messages, and how its turns ended (issue 258)");
+        assert_eq!(texts(history), ["the plan", "the date"], "a channel reads itself as a whole");
         assert!(whole.member(ActorId::Agent(helper.id)).await.unwrap().context().await.is_ok());
     }
 

@@ -48,6 +48,29 @@ where
 #[cfg(test)]
 pub(crate) mod testing {
     use super::*;
+    use caelumora_model::agent::AgentChannelState;
+    use caelumora_model::message_history::HistoryEntry;
+    use caelumora_model::turn::GivenUpReason;
+    use caelumora_model::work::TurnId;
+
+    /// The turns the agent of `state` gave up, as its history records them
+    /// (issue 258): each with why, and the messages before its end that
+    /// carry its id.
+    pub(crate) fn given_up_turns(state: &AgentChannelState) -> Vec<(TurnId, GivenUpReason, Vec<Message>)> {
+        let items = state.history.items();
+        items.iter().enumerate()
+            .filter_map(|(at, item)| {
+                let HistoryEntry::TurnGivenUp { turn_id, reason, .. } = item else { return None };
+                let messages = items[..at].iter()
+                    .filter_map(|item| match item {
+                        HistoryEntry::Said { message, .. } if message.turn_id == Some(*turn_id) => Some(message.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                Some((*turn_id, reason.clone(), messages))
+            })
+            .collect()
+    }
 
     /// Keeps what does not contain `word`, or fails.
     #[derive(Debug)]

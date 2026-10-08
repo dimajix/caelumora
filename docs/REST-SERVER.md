@@ -88,7 +88,7 @@ Everything except `POST /auth/login` and `POST /auth/logout` requires a logged-i
 | `PUT …/channels/{cid}/approval-rules` | Set what the channel restricts of the tool calls in it - whoever may change it (issue 13), as for the session; answered like `GET`, which carries `approval_rules` |
 | `POST …/channels/{cid}/restore` | Restore a deleted channel into its session and start it again, answered like `GET`; `409 name_taken` if its name was taken meanwhile. A channel is purged only with its session (issue 164) |
 | `PUT …/messages/{mid}/classification` | Reclassify a message - its author or the channel's owner, as a participant, through their actor (issues 133, 239; `message_not_found`, `409 message_revoked`, `403 not_a_participant`); shown on the channel's stream as `MessageReclassified` |
-| `GET …/messages`, `POST …/messages` | The channel's history, older messages on request; write a message, with an optional `classification` that releases it (issue 133; refused as `invalid_classification`). Each message as it stands, with `modified` and `revoked` - when its author changed it - where set (issue 234) |
+| `GET …/history`, `POST …/messages` | The channel's history as items (see below), what the snapshot leaves out on request; write a message, with an optional `classification` that releases it (issue 133; refused as `invalid_classification`). Each message as it stands, with `modified` and `revoked` - when its author changed it - where set (issue 234) |
 | `POST …/messages/{mid}/retry` | Ask the agent that said the message to answer again instead of it (issue 234, see [CHANNELS.md](CHANNELS.md#answering-again)), answered once the request is on its way; the agent's answer is on the stream - `RetryAccepted`, the message taken back and the new answer, or `RetryRejected` with a `reason`: `not_its_answer`, `not_last`, `calls_ran`, `asked_again`, `elsewhere` or `ended` (issue 235). The events name what they are about as `target`: `{"message": …}`, or `{"turn": …}` for an answer under way. `404 message_not_found`, `403 session_forbidden`, `409 message_revoked`, `409 not_an_agents_message`. Offered where the member's `can_retry` (issue 242) |
 | `PUT …/messages/{mid}`, `DELETE …/messages/{mid}` | Modify one's own message - `{content, classification?}`, classified as it is if absent - or take it back, answered `204` (issue 234, see [CHANNELS.md](CHANNELS.md#changing-what-was-said)); `404 message_not_found`, `403 session_forbidden` for another's, `409 message_revoked` for one taken back already, `400 invalid_classification`. The stream shows the change as `MessageModified` or `MessageRevoked` |
 | `POST …/approvals` | Approve or deny a tool call |
@@ -100,9 +100,8 @@ Everything except `POST /auth/login` and `POST /auth/logout` requires a logged-i
 | `POST …/participants`, `DELETE …/participants/{aid}` | Add a participant (with `history`), remove one; `not_cleared` if they are not cleared for the channel (issue 133) |
 | `GET …/participants/{aid}` | One participant, with what its model calls used (`usage`, issue 209) - fetched again when an agent's turn ends, instead of the whole channel; a former member too, with `left` (issue 164). Also who it is (issue 244), each left out where absent: its `introduction` - an agent's by its personality, a user's own -, and of an agent the name of its `personality`, its `personality_kind` (`internal` or `external`), its `owner` and `owner_name`; public to whoever reads the channel, not given where members are listed |
 | `GET …/actors/{aid}/messages/{mid}/context` | What an agent's model saw when it wrote a message |
-| `GET …/actors/{aid}/history` | All that was offered to an agent and what it said itself, whole like the channel's messages - each with `has_context` and `in_transcript` (issue 207); like the context and the turns given up, also for a former member (issue 164) |
+| `GET …/actors/{aid}/history` | All that was offered to an agent and what it said itself, and how its turns ended, whole like the channel's history - as items (see below), each message with `has_context` and `in_transcript` (issues 207, 258); like the context, also for a former member (issue 164) |
 | `GET …/actors/{aid}/tools` | The tools an agent has now in the channel, in their tool sets - each tool with `requires_approval`, `visibility` and `classification` - as it would offer them at the start of its next turn (issue 194); `tool_sets` is empty where it has none here: no agent run here, a former member - and also a channel that does not run, whose agents' tools are not built. `403 agent_forbidden` for whoever may not see them (`ReadAgentTools`) |
-| `GET …/actors/{aid}/given-up-turns` | The turns an agent gave up - failed, lowered, stopped or asked for again - with their reason, the history message they follow (`after`), and their messages like the history's, which holds them too (issues 145, 146, 258) |
 | `GET …/commands`, `POST …/commands` | The commands the user may see; run one |
 | `GET …/channels/{cid}/events` | The channel's stream |
 | `GET /events` | The global stream |
@@ -196,10 +195,16 @@ agent's answer begins with `{"ResponseStarted": {"turn_id": …}}`, and every me
 or complete, carries the same `turn_id` (issue 235) - also the messages of a channel's history, so
 that a client tells which messages are one answer, and which answer is under way after a reload, by
 the id rather than by who sent what when. A user's message carries none: it is said outside of
-any turn. A turn taken over ends with `{"TurnFinished": {"turn_id": …, "messages": […]}}`, one
-given up with
-`{"TurnGivenUp": {"turn_id": …, "reason": {"kind": "failed", "message": …}}}` - or a `kind` of
-`lowered` with the `channel`, or `retried`; a stopped agent sends none (issue 258).
+any turn. A turn taken over ends with `{"TurnFinished": {"turn_id": …, "messages": […]}}`, one given
+up with `{"TurnGivenUp": {"turn_id": …, "reason": {"kind": "failed", "message": …}}}` - or a `kind`
+of `lowered` with the `channel`, or `retried`; a stopped agent sends none (issue 258).
+
+A history - the channel's in the snapshot and from `GET …/history`, an agent's from
+`GET …/actors/{aid}/history` - is a list of items in the order they happened (issue 258): a message
+said, `{"said": …}`, or how a turn ended, `{"turn_finished": {"turn_id", "actor", "at"}}` or
+`{"turn_given_up": {"turn_id", "actor", "reason", "at"}}`, `actor` being whose turn it was. The
+snapshot carries the last 20 items as `items`, and `has_more` if there are older ones. Read from
+another channel entry by entry, a history holds the messages released and no turn's end.
 
 ### Who follows a channel
 

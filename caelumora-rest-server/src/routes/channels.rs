@@ -1,5 +1,5 @@
 use crate::auth::AuthenticatedUser;
-use crate::models::{AddParticipantRequest, DescriptionRequest, AgentToolsResponse, DeletedResponse, ListOptions, ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CreateChannelRequest, KnowledgeRefResponse, CommandReplyResponse, ExecuteCommandRequest, GivenUpTurnResponse, HistoryMessageResponse, LabelCauses, MessageContextResponse, SeenItemResponse, PublishedNotesResponse, MessageRequest, RetryTurnRequest, SendApprovalRequest, StreamOptions, AnswerQuestionsRequest};
+use crate::models::{AddParticipantRequest, DescriptionRequest, AgentToolsResponse, DeletedResponse, ListOptions, ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CreateChannelRequest, KnowledgeRefResponse, CommandReplyResponse, ExecuteCommandRequest, HistoryItemResponse, HistoryMessageResponse, LabelCauses, MessageContextResponse, SeenItemResponse, PublishedNotesResponse, MessageRequest, RetryTurnRequest, SendApprovalRequest, StreamOptions, AnswerQuestionsRequest};
 use crate::state::AppState;
 use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response, Sse};
@@ -9,6 +9,7 @@ use crate::error::{Json, Path};
 use caelumora_model::snapshot::Detail;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
+use caelumora_model::message_history::HistoryEntry;
 use caelumora_runtime::actor::user::UserActor;
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::session::ChannelSpec;
@@ -109,21 +110,28 @@ pub async fn get_channel(
     Ok(Json(crate::routes::channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?))
 }
 
-/// How many messages a snapshot carries: the end of the conversation, which
-/// is what a client needs to show it. Everything older is fetched over REST
-/// (`GET .../messages`), which `has_more` tells the client to do.
-const SNAPSHOT_MESSAGES: usize = 20;
+/// How many items of its history a snapshot carries: the end of the
+/// conversation, which is what a client needs to show it. Everything older
+/// is fetched over REST (`GET .../history`), which `has_more` tells the
+/// client to do.
+const SNAPSHOT_ITEMS: usize = 20;
 
-pub async fn get_channel_messages(
+/// The history of the channel, as the user may see it (issue 46): its
+/// messages and how turns ended (issue 258), oldest first.
+pub async fn get_channel_history(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
     user: AuthenticatedUser,
-) -> Result<Json<Vec<Message>>, ApiError> {
+) -> Result<Json<Vec<HistoryItemResponse<Message>>>, ApiError> {
     let channel = crate::routes::channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    // As much of it as the user may see (issue 46).
     let history = channel.history().await
         .map_err(|e| ApiError::from_runtime(e.into(), Subject::Session, &format!("reading the history of channel {cid}")))?;
-    Ok(Json(history.messages))
+    Ok(Json(items(history.items)))
+}
+
+/// The items of a history as the API gives them.
+fn items(history: Vec<HistoryEntry>) -> Vec<HistoryItemResponse<Message>> {
+    history.into_iter().filter_map(|entry| HistoryItemResponse::of(entry, |message| message)).collect()
 }
 
 /// The notes every agent of the channel published (issue 17) - what a
@@ -163,16 +171,16 @@ async fn channel_snapshot(state: &AppState, channel: &ChannelLoop, viewer: &Secu
             return None;
         }
     };
-    let (messages, has_more) = recent_messages(history.messages);
+    let (recent, has_more) = recent_items(history.items);
     // The conversation can be shown without what of it cannot be read.
     let channel = view.snapshot(Detail::MEMBERS | Detail::USAGE | Detail::NOTES | Detail::APPROVALS | Detail::BRIEFING).await;
-    Some(ChannelSnapshot::of(channel, messages, has_more))
+    Some(ChannelSnapshot::of(channel, items(recent), has_more))
 }
 
 /// The end of a history, and whether it was cut.
-fn recent_messages(history: Vec<Message>) -> (Vec<Message>, bool) {
-    let has_more = history.len() > SNAPSHOT_MESSAGES;
-    let start = history.len().saturating_sub(SNAPSHOT_MESSAGES);
+fn recent_items(history: Vec<HistoryEntry>) -> (Vec<HistoryEntry>, bool) {
+    let has_more = history.len() > SNAPSHOT_ITEMS;
+    let start = history.len().saturating_sub(SNAPSHOT_ITEMS);
     (history.into_iter().skip(start).collect(), has_more)
 }
 
@@ -548,46 +556,26 @@ pub async fn message_context(
     }))
 }
 
-/// The turns actor `aid` gave up in the channel (issue 145), oldest first,
-/// for whoever may read what it saw - each with where it stands in the
-/// agent's history and its messages as that history's are (issue 146).
-/// Until the history is read with the turns' ends in it (issue 258).
-pub async fn given_up_turns(
-    State(state): State<Arc<AppState>>,
-    Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
-    user: AuthenticatedUser,
-) -> Result<Json<Vec<GivenUpTurnResponse>>, ApiError> {
-    let channel = crate::routes::channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let view = member_of(&channel, aid).await?.context().await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Context, "reading the turns given up"))?;
-    let turns = view.given_up_turns().into_iter()
-        .map(|turn| GivenUpTurnResponse {
-            reason: turn.reason,
-            at: turn.at,
-            after: turn.after,
-            messages: turn.messages.into_iter().map(|message| history_message(&view, message)).collect(),
-        })
-        .collect();
-    Ok(Json(turns))
-}
-
 /// `message` of the agent whose context `view` is, as its history shows it.
 fn history_message(view: &AgentContextView, message: Message) -> HistoryMessageResponse {
     HistoryMessageResponse { has_context: view.has_context(message.id), in_transcript: view.in_transcript(message.id), message }
 }
 
 /// All that was offered to actor `aid` in the channel and what it said
-/// itself (issue 207), oldest first, for whoever may read what it saw.
-/// Not paged: like the channel's messages, the history is returned whole.
+/// itself (issue 207), and how its turns ended (issue 258), oldest first,
+/// for whoever may read what it saw. Not paged: like the channel's history,
+/// it is returned whole.
 pub async fn agent_history(
     State(state): State<Arc<AppState>>,
     Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
     user: AuthenticatedUser,
-) -> Result<Json<Vec<HistoryMessageResponse>>, ApiError> {
+) -> Result<Json<Vec<HistoryItemResponse<HistoryMessageResponse>>>, ApiError> {
     let channel = crate::routes::channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let view = member_of(&channel, aid).await?.context().await
         .map_err(|e| ApiError::from_runtime(e.into(), Subject::Context, "reading the history"))?;
-    let history = view.history().into_iter().map(|message| history_message(&view, message)).collect();
+    let history = view.history().into_iter()
+        .filter_map(|entry| HistoryItemResponse::of(entry, |message| history_message(&view, message)))
+        .collect();
     Ok(Json(history))
 }
 
@@ -648,32 +636,41 @@ mod tests {
     use caelumora_runtime::command::CommandError;
     use caelumora_model::message::MessageId;
 
-    fn history(count: usize) -> Vec<Message> {
-        (0..count).map(|i| Message {
+    fn history(count: usize) -> Vec<HistoryEntry> {
+        (0..count).map(|i| HistoryEntry::Said { message: Message {
             id: MessageId::new(),
             content: Some(format!("message {i}")),
             ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
+        }, context: None }).collect()
+    }
+
+    /// The contents of the messages of `items`.
+    fn contents(items: &[HistoryEntry]) -> Vec<String> {
+        items.iter().filter_map(|item| match item {
+            HistoryEntry::Said { message, .. } => message.content.clone(),
+            _ => None,
         }).collect()
     }
 
     #[test]
     fn a_snapshot_carries_the_end_of_the_history() {
-        let (messages, has_more) = recent_messages(history(SNAPSHOT_MESSAGES + 5));
+        let (items, has_more) = recent_items(history(SNAPSHOT_ITEMS + 5));
 
-        assert_eq!(messages.len(), SNAPSHOT_MESSAGES);
+        assert_eq!(items.len(), SNAPSHOT_ITEMS);
         assert!(has_more, "the client has to fetch the older ones over REST");
-        assert_eq!(messages.first().unwrap().content.as_deref(), Some("message 5"));
-        assert_eq!(messages.last().unwrap().content.as_deref(), Some(&format!("message {}", SNAPSHOT_MESSAGES + 4)[..]));
+        let said = contents(&items);
+        assert_eq!(said.first().map(String::as_str), Some("message 5"));
+        assert_eq!(said.last().map(String::as_str), Some(&format!("message {}", SNAPSHOT_ITEMS + 4)[..]));
     }
 
     #[test]
     fn a_short_history_is_complete() {
-        let (messages, has_more) = recent_messages(history(3));
-        assert_eq!(messages.len(), 3);
+        let (items, has_more) = recent_items(history(3));
+        assert_eq!(items.len(), 3);
         assert!(!has_more);
 
-        let (messages, has_more) = recent_messages(Vec::new());
-        assert!(messages.is_empty());
+        let (items, has_more) = recent_items(Vec::new());
+        assert!(items.is_empty());
         assert!(!has_more);
     }
 

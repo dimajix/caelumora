@@ -85,7 +85,8 @@ impl ToolProvider for ChannelHistoryComponent {
         };
         let channel = session.channel_named(channel).await?;
         let history = channel.history().await?;
-        let (messages, more) = select(&history.messages, last, query);
+        let said = history.messages();
+        let (messages, more) = select(&said, last, query);
         // What was read is classified as the messages given (issue 168).
         let classification = Classification::join_all(messages.iter().map(|m| &m.classification));
         let source = KnowledgeSource::History { digest: history.digest, start: history.start };

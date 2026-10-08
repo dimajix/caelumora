@@ -1888,7 +1888,7 @@ mod tests {
             views.session(channel.id(), channel.classification()).expect("attached to its session")
         };
         let read = reading_from(&finance).channel_named("hr").await.expect("reachable for what was released").history().await.expect("what was released to finance");
-        let texts: Vec<_> = read.messages.iter().map(|m| m.content.clone().unwrap_or_default()).collect();
+        let texts: Vec<_> = read.messages().iter().map(|m| m.content.clone().unwrap_or_default()).collect();
         assert_eq!(texts, ["for finance too"], "only what was released");
         let nothing = reading_from(&team).channel_named("hr").await.expect("reachable, but").history().await;
         assert!(matches!(nothing, Err(ViewError::NoChannelNamed(_))), "nothing was released to a general channel");
@@ -2485,9 +2485,9 @@ mod tests {
         assert!(channel.members().iter().any(|m| m.id == other), "a member now");
         let other_user = match other { caelumora_model::actor::ActorId::User(id) => id, _ => unreachable!() };
         assert!(channel.user_actor(other_user).is_some(), "with an actor of their own");
-        let visible: Vec<_> = channel.visible_history(other).await.messages.into_iter().map(|m| m.content).collect();
+        let visible: Vec<_> = channel.visible_history(other).await.messages().into_iter().map(|m| m.content).collect();
         assert_eq!(visible, vec![Some("three".to_string())], "the last message and no more");
-        assert_eq!(channel.visible_history(ctx.initiator_id).await.messages.len(), before.len(), "the others still see everything");
+        assert_eq!(channel.visible_history(ctx.initiator_id).await.messages().len(), before.len(), "the others still see everything");
         // What a reader records as read says from where (issue 72).
         let (limited, full) = (channel.visible_history(other).await, channel.visible_history(ctx.initiator_id).await);
         assert_eq!(limited.start, Some(caelumora_model::channel::HistoryStart::From(before[2].id)), "from the last message");
@@ -2503,7 +2503,7 @@ mod tests {
         // What is written after joining is visible.
         writer.send_message("four".to_string(), None).await.unwrap();
         history_of(&channel, 4).await;
-        assert_eq!(channel.visible_history(other).await.messages.len(), 2);
+        assert_eq!(channel.visible_history(other).await.messages().len(), 2);
 
         let refusal = |error: anyhow::Error| error.downcast::<ChannelError>().expect("a ChannelError");
         let again = channel.add_participant(&ctx, other, HistoryAccess::All).await.expect_err("already in");
