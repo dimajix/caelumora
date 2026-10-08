@@ -358,10 +358,11 @@ against the size of its context, amber from three quarters on and red from nine 
 context of the last call, against the context's size, and the usage of all of the agent's calls in
 the channel as total input and total output tokens - totals, which grow much faster than the
 context, since every call is given the whole context again. Above the list, "Total tokens" adds up
-the usage of the agents shown. The numbers come with the stream's snapshot, and an agent's are
-fetched again when its turn ends (`GET …/participants/{aid}`); an external agent reports none. A
-message's "(i)" shows the input and output tokens of its call, how full the call's context was,
-and its times.
+the usage of the agents shown. The numbers come with the stream's snapshot; an agent's are updated
+by each of its calls as its message arrives - the steps of a plan are many calls of one turn - and
+fetched again when its turn ends or is given up (`GET …/participants/{aid}`), which also counts
+calls whose messages were not published. An external agent reports none. A message's "(i)" shows
+the input and output tokens of its call, how full the call's context was, and its times.
 
 All three show their numbers in the same hover card (`HoverCard` with `UsageStats`, issue 219):
 groups under a heading, labels on the left and values aligned on the right, never wrapped, the card
