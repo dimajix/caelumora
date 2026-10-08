@@ -129,10 +129,12 @@ pub enum ActorEvent {
     /// plan), produced while deliberating or executing an approved plan -
     /// not the final answer.
     IntermediateMessageGenerated(Message),
-    /// A plan step has just begun execution. Emitted directly by `AgentActor`
-    /// whenever it pushes that step's instruction, so observers (e.g. the web
-    /// UI) can show which step of the plan is currently in progress.
+    /// A plan step of the turn `turn_id` has just begun execution. Emitted
+    /// directly by `AgentActor` whenever it pushes that step's instruction,
+    /// so observers (e.g. the web UI) can show which step of the plan is in
+    /// progress; the channel records it in its history (issue 263).
     PlanStepStarted {
+        turn_id: TurnId,
         step_index: usize,
         total_steps: usize,
         description: String,
@@ -141,6 +143,7 @@ pub enum ActorEvent {
     /// `AgentActor` right before it advances to the next step (or to
     /// finalization).
     PlanStepFinished {
+        turn_id: TurnId,
         step_index: usize,
         total_steps: usize,
         description: String,

@@ -197,14 +197,19 @@ that a client tells which messages are one answer, and which answer is under way
 the id rather than by who sent what when. A user's message carries none: it is said outside of
 any turn. A turn taken over ends with `{"TurnFinished": {"turn_id": …, "messages": […]}}`, one given
 up with `{"TurnGivenUp": {"turn_id": …, "reason": {"kind": "failed", "message": …}}}` - or a `kind`
-of `lowered` with the `channel`, or `retried`; a stopped agent sends none (issue 258).
+of `lowered` with the `channel`, or `retried`; a stopped agent sends none (issue 258). A step of
+a plan begun is `{"PlanStepStarted": {"turn_id", "step_index", "total_steps", "description"}}`,
+its end `PlanStepFinished` alike.
 
 A history - the channel's in the snapshot and from `GET …/history`, an agent's from
 `GET …/actors/{aid}/history` - is a list of items in the order they happened (issue 258): a message
-said, `{"said": …}`, or how a turn ended, `{"turn_finished": {"turn_id", "actor", "at"}}` or
-`{"turn_given_up": {"turn_id", "actor", "reason", "at"}}`, `actor` being whose turn it was. The
+said, `{"said": …}`, where a step of a turn's plan began, `{"plan_step_started": {"turn_id",
+"actor", "step_index", "total_steps", "description", "at"}}` (issue 263, the channel's only), or
+how a turn ended, `{"turn_finished": {"turn_id", "actor", "at"}}` or `{"turn_given_up":
+{"turn_id", "actor", "reason", "at"}}`, `actor` being whose turn it was. The
 snapshot carries the last 20 items as `items`, and `has_more` if there are older ones. Read from
-another channel entry by entry, a history holds the messages released and no turn's end.
+another channel entry by entry, a history holds the messages released, and neither a turn's end
+nor the start of a step.
 
 ### Who follows a channel
 

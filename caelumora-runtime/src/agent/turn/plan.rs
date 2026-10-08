@@ -57,6 +57,7 @@ impl Turn<'_> {
                 self.place_turn_prompt(MessageRole::System, plan_step_instruction(next + 1, plan.steps.len(), step));
                 self.set_plan_progress(PlanProgress::Step(next));
                 Some(ActorEvent::PlanStepStarted {
+                    turn_id: self.turn_id(),
                     step_index: next,
                     total_steps: plan.steps.len(),
                     description: step.description.clone(),
@@ -81,7 +82,7 @@ impl Turn<'_> {
             PlanProgress::Step(step_index) => {
                 let total_steps = plan.plan.steps.len();
                 let description = plan.plan.steps.get(step_index).map(|s| s.description.clone()).unwrap_or_default();
-                let mut events = vec![ActorEvent::PlanStepFinished { step_index, total_steps, description }];
+                let mut events = vec![ActorEvent::PlanStepFinished { turn_id: self.turn_id(), step_index, total_steps, description }];
                 events.extend(self.advance_plan(step_index + 1));
                 events
             }
@@ -178,8 +179,9 @@ mod tests {
         assert_eq!(role, MessageRole::User, "a system message in the middle, given as a user message");
         assert!(text.contains("second"));
         match started {
-            Some(ActorEvent::PlanStepStarted { step_index, total_steps, description }) => {
+            Some(ActorEvent::PlanStepStarted { turn_id, step_index, total_steps, description }) => {
                 assert_eq!((step_index, total_steps, description.as_str()), (1, 2, "second"));
+                assert_eq!(turn_id, turn.turn_id(), "of the turn");
             }
             other => panic!("expected PlanStepStarted, got {other:?}"),
         }

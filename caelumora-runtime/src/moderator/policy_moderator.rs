@@ -627,13 +627,14 @@ mod tests {
         moderator.add_actor(Arc::new(TestActor { id: user, state: ActorState::Idle }));
         let message = || Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT);
         let step = || (0, 2, "first".to_string());
+        let turn_id = caelumora_model::work::TurnId::new();
         let events = [
-            ActorEvent::ResponseStarted { turn_id: caelumora_model::work::TurnId::new() },
+            ActorEvent::ResponseStarted { turn_id },
             ActorEvent::PartialMessageGenerated(message()),
             ActorEvent::IntermediatePartialGenerated(message()),
             ActorEvent::IntermediateMessageGenerated(message()),
-            ActorEvent::PlanStepStarted { step_index: step().0, total_steps: step().1, description: step().2 },
-            ActorEvent::PlanStepFinished { step_index: step().0, total_steps: step().1, description: step().2 },
+            ActorEvent::PlanStepStarted { turn_id, step_index: step().0, total_steps: step().1, description: step().2 },
+            ActorEvent::PlanStepFinished { turn_id, step_index: step().0, total_steps: step().1, description: step().2 },
         ];
         for event in events {
             let kind = event.kind();

@@ -536,7 +536,7 @@ A command answers the issuer alone (`/help`) or the whole channel (`/wakeup`).
 | `bye` | `stop_tool` | - | no | `SHOWN` | Ends the turn: the agent says good-bye and goes to sleep. |
 | `silence` | `stop_tool` | - | no | `SHOWN` | Ends the turn without an answer; the agent stays idle. |
 | `ask_user` | `ask_user_tool` | `questions` (1-5, each with `header`, `question`, optional `choices` and `multi_select`), `ask` (handles, at least one) | no | `SHOWN` | Asks the users named and waits for their answers, which are its result (see [Questions](#questions)). |
-| `create_plan` | `create_plan_tool` | `summary`, `steps` (each with `description`) | no | `SHOWN` | Submits a multi-step plan; a plan in progress is extended, not replaced. |
+| `create_plan` | `create_plan_tool` | `summary`, `steps` (each with `description`) | no | `SHOWN` | Submits a multi-step plan; a plan in progress is extended, not replaced. Presented as `plan`: the summary and the numbered steps. |
 | `{id}__{name}` | `mcp_tool` | as the server declares | per `requires_approval`, yes by default; with `"unless_read_only"` not for a tool the server marks read-only | `SHOWN` | A tool of a remote MCP server. |
 | `note` | `notes` | `text` | no | `SHOWN` | Notes something in the channel, visible to every participant. |
 | `revoke_note` | `notes` | `id` | no | `SHOWN` | Revokes one of the agent's own notes. |

@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use caelumora_model::question::Answers;
 use caelumora_model::plan::{Plan, PlanId, PlanProgress, PlanState, PlanStep};
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::tool::{Tool, ToolVisibility, ToolParameters};
+use caelumora_model::tool::{Tool, ToolPresentation, ToolVisibility, ToolParameters};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -116,7 +116,7 @@ impl ToolProvider for CreatePlanToolProvider {
             requires_approval: false,
             visibility: ToolVisibility::SHOWN,
             classification: None,
-            presentation: Default::default(),
+            presentation: ToolPresentation::Plan,
         }]
     }
 
@@ -182,6 +182,11 @@ mod tests {
     #[test]
     fn create_plan_tool_requires_no_approval() {
         assert!(!CreatePlanToolProvider.tools().remove(0).requires_approval);
+    }
+
+    #[test]
+    fn create_plan_calls_are_shown_as_a_plan() {
+        assert_eq!(CreatePlanToolProvider.tools().remove(0).presentation, ToolPresentation::Plan);
     }
 
     #[tokio::test]

@@ -206,10 +206,50 @@ const ShellToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) =>
   );
 };
 
+/** The steps of a plan's arguments, each its description, or `null` if they are no list of steps. */
+function planSteps(steps: unknown): string[] | null {
+  if (!Array.isArray(steps)) return null;
+  const descriptions = steps.map(step => typeof step?.description === 'string' ? step.description as string : null);
+  return descriptions.every(d => d !== null) ? descriptions as string[] : null;
+}
+
+/**
+ * A plan (issue 263): its summary and its steps, numbered - a plan extended is a call of its own,
+ * whose steps follow those before. A call that failed shows why.
+ */
+const PlanToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) => {
+  const args = argumentsObject(call.arguments);
+  const summary = typeof args?.summary === 'string' ? args.summary : null;
+  const steps = planSteps(args?.steps);
+  const failed = result && result.status && result.status !== 'ok';
+  return (
+    <>
+      {call.arguments === null ? (
+        <span className="text-[11px] italic opacity-60">Plan not shown</span>
+      ) : summary !== null && steps !== null ? (
+        <div className="text-xs">
+          <div className="font-medium">{summary}</div>
+          <ol className="mt-1 ml-5 list-decimal space-y-0.5">
+            {steps.map((step, i) => <li key={i}>{step}</li>)}
+          </ol>
+        </div>
+      ) : (
+        <code className="text-[11px] font-mono break-all">{formatArguments(call.arguments)}</code>
+      )}
+      {failed && (
+        <pre className="mt-2 text-[11px] font-mono whitespace-pre-wrap break-all bg-white dark:bg-gray-950 p-1.5 rounded-sm border border-gray-100 dark:border-gray-900">
+          {toolResultText(result)}
+        </pre>
+      )}
+    </>
+  );
+};
+
 /** The handler of each presentation; one the server knows and this client does not falls back to the default. */
 const PRESENTATIONS: Record<ToolPresentation, React.FC<ToolCallContentProps>> = {
   default: DefaultToolCallContent,
   shell: ShellToolCallContent,
+  plan: PlanToolCallContent,
 };
 
 interface ToolCallViewProps {

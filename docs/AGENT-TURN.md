@@ -293,11 +293,13 @@ the entries:
     the model is given.
 *   `MessageHistory` is `Chain<HistoryEntry>`: a message `Said`, with what it was produced from
     for the agent's own, a message `Reclassified`, `Modified` or `Revoked`, the channel's
-    classification `Fitted`, the end of a turn, `TurnFinished` or `TurnGivenUp`. `messages` and
-    `message(id)` fold every branch in the order things happened into the messages as they stand,
-    so a reclassification, a modification or a revocation applies to a message on any branch, as it
-    did in the channel. `items` reads the active path as one list: each message said as it stands,
-    and how the turns ended - what a reader of the history is shown (issue 258).
+    classification `Fitted`, the start of a step of a turn's plan, `PlanStepStarted` (issue 263,
+    recorded by the channel only), the end of a turn, `TurnFinished` or `TurnGivenUp`. `messages`
+    and `message(id)` fold every branch in the order things happened into the messages as they
+    stand, so a reclassification, a modification or a revocation applies to a message on any
+    branch, as it did in the channel. `items` reads the active path as one list: each message said
+    as it stands, where the steps of plans began and how the turns ended - what a reader of the
+    history is shown (issue 258).
 *   Notes and memory are `Chain<LedgerEntry<K>>`, a ledger of changes to numbered items (see
     [MEMORY.md](MEMORY.md)).
 

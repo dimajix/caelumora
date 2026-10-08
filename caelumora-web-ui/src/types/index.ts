@@ -203,7 +203,7 @@ export interface ToolVisibility {
  * How a tool's calls and their results are shown (issue 165), declared by the tool and stamped on
  * each call; absent means `default`. Display only.
  */
-export type ToolPresentation = 'default' | 'shell';
+export type ToolPresentation = 'default' | 'shell' | 'plan';
 
 export interface ToolCall {
   id?: string;
@@ -422,6 +422,9 @@ export interface Message {
   // UI only: the sender would not answer again instead of a message (issue
   // 234), a notice that is gone on reload.
   retryRejected?: RetryRefused;
+  // UI only: a step of the plan of the turn `turn_id` began here (issue
+  // 263) - not shown itself, but heading the messages of the step.
+  planStep?: PlanStep;
   // Usage statistics
   prompt_tokens?: number;
   completion_tokens?: number;
@@ -433,10 +436,15 @@ export interface Message {
   [key: string]: unknown;
 }
 
-export interface PlanStepEvent {
+/** A step of a plan, as the steps of an agent's turn are numbered (issue 263). */
+export interface PlanStep {
   step_index: number;
   total_steps: number;
   description: string;
+}
+
+export interface PlanStepEvent extends PlanStep {
+  turn_id: string;
 }
 
 /**
@@ -748,6 +756,7 @@ export type GivenUpReason =
  */
 export type HistoryItem<M> =
   | {said: M}
+  | {plan_step_started: {turn_id: string; actor: ActorId; step_index: number; total_steps: number; description: string; at: string}}
   | {turn_finished: {turn_id: string; actor: ActorId; at: string}}
   | {turn_given_up: {turn_id: string; actor: ActorId; reason: GivenUpReason; at: string}};
 

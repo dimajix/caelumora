@@ -733,15 +733,18 @@ pub struct CommandReplyResponse {
 }
 
 /// An item of a history (issue 258), as the API gives it: a message said -
-/// `M`, the channel's `Message` or an agent's `HistoryMessageResponse` - or
-/// how a turn ended, and whose it was. Written as an object named by its
-/// kind: `{"said": …}`, `{"turn_finished": {…}}`, `{"turn_given_up": {…}}`.
+/// `M`, the channel's `Message` or an agent's `HistoryMessageResponse` -,
+/// where a step of a turn's plan began (issue 263) or how a turn ended, and
+/// whose it was. Written as an object named by its kind: `{"said": …}`,
+/// `{"plan_step_started": {…}}`, `{"turn_finished": {…}}`,
+/// `{"turn_given_up": {…}}`.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HistoryItemResponse<M> {
     Said(M),
     TurnFinished { turn_id: TurnId, actor: ActorId, at: DateTime<Utc> },
     TurnGivenUp { turn_id: TurnId, actor: ActorId, reason: caelumora_model::turn::GivenUpReason, at: DateTime<Utc> },
+    PlanStepStarted { turn_id: TurnId, actor: ActorId, step_index: usize, total_steps: usize, description: String, at: DateTime<Utc> },
 }
 
 impl<M> HistoryItemResponse<M> {
@@ -753,6 +756,7 @@ impl<M> HistoryItemResponse<M> {
             HistoryEntry::Said { message, .. } => Some(Self::Said(said(message))),
             HistoryEntry::TurnFinished { turn_id, actor, at } => Some(Self::TurnFinished { turn_id, actor, at }),
             HistoryEntry::TurnGivenUp { turn_id, actor, reason, at } => Some(Self::TurnGivenUp { turn_id, actor, reason, at }),
+            HistoryEntry::PlanStepStarted { turn_id, actor, step_index, total_steps, description, at } => Some(Self::PlanStepStarted { turn_id, actor, step_index, total_steps, description, at }),
             HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. } => None,
         }
     }
@@ -995,6 +999,10 @@ mod tests {
         let json = serde_json::to_value(given_up).unwrap();
         assert_eq!(json["turn_given_up"]["reason"], serde_json::json!({ "kind": "failed", "message": "boom" }));
         assert_eq!(json["turn_given_up"]["turn_id"], serde_json::json!(turn));
+        let step = HistoryItemResponse::<Message>::of(HistoryEntry::PlanStepStarted { turn_id: turn, actor, step_index: 1, total_steps: 3, description: "second".to_string(), at: chrono::Utc::now() }, |m| m).unwrap();
+        let json = serde_json::to_value(step).unwrap();
+        assert_eq!((json["plan_step_started"]["step_index"].clone(), json["plan_step_started"]["total_steps"].clone()), (serde_json::json!(1), serde_json::json!(3)));
+        assert_eq!(json["plan_step_started"]["description"], "second");
         assert!(HistoryItemResponse::<Message>::of(HistoryEntry::Fitted { channel: Classification::PUBLIC }, |m| m).is_none(), "a change is in the message it changed");
     }
 

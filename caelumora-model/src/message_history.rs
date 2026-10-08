@@ -1,8 +1,9 @@
 //! The history of a channel as an agent keeps it (issue 06): the chain of
 //! what happened in it - messages said, each of the agent's own with what it
 //! was produced from, reclassifications (issue 133), changes to what was
-//! said (issue 234) and how turns ended (issue 258) - read into the messages
-//! as they stand (issue 197).
+//! said (issue 234), where the steps of a plan began (issue 263) and how
+//! turns ended (issue 258) - read into the messages as they stand (issue
+//! 197).
 
 use crate::actor::ActorId;
 use crate::chain::Chain;
@@ -46,6 +47,11 @@ pub enum HistoryEntry {
     /// (issue 258): what it said before stays said. Whose turn it was is
     /// recorded, since a turn may end before it said anything.
     TurnGivenUp { turn_id: TurnId, actor: ActorId, reason: GivenUpReason, at: DateTime<Utc> },
+    /// Step `step_index` of `total_steps` of the plan of `actor`'s turn
+    /// `turn_id` began at `at` (issue 263): what the turn says from here on
+    /// is said in that step, until the next one begins or the turn gives
+    /// its final answer. `description` is the step as the plan words it.
+    PlanStepStarted { turn_id: TurnId, actor: ActorId, step_index: usize, total_steps: usize, description: String, at: DateTime<Utc> },
 }
 
 /// The conversation as it happened - a chain like a `Transcript`. What it
@@ -65,7 +71,8 @@ impl Chain<HistoryEntry> {
 
     /// The history of the active path as it stands, in the order it
     /// happened (issue 258): the messages said - `Said`, each as it stands,
-    /// with every change since folded into it - and how turns ended -
+    /// with every change since folded into it -, where the steps of a plan
+    /// began - `PlanStepStarted` (issue 263) - and how turns ended -
     /// `TurnFinished` and `TurnGivenUp`. No other entry occurs: what changes
     /// a message is in the message, a fitting in every message.
     pub fn items(&self) -> Vec<HistoryEntry> {
@@ -74,7 +81,7 @@ impl Chain<HistoryEntry> {
             .filter_map(|node| match &node.entry {
                 HistoryEntry::Said { context, .. } => folded.remove(&node.digest)
                     .map(|message| HistoryEntry::Said { message, context: context.clone() }),
-                end @ (HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. }) => Some(end.clone()),
+                turn @ (HistoryEntry::PlanStepStarted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. }) => Some(turn.clone()),
                 HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. } => None,
             })
             .collect()
@@ -133,7 +140,7 @@ impl Chain<HistoryEntry> {
                         message.classification = message.classification.fitted_into(channel);
                     }
                 }
-                HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } => {}
+                HistoryEntry::PlanStepStarted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } => {}
             }
         }
         messages
@@ -231,6 +238,13 @@ impl Chain<HistoryEntry> {
         self.record(end);
     }
 
+    /// Records that a step of a turn's plan began (issue 263):
+    /// `PlanStepStarted`, before the messages of the step.
+    pub fn start_plan_step(&mut self, start: HistoryEntry) {
+        debug_assert!(matches!(start, HistoryEntry::PlanStepStarted { .. }), "only the start of a plan step");
+        self.record(start);
+    }
+
     fn record(&mut self, entry: HistoryEntry) {
         self.push_with(entry, crate::digest::history_chain);
     }
@@ -242,7 +256,7 @@ impl HistoryEntry {
         match self {
             HistoryEntry::Said { message, .. } => Some(message),
             HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. }
-            | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } => None,
+            | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } => None,
         }
     }
 
@@ -283,6 +297,7 @@ mod tests {
         let at = Utc::now();
         let mut history = MessageHistory::default();
         history.push(make_message(id(1)), None);
+        history.start_plan_step(HistoryEntry::PlanStepStarted { turn_id: finished, actor: ActorId::default(), step_index: 0, total_steps: 1, description: "first".to_string(), at });
         history.push(Message { turn_id: Some(finished), ..make_message(id(2)) }, None);
         history.end_turn(HistoryEntry::TurnFinished { turn_id: finished, actor: ActorId::default(), at });
         history.modify(Message { content: Some("changed".to_string()), ..make_message(id(1)) });
@@ -295,10 +310,11 @@ mod tests {
             HistoryEntry::Said { message, .. } => format!("said {}", message.content.clone().unwrap_or_default()),
             HistoryEntry::TurnFinished { turn_id, .. } => format!("finished {}", *turn_id == finished),
             HistoryEntry::TurnGivenUp { turn_id, .. } => format!("given up {}", *turn_id == given_up),
+            HistoryEntry::PlanStepStarted { turn_id, description, .. } => format!("step {description} {}", *turn_id == finished),
             other => format!("{other:?}"),
         }).collect();
         let text = |n: u128| format!("said {}", make_message(id(n)).content.unwrap_or_default());
-        assert_eq!(kinds, ["said changed".to_string(), text(2), "finished true".to_string(), text(3), "given up true".to_string()],
+        assert_eq!(kinds, ["said changed".to_string(), "step first true".to_string(), text(2), "finished true".to_string(), text(3), "given up true".to_string()],
             "in the order they happened, the change folded into its message, the fitting in every one");
         assert_eq!(history.messages().len(), 3, "the messages alone, as before");
     }

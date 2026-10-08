@@ -1,6 +1,6 @@
 // Helpers for showing messages, shared by the chat and the context panel.
 
-import type {ActorId, GivenUpReason, HistoryItem, Message, TokenUsage} from './types';
+import type {ActorId, GivenUpReason, HistoryItem, Message, PlanStep, TokenUsage} from './types';
 import {classificationLabel} from './confidentiality';
 
 export function formatArguments(args: unknown): string {
@@ -58,13 +58,36 @@ export function givenUpNotice(turnId: string, reason: GivenUpReason, actor: Acto
 }
 
 /**
+ * The mark of a step of a plan beginning (issue 263), as the chat keeps it -
+ * live and from the history alike, named for its turn and step so that it
+ * is kept once: whose turn it is, which step, and when.
+ */
+export function planStepMark(turnId: string, step: PlanStep, actor: ActorId, name: string | undefined, at: string): Message {
+  return {
+    id: `plan-step:${turnId}:${step.step_index}`,
+    role: 'System',
+    content: null,
+    sender_id: actor,
+    sender_name: name,
+    turn_id: turnId,
+    planStep: {step_index: step.step_index, total_steps: step.total_steps, description: step.description},
+    timestamp: at,
+  };
+}
+
+/**
  * The chat's messages for `items` of a channel's history (issue 258): each
- * message said, and the notice of a turn given up - whose, as `nameOf`
- * names them. A turn that finished shows nothing of its own.
+ * message said, the mark of each step of a plan begun (issue 263), and the
+ * notice of a turn given up - whose, as `nameOf` names them. A turn that
+ * finished shows nothing of its own.
  */
 export function chatMessages(items: HistoryItem<Message>[], nameOf: (actor: ActorId) => string | undefined): Message[] {
   return items.flatMap((item): Message[] => {
     if ('said' in item) return [item.said];
+    if ('plan_step_started' in item) {
+      const {turn_id, actor, at, ...step} = item.plan_step_started;
+      return [planStepMark(turn_id, step, actor, nameOf(actor), at)];
+    }
     if ('turn_given_up' in item) {
       const {turn_id, actor, reason, at} = item.turn_given_up;
       return [givenUpNotice(turn_id, reason, actor, nameOf(actor), at)];
@@ -74,30 +97,40 @@ export function chatMessages(items: HistoryItem<Message>[], nameOf: (actor: Acto
 }
 
 /**
- * A row of the chat: a message, or the steps of a plan (issue 258) - a run of
- * internal messages of one turn, shown together and folded.
+ * A row of the chat: a message, or a step of a plan (issues 258, 263) - the
+ * internal messages of one step of a turn, shown together under the step
+ * and folded, with the name of whose turn it is. `step` is `null` where it
+ * is not known: a history from before steps were recorded, or one cut off in
+ * the middle of a step.
  */
 export type ChatRow =
   | {kind: 'message'; message: Message}
-  | {kind: 'steps'; turnId: string | null; messages: Message[]};
+  | {kind: 'steps'; turnId: string | null; sender: string | undefined; step: PlanStep | null; messages: Message[]};
 
 /**
- * The rows `messages` are shown as: each internal message joins the steps
- * right before it if they are of its turn, else begins steps of its own.
- * Tool results are merged first (`mergeToolResults`), so that a step's call
- * and its result stay one message.
+ * The rows `messages` are shown as: the mark of a step begins a row of its
+ * own, and each internal message joins the row right before it if that is
+ * of its turn. Interrupted by another's - agents answering at once - it
+ * begins a row of its own, under the step its turn was last in. Tool
+ * results are merged first (`mergeToolResults`), so that a step's call and
+ * its result stay one message.
  */
 export function chatRows(messages: Message[]): ChatRow[] {
   const rows: ChatRow[] = [];
+  // The step each turn is in, as its last mark said.
+  const steps = new Map<string | null, PlanStep>();
   for (const message of messages) {
     const last = rows[rows.length - 1];
     const turnId = message.turn_id ?? null;
-    if (!message.internal) {
+    if (message.planStep) {
+      steps.set(turnId, message.planStep);
+      rows.push({kind: 'steps', turnId, sender: message.sender_name, step: message.planStep, messages: []});
+    } else if (!message.internal) {
       rows.push({kind: 'message', message});
     } else if (last?.kind === 'steps' && last.turnId === turnId) {
       last.messages.push(message);
     } else {
-      rows.push({kind: 'steps', turnId, messages: [message]});
+      rows.push({kind: 'steps', turnId, sender: message.sender_name, step: steps.get(turnId) ?? null, messages: [message]});
     }
   }
   return rows;

@@ -65,3 +65,6 @@ What then happens, as far as the code shows (not yet seen in the browser):
   button - is whether any answer is under way. The "stopped" bubble is gone: since every turn ends
   with `FullResponseGenerated` or `TurnFailed`, both of which clear what was under way, it could no
   longer be reached. Not verified in the browser with two agents answering at once.
+- **2026-10-08** — The plan-step bar above the chat is gone: each step of a plan is a block of its
+  own in the chat, headed by the step, live and after a reload alike
+  ([263](263-plan-steps-not-in-chat.md)).

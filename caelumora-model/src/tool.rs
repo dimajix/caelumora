@@ -119,6 +119,8 @@ pub enum ToolPresentation {
     /// A shell command (issue 251): its `command` as a line of code, its
     /// `output` as a terminal shows it, and its exit code.
     Shell,
+    /// A plan (issue 263): its `summary` and its `steps`, numbered.
+    Plan,
 }
 
 impl ToolPresentation {

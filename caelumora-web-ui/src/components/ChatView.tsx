@@ -41,7 +41,6 @@ import type {
   Compartment,
   Envelope,
   Message,
-  PlanStepEvent,
   PublishedNotes,
   QuestionRequest,
   QuestionResponse,
@@ -71,7 +70,7 @@ import {type ClassValue, clsx} from 'clsx';
 import {twMerge} from 'tailwind-merge';
 import {MarkdownMessage} from './MarkdownMessage';
 import {MessageFooter, MessageView, Reasoning} from './MessageView';
-import {chatMessages, chatRows, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, mergeToolResults} from '../messages';
+import {chatMessages, chatRows, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, mergeToolResults, planStepMark} from '../messages';
 import {PlanSteps} from './PlanSteps';
 import {TokenGauge} from './TokenGauge';
 import {HoverCard} from './HoverCard';
@@ -166,7 +165,6 @@ interface Answer {
   turnId: string | null;
   reasoning: string;
   content: string;
-  step: PlanStepEvent | null;
 }
 
 /**
@@ -185,7 +183,7 @@ function nameIn(channel: ChannelResponse | null): (actor: ActorId) => string | u
 function withAnswer(answers: Answer[], sender: string, name: string | null, change: (answer: Answer) => Answer): Answer[] {
   const index = answers.findIndex(a => a.sender === sender);
   if (index < 0) {
-    return [...answers, change({sender, name, turnId: null, reasoning: '', content: '', step: null})];
+    return [...answers, change({sender, name, turnId: null, reasoning: '', content: ''})];
   }
   return answers.map((a, i) => i === index ? change({...a, name: name ?? a.name}) : a);
 }
@@ -571,7 +569,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
         // The answers under way as the snapshot found them (issue 240): what
         // streamed before is not kept, what follows streams in.
         setAnswers(snapshot.channel.members.flatMap(m => m.turn_under_way
-          ? [{sender: actorKey(m.id), name: m.name, turnId: m.turn_under_way, reasoning: '', content: '', step: null}]
+          ? [{sender: actorKey(m.id), name: m.name, turnId: m.turn_under_way, reasoning: '', content: ''}]
           : []));
       } catch (e) {
         reportError('Failed to read the channel state', e);
@@ -740,13 +738,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           };
           setMessages(prev => [...prev, notice]);
         } else if (actorEvent.PlanStepStarted) {
-          const step = actorEvent.PlanStepStarted;
-          setAnswers(prev => withAnswer(prev, answerer, answererName, a => ({...a, step})));
-        } else if (actorEvent.PlanStepFinished) {
-          const finished = actorEvent.PlanStepFinished.step_index;
-          setAnswers(prev => prev.map(a =>
-            a.sender === answerer && a.step?.step_index === finished ? {...a, step: null} : a
-          ));
+          // Heads the messages of the step that follow (issue 263), as the
+          // history's mark of it does after a reload.
+          const {turn_id, ...step} = actorEvent.PlanStepStarted;
+          const mark = planStepMark(turn_id, step, envelope.context.sender_id, envelope.context.sender_name, envelope.timestamp);
+          setMessages(prev => prev.some(m => m.id === mark.id) ? prev : [...prev, mark]);
         }
       } catch (e) {
         console.error('Failed to parse SSE event', e);
@@ -1177,20 +1173,14 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
     />
   );
 
+  const rows = chatRows(mergeToolResults(messages));
+  // The row of each turn's step that came last: the step it is in now, open
+  // while the turn is under way (issue 263).
+  const currentSteps = new Map(rows.flatMap((row, i) => row.kind === 'steps' ? [[row.turnId, i] as const] : []));
+
   return (
     <div className="flex-1 flex overflow-hidden bg-gray-50 dark:bg-gray-800">
       <div className="flex-1 flex flex-col min-w-0">
-        {answers.map(answer => answer.step && (
-          <div key={answer.sender} className="px-4 py-2 bg-blue-50 dark:bg-blue-900/20 border-b border-blue-200 dark:border-blue-900/50 flex items-center gap-2">
-            <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse shrink-0" />
-            <span className="text-xs font-semibold uppercase tracking-wider text-blue-700 dark:text-blue-300 shrink-0">
-              {answer.name || 'Assistant'} · Step {answer.step.step_index + 1} of {answer.step.total_steps}
-            </span>
-            <span className="text-xs text-blue-700 dark:text-blue-300 truncate">
-              {answer.step.description}
-            </span>
-          </div>
-        ))}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {hasMore && (
             <div className="text-center">
@@ -1203,14 +1193,15 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
               </button>
             </div>
           )}
-          {chatRows(mergeToolResults(messages)).map((row, idx) => row.kind === 'message'
+          {rows.map((row, idx) => row.kind === 'message'
             ? renderMessage(row.message, row.message.id ?? `local-${idx}`)
             : (
               <PlanSteps
-                key={`steps-${row.turnId}-${row.messages[0].id ?? idx}`}
-                name={row.messages[0].sender_name || 'Assistant'}
+                key={`steps-${row.turnId}-${row.step?.step_index ?? ''}-${row.messages[0]?.id ?? idx}`}
+                name={row.sender || 'Assistant'}
+                step={row.step}
                 count={row.messages.length}
-                underWay={row.turnId !== null && answers.some(a => a.turnId === row.turnId)}
+                underWay={row.turnId !== null && answers.some(a => a.turnId === row.turnId) && currentSteps.get(row.turnId) === idx}
               >
                 {row.messages.map((msg, i) => renderMessage(msg, msg.id ?? `local-${i}`))}
               </PlanSteps>

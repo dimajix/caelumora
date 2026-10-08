@@ -200,11 +200,11 @@ else who may read it - the session's owner, say - is shown its history and no in
     its line breaks, so that an approver reads a command of several lines as it was written.
 *   **While an agent answers**, its partial message is shown as it streams, its reasoning
     included: folded under "Thinking" until the answer begins (issue 216). Several agents answering
-    at once each have an answer of their own, in the order they began, and a plan step of their own
-    above the chat (issue 203). Answers under way are shown below every complete message: a
-    message joins the history when it is complete, so an answer that ends first moves up past those
-    still under way - as a reload shows the history. Each answer under way knows its turn, from
-    `ResponseStarted` or, for one that began before the page was loaded, from the snapshot's
+    at once each have an answer of their own, in the order they began (issue 203). Answers under
+    way are shown below every complete message: a message joins the history when it is complete,
+    so an answer that ends first moves up past those still under way - as a reload shows the
+    history. Each answer under way knows its turn, from `ResponseStarted` or, for one that began
+    before the page was loaded, from the snapshot's
     `turn_under_way` of its member (issues 235, 240); what streamed before is not shown. The stop
     button stays while any agent answers. Reasoning that is the owner's never reaches the chat, and
     reasoning held back while the agent could still make a call whose content is the owner's
@@ -220,14 +220,21 @@ else who may read it - the session's owner, say - is shown its history and no in
     When a chain between agents is cut off at its limit (`ChainCutOff`), a notice "Chain cut off"
     says so, naming the agents mentioned that were not asked, and that a message of a user starts a
     new chain; like the answer of a command, it is gone on reload (issue 200).
-*   **The steps of a plan** (issue 258). While an agent works through a plan, what each step says -
-    its answer, its tool calls and their results - arrives as `IntermediatePartialGenerated` and
-    `IntermediateMessageGenerated` and is shown as any partial and complete message is, a tool
-    result refreshing the workspace alike. The internal messages of one turn that follow each other
-    are one block (`PlanSteps`, `chatRows`), folded under "works on the plan": open while the turn
-    is under way, folded once it ended, unless the user opened or closed it. Its messages are
-    rendered as every other message, with their icons; none of them is offered for another answer.
-    The channel's history keeps them, so a reload shows them folded.
+*   **A plan** (issue 263) is shown by its call: `create_plan` is presented as `plan`, its summary
+    and its steps numbered, a plan extended as a call of its own.
+*   **The steps of a plan** (issues 258, 263). While an agent works through a plan, what each step
+    says - its answer, its tool calls and their results - arrives as `IntermediatePartialGenerated`
+    and `IntermediateMessageGenerated` and is shown as any partial and complete message is, a tool
+    result refreshing the workspace alike. Each step is a block of its own (`PlanSteps`,
+    `chatRows`), headed "works on step 2 of 3" with the step's description: `PlanStepStarted`, live,
+    and the history's `plan_step_started`, after a reload, become a mark in the chat's messages
+    (`planStepMark`) that begins the block, and the internal messages of its turn that follow join
+    it. The step a turn is in is open while the turn is under way, every other step folded, unless
+    the user opened or closed it. Messages of a turn interrupted by another agent's continue in a
+    block of their own under the same step; internal messages before any mark - a history from
+    before steps were recorded, or a snapshot cut within a step - are headed "the plan". The
+    messages are rendered as every other message, with their icons; none of them is offered for
+    another answer.
 *   **Changing one's own messages** (issue 234). A participant's own message has an edit icon, which
     turns it into an editor in its place (`MessageEditor`: save, cancel, Escape, Ctrl+Enter), and a
     take-back icon, which asks "Take back?" on the first click and takes the message back on the

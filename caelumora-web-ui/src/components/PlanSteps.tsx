@@ -1,24 +1,28 @@
-// The steps of a plan an agent works through (issue 258): their answers, tool
-// calls and results, folded under one toggle, as reasoning is folded.
+// A step of a plan an agent works through (issues 258, 263): its answers, tool calls and results,
+// folded under one toggle headed by the step, as reasoning is folded.
 
 import React, {useState} from 'react';
 import {ChevronDown, ChevronRight, ListChecks} from 'lucide-react';
+import type {PlanStep} from '../types';
 
 interface PlanStepsProps {
   /** Who works on the plan. */
   name: string;
-  /** How many messages the steps hold. */
+  /** The step, or `null` if it is not known: the messages are then headed by the plan alone. */
+  step: PlanStep | null;
+  /** How many messages the step holds. */
   count: number;
-  /** Whether its turn is still under way: open then, folded once it ended. */
+  /** Whether it is the step its turn is in now: open then, folded once the turn moved on. */
   underWay: boolean;
   /** The messages, as the chat renders them. */
   children: React.ReactNode;
 }
 
-export const PlanSteps: React.FC<PlanStepsProps> = ({name, count, underWay, children}) => {
-  // What the user chose, if they did: it outweighs whether the turn runs.
+export const PlanSteps: React.FC<PlanStepsProps> = ({name, step, count, underWay, children}) => {
+  // What the user chose, if they did: it outweighs whether the step runs.
   const [chosen, setChosen] = useState<boolean | null>(null);
   const open = chosen ?? underWay;
+  const which = step ? `step ${step.step_index + 1} of ${step.total_steps}` : 'the plan';
   return (
     // As wide as the chat: the messages in it are as wide as every other.
     <div>
@@ -26,20 +30,21 @@ export const PlanSteps: React.FC<PlanStepsProps> = ({name, count, underWay, chil
         type="button"
         onClick={() => setChosen(!open)}
         aria-expanded={open}
-        className="flex items-center gap-1 text-xs text-gray-600 dark:text-gray-300 opacity-80 hover:opacity-100 focus:opacity-100"
+        className="flex items-start gap-1 text-left text-xs text-gray-600 dark:text-gray-300 opacity-80 hover:opacity-100 focus:opacity-100"
       >
-        {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-        <ListChecks size={13} />
-        {underWay ? (
-          <span className="inline-flex items-center gap-1.5">
-            {name} works on the plan
-            <span className="w-1.5 h-1.5 bg-current rounded-full animate-pulse" />
-          </span>
-        ) : (
-          <span>{name} worked on the plan · {count} {count === 1 ? 'message' : 'messages'}</span>
-        )}
+        <span className="flex items-center gap-1 shrink-0 mt-px">
+          {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+          <ListChecks size={13} />
+        </span>
+        <span>
+          {name} {underWay ? 'works' : 'worked'} on {which}
+          {step && <span className="font-medium"> · {step.description}</span>}
+          {underWay
+            ? <span className="inline-block ml-1.5 w-1.5 h-1.5 bg-current rounded-full animate-pulse align-middle" />
+            : <span className="opacity-70"> · {count} {count === 1 ? 'message' : 'messages'}</span>}
+        </span>
       </button>
-      {open && (
+      {open && count > 0 && (
         <div className="mt-2 pl-3 border-l-2 border-gray-200 dark:border-gray-600 space-y-4">
           {children}
         </div>

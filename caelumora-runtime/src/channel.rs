@@ -1388,8 +1388,9 @@ impl ChannelLoop {
         let mut state = self.state.lock().await;
         let changed = match &envelope.event {
             // What is said is kept as it arrives, a turn's steps too, and
-            // nothing said is unsaid (issue 258); a turn's end is recorded
-            // after its messages.
+            // nothing said is unsaid (issue 258); where a step of its plan
+            // begins is recorded before the step's messages (issue 263), a
+            // turn's end after its messages.
             ActorEvent::CompleteMessageGenerated(message) | ActorEvent::IntermediateMessageGenerated(message) => {
                 state.history.push(message.clone(), None);
                 true
@@ -1400,6 +1401,17 @@ impl ChannelLoop {
             }
             ActorEvent::TurnGivenUp { turn_id, reason } => {
                 state.history.end_turn(HistoryEntry::TurnGivenUp { turn_id: *turn_id, actor: envelope.context.sender_id, reason: reason.clone(), at: envelope.timestamp });
+                true
+            }
+            ActorEvent::PlanStepStarted { turn_id, step_index, total_steps, description } => {
+                state.history.start_plan_step(HistoryEntry::PlanStepStarted {
+                    turn_id: *turn_id,
+                    actor: envelope.context.sender_id,
+                    step_index: *step_index,
+                    total_steps: *total_steps,
+                    description: description.clone(),
+                    at: envelope.timestamp,
+                });
                 true
             }
             // Admitted, so they apply (`admits_change`, issue 234).
@@ -2942,6 +2954,13 @@ mod tests {
             (true, "first done".to_string()), (true, "second done".to_string()),
             (false, "all done".to_string()),
         ], "the plan's call and its result, the steps, the answer");
+        // Each step begins before what it says (issue 263).
+        let items: Vec<String> = channel.state.lock().await.history.items().into_iter().filter_map(|item| match item {
+            caelumora_model::message_history::HistoryEntry::Said { message, .. } if message.sender_id == ActorId::Agent(agent) && message.internal => message.content,
+            caelumora_model::message_history::HistoryEntry::PlanStepStarted { actor, step_index, total_steps, description, .. } if actor == ActorId::Agent(agent) => Some(format!("step {}/{total_steps}: {description}", step_index + 1)),
+            _ => None,
+        }).collect();
+        assert_eq!(items, ["step 1/2: first", "first done", "step 2/2: second", "second done"]);
         let ended = channel.state.lock().await.history.last().map(|n| n.entry.clone());
         assert!(matches!(ended, Some(caelumora_model::message_history::HistoryEntry::TurnFinished { turn_id, .. }) if Some(turn_id) == history.last().and_then(|m| m.turn_id)), "{ended:?}");
         running.abort();

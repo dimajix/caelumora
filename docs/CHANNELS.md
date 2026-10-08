@@ -243,7 +243,10 @@ notice, `ParticipantRemoved` - does not come through an actor's sender.
 **Nothing said is unsaid** (issue 258). The channel keeps every message it admits in its history
 as it arrives - `CompleteMessageGenerated`, and the steps of a plan as
 `IntermediateMessageGenerated` - and records how each turn ended after its messages, from the
-event of that name: `TurnFinished`, or `TurnGivenUp` with its reason. A turn given up
+event of that name: `TurnFinished`, or `TurnGivenUp` with its reason. Where a step of a plan
+begins it records before the step's messages, from `PlanStepStarted`, with the step's number and
+description (issue 263); a step ends where the next begins, at the final answer or at the turn's
+end. A turn given up
 keeps what it said; only a message still streaming when it ended is lost, never having been
 complete. A message is admitted as it arrives (`admits`), so one said after the channel was lowered
 below its turn is refused, and what was said before is fitted with the rest. How a turn ended is
