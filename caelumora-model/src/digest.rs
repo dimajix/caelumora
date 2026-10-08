@@ -10,6 +10,8 @@ use crate::confidentiality::Classification;
 use crate::message::{Message, MessageId};
 use crate::message_history::HistoryEntry;
 use crate::transcript::TranscriptEntry;
+use crate::turn::GivenUpReason;
+use crate::work::TurnId;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
@@ -229,9 +231,9 @@ pub fn message_reclassified(previous: Option<&Digest>, message: MessageId, class
 /// The digest of a transcript (issue 50) ending in `entry`, whose
 /// predecessor chain has the digest `previous`: a message as
 /// `message_chain`, so that every digest recorded before issue 197 names
-/// what it named; a turn given up (issue 145) by what it says - the branch
-/// it ends, the reason and the count, not the time - in a scheme of its own;
-/// a message modified, taken back or reclassified as `message_modified`,
+/// what it named; a turn's end (issue 258) by what it says - the turn and,
+/// given up, the reason, not the time - in schemes of their own; a message
+/// modified, taken back or reclassified as `message_modified`,
 /// `message_revoked` and `message_reclassified`.
 pub fn transcript_chain(previous: Option<&Digest>, entry: &TranscriptEntry) -> Digest {
     match entry {
@@ -239,23 +241,31 @@ pub fn transcript_chain(previous: Option<&Digest>, entry: &TranscriptEntry) -> D
         TranscriptEntry::Modified { message } => message_modified(previous, message),
         TranscriptEntry::Revoked { message, .. } => message_revoked(previous, *message),
         TranscriptEntry::Reclassified { message, classification } => message_reclassified(previous, *message, classification),
-        TranscriptEntry::GivenUp { end, given_up } => {
-            let mut e = Encoder::new("caelumora.transcript-given-up.v2");
-            e.opt_digest(previous);
-            e.opt_digest(Some(end));
-            e.json(&to_json(&given_up.reason));
-            e.bytes(given_up.turn_id.0.as_bytes());
-            e.finish()
-        }
+        TranscriptEntry::TurnFinished { turn_id, .. } => turn_ended("caelumora.transcript-turn-finished.v1", previous, *turn_id, None),
+        TranscriptEntry::TurnGivenUp { turn_id, reason, .. } => turn_ended("caelumora.transcript-turn-given-up.v1", previous, *turn_id, Some(reason)),
     }
+}
+
+/// The digest of a chain ending in the end of the turn `turn` (issue 258),
+/// in `scheme`: the turn and, if it was given up, the `reason` - not the
+/// time.
+fn turn_ended(scheme: &str, previous: Option<&Digest>, turn: TurnId, reason: Option<&GivenUpReason>) -> Digest {
+    let mut e = Encoder::new(scheme);
+    e.opt_digest(previous);
+    e.bytes(turn.0.as_bytes());
+    if let Some(reason) = reason {
+        e.json(&to_json(reason));
+    }
+    e.finish()
 }
 
 /// The digest of a history (issue 06) ending in `entry`, whose predecessor
 /// chain has the digest `previous`: a message said as `message_chain`, so
 /// that every digest recorded before issue 197 names what it named; the
-/// channel's classification fitted into (issue 133) in a scheme of its own;
-/// a message modified, taken back or reclassified as `message_modified`,
-/// `message_revoked` and `message_reclassified`.
+/// channel's classification fitted into (issue 133) and a turn's end (issue
+/// 258) in schemes of their own; a message modified, taken back or
+/// reclassified as `message_modified`, `message_revoked` and
+/// `message_reclassified`.
 pub fn history_chain(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest {
     match entry {
         HistoryEntry::Said { message, .. } => message_chain(previous, message),
@@ -268,6 +278,8 @@ pub fn history_chain(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest 
             e.json(&to_json(channel));
             e.finish()
         }
+        HistoryEntry::TurnFinished { turn_id, .. } => turn_ended("caelumora.history-turn-finished.v1", previous, *turn_id, None),
+        HistoryEntry::TurnGivenUp { turn_id, reason, .. } => turn_ended("caelumora.history-turn-given-up.v1", previous, *turn_id, Some(reason)),
     }
 }
 

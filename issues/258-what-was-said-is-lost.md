@@ -201,9 +201,13 @@ keep or to better; what is fixed is where a responsibility lies and what each st
 7. **The model is told at resolve time.** `ContextResolver::assemble` words a `TurnGivenUp` entry
    as a system item - why the turn ended, that what its tools did stays done - as it places prompt
    parts: the entry is the fact, the wording its presentation, and a `ContextRef` reconstructs it
-   alike. `told_of_executed` and `names_only` go: the calls and their results stand on the active
-   path in the turn's own messages, and a turn's label is bounded by the channel's at its
-   beginning (A), so a lowered turn's messages raise nothing later.
+   alike. `told_of_executed` goes: the calls and their results stand on the active path in the
+   turn's own messages. *Corrected in step 3:* of a turn given up as `Lowered` the resolver gives
+   only which tools its messages called and how they ended (`Message::names_only`), classified as
+   the channel is now. The bound of a turn's label by the channel's at its beginning (A) hides
+   content above the channel rather than releasing it, and what the turn says after the lowering,
+   or in a step it did not complete, was never held by the channel. A turn that no longer flows
+   is recorded as `Lowered` whatever ended it.
 8. **A turn that said nothing is recorded too**, in both the agent's chains and the channel's
    history: one rule, and the users keep the notice they saw. Today such a turn leaves nothing.
 
@@ -347,12 +351,13 @@ the step that changes what they describe.
    call sites. The one change in behaviour: the tool message of abandoned calls is said live,
    which the cancel tests of `channel.rs` see. AGENT-TURN.md.
 3. **The chains keep what a turn said** (C, decisions 1, 6, 7, 8): the two entries, `items`,
-   `record_turn` and `give_up_turn` on the active path, the resolver's wording; the runtime
-   follows where it reads them (`give_up` without a branch, still with its telling; the view's
-   `given_up_turns` and its route read from the items until 6). The tests of the model. The
+   `record_turn` and `give_up_turn` on the active path, the resolver's wording and its
+   withholding of a lowered turn; the runtime follows where it reads them (`give_up` without a
+   branch and without its telling, `told_of_executed` and `names_only` gone; the view's
+   `given_up_turns` and its route read the active path until 6). The tests of the model. The
    stored data that has to go, said in the summary. AGENT-TURN.md's chain section.
-4. **The turn's end** (D, decision 4): `TurnGivenUp` for the agent and the external agent,
-   `told_of_executed` and `names_only` gone; the moderator routes it; REST, web UI and TUI take
+4. **The turn's end** (D, decision 4): `TurnGivenUp` for the agent and the external agent; the
+   moderator routes it; REST, web UI and TUI take
    the event in place of `TurnFailed` in the same step - as a notice, not yet stored. The tests
    of `ending.rs`, `actor/agent`, `channel.rs` and the moderator. AGENT-TURN.md,
    CONFIDENTIALITY.md, CHANNELS.md, REST-SERVER.md; ARCHITECTURE.md, CODING-GUIDELINES.md and
@@ -463,3 +468,25 @@ the step that changes what they describe.
   by the turn, which is handed to every component working in it, none of which is to speak in the
   agent's name; nor by the actor ending the step itself, which would split the turn's end in two.
   `send_event` is `pub(crate)` now. A failed send while abandoning is logged; the message is kept.
+- **2026-10-08** — Step 3 done, with a correction of decision 7 found while implementing it and
+  decided with the maintainer. Decision 7 said a lowered turn's messages raise nothing later, since
+  a turn's label is bounded by the channel's at its beginning; but that bound hides the content
+  rather than releasing it. Two kinds of message of a turn given up as lowered were never held by
+  the channel - what it says after the lowering until the next check, and the tool message of a
+  step it did not complete, made as the turn ends - and on the active path they would reach the
+  model of the next turn under a label capped at the lowered channel. So what is recorded and what
+  the model is given stay two questions (issue 145): the record keeps everything, and the
+  `ContextResolver` gives the messages of a turn given up as `Lowered` only as which tools they
+  called and how they ended (`Message::names_only`), classified as the channel is now - as
+  `names_only` told them before. A turn that no longer flows is recorded as `Lowered` whatever
+  ended it. The resolver also words why a turn was given up, where its end stands
+  (`GivenUpReason::cause`); `told_of_executed` and `names_only` of `give_up` went in this step
+  rather than in step 4, since the telling said "its messages are gone".
+
+  Otherwise as planned: `TurnFinished` and `TurnGivenUp` in both chains, `TranscriptEntry::GivenUp`
+  gone; `record_turn` and `give_up_turn` record on the active path, internal steps in the history
+  too, a turn that said nothing with its end; `MessageHistory::items`. `GivenUpReason` lives in
+  `caelumora_model::turn`, beside the turn's state, rather than in `message.rs`. `given_up_turns`
+  reads the active path until step 6; the history panel shows a given-up turn's messages in its
+  block alone. Stored data: agent channel states holding a turn given up before this step do not
+  read and have to be deleted.

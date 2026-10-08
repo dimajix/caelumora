@@ -136,10 +136,13 @@ never above its channel, and only with configured compartments.
     *   every agent asks before each step of a turn whether the turn still flows into the channel as
         it is now. One that does not is given up (`GivenUpReason::Lowered`, with the new
         classification) rather than taken over - also when it was cancelled, also when it began just
-        before the change or is resumed after a restart: no tool runs any more, and nothing of it
-        reaches the channel or the conversation. Its messages stay as a branch no longer active; the
-        agent is told which tools ran, not with what (see
-        [AGENT-TURN.md](AGENT-TURN.md#beginning-and-ending-a-turn)); the users get a `TurnFailed`
+        before the change or is resumed after a restart: no tool runs any more, and nothing it says
+        from then on reaches the channel. Its messages stay in the agent's transcript where they
+        were said (issue 258), but its model is given of them only which tools it called and how
+        they ended, classified as the channel is now: what it read after the lowering, or in a step
+        it did not complete, was never released (see
+        [AGENT-TURN.md](AGENT-TURN.md#beginning-and-ending-a-turn)). A turn that no longer flows is
+        recorded so whatever ended it - asked for again, stopped. The users get a `TurnFailed`
         saying why.
     *   an external agent's work is given up the same way (issue 212): an answer under way, which
         the lowering cancels, publishes nothing of what came so far; an open task begun before is

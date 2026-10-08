@@ -732,14 +732,14 @@ pub struct CommandReplyResponse {
 }
 
 /// A turn an agent gave up (issue 145): why and when, and the messages it
-/// had produced, which stay in the agent's transcript as a branch no longer
-/// active. What each of them was produced from is its context, as for any
-/// message of the agent. `after` is the message of the agent's history the
-/// turn branched off after, where it is shown (issue 146); `None` if it
-/// began before anything was said.
+/// had produced, which stay in the agent's history where they were said
+/// (issue 258). What each of them was produced from is its context, as for
+/// any message of the agent. `after` is the message of the agent's history
+/// the turn follows, where it is shown (issue 146); `None` if it began
+/// before anything was said.
 #[derive(Debug, Serialize)]
 pub struct GivenUpTurnResponse {
-    pub reason: caelumora_model::transcript::GivenUpReason,
+    pub reason: caelumora_model::turn::GivenUpReason,
     pub at: chrono::DateTime<chrono::Utc>,
     pub after: Option<caelumora_model::message::MessageId>,
     pub messages: Vec<HistoryMessageResponse>,
@@ -974,7 +974,7 @@ mod tests {
 
     #[test]
     fn a_turn_given_up_is_answered_with_its_reason_place_and_messages() {
-        use caelumora_model::transcript::GivenUpReason;
+        use caelumora_model::turn::GivenUpReason;
         let after = caelumora_model::message::MessageId::new();
         let turn = GivenUpTurnResponse {
             reason: GivenUpReason::Failed { message: "boom".to_string() },

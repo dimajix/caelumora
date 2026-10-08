@@ -1,13 +1,15 @@
 //! The history of a channel as an agent keeps it (issue 06): the chain of
 //! what happened in it - messages said, each of the agent's own with what it
-//! was produced from, reclassifications (issue 133) and changes to what was
-//! said (issue 234) - read into the messages as they stand (issue 197).
+//! was produced from, reclassifications (issue 133), changes to what was
+//! said (issue 234) and how turns ended (issue 258) - read into the messages
+//! as they stand (issue 197).
 
 use crate::chain::Chain;
 use crate::confidentiality::Classification;
 use crate::context::ContextRef;
 use crate::work::TurnId;
 use crate::message::{Message, MessageId};
+use crate::turn::GivenUpReason;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -35,6 +37,11 @@ pub enum HistoryEntry {
     /// The channel was classified `channel`, and every message said so far
     /// fits into it from here on (`Classification::fitted_into`).
     Fitted { channel: Classification },
+    /// The turn `turn_id` ended at `at` and was taken over (issue 258).
+    TurnFinished { turn_id: TurnId, at: DateTime<Utc> },
+    /// The turn `turn_id` was given up at `at`, for `reason` (issue 258):
+    /// what it said before stays said.
+    TurnGivenUp { turn_id: TurnId, reason: GivenUpReason, at: DateTime<Utc> },
 }
 
 /// The conversation as it happened - a chain like a `Transcript`. What it
@@ -50,6 +57,23 @@ impl Chain<HistoryEntry> {
     pub fn messages(&self) -> Vec<Message> {
         let active: HashSet<MessageId> = self.entries().filter_map(|n| n.entry.said()).map(|m| m.id).collect();
         self.fold().into_iter().filter(|m| active.contains(&m.id)).collect()
+    }
+
+    /// The history of the active path as it stands, in the order it
+    /// happened (issue 258): the messages said - `Said`, each as it stands,
+    /// with every change since folded into it - and how turns ended -
+    /// `TurnFinished` and `TurnGivenUp`. No other entry occurs: what changes
+    /// a message is in the message, a fitting in every message.
+    pub fn items(&self) -> Vec<HistoryEntry> {
+        let mut folded: HashMap<MessageId, Message> = self.fold().into_iter().map(|m| (m.id, m)).collect();
+        self.entries()
+            .filter_map(|node| match &node.entry {
+                HistoryEntry::Said { message, context } => folded.remove(&message.id)
+                    .map(|message| HistoryEntry::Said { message, context: context.clone() }),
+                end @ (HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. }) => Some(end.clone()),
+                HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. } => None,
+            })
+            .collect()
     }
 
     /// The message `id` as it stands - on whichever branch - or `None` if
@@ -90,6 +114,7 @@ impl Chain<HistoryEntry> {
                         message.classification = message.classification.fitted_into(channel);
                     }
                 }
+                HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } => {}
             }
         }
         messages
@@ -180,6 +205,13 @@ impl Chain<HistoryEntry> {
         changed
     }
 
+    /// Records how a turn ended (issue 258): `TurnFinished` or
+    /// `TurnGivenUp`, after its messages.
+    pub fn end_turn(&mut self, end: HistoryEntry) {
+        debug_assert!(matches!(end, HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. }), "only the end of a turn");
+        self.record(end);
+    }
+
     fn record(&mut self, entry: HistoryEntry) {
         self.push_with(entry, crate::digest::history_chain);
     }
@@ -190,7 +222,8 @@ impl HistoryEntry {
     fn said(&self) -> Option<&Message> {
         match self {
             HistoryEntry::Said { message, .. } => Some(message),
-            HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. } => None,
+            HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. }
+            | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } => None,
         }
     }
 
@@ -210,6 +243,32 @@ mod tests {
     use crate::confidentiality::Confidentiality;
     use crate::digest::message_chain;
     use crate::message::tests::{id, make_message};
+
+    #[test]
+    fn its_items_are_the_messages_as_they_stand_and_how_turns_ended() {
+        let (finished, given_up) = (TurnId::new(), TurnId::new());
+        let at = Utc::now();
+        let mut history = MessageHistory::default();
+        history.push(make_message(id(1)), None);
+        history.push(Message { turn_id: Some(finished), ..make_message(id(2)) }, None);
+        history.end_turn(HistoryEntry::TurnFinished { turn_id: finished, at });
+        history.modify(Message { content: Some("changed".to_string()), ..make_message(id(1)) });
+        history.push(Message { turn_id: Some(given_up), ..make_message(id(3)) }, None);
+        history.end_turn(HistoryEntry::TurnGivenUp { turn_id: given_up, reason: GivenUpReason::Stopped, at });
+        history.fit_into(&Classification::CHANNEL_DEFAULT);
+
+        let items = history.items();
+        let kinds: Vec<String> = items.iter().map(|item| match item {
+            HistoryEntry::Said { message, .. } => format!("said {}", message.content.clone().unwrap_or_default()),
+            HistoryEntry::TurnFinished { turn_id, .. } => format!("finished {}", *turn_id == finished),
+            HistoryEntry::TurnGivenUp { turn_id, .. } => format!("given up {}", *turn_id == given_up),
+            other => format!("{other:?}"),
+        }).collect();
+        let text = |n: u128| format!("said {}", make_message(id(n)).content.unwrap_or_default());
+        assert_eq!(kinds, ["said changed".to_string(), text(2), "finished true".to_string(), text(3), "given up true".to_string()],
+            "in the order they happened, the change folded into its message, the fitting in every one");
+        assert_eq!(history.messages().len(), 3, "the messages alone, as before");
+    }
 
     #[test]
     fn what_was_missed_is_what_came_after_the_last_message_kept_and_nothing_older() {

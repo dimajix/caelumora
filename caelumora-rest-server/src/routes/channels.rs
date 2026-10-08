@@ -549,8 +549,9 @@ pub async fn message_context(
 }
 
 /// The turns actor `aid` gave up in the channel (issue 145), oldest first,
-/// for whoever may read what it saw - each with where it branched off the
+/// for whoever may read what it saw - each with where it stands in the
 /// agent's history and its messages as that history's are (issue 146).
+/// Until the history is read with the turns' ends in it (issue 258).
 pub async fn given_up_turns(
     State(state): State<Arc<AppState>>,
     Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
@@ -561,8 +562,8 @@ pub async fn given_up_turns(
         .map_err(|e| ApiError::from_runtime(e.into(), Subject::Context, "reading the turns given up"))?;
     let turns = view.given_up_turns().into_iter()
         .map(|turn| GivenUpTurnResponse {
-            reason: turn.given_up.reason,
-            at: turn.given_up.at,
+            reason: turn.reason,
+            at: turn.at,
             after: turn.after,
             messages: turn.messages.into_iter().map(|message| history_message(&view, message)).collect(),
         })

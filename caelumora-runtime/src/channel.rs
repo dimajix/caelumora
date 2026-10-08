@@ -2986,10 +2986,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_turn_that_fails_after_a_tool_ran_stays_as_a_branch_and_the_agent_is_told() {
+    async fn a_turn_that_fails_after_a_tool_ran_keeps_what_it_said_and_the_agent_is_told() {
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         use caelumora_model::message::MessageRole;
-        use caelumora_model::transcript::GivenUpReason;
+        use caelumora_model::turn::GivenUpReason;
         use caelumora_model::tool::{ToolCall, ToolVisibility};
 
         // The model calls a tool that needs no approval, and fails when
@@ -3019,25 +3019,23 @@ mod tests {
         settled(&helper, ActorState::Idle).await;
         let stored = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
 
-        // The turn's messages are a branch no longer active, marked as given
-        // up; what the model saw for them can still be told.
+        // The turn's messages stay where they were said, followed by its end
+        // (issue 258); what the model saw for them can still be told.
         let seen = crate::view::AgentContextView::of(ActorId::Agent(agent), stored.clone());
         let turns = seen.given_up_turns();
         assert_eq!(turns.len(), 1);
-        assert!(matches!(turns[0].given_up.reason, GivenUpReason::Failed { .. }));
+        assert!(matches!(turns[0].reason, GivenUpReason::Failed { .. }));
         let roles: Vec<_> = turns[0].messages.iter().map(|m| m.role).collect();
         assert_eq!(roles, [MessageRole::Assistant, MessageRole::Tool], "the call and its result");
-        assert!(seen.context_of(calculate.id).is_ok(), "the call's context is resolved on its branch");
+        assert!(seen.context_of(calculate.id).is_ok(), "the call's context is resolved");
+        assert!(stored.transcript.messages().iter().any(|m| m.id == calculate.id), "in the transcript");
+        assert!(stored.history.messages().iter().any(|m| m.id == calculate.id), "and in the agent's history");
 
-        // On the active branch the agent is told what ran, and nothing else
-        // of the turn is there - neither in its transcript nor its history.
-        let transcript = stored.transcript.messages();
-        assert!(transcript.iter().all(|m| m.id != calculate.id), "{transcript:?}");
-        let told = transcript.last().expect("the agent is told");
-        assert!((told.role, told.internal) == (MessageRole::System, true), "{told:?}");
-        let text = told.content.as_deref().unwrap_or_default();
-        assert!(text.contains("calculate") && text.contains("1+1"), "in full: {text}");
-        assert!(stored.history.messages().iter().all(|m| m.id != calculate.id && m.id != told.id));
+        // Its model is given the call in full, and told why the turn ended.
+        let given = given_next(&stored, agent);
+        assert!(given.iter().any(|m| m.tool_calls.iter().any(|c| c.arguments == serde_json::json!({ "expression": "1+1" }))), "{given:?}");
+        let told = given.last().and_then(|m| m.content.clone()).unwrap_or_default();
+        assert!(told.contains("because it failed"), "{told}");
         running.abort();
     }
 
@@ -3045,7 +3043,7 @@ mod tests {
     async fn an_agent_removed_during_a_turn_gives_it_up() {
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         use caelumora_model::message::MessageRole;
-        use caelumora_model::transcript::GivenUpReason;
+        use caelumora_model::turn::GivenUpReason;
         use caelumora_model::tool::{ToolCall, ToolVisibility};
 
         // The model calls a tool, and never answers again.
@@ -3080,7 +3078,7 @@ mod tests {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         }).await.expect("the turn is given up");
-        assert_eq!(turns[0].given_up.reason, GivenUpReason::Stopped);
+        assert_eq!(turns[0].reason, GivenUpReason::Stopped);
         running.abort();
     }
 
@@ -3098,6 +3096,19 @@ mod tests {
                 _ => true,
             }
         }
+    }
+
+    /// What the model of the agent whose state is `stored` is given next:
+    /// its transcript as it stands, resolved as a turn's context is.
+    fn given_next(stored: &caelumora_model::agent::AgentChannelState, agent: caelumora_model::agent::AgentId) -> Vec<Message> {
+        use caelumora_model::context::{ContextItem, ContextRef, ContextResolver};
+        let reference = ContextRef { transcript: stored.transcript.digest(), ..ContextRef::default() };
+        ContextResolver::of(stored).resolve(&reference, caelumora_model::work::TurnId::new(), ActorId::Agent(agent)).expect("resolved").items.into_iter()
+            .filter_map(|item| match item {
+                ContextItem::Conversation { message } => Some(message),
+                ContextItem::Prompt { .. } => None,
+            })
+            .collect()
     }
 
     fn calculator() -> (Message, caelumora_model::component::ComponentConfig) {
@@ -3135,7 +3146,7 @@ mod tests {
     #[tokio::test]
     async fn lowering_the_channel_gives_up_a_running_turn() {
         use caelumora_model::confidentiality::Confidentiality;
-        use caelumora_model::transcript::GivenUpReason;
+        use caelumora_model::turn::GivenUpReason;
 
         // The model calls a tool, and then is asked about its result for
         // ever.
@@ -3161,14 +3172,19 @@ mod tests {
         let stored = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
         let turns = stored.transcript.given_up_turns();
         assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0].given_up.reason, GivenUpReason::Lowered { channel: public.clone() });
-        assert!(channel.history().await.iter().all(|m| m.id != calculate.id));
+        assert_eq!(turns[0].reason, GivenUpReason::Lowered { channel: public.clone() });
+        assert!(channel.history().await.iter().all(|m| m.id != calculate.id), "the channel's history takes a turn's answer alone");
 
-        // The agent learns which tool ran, but not what it saw.
-        let told = stored.transcript.messages().pop().expect("the agent is told");
-        let text = told.content.unwrap_or_default();
-        assert!(text.contains("calculate") && !text.contains("1+1"), "{text}");
-        assert_eq!(told.classification, public);
+        // The agent keeps what the turn said, but its model is given which
+        // tool ran and not what it saw (issues 141, 258).
+        assert!(stored.transcript.messages().iter().any(|m| m.id == calculate.id), "the record keeps it");
+        let given = given_next(&stored, agent);
+        let call = given.iter().find(|m| m.id == calculate.id).expect("the call is given");
+        assert_eq!((call.tool_calls[0].function_name.as_str(), &call.tool_calls[0].arguments), ("calculate", &serde_json::Value::Null));
+        assert_eq!(call.classification, public);
+        assert!(given.iter().flat_map(|m| &m.tool_results).all(|r| r.content.is_empty()), "nothing of what it returned");
+        let told = given.last().and_then(|m| m.content.clone()).unwrap_or_default();
+        assert!(told.contains("lowered") && told.contains("withheld"), "{told}");
         running.abort();
     }
 
@@ -3408,14 +3424,13 @@ mod tests {
         let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
         let given_up = state.transcript.given_up_turns();
         assert_eq!(given_up.len(), 1, "the turn is kept as given up");
-        assert_eq!(given_up[0].given_up.reason, caelumora_model::transcript::GivenUpReason::Retried);
-        let told = state.transcript.messages().into_iter()
-            .find(|m| m.internal && m.content.as_deref().is_some_and(|c| c.contains("sleep")))
-            .expect("the model is told of the call that ran");
-        assert!(told.content.unwrap().contains("asked for again"), "and why the turn was given up");
-        assert_eq!(told.turn_id, Some(turn), "as the record of that turn");
+        assert_eq!(given_up[0].reason, caelumora_model::turn::GivenUpReason::Retried);
+        assert_eq!(given_up[0].turn_id, turn);
+        assert!(given_up[0].messages.iter().any(|m| m.tool_calls.iter().any(|c| c.function_name == "sleep")), "the call that ran stays");
+        let told: Vec<_> = given_next(&state, agent).into_iter().filter_map(|m| m.content).filter(|c| c.contains("given up")).collect();
+        assert!(told.iter().any(|c| c.contains("asked for again")), "the model is told why the turn was given up: {told:?}");
         let history: Vec<_> = channel.history().await.into_iter().filter_map(|m| m.content).collect();
-        assert_eq!(history, ["hello", "never given"], "nothing of the given-up turn reached the channel");
+        assert_eq!(history, ["hello", "never given"], "the channel's history takes a turn's answer alone");
         running.abort();
     }
 
@@ -3468,8 +3483,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_agent_removed_while_a_tool_runs_gives_up_its_turn_and_is_told_the_tool_ran() {
-        use caelumora_model::transcript::GivenUpReason;
+    async fn an_agent_removed_while_a_tool_runs_gives_up_its_turn_and_keeps_the_call() {
+        use caelumora_model::turn::GivenUpReason;
 
         let (Stuck { channel, context, agent, running, .. }, _) = with_an_agent_in_a_long_tool().await;
 
@@ -3484,15 +3499,16 @@ mod tests {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         }).await.expect("the turn is given up before the grace runs out");
-        assert_eq!(stored.transcript.given_up_turns()[0].given_up.reason, GivenUpReason::Stopped);
-        let told = stored.transcript.messages().last().and_then(|m| m.content.clone()).unwrap_or_default();
-        assert!(told.contains("- sleep(") && told.contains("interrupted"), "the agent is told the call ran: {told}");
+        assert_eq!(stored.transcript.given_up_turns()[0].reason, GivenUpReason::Stopped);
+        let interrupted = stored.transcript.messages().iter().flat_map(|m| m.tool_results.clone())
+            .find(|r| r.tool_name == "sleep").map(|r| r.content).unwrap_or_default();
+        assert!(interrupted.contains("interrupted"), "the call that ran stays, with how it ended: {interrupted}");
         running.abort();
     }
 
     #[tokio::test]
     async fn an_agent_removed_while_waiting_for_approval_gives_up_its_turn() {
-        use caelumora_model::transcript::GivenUpReason;
+        use caelumora_model::turn::GivenUpReason;
 
         let (call, components) = a_call_needing_approval();
         let Stuck { channel, context, agent, helper, running, .. } =
@@ -3510,7 +3526,7 @@ mod tests {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         }).await.expect("the turn is given up");
-        assert_eq!(stored.transcript.given_up_turns()[0].given_up.reason, GivenUpReason::Stopped);
+        assert_eq!(stored.transcript.given_up_turns()[0].reason, GivenUpReason::Stopped);
         running.abort();
     }
 

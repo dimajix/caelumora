@@ -15,8 +15,41 @@ use crate::note::NoteChange;
 use crate::plan::PlanState;
 use crate::tool::{Tool, ToolCallState, ToolCallStatus};
 use crate::transcript::TranscriptEntry;
+use crate::confidentiality::Classification;
 use crate::work::Work;
 use serde::{Deserialize, Serialize};
+
+/// Why a turn was given up.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum GivenUpReason {
+    /// It failed; `message` is what its users were told.
+    Failed { message: String },
+    /// The channel's classification was lowered to `channel` while the
+    /// turn ran (issue 141): what the turn saw may not flow into it any
+    /// more.
+    Lowered { channel: Classification },
+    /// The agent was stopped, leaving the channel: removed from it, or the
+    /// channel deleted. Who did that is a matter of that act, not of its
+    /// consequence - the audit log's (issue 140).
+    Stopped,
+    /// Its answer was asked for again while it was under way (issue 235):
+    /// a turn of its own answers instead.
+    Retried,
+}
+
+impl GivenUpReason {
+    /// Why the turn was given up, as its agent is told: "… because it
+    /// failed". A fixed text, which says nothing of the conversation.
+    pub fn cause(&self) -> &'static str {
+        match self {
+            GivenUpReason::Failed { .. } => "it failed",
+            GivenUpReason::Lowered { .. } => "the channel's classification was lowered",
+            GivenUpReason::Stopped => "you were stopped",
+            GivenUpReason::Retried => "your answer was asked for again",
+        }
+    }
+}
 
 /// The working state of one turn (issue 85): what the turn is - fixed when
 /// it begins - and what it has produced and staged so far, none of it taken

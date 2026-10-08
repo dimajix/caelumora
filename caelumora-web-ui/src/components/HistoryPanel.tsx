@@ -40,11 +40,14 @@ interface HistoryPanelProps {
 type Row = {kind: 'message'; message: Message} | {kind: 'turn'; turn: GivenUpTurn; index: number};
 
 /**
- * The rows of `history` with each of `turns` after the message it branched
- * off after - first if after none, last if the history does not hold that
- * message.
+ * The rows of `history` with each of `turns` after the message it follows -
+ * first if after none, last if the history does not hold that message. The
+ * history holds a turn's messages as well (issue 258); they are shown in the
+ * turn's block alone.
  */
 function rowsOf(history: HistoryMessage[], turns: GivenUpTurn[]): Row[] {
+  const ofTurns = new Set(turns.flatMap(turn => turn.messages.map(entry => entry.message.id)));
+  history = history.filter(entry => !ofTurns.has(entry.message.id));
   const held = new Set(history.map(entry => entry.message.id));
   const turnRows = (after: string | null | undefined) => turns
     .map((turn, index): Row => ({kind: 'turn', turn, index}))

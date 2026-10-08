@@ -175,6 +175,28 @@ impl Message {
         (!empty).then_some(message)
     }
 
+    /// What a model is given of the message where what it said may not be
+    /// given (issue 258): which tools it called and how they ended, without
+    /// its content, reasoning, arguments or what the calls returned,
+    /// classified `classification`. For a turn given up because its channel
+    /// was lowered below it (issue 141), whose content its owner never
+    /// released. `None` if nothing is left: no call, no result.
+    pub fn names_only(&self, classification: &Classification) -> Option<Message> {
+        if self.tool_calls.is_empty() && self.tool_results.is_empty() {
+            return None;
+        }
+        let mut message = Message { content: None, reasoning: None, classification: classification.clone(), ..self.clone() };
+        for call in &mut message.tool_calls {
+            call.arguments = serde_json::Value::Null;
+        }
+        for result in &mut message.tool_results {
+            result.content.clear();
+            result.answers = None;
+            result.classification = classification.clone();
+        }
+        Some(message)
+    }
+
     /// Whether a participant hears anything of the message when someone
     /// else said it (issue 224): whether it was said or answered in words -
     /// not a tool message, not an inner step of a plan, not a message
@@ -420,6 +442,25 @@ pub(crate) mod tests {
         let published = with_text.published().expect("the text is left");
         assert!(published.tool_calls.is_empty());
         assert_eq!(published.content.as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn of_a_message_withheld_only_which_tools_it_called_is_given() {
+        use crate::tool::{ToolCall, ToolCallResult, ToolResultStatus};
+        let secret = Classification::general(crate::confidentiality::Confidentiality::Confidential);
+        let call = ToolCall { id: Some("1".to_string()), function_name: "read".to_string(), arguments: serde_json::json!({ "file": "plans" }), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
+        let calling = Message { content: Some("let me look".to_string()), reasoning: Some("hm".to_string()), tool_calls: vec![call.clone()], ..Message::new(secret.clone()) };
+        let result = ToolCallResult::of(&call, ToolResultStatus::Ok, "the plans".to_string(), secret.clone());
+        let answered = Message { role: MessageRole::Tool, tool_results: vec![result], ..Message::new(secret.clone()) };
+
+        let given = calling.names_only(&Classification::PUBLIC).expect("it called a tool");
+        assert_eq!((given.content, given.reasoning, given.classification), (None, None, Classification::PUBLIC));
+        assert_eq!((given.tool_calls[0].function_name.as_str(), &given.tool_calls[0].arguments), ("read", &serde_json::Value::Null));
+        let given = answered.names_only(&Classification::PUBLIC).expect("a result");
+        assert_eq!((given.tool_results[0].status, given.tool_results[0].content.as_str()), (ToolResultStatus::Ok, ""), "how it ended, not what it returned");
+        assert_eq!(given.tool_results[0].classification, Classification::PUBLIC);
+        let words = Message { content: Some("said".to_string()), ..Message::new(secret) };
+        assert!(words.names_only(&Classification::PUBLIC).is_none(), "nothing left of words alone");
     }
 
     #[test]

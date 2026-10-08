@@ -442,8 +442,9 @@ closing that returns to the history. The history is loaded again whenever the ch
 change.
 
 The turns the agent gave up (issue 146, `GET …/actors/{aid}/given-up-turns`) are folded into the
-history where they branched off: after the message the server names as `after`, first if it names
-none, last if the history does not hold it. Each is a folded block with why it ended - failed,
+history where they stand: after the message the server names as `after`, first if it names none,
+last if the history does not hold it. The history holds their messages too (issue 258); they are
+shown in the turn's block alone. Each is a folded block with why it ended - failed,
 stopped, or the channel lowered - and when; opened, it shows the turn's messages with their tool
 calls and results, each with its context where it is recorded. A failed turn's notice in the chat
 offers "What the turn did" for an agent whose context the user may read, which opens the history

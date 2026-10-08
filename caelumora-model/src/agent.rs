@@ -11,7 +11,8 @@ use crate::ledger::LedgerEntry;
 use crate::message::{Message, MessageId, MessageRole, TokenUsage};
 use crate::memory::{Memories, MemoryChain};
 use crate::message_history::{HistoryEntry, MessageHistory};
-use crate::transcript::{as_they_stand, GivenUp, GivenUpReason, Transcript, TranscriptEntry};
+use crate::transcript::{as_they_stand, Transcript, TranscriptEntry};
+use crate::turn::GivenUpReason;
 use crate::turn::{TurnEntry, TurnState};
 use crate::work::{TurnId, Work};
 use crate::note::{NoteChain, NoteChange, NoteOrigin, Notes};
@@ -288,6 +289,8 @@ impl AgentChannelState {
         for (node, standing) in path {
             match (&node.entry, standing) {
                 (TranscriptEntry::Modified { .. } | TranscriptEntry::Revoked { .. } | TranscriptEntry::Reclassified { .. }, _) => {}
+                // Its own turn's end.
+                (TranscriptEntry::TurnFinished { turn_id, .. }, _) if *turn_id == turn => {}
                 // Taken back already.
                 (TranscriptEntry::Message(_), None) => {}
                 (TranscriptEntry::Message(_), Some(step)) if step.turn_id == Some(turn) => {
@@ -296,7 +299,7 @@ impl AgentChannelState {
                     }
                     taken_back.push(step.id);
                 }
-                (TranscriptEntry::Message(_) | TranscriptEntry::GivenUp { .. }, _) => return Err(RetryRefused::NotLast),
+                (TranscriptEntry::Message(_) | TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. }, _) => return Err(RetryRefused::NotLast),
             }
         }
         Ok(taken_back)
@@ -347,28 +350,15 @@ impl AgentChannelState {
     }
 
     /// Takes over what a turn produced (issues 06, 17, 136): its `entries`
-    /// into the transcript - and those not internal into the history, each
-    /// with what it was produced from - and its changes to the agent's
-    /// `notes` and `private_notes` here, anchored at its last message in the
-    /// history. Returns whether there were changes to the notes.
-    pub fn record_turn(&mut self, entries: Vec<TurnEntry>, notes: Vec<NoteChange>, private_notes: Vec<NoteChange>) -> bool {
-        let expected = entries.last().map(|e| e.node.digest);
-        for TurnEntry { node, context } in entries {
-            let TranscriptEntry::Message(message) = node.entry else { continue };
-            self.transcript.push(message.clone());
-            if !message.internal {
-                self.history.push(message, Some(context));
-            }
-        }
-        // The turn's messages got their digests continuing the transcript
-        // as it was when the turn began (issue 136); had it changed
-        // meanwhile, what they were produced from could not be told.
-        if expected.is_some() && self.transcript.digest() != expected {
-            tracing::warn!("An agent's transcript changed during a turn; the contexts recorded for the turn's messages cannot be resolved");
-        }
-
-        // A message of the history, not an internal step of the transcript:
-        // what branching (issue 08) will find the changes by.
+    /// into the transcript and the history - each with what it was produced
+    /// from, internal steps too (issue 258) - followed by its end,
+    /// `TurnFinished`; and its changes to the agent's `notes` and
+    /// `private_notes` here, anchored at its last message. Returns whether
+    /// there were changes to the notes.
+    pub fn record_turn(&mut self, turn_id: TurnId, entries: Vec<TurnEntry>, notes: Vec<NoteChange>, private_notes: Vec<NoteChange>) -> bool {
+        self.record_messages(entries);
+        // What branching (issue 08) will find the changes by: the turn's
+        // last message, and the transcript as the turn left it.
         let after = self.history.last_message_id();
         let origin = NoteOrigin { transcript: self.transcript.digest() };
         let changed = !notes.is_empty() || !private_notes.is_empty();
@@ -378,27 +368,38 @@ impl AgentChannelState {
         for change in private_notes {
             self.private_notes.push(change, origin.clone(), after);
         }
+        let at = chrono::Utc::now();
+        self.transcript.end_turn(TranscriptEntry::TurnFinished { turn_id, at });
+        self.history.end_turn(HistoryEntry::TurnFinished { turn_id, at });
         changed
     }
 
     /// Keeps what the turn `turn_id` given up for `reason` produced, its
-    /// `entries`, as a branch that is no longer active (issue 145): recorded
-    /// as when taken over (`record_turn`), each with what it was produced
-    /// from, then both heads moved back to where the turn began, and the
-    /// transcript records the turn as given up, naming the branch. A turn
-    /// that produced nothing leaves nothing.
+    /// `entries`, where they are (issue 258): recorded as when taken over,
+    /// each with what it was produced from, followed by its end,
+    /// `TurnGivenUp` - also for a turn that said nothing. What it said is not
+    /// unsaid; what it staged is not applied.
     pub fn give_up_turn(&mut self, turn_id: TurnId, entries: Vec<TurnEntry>, reason: GivenUpReason) {
-        if entries.is_empty() {
-            return;
+        self.record_messages(entries);
+        let at = chrono::Utc::now();
+        self.transcript.end_turn(TranscriptEntry::TurnGivenUp { turn_id, reason: reason.clone(), at });
+        self.history.end_turn(HistoryEntry::TurnGivenUp { turn_id, reason, at });
+    }
+
+    /// Keeps the messages of a turn's `entries` in the transcript and the
+    /// history, each with what it was produced from.
+    fn record_messages(&mut self, entries: Vec<TurnEntry>) {
+        let expected = entries.last().map(|e| e.node.digest);
+        for TurnEntry { node, context } in entries {
+            let TranscriptEntry::Message(message) = node.entry else { continue };
+            self.transcript.push(message.clone());
+            self.history.push(message, Some(context));
         }
-        let transcript = self.transcript.digest();
-        let history = self.history.digest();
-        self.record_turn(entries, Vec::new(), Vec::new());
-        let end = self.transcript.digest();
-        self.transcript.move_head(transcript.as_ref());
-        self.history.move_head(history.as_ref());
-        if let Some(end) = end {
-            self.transcript.give_up(end, GivenUp { reason, at: chrono::Utc::now(), turn_id });
+        // The turn's messages got their digests continuing the transcript
+        // as it was when the turn began (issue 136); had it changed
+        // meanwhile, what they were produced from could not be told.
+        if expected.is_some() && self.transcript.digest() != expected {
+            tracing::warn!("An agent's transcript changed during a turn; the contexts recorded for the turn's messages cannot be resolved");
         }
     }
 
@@ -675,7 +676,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_turn_recorded_continues_the_transcript_and_keeps_in_the_history_what_is_not_internal() {
+    fn a_turn_recorded_continues_the_transcript_and_the_history_and_ends_finished() {
         let mut state = a_state_that_heard("add 1 and 2", Classification::CHANNEL_DEFAULT);
         begin(&mut state, Vec::new());
         let mut turn = state.turn.take().expect("a turn was begun");
@@ -688,10 +689,12 @@ pub(crate) mod tests {
         let expected = turn.entries.last().map(|e| e.node.digest);
         let note = NoteChange::Add { id: crate::note::NoteId(1), text: "sums".to_string(), classification: Classification::CHANNEL_DEFAULT };
 
-        assert!(state.record_turn(turn.entries, vec![note], Vec::new()), "a note changed");
-        assert_eq!(state.transcript.digest(), expected, "the turn's messages have the digests they were given");
-        assert_eq!(state.transcript.entries().count(), 3);
-        assert_eq!(state.history.messages().iter().map(|m| m.content.clone().unwrap_or_default()).collect::<Vec<_>>(), ["add 1 and 2", "3"]);
+        assert!(state.record_turn(turn_id, turn.entries, vec![note], Vec::new()), "a note changed");
+        assert_eq!(state.transcript.entries().nth(2).map(|n| n.digest), expected, "the turn's messages have the digests they were given");
+        assert_eq!(state.transcript.entries().count(), 4, "and are followed by the turn's end");
+        assert!(matches!(state.transcript.last().map(|n| &n.entry), Some(TranscriptEntry::TurnFinished { turn_id: t, .. }) if *t == turn_id));
+        assert!(matches!(state.history.last().map(|n| &n.entry), Some(HistoryEntry::TurnFinished { turn_id: t, .. }) if *t == turn_id));
+        assert_eq!(state.history.messages().iter().map(|m| m.content.clone().unwrap_or_default()).collect::<Vec<_>>(), ["add 1 and 2", "thinking", "3"], "an internal step too (issue 258)");
         let turns: Vec<_> = state.transcript.messages().iter().map(|m| m.turn_id).collect();
         assert_eq!(turns, [None, Some(turn_id), Some(turn_id)], "what the turn keeps is the turn's, what was heard no turn's");
         assert_eq!(state.history.messages().last().and_then(|m| m.turn_id), Some(turn_id));
@@ -700,25 +703,26 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_turn_given_up_is_a_branch_no_longer_active_and_names_it() {
+    fn a_turn_given_up_keeps_what_it_said_and_ends_given_up() {
         let mut state = a_state_that_heard("mail bob", Classification::CHANNEL_DEFAULT);
-        let history = state.history.digest();
         begin(&mut state, Vec::new());
         let mut turn = state.turn.take().expect("a turn was begun");
         turn.push(said("mailing", Classification::CHANNEL_DEFAULT));
 
         let turn_id = turn.work.turn_id;
         state.give_up_turn(turn_id, turn.entries, GivenUpReason::Stopped);
-        assert_eq!(state.history.digest(), history, "the history is back where it began");
-        let active: Vec<String> = state.transcript.entries().filter_map(|e| e.entry.message()).map(|m| m.content.clone().unwrap_or_default()).collect();
-        assert_eq!(active, ["mail bob"], "and so is the transcript, followed by the record");
+        let contents = |messages: Vec<Message>| messages.iter().map(|m| m.content.clone().unwrap_or_default()).collect::<Vec<_>>();
+        assert_eq!(contents(state.transcript.messages()), ["mail bob", "mailing"], "what it said is not unsaid");
+        assert_eq!(contents(state.history.messages()), ["mail bob", "mailing"]);
+        assert!(matches!(state.history.last().map(|n| &n.entry), Some(HistoryEntry::TurnGivenUp { turn_id: t, reason: GivenUpReason::Stopped, .. }) if *t == turn_id));
+        assert_eq!(state.transcript.all_entries().count(), state.transcript.entries().count(), "nothing branches");
         let given_up = state.transcript.given_up_turns();
         assert_eq!(given_up.len(), 1);
-        assert_eq!(given_up[0].given_up.turn_id, turn_id);
-        assert_eq!(given_up[0].messages.iter().map(|m| m.content.clone().unwrap_or_default()).collect::<Vec<_>>(), ["mailing"]);
+        assert_eq!(given_up[0].turn_id, turn_id);
+        assert_eq!(contents(given_up[0].messages.clone()), ["mailing"]);
 
         state.give_up_turn(TurnId::new(), Vec::new(), GivenUpReason::Stopped);
-        assert_eq!(state.transcript.given_up_turns().len(), 1, "a turn that produced nothing leaves nothing");
+        assert_eq!(state.transcript.given_up_turns().len(), 2, "a turn that said nothing leaves its end too");
     }
 
     /// `state` as a store holds it, and the live state marked stored.
@@ -893,6 +897,15 @@ pub(crate) mod tests {
         // The user corrects the question: a change, not something said.
         state.transcript.modify(Message { content: Some("hello there".to_string()), ..question.clone() });
         assert_eq!(state.retried(first.id, agent), Ok(vec![first.id]), "still its last answer");
+
+        // Its turn ended: taken over, it is still its last answer; given up,
+        // what it said stands and nothing is taken back.
+        let mut finished = state.clone();
+        finished.transcript.end_turn(TranscriptEntry::TurnFinished { turn_id: turn, at: chrono::Utc::now() });
+        assert_eq!(finished.retried(first.id, agent), Ok(vec![first.id]), "its own turn's end");
+        let mut given_up = state.clone();
+        given_up.transcript.end_turn(TranscriptEntry::TurnGivenUp { turn_id: turn, reason: GivenUpReason::Stopped, at: chrono::Utc::now() });
+        assert_eq!(given_up.retried(first.id, agent), Err(RetryRefused::NotLast), "a turn given up");
 
         // What its turn did after it is taken back with it - not a step of
         // a later turn, nor a call that ran.

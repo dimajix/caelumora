@@ -25,11 +25,14 @@ use crate::turn::TurnEntry;
 use crate::chain::Node;
 use crate::digest::Digest;
 use crate::kept::Kept;
-use crate::message::{Message, MessageRole, TokenUsage};
+use crate::message::{Message, MessageId, MessageRole, TokenUsage};
 use crate::transcript::{as_they_stand, Transcript, TranscriptEntry};
+use crate::turn::GivenUpReason;
 use crate::tool::ToolSet;
 use crate::work::TurnId;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// A prompt part an agent's model was given besides the conversation - the
 /// system prompt, notes, ... (issue 47): the digest of its text, the role it
@@ -436,9 +439,23 @@ impl<'a> ContextResolver<'a> {
     /// one, a prompt or a set of tools that was never recorded, or a prompt
     /// whose entry is not in the prefix.
     pub fn resolve(&self, reference: &ContextRef, turn: TurnId, agent: ActorId) -> Option<ResolvedContext> {
-        let path = self.transcript.prefix(reference.transcript.as_ref())?;
-        let entries = as_they_stand(path).map(|(node, message)| {
+        let path: Vec<_> = as_they_stand(self.transcript.prefix(reference.transcript.as_ref())?).collect();
+        // The turns given up because the channel was lowered below them:
+        // what they read may not flow into it, and nobody released it (issue
+        // 141), so the model is given which tools they called and nothing
+        // else (issue 258).
+        let lowered: HashMap<TurnId, &Classification> = path.iter()
+            .filter_map(|(node, _)| match &node.entry {
+                TranscriptEntry::TurnGivenUp { turn_id, reason: GivenUpReason::Lowered { channel }, .. } => Some((*turn_id, channel)),
+                _ => None,
+            })
+            .collect();
+        let entries = path.into_iter().map(|(node, message)| {
             let own = message.as_ref().is_some_and(|m| m.turn_id == Some(turn));
+            let message = message.and_then(|m| match m.turn_id.and_then(|t| lowered.get(&t)) {
+                Some(channel) => m.names_only(channel),
+                None => Some(m),
+            });
             (node, message, own)
         });
         let items = self.assemble(&reference.prompts, &reference.profile, agent, entries)?;
@@ -472,10 +489,13 @@ impl<'a> ContextResolver<'a> {
 
         let mut items = after_entry(None)?;
         for (node, message, in_turn) in entries {
-            // The record of a turn given up is no message; a part may still
-            // have been placed after it.
+            // The end of a turn is no message; one given up is told where it
+            // stands. A part may have been placed after either.
             if let Some(message) = message {
                 items.push(ContextItem::Conversation { message: profile.given(message, agent, in_turn) });
+            }
+            if let TranscriptEntry::TurnGivenUp { turn_id, reason, at } = &node.entry {
+                items.push(ContextItem::Conversation { message: profile.given(given_up_notice(*turn_id, reason, *at), agent, false) });
             }
             items.extend(after_entry(Some(node.digest))?);
         }
@@ -483,6 +503,29 @@ impl<'a> ContextResolver<'a> {
         // Every part was placed, none after what is not there.
         let placed = items.iter().filter(|item| matches!(item, ContextItem::Prompt { .. })).count();
         (placed == prompts.len()).then_some(items)
+    }
+}
+
+/// What the model is told of the turn `turn`, given up at `at` for `reason`
+/// (issue 258), where its end stands: why, and that what its tools did stays
+/// done. A fixed text of the runtime's, which says nothing of the
+/// conversation; its id is the turn's, so that it is the same each time it
+/// is resolved.
+fn given_up_notice(turn: TurnId, reason: &GivenUpReason, at: DateTime<Utc>) -> Message {
+    let withheld = match reason {
+        GivenUpReason::Lowered { .. } => " What it read and said is withheld; only which tools it called is given.",
+        GivenUpReason::Failed { .. } | GivenUpReason::Stopped | GivenUpReason::Retried => "",
+    };
+    Message {
+        id: MessageId(turn.0),
+        timestamp: at,
+        role: MessageRole::System,
+        content: Some(format!(
+            "Your previous turn was given up before it was complete, because {}.{withheld} What its tool calls did stays done: do not repeat them unless that is what is wanted.",
+            reason.cause())),
+        internal: true,
+        turn_id: Some(turn),
+        ..Message::new(Classification::PUBLIC)
     }
 }
 
@@ -663,7 +706,7 @@ mod tests {
 
     #[test]
     fn usage_sums_the_agent_s_own_calls_on_every_branch_and_in_its_turn() {
-        use crate::transcript::{GivenUp, GivenUpReason};
+        use crate::turn::GivenUpReason;
         let agent = ActorId::Agent(AgentId::new());
         let call = |sender: ActorId, prompt: u64, completion: u64, size: Option<u64>| Message {
             sender_id: sender,
@@ -677,11 +720,12 @@ mod tests {
 
         state.transcript.push(call(agent, 100, 10, Some(4096)));
         state.transcript.push(call(ActorId::Agent(AgentId::new()), 5000, 500, Some(8192)));
-        let before_lost = state.transcript.digest();
+        let before_given = state.transcript.digest();
         state.transcript.push(call(agent, 200, 20, Some(4096)));
-        let lost = state.transcript.digest().unwrap();
-        state.transcript.move_head(before_lost.as_ref());
-        state.transcript.give_up(lost, GivenUp { reason: GivenUpReason::Stopped, at: chrono::Utc::now(), turn_id: TurnId::new() });
+        state.transcript.end_turn(TranscriptEntry::TurnGivenUp { turn_id: TurnId::new(), reason: GivenUpReason::Stopped, at: chrono::Utc::now() });
+        // A branch no longer active - as an external agent's earlier calls
+        // are (`start_anew`) - counts as well.
+        state.transcript.move_head(before_given.as_ref());
         begin(&mut state, ModelProfile::default());
         state.turn.as_mut().unwrap().push(call(agent, 300, 30, None));
 

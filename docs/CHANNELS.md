@@ -324,10 +324,11 @@ announced and every message of the turn carries).
     older message never ends the answer under way, it waits for it like everything the agent hears.
 *   **The agent**, its turn under way asked for again, ends the step under way at once - the model
     call is dropped, a running tool interrupted, a wait for an approval ended, as on a cancel - and
-    gives the turn up (`GivenUpReason::Retried`, issue 145): its messages stay on a branch no longer
-    active, its calls that ran are told to its model on the active path, its approval requests are
-    withdrawn. Nothing of it reached the channel's history or another agent, which hear an answer
-    only with its `FullResponseGenerated`, so nothing has to be taken back. A cancel asked before
+    gives the turn up (`GivenUpReason::Retried`, issue 145): its messages stay in its transcript
+    where they were said, followed by why it ended (issue 258), so its model sees the calls that
+    ran; its approval requests are withdrawn. Nothing of it reached the channel's history or
+    another agent, which hear an answer only with its `FullResponseGenerated`, so nothing has to be
+    taken back. A cancel asked before
     wins: the turn is taken over instead.
 *   **The agent** takes requests in between turns, with what it hears (`actor::intake::take_in`):
     *   the request of the turn it gave up for it is accepted, whatever came with it - its answer is

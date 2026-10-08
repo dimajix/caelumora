@@ -118,8 +118,9 @@ turn's `CancellationToken`, which a cancel and a stop cancel; then the executor'
 it the tool's - is dropped wherever it stands, the call is answered as `interrupted`, and the agent
 starts no further call of the step. A tool that is done when the token is cancelled keeps its
 result. Dropping a tool does not undo what it did ([20](../issues/20-transactional-effects.md)):
-the call keeps when it started, so that it counts as having run - a turn given up tells the agent
-of it - and the model is told to check its effect before calling it again.
+the call keeps when it started, so that it counts as having run - a turn given up keeps the call
+and its result where they were said (issue 258) - and the model is told to check its effect
+before calling it again.
 
 Dropping a future ends it: none of the tool's code runs after the `await` it stood at, and what the
 future holds - timers, sockets, open requests - is released. That is all the stopping a tool gets;

@@ -1,19 +1,18 @@
 //! How a turn ends: taken over when it completes (`Turn::commit`), or
-//! given up when it fails or is stopped (`Turn::give_up`), which keeps
-//! its messages as a branch of the transcript that is no longer active
-//! (issue 145). Both use the turn up and return what is still needed of it:
-//! the contexts its last events are sent in (`Answering`) and the tool calls
-//! it abandoned.
+//! given up when it fails or is stopped (`Turn::give_up`, issue 145). Either
+//! way its messages stay where they were said, followed by its end (issue
+//! 258). Both use the turn up and return what is still needed of it: the
+//! contexts its last events are sent in (`Answering`) and the tool calls it
+//! abandoned.
 
 use super::Turn;
 use crate::actor::Answering;
 use crate::agent::turn::tool_calls::ToolCalls;
 use crate::transport::EventSender;
 use caelumora_model::turn::TurnState;
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::message::{executed_calls, Message};
-use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState};
-use caelumora_model::transcript::GivenUpReason;
+use caelumora_model::message::Message;
+use caelumora_model::tool::ToolCallState;
+use caelumora_model::turn::GivenUpReason;
 use tracing::warn;
 
 /// What is still needed of a turn once it is taken over (`commit`).
@@ -31,40 +30,6 @@ pub(crate) struct CommittedTurn {
     /// executed (`Turn::abandon_tool_calls`, issue 148): their approval
     /// requests are to be withdrawn.
     pub(crate) abandoned_calls: Vec<ToolCallState>,
-}
-
-/// Why a turn was given up, as the agent is told: "… because it failed".
-fn because(reason: &GivenUpReason) -> &'static str {
-    match reason {
-        GivenUpReason::Failed { .. } => "it failed",
-        GivenUpReason::Lowered { .. } => "the channel's classification was lowered",
-        GivenUpReason::Stopped => "you were stopped",
-        GivenUpReason::Retried => "your answer was asked for again",
-    }
-}
-
-/// What the agent is told of the calls that ran in a turn given up
-/// (`executed`), and why it was given up: with arguments and results
-/// `in_full`, else only which tools ran - the turn does no longer flow into
-/// the channel, whose classification was lowered meanwhile (issue 141), so
-/// what it saw may not either.
-fn told_of_executed(reason: &GivenUpReason, executed: &[(Option<&ToolCall>, &ToolCallResult)], in_full: bool) -> String {
-    let because = because(reason);
-    let calls: Vec<String> = executed.iter().map(|(call, result)| match in_full {
-        true => {
-            let arguments = call.map(|c| c.arguments.to_string()).unwrap_or_default();
-            let status = serde_json::to_string(&result.status).unwrap_or_default();
-            format!("- {}({}) -> {}: {}", result.tool_name, arguments, status.trim_matches('"'), result.content)
-        }
-        false => format!("- {}", result.tool_name),
-    }).collect();
-    let (what, hidden) = match in_full {
-        true => ("these tool calls", ""),
-        false => ("calls of these tools", "Their arguments and results cannot be shown here: the channel's classification was lowered since. "),
-    };
-    format!(
-        "Your previous turn was given up before it was complete, because {because}. Its messages are gone, but {what} had already been executed, and their effects remain:\n{}\n{hidden}Do not repeat them unless that is what is wanted.",
-        calls.join("\n"))
 }
 
 impl Turn<'_> {
@@ -92,8 +57,9 @@ impl Turn<'_> {
         let turn = self.agent_channel_state.turn.take().unwrap_or_default();
         // Every part is used up exactly once.
         let final_messages = turn.messages().filter(|m| !m.internal).cloned().collect();
+        let turn_id = turn.work.turn_id;
         let TurnState { entries, memory, notes, private_notes, .. } = turn;
-        let channel_state_changed = self.agent_channel_state.record_turn(entries, notes, private_notes);
+        let channel_state_changed = self.agent_channel_state.record_turn(turn_id, entries, notes, private_notes);
         if let Err(e) = self.agent_state.apply(memory, self.agent_channel_state.history.last_message_id()).await {
             warn!("Agent {}: the changes of its turn to its own state are lost: {:#}", self.agent_id, e);
         }
@@ -101,44 +67,26 @@ impl Turn<'_> {
     }
 
     /// Gives the turn up after it failed or was stopped, for `reason`
-    /// (issue 145): its messages go into the transcript and the history as
-    /// they would when taken over, each with what it was produced from, but
-    /// as a branch that is no longer active - both heads go back to where
-    /// the turn began, and the transcript records the turn as given up,
-    /// naming the branch. Nothing it staged is applied.
+    /// (issues 145, 258): its messages go into the transcript and the
+    /// history as they would when taken over, each with what it was
+    /// produced from, followed by its end, `TurnGivenUp` - what it said is
+    /// not unsaid. Nothing it staged is applied. A step whose calls do not
+    /// all have their result yet is ended first (`abandon_tool_calls`).
     ///
-    /// What its tools did stays done. If any of its calls ran, the agent is
-    /// told on the active branch, in a message of the runtime in its
-    /// transcript: in full, classified as the turn's label (issue 168) - or,
-    /// with `names_only`, only which tools ran, classified so. A step whose
-    /// calls do not all have their result yet is ended first
-    /// (`abandon_tool_calls`), so that those that ran are told too.
+    /// What its tools did stays done, and its calls stand in its messages;
+    /// the model is told why the turn ended where its end stands, and of a
+    /// turn given up as `Lowered` is given only which tools it called
+    /// (`ContextResolver`).
     ///
     /// Returns what its last events are sent with, and the calls it
     /// abandoned.
-    pub(crate) async fn give_up(mut self, reason: GivenUpReason, names_only: Option<Classification>, output: &dyn EventSender) -> (Answering, Vec<ToolCallState>) {
-        let abandoned_calls = self.abandon_tool_calls(because(&reason), output).await;
+    pub(crate) async fn give_up(mut self, reason: GivenUpReason, output: &dyn EventSender) -> (Answering, Vec<ToolCallState>) {
+        let abandoned_calls = self.abandon_tool_calls(reason.cause(), output).await;
         let answering = self.answering();
         let turn = self.agent_channel_state.turn.take().unwrap_or_default();
-        let label = turn.work.label();
         let turn_id = turn.work.turn_id;
         let TurnState { entries, .. } = turn;
-        let messages: Vec<&Message> = entries.iter().filter_map(|e| e.node.entry.message()).collect();
-        let executed = executed_calls(&messages);
-        // The record of the turn on the active branch: its own, like the
-        // messages it names.
-        let told = (!executed.is_empty()).then(|| Message {
-            id: caelumora_model::message::MessageId::new(),
-            content: Some(told_of_executed(&reason, &executed, names_only.is_none())),
-            internal: true,
-            turn_id: Some(turn_id),
-            ..Message::new(names_only.unwrap_or(label))
-        });
         self.agent_channel_state.give_up_turn(turn_id, entries, reason);
-
-        if let Some(message) = told {
-            self.agent_channel_state.transcript.push(message);
-        }
         (answering, abandoned_calls)
     }
 
@@ -174,6 +122,8 @@ mod tests {
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::message::MessageId;
     use caelumora_model::message::MessageRole;
+    use caelumora_model::confidentiality::Classification;
+    use caelumora_model::tool::{ToolCall, ToolCallResult};
     use crate::transport::Discard;
 
     /// A turn begun on `state`, whose model called `tool` with `arguments`;
@@ -200,44 +150,49 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_turn_given_up_stays_as_a_branch_and_nothing_it_staged_is_applied() {
+    async fn a_turn_given_up_keeps_what_it_said_and_nothing_it_staged_is_applied() {
         let mut state = a_state_with("mail bob");
-        let (transcript, history) = (state.transcript.digest(), state.history.digest());
         let turn = a_turn_that_called(&mut state, "send_mail", false);
-        turn.give_up(GivenUpReason::Stopped, None, &Discard).await;
+        turn.give_up(GivenUpReason::Stopped, &Discard).await;
 
         assert!(state.turn.is_none(), "the turn is over");
-        assert_eq!(state.history.digest(), history, "the history is where the turn began");
-        assert_ne!(state.transcript.digest(), transcript, "the transcript records the turn given up");
-        assert_eq!(state.transcript.entries().len(), 2, "after what was there: nothing ran, so nothing is told");
-        assert_eq!(state.transcript.messages().len(), 1, "and the model is given what was there");
+        assert_eq!(state.transcript.messages().len(), 3, "what it said is not unsaid (issue 258)");
+        assert_eq!(state.history.messages().len(), 3, "in the history as well");
+        assert_eq!(state.transcript.all_entries().count(), 4, "followed by its end, and nothing branches");
         let turns = state.transcript.given_up_turns();
         assert_eq!(turns.len(), 1);
-        assert_eq!((turns[0].given_up.reason.clone(), turns[0].messages.len()), (GivenUpReason::Stopped, 2));
-        assert_eq!(state.history.all_entries().len(), 3, "its messages are in the history too, on their branch");
+        assert_eq!((turns[0].reason.clone(), turns[0].messages.len()), (GivenUpReason::Stopped, 2));
         assert!(state.notes.current().is_empty(), "the note it staged is not taken over");
     }
 
+    /// What the model of the next turn begun on `state` is given.
+    fn given_next(state: &mut AgentChannelState) -> Vec<Message> {
+        let turn = Turn::begun(AgentId::default(), String::new(), state, AgentStateHandle::detached());
+        turn.full_context().expect("resolved").0
+    }
+
     #[tokio::test]
-    async fn what_ran_in_a_turn_given_up_is_told_in_full_or_by_name() {
+    async fn the_model_is_told_why_a_turn_was_given_up_and_of_a_lowered_one_only_which_tools_it_called() {
         let mut state = a_state_with("mail bob");
         let turn = a_turn_that_called(&mut state, "send_mail", true);
-        let turn_id = turn.turn_id();
-        turn.give_up(GivenUpReason::Failed { message: "boom".to_string() }, None, &Discard).await;
-        let told = state.transcript.messages().pop().unwrap();
-        assert_eq!(told.turn_id, Some(turn_id), "the record of the turn it tells of");
-        let text = told.content.unwrap();
-        assert!(text.contains("send_mail") && text.contains("bob") && text.contains("sent"), "{text}");
-        assert_eq!(told.classification, Classification::CHANNEL_DEFAULT, "as the turn");
+        turn.give_up(GivenUpReason::Failed { message: "boom".to_string() }, &Discard).await;
+        let given = given_next(&mut state);
+        assert_eq!(given[1].tool_calls[0].arguments, serde_json::json!({ "to": "bob" }), "its call in full");
+        assert_eq!(given[2].tool_results[0].content, "sent");
+        let told = given.last().and_then(|m| m.content.clone()).unwrap_or_default();
+        assert!(told.contains("because it failed") && !told.contains("boom"), "where its end stands, without what its users were told: {told}");
 
         let mut state = a_state_with("mail bob");
         let lowered = Classification::general(caelumora_model::confidentiality::Confidentiality::Public);
         let turn = a_turn_that_called(&mut state, "send_mail", true);
-        turn.give_up(GivenUpReason::Stopped, Some(lowered.clone()), &Discard).await;
-        let told = state.transcript.messages().pop().unwrap();
-        let text = told.content.unwrap();
-        assert!(text.contains("send_mail") && !text.contains("bob") && !text.contains("sent"), "{text}");
-        assert_eq!(told.classification, lowered, "as the channel");
+        turn.give_up(GivenUpReason::Lowered { channel: lowered.clone() }, &Discard).await;
+        let given = given_next(&mut state);
+        assert_eq!((given[1].tool_calls[0].function_name.as_str(), &given[1].tool_calls[0].arguments), ("send_mail", &serde_json::Value::Null), "only which tool it called");
+        assert!(given[2].tool_results[0].content.is_empty(), "nothing of what it returned");
+        assert_eq!(given[1].classification, lowered, "as the channel is now");
+        let told = given.last().and_then(|m| m.content.clone()).unwrap_or_default();
+        assert!(told.contains("withheld"), "{told}");
+        assert_eq!(state.transcript.messages()[1].tool_calls[0].arguments, serde_json::json!({ "to": "bob" }), "the record keeps it all");
     }
 
     /// A turn begun on `state`, whose model called `send_mail` and `delete`
@@ -284,26 +239,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_turn_given_up_with_an_open_step_tells_what_ran_in_it() {
+    async fn a_turn_given_up_with_an_open_step_answers_it() {
         use caelumora_model::tool::ToolResultStatus;
         let mut state = a_state_with("mail bob, then delete");
         let turn = a_turn_with_an_open_step(&mut state);
-        turn.give_up(GivenUpReason::Failed { message: "boom".to_string() }, None, &Discard).await;
+        turn.give_up(GivenUpReason::Failed { message: "boom".to_string() }, &Discard).await;
 
-        let told = state.transcript.messages().pop().unwrap().content.unwrap();
-        assert!(told.contains("send_mail") && !told.contains("delete"), "only what ran: {told}");
         let turns = state.transcript.given_up_turns();
         let answered: Vec<_> = turns[0].messages.last().unwrap().tool_results.iter().map(|r| r.status).collect();
-        assert_eq!(answered, [ToolResultStatus::Ok, ToolResultStatus::NotExecuted], "the branch holds no call without a result");
+        assert_eq!(answered, [ToolResultStatus::Ok, ToolResultStatus::NotExecuted], "no call is left without a result");
     }
 
     #[tokio::test]
-    async fn a_turn_given_up_before_it_said_anything_leaves_nothing() {
+    async fn a_turn_given_up_before_it_said_anything_leaves_its_end() {
         let mut state = a_state_with("hello");
         let turn = Turn::begun(AgentId::default(), String::new(), &mut state, crate::agent::state::AgentStateHandle::detached());
-        turn.give_up(GivenUpReason::Stopped, None, &Discard).await;
-        assert!(state.transcript.given_up_turns().is_empty());
-        assert_eq!(state.transcript.entries().len(), 1);
+        turn.give_up(GivenUpReason::Stopped, &Discard).await;
+        assert_eq!(state.transcript.given_up_turns().len(), 1, "one rule for every turn (issue 258)");
+        assert!(state.transcript.given_up_turns()[0].messages.is_empty());
+        assert_eq!(state.transcript.entries().len(), 2);
     }
 
     #[tokio::test]

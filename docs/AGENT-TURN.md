@@ -114,9 +114,10 @@ model is given, `plan.rs` moves the plan on, `tool_calls.rs` keeps the books of 
 
 What a turn does to the agent's state when it begins and ends is a rule of that state, kept with
 it in the model: `AgentChannelState::begin_turn`, `record_turn` - its messages into transcript and
-history, its notes - and `give_up_turn`, which keeps its messages as a branch no longer active. The
-working state itself, `TurnState`, is in `caelumora_model::turn`. `Turn` calls these and does what
-runs around them: abandoning tool calls, applying the agent's memory, telling the agent what ran.
+history, its notes, its end - and `give_up_turn`, which keeps its messages where they were said and
+records why the turn ended. The working state itself, `TurnState`, is in `caelumora_model::turn`.
+`Turn` calls these and does what runs around them: abandoning tool calls, applying the agent's
+memory.
 
 The working state of a turn is one value, `AgentChannelState::turn: Option<TurnState>`, which is
 `None` between turns (issue 85). It holds what the turn is and what it has done so far:
@@ -170,8 +171,9 @@ reads nothing.
     meanwhile. All four are stored with the channel state, so that a turn resumed after a restart is
     the same turn.
 *   **`Turn::commit`** takes a completed turn over:
-    *   it appends the agent's messages to its transcript, and the non-internal ones to its history,
-        each with a `ContextRef` (see below);
+    *   it appends the agent's messages to its transcript and its history - internal steps too
+        (issue 258) - each with a `ContextRef` (see below), followed by the turn's end,
+        `TurnFinished`, in both;
     *   it applies the changes staged to the agent's state in the channel, and those staged to its
         own state;
     *   it clears the working state, so that none of it is stored with the channel state.
@@ -180,32 +182,26 @@ reads nothing.
     channel state changed, the contexts the turn's last events are sent in, and the tool calls it
     abandoned.
 *   **`Turn::give_up`** gives up a turn that failed, was stopped or asked for again (issues 145,
-    235). No end of a turn loses its messages:
-    *   its messages are appended to the transcript and the history as by `commit`, each with
-        its `ContextRef`, and both heads go back to where the turn began: the messages stay as a
-        branch no longer active (see [The transcript as a chain](#the-transcript-as-a-chain)). So
-        the agent's model does not see them, nor does the channel, while what they were produced
-        from can still be asked for;
-    *   the transcript records the turn as given up, as an entry after the head went back
-        (`TranscriptEntry::GivenUp`, issue 197): the branch it ends, the reason (failed, with what
-        its users were told; lowered, with the channel's new classification; stopped; retried), the
-        time and which turn it was (`GivenUp::turn_id`), whose messages at the end of the branch
-        are the turn's (issue 241). The model is given messages only; the digest
-        covers the record, so the transcript's digest changes when a turn is given up, though the
-        model saw nothing new - a digest names a prefix of the record, not only what the model was
-        given;
+    235). Nothing it said is unsaid (issue 258):
+    *   its messages are appended to the transcript and the history as by `commit`, each with its
+        `ContextRef`, where they were said - on the active path;
+    *   its end follows in both, `TurnGivenUp` (issue 197): the reason (failed, with what its users
+        were told; lowered, with the channel's new classification; stopped; retried), the time and
+        which turn it was, whose messages before it carry its id (issue 241). A turn that said
+        nothing leaves its end too. The digest covers the turn and the reason, not the time;
     *   nothing it staged is applied - no note, nothing remembered;
-    *   what its tools did stays done. If a call ran (its result has a start), the agent is told on
-        the active branch, in an internal system message of the runtime in its transcript - with
-        arguments and results, classified as the turn's label, while the turn may still flow into
-        the channel (`ActionType::Publish`); only the names of the tools, classified as the channel,
-        once the channel was lowered below the turn (issue 141) or is gone. A call that did not
-        run - denied, or given up while waiting for approval - is not told. A step whose calls do
-        not all have their result is ended first, as on a cancel: those without one are answered as
-        not executed on the dead branch, and those that ran are told (issue 148).
+    *   what its tools did stays done, and its calls and their results stand in its messages. A
+        step whose calls do not all have their result is ended first, as on a cancel: those without
+        one are answered as not executed, and that answer is said (issue 148). The model is told
+        why the turn ended where its end stands - the `ContextResolver` words it, a fixed text that
+        says nothing of the conversation. A turn that no longer flows into its channel - the
+        channel was lowered below it (issue 141) - is recorded as `Lowered` whatever ended it, and
+        of it the model is given only which tools it called and how they ended
+        (`Message::names_only`), classified as the channel is now: what it read and said after the
+        lowering, or in a step it did not complete, was never released.
 
-    A turn that produced no message leaves nothing: there is nothing to keep. `cancel` does not give
-    a turn up; it takes it over - unless the turn no longer flows into its channel. A turn whose
+    `cancel` does not give a turn up; it takes it over - unless the turn no longer flows into its
+    channel. A turn whose
     answer is asked for again while under way is given up (`Retried`, issue 235): the run loop
     takes `Interrupt::Retry` after the step it cut short, as it takes a stop, gives the turn up and
     goes idle, and the request on its way begins the next turn. Its approval requests are withdrawn
@@ -285,13 +281,16 @@ on its chain ([197](../issues/197-one-chain-one-model-of-change.md)); what stand
 the entries:
 
 *   `Transcript` is `Chain<TranscriptEntry>`: a `Message` the model was given or produced, a
-    message `Modified`, `Revoked` or `Reclassified`, or the record of a turn `GivenUp`. `messages`
-    is the messages of the active path as they stand, what the model is given.
+    message `Modified`, `Revoked` or `Reclassified`, or the end of a turn, `TurnFinished` or
+    `TurnGivenUp` (issue 258). `messages` is the messages of the active path as they stand, what
+    the model is given.
 *   `MessageHistory` is `Chain<HistoryEntry>`: a message `Said`, with what it was produced from
     for the agent's own, a message `Reclassified`, `Modified` or `Revoked`, the channel's
-    classification `Fitted`. `messages` and `message(id)` fold every branch in the order things
-    happened into the messages as they stand, so a reclassification, a modification or a revocation
-    applies to a message on any branch, as it did in the channel.
+    classification `Fitted`, the end of a turn, `TurnFinished` or `TurnGivenUp`. `messages` and
+    `message(id)` fold every branch in the order things happened into the messages as they stand,
+    so a reclassification, a modification or a revocation applies to a message on any branch, as it
+    did in the channel. `items` reads the active path as one list: each message said as it stands,
+    and how the turns ended - what a reader of the history is shown (issue 258).
 *   Notes and memory are `Chain<LedgerEntry<K>>`, a ledger of changes to numbered items (see
     [MEMORY.md](MEMORY.md)).
 
@@ -310,10 +309,11 @@ A chain is a tree with a head ([08](../issues/08-retry-and-edit-past-answers.md)
     stand with every reclassification recorded since, the next number of a note.
 *   `prefix` finds an entry on any branch, so a `ContextRef` into a branch no longer active still
     resolves.
-*   A branch no longer active is not always one given up. The transcript of an external agent
-    starts anew with every call (`Transcript::start_anew`, issue 205): the remote agent keeps what
-    it was given, so the active path holds only what it is given next, and every call before is a
-    branch from the root - what did happen, one call each.
+*   A branch no longer active is what an external agent's transcript leaves: it starts anew with
+    every call (`Transcript::start_anew`, issue 205), since the remote agent keeps what it was
+    given, so the active path holds only what it is given next, and every call before is a branch
+    from the root - what did happen, one call each. A turn given up no longer branches (issue
+    258).
 *   `children` are the siblings among which a branch is chosen, and `leaf_from` finds where a
     switch to a branch goes on: at the newest child, unless the entry remembers another as last on
     the active path - which it does only once the head went back to an older one, so that an entry
@@ -324,9 +324,9 @@ A chain is a tree with a head ([08](../issues/08-retry-and-edit-past-answers.md)
     and the chain keeps what changed since it was last stored (`changes`, `mark_stored`, `apply`;
     [193](../issues/193-external-state-rewritten-whole.md)).
 
-Giving up a turn ([145](../issues/145-ended-turns-leave-a-record.md), see [Beginning and ending a
-turn](#beginning-and-ending-a-turn)) moves the heads of the transcript and the history back.
-Changing a message does not: it is recorded after it (see below).
+Neither ending a turn ([258](../issues/258-what-was-said-is-lost.md), see [Beginning and ending a
+turn](#beginning-and-ending-a-turn)) nor changing a message moves a head: each is recorded after
+what it is about (see below).
 
 ### Changes to a message
 

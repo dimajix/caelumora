@@ -25,7 +25,7 @@ use crate::controller::{AgentController, ChannelController};
 use caelumora_model::approval::{ApprovalId, ApprovalStatus};
 use caelumora_model::confidentiality::{Classification, Visibility};
 use caelumora_model::message::{Message, MessageEvent};
-use caelumora_model::transcript::GivenUpReason;
+use caelumora_model::turn::GivenUpReason;
 use caelumora_model::plan::PlanProgress;
 use caelumora_model::security::{AccessQuestions, SecurityContext};
 use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState, ToolCallStatus, ToolResultStatus, ToolSet};
@@ -406,10 +406,10 @@ impl AgentActor {
     }
 
     /// Gives the turn under way in `state` up for `reason` (issue 145) -
-    /// failed, lowered, stopped, asked for again: its messages stay as a
-    /// branch no longer active, and the calls of its tools that ran are told
-    /// on the active branch, in full while the turn still flows into the
-    /// channel, else by name, classified as the channel is now (issue 141).
+    /// failed, lowered, stopped, asked for again: its messages stay where
+    /// they were said, followed by its end (issue 258) - recorded as lowered
+    /// once the turn no longer flows into the channel (issue 141), whatever
+    /// ended it, so that its model is given only which tools it called.
     /// The approval requests it still waited for are withdrawn (issue 148) -
     /// unless the agent was stopped: it left the channel, which takes
     /// nothing from it any longer, and the approvers discard its requests as
@@ -419,10 +419,13 @@ impl AgentActor {
     /// is nothing to give up.
     async fn give_up(&self, state: &mut AgentChannelState, reason: GivenUpReason, output: &dyn EventSender) {
         let Some(under_way) = state.turn.as_ref() else { return };
-        let names_only = match self.turn_flow(under_way).await {
-            TurnFlow::Flows => None,
-            TurnFlow::Lowered(channel) => Some(channel),
-            TurnFlow::NoChannel => Some(under_way.work.classification.clone()),
+        // A turn that no longer flows into its channel is recorded as
+        // lowered, whatever ended it: its model is then given only which
+        // tools it called (issue 258). What its users are told follows from
+        // what ended it.
+        let recorded = match self.turn_flow(under_way).await {
+            TurnFlow::Lowered(channel) => GivenUpReason::Lowered { channel },
+            TurnFlow::Flows | TurnFlow::NoChannel => reason.clone(),
         };
         let agent_name = self.agent_controller.name();
         let told = match &reason {
@@ -432,7 +435,7 @@ impl AgentActor {
         };
         let stays = reason != GivenUpReason::Stopped;
         let Some(turn) = self.turn(state) else { return };
-        let (answering, abandoned_calls) = turn.give_up(reason, names_only, output).await;
+        let (answering, abandoned_calls) = turn.give_up(recorded, output).await;
         if !stays {
             return;
         }
