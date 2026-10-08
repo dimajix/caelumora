@@ -107,7 +107,7 @@ names are - and the store answers `StoreError::NameTaken` (REST `409 name_taken`
 name, but no unique one.
 
 *   The check reads every one of the kind that is not deleted, also those the caller may not read
-    (`store_impl::access::name_free`; see [SECURITY.md](SECURITY.md#how-stores-check)). What is
+    (`store::access::name_free`; see [SECURITY.md](SECURITY.md#how-stores-check)). What is
     deleted holds no name: restoring it is checked as creating it is.
 *   It is made in the same step as the write. The memory store checks inside its map's lock; the
     JSON store holds a lock per named kind through every write of that kind - within its process,
@@ -166,7 +166,7 @@ component in the `ComponentStore` is not marked: it is reached only through the 
 templates that refer to it, and hidden with them; it is deleted for good.
 
 A document that carries the mark is not there for the five operations, before anything is asked
-(`store_impl::access`): it is not read, not listed, not found by name, not changed and not deleted
+(`store::access`): it is not read, not listed, not found by name, not changed and not deleted
 again - also not by the system, so that no caller has to remember to leave it out. Its id stays
 taken: creating it again is a `Conflict`, and so seeding does not bring back deleted demo data.
 Nothing created or changed may carry the mark (`Validation`): only deleting is to set it.

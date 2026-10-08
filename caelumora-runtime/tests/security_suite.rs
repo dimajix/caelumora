@@ -33,7 +33,7 @@ use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{ActionType, OwnershipSecurityManager, Reclassified, SecurityAttributes, SecurityContext, SecurityManager};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::store::{EntityStore, StateStore, StoreError};
-use caelumora_model::store_impl::memory::MemoryStore;
+use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId, TemplateError, WorkspaceTemplate};
 use caelumora_model::user::{User, UserId, UserProfile};
 use caelumora_model::work::TurnId;
@@ -539,7 +539,7 @@ async fn the_owner_changes_and_ends_the_session() {
 // --- Messages ----------------------------------------------------------------
 
 /// What `watch` is shown next of the kind `wanted`.
-async fn shown(watch: &mut caelumora_runtime::actor_impl::user::ChannelWatch, wanted: &str) -> caelumora_model::actor::ActorEvent {
+async fn shown(watch: &mut caelumora_runtime::actor::user::ChannelWatch, wanted: &str) -> caelumora_model::actor::ActorEvent {
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
             let envelope = watch.events.recv().await.expect("the channel runs");
@@ -852,7 +852,7 @@ async fn with_a_call_to_approve() -> (World, Arc<SessionLoop>, Arc<caelumora_run
             ComponentDescriptor::new("model", "once"),
             ComponentDescriptor {
                 params: serde_json::json!({ "requires_approval": true }),
-                ..ComponentDescriptor::new("sleep", caelumora_runtime::tool_impl::sleep_tool::SLEEP_TOOL_KIND)
+                ..ComponentDescriptor::new("sleep", caelumora_runtime::tool::sleep_tool::SLEEP_TOOL_KIND)
             },
         ] },
         ..world.personality("asking", None, &[]).await
@@ -905,7 +905,7 @@ impl caelumora_runtime::tool::ToolProvider for AskingOwner {
 /// its owner, before it runs - once it is asked, in a session alice shares
 /// with bob and he opened; with the session's main channel, the questions
 /// as alice is shown them, and what bob was shown since before she asked.
-async fn with_a_call_asking(sensitive: bool) -> (World, Arc<SessionLoop>, Arc<caelumora_runtime::channel::ChannelLoop>, caelumora_model::question::QuestionRequest, caelumora_runtime::actor_impl::user::ChannelWatch) {
+async fn with_a_call_asking(sensitive: bool) -> (World, Arc<SessionLoop>, Arc<caelumora_runtime::channel::ChannelLoop>, caelumora_model::question::QuestionRequest, caelumora_runtime::actor::user::ChannelWatch) {
     use caelumora_model::message::{Message, MessageRole};
     use caelumora_model::tool::{ToolCall, ToolVisibility};
 
@@ -2089,7 +2089,7 @@ async fn asked_for_a_call_on_the_workspace(function: &str, arguments: serde_json
             ComponentDescriptor::new("model", "once"),
             ComponentDescriptor {
                 params: serde_json::json!({ "requires_approval": false }),
-                ..ComponentDescriptor::new("workspace", caelumora_runtime::tool_impl::terminal_tool::TERMINAL_TOOL_KIND)
+                ..ComponentDescriptor::new("workspace", caelumora_runtime::tool::terminal_tool::TERMINAL_TOOL_KIND)
             },
         ] },
         ..world.personality("working", None, &[]).await

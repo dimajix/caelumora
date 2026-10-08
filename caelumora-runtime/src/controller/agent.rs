@@ -114,7 +114,7 @@ mod tests {
     use caelumora_model::value::name::ScopedName;
     use caelumora_model::agent::{Personality, PersonalityId};
     use caelumora_model::scope::Scope;
-    use caelumora_model::store_impl::memory::MemoryStore;
+    use caelumora_model::store::memory::MemoryStore;
 
     #[tokio::test]
     async fn a_renamed_agent_is_stored_first() {

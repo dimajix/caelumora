@@ -1,16 +1,16 @@
 use caelumora_model::value::name::Name;
 use crate::actor::Actor;
-use crate::actor_impl::agent::AgentActor;
-use crate::actor_impl::approval::ApproverActor;
-use crate::actor_impl::external_agent::ExternalAgentActor;
-use crate::actor_impl::user::UserActor;
+use crate::actor::agent::AgentActor;
+use crate::actor::approval::ApproverActor;
+use crate::actor::external_agent::ExternalAgentActor;
+use crate::actor::user::UserActor;
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::moderator::Moderator;
 use crate::session::SessionError;
 use crate::recorder::Recorder;
 use crate::runtime::{ChannelRuntime, RuntimeManager};
 use crate::transport::{EventSender, TransportError};
-use crate::transport_impl::{FilteringEventSender, InMemoryEventReceiver, InMemoryEventSender, OriginEventSender};
+use crate::transport::{FilteringEventSender, InMemoryEventReceiver, InMemoryEventSender, OriginEventSender};
 use anyhow::{anyhow, Result};
 use arc_swap::ArcSwap;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, RetryTarget};
@@ -1416,14 +1416,14 @@ mod tests {
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::store::EntityStore;
     use crate::command::CommandExecutor;
-    use crate::command_impl::help_command::HelpCommandProvider;
-    use crate::command_impl::wakeup_command::WakeupCommandProvider;
+    use crate::command::help_command::HelpCommandProvider;
+    use crate::command::wakeup_command::WakeupCommandProvider;
     use caelumora_model::component::ComponentFailPolicy;
     use crate::runtime::RuntimeManager;
     use caelumora_model::command::default_commands;
     use caelumora_model::secret::SecretManager;
     use caelumora_model::security::{DummySecurityManager, SecurityAttributes, SecurityManager};
-    use caelumora_model::store_impl::memory::MemoryStore;
+    use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::user::User;
 
     /// Refuses everything, to see that a refusal reaches the caller.
@@ -1852,10 +1852,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_user_following_the_channel_is_told_when_a_chain_is_cut_off() {
-        use crate::moderator_impl::policy_moderator::PolicyModerator;
+        use crate::moderator::policy_moderator::PolicyModerator;
         use caelumora_model::approval::{ApprovalStrategy, ApproverId};
         let alice = user("alice");
-        let responders = ComponentImpl { id: "responders".to_string(), fail_policy: Default::default(), facet: Arc::new(crate::moderator_impl::broadcast_policy::BroadcastPolicy) as Arc<dyn crate::moderator_impl::ResponderPolicy> };
+        let responders = ComponentImpl { id: "responders".to_string(), fail_policy: Default::default(), facet: Arc::new(crate::moderator::broadcast_policy::BroadcastPolicy) as Arc<dyn crate::moderator::ResponderPolicy> };
         let moderator = Arc::new(PolicyModerator::new(responders, 1));
         let channel = channel_moderated_by(&[&alice], Arc::<PolicyModerator>::clone(&moderator)).await;
         let talker = Arc::new(SaysOnce(ActorId::Agent(caelumora_model::agent::AgentId::new())));
@@ -2672,7 +2672,7 @@ mod tests {
         let stop = vec![ToolCall { id: Some("1".to_string()), function_name: "stop".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() }];
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
             id: "stop".to_string(),
-            kind: crate::tool_impl::stop_tool::STOP_TOOL_KIND.to_string(),
+            kind: crate::tool::stop_tool::STOP_TOOL_KIND.to_string(),
             params: serde_json::Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
@@ -2709,7 +2709,7 @@ mod tests {
         };
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
             id: "stop".to_string(),
-            kind: crate::tool_impl::stop_tool::STOP_TOOL_KIND.to_string(),
+            kind: crate::tool::stop_tool::STOP_TOOL_KIND.to_string(),
             params: serde_json::Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
@@ -2743,7 +2743,7 @@ mod tests {
         };
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
             id: "stop".to_string(),
-            kind: crate::tool_impl::stop_tool::STOP_TOOL_KIND.to_string(),
+            kind: crate::tool::stop_tool::STOP_TOOL_KIND.to_string(),
             params: serde_json::Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
@@ -2939,7 +2939,7 @@ mod tests {
         };
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
             id: "calculator".to_string(),
-            kind: crate::tool_impl::calculator_tool::CALCULATOR_TOOL_KIND.to_string(),
+            kind: crate::tool::calculator_tool::CALCULATOR_TOOL_KIND.to_string(),
             params: serde_json::Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
@@ -3002,7 +3002,7 @@ mod tests {
         };
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
             id: "calculator".to_string(),
-            kind: crate::tool_impl::calculator_tool::CALCULATOR_TOOL_KIND.to_string(),
+            kind: crate::tool::calculator_tool::CALCULATOR_TOOL_KIND.to_string(),
             params: serde_json::Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
@@ -3056,7 +3056,7 @@ mod tests {
         };
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
             id: "calculator".to_string(),
-            kind: crate::tool_impl::calculator_tool::CALCULATOR_TOOL_KIND.to_string(),
+            kind: crate::tool::calculator_tool::CALCULATOR_TOOL_KIND.to_string(),
             params: serde_json::Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
@@ -3112,7 +3112,7 @@ mod tests {
         };
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
             id: "calculator".to_string(),
-            kind: crate::tool_impl::calculator_tool::CALCULATOR_TOOL_KIND.to_string(),
+            kind: crate::tool::calculator_tool::CALCULATOR_TOOL_KIND.to_string(),
             params: serde_json::Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
@@ -3252,7 +3252,7 @@ mod tests {
         };
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
             id: "sleep".to_string(),
-            kind: crate::tool_impl::sleep_tool::SLEEP_TOOL_KIND.to_string(),
+            kind: crate::tool::sleep_tool::SLEEP_TOOL_KIND.to_string(),
             params: serde_json::json!({ "requires_approval": true }),
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
@@ -3345,7 +3345,7 @@ mod tests {
         };
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
             id: "sleep".to_string(),
-            kind: crate::tool_impl::sleep_tool::SLEEP_TOOL_KIND.to_string(),
+            kind: crate::tool::sleep_tool::SLEEP_TOOL_KIND.to_string(),
             params: serde_json::json!({ "seconds": 60 }),
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
@@ -3971,7 +3971,7 @@ mod tests {
             ..Message::new(Classification::CHANNEL_DEFAULT)
         };
         let done = Message { role: MessageRole::Assistant, content: Some("Done.".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
-        let components = ComponentConfig { component_nodes: vec![ComponentDescriptor::new("ask", crate::tool_impl::ask_user_tool::ASK_USER_TOOL_KIND)] };
+        let components = ComponentConfig { component_nodes: vec![ComponentDescriptor::new("ask", crate::tool::ask_user_tool::ASK_USER_TOOL_KIND)] };
         let model = Scripted(std::sync::Mutex::new([ask("1", "@carol"), ask("2", "@alice"), done].into()));
         let Stuck { channel, context, agent, helper, mut events, running } = with_an_agent(Arc::new(model), components).await;
 

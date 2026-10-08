@@ -12,7 +12,7 @@ in a turn in [COMPONENTS.md](COMPONENTS.md); tools and approvals in
 to a turn.
 
 **Between turns** (`Idle`, `Sleeping`) the agent waits for the next event, and takes it in together
-with everything queued behind it - what came while it was busy - in order (`actor_impl::take_in`,
+with everything queued behind it - what came while it was busy - in order (`actor::intake::take_in`,
 issue 222), then commits once:
 
 *   **Perceive.** A `FullResponseGenerated` of another participant is appended to the agent's
@@ -25,8 +25,8 @@ issue 222), then commits once:
     messages; what passes is what the agent processes, and is appended to its transcript - whatever
     the personality configures (issue 196). A failing stage is logged; what was heard stays in the
     history and is not offered again. An external agent takes in what it hears the same way
-    (`actor_impl::perceive`, issue 206). No turn begins, and nothing is asked of the policy (issues
-    85, 90).
+    (`actor::intake::perceive`, issue 206). No turn begins, and nothing is asked of the policy
+    (issues 85, 90).
 *   **Begin.** The last `ResponseRequested` from the moderator among what was taken in begins one
     turn on its state (`AgentChannelState::begin_turn`, see below), announces `ResponseStarted`
     with the turn's id and has the agent's `ContextProvider` assemble the context. The agent goes
@@ -234,7 +234,7 @@ alone. When the agent is loaded again, the turn is resumed (issue 75):
 *   `Cancelling` ends the turn.
 *   `ExecutingTools` is the exception. A tool may have run without its result being stored, and
     running it again would repeat its effect (issue 20). So every call that was ready to run is
-    answered as *not executed* (`prepare_resume` in `actor_impl/agent.rs`), the tool message is
+    answered as *not executed* (`prepare_resume` in `actor/agent.rs`), the tool message is
     built from that, and the model decides again.
 
 A turn state stored without the turn's working state cannot be resumed; the agent starts `Idle`.
@@ -329,7 +329,7 @@ A message once said can be modified or taken back by its author
 ([234](../issues/234-modify-revoke-and-retry-messages.md)). Neither rewrites it: the change is an
 entry of its own after it - `Modified` with the message as it reads from now on, or `Revoked` - in
 every chain that holds the message (`modify` and `revoke` of `MessageHistory` and `Transcript`, both
-called where an agent takes a change in, `actor_impl::take_in`). A chain that does not hold the
+called where an agent takes a change in, `actor::intake::take_in`). A chain that does not hold the
 message records nothing, and so does one where the message as it stands cannot be changed so: taken
 back already, or modified by another sender or in another role.
 
@@ -410,7 +410,7 @@ and fixed in the turn (`TurnState::tools`, flat, issue 137) like its classificat
 - a resumed turn keeps them. The model is told of a tool only its name, description and parameters -
 the backend sends no more (`LLMClient::chat_completion`); whether its calls need approval, who sees
 them and how its results are classified stay with the runtime, which labels the model's answer
-(`label` in `actor_impl/agent.rs`) and puts its calls up for approval (`GuardedToolExecutor::admit`)
+(`label` in `actor/agent.rs`) and puts its calls up for approval (`GuardedToolExecutor::admit`)
 by the same `Tool`s. A tool that changes or disappears during a turn is offered as it is from the
 next turn on; a call of one that is gone fails as unknown.
 
@@ -697,7 +697,7 @@ typed by a participant, contained in a fetched web page or quoted by the model i
 the real token - a turn boundary the model cannot tell from one the runtime wrote, so that a message
 could open a fake system turn (issue 149). Which strings are such tokens is a property of the
 backend's tokenizer, not of the context, so the `ollama_client` defuses them, not the
-`ContextResolver` (`llm_impl/control_tokens.rs`):
+`ContextResolver` (`llm/control_tokens.rs`):
 
 *   **Which.** The model's tokens of type control (3) and user-defined (4) in `/api/show`
     (`verbose`); the latter are qwen3's `<think>` and `<tool_call>`, which Ollama tokenizes alike.

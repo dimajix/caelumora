@@ -144,7 +144,7 @@ mod tests {
     use caelumora_model::agent::Personality;
     use caelumora_model::scope::Scope;
     use caelumora_model::security::{ActionType, SecurityManager};
-    use caelumora_model::store_impl::memory::MemoryStore;
+    use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::template::{ParticipantTemplate, ScopeTemplate, SessionTemplateId, TemplateError};
     use caelumora_model::user::User;
     use std::sync::Arc;

@@ -1,7 +1,7 @@
 //! The built-in components that belong to no facet's own directory, one
 //! file per component kind (issue 52). Tools, commands, language models and
-//! moderators have directories of their own (`tool_impl`, `command_impl`,
-//! `llm_impl`, `moderator_impl`); a component that offers several facets -
+//! moderators have directories of their own (`tool`, `command`,
+//! `llm`, `moderator`); a component that offers several facets -
 //! tools and a prompt part, say - stays here. The facet traits live next to
 //! the code that uses them (`crate::tool`, `crate::command`,
 //! `crate::context`, `crate::message`).

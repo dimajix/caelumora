@@ -238,7 +238,7 @@ mod tests {
         use crate::session::SessionId;
         use crate::channel::ChannelId;
         use crate::store::{EntityStore, StoreError};
-        use crate::store_impl::memory::MemoryStore;
+        use crate::store::memory::MemoryStore;
         use std::sync::Arc;
 
         let store = MemoryStore::with_security_manager(Arc::new(OwnershipSecurityManager::new()));

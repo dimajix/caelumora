@@ -271,7 +271,7 @@ message, and what they said in reply stays.
     or without what it said (`Message::revoked`).
 *   **Everyone who heard it follows.** The moderator routes the change to every user and agent but
     its sender (`route_to_participants`) and asks nobody to respond. An agent of either kind takes
-    it in between turns, in order with what it hears (`actor_impl::take_in`): into its history if
+    it in between turns, in order with what it hears (`actor::intake::take_in`): into its history if
     that holds the message, into its transcript if the message is on its active path - a
     modification as it hears it, through its perceive processors; where nothing of it passes, the
     message is no longer given. A turn under way ends as it began; the next is given what stands.
@@ -329,7 +329,7 @@ announced and every message of the turn carries).
     withdrawn. Nothing of it reached the channel's history or another agent, which hear an answer
     only with its `FullResponseGenerated`, so nothing has to be taken back. A cancel asked before
     wins: the turn is taken over instead.
-*   **The agent** takes requests in between turns, with what it hears (`actor_impl::take_in`):
+*   **The agent** takes requests in between turns, with what it hears (`actor::intake::take_in`):
     *   the request of the turn it gave up for it is accepted, whatever came with it - its answer is
         gone already - and answered with `RetryAccepted`;
     *   a request of a turn it did not give up for it - a cancel came first, or the turn failed -
@@ -547,12 +547,12 @@ An **actor** is anything that sends and receives events in a channel.
     [SECURITY.md](SECURITY.md#operations-that-check-themselves)). What an agent's model saw is not
     asked of its actor but read through the views (see
     [AGENT-TURN.md](AGENT-TURN.md#asking-what-an-agent-saw)). The implementations are `AgentActor`,
-    `UserActor`, `ApproverActor` and `ExternalAgentActor` (`caelumora_runtime::actor_impl`).
+    `UserActor`, `ApproverActor` and `ExternalAgentActor` (`caelumora_runtime::actor`).
 *   **An actor's inbox** is an `EventReceiver` (`caelumora_runtime::transport`): `recv` waits for
     the next envelope, `recv_matching` for the next one of a kind - an agent waiting for approvals
     leaves the others queued - and `try_recv` takes what is queued already without waiting. `commit`
     acknowledges everything taken since the last one. Both kinds of agent take an envelope together
-    with everything queued behind it (`actor_impl::take_in`, issue 222): every message heard is
+    with everything queued behind it (`actor::intake::take_in`, issue 222): every message heard is
     taken in, in order, and only the last request is answered, once - see
     [AGENT-TURN.md](AGENT-TURN.md#the-cognitive-cycle).
 *   **Which actor runs an agent** is its personality's `kind` (issue 179): `internal` - the
@@ -691,7 +691,7 @@ The built-in moderator, `policy_moderator` (the default), routes the way every c
 *   a chain between agents ends at a limit (see below).
 
 Whom it asks when a message mentions no agent is its slot, the channel's `ResponderPolicy`, which it
-asks for when it is built (`caelumora-runtime/src/moderator_impl/`). The policy is told who wrote
+asks for when it is built (`caelumora-runtime/src/moderator/`). The policy is told who wrote
 the message and which agents could answer. A new way of choosing who answers is a new policy:
 
 | Policy | Who responds to a message without a mention |

@@ -173,7 +173,7 @@ mod tests {
     use super::*;
     use caelumora_model::value::text::Introduction;
     use caelumora_model::actor::ActorId;
-    use caelumora_model::store_impl::memory::MemoryStore;
+    use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::security::OwnershipSecurityManager;
     use std::sync::Mutex;
 

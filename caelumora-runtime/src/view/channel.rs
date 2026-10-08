@@ -4,7 +4,7 @@ use super::member::{member_state, AgentMember, MemberState};
 use super::{AgentContextView, SessionView, ViewError, ViewResult, Views, WorkspaceView};
 use crate::channel::{visible_part, ChannelLoop, VisibleHistory};
 use crate::moderator::Moderator;
-use crate::moderator_impl::ResponderPolicy;
+use crate::moderator::ResponderPolicy;
 use caelumora_model::actor::{ActorId, ActorState};
 use caelumora_model::approval::ApprovalRequest;
 use caelumora_model::channel::{Channel, ChannelState, Participant};

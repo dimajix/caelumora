@@ -413,9 +413,9 @@ mod tests {
     use super::*;
     use axum::body::Body;
     use caelumora_model::store::EntityStore;
-    use caelumora_model::store_impl::memory::MemoryStore;
+    use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::user_provider::UserProvider;
-    use caelumora_model::user_provider_impl::accept_any::AcceptAnyUserProvider;
+    use caelumora_model::user_provider::accept_any::AcceptAnyUserProvider;
     use tower::ServiceExt;
 
     const KEY: &[u8] = b"0123456789abcdef0123456789abcdef";

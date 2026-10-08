@@ -217,7 +217,7 @@ mod tests {
     use caelumora_model::security::{ActionType, OwnershipSecurityManager, SecurityAttributes};
     use caelumora_model::session::{ChannelId, Session, SessionId};
     use caelumora_model::store::StateStore;
-    use caelumora_model::store_impl::memory::MemoryStore;
+    use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::user::UserId;
     use std::collections::HashMap;
 

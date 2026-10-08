@@ -253,7 +253,7 @@ mod tests {
     #[ignore = "needs a running Open Terminal"]
     async fn against_a_real_instance() {
         let url = std::env::var("CAELUMORA_OPEN_TERMINAL_URL").expect("CAELUMORA_OPEN_TERMINAL_URL");
-        let file = caelumora_model::secret_impl::file::FileSecretProvider::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../local/secrets.json"));
+        let file = caelumora_model::secret::file::FileSecretProvider::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../local/secrets.json"));
         let secrets = Arc::new(SecretManager::new(vec![Arc::new(file)], Arc::new(DummySecurityManager::new())));
         let provider = SharedProvider::new(endpoint(&url), "/tmp/caelumora-workspaces", None, secrets).unwrap();
         let id = WorkspaceId::new();

@@ -5,7 +5,9 @@
 //! history, and what passes its processors - what it processes - in its
 //! transcript.
 
+use crate::component::ComponentImpl;
 use async_trait::async_trait;
+use caelumora_model::component::ComponentFailPolicy;
 use caelumora_model::message::Message;
 use caelumora_model::security::SecurityContext;
 
@@ -18,3 +20,78 @@ pub trait MessageProcessor: Send + Sync + std::fmt::Debug {
 
 pub trait PerceiveInProcessor: MessageProcessor {}
 pub trait EmitOutProcessor: MessageProcessor {}
+
+/// Passes `input` through `processors` in turn, each given what the one
+/// before returned, for the actor whose context is `security`. A failing
+/// processor is skipped if it fails open - the next one is given what it
+/// was given - and fails the whole stage if it fails closed.
+pub(crate) async fn apply_stage_processors<T>(
+    processors: &[ComponentImpl<T>],
+    mut input: Vec<Message>,
+    security: &SecurityContext,
+) -> anyhow::Result<Vec<Message>>
+where
+    T: MessageProcessor + ?Sized + Send + Sync,
+{
+    for stage_processor in processors {
+        // What it was given, should it be left out.
+        let kept = matches!(stage_processor.fail_policy, ComponentFailPolicy::FailOpen).then(|| input.clone());
+        let output = stage_processor.process_messages(input, security).await;
+        input = match stage_processor.apply_fail_policy(output)? {
+            Some(output) => output,
+            None => kept.unwrap_or_default(),
+        };
+    }
+    Ok(input)
+}
+
+#[cfg(test)]
+pub(crate) mod testing {
+    use super::*;
+
+    /// Keeps what does not contain `word`, or fails.
+    #[derive(Debug)]
+    pub(crate) struct Without(pub(crate) Option<&'static str>);
+
+    #[async_trait]
+    impl MessageProcessor for Without {
+        async fn process_messages(&self, input: Vec<Message>, _security: &SecurityContext) -> anyhow::Result<Vec<Message>> {
+            let Some(word) = self.0 else { return Err(anyhow::anyhow!("broken")) };
+            Ok(input.into_iter().filter(|m| !m.content.as_deref().unwrap_or_default().contains(word)).collect())
+        }
+    }
+
+    impl PerceiveInProcessor for Without {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::testing::Without;
+    use caelumora_model::confidentiality::Classification;
+    use std::sync::Arc;
+
+    fn stage(id: &str, processor: Without, fail_policy: ComponentFailPolicy) -> ComponentImpl<dyn MessageProcessor> {
+        ComponentImpl { id: id.to_string(), fail_policy, facet: Arc::new(processor) }
+    }
+
+    fn said(text: &str) -> Message {
+        Message { role: caelumora_model::message::MessageRole::User, content: Some(text.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) }
+    }
+
+    #[tokio::test]
+    async fn each_processor_filters_what_the_one_before_left_and_a_broken_one_that_fails_open_is_skipped() {
+        let security = SecurityContext::default();
+        let input = vec![said("hello"), said("secret plan"), said("spam offer")];
+        let stages = [
+            stage("no-secrets", Without(Some("secret")), ComponentFailPolicy::FailClosed),
+            stage("broken", Without(None), ComponentFailPolicy::FailOpen),
+            stage("no-spam", Without(Some("spam")), ComponentFailPolicy::FailClosed),
+        ];
+        let output = apply_stage_processors(&stages, input.clone(), &security).await.expect("the broken one fails open");
+        assert_eq!(output.iter().filter_map(|m| m.content.as_deref()).collect::<Vec<_>>(), vec!["hello"], "the next is given what the broken one was given");
+
+        let stages = [stage("broken", Without(None), ComponentFailPolicy::FailClosed)];
+        assert!(apply_stage_processors(&stages, input, &security).await.is_err(), "failing closed fails the stage");
+    }
+}

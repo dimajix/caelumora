@@ -205,7 +205,7 @@ mod tests {
     use caelumora_model::scope::Scope;
     use caelumora_model::security::DummySecurityManager;
     use caelumora_model::store::StoreError;
-    use caelumora_model::store_impl::memory::MemoryStore;
+    use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::user::{User, UserUpdateEvent};
     use std::time::Duration;
 

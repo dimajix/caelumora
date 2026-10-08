@@ -147,7 +147,7 @@ impl AgentStates {
 mod tests {
     use super::*;
     use caelumora_model::confidentiality::Classification;
-    use caelumora_model::store_impl::memory::MemoryStore;
+    use caelumora_model::store::memory::MemoryStore;
 
     fn remember(id: MemoryId, text: &str) -> (MemoryChange, MemoryOrigin) {
         (MemoryChange::Add { id, text: text.to_string(), classification: Classification::CHANNEL_DEFAULT }, MemoryOrigin::default())

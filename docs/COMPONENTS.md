@@ -46,7 +46,7 @@ A component offers one or more *facets*: traits it implements to take part in th
 | `PerceiveInProcessor` | filtering of incoming messages, of agents and external agents alike | `crate::message` |
 | `EmitOutProcessor` | filtering of the messages an agent emits | `crate::message` |
 | `Moderator` | how a channel routes its events and who is asked to respond | `crate::moderator` |
-| `ResponderPolicy` | whom the `policy_moderator` asks when nobody was mentioned | `crate::moderator_impl` |
+| `ResponderPolicy` | whom the `policy_moderator` asks when nobody was mentioned | `crate::moderator` |
 
 `PerceiveInProcessor` and `EmitOutProcessor` have no built-in implementation; they are kept as
 extension points (issues 99, 196). A processor is given the messages and the actor's
@@ -84,8 +84,7 @@ Of some facets an agent has exactly one: the `ContextProvider` (issue 98), the `
 (issue 127) and the `LLMClient` (issue 130), an external agent exactly one `ExternalAgent` (issue
 179); a channel has exactly one `Moderator` and one `ResponderPolicy` (issue 174). They are
 registered with `ComponentRegistry::single::<T>(default_kind)` in the `register_all` of the
-directory that holds the default kind (`component_impl`, `tool_impl`, `llm_impl`, `external_impl`,
-`moderator_impl`).
+module that holds the default kind (`component_impl`, `tool`, `llm`, `external_impl`, `moderator`).
 
 *   Two components of one container that provide such a facet are refused before anything is built.
 *   If none does, a default is built the first time the facet is asked for
@@ -138,24 +137,25 @@ channels did.
 ## Writing a component
 
 The built-in components live in `caelumora-runtime/src/`, **one file per component kind**, named
-after the kind (`calculator_tool.rs`, `notes.rs`, ...), in the directory of the facet that is their
-purpose:
+after the kind (`calculator_tool.rs`, `notes.rs`, ...), in the module of the facet that is their
+purpose. That module's `mod.rs` holds the facet trait - with what consumes it, such as the
+`GuardedToolExecutor` - and `register_all`; its other files are the components:
 
-| Directory | Components |
+| Module | Components |
 |---|---|
-| `tool_impl/` | tool providers and the `ToolExecutor` (`calculator_tool`, `mcp_tool`, `default_tool_executor`, ...) |
-| `command_impl/` | command providers (`help_command`, `wakeup_command`) |
-| `llm_impl/` | language models (`ollama_client`) |
+| `tool/` | tool providers and the `ToolExecutor` (`calculator_tool`, `mcp_tool`, `default_tool_executor`, ...) |
+| `command/` | command providers (`help_command`, `wakeup_command`) |
+| `llm/` | language models (`ollama_client`) |
+| `moderator/` | the moderator and its responder policies |
 | `external_impl/` | the ways to reach an external agent (`a2a_agent`, issue 179) - a module per kind: `a2a_agent/` holds the component (`mod.rs`), the protocol's types (`wire.rs`), their translation to and from `crate::external` (`translation.rs`) and the transport (`client.rs`, issue 210) |
-| `moderator_impl/` | the moderator and its responder policies |
 | `component_impl/` | everything else, and every component that offers several facets |
 
 A component that offers several facets - `create_plan_tool`, `notes` and the other memory components
 provide tools and a prompt part - stays in `component_impl`, because it cannot be sorted by one
-facet. Each file holds the kind constant, its `register` function and its tests; each directory's
+facet. Each file holds the kind constant, its `register` function and its tests; each module's
 `register_all` registers its kinds and the singles it holds the default for, and
 `ComponentRegistry::built_in` calls them all. A new component gets a file of its own and a line in
-its directory's `register_all`; the `*_impl` directories hold components only.
+its module's `register_all`; `component_impl` and `external_impl` hold components only.
 
 They follow one convention (issue 101):
 

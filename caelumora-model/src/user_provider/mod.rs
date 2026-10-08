@@ -1,0 +1,289 @@
+//! Sources of user identities and verification of their credentials (issue 25).
+//!
+//! A `UserProvider` is one source of users — a file, a database, a directory —
+//! and a `UserManager` holds an ordered chain of them, mirroring
+//! `SecretProvider` / `SecretManager`. Unlike the secret chain, a provider that
+//! fails does *not* fall through to the next one: for authentication, "the
+//! user file is broken" must never turn into "ask someone else" or into
+//! "no such user".
+
+pub mod accept_any;
+
+use crate::user::{User, UserId};
+use async_trait::async_trait;
+use std::fmt;
+use std::fmt::Debug;
+use std::sync::Arc;
+
+/// A credential presented for authentication.
+///
+/// Borrowed, so that callers do not scatter copies of secret material, and
+/// with a `Debug` impl that never prints it. More kinds (bearer tokens, API
+/// keys) are expected; a provider that cannot verify a kind declines it.
+#[non_exhaustive]
+pub enum Credential<'a> {
+    Password(&'a str),
+}
+
+impl Credential<'_> {
+    /// A short name for the credential kind, for logs and errors.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Credential::Password(_) => "password",
+        }
+    }
+}
+
+impl Debug for Credential<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Credential::{}(<redacted>)", self.kind())
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum AuthError {
+    /// The credential was rejected, or no provider knows the user. The two are
+    /// deliberately not distinguished towards the caller, so that a login form
+    /// cannot be used to find out which usernames exist.
+    #[error("invalid credentials")]
+    InvalidCredentials,
+    /// A provider could not answer, e.g. an unreadable or malformed user file
+    /// or an unreachable directory. Authentication is denied, never passed on.
+    #[error("user provider failed: {0}")]
+    Backend(String),
+}
+
+pub type AuthResult<T> = Result<T, AuthError>;
+
+/// A single source of users, consulted in order by a `UserManager`.
+///
+/// Looking a user up and verifying a credential are separate operations, and
+/// verification never hands out the stored credential: a file backend compares
+/// a hash, a directory verifies by binding as the user and has nothing to hand
+/// out at all.
+///
+/// **Ids.** How a provider assigns `UserId`s is up to the provider — random
+/// and persisted, derived from the username, or taken from the backend's own
+/// immutable key. The contract is only that it returns the same id for the
+/// same user for as long as it knows that user, including across restarts:
+/// the id ends up in ownership references throughout the stores.
+///
+/// For all three methods, `Ok(None)` means "not mine, ask the next provider";
+/// an `Err` stops the chain.
+#[async_trait]
+pub trait UserProvider: Debug + Send + Sync {
+    /// Looks up a user by login name, without verifying anything.
+    async fn find_user(&self, username: &str) -> AuthResult<Option<User>>;
+
+    /// Looks up a user by id, e.g. to check that the subject of a session
+    /// still exists and is enabled.
+    async fn get_user(&self, id: UserId) -> AuthResult<Option<User>>;
+
+    /// Verifies `credential` for `username` and returns the authenticated
+    /// user. Returns `Ok(None)` if the user is unknown to this provider or it
+    /// cannot verify this kind of credential, and
+    /// `Err(AuthError::InvalidCredentials)` if the user is known here but the
+    /// credential is wrong — which ends the chain, so that a second provider
+    /// knowing the same name cannot be used to bypass the first.
+    async fn authenticate(&self, username: &str, credential: &Credential<'_>) -> AuthResult<Option<User>>;
+}
+
+/// An ordered chain of `UserProvider`s; for each question, the first provider
+/// that knows the user answers it.
+///
+/// Unlike `SecretManager`, lookups are not gated through the
+/// `SecurityManager`: authentication is what produces the `SecurityContext`
+/// such a check would need.
+#[derive(Debug)]
+pub struct UserManager {
+    providers: Vec<Arc<dyn UserProvider>>,
+}
+
+impl UserManager {
+    pub fn new(providers: Vec<Arc<dyn UserProvider>>) -> Self {
+        Self { providers }
+    }
+
+    /// Whether the chain has no providers, i.e. nobody can authenticate.
+    pub fn is_empty(&self) -> bool {
+        self.providers.is_empty()
+    }
+
+    /// Authenticates `username` with `credential` against the chain.
+    ///
+    /// # Errors
+    /// `AuthError::InvalidCredentials` if the credential is wrong or no
+    /// provider knows the user; `AuthError::Backend` if a provider failed.
+    pub async fn authenticate(&self, username: &str, credential: &Credential<'_>) -> AuthResult<User> {
+        for provider in &self.providers {
+            match provider.authenticate(username, credential).await {
+                Ok(Some(user)) => return Ok(user),
+                Ok(None) => continue,
+                Err(AuthError::InvalidCredentials) => {
+                    tracing::info!("Authentication of '{}' failed: invalid {}", username, credential.kind());
+                    return Err(AuthError::InvalidCredentials);
+                }
+                Err(e) => {
+                    tracing::error!("User provider {:?} failed while authenticating '{}': {}", provider, username, e);
+                    return Err(e);
+                }
+            }
+        }
+        tracing::info!("Authentication of '{}' failed: no provider knows the user", username);
+        Err(AuthError::InvalidCredentials)
+    }
+
+    /// Looks up a user by login name. `Ok(None)` if no provider knows it.
+    pub async fn find_user(&self, username: &str) -> AuthResult<Option<User>> {
+        for provider in &self.providers {
+            if let Some(user) = provider.find_user(username).await? {
+                return Ok(Some(user));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Looks up a user by id. `Ok(None)` if no provider knows it.
+    pub async fn get_user(&self, id: UserId) -> AuthResult<Option<User>> {
+        for provider in &self.providers {
+            if let Some(user) = provider.get_user(id).await? {
+                return Ok(Some(user));
+            }
+        }
+        Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::value::name::Name;
+    use std::collections::HashMap;
+
+    fn user(name: &str) -> User {
+        User {
+            id: UserId::new(),
+            username: Name::new(name).unwrap(),
+            email: String::new(),
+            roles: Vec::new(),
+            deleted: None,
+        }
+    }
+
+    /// Knows a fixed set of users with plaintext passwords - fine for a test.
+    #[derive(Debug)]
+    struct MapUserProvider {
+        users: HashMap<String, (User, String)>,
+    }
+
+    impl MapUserProvider {
+        fn new(entries: &[(&User, &str)]) -> Self {
+            let users = entries.iter()
+                .map(|(u, p)| (u.username.to_string(), ((*u).clone(), p.to_string())))
+                .collect();
+            Self { users }
+        }
+    }
+
+    #[async_trait]
+    impl UserProvider for MapUserProvider {
+        async fn find_user(&self, username: &str) -> AuthResult<Option<User>> {
+            Ok(self.users.get(username).map(|(u, _)| u.clone()))
+        }
+        async fn get_user(&self, id: UserId) -> AuthResult<Option<User>> {
+            Ok(self.users.values().find(|(u, _)| u.id == id).map(|(u, _)| u.clone()))
+        }
+        async fn authenticate(&self, username: &str, credential: &Credential<'_>) -> AuthResult<Option<User>> {
+            let Credential::Password(password) = credential;
+            match self.users.get(username) {
+                None => Ok(None),
+                Some((u, p)) if p == password => Ok(Some(u.clone())),
+                Some(_) => Err(AuthError::InvalidCredentials),
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    struct FailingUserProvider;
+
+    #[async_trait]
+    impl UserProvider for FailingUserProvider {
+        async fn find_user(&self, _username: &str) -> AuthResult<Option<User>> {
+            Err(AuthError::Backend("boom".to_string()))
+        }
+        async fn get_user(&self, _id: UserId) -> AuthResult<Option<User>> {
+            Err(AuthError::Backend("boom".to_string()))
+        }
+        async fn authenticate(&self, _username: &str, _credential: &Credential<'_>) -> AuthResult<Option<User>> {
+            Err(AuthError::Backend("boom".to_string()))
+        }
+    }
+
+    #[tokio::test]
+    async fn authenticate_falls_through_to_the_provider_that_knows_the_user() {
+        let alice = user("alice");
+        let bob = user("bob");
+        let manager = UserManager::new(vec![
+            Arc::new(MapUserProvider::new(&[(&alice, "a")])),
+            Arc::new(MapUserProvider::new(&[(&bob, "b")])),
+        ]);
+
+        let result = manager.authenticate("bob", &Credential::Password("b")).await.expect("bob authenticates");
+        assert_eq!(result.id, bob.id);
+    }
+
+    #[tokio::test]
+    async fn wrong_credential_ends_the_chain() {
+        let first = user("alice");
+        let second = user("alice");
+        let manager = UserManager::new(vec![
+            Arc::new(MapUserProvider::new(&[(&first, "a")])),
+            Arc::new(MapUserProvider::new(&[(&second, "other")])),
+        ]);
+
+        let result = manager.authenticate("alice", &Credential::Password("other")).await;
+        assert!(matches!(result, Err(AuthError::InvalidCredentials)), "a later provider must not override a rejection");
+    }
+
+    #[tokio::test]
+    async fn unknown_user_is_indistinguishable_from_a_wrong_password() {
+        let alice = user("alice");
+        let manager = UserManager::new(vec![Arc::new(MapUserProvider::new(&[(&alice, "a")]))]);
+
+        let result = manager.authenticate("mallory", &Credential::Password("x")).await;
+        assert!(matches!(result, Err(AuthError::InvalidCredentials)));
+    }
+
+    #[tokio::test]
+    async fn failing_provider_denies_instead_of_falling_through() {
+        let alice = user("alice");
+        let manager = UserManager::new(vec![
+            Arc::new(FailingUserProvider),
+            Arc::new(MapUserProvider::new(&[(&alice, "a")])),
+        ]);
+
+        assert!(matches!(manager.authenticate("alice", &Credential::Password("a")).await, Err(AuthError::Backend(_))));
+        assert!(matches!(manager.find_user("alice").await, Err(AuthError::Backend(_))));
+        assert!(matches!(manager.get_user(alice.id).await, Err(AuthError::Backend(_))));
+    }
+
+    #[tokio::test]
+    async fn lookups_return_the_first_match_or_none() {
+        let alice = user("alice");
+        let manager = UserManager::new(vec![
+            Arc::new(MapUserProvider::new(&[])),
+            Arc::new(MapUserProvider::new(&[(&alice, "a")])),
+        ]);
+
+        assert_eq!(manager.find_user("alice").await.unwrap().map(|u| u.id), Some(alice.id));
+        assert_eq!(manager.get_user(alice.id).await.unwrap().map(|u| u.username), Some(Name::new("alice").unwrap()));
+        assert!(manager.find_user("bob").await.unwrap().is_none());
+        assert!(UserManager::new(vec![]).get_user(alice.id).await.unwrap().is_none());
+    }
+
+    #[test]
+    fn credential_debug_never_prints_the_secret() {
+        let rendered = format!("{:?}", Credential::Password("hunter2"));
+        assert!(!rendered.contains("hunter2"), "got {}", rendered);
+    }
+}

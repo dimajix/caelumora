@@ -355,7 +355,7 @@ mod tests {
         use caelumora_model::confidentiality::Visibility;
         use caelumora_model::tool::{ToolCall, ToolVisibility};
         let (tx, mut rx) = tokio::sync::mpsc::channel(4);
-        let output = crate::transport_impl::memory::InMemoryEventSender::new(tx);
+        let output = crate::transport::memory::InMemoryEventSender::new(tx);
         let mut state = AgentChannelState::default();
         state.begin_turn(Default::default(), Default::default(), Default::default(), Vec::new(), Default::default());
         let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached()).expect("a turn was begun");

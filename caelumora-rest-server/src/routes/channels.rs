@@ -9,7 +9,7 @@ use crate::error::{Json, Path};
 use caelumora_model::snapshot::Detail;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
-use caelumora_runtime::actor_impl::user::UserActor;
+use caelumora_runtime::actor::user::UserActor;
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::session::ChannelSpec;
 use caelumora_runtime::view::{AgentContextView, ChannelView, MemberView, Viewer};

@@ -73,7 +73,7 @@ pub async fn load(store: &dyn EntityStore, paths: &[PathBuf]) -> anyhow::Result<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::store_impl::memory::MemoryStore;
+    use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::template::ParticipantTemplate;
 
     fn example() -> PathBuf {

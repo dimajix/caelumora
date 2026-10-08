@@ -113,7 +113,7 @@ by its owner. Another policy may apply other rules (issue
 
 ### How stores check
 
-The stores ask the same way for every entity kind (`store_impl::access`); the `EntityStore` trait
+The stores ask the same way for every entity kind (`store::access`); the `EntityStore` trait
 itself is unchanged.
 
 *   **Reads** are checked with the attributes as stored. An entity the caller may not read is

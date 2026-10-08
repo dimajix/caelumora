@@ -6,9 +6,9 @@ use caelumora_model::component::{ComponentConfig, ComponentDescriptor, Component
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{DummySecurityManager, SecurityContext};
 use caelumora_model::store::ComponentStore;
-use caelumora_model::store_impl::memory::MemoryStore;
+use caelumora_model::store::memory::MemoryStore;
 use caelumora_runtime::component::{ComponentContainer, ComponentContext};
-use caelumora_runtime::tool_impl::mcp_tool;
+use caelumora_runtime::tool::mcp_tool;
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::tool::ToolProvider;
 use rmcp::handler::server::tool::ToolRouter;

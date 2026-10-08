@@ -398,7 +398,7 @@ mod tests {
     use caelumora_model::agent::AgentId;
     use caelumora_model::command::default_commands;
     use caelumora_model::security::DummySecurityManager;
-    use caelumora_model::store_impl::memory::MemoryStore;
+    use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::user::UserId;
 
     fn channel_runtime() -> ChannelRuntime {

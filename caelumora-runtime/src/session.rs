@@ -1062,7 +1062,7 @@ mod tests {
     use caelumora_model::channel::Channel;
     use caelumora_model::secret::SecretManager;
     use caelumora_model::security::{DummySecurityManager, SecurityAttributes};
-    use caelumora_model::store_impl::memory::MemoryStore;
+    use caelumora_model::store::memory::MemoryStore;
     use uuid::Uuid;
 
     /// `users` as participants, recorded in the store the session reads
@@ -1551,8 +1551,8 @@ mod tests {
         let unknown = ChannelSpec { components: caelumora_model::channel::moderation_components(None, Some("nobody")), ..spec("x", vec![]) };
         assert!(matches!(refusal(session.create_channel(&ctx, unknown).await), SessionError::InvalidModerator(_)));
         let two = caelumora_model::component::ComponentConfig { component_nodes: vec![
-            caelumora_model::component::ComponentDescriptor::new("one", crate::moderator_impl::broadcast_policy::BROADCAST_POLICY_KIND),
-            caelumora_model::component::ComponentDescriptor::new("two", crate::moderator_impl::random_policy::RANDOM_POLICY_KIND),
+            caelumora_model::component::ComponentDescriptor::new("one", crate::moderator::broadcast_policy::BROADCAST_POLICY_KIND),
+            caelumora_model::component::ComponentDescriptor::new("two", crate::moderator::random_policy::RANDOM_POLICY_KIND),
         ] };
         assert!(matches!(refusal(session.create_channel(&ctx, ChannelSpec { components: two, ..spec("x", vec![]) }).await), SessionError::InvalidModerator(_)), "a channel has one policy");
 

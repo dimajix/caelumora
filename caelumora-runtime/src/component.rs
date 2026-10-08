@@ -248,19 +248,19 @@ impl ComponentRegistry {
     }
 
     /// A registry with every built-in component kind (the `register_all` of
-    /// `component_impl`, `tool_impl`, `command_impl`, `llm_impl`,
-    /// `external_impl` and `moderator_impl`), resolving references to
+    /// `component_impl`, `tool`, `command`, `llm`,
+    /// `external_impl` and `moderator`), resolving references to
     /// preconfigured components in `component_store`. A binary passes it to
     /// the `RuntimeManager` as it is; a test may register kinds of its own
     /// first, such as a stand-in for the model.
     pub fn built_in(component_store: Arc<dyn ComponentStore>) -> Self {
         let mut registry = Self::new(component_store);
         crate::component_impl::register_all(&mut registry);
-        crate::tool_impl::register_all(&mut registry);
-        crate::command_impl::register_all(&mut registry);
-        crate::llm_impl::register_all(&mut registry);
+        crate::tool::register_all(&mut registry);
+        crate::command::register_all(&mut registry);
+        crate::llm::register_all(&mut registry);
         crate::external_impl::register_all(&mut registry);
-        crate::moderator_impl::register_all(&mut registry);
+        crate::moderator::register_all(&mut registry);
         registry
     }
 
@@ -752,7 +752,7 @@ mod tests {
     use caelumora_model::component::StoredComponent;
     use caelumora_model::security::DummySecurityManager;
     use caelumora_model::session::SessionId;
-    use caelumora_model::store_impl::memory::MemoryStore;
+    use caelumora_model::store::memory::MemoryStore;
     use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;

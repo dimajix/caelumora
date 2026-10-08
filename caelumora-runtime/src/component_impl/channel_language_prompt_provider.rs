@@ -140,7 +140,7 @@ mod tests {
     use caelumora_model::security::{DummySecurityManager, SecurityContext};
     use caelumora_model::session::{Session, SessionId};
     use caelumora_model::store::EntityStore;
-    use caelumora_model::store_impl::memory::MemoryStore;
+    use caelumora_model::store::memory::MemoryStore;
 
     fn language(tag: &str) -> Option<Language> {
         Some(Language::new(tag).unwrap())
