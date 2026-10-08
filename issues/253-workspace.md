@@ -122,3 +122,11 @@ its plan is kept in one place so that the two are read together. In short:
   the `WorkspaceManager`: `scoped.rs` marks them in the store and announces them, as it does
   agents. Only purging needs the manager, which removes the places first (`purge_lying_in`);
   `delete_lying_in` and `restore_lying_in` are gone. No change of behaviour.
+- **2026-10-08** — Step 4 of 251's plan: REST (`routes/workspaces.rs`, see REST-SERVER.md) and the
+  web UI - the user's workspaces in the sidebar with a page of their own in the place of a channel,
+  `FileBrowser` over either way to the files, attaching from a session's menu, and "Files" with the
+  channel's switch in the channel panel; `App.tsx`'s layout component is `Layout` now. Checked
+  against a running server: with `curl` - a 3 MiB file back unchanged, `..` refused also encoded, a
+  stranger shown nothing, the channel's way and its switch - and in the browser through the DOM;
+  screenshots could not be taken, the browser window being hidden. Downloads are
+  `application/octet-stream` for now: `mime_guess` would have been a new dependency.

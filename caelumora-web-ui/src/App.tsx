@@ -1,6 +1,7 @@
 import {useCallback, useEffect, useState} from 'react';
 import {Sidebar} from './components/Sidebar';
 import {ChatView} from './components/ChatView';
+import {WorkspacePage} from './components/WorkspacePage';
 import {Login} from './components/Login';
 import {ErrorBanner} from './components/ErrorBanner';
 import {api} from './api';
@@ -51,7 +52,7 @@ function App() {
     content = <Login onLogin={setUser} />;
   } else {
     // Keyed by user, so nothing of a previous user's view survives a re-login.
-    content = <Workspace key={user.id} user={user} onLogout={handleLogout} />;
+    content = <Layout key={user.id} user={user} onLogout={handleLogout} />;
   }
   return (
     <>
@@ -61,19 +62,32 @@ function App() {
   );
 }
 
-interface WorkspaceProps {
+interface LayoutProps {
   user: UserResponse;
   onLogout: () => void;
 }
 
-function Workspace({ user, onLogout }: WorkspaceProps) {
+/** The sidebar, and beside it a channel or one of the user's workspaces. */
+function Layout({ user, onLogout }: LayoutProps) {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
+  // One of the user's workspaces (issue 253), shown in the place of a channel.
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
 
   const handleSelectChannel = (sessionId: string, channelId: string) => {
+    setSelectedWorkspaceId(null);
     setSelectedSessionId(sessionId);
     setSelectedChannelId(channelId);
   };
+
+  const handleSelectWorkspace = (workspaceId: string) => {
+    setSelectedChannelId(null);
+    setSelectedWorkspaceId(workspaceId);
+  };
+
+  const handleWorkspaceDeleted = useCallback((workspaceId: string) => {
+    setSelectedWorkspaceId(current => (current === workspaceId ? null : current));
+  }, []);
 
   const handleChannelDeleted = useCallback((channelId: string) => {
     setSelectedChannelId(current => (current === channelId ? null : current));
@@ -96,10 +110,15 @@ function Workspace({ user, onLogout }: WorkspaceProps) {
         onSelectChannel={handleSelectChannel}
         onSessionDeleted={handleSessionDeleted}
         onChannelDeleted={handleChannelDeleted}
+        selectedWorkspaceId={selectedWorkspaceId}
+        onSelectWorkspace={handleSelectWorkspace}
+        onWorkspaceDeleted={handleWorkspaceDeleted}
       />
       
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        {selectedSessionId && selectedChannelId ? (
+        {selectedWorkspaceId ? (
+          <WorkspacePage key={selectedWorkspaceId} workspaceId={selectedWorkspaceId} onDeleted={handleWorkspaceDeleted} />
+        ) : selectedSessionId && selectedChannelId ? (
           <ChatView
             sessionId={selectedSessionId}
             channelId={selectedChannelId}

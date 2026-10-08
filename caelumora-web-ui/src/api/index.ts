@@ -12,7 +12,11 @@ import type {
   MessageContextResponse,
   CreateChannelRequest,
   CreateSessionRequest,
+  CreateWorkspaceRequest,
   Deleted,
+  FileEntry,
+  StorageResponse,
+  WorkspaceResponse,
   Message,
   PrivateNotes,
   PublishedNotes,
@@ -31,6 +35,49 @@ import type {PrivacyPolicy} from '../privacy';
 import {ensureOk} from '../errors';
 
 const API_BASE = '/api';
+
+/** A path inside a workspace, each part encoded, `/` kept between them. */
+function filePath(path: string): string {
+  return path.split('/').filter(part => part !== '').map(encodeURIComponent).join('/');
+}
+
+/**
+ * The files of a workspace, reached one way (issue 253): directly by its
+ * owner, or through a channel of the session it is attached to. Every path
+ * is one inside the workspace, `/` between its parts.
+ */
+export interface WorkspaceFiles {
+  /** The entries of the directory `path`; `''` is the workspace itself. */
+  list(path: string): Promise<FileEntry[]>;
+  /** Where the file is downloaded - a plain link; the cookie goes with it. */
+  url(path: string): string;
+  /** Uploads `file` as `path`, replacing what was there. */
+  upload(path: string, file: Blob): Promise<void>;
+  /** Removes a file, or a directory if it is empty. */
+  remove(path: string): Promise<void>;
+}
+
+/** The files under `base`, an API path ending before `/files`. */
+function filesAt(base: string): WorkspaceFiles {
+  return {
+    async list(path) {
+      const res = await request(`${base}/files?path=${encodeURIComponent(path)}`);
+      await ensureOk(res, 'Failed to list the files');
+      return res.json();
+    },
+    url(path) {
+      return `${API_BASE}${base}/files/${filePath(path)}`;
+    },
+    async upload(path, file) {
+      const res = await request(`${base}/files/${filePath(path)}`, {method: 'PUT', body: file});
+      await ensureOk(res, `Failed to upload ${path}`);
+    },
+    async remove(path) {
+      const res = await request(`${base}/files/${filePath(path)}`, {method: 'DELETE'});
+      await ensureOk(res, `Failed to delete ${path}`);
+    },
+  };
+}
 
 let onUnauthorized: (() => void) | null = null;
 
@@ -495,6 +542,134 @@ export const api = {
   /** The global event stream (sessions and channels), to open with `openEventStream`. */
   globalEventsUrl(): string {
     return `${API_BASE}/events`;
+  },
+
+  /** The user's own workspaces (issue 253). */
+  async getWorkspaces(): Promise<WorkspaceResponse[]> {
+    const res = await request('/workspaces');
+    await ensureOk(res, 'Failed to fetch the workspaces');
+    return res.json();
+  },
+
+  /** The user's workspaces they deleted, the trash. */
+  async getDeletedWorkspaces(): Promise<Deleted[]> {
+    const res = await request('/workspaces?deleted=true');
+    await ensureOk(res, 'Failed to fetch the deleted workspaces');
+    return res.json();
+  },
+
+  /** The storages a workspace can be made in. */
+  async getStorages(): Promise<StorageResponse[]> {
+    const res = await request('/workspaces/storages');
+    await ensureOk(res, 'Failed to fetch the storages');
+    return res.json();
+  },
+
+  async getWorkspace(workspaceId: string): Promise<WorkspaceResponse> {
+    const res = await request(`/workspaces/${workspaceId}`);
+    await ensureOk(res, 'Failed to fetch the workspace');
+    return res.json();
+  },
+
+  async createWorkspace(payload: CreateWorkspaceRequest): Promise<WorkspaceResponse> {
+    const res = await request('/workspaces', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    await ensureOk(res, 'Failed to create the workspace');
+    return res.json();
+  },
+
+  async renameWorkspace(workspaceId: string, name: string): Promise<WorkspaceResponse> {
+    const res = await request(`/workspaces/${workspaceId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    await ensureOk(res, 'Failed to rename the workspace');
+    return res.json();
+  },
+
+  /** Says what the workspace holds; `null` or empty takes it away. */
+  async describeWorkspace(workspaceId: string, description: string | null): Promise<WorkspaceResponse> {
+    const res = await request(`/workspaces/${workspaceId}/description`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ description }),
+    });
+    await ensureOk(res, 'Failed to describe the workspace');
+    return res.json();
+  },
+
+  /** Reclassifies the workspace as a whole: lowering releases every file. */
+  async reclassifyWorkspace(workspaceId: string, classification: Classification): Promise<WorkspaceResponse> {
+    const res = await request(`/workspaces/${workspaceId}/classification`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(classification),
+    });
+    await ensureOk(res, 'Failed to reclassify the workspace');
+    return res.json();
+  },
+
+  /** Deletes the workspace: kept, with its files, until it is purged. */
+  async deleteWorkspace(workspaceId: string): Promise<void> {
+    const res = await request(`/workspaces/${workspaceId}`, {method: 'DELETE'});
+    await ensureOk(res, 'Failed to delete the workspace');
+  },
+
+  async restoreWorkspace(workspaceId: string): Promise<WorkspaceResponse> {
+    const res = await request(`/workspaces/${workspaceId}/restore`, {method: 'POST'});
+    await ensureOk(res, 'Failed to restore the workspace');
+    return res.json();
+  },
+
+  /** Removes a deleted workspace for good, with its files. */
+  async purgeWorkspace(workspaceId: string): Promise<void> {
+    const res = await request(`/workspaces/${workspaceId}/purge`, {method: 'POST'});
+    await ensureOk(res, 'Failed to delete the workspace for good');
+  },
+
+  /** The files of the user's own workspace, outside a session. */
+  ownedFiles(workspaceId: string): WorkspaceFiles {
+    return filesAt(`/workspaces/${workspaceId}`);
+  },
+
+  /** The session's workspace as the user may use it in the channel; `null` where they may not. */
+  async getChannelWorkspace(sessionId: string, channelId: string): Promise<WorkspaceResponse | null> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/workspace`);
+    await ensureOk(res, 'Failed to fetch the workspace of the channel');
+    return res.json();
+  },
+
+  /** The files of the session's workspace, through the channel. */
+  channelFiles(sessionId: string, channelId: string): WorkspaceFiles {
+    return filesAt(`/sessions/${sessionId}/channels/${channelId}/workspace`);
+  },
+
+  /** Attaches one of the user's workspaces to their session, or with `null` takes it away. */
+  async setSessionWorkspace(sessionId: string, workspaceId: string | null): Promise<SessionSnapshot> {
+    const res = workspaceId === null
+      ? await request(`/sessions/${sessionId}/workspace`, {method: 'DELETE'})
+      : await request(`/sessions/${sessionId}/workspace`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspace_id: workspaceId }),
+      });
+    await ensureOk(res, workspaceId === null ? 'Failed to detach the workspace' : 'Failed to attach the workspace');
+    return res.json();
+  },
+
+  /** Whether the channel uses the session's workspace (issue 251). */
+  async setChannelUsesWorkspace(sessionId: string, channelId: string, uses: boolean): Promise<ChannelResponse> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/uses-workspace`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uses }),
+    });
+    await ensureOk(res, 'Failed to change the channel\'s use of the workspace');
+    return res.json();
   },
 
   /** One session with its channels, as the global snapshot describes it. */

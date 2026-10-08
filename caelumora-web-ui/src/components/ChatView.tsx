@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ChevronRight,
   Gauge,
+  HardDrive,
   History,
   IdCard,
   Languages,
@@ -82,6 +83,7 @@ import {ToolsPanel} from './ToolsPanel';
 import {PrivateNotesPanel} from './PrivateNotesPanel';
 import {ProfilePanel} from './ProfilePanel';
 import {ChannelDescription} from './ChannelDescription';
+import {ChannelWorkspacePanel} from './ChannelWorkspacePanel';
 import {DescriptionDialog} from './DescriptionDialog';
 import {AddParticipantDialog} from './AddParticipantDialog';
 import {ApprovalRuleOffer} from './ApprovalRuleOffer';
@@ -188,7 +190,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   const [messages, setMessages] = useState<Message[]>([]);
   const [channel, setChannel] = useState<ChannelResponse | null>(null);
   const [notes, setNotes] = useState<PublishedNotes[]>([]);
-  const [sideTab, setSideTab] = useState<'channel' | 'notes'>('channel');
+  const [sideTab, setSideTab] = useState<'channel' | 'notes' | 'workspace'>('channel');
+  // Changes whenever the session's workspace or its files may have changed
+  // here: a tool call ended, the channel's switch was set (issue 253).
+  const [workspaceVersion, setWorkspaceVersion] = useState(0);
   // The widths of the channel panel and of the panel showing an agent's
   // context, history or tools (issue 231). The channel panel keeps the key
   // it had as the members panel (issue 245), so that its width stays.
@@ -558,6 +563,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
             content: a.content + (partial.content ?? ''),
           })));
         } else if (actorEvent.CompleteMessageGenerated) {
+          // A tool call that ended may have changed the files.
+          if (actorEvent.CompleteMessageGenerated.tool_results?.length) setWorkspaceVersion(v => v + 1);
           setMessages(prev => {
             const newMsg = actorEvent.CompleteMessageGenerated!;
             // A message can arrive twice: in the snapshot and as an event.
@@ -1533,8 +1540,19 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
               <NotebookPen size={16} />
               <h3 className="font-semibold uppercase text-xs tracking-wider">Notes</h3>
             </button>
+            <button
+              role="tab"
+              aria-selected={sideTab === 'workspace'}
+              onClick={() => setSideTab('workspace')}
+              className={cn("flex items-center gap-1.5 px-2 py-1 rounded-md", sideTab === 'workspace' && "bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-100")}
+            >
+              <HardDrive size={16} />
+              <h3 className="font-semibold uppercase text-xs tracking-wider">Files</h3>
+            </button>
           </div>
-          {sideTab === 'notes' ? <NotesList notes={notes} /> : (<>
+          {sideTab === 'notes' ? <NotesList notes={notes} /> : sideTab === 'workspace' ? (
+            <ChannelWorkspacePanel sessionId={sessionId} channelId={channelId} version={workspaceVersion} />
+          ) : (<>
           {channel && (
             <ChannelDescription channel={channel} onEdit={() => setIsDescribing(true)} />
           )}
@@ -1585,6 +1603,32 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
                 >
                   <Pencil size={12} />
                 </button>
+              )}
+            </div>
+          )}
+          {channel && (
+            <div
+              className="flex items-center gap-2 mb-4 -mt-2 text-xs text-gray-500 dark:text-gray-400"
+              title="Whether its members work on the session's workspace here - where it and the channel are classified alike."
+            >
+              <HardDrive size={14} />
+              <span>Workspace:</span>
+              {channel.can_change ? (
+                <label className="flex items-center gap-1 text-gray-700 dark:text-gray-300">
+                  <input
+                    type="checkbox"
+                    checked={channel.uses_workspace}
+                    onChange={(e) => {
+                      const uses = e.target.checked;
+                      api.setChannelUsesWorkspace(sessionId, channelId, uses)
+                        .then(updated => { setChannel(updated); setWorkspaceVersion(v => v + 1); })
+                        .catch(error => reportError('Failed to change the channel\'s use of the workspace', error));
+                    }}
+                  />
+                  used here
+                </label>
+              ) : (
+                <span className="text-gray-700 dark:text-gray-300">{channel.uses_workspace ? 'used here' : 'not used here'}</span>
               )}
             </div>
           )}

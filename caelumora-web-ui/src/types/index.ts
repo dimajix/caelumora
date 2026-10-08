@@ -179,6 +179,8 @@ export interface ChannelResponse {
   language: string | null;
   /** What it restricts of the tool calls made in it (issue 13): rules that ask or deny. */
   approval_rules: ApprovalRule[];
+  /** Whether its members work on the session's workspace here (issue 251), where the classifications let them. */
+  uses_workspace: boolean;
   /** Whether you may rename it, add or remove participants (issue 46) and set its approval rules. */
   can_change: boolean;
   /** Who took part and left (issue 164), in the order they left, each with `left`. */
@@ -301,6 +303,48 @@ export interface SessionSnapshot {
   channels: ChannelResponse[];
   /** Everyone who takes part in the session - whom a new channel can be made of (issue 09). */
   participants: SessionParticipant[];
+  /** The workspace attached to it (issue 253), if you may read it - its owner; absent otherwise. */
+  workspace?: WorkspaceResponse;
+}
+
+/** Where a workspace lies (issue 251): made for one session, the owner's, or global. */
+export type WorkspaceScope = 'session' | 'user' | 'global';
+
+/** A workspace (issue 253), as its owner or a member of a channel using it sees it. */
+export interface WorkspaceResponse {
+  id: string;
+  name: string;
+  scope: WorkspaceScope;
+  /** The session it was made for, if it lies in a session's scope. */
+  session_id?: string;
+  /** The storage its files lie in, by its configured name. */
+  storage: string;
+  description?: string;
+  classification: Classification;
+  /** Whether you may change it and attach it to a session: its owner. */
+  can_change: boolean;
+}
+
+export interface CreateWorkspaceRequest {
+  name: string;
+  /** `user` unless given; one of a session's scope is made by a template. */
+  scope?: 'user' | 'global';
+  storage: string;
+  description?: string;
+  classification?: Classification;
+}
+
+/** A configured storage a workspace can be made in. */
+export interface StorageResponse {
+  name: string;
+}
+
+/** An entry of a directory of a workspace. */
+export interface FileEntry {
+  name: string;
+  is_dir: boolean;
+  size: number;
+  modified?: string;
 }
 
 export interface SessionParticipant {

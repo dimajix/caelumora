@@ -47,9 +47,9 @@ The UI shows what the server says and repeats no rule of its own:
 | `src/command.ts`, `src/mention.ts` | The lexical rules mirrored from the model |
 | `src/messages.ts` | Helpers for showing messages, shared by the chat and the context panel |
 | `src/panelWidth.ts` | The widths of the panels beside the chat, kept in browser storage |
-| `src/moderator.ts`, `src/confidentiality.ts` | Labels and explanations of responder policies and classifications |
+| `src/moderator.ts`, `src/confidentiality.ts`, `src/workspace.ts` | Labels and explanations of responder policies, classifications and where a workspace lies |
 | `src/App.tsx` | Login state, keep-alive, the error banner, the layout |
-| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `ToolCallView`, `QuestionCard`, `MarkdownMessage`, `ContextPanel`, `HistoryPanel`, `ToolsPanel`, `PrivateNotesPanel`, `ToolSetList`, `DeletedList`, `NotesList`, `TokenGauge`, `HoverCard`, `ActionMenu`, `ResizeHandle`, `UsageStats`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ApprovalRulesDialog`, `ErrorBanner` |
+| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `ToolCallView`, `QuestionCard`, `MarkdownMessage`, `ContextPanel`, `HistoryPanel`, `ToolsPanel`, `PrivateNotesPanel`, `ToolSetList`, `DeletedList`, `NotesList`, `TokenGauge`, `HoverCard`, `ActionMenu`, `ResizeHandle`, `UsageStats`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ApprovalRulesDialog`, `ErrorBanner`, `WorkspacePage`, `FileBrowser`, `ChannelWorkspacePanel`, `NewWorkspaceDialog`, `SessionWorkspaceDialog` |
 
 ## Talking to the server
 
@@ -148,6 +148,32 @@ A new session is created from a template; the one used last in this browser is p
 40). A new channel is created with its name, responder policy, classification - a level and, if any
 are configured, compartments from `GET /compartments` (issue 133) - language, preset to the one the
 user prefers (issue 56), and participants (`NewChannelDialog`, issue 09).
+
+### Workspaces
+
+The user's own workspaces (issue [253](../issues/253-workspace.md)) are listed below the sessions,
+each with where it lies where that is not their own scope, and a folded "Deleted workspaces" - the
+trash, as for sessions - below them; the list is loaded again on every global event about a
+workspace (`WorkspaceCreated`, `…Updated`, `…Deleted`, `…Restored`). "+" opens `NewWorkspaceDialog`:
+its name, the storage from those the server names, whether its name lies in the user's scope or the
+global one, what it holds and its classification - what the server refuses, a name taken or a
+classification the user is not cleared for, is shown in the dialog.
+
+A workspace chosen there takes the place of a channel (`WorkspacePage`): what it is, the menu of
+what its owner may do - rename, describe, reclassify, delete - and its files (`FileBrowser`). One
+that lies in a session's scope is used within that session alone, and the page says so instead of
+showing its files.
+
+`FileBrowser` shows one directory at a time, directories first, with a path back to the top. A file
+is downloaded through a plain link - the cookie goes with it, and the server sends it as an
+attachment; files are uploaded into the directory shown, one request each, the file as the body;
+deleting asks once more in the menu. It works on a `WorkspaceFiles` of the API client, which is the
+owner's way to the files (`api.ownedFiles`) or a channel's (`api.channelFiles`) - the browser does
+not know the difference.
+
+A session's menu has "Workspace" (`SessionWorkspaceDialog`): the workspace attached, if the user
+may read it - its owner -, and to whoever may change the session one of their workspaces to attach,
+not one made for another session, or taking it away.
 
 ### A channel
 
@@ -283,6 +309,16 @@ dialog as the session's. A rule names a tool - `*` for every one - and optionall
 argument, and asks or denies; the dialog offers nothing that allows, since a place cannot. The
 rules are saved as a whole, and what the server refuses of them is shown in the dialog. An
 approval asked for by such a rule says so on its card (`explicit`).
+
+### The channel's files
+
+Beside "Channel" and "Notes", the channel panel has "Files" (`ChannelWorkspacePanel`): the session's
+workspace as the user may use it in this channel (`GET …/workspace`) - its name, classification and
+what it holds - and its files, through the channel; or that no workspace is used in this channel,
+without why. The files are loaded again when the tab is shown, when a tool call of the channel
+ended (a `CompleteMessageGenerated` with tool results) and when the channel's switch changes. The
+"Channel" tab shows the switch - "Workspace: used here" - as a checkbox to whoever may change the
+channel, as text to everybody else (issue 251).
 
 ### Members, moderator and notes
 

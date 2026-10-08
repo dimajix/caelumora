@@ -1040,3 +1040,5 @@ command may come later.
 - **2026-10-08** — Before step 4, on the maintainer's proposal: a workspace lies in a scope as an
   agent does, and a template may name one (*Decisions* 13 and 14). Done as step 3b - see issue
   [253](253-workspace.md).
+- **2026-10-08** — Step 4 of the plan done: workspaces over REST and in the web UI - see issue
+  [253](253-workspace.md).
