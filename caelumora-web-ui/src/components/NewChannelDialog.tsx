@@ -1,7 +1,7 @@
 // Creating a channel in a running session (issue 09): its name, its
 // moderator, its classification - a level and compartments (issue 133) -,
-// its language (issue 56) and who of the session takes part besides the
-// user.
+// its language (issue 56), whether it uses the session's workspace (issue
+// 253) and who of the session takes part besides the user.
 
 import React, {useEffect, useState} from 'react';
 import {X} from 'lucide-react';
@@ -40,6 +40,7 @@ export const NewChannelDialog: React.FC<NewChannelDialogProps> = ({session, user
   const [compartments, setCompartments] = useState<Compartment[]>([]);
   const [chosenCompartments, setChosenCompartments] = useState<Set<string>>(new Set());
   const [language, setLanguage] = useState('');
+  const [usesWorkspace, setUsesWorkspace] = useState(true);
   const [chosen, setChosen] = useState<Set<string>>(() => new Set(candidates.map(p => actorKey(p.id))));
   const [problem, setProblem] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
@@ -89,6 +90,7 @@ export const NewChannelDialog: React.FC<NewChannelDialogProps> = ({session, user
         classification: {level, compartments: level === 'public' ? [] : [...chosenCompartments]},
         participants: candidates.filter(p => chosen.has(actorKey(p.id))).map(p => p.id),
         language: language.trim() || undefined,
+        uses_workspace: usesWorkspace,
       });
       onCreated(channel);
     } catch (error) {
@@ -191,6 +193,16 @@ export const NewChannelDialog: React.FC<NewChannelDialogProps> = ({session, user
             onChange={setLanguage}
             hint="its agents are told to write in it. Empty: the language you prefer, if you set one in your profile."
           />
+
+          <label className="flex items-start gap-2">
+            <input type="checkbox" className="mt-1" checked={usesWorkspace} onChange={e => setUsesWorkspace(e.target.checked)} />
+            <span>
+              <span className="block">Use the session's workspace</span>
+              <span className="block text-xs text-gray-500">
+                Its members work on the session's files here - where the workspace and the channel are classified alike. Can be changed later.
+              </span>
+            </span>
+          </label>
 
           <fieldset className="space-y-1">
             <legend className="text-xs text-gray-400">Participants</legend>

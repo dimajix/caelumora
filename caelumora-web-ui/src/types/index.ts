@@ -594,6 +594,8 @@ export interface CreateChannelRequest {
   classification?: Classification;
   /** The language its conversation is held in (issue 56); the one you prefer if absent. */
   language?: string;
+  /** Whether its members work on the session's workspace in it (issue 253); yes if absent. */
+  uses_workspace?: boolean;
 }
 
 /**

@@ -497,7 +497,7 @@ async fn a_participant_takes_part_but_changes_nothing() {
 
     assert!(denied(&session.update_name(&bob, "his").await.expect_err("not his to rename")));
     assert!(session.update_privacy(&bob, PrivacyConfig::default()).await.is_err(), "nor to change its privacy");
-    assert!(session.create_channel(&bob, ChannelSpec { name: "side".to_string(), components: quiet(), participants: vec![], classification: None, language: None }).await.is_err(), "nor to add channels");
+    assert!(session.create_channel(&bob, ChannelSpec { name: "side".to_string(), components: quiet(), participants: vec![], classification: None, language: None, uses_workspace: None }).await.is_err(), "nor to add channels");
     assert!(session.delete_channel(&bob, main.id()).await.is_err(), "nor to delete them");
     assert!(main.remove_participant(&bob, ActorId::User(world.alice)).await.is_err(), "nor to remove others");
     assert!(main.reclassify(&bob, Classification::general(Confidentiality::Public)).await.is_err(), "nor to reclassify the channel");
@@ -528,7 +528,7 @@ async fn the_owner_changes_and_ends_the_session() {
     assert!(main.update_approval_rules(&alice, vec![shell(RuleDecision::Allow)]).await.is_err(), "but not to allow them: a place only restricts");
     session.update_description(&alice, Some("Release 2.0"), Some("Dates are in UTC.")).await.expect("and to say what it is for");
     main.update_description(&alice, Some("Planning"), None).await.expect("and each of its channels");
-    let side = session.create_channel(&alice, ChannelSpec { name: "side".to_string(), components: quiet(), participants: vec![], classification: None, language: None }).await.expect("and to add channels");
+    let side = session.create_channel(&alice, ChannelSpec { name: "side".to_string(), components: quiet(), participants: vec![], classification: None, language: None, uses_workspace: None }).await.expect("and to add channels");
     side.add_participant(&alice, ActorId::User(world.bob), HistoryAccess::All).await.expect("and people to them");
     session.delete_channel(&alice, side.id()).await.expect("and to delete them");
     assert!(world.manager.delete_session(&alice, session.id()).await.unwrap(), "and to delete it");
@@ -1687,7 +1687,7 @@ async fn deleting_a_session_needs_owning_it() {
 async fn creating_a_channel_needs_owning_its_session() {
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
-    let spec = |participants| ChannelSpec { name: "side".to_string(), components: quiet(), participants, classification: None, language: None };
+    let spec = |participants| ChannelSpec { name: "side".to_string(), components: quiet(), participants, classification: None, language: None, uses_workspace: None };
     let (created, asked) = world.asked(session.create_channel(&World::as_user(world.alice), spec(vec![ActorId::User(world.bob)]))).await;
     assert!(created.is_ok());
     assert_eq!(asked, checks(&[
@@ -1708,7 +1708,7 @@ async fn creating_a_channel_needs_owning_its_session() {
 async fn who_may_not_create_a_channel_is_refused_before_the_others_are_looked_at() {
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
-    let spec = ChannelSpec { name: "his".to_string(), components: quiet(), participants: vec![ActorId::User(world.alice)], classification: None, language: None };
+    let spec = ChannelSpec { name: "his".to_string(), components: quiet(), participants: vec![ActorId::User(world.alice)], classification: None, language: None, uses_workspace: None };
     let (refused, asked) = world.asked(session.create_channel(&World::as_user(world.bob), spec)).await;
     assert!(refused.is_err());
     assert_eq!(asked, checks(&["bob: UpdateSession(alice's) no"]));

@@ -92,6 +92,9 @@ pub struct ChannelSpec {
     /// The language its conversation is held in (issue 56); `None` for the
     /// one its creator prefers, if they prefer one.
     pub language: Option<String>,
+    /// Whether its members work on the session's workspace in it (issue
+    /// 253); `None` for the default, as in a template.
+    pub uses_workspace: Option<bool>,
 }
 
 /// The language the user `context` acts for prefers (issue 56), which
@@ -372,7 +375,10 @@ impl SessionLoop {
             }
         }
 
-        let channel = Channel::build(self.id, session.security_attributes.owner_id, name, spec.components, classification, language, participants);
+        let mut channel = Channel::build(self.id, session.security_attributes.owner_id, name, spec.components, classification, language, participants);
+        if let Some(uses) = spec.uses_workspace {
+            channel.uses_workspace = uses;
+        }
         crate::channel::require_admitted(&self.runtime_manager, context, &channel).await?;
         let store = &self.entities;
         store.create_channel(context, &channel).await?;
@@ -1385,7 +1391,7 @@ mod tests {
     }
 
     fn spec(name: &str, participants: Vec<caelumora_model::actor::ActorId>) -> ChannelSpec {
-        ChannelSpec { name: name.to_string(), components: Default::default(), participants, classification: None, language: None }
+        ChannelSpec { name: name.to_string(), components: Default::default(), participants, classification: None, language: None, uses_workspace: None }
     }
 
     #[tokio::test]
@@ -1534,6 +1540,21 @@ mod tests {
         assert_eq!(asked.channel().language, None);
         let stored = runtime.entity_store().get_channel(&ctx, asked.id()).await.unwrap();
         assert_eq!(stored.language, None, "stored, not only in memory");
+        manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_channel_uses_the_workspace_unless_its_creator_says_otherwise() {
+        let runtime = test_runtime();
+        let manager = SessionManager::new(Arc::clone(&runtime));
+        let (session, ctx, _) = running_session_of_a_user(&manager).await;
+
+        let unsaid = session.create_channel(&ctx, spec("unsaid", vec![])).await.unwrap();
+        assert!(unsaid.channel().uses_workspace, "by default");
+        let without = session.create_channel(&ctx, ChannelSpec { uses_workspace: Some(false), ..spec("without", vec![]) }).await.unwrap();
+        assert!(!without.channel().uses_workspace, "as its creator says");
+        let stored = runtime.entity_store().get_channel(&ctx, without.id()).await.unwrap();
+        assert!(!stored.uses_workspace, "stored, not only in memory");
         manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 

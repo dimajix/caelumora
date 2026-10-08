@@ -511,6 +511,10 @@ pub struct CreateChannelRequest {
     /// the one the requesting user prefers if absent.
     #[serde(default)]
     pub language: Option<String>,
+    /// Whether its members work on the session's workspace in it (issue
+    /// 253); yes if absent.
+    #[serde(default)]
+    pub uses_workspace: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]

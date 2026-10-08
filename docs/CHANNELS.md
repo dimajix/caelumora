@@ -179,9 +179,10 @@ In a session the workspace is used through a channel, by its current members - a
 agent acting there for whoever asked it - and nobody else, also not its owner from outside the
 channel. A channel uses it where
 
-*   its switch says so (`Channel::uses_workspace`, on unless its template or whoever may change the
-    channel says otherwise: `ChannelLoop::update_uses_workspace`, `UpdateChannel`,
-    `UsesWorkspaceChanged`) - what the channel is for; and
+*   its switch says so (`Channel::uses_workspace`, on unless its template, its creator
+    (`ChannelSpec::uses_workspace`) or whoever may change the channel says otherwise:
+    `ChannelLoop::update_uses_workspace`, `UpdateChannel`, `UsesWorkspaceChanged`) - what the
+    channel is for; and
 *   the workspace and the channel flow both ways (see
     [CONFIDENTIALITY.md](CONFIDENTIALITY.md#workspaces)) - the boundary, which the switch cannot
     widen.

@@ -81,7 +81,7 @@ pub async fn create_channel(
     let context = user.security_context();
 
     let components = moderation_components(payload.moderator.as_deref(), payload.responder_policy.as_deref());
-    let spec = ChannelSpec { name: payload.name, components, participants: payload.participants, classification: payload.classification, language: payload.language };
+    let spec = ChannelSpec { name: payload.name, components, participants: payload.participants, classification: payload.classification, language: payload.language, uses_workspace: payload.uses_workspace };
     let channel = session.create_channel(&context, spec).await
         .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("creating a channel in session {session_id}")))?;
     Ok(Json(crate::routes::channel_view(&state, &user, session_id, channel.id()).await?))

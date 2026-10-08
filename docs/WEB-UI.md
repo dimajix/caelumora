@@ -147,7 +147,8 @@ a new one.
 A new session is created from a template; the one used last in this browser is preselected (issue
 40). A new channel is created with its name, responder policy, classification - a level and, if any
 are configured, compartments from `GET /compartments` (issue 133) - language, preset to the one the
-user prefers (issue 56), and participants (`NewChannelDialog`, issue 09).
+user prefers (issue 56), whether it uses the session's workspace, preset to yes (issue 253), and
+participants (`NewChannelDialog`, issue 09).
 
 ### Workspaces
 
