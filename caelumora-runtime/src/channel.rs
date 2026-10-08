@@ -66,7 +66,13 @@ struct RunningActor {
     abort_handle: AbortHandle,
     /// What to wait on for the task to end (`ChannelActor::task`).
     task: TaskTracker,
-    sender: Box<dyn EventSender>,
+    /// Its inbox - none once it was told to stop: nothing is delivered to
+    /// an actor that is leaving, though what it sends is still taken.
+    sender: Option<Box<dyn EventSender>>,
+    /// On whose behalf it was removed, once it was told to stop (issue
+    /// 262): its task still runs - the step it was in, its farewell - and
+    /// `run` announces the removal in this name once the task has ended.
+    leaving: Option<SecurityContext>,
 }
 
 /// Something that may not be done in a channel. Raised by `ChannelLoop`;
@@ -310,11 +316,6 @@ enum ActorChange {
     /// issues 162, 262).
     Stop(ActorId, SecurityContext),
 }
-
-/// The actors `run` told to stop whose tasks have not ended yet (issue
-/// 262): on whose behalf each was removed, and its task - the id its
-/// `AbortHandle` names, by which `run` knows the task that ended as its.
-type Leaving = HashMap<ActorId, (SecurityContext, tokio::task::Id)>;
 
 #[derive(Debug)]
 pub struct ChannelLoop {
@@ -1012,7 +1013,6 @@ impl ChannelLoop {
         let (event_tx, mut event_rx) = mpsc::channel(10);
         let mut join_set = JoinSet::new();
         let mut running = self.spawn_actors(event_tx.clone(), &mut join_set);
-        let mut leaving = Leaving::new();
 
         loop {
             tokio::select! {
@@ -1022,12 +1022,12 @@ impl ChannelLoop {
                 // under its id starts.
                 biased;
                 maybe_event = event_rx.recv() => {
-                    if self.handle_actor_event(maybe_event, &running, &leaving).await {
+                    if self.handle_actor_event(maybe_event, &running).await {
                         break;
                     }
                 }
                 Some(change) = changes_rx.recv() => {
-                    self.apply_change(change, &mut running, &mut leaving, &event_tx, &mut join_set).await;
+                    self.apply_change(change, &mut running, &event_tx, &mut join_set).await;
                 }
                 // Finished tasks are dropped as they end - a removed actor's
                 // with its removal announced (issue 262); once the last one
@@ -1038,8 +1038,8 @@ impl ChannelLoop {
                         Ok((task, _)) => *task,
                         Err(e) => e.id(),
                     };
-                    let left = leaving.iter().find(|(_, (_, left))| *left == task).map(|(id, _)| *id);
-                    if let Some((id, (remover, _))) = left.and_then(|id| leaving.remove_entry(&id)) {
+                    let ended = running.iter().find(|(_, actor)| actor.abort_handle.id() == task).map(|(id, _)| *id);
+                    if let Some(RunningActor { id, leaving: Some(remover), .. }) = ended.and_then(|id| running.remove(&id)) {
                         self.announce_removal(id, remover, &running).await;
                     }
                     if join_set.is_empty() {
@@ -1054,7 +1054,7 @@ impl ChannelLoop {
     }
 
     /// Starts or stops an actor as a participant joined or left (issue 46).
-    async fn apply_change(&self, change: ActorChange, running: &mut HashMap<ActorId, RunningActor>, leaving: &mut Leaving, event_tx: &Sender<Envelope>, join_set: &mut JoinSet<ActorId>) {
+    async fn apply_change(&self, change: ActorChange, running: &mut HashMap<ActorId, RunningActor>, event_tx: &Sender<Envelope>, join_set: &mut JoinSet<ActorId>) {
         match change {
             ActorChange::Start(joined) => {
                 // Joined before `run` started: already running. Removed
@@ -1063,31 +1063,34 @@ impl ChannelLoop {
                 // (issue 171).
                 let id = joined.actor.id();
                 let still_joined = self.actors.load().get(&id).is_some_and(|current| Arc::ptr_eq(&current.actor, &joined.actor));
-                if !running.contains_key(&id) && still_joined {
-                    // Its old actor has ended - `add_participant` waited for
-                    // that (`left`) - but its task's end may not have been
-                    // seen yet: the removal is announced before anything of
-                    // the new actor (issue 262).
-                    if let Some((remover, _)) = leaving.remove(&id) {
+                // Its old actor has ended - `add_participant` waited for
+                // that (`left`) - but its task's end may not have been seen
+                // yet: the removal is announced before anything of the new
+                // actor (issue 262).
+                if running.get(&id).is_some_and(|old| old.leaving.is_some()) {
+                    if let Some(RunningActor { leaving: Some(remover), .. }) = running.remove(&id) {
                         self.announce_removal(id, remover, running).await;
                     }
+                }
+                if !running.contains_key(&id) && still_joined {
                     let handle = self.spawn_actor(&joined, event_tx.clone(), join_set);
                     running.insert(handle.id, handle);
                 }
             }
             ActorChange::Stop(id, remover) => {
-                // Dropping the handle closes the actor's inbox; told to stop
-                // (`Actor::stop`), it ends its task itself once its state is
-                // stored consistent. Only if it does not - a tool that hangs -
-                // is it aborted. Until its task has ended, what it sends is
+                // Dropping its inbox closes it; told to stop (`Actor::stop`),
+                // the actor ends its task itself once its state is stored
+                // consistent. Only if it does not - a tool that hangs - is it
+                // aborted. It keeps running until then: what it sends is
                 // taken (`handle_actor_event`), and the removal is announced
-                // once it has (issue 262). An actor never started has nothing
-                // to say: announced at once.
-                match running.remove(&id) {
+                // once its task has ended (issue 262). An actor never started
+                // has nothing to say: announced at once.
+                match running.get_mut(&id) {
                     Some(handle) => {
+                        handle.sender = None;
+                        handle.leaving = Some(remover);
                         let (abort_handle, task) = (handle.abort_handle.clone(), handle.task.clone());
                         let (channel, actor) = (self.id, id);
-                        leaving.insert(id, (remover, abort_handle.id()));
                         tokio::spawn(async move {
                             if !stopped(&[task]).await {
                                 warn!("Actor {} did not stop by itself after leaving channel {}: aborted", actor, channel);
@@ -1116,7 +1119,7 @@ impl ChannelLoop {
         self.process_envelope(removed, running).await;
     }
 
-    async fn handle_actor_event(&self, maybe_event: Option<Envelope>, running: &HashMap<ActorId, RunningActor>, leaving: &Leaving) -> bool {
+    async fn handle_actor_event(&self, maybe_event: Option<Envelope>, running: &HashMap<ActorId, RunningActor>) -> bool {
         if let Some(event) = maybe_event {
             // An actor that was removed still finishes the step it was in
             // and ends its turn: what it sends until its task has ended
@@ -1124,8 +1127,7 @@ impl ChannelLoop {
             // that - its task aborted - does not (issue 162). Its sender is
             // the actor's own: its `OriginEventSender` passes on nothing
             // else (issue 228).
-            let sender = event.context.sender_id;
-            if !running.contains_key(&sender) && !leaving.contains_key(&sender) {
+            if !running.contains_key(&event.context.sender_id) {
                 debug!("Dropped {}: its sender left channel {}", event.describe(), self.id);
                 return false;
             }
@@ -1189,7 +1191,7 @@ impl ChannelLoop {
             filter,
         ));
 
-        RunningActor { id, abort_handle, task, sender: filtered_sender }
+        RunningActor { id, abort_handle, task, sender: Some(filtered_sender), leaving: None }
     }
 
     /// Whether every message `event` carries may enter the channel as its
@@ -1368,10 +1370,11 @@ impl ChannelLoop {
             target_event.context.session_id = self.session_id;
             target_event.context.span_id = span_id;
             target_event.context.span_depth = span_depth;
-            if let Some(actor) = running.get(&target_id) {
+            // Not to an actor that is leaving: its inbox is closed.
+            if let Some(sender) = running.get(&target_id).and_then(|actor| actor.sender.as_ref()) {
                 debug!(to = %target_id, "Forwarding {}", event_desc);
                 self.record_send_event(&target_event).await;
-                if let Err(e) = actor.sender.try_send(target_event) {
+                if let Err(e) = sender.try_send(target_event) {
                     match e {
                         TransportError::Full => warn!("Queue full for actor {}", target_id),
                         _ => warn!("Could not forward event {} from={} to={}: {:?}", event_desc, sender_id, target_id, e)
@@ -1843,7 +1846,7 @@ mod tests {
         let channel = channel_moderated_by(&[&alice], Arc::new(AskBack(bob))).await;
         let (tx, mut rx) = mpsc::channel(8);
         let abort_handle = tokio::spawn(async {}).abort_handle();
-        let actors = HashMap::from([(bob, RunningActor { id: bob, abort_handle, task: TaskTracker::new(), sender: Box::new(InMemoryEventSender::new(tx)) })]);
+        let actors = HashMap::from([(bob, RunningActor { id: bob, abort_handle, task: TaskTracker::new(), sender: Some(Box::new(InMemoryEventSender::new(tx))), leaving: None })]);
         let from_alice = |event| Envelope::new(
             context.clone(),
             EventContext { sender_id: ActorId::User(alice.id), ..EventContext::default() },
@@ -1906,7 +1909,7 @@ mod tests {
         let channel = channel_moderated_by(&[&alice], Arc::new(TellsTheSender)).await;
         let (tx, mut rx) = mpsc::channel(8);
         let abort_handle = tokio::spawn(async {}).abort_handle();
-        let actors = HashMap::from([(bob, RunningActor { id: bob, abort_handle, task: TaskTracker::new(), sender: Box::new(InMemoryEventSender::new(tx)) })]);
+        let actors = HashMap::from([(bob, RunningActor { id: bob, abort_handle, task: TaskTracker::new(), sender: Some(Box::new(InMemoryEventSender::new(tx))), leaving: None })]);
         let said = Envelope::new(
             SecurityContext::default(),
             EventContext { sender_id: bob, ..EventContext::default() },
@@ -3912,9 +3915,15 @@ mod tests {
         let late = Envelope::new(SecurityContext::default(), EventContext::new(channel.session_id, channel.id, gone, "helper".to_string()), ActorEvent::TurnGivenUp { turn_id: caelumora_model::work::TurnId::new(), reason: caelumora_model::turn::GivenUpReason::Failed { message: "too late".to_string() } });
 
         // Its actor no longer runs, nor is it leaving: it was aborted.
-        channel.handle_actor_event(Some(late), &HashMap::new(), &Leaving::new()).await;
+        channel.handle_actor_event(Some(late), &HashMap::new()).await;
 
         assert!(events.try_recv().is_err(), "what a removed participant sends is dropped");
+    }
+
+    /// An actor told to stop whose task has not ended: no inbox, and who
+    /// removed it.
+    fn leaving_actor(id: ActorId, remover: SecurityContext) -> RunningActor {
+        RunningActor { id, abort_handle: tokio::spawn(async {}).abort_handle(), task: TaskTracker::new(), sender: None, leaving: Some(remover) }
     }
 
     #[tokio::test]
@@ -3927,9 +3936,8 @@ mod tests {
         let farewell = Envelope::new(SecurityContext::default(), EventContext::new(channel.session_id, channel.id, going, "helper".to_string()), ActorEvent::TurnGivenUp { turn_id, reason: caelumora_model::turn::GivenUpReason::Stopped });
 
         // Told to stop, its task still runs: what it says is its own (issue 262).
-        let task = tokio::spawn(async {}).id();
-        let leaving = Leaving::from([(going, (SecurityContext::default(), task))]);
-        channel.handle_actor_event(Some(farewell), &HashMap::new(), &leaving).await;
+        let running = HashMap::from([(going, leaving_actor(going, SecurityContext::default()))]);
+        channel.handle_actor_event(Some(farewell), &running).await;
 
         let heard = events.try_recv().expect("the farewell enters the channel");
         assert!(matches!(heard.event, ActorEvent::TurnGivenUp { turn_id: id, .. } if id == turn_id));
@@ -3947,15 +3955,13 @@ mod tests {
         // but `run` has not seen that yet when the new actor's start comes.
         let (event_tx, _event_rx) = mpsc::channel(10);
         let mut join_set = JoinSet::new();
-        let mut running = HashMap::new();
-        let mut leaving = Leaving::from([(participant, (context.clone(), tokio::spawn(async {}).id()))]);
-        channel.apply_change(ActorChange::Start(joined), &mut running, &mut leaving, &event_tx, &mut join_set).await;
+        let mut running = HashMap::from([(participant, leaving_actor(participant, context.clone()))]);
+        channel.apply_change(ActorChange::Start(joined), &mut running, &event_tx, &mut join_set).await;
 
         let announced = events.try_recv().expect("the removal is announced");
         assert!(matches!(announced.event, ActorEvent::ParticipantRemoved { participant: p } if p == participant), "{}", announced.describe());
         assert_eq!(announced.context.sender_id, context.caller_id, "in the remover's name");
-        assert!(running.contains_key(&participant), "and then the new actor runs");
-        assert!(leaving.is_empty(), "the removal is announced once");
+        assert!(running.get(&participant).is_some_and(|actor| actor.leaving.is_none()), "and then the new actor runs");
         join_set.abort_all();
     }
 

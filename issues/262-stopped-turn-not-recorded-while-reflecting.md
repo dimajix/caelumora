@@ -212,3 +212,13 @@ as it does.
   reflects - has no test of its own, since no component of the tests holds that step; the
   mechanism is pinned at `handle_actor_event` and through the long tool, the `Start` arm at
   `apply_change`. Nothing to change in the frontends.
+- **2026-10-08** — Restructured at the maintainer's request, without a change in behaviour: an
+  actor told to stop stays in `run`'s `running` until its task has ended - its inbox gone
+  (`RunningActor::sender` is `None`, nothing is delivered to it) and who removed it kept
+  (`RunningActor::leaving`) - instead of being moved to a map of its own. `handle_actor_event`
+  asks `running` alone, as before 262; the task that ended is found by its `AbortHandle`'s id.
+  Weighed and not taken: keeping the actor in `ChannelLoop::actors` as well, until its task has
+  ended - `actors` says who takes part, as the stored channel does, and its readers (`members`,
+  the mentions, `wakeup`, `actor_by_id`) would each have had to leave a leaving actor out.
+  `ChannelLoop::leaving` stays, for `add_participant` to wait on (171). A task that ends on its
+  own is now dropped from `running` as well, where before its entry stayed.
