@@ -350,6 +350,44 @@ impl Admission {
     }
 }
 
+/// Which calls of a provider's tools require human approval, as configured
+/// in its `requires_approval`: `true` (all of them, the default), `false`
+/// (none), or `"unless_read_only"` - all but those of the tools that only
+/// read (issue 246), as the provider tells them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(try_from = "Value")]
+pub(crate) enum ApprovalMode {
+    #[default]
+    Always,
+    Never,
+    UnlessReadOnly,
+}
+
+impl ApprovalMode {
+    /// Whether calls of a tool require approval, which only reads if
+    /// `read_only`.
+    pub(crate) fn required(self, read_only: bool) -> bool {
+        match self {
+            ApprovalMode::Always => true,
+            ApprovalMode::Never => false,
+            ApprovalMode::UnlessReadOnly => !read_only,
+        }
+    }
+}
+
+impl TryFrom<Value> for ApprovalMode {
+    type Error = &'static str;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::Bool(true) => Ok(ApprovalMode::Always),
+            Value::Bool(false) => Ok(ApprovalMode::Never),
+            Value::String(text) if text == "unless_read_only" => Ok(ApprovalMode::UnlessReadOnly),
+            _ => Err("requires_approval must be true, false or \"unless_read_only\""),
+        }
+    }
+}
+
 /// Whether `call` names a tool `turn` was offered (issue 180): a tool of a
 /// set withheld in the turn's channel, or of none, is not called by name.
 fn offered(call: &ToolCall, turn: &Turn<'_>) -> bool {
@@ -886,6 +924,18 @@ mod tests {
         let result = executor.execute(&call("send_out"), None, &mut turn, &CancellationToken::new()).await;
         assert_eq!(result.status, ToolResultStatus::UnknownTool, "nor run, approved or not");
         assert!(result.started_at.is_none());
+    }
+
+    #[test]
+    fn approval_is_configured_for_all_none_or_all_but_what_only_reads() {
+        let configured = |value: Value| serde_json::from_value::<ApprovalMode>(value);
+        assert_eq!(configured(json!(true)).unwrap(), ApprovalMode::Always);
+        assert_eq!(configured(json!(false)).unwrap(), ApprovalMode::Never);
+        assert_eq!(configured(json!("unless_read_only")).unwrap(), ApprovalMode::UnlessReadOnly);
+        assert!(configured(json!("hints")).is_err());
+        for (approval, asks) in [(ApprovalMode::Always, [true, true]), (ApprovalMode::Never, [false, false]), (ApprovalMode::UnlessReadOnly, [false, true])] {
+            assert_eq!([true, false].map(|read_only| approval.required(read_only)), asks, "{approval:?}: reading, writing");
+        }
     }
 
     #[tokio::test]

@@ -3,7 +3,7 @@ use caelumora_model::question::Answers;
 use caelumora_model::confidentiality::Classification;
 use crate::component::{ComponentError, ComponentFacets, ComponentRegistry, ComponentKind};
 use caelumora_model::remote::RemoteEndpoint;
-use crate::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
+use crate::tool::{ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::secret::{SecretError, SecretManager};
 use caelumora_model::tool::{Tool, ToolVisibility, ToolParameters};
@@ -50,7 +50,7 @@ struct McpToolConfig {
     /// Left out, they do: a server may act outside, and what makes an agent
     /// call it may be a consent nobody gave (issue 150).
     #[serde(default)]
-    pub requires_approval: Approval,
+    pub requires_approval: ApprovalMode,
     /// How the results of this server's tools are classified (issue 133):
     /// a result that may not flow into the agent's channel is withheld
     /// from the agent. Left out, as the channel.
@@ -85,43 +85,12 @@ impl McpError {
     }
 }
 
-/// Which calls of a server's tools require human approval: `true` (all of
-/// them, the default), `false` (none), or `"unless_read_only"` - all but
-/// those of the tools the server says only read (issue 246). That a server
-/// says so is trusted only where configured: it may be wrong, or lie.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
-#[serde(try_from = "Value")]
-enum Approval {
-    #[default]
-    Always,
-    Never,
-    UnlessReadOnly,
-}
-
-impl Approval {
-    /// Whether calls of a tool the server annotated with `annotations`
-    /// require approval. A tool without `readOnlyHint` is not read-only,
-    /// as MCP says.
-    fn required_for(self, annotations: Option<&ToolAnnotations>) -> bool {
-        match self {
-            Approval::Always => true,
-            Approval::Never => false,
-            Approval::UnlessReadOnly => !annotations.and_then(|a| a.read_only_hint).unwrap_or(false),
-        }
-    }
-}
-
-impl TryFrom<Value> for Approval {
-    type Error = &'static str;
-
-    fn try_from(value: Value) -> Result<Self, Self::Error> {
-        match value {
-            Value::Bool(true) => Ok(Approval::Always),
-            Value::Bool(false) => Ok(Approval::Never),
-            Value::String(text) if text == "unless_read_only" => Ok(Approval::UnlessReadOnly),
-            _ => Err("requires_approval must be true, false or \"unless_read_only\""),
-        }
-    }
+/// Whether a tool the server annotated with `annotations` only reads, as
+/// it says (issue 246): a tool without `readOnlyHint` does not, as MCP
+/// says. That a server says so is trusted only where configured
+/// (`ApprovalMode::UnlessReadOnly`): it may be wrong, or lie.
+fn read_only(annotations: Option<&ToolAnnotations>) -> bool {
+    annotations.and_then(|a| a.read_only_hint).unwrap_or(false)
 }
 
 impl McpToolConfig {
@@ -209,7 +178,7 @@ async fn discover_tools(descriptor_id: &str, config: &McpToolConfig, auth_header
                 name: format!("{}{}{}", descriptor_id, NAME_SEPARATOR, t.name),
                 description,
                 parameters: schema_to_tool_parameters(&schema),
-                requires_approval: config.requires_approval.required_for(t.annotations.as_ref()),
+                requires_approval: config.requires_approval.required(read_only(t.annotations.as_ref())),
                 visibility: ToolVisibility::SHOWN,
                 classification: config.classification.clone(),
                 presentation: Default::default(),
@@ -428,24 +397,22 @@ mod tests {
         let config: McpToolConfig = serde_json::from_value(value).unwrap();
         assert!(config.endpoint.auth.is_none());
         assert_eq!(config.timeout(), Duration::from_secs(10));
-        assert_eq!(config.requires_approval, Approval::Always, "approval unless configured otherwise");
+        assert_eq!(config.requires_approval, ApprovalMode::Always, "approval unless configured otherwise");
         assert!(serde_json::from_value::<McpToolConfig>(json!({ "endpoint": { "url": "x" }, "requires_aproval": true })).is_err(), "nothing unknown");
     }
 
     #[test]
     fn approval_is_configured_for_all_none_or_all_but_the_read_only_tools() {
         let configured = |approval: Value| serde_json::from_value::<McpToolConfig>(json!({ "endpoint": { "url": "x" }, "requires_approval": approval })).map(|c| c.requires_approval);
-        assert_eq!(configured(json!(true)).unwrap(), Approval::Always);
-        assert_eq!(configured(json!(false)).unwrap(), Approval::Never);
-        assert_eq!(configured(json!("unless_read_only")).unwrap(), Approval::UnlessReadOnly);
+        assert_eq!(configured(json!("unless_read_only")).unwrap(), ApprovalMode::UnlessReadOnly);
         let refused = configured(json!("hints")).unwrap_err().to_string();
         assert!(refused.contains("requires_approval must be"), "names the field: {refused}");
 
         let read_only = ToolAnnotations::new().read_only(true);
         let writes = ToolAnnotations::new().read_only(false);
         let unannotated = ToolAnnotations::new().destructive(false);
-        for (approval, asks) in [(Approval::Always, [true, true, true, true]), (Approval::Never, [false; 4]), (Approval::UnlessReadOnly, [false, true, true, true])] {
-            let required = [Some(&read_only), Some(&writes), Some(&unannotated), None].map(|a| approval.required_for(a));
+        for (approval, asks) in [(ApprovalMode::Always, [true, true, true, true]), (ApprovalMode::Never, [false; 4]), (ApprovalMode::UnlessReadOnly, [false, true, true, true])] {
+            let required = [Some(&read_only), Some(&writes), Some(&unannotated), None].map(|a| approval.required(super::read_only(a)));
             assert_eq!(required, asks, "{approval:?}: read-only, writing, without readOnlyHint, without annotations");
         }
     }
@@ -456,7 +423,7 @@ mod tests {
             descriptor_id: "github-mcp".to_string(),
             config: McpToolConfig {
                 endpoint: RemoteEndpoint::new("http://example.invalid/mcp"),
-                requires_approval: Approval::Never,
+                requires_approval: ApprovalMode::Never,
                 classification: None,
                 description: None,
                 destination: None,
