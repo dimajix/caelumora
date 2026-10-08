@@ -30,17 +30,15 @@ pub const CREATE_PLAN_TOOL_NAME: &str = "create_plan";
 const PLANNING_SYSTEM_PROMPT: &str = "Before responding, decide whether this request needs \
 research or multiple steps to complete. If it does, gather any information you need using \
 the available tools, then call `create_plan` once with a short summary and an ordered list \
-of the steps you will take to fulfill the request. The plan will be shown to the user for \
-approval before you execute it. For simple requests that need no research and no multiple \
+of the steps you will take to fulfill the request. For simple requests that need no research and no multiple \
 steps, skip `create_plan` entirely and just answer directly.";
 
 /// The `create_plan` tool: available at every point in a turn (not phase-
-/// gated) and approved through the exact same generic tool-call approval
-/// pipeline (`requires_approval: true`) as any other tool. `execute()` only
-/// ever runs once that approval has already been granted, at which point
-/// the submission is inherently "approved" - it parses the plan and either
-/// stores it on `Turn` as a fresh plan, or, if one is already in
-/// progress, appends the new steps to it (see `execute` below). Also
+/// gated) and without approval, as a tool without an effect outside the
+/// turn - whoever wants to see plans first sets a rule of a place that asks
+/// for it (issue 13), and `describe` shows them the plan. `execute()` parses
+/// the plan and either stores it on `Turn` as a fresh plan, or, if one is
+/// already in progress, appends the new steps to it (see `execute` below). Also
 /// implements `PromptProvider` to contribute `PLANNING_SYSTEM_PROMPT`, which
 /// the context provider collects with every other prompt part (issue 99).
 #[derive(Debug)]
@@ -115,7 +113,7 @@ impl ToolProvider for CreatePlanToolProvider {
                 ],
                 ["summary", "steps"],
             ),
-            requires_approval: true,
+            requires_approval: false,
             visibility: ToolVisibility::SHOWN,
             classification: None,
             presentation: Default::default(),
@@ -182,8 +180,8 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn create_plan_tool_requires_approval_like_any_other_tool() {
-        assert!(CreatePlanToolProvider.tools().remove(0).requires_approval);
+    fn create_plan_tool_requires_no_approval() {
+        assert!(!CreatePlanToolProvider.tools().remove(0).requires_approval);
     }
 
     #[tokio::test]

@@ -252,7 +252,9 @@ approval follows from that:
 *   **What stays in the conversation** needs none: reading (`read_notes`, `read_history`), within
     what the agent may read and its channel may take in; the tools without an effect; and ending
     the turn (`stop`, `bye`, `silence`) - an agent put to sleep on someone's word is woken with
-    `/wakeup`.
+    `/wakeup`. A plan (`create_plan`) is one of them: it says what the agent intends, and every
+    step with an effect is approved on its own. Whoever wants to see plans before they run sets a
+    rule of a place that asks for `create_plan` (see below); the request shows the plan.
 *   **Notes and memory** need none either, although what the agent writes there may rest on a
     faked word and from then on stands in the agent's name: a note before everyone in the channel
     and in what other channels read of it, something remembered in the agent's other channels, seen
@@ -534,7 +536,7 @@ A command answers the issuer alone (`/help`) or the whole channel (`/wakeup`).
 | `bye` | `stop_tool` | - | no | `SHOWN` | Ends the turn: the agent says good-bye and goes to sleep. |
 | `silence` | `stop_tool` | - | no | `SHOWN` | Ends the turn without an answer; the agent stays idle. |
 | `ask_user` | `ask_user_tool` | `questions` (1-5, each with `header`, `question`, optional `choices` and `multi_select`), `ask` (handles, at least one) | no | `SHOWN` | Asks the users named and waits for their answers, which are its result (see [Questions](#questions)). |
-| `create_plan` | `create_plan_tool` | `summary`, `steps` (each with `description`) | yes | `SHOWN` | Submits a multi-step plan; a plan in progress is extended, not replaced. |
+| `create_plan` | `create_plan_tool` | `summary`, `steps` (each with `description`) | no | `SHOWN` | Submits a multi-step plan; a plan in progress is extended, not replaced. |
 | `{id}__{name}` | `mcp_tool` | as the server declares | per `requires_approval`, yes by default; with `"unless_read_only"` not for a tool the server marks read-only | `SHOWN` | A tool of a remote MCP server. |
 | `note` | `notes` | `text` | no | `SHOWN` | Notes something in the channel, visible to every participant. |
 | `revoke_note` | `notes` | `id` | no | `SHOWN` | Revokes one of the agent's own notes. |

@@ -107,3 +107,8 @@ not verified by the model.
     member and every entry records where it was made. Releasing one stays under approval.
   - Reading and the tools without an effect need none.
   TOOLS-AND-COMMANDS.md (*What needs approval*) and MEMORY.md record it.
+- **2026-10-08** — `create_plan` no longer requires approval either: the review in (A) missed it, a
+  leftover of the plan approval that was folded into the tool approval. A plan has no effect outside
+  the turn, its steps are approved one by one, and a denial told the model nothing about what was
+  wrong with it. Whoever wants to see plans first sets a rule of a place that asks for
+  `create_plan` (issue [13](13-approval-modes.md)).

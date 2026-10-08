@@ -2879,7 +2879,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_plan_runs_its_steps_as_intermediate_messages_and_ends_with_the_final_answer() {
-        use caelumora_model::approval::ApprovalResponse;
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         use caelumora_model::message::MessageRole;
         use caelumora_model::tool::{ToolCall, ToolVisibility};
@@ -2904,24 +2903,15 @@ mod tests {
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
         }] };
-        let Stuck { channel, context, agent, helper, mut events, running } =
+        let Stuck { channel, agent, helper, mut events, running, .. } =
             with_an_agent(Arc::new(Scripted(std::sync::Mutex::new(script.into()))), components).await;
 
-        // The plan needs approval; alice gives it.
+        // The plan needs no approval: it runs at once.
         let mut seen = Vec::new();
-        let request = tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                if let ActorEvent::ApprovalRequested(request) = events.recv().await.expect("the channel is running").event {
-                    break request;
-                }
-            }
-        }).await.expect("the plan is put up for approval");
-        let ActorId::User(alice) = context.initiator_id else { panic!("alice acts") };
-        channel.user_actor(alice).unwrap().send_approval(ApprovalResponse::new(request.id, agent), true).await.unwrap();
-
         let final_messages = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 let envelope = events.recv().await.expect("the channel is running");
+                assert!(!matches!(envelope.event, ActorEvent::ApprovalRequested(_)), "nobody is asked");
                 if envelope.context.sender_id != ActorId::Agent(agent) { continue }
                 match envelope.event {
                     ActorEvent::TurnFinished { messages, .. } => break messages,
@@ -2959,7 +2949,6 @@ mod tests {
 
     #[tokio::test]
     async fn every_message_of_a_turn_carries_the_turn_its_start_announced() {
-        use caelumora_model::approval::ApprovalResponse;
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         use caelumora_model::message::MessageRole;
         use caelumora_model::tool::{ToolCall, ToolVisibility};
@@ -2986,31 +2975,17 @@ mod tests {
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
         }] };
-        let Stuck { channel, context, agent, helper, mut events, running } =
+        let Stuck { channel, agent, helper, mut events, running, .. } =
             with_an_agent(Arc::new(Scripted(std::sync::Mutex::new(script.into()))), components).await;
 
         let mut started = None;
         let mut shown = Vec::new();
-        let request = tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                let envelope = events.recv().await.expect("the channel is running");
-                let agents = envelope.context.sender_id == ActorId::Agent(agent);
-                match envelope.event {
-                    ActorEvent::ResponseStarted { turn_id } if agents => started = Some(turn_id),
-                    ActorEvent::CompleteMessageGenerated(m) | ActorEvent::IntermediateMessageGenerated(m) if agents => shown.push(m.turn_id),
-                    ActorEvent::ApprovalRequested(request) => break request,
-                    _ => {}
-                }
-            }
-        }).await.expect("the plan is put up for approval");
-        let ActorId::User(alice) = context.initiator_id else { panic!("alice acts") };
-        channel.user_actor(alice).unwrap().send_approval(ApprovalResponse::new(request.id, agent), true).await.unwrap();
-
         let final_messages = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 let envelope = events.recv().await.expect("the channel is running");
                 if envelope.context.sender_id != ActorId::Agent(agent) { continue }
                 match envelope.event {
+                    ActorEvent::ResponseStarted { turn_id } => started = Some(turn_id),
                     ActorEvent::TurnFinished { messages, .. } => break messages,
                     ActorEvent::CompleteMessageGenerated(m) | ActorEvent::IntermediateMessageGenerated(m) => shown.push(m.turn_id),
                     _ => {}
@@ -3570,31 +3545,12 @@ mod tests {
 
     #[tokio::test]
     async fn a_turn_asked_for_again_while_it_waits_for_an_approval_withdraws_the_request() {
-        use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         use caelumora_model::message::MessageRole;
-        use caelumora_model::tool::{ToolCall, ToolVisibility};
 
-        let plan = Message {
-            role: MessageRole::Assistant,
-            tool_calls: vec![ToolCall {
-                id: Some("1".to_string()),
-                function_name: "create_plan".to_string(),
-                arguments: serde_json::json!({ "summary": "one step", "steps": [{ "description": "first" }] }),
-                visibility: ToolVisibility::SHOWN,
-                presentation: Default::default(),
-            }],
-            ..Message::new(Classification::CHANNEL_DEFAULT)
-        };
-        let instead = Message { role: MessageRole::Assistant, content: Some("no plan needed".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
-        let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
-            id: "plan".to_string(),
-            kind: crate::component_impl::create_plan_tool::CREATE_PLAN_TOOL_KIND.to_string(),
-            params: serde_json::Value::Null,
-            tags: vec![],
-            fail_policy: ComponentFailPolicy::FailClosed,
-        }] };
+        let (call, components) = a_call_needing_approval();
+        let instead = Message { role: MessageRole::Assistant, content: Some("no wait needed".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
         let Stuck { channel, context, agent, helper, mut events, running } =
-            with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([plan, instead].into()))), components).await;
+            with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([call, instead].into()))), components).await;
         let ActorEvent::ApprovalRequested(request) = shown_by(&mut events, agent, "ApprovalRequested").await else { unreachable!() };
         settled(&helper, ActorState::WaitingForUser).await;
 
@@ -3604,7 +3560,7 @@ mod tests {
             "nobody is asked any longer");
         assert!(matches!(shown_by(&mut events, agent, "RetryAccepted").await, ActorEvent::RetryAccepted { target } if target == RetryTarget::Turn(turn)));
         let said = |messages: Vec<Message>| messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
-        assert_eq!(said(answered(&mut events, agent).await), ["no plan needed"]);
+        assert_eq!(said(answered(&mut events, agent).await), ["no wait needed"]);
         running.abort();
     }
 
@@ -3748,11 +3704,13 @@ mod tests {
 
     #[tokio::test]
     async fn a_call_with_invalid_arguments_is_answered_without_asking_anyone() {
+        use caelumora_model::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         use caelumora_model::message::MessageRole;
         use caelumora_model::tool::{ToolCall, ToolVisibility, ToolResultStatus};
 
-        // `create_plan` needs approval; this call's arguments are no plan.
+        // A rule asks for every `create_plan` (issue 13); this call's
+        // arguments are no plan.
         let not_a_plan = Message {
             role: MessageRole::Assistant,
             tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "create_plan".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
@@ -3766,8 +3724,10 @@ mod tests {
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
         }] };
-        let Stuck { agent, helper, mut events, running, .. } =
-            with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([not_a_plan, answer].into()))), components).await;
+        let built = agent_channel(Arc::new(DummySecurityManager::new()), Arc::new(Scripted(std::sync::Mutex::new([not_a_plan, answer].into()))), components).await;
+        let ask = ApprovalRule::new(ToolMatcher { tool: "create_plan".to_string(), arguments: Default::default() }, RuleDecision::Ask, Reach::Everywhere, None).unwrap();
+        built.0.update_approval_rules(&SecurityContext::system(), vec![ask]).await.expect("the system may");
+        let Stuck { agent, helper, mut events, running, .. } = start(built).await;
 
         // The turn ends without anyone approving anything: the call was
         // answered as invalid, and the model tried again.
