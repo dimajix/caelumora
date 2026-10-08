@@ -131,7 +131,7 @@ it does not see the token, and there is no way yet for one to clean up otherwise
     only detaches it), a child process is started with `kill_on_drop(true)`, and work on a thread
     of its own (`spawn_blocking`, `std::thread`) cannot be interrupted at all - the one exception
     is `terminal_tool`, whose commands live with the storage
-    ([Commands in the workspace](#commands-in-the-workspace));
+    ([The workspace](#the-workspace));
 *   does not block: code that never reaches an `await` - a long computation, `std::thread::sleep` -
     cannot be interrupted, and holds up the agent's whole task, which even the abort after
     `STOP_GRACE` does not end.
@@ -545,22 +545,47 @@ A command answers the issuer alone (`/help`) or the whole channel (`/wakeup`).
 | `remember` | `agent_memory` | `text` | no | `HIDDEN` | Remembers something across channels and sessions. |
 | `forget` | `agent_memory` | `id` | no | `HIDDEN` | Forgets something remembered. |
 | `reclassify_memory` | `agent_memory` | `id`, `level`, `compartments` (optional) | yes | `HIDDEN` | Reclassifies something remembered that may be recalled here, never above the channel (issue 133). |
-| `run_command` | `terminal_tool` | `command`, `wait_secs` (optional, at most `max_wait_secs`) | as configured, yes by default | `SHOWN` | Runs a shell command in the session's workspace and follows it; answers with its output and exit code, or with its id while it runs (see [Commands in the workspace](#commands-in-the-workspace)). |
+| `run_command` | `terminal_tool` | `command`, `wait_secs` (optional, at most `max_wait_secs`) | as configured, yes by default | `SHOWN` | Runs a shell command in the session's workspace and follows it; answers with its output and exit code, or with its id while it runs (see [The workspace](#the-workspace)). |
 | `command_output` | `terminal_tool` | `id`, `offset` (optional), `wait_secs` (optional) | no | `SHOWN` | What a command started in the channel printed since `offset`, once it ended or the wait is over. |
 | `kill_command` | `terminal_tool` | `id` | no | `SHOWN` | Ends a command started in the channel, and what it started. |
+| `list_files` | `terminal_tool` | `path` (optional, the top) | as configured; not under `"unless_read_only"` | `SHOWN` | Lists a directory of the workspace (see [The workspace](#the-workspace)). |
+| `read_file` | `terminal_tool` | `path`, `start_line`, `line_count` (optional) | as configured; not under `"unless_read_only"` | `SHOWN` | Reads a text file of the workspace, or the lines asked for. |
+| `grep_files` | `terminal_tool` | `pattern`, `path` (optional), `max_matches` (optional, 100, at most 1000) | as configured; not under `"unless_read_only"` | `SHOWN` | Searches the text files of the workspace for a regular expression. |
+| `write_file` | `terminal_tool` | `path`, `content` | as configured, yes by default | `SHOWN` | Writes a text file of the workspace, its directories made. |
+| `replace_in_file` | `terminal_tool` | `path`, `old_text`, `new_text`, `replace_all` (optional) | as configured, yes by default | `SHOWN` | Replaces text that occurs once - or every occurrence - in a text file of the workspace. |
+| `delete_file` | `terminal_tool` | `path` | as configured, yes by default | `SHOWN` | Deletes a file or an empty directory of the workspace. |
 | `read_history` | `channel_history` | `channel`, `last` (optional, default 20, at most 100), `query` (optional) | no | `SHOWN` | Reads the latest messages of another channel, or those containing a text. |
 
 `stop`, `bye` and `silence` end the turn with the current tool step (`Turn::request_state`). Notes,
 private notes and agent memory are described in [MEMORY.md](MEMORY.md).
 
-### Commands in the workspace
+### The workspace
 
-`terminal_tool` (issue [251](../issues/251-open-terminal.md)) gives an agent a shell in its
-session's workspace, where its channel may use it ([CHANNELS.md](CHANNELS.md#its-workspace)): the
-workspace is reached through the turn's views on every call, before anything is sent, and a call
-where there is none - or whose storage has no shell - fails and says so. `workspace_prompt_provider`
-tells the model beforehand what it has. A command runs in the workspace's directory, every one
-anew - a `cd` does not carry over - and is seen only from the channel it was started in.
+`terminal_tool` (issue [251](../issues/251-open-terminal.md)) gives an agent its session's
+workspace, where its channel may use it ([CHANNELS.md](CHANNELS.md#its-workspace)): its files, and
+a shell in it where its storage gives one. The workspace is reached through the turn's views on
+every call, before anything is sent, and a call where there is none - or a command where its
+storage has no shell - fails and says so. `workspace_prompt_provider` tells the model beforehand
+what it has. Which calls need approval is configured as for `mcp_tool` (`requires_approval`,
+`ApprovalMode`): all - the default -, none, or `"unless_read_only"`, all but those that only read
+files.
+
+**Files.** `list_files`, `read_file` and `grep_files` read; `write_file`, `replace_in_file` and
+`delete_file` change - over the workspace's `Terminal`, whatever its storage, a shell not needed.
+A path is relative to the workspace's top and made a `WorkspacePath` first: one that leaves the
+workspace is the model's to correct, as is a file that is not there or not text. A file is read
+whole, up to 4 MiB, as text (UTF-8); `read_file` gives the lines asked for, at most
+`max_output_bytes` of them, and says where to read on; `grep_files` walks the directory asked for,
+at most 2000 files, skipping what is no text. A replacement must find its text exactly once, unless
+every occurrence is to be replaced; it reads, replaces and writes, so what changed the file in
+between is overwritten. What was read is recorded as the turn's knowledge
+(`KnowledgeSource::Workspace`, see [MEMORY.md](MEMORY.md#recording-what-was-read)), a file's
+content by its digest. The approver reads a change whole - what is written, what is replaced by
+what -, and a rule derived from an approved change covers the file, whatever is written into it
+(`ToolProvider::matcher`, the path alone).
+
+**Commands.** A command runs in the workspace's directory, every one anew - a `cd` does not carry
+over - and is seen only from the channel it was started in.
 
 A call follows its command for `wait_secs`; one still running then is handed back with its id, and
 the model follows it with `command_output` - handing back the `next_offset` of the last result - or

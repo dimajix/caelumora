@@ -1,0 +1,211 @@
+//! The `terminal_tool` component (issue 251, part C): the session's
+//! workspace, for the agents of the channels that may use it - its files,
+//! and a shell in it where its storage gives one. Generic over the
+//! terminal: what it can do is what the workspace's storage gives, and the
+//! component knows no provider.
+//!
+//! - The shell (`shell`): `run_command` starts a command in the workspace's
+//!   directory and follows it for a while; one still running then is handed
+//!   back with its id. `command_output` follows it further, `kill_command`
+//!   ends it.
+//! - The files (`files`): `list_files`, `read_file` and `grep_files` read;
+//!   `write_file`, `replace_in_file` and `delete_file` change. What was read
+//!   is recorded as the turn's knowledge (`KnowledgeSource::Workspace`).
+//!
+//! The workspace is reached through the turn's views on every call, before
+//! anything is sent: as a member of the channel, where the channel uses it
+//! and it and the channel flow both ways. A result is classified as the
+//! workspace. Which calls need approval is configured as for `mcp_tool`
+//! (`requires_approval`, an `ApprovalMode`): all, none, or all but those
+//! that only read.
+
+mod files;
+mod shell;
+
+use crate::agent_turn::Turn;
+use crate::component::{ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
+use crate::terminal::TerminalError;
+use crate::tool::{ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
+use crate::view::WorkspaceView;
+use async_trait::async_trait;
+use caelumora_model::approval::ToolMatcher;
+use caelumora_model::question::Answers;
+use caelumora_model::tool::{Tool, ToolCall, ToolParameters, ToolPresentation, ToolVisibility};
+use serde::Deserialize;
+use serde_json::Value;
+use std::sync::Arc;
+
+pub const TERMINAL_TOOL_KIND: &str = "terminal_tool";
+
+pub use files::{DELETE_FILE, GREP_FILES, LIST_FILES, READ_FILE, REPLACE_IN_FILE, WRITE_FILE};
+pub use shell::{COMMAND_OUTPUT, KILL_COMMAND, RUN_COMMAND};
+
+fn default_wait_secs() -> u64 {
+    60
+}
+
+fn default_output_bytes() -> usize {
+    64 * 1024
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TerminalToolConfig {
+    /// How long a call follows a command at most, in seconds: 60 unless
+    /// configured, never more than 300.
+    #[serde(default = "default_wait_secs")]
+    max_wait_secs: u64,
+    /// How much of a command's output, or of a file, one result holds at
+    /// most. 64 KiB unless configured.
+    #[serde(default = "default_output_bytes")]
+    max_output_bytes: usize,
+    /// Which calls need approval - unless configured, all that may: a
+    /// command may act anywhere its place reaches (issue 150).
+    /// `"unless_read_only"` spares the tools that only read files.
+    /// `command_output` and `kill_command` concern a command that ran
+    /// already, and never do.
+    #[serde(default)]
+    requires_approval: ApprovalMode,
+    /// What the tool set is for, written for a model (issue 194); a text of
+    /// its own unless configured.
+    #[serde(default)]
+    description: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct TerminalTool {
+    config: TerminalToolConfig,
+}
+
+/// A tool of this component, as the model is offered it.
+fn tool(name: &str, description: String, parameters: ToolParameters, requires_approval: bool, presentation: ToolPresentation) -> Tool {
+    Tool { name: name.to_string(), description, parameters, requires_approval, visibility: ToolVisibility::SHOWN, classification: None, presentation }
+}
+
+/// What a terminal reports, as the model is told it: what names something
+/// that is not there, or is not what the call needs, is the model's to
+/// correct; that the storage failed is not.
+fn failed(error: TerminalError) -> ToolError {
+    match error {
+        TerminalError::Unavailable(_) => ToolError::ExecutionFailed(error.to_string()),
+        TerminalError::InvalidPath(_) | TerminalError::NotFound(_) | TerminalError::Exists(_) | TerminalError::IsADirectory(_)
+        | TerminalError::NotADirectory(_) | TerminalError::NotEmpty(_) | TerminalError::TooLarge { .. } | TerminalError::UnknownCommand(_) => {
+            ToolError::InvalidParameter(error.to_string())
+        }
+    }
+}
+
+impl TerminalTool {
+    /// The workspace of the turn's channel, if the agent may use it there.
+    async fn workspace(&self, turn: &Turn<'_>) -> ToolResult<WorkspaceView> {
+        let session = turn.session().ok_or_else(|| ToolError::ExecutionFailed("the turn is in no session".to_string()))?;
+        let channel = session.channel(turn.channel_id()).await?;
+        channel.workspace().await?
+            .ok_or_else(|| ToolError::ExecutionFailed("there is no workspace you can use in this channel".to_string()))
+    }
+}
+
+#[async_trait]
+impl ToolProvider for TerminalTool {
+    fn description(&self) -> String {
+        self.config.description.clone().unwrap_or_else(|| {
+            "The session's workspace: its files, which persist across turns and are shared with the others who use it - \
+            list, read, search and change them - and a shell in it, where its storage gives one.".to_string()
+        })
+    }
+
+    fn tools(&self) -> Vec<Tool> {
+        let mut tools = shell::tools(&self.config);
+        tools.extend(files::tools(&self.config));
+        tools
+    }
+
+    /// What an approver reads: the command, or the change, whole.
+    fn describe(&self, name: &str, params: &Value) -> ToolResult<String> {
+        match name {
+            _ if shell::TOOLS.contains(&name) => shell::describe(name, params),
+            _ if files::TOOLS.contains(&name) => files::describe(name, params),
+            _ => Err(ToolError::UnknownTool(name.to_string())),
+        }
+    }
+
+    /// For a change of a file, its path: a rule derived from an approved
+    /// write covers the file, whatever is written into it.
+    fn matcher(&self, name: &str, params: &Value) -> ToolMatcher {
+        files::matcher(name, params).unwrap_or_else(|| {
+            ToolMatcher::exact(&ToolCall { id: None, function_name: name.to_string(), arguments: params.clone(), visibility: ToolVisibility::SHOWN, presentation: Default::default() })
+        })
+    }
+
+    async fn execute(&self, name: &str, params: &Value, _answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
+        let is_shell = shell::TOOLS.contains(&name);
+        if !is_shell && !files::TOOLS.contains(&name) {
+            return Err(ToolError::UnknownTool(name.to_string()));
+        }
+        let workspace = self.workspace(turn).await?;
+        let terminal = workspace.terminal().await.map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+        let value = match is_shell {
+            true => shell::execute(&self.config, name, params, terminal.as_ref(), turn).await?,
+            false => files::execute(&self.config, name, params, terminal.as_ref(), &workspace, turn).await?,
+        };
+        Ok(ToolOutput::classified(value, workspace.classification().clone()))
+    }
+}
+
+pub fn register(registry: &mut ComponentRegistry) {
+    registry.register(
+        ComponentKind::new(TERMINAL_TOOL_KIND).provides::<dyn ToolProvider>(),
+        |descriptor, _context| {
+            let config: TerminalToolConfig = serde_json::from_value(descriptor.params.clone())
+                .map_err(|e| ComponentError::InvalidConfig(format!("invalid parameters: {e}")))?;
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn ToolProvider>(Arc::new(TerminalTool { config }));
+            Ok(facets)
+        },
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::workspace::testing::session_with_workspace;
+    use caelumora_model::agent::AgentChannelState;
+    use caelumora_model::security::SecurityContext;
+    use serde_json::json;
+
+    pub(super) fn tool(params: Value) -> TerminalTool {
+        TerminalTool { config: serde_json::from_value(params).unwrap() }
+    }
+
+    #[tokio::test]
+    async fn no_workspace_is_used_where_the_channel_does_not_use_it() {
+        let world = session_with_workspace().await;
+        world.session.channels()[0].update_uses_workspace(&SecurityContext::system(), false).await.unwrap();
+        let mut state = AgentChannelState::default();
+        let mut turn = world.turn(&mut state);
+        let tool = tool(json!({}));
+        for (name, params) in [(RUN_COMMAND, json!({ "command": "touch here" })), (WRITE_FILE, json!({ "path": "here", "content": "x" }))] {
+            let refused = tool.execute(name, &params, None, &mut turn).await;
+            assert!(matches!(&refused, Err(ToolError::ExecutionFailed(why)) if why.contains("no workspace")), "{name}: {refused:?}");
+        }
+        assert!(!world.dir().join("here").exists());
+    }
+
+    #[test]
+    fn which_calls_ask_is_configured_for_all_none_or_all_but_what_only_reads() {
+        let asking = |mode: Value| -> Vec<(String, bool)> { tool(json!({ "requires_approval": mode })).tools().into_iter().map(|t| (t.name, t.requires_approval)).collect() };
+        let asks = |mode: Value, name: &str| asking(mode).into_iter().find(|(n, _)| n == name).map(|(_, asks)| asks).unwrap();
+        for name in [RUN_COMMAND, WRITE_FILE, REPLACE_IN_FILE, DELETE_FILE, READ_FILE] {
+            assert!(asks(json!(true), name), "{name}, by default too");
+            assert!(!asks(json!(false), name), "{name}");
+        }
+        for (name, asked) in [(RUN_COMMAND, true), (WRITE_FILE, true), (REPLACE_IN_FILE, true), (DELETE_FILE, true), (LIST_FILES, false), (READ_FILE, false), (GREP_FILES, false)] {
+            assert_eq!(asks(json!("unless_read_only"), name), asked, "{name}");
+        }
+        for name in [COMMAND_OUTPUT, KILL_COMMAND] {
+            assert!(!asks(json!(true), name), "{name} concerns a command approved already");
+        }
+        let defaults = TerminalTool { config: serde_json::from_value(json!({})).unwrap() };
+        assert!(defaults.tools().iter().all(|t| t.requires_approval || [COMMAND_OUTPUT, KILL_COMMAND].contains(&t.name.as_str())), "all that may, unless configured");
+    }
+}

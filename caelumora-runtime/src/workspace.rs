@@ -409,6 +409,9 @@ pub(crate) mod testing {
     use caelumora_model::workspace::Workspace;
     use std::sync::Arc;
 
+    /// The largest file the workspace takes.
+    pub(crate) const MAX_FILE_BYTES: u64 = 1024 * 1024;
+
     pub(crate) struct WithWorkspace {
         /// Where the storage keeps the workspace's files.
         pub(crate) files: tempfile::TempDir,
@@ -441,7 +444,7 @@ pub(crate) mod testing {
         let files = tempfile::tempdir().unwrap();
         let internal = Classification::general(Confidentiality::Internal);
         let storage = StorageConfig::Local { root: files.path().to_path_buf(), shell: true, destination: Some(internal.clone()) };
-        let workspaces = WorkspacesConfig { storage: [("dev".to_string(), storage)].into(), ..Default::default() };
+        let workspaces = WorkspacesConfig { storage: [("dev".to_string(), storage)].into(), max_file_bytes: MAX_FILE_BYTES };
         let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), Vec::new(), workspaces, crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let system = SecurityContext::system();
 

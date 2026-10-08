@@ -804,7 +804,9 @@ export interface KnowledgeRef {
   channel_name: string | null;
   /** Whether the channel was deleted (issue 164) - told only to whoever could read it were it there. */
   channel_deleted: boolean;
-  source: 'notes' | 'private_notes' | 'history' | 'memory';
+  source: 'notes' | 'private_notes' | 'history' | 'memory' | 'workspace';
+  /** The workspace whose files were read, for `workspace` (issue 251). */
+  workspace_id?: string;
   /** Whose notes or memory, for `notes`, `private_notes` and `memory`. */
   agent_id: ActorId | null;
   agent_name: string | null;

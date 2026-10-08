@@ -150,6 +150,9 @@ function knowledgeLabel(knowledge: KnowledgeRef, sessionId: string): string {
       return `Private notes of ${agent} in ${channel}`;
     case 'memory':
       return `Memory of ${agent}, from ${channel}`;
+    case 'workspace':
+      // The digest is a file's content as read; none for a listing or a search.
+      return knowledge.digest ? `A file of the workspace, read in ${channel}` : `The files of the workspace, listed or searched in ${channel}`;
     default:
       // A reader who joined later saw only part of it (issue 72).
       return knowledge.history_start ? `History of ${channel}, from when it was granted` : `History of ${channel}`;

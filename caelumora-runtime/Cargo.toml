@@ -25,6 +25,7 @@ sse-stream = "0.2"
 rand = "0.10.3"
 arc-swap = "1.9.2"
 aho-corasick = "1.1"
+regex = "1.12"
 meval = "0.2.0"
 rmcp = { version = "3.4", features = ["client", "transport-streamable-http-client-reqwest"] }
 bollard = "0.21"

@@ -290,6 +290,13 @@ pub fn ledger_chain<K: crate::ledger::LedgerKind>(previous: Option<&Digest>, cha
 
 /// The digest of a prompt part: the system prompt, or any other text an
 /// agent's model is given besides the conversation (issue 47).
+/// The digest of the content of a file as it was read (issue 251).
+pub fn content(bytes: &[u8]) -> Digest {
+    let mut encoder = Encoder::new("content");
+    encoder.bytes(bytes);
+    encoder.finish()
+}
+
 pub fn prompt(prompt: &str) -> Digest {
     let mut e = Encoder::new("caelumora.prompt.v1");
     e.str(prompt);

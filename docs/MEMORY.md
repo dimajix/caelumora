@@ -180,7 +180,10 @@ another session can be told, issue 134), and what was read there (`KnowledgeSour
 *   `History { digest, start }` - the channel's history: up to where, and, for a reader who joined
     later with a limit, from where (issue 72);
 *   `Memory { agent, digest }` - the agent's memory, recorded once for every channel the entries
-    recalled were written in.
+    recalled were written in;
+*   `Workspace { workspace, digest }` - the files of the session's workspace, read through the
+    channel with `terminal_tool` (issue 251): the digest of a file's content as it was read, none
+    for a listing or a search.
 
 `Turn::record_knowledge` records a read together with the number of messages the turn had produced
 by then. `Turn::commit` puts it into the `ContextRef` of every message produced after it

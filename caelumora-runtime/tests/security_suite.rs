@@ -2067,19 +2067,15 @@ async fn a_workspace_is_not_used_in_a_channel_by_who_is_not_in_it() {
     world.manager.stop_session(&alice, session.id()).await.unwrap();
 }
 
-/// An agent's command (issue 251): the call is asked in the name of whoever
-/// asked the agent, as every call is; the workspace is reached through the
-/// channel as the agent reads every other place - with its owner's
-/// clearance (issue 142) - its flow both ways, before anything is sent to
-/// the shell.
-#[tokio::test]
-async fn an_agents_command_is_called_for_who_asked_and_reaches_the_workspace_through_its_channel() {
+/// What is asked when alice's agent, asked by bob, makes `call` in the
+/// session's workspace - one that leaves `made`, a file of the workspace.
+async fn asked_for_a_call_on_the_workspace(function: &str, arguments: serde_json::Value, made: &str) -> Vec<String> {
     use caelumora_model::message::{Message, MessageRole};
-    use caelumora_model::tool::{ToolCall, ToolPresentation, ToolVisibility};
+    use caelumora_model::tool::{ToolCall, ToolVisibility};
 
     let call = Message {
         role: MessageRole::Assistant,
-        tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "run_command".to_string(), arguments: serde_json::json!({ "command": "echo ran > ran.txt" }), visibility: ToolVisibility::SHOWN, presentation: ToolPresentation::Shell }],
+        tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: function.to_string(), arguments, visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
         ..Message::new(Classification::general(Confidentiality::Internal))
     };
     let model = Arc::new(Once(Mutex::new(Some(call))));
@@ -2088,33 +2084,43 @@ async fn an_agents_command_is_called_for_who_asked_and_reaches_the_workspace_thr
         facets.insert::<dyn caelumora_runtime::llm::LLMClient>(Arc::<Once>::clone(&model));
         Ok(facets)
     })).await;
-    let running = Personality {
+    let working = Personality {
         components: ComponentConfig { component_nodes: vec![
             ComponentDescriptor::new("model", "once"),
             ComponentDescriptor {
                 params: serde_json::json!({ "requires_approval": false }),
-                ..ComponentDescriptor::new("shell", caelumora_runtime::tool_impl::terminal_tool::TERMINAL_TOOL_KIND)
+                ..ComponentDescriptor::new("workspace", caelumora_runtime::tool_impl::terminal_tool::TERMINAL_TOOL_KIND)
             },
         ] },
-        ..world.personality("running", None, &[]).await
+        ..world.personality("working", None, &[]).await
     };
-    world.store.update_personality(&World::system(), &running).await.unwrap();
-    let helper = world.agent("helper", world.alice, &running).await;
+    world.store.update_personality(&World::system(), &working).await.unwrap();
+    let helper = world.agent("helper", world.alice, &working).await;
     let alice = World::as_user(world.alice);
     let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "shell", None, Classification::general(Confidentiality::Internal)).await.unwrap();
     let session = world.shared_session(&[helper], &[]).await;
     session.set_workspace(&alice, Some(docs.id)).await.unwrap();
     let main = Arc::clone(&session.channels()[0]);
 
-    let ran = world.files.path().join("shell").join(docs.id.to_string()).join("ran.txt");
+    let made = world.files.path().join("shell").join(docs.id.to_string()).join(made);
     let (_, asked) = world.asked(async {
-        main.user_actor(world.bob).unwrap().send_message("@helper run it".to_string(), None).await.expect("sent");
+        main.user_actor(world.bob).unwrap().send_message("@helper do it".to_string(), None).await.expect("sent");
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
-            while !ran.is_file() {
+            while !made.is_file() {
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
-        }).await.expect("the command ran in the workspace");
+        }).await.expect("the call reached the workspace");
     }).await;
+    world.manager.stop_session(&alice, session.id()).await.unwrap();
+    asked
+}
+
+/// That `asked` asked for an agent's call on the workspace: the call in
+/// bob's name, who asked the agent, as every call is; the workspace
+/// through the channel as the agent reads every other place - with its
+/// owner's clearance (issue 142) - its flow both ways, before anything is
+/// sent to the storage.
+fn asked_as_a_call_on_the_workspace(asked: &[String]) {
     let calling: Vec<&String> = asked.iter().filter(|line| line.contains("CallTool")).collect();
     assert!(!calling.is_empty() && calling.iter().all(|line| *line == "bob as helper: CallTool yes"), "the call in bob's name, who asked: {asked:?}");
     let reaching: Vec<&String> = asked.iter().filter(|line| line.starts_with("alice as helper:")).collect();
@@ -2124,7 +2130,20 @@ async fn an_agents_command_is_called_for_who_asked_and_reaches_the_workspace_thr
         // Its terminal, reached again through session and channel.
         "alice as helper: GetSession(alice's) yes", "alice as helper: Publish yes", "alice as helper: Publish yes",
     ], "the workspace as the agent reads every other place, in its owner's name (issue 142)");
-    world.manager.stop_session(&alice, session.id()).await.unwrap();
+}
+
+/// An agent's command (issue 251).
+#[tokio::test]
+async fn an_agents_command_is_called_for_who_asked_and_reaches_the_workspace_through_its_channel() {
+    let asked = asked_for_a_call_on_the_workspace("run_command", serde_json::json!({ "command": "echo ran > ran.txt" }), "ran.txt").await;
+    asked_as_a_call_on_the_workspace(&asked);
+}
+
+/// An agent's change of a file (issue 251, step 9) asks what a command asks.
+#[tokio::test]
+async fn an_agents_file_tool_asks_what_a_command_asks() {
+    let asked = asked_for_a_call_on_the_workspace("write_file", serde_json::json!({ "path": "notes/a.md", "content": "written" }), "notes/a.md").await;
+    asked_as_a_call_on_the_workspace(&asked);
 }
 
 /// A template of the system whose sessions have a workspace "files" in

@@ -841,8 +841,12 @@ pub struct KnowledgeRefResponse {
     /// Whether the channel was deleted (issue 164) - told only to whoever
     /// could read it were it there; for anyone else, it never was.
     pub channel_deleted: bool,
-    /// `"notes"`, `"private_notes"`, `"memory"` or `"history"`.
+    /// `"notes"`, `"private_notes"`, `"memory"`, `"history"` or
+    /// `"workspace"`.
     pub source: &'static str,
+    /// The workspace whose files were read, for `"workspace"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<caelumora_model::workspace::WorkspaceId>,
     /// Whose notes, for `"notes"` and `"private_notes"`.
     pub agent_id: Option<ActorId>,
     pub agent_name: Option<String>,
@@ -876,6 +880,11 @@ impl KnowledgeRefResponse {
             KnowledgeSource::PrivateNotes { agent, digest } => ("private_notes", Some(ActorId::Agent(agent)), digest, None),
             KnowledgeSource::History { digest, start } => ("history", None, digest, start),
             KnowledgeSource::Memory { agent, digest } => ("memory", Some(ActorId::Agent(agent)), digest, None),
+            KnowledgeSource::Workspace { digest, .. } => ("workspace", None, digest, None),
+        };
+        let workspace_id = match knowledge.source {
+            KnowledgeSource::Workspace { workspace, .. } => Some(workspace),
+            _ => None,
         };
         let agent_name = match (agent_id, &channel) {
             (Some(id), Some(channel)) => channel.member(id).await.ok().and_then(|m| m.name().map(str::to_string)),
@@ -887,6 +896,7 @@ impl KnowledgeRefResponse {
             channel_name: channel.map(|c| c.name().to_string()),
             channel_deleted,
             source,
+            workspace_id,
             agent_id,
             agent_name,
             digest,

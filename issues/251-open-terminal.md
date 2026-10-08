@@ -1098,4 +1098,14 @@ command may come later.
   [180](180-outbound-flow-unchecked.md), now done. As part D said; `ToolSet::withheld` makes the
   unavailable set, and the actor's `tool_sets` became asynchronous, judged in the agent's own name,
   for who looks at an agent's tools.
-
+- **2026-10-08** — Step 9 of the plan done: the file tools of `terminal_tool` - `list_files`,
+  `read_file`, `grep_files`, `write_file`, `replace_in_file`, `delete_file` - over the workspace's
+  `Terminal`, a shell not needed; the component is a directory now (`shell.rs`, `files.rs`). First,
+  as a step of its own without a change of behaviour, `mcp_tool`'s `Approval` moved to `crate::tool`
+  as `ApprovalMode` (the maintainer's name), deciding by whether a tool only reads;
+  `terminal_tool`'s `requires_approval` is one too, `"unless_read_only"` sparing the reading file
+  tools. What the file tools read is recorded as `KnowledgeSource::Workspace { workspace, digest }`,
+  a file's content by its digest (`digest::content`) and none for a listing or a search, shown in
+  the context panel and over REST (`workspace_id`). A rule derived from an approved change covers
+  the file by its path alone. `WorkspaceView::max_file_bytes` bounds a write as an upload is. The
+  suite pins that a file tool asks what a command asks.

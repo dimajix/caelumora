@@ -114,6 +114,10 @@ pub enum KnowledgeSource {
     /// were written in, so that knowledge from another session can be told
     /// (issue 134).
     Memory { agent: crate::agent::AgentId, digest: Option<Digest> },
+    /// The files of a workspace (issue 251), read through the channel it
+    /// is used in; the digest of a file's content as it was read, `None`
+    /// for a listing or a search.
+    Workspace { workspace: crate::workspace::WorkspaceId, digest: Option<Digest> },
 }
 
 /// Which reasoning of the messages in its context a model is given back
