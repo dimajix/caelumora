@@ -288,7 +288,7 @@ impl ExternalAgentActor {
         }
         let events = match ending {
             // A request is always answered, with nothing if need be.
-            Ok(Ending::Answered(message)) => answered(message.map(|message| *message)),
+            Ok(Ending::Answered(message)) => answered(Some(work.turn_id), message.map(|message| *message)),
             Ok(Ending::Failed(reason)) => {
                 info!("External agent {} {} failed its task: {}", self.id(), self.name(), reason);
                 vec![ActorEvent::TurnGivenUp { turn_id: work.turn_id, reason: GivenUpReason::Failed { message: format!("{} could not answer: {reason}", self.name()) } }]
@@ -562,7 +562,7 @@ impl ExternalAgentActor {
             Err(reason) => vec![ActorEvent::TurnGivenUp { turn_id: work.as_ref().map_or_else(TurnId::new, |w| w.turn_id), reason: GivenUpReason::Failed { message: format!("{} could not finish: {reason}", self.name()) } }],
             // Nobody asked: it says nothing if it has nothing to say.
             Ok(answer) => match self.record(state, answer, label, work.as_ref()) {
-                Some(message) => answered(Some(message)),
+                Some(message) => answered(work.as_ref().map(|w| w.turn_id), Some(message)),
                 None => Vec::new(),
             },
         };
@@ -823,11 +823,11 @@ fn notice(was: &Message, now: Option<&Message>, at: chrono::DateTime<Utc>) -> Me
     }
 }
 
-/// The events that publish an answer: the message, if there is one, and
-/// the end of the response.
-fn answered(message: Option<Message>) -> Vec<ActorEvent> {
+/// The events that publish an answer of the work `turn_id`: the message, if
+/// there is one, and the end of the response.
+fn answered(turn_id: Option<TurnId>, message: Option<Message>) -> Vec<ActorEvent> {
     let complete = message.clone().map(ActorEvent::CompleteMessageGenerated);
-    complete.into_iter().chain([ActorEvent::FullResponseGenerated(message.into_iter().collect())]).collect()
+    complete.into_iter().chain([ActorEvent::FullResponseGenerated { turn_id, messages: message.into_iter().collect() }]).collect()
 }
 
 /// Whether what a remote agent brings in itself - classified `brought`, as
@@ -855,7 +855,7 @@ impl Actor for ExternalAgentActor {
     }
 
     fn event_filter(&self) -> fn(&Envelope) -> bool {
-        |event| matches!(event.event, ActorEvent::ResponseRequested | ActorEvent::FullResponseGenerated(_) | ActorEvent::MessageModified(_) | ActorEvent::MessageRevoked { .. } | ActorEvent::MessageReclassified { .. } | ActorEvent::RetryRequested { .. })
+        |event| matches!(event.event, ActorEvent::ResponseRequested | ActorEvent::CompleteMessageGenerated(_) | ActorEvent::MessageModified(_) | ActorEvent::MessageRevoked { .. } | ActorEvent::MessageReclassified { .. } | ActorEvent::RetryRequested { .. })
     }
 
     /// Takes in what it missed as what it hears (issues 190, 196, 206); the

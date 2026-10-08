@@ -501,3 +501,22 @@ the step that changes what they describe.
   history panel), the TUI prints the reason. Along with it, as proposed in step 2: a step's tool
   message is internal as the message that made its calls is (`Turn::in_plan_step`), no longer
   whenever a plan exists - a call made while finalizing was internal in its result alone.
+- **2026-10-08** — Step 5 done: the channel keeps every `CompleteMessageGenerated` and
+  `IntermediateMessageGenerated` it admits as it arrives, records `TurnFinished` from the
+  `FullResponseGenerated` that names a turn and `TurnGivenUp` from the event of that name; the
+  messages of `FullResponseGenerated` are stored no more, so a message sent twice - by users and
+  external agents too - is kept once. `FullResponseGenerated` is `{ turn_id, messages }`, `None`
+  for a user's message. The moderator forwards a message said to the users and, if it is heard, to
+  the agents (`route_said`), the end of an answer to the users alone, deciding from it whom to ask;
+  the agents take in `CompleteMessageGenerated` and no longer `FullResponseGenerated`, and catching
+  up takes in only what is heard, so that both ways agree - an agent's history no longer holds
+  another agent's tool messages, which it never heard. `remove_participant` asks for the turn under
+  way before it stops the actor, and the channel records it as `Stopped` and announces
+  `TurnGivenUp` in the participant's name after `ParticipantRemoved`. The web UI no longer removes
+  a turn asked for again, taken forward from step 6 since a reload would bring it back. The history
+  is still read as messages; the turns' ends reach readers in step 6.
+
+  The maintainer asked whether `FullResponseGenerated` can be renamed `TurnFinished`. Proposed: yes,
+  together with users sending only `CompleteMessageGenerated` - the moderator deciding on a user's
+  message directly, a user having no turns - so that the event always names a turn; as a step of
+  its own after this one.

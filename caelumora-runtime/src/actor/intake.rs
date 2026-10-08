@@ -123,9 +123,9 @@ pub(super) async fn take_in(
         let asked = async {
             debug!("Received {}", event.describe());
             match event.event {
-                ActorEvent::FullResponseGenerated(messages) => {
-                    trace!("Heard {:?}", messages.iter().map(|m| &m.content).collect::<Vec<_>>());
-                    perceive(state, messages, processors, security).await;
+                ActorEvent::CompleteMessageGenerated(message) => {
+                    trace!("Heard {:?}", message.content);
+                    perceive(state, vec![message], processors, security).await;
                     None
                 }
                 ActorEvent::MessageModified(modified) => {
@@ -175,7 +175,9 @@ pub(super) async fn catch_up(
     security: &SecurityContext,
     runtime: &ActorRuntime,
 ) -> Result<()> {
-    let missed: Vec<Message> = state.history.missing_from(visible).into_iter().filter(|m| m.sender_id != own).collect();
+    // As it would have heard them (`Message::is_heard`, issue 258): the
+    // steps of a plan and tool messages are kept in the channel, not heard.
+    let missed: Vec<Message> = state.history.missing_from(visible).into_iter().filter(|m| m.sender_id != own && m.is_heard()).collect();
     if missed.is_empty() {
         return Ok(());
     }
@@ -212,7 +214,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         let security = SecurityContext::default();
 
-        let heard = |text: &str| envelope(ActorEvent::FullResponseGenerated(vec![said(text)]));
+        let heard = |text: &str| envelope(ActorEvent::CompleteMessageGenerated(said(text)));
         let mut last = envelope(ActorEvent::ResponseRequested);
         last.security.caller_id = caelumora_model::actor::ActorId::System;
         for event in [envelope(ActorEvent::ResponseRequested), heard("two"), envelope(ActorEvent::ResponseStarted { turn_id: caelumora_model::work::TurnId::new() }), last, heard("three")] {
@@ -240,7 +242,7 @@ mod tests {
         state.transcript.start_anew();
         state.perceive(vec![kept.clone()], vec![kept.clone()]);
         let modified = |message: &Message, text: &str| envelope(ActorEvent::MessageModified(Message { content: Some(text.to_string()), ..message.clone() }));
-        let heard = |text: &str| envelope(ActorEvent::FullResponseGenerated(vec![Message { id: MessageId::new(), ..said(text) }]));
+        let heard = |text: &str| envelope(ActorEvent::CompleteMessageGenerated(Message { id: MessageId::new(), ..said(text) }));
         // Writes down what it is handed, where it is handed it.
         fn noted(state: &mut AgentChannelState, change: TranscriptEntry) {
             let text = match change {

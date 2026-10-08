@@ -240,6 +240,17 @@ learns of it where it happened. Who the actor acts for - the context's initiator
 else: an agent answers on behalf of whoever asked it. What the channel says itself - a moderator's
 notice, `ParticipantRemoved` - does not come through an actor's sender.
 
+**Nothing said is unsaid** (issue 258). The channel keeps every message it admits in its history
+as it arrives - `CompleteMessageGenerated`, and the steps of a plan as
+`IntermediateMessageGenerated` - and records how each turn ended after its messages: `TurnFinished`
+from the `FullResponseGenerated` that names the turn, `TurnGivenUp` with its reason. A turn given up
+keeps what it said; only a message still streaming when it ended is lost, never having been
+complete. A message is admitted as it arrives (`admits`), so one said after the channel was lowered
+below its turn is refused, and what was said before is fitted with the rest. An agent removed while
+it answers can no longer tell the channel: `remove_participant` asks for its turn under way before
+it stops it, and the channel records that turn as given up, `Stopped`, and announces it in the
+participant's name after `ParticipantRemoved`.
+
 Waking the channel for a message is the actor's job, too: it sends a `WakeupRequested` ahead of
 every message, in the message's span. Neither a frontend nor the channel decides that by itself
 (issue 90).
@@ -326,9 +337,8 @@ announced and every message of the turn carries).
     call is dropped, a running tool interrupted, a wait for an approval ended, as on a cancel - and
     gives the turn up (`GivenUpReason::Retried`, issue 145): its messages stay in its transcript
     where they were said, followed by why it ended (issue 258), so its model sees the calls that
-    ran; its approval requests are withdrawn. Nothing of it reached the channel's history or
-    another agent, which hear an answer only with its `FullResponseGenerated`, so nothing has to be
-    taken back. A cancel asked before
+    ran; its approval requests are withdrawn. What it said stays said, in the channel's history
+    too, followed by its end, so nothing has to be taken back (issue 258). A cancel asked before
     wins: the turn is taken over instead.
 *   **The agent** takes requests in between turns, with what it hears (`actor::intake::take_in`):
     *   the request of the turn it gave up for it is accepted, whatever came with it - its answer is
@@ -680,14 +690,16 @@ channels:
 
 The built-in moderator, `policy_moderator` (the default), routes the way every channel routes:
 
-*   every response goes, as it was said, to every other participant: to the users always, who
-    learn so that an answer ended even when it said nothing (issue 225), to the agents if there is
-    something to hear in it (`Message::is_heard`, issue 224) - each agent takes in its words
-    itself;
-*   how an answer comes about - `ResponseStarted`, partial and complete messages, intermediate
-    ones, plan steps - goes to the users, not to the agents, which hear the answer (issue 220); so
-    does where an agent stands, `StateChanged` (issue 243);
-*   approvals, failed turns and announced commands go to whom they concern;
+*   every message said (`CompleteMessageGenerated`) goes, as it was said, to every other
+    participant: to the users always, to the agents if there is something to hear in it
+    (`Message::is_heard`, issues 224, 258) - each agent takes in its words itself;
+*   the end of an answer (`FullResponseGenerated`, with the turn's id) goes to the users, who learn
+    so that an answer ended even when it said nothing (issue 225), and is what the moderator
+    decides from whom to ask to respond; the agents heard its messages as they were said;
+*   how an answer comes about - `ResponseStarted`, partial messages, intermediate ones, plan steps -
+    goes to the users, not to the agents (issue 220); so does where an agent stands,
+    `StateChanged` (issue 243), and how a turn was given up, `TurnGivenUp`;
+*   approvals and announced commands go to whom they concern;
 *   every agent a message `@`-mentions is asked to respond;
 *   a chain between agents ends at a limit (see below).
 

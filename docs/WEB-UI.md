@@ -223,8 +223,7 @@ else who may read it - the session's owner, say - is shown its history and no in
     are one block (`PlanSteps`, `chatRows`), folded under "works on the plan": open while the turn
     is under way, folded once it ended, unless the user opened or closed it. Its messages are
     rendered as every other message, with their icons; none of them is offered for another answer.
-    Nothing of them is stored yet: a reload loses them, until the history keeps them (the later
-    steps of issue 258).
+    The channel's history keeps them, so a reload shows them folded.
 *   **Changing one's own messages** (issue 234). A participant's own message has an edit icon, which
     turns it into an editor in its place (`MessageEditor`: save, cancel, Escape, Ctrl+Enter), and a
     take-back icon, which asks "Take back?" on the first click and takes the message back on the
@@ -243,8 +242,8 @@ else who may read it - the session's owner, say - is shown its history and no in
     turn. An answer still under way has a retry icon of its own once its turn is known and its
     member's `can_retry` allows it (issue 235): `POST …/participants/{aid}/retry` with the turn.
     Refused if the answer ended meanwhile - its last message then has the icon. On `RetryAccepted`
-    of a turn, the messages of that turn shown so far leave the chat: they never reached the
-    history, so a reload agrees.
+    of a turn, the messages of that turn shown so far stay: what was said is not unsaid, and the
+    history keeps them (issue 258).
 *   **Approvals.** A tool call that needs approval is shown to everybody, with approve and deny only
     for who may approve the agent's calls (`can_approve` of the member, issue 14); everybody else is
     told that it waits for whoever is responsible for the agent. Once this user answered, it waits

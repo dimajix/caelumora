@@ -111,7 +111,14 @@ pub enum ActorEvent {
     StateChanged(ActorState),
     PartialMessageGenerated(Message),
     CompleteMessageGenerated(Message),
-    FullResponseGenerated(Vec<Message>),
+    /// The end of an answer: the turn `turn_id` was taken over - `None` for
+    /// a user's message, which is no turn - with its answer, `messages`, the
+    /// messages that are not internal. The channel records the turn's end
+    /// from it, and the moderator decides from it whom to ask to respond
+    /// (issue 258); the messages themselves were said before, each as a
+    /// `CompleteMessageGenerated`, which is what the channel keeps and the
+    /// agents hear.
+    FullResponseGenerated { turn_id: Option<TurnId>, messages: Vec<Message> },
     WakeupRequested,
     /// Streaming text produced by the agent while it is not yet ready to give
     /// its final answer - still deliberating (researching, proposing a plan)
@@ -272,9 +279,10 @@ impl ActorEvent {
             ActorEvent::IntermediatePartialGenerated(m) => publish(m, ActorEvent::IntermediatePartialGenerated),
             ActorEvent::IntermediateMessageGenerated(m) => publish(m, ActorEvent::IntermediateMessageGenerated),
             ActorEvent::MessageModified(m) => publish(m, ActorEvent::MessageModified),
-            ActorEvent::FullResponseGenerated(messages) => Some(ActorEvent::FullResponseGenerated(
-                messages.iter().filter_map(Message::published).collect(),
-            )),
+            ActorEvent::FullResponseGenerated { turn_id, messages } => Some(ActorEvent::FullResponseGenerated {
+                turn_id,
+                messages: messages.iter().filter_map(Message::published).collect(),
+            }),
             other => Some(other),
         }
     }
@@ -288,7 +296,7 @@ impl ActorEvent {
             | ActorEvent::IntermediatePartialGenerated(m)
             | ActorEvent::IntermediateMessageGenerated(m)
             | ActorEvent::MessageModified(m) => vec![m],
-            ActorEvent::FullResponseGenerated(messages) => messages.iter().collect(),
+            ActorEvent::FullResponseGenerated { messages, .. } => messages.iter().collect(),
             _ => Vec::new(),
         }
     }
@@ -311,7 +319,7 @@ impl ActorEvent {
             ActorEvent::StateChanged(_) => "StateChanged",
             ActorEvent::PartialMessageGenerated(_) => "PartialMessageGenerated",
             ActorEvent::CompleteMessageGenerated(_) => "CompleteMessageGenerated",
-            ActorEvent::FullResponseGenerated(_) => "FullResponseGenerated",
+            ActorEvent::FullResponseGenerated { .. } => "FullResponseGenerated",
             ActorEvent::WakeupRequested => "WakeupRequested",
             ActorEvent::IntermediatePartialGenerated(_) => "IntermediatePartialGenerated",
             ActorEvent::IntermediateMessageGenerated(_) => "IntermediateMessageGenerated",
@@ -420,7 +428,7 @@ impl Envelope {
             ActorEvent::CompleteMessageGenerated(m) => {
                 format!("Complete(sender_id={}, sender_name={}, role={:?}, mid={})", ctx.sender_id, ctx.sender_name, m.role, m.id)
             }
-            ActorEvent::FullResponseGenerated(v) => match v.last() {
+            ActorEvent::FullResponseGenerated { messages: v, .. } => match v.last() {
                 Some(m) => format!("EndOfTurn(sender_id={}, sender_name={}, role={:?}, mid={})", ctx.sender_id, ctx.sender_name, m.role, m.id),
                 None => format!("EndOfTurn(sender_id={}, sender_name={}, no message)", ctx.sender_id, ctx.sender_name),
             },
@@ -596,15 +604,15 @@ mod tests {
 
         assert!(ActorEvent::CompleteMessageGenerated(hidden.clone()).published().is_none(), "nothing left to show");
         assert!(ActorEvent::PartialMessageGenerated(hidden.clone()).published().is_none());
-        match ActorEvent::FullResponseGenerated(vec![hidden.clone(), text.clone()]).published() {
-            Some(ActorEvent::FullResponseGenerated(messages)) => {
+        match (ActorEvent::FullResponseGenerated { turn_id: None, messages: vec![hidden.clone(), text.clone()] }).published() {
+            Some(ActorEvent::FullResponseGenerated { messages, .. }) => {
                 assert_eq!(messages.len(), 1);
                 assert_eq!(messages[0].id, text.id);
             }
             other => panic!("expected the response, got {other:?}"),
         }
         assert!(
-            matches!(ActorEvent::FullResponseGenerated(vec![hidden]).published(), Some(ActorEvent::FullResponseGenerated(m)) if m.is_empty()),
+            matches!(ActorEvent::FullResponseGenerated { turn_id: None, messages: vec![hidden] }.published(), Some(ActorEvent::FullResponseGenerated { messages: m, .. }) if m.is_empty()),
             "the end of the turn is still announced"
         );
     }

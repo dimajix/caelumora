@@ -184,10 +184,10 @@ mod tests {
         assert!(receiver.try_recv().is_none(), "nothing queued, nothing waited for");
 
         tx.try_send(envelope(ActorEvent::ResponseRequested)).expect("room");
-        tx.try_send(envelope(ActorEvent::FullResponseGenerated(Vec::new()))).expect("room");
+        tx.try_send(envelope(ActorEvent::FullResponseGenerated { turn_id: None, messages: Vec::new() })).expect("room");
         tx.try_send(envelope(ActorEvent::ResponseStarted { turn_id: caelumora_model::work::TurnId::new() })).expect("room");
         // Puts the request aside while it takes what it waits for.
-        receiver.recv_matching(|e| matches!(e.event, ActorEvent::FullResponseGenerated(_))).await.expect("queued");
+        receiver.recv_matching(|e| matches!(e.event, ActorEvent::FullResponseGenerated { .. })).await.expect("queued");
 
         let kinds: Vec<_> = std::iter::from_fn(|| receiver.try_recv()).map(|e| e.event.kind()).collect();
         assert_eq!(kinds, ["ResponseRequested", "ResponseStarted"], "what was put aside first, then what is queued");

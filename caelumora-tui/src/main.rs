@@ -159,7 +159,7 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                         under_way = sender_id.filter(|id| matches!(id, ActorId::Agent(_))).map(|id| (id, turn_id));
                     }
                     // Its answer has ended, said or not.
-                    Some(ActorEvent::FullResponseGenerated(_)) if under_way.is_some_and(|(agent, _)| Some(agent) == sender_id) => {
+                    Some(ActorEvent::FullResponseGenerated { .. }) if under_way.is_some_and(|(agent, _)| Some(agent) == sender_id) => {
                         under_way = None;
                     }
                     // Each message as soon as it is complete, as the web UI

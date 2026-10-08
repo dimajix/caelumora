@@ -15,11 +15,13 @@ to a turn.
 with everything queued behind it - what came while it was busy - in order (`actor::intake::take_in`,
 issue 222), then commits once:
 
-*   **Perceive.** A `FullResponseGenerated` of another participant is appended to the agent's
-    history - all that was offered to it, as it was said. What the agent hears of it is offered to
-    its `PerceiveInProcessor`s: of what others said, their words (`Message::as_heard`, issue 224) -
-    a `user` or `assistant` message with text, as a `user` message without its tool calls and
-    results, which were the sender's; nothing of a tool message, an empty one or a `system` one. The
+*   **Perceive.** A `CompleteMessageGenerated` of another participant is appended to the agent's
+    history - all that was offered to it, as it was said: what there is to hear, as the moderator
+    forwards it, and what it catches up with alike (issue 258). What the agent hears of it is
+    offered to its `PerceiveInProcessor`s: of what others said, their words (`Message::as_heard`,
+    issue 224) - a `user` or `assistant` message with text, as a `user` message without its tool
+    calls and results, which were the sender's; nothing of a tool message, an empty one or a
+    `system` one. The
     rule is the same live, for what was queued and for what an agent catches up with on joining,
     which comes from the channel's history as it was said. The processors may drop, change or add
     messages; what passes is what the agent processes, and is appended to its transcript - whatever
@@ -83,10 +85,11 @@ shown (`Turn::show`). Both take the actor's output as a parameter: the turn is h
 component working in it, and none of them is to speak in the agent's name.
 
 When a plan is in progress (`create_plan`), the messages of its steps are *internal*: they are
-published as intermediate messages, kept in the transcript, but not in the history. The answer after
-the last step is the final one. The instruction for each step, and the one to write the final
-answer, are prompt parts placed among the turn's messages, not messages (see [Instructions within a
-turn](#instructions-within-a-turn)).
+published as intermediate messages and kept like every message - in the transcript, the agent's
+history and the channel's (issue 258) - but no other participant hears them, and they are not the
+answer. The answer after the last step is the final one. The instruction for each step, and the one
+to write the final answer, are prompt parts placed among the turn's messages, not messages (see
+[Instructions within a turn](#instructions-within-a-turn)).
 
 An error in one of the turn's states ends the turn, not the agent: the agent logs it, gives the turn
 up (`Turn::give_up`), emits `TurnGivenUp` with the reason `Failed` and returns to `Idle` (see

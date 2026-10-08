@@ -607,17 +607,13 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           const {message, classification} = actorEvent.MessageReclassified;
           setMessages(prev => prev.map(m => m.id === message ? {...m, classification} : m));
         } else if (actorEvent.RetryAccepted) {
-          // Its answer is taken back next and a new one begins: shown as
-          // under way from now on. An answer under way was given up, and
-          // what of it was shown goes: it never reached the history, so a
-          // reload agrees (issue 235).
-          const target = actorEvent.RetryAccepted.target;
-          if ('turn' in target) {
-            setMessages(prev => prev.filter(m => m.turn_id !== target.turn));
-          }
+          // A new answer begins: shown as under way from now on. An answer
+          // under way was given up, and what of it was said stays, as the
+          // history keeps it (issue 258); a completed answer is taken back
+          // as `MessageRevoked` says.
           setAnswers(prev => withAnswer(prev.filter(a => a.sender !== answerer), answerer, answererName, a => a));
         } else if (actorEvent.RetryRejected) {
-          // Like a failed turn: shown, but not part of the history.
+          // Shown, but not part of the history.
           const notice: Message = {
             role: 'System',
             content: null,

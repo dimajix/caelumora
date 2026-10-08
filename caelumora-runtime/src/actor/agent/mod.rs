@@ -268,13 +268,14 @@ impl AgentActor {
         let turn = self.turn_under_way(state)?;
         // Read before the turn is taken over, which ends it.
         let next = if cancelled { ActorState::Idle } else { turn.requested_state().unwrap_or(ActorState::Idle) };
+        let turn_id = turn.turn_id();
         let CommittedTurn { final_messages, channel_state_changed, answering, abandoned_calls } = turn.commit(cancelled, output).await;
         self.store_channel_state(state).await;
         if channel_state_changed {
             self.actor_runtime.announce_channel_state_changed();
         }
         withdraw_requests(&answering, &abandoned_calls, output).await?;
-        answering.send(ActorEvent::FullResponseGenerated(final_messages), output).await?;
+        answering.send(ActorEvent::FullResponseGenerated { turn_id: Some(turn_id), messages: final_messages }, output).await?;
         debug!("Agent {} {} ended its turn{}", self.id(), self.agent_controller.name(), if cancelled { ", cancelled" } else { "" });
         Ok(next)
     }
@@ -850,7 +851,7 @@ impl Actor for AgentActor {
                     | ActorEvent::ApprovalTimedOut(_)
                     | ActorEvent::QuestionAnswered { .. }
                     | ActorEvent::QuestionDeclined { .. }
-                    | ActorEvent::FullResponseGenerated(_)
+                    | ActorEvent::CompleteMessageGenerated(_)
                     | ActorEvent::MessageModified(_)
                     | ActorEvent::MessageRevoked { .. }
                     | ActorEvent::MessageReclassified { .. }

@@ -394,10 +394,10 @@ mod tests {
         let message = Message { role: MessageRole::Assistant, tool_calls: vec![call], ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) };
         turn.push_message(message.clone());
         turn.send_event(ActorEvent::CompleteMessageGenerated(message.clone()), &output).await.unwrap();
-        turn.send_event(ActorEvent::FullResponseGenerated(vec![message]), &output).await.unwrap();
+        turn.send_event(ActorEvent::FullResponseGenerated { turn_id: None, messages: vec![message] }, &output).await.unwrap();
 
         match rx.recv().await.map(|e| e.event) {
-            Some(ActorEvent::FullResponseGenerated(messages)) => assert!(messages.is_empty(), "the hidden call is not published"),
+            Some(ActorEvent::FullResponseGenerated { messages, .. }) => assert!(messages.is_empty(), "the hidden call is not published"),
             other => panic!("the complete message is not sent at all, got {other:?}"),
         }
         assert_eq!(turn.messages().next().map(|m| m.tool_calls.len()), Some(1), "the agent keeps it");

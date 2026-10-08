@@ -2240,7 +2240,7 @@ mod tests {
                 tokio::time::timeout(std::time::Duration::from_secs(5), async {
                     loop {
                         let envelope = events.recv().await.expect("the channel is running");
-                        if envelope.context.sender_id == ActorId::Agent(hermes.id) && matches!(envelope.event, ActorEvent::FullResponseGenerated(_)) { break }
+                        if envelope.context.sender_id == ActorId::Agent(hermes.id) && matches!(envelope.event, ActorEvent::FullResponseGenerated { .. }) { break }
                     }
                 }).await.expect("the agent answers")
             }

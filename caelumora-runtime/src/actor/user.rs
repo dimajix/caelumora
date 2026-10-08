@@ -206,7 +206,7 @@ impl UserActor {
         }
         self.send(self.envelope(ActorEvent::WakeupRequested, span_id)).await?;
         self.send(self.envelope(ActorEvent::CompleteMessageGenerated(msg.clone()), span_id)).await?;
-        self.send(self.envelope(ActorEvent::FullResponseGenerated(vec![msg]), span_id)).await?;
+        self.send(self.envelope(ActorEvent::FullResponseGenerated { turn_id: None, messages: vec![msg] }, span_id)).await?;
         Ok(span_id)
     }
 
@@ -694,7 +694,7 @@ mod tests {
         let full = rx.recv().await.expect("FullResponseGenerated");
         assert!(matches!(wakeup.event, ActorEvent::WakeupRequested), "the wakeup first, so that the agents are awake when the message comes");
         assert!(matches!(complete.event, ActorEvent::CompleteMessageGenerated(_)));
-        assert!(matches!(full.event, ActorEvent::FullResponseGenerated(_)));
+        assert!(matches!(full.event, ActorEvent::FullResponseGenerated { .. }));
         for envelope in [&wakeup, &complete, &full] {
             assert_eq!(envelope.context.span_id, span_id, "one user action, one span");
             assert_eq!(envelope.context.sender_id, actor.id());
