@@ -22,6 +22,7 @@ mod events;
 mod profile;
 mod sessions;
 mod templates;
+mod workspaces;
 
 pub async fn ensure_session(
     state: &Arc<AppState>,
@@ -104,6 +105,18 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/agents/{id}", axum::routing::delete(agents::delete_agent))
         .route("/agents/{id}/restore", post(agents::restore_agent))
         .route("/agents/{id}/purge", post(agents::purge_agent))
+        .route("/workspaces", get(workspaces::list_workspaces).post(workspaces::create_workspace))
+        .route("/workspaces/storages", get(workspaces::list_storages))
+        .route("/workspaces/{id}", get(workspaces::get_workspace).patch(workspaces::rename_workspace).delete(workspaces::delete_workspace))
+        .route("/workspaces/{id}/description", axum::routing::put(workspaces::describe_workspace))
+        .route("/workspaces/{id}/classification", axum::routing::put(workspaces::reclassify_workspace))
+        .route("/workspaces/{id}/restore", post(workspaces::restore_workspace))
+        .route("/workspaces/{id}/purge", post(workspaces::purge_workspace))
+        .route("/workspaces/{id}/files", get(workspaces::owned_files))
+        .route(
+            "/workspaces/{id}/files/{*path}",
+            get(workspaces::download_owned_file).put(workspaces::upload_owned_file).delete(workspaces::delete_owned_file),
+        )
         .route("/sessions", get(sessions::list_sessions).post(sessions::create_session))
         .route(
             "/sessions/{id}",
@@ -114,6 +127,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/sessions/{id}/description", axum::routing::put(sessions::update_session_description))
         .route("/sessions/{id}/restore", post(sessions::restore_session))
         .route("/sessions/{id}/purge", post(sessions::purge_session))
+        .route("/sessions/{id}/workspace", axum::routing::put(workspaces::attach_workspace).delete(workspaces::detach_workspace))
         .route("/sessions/{id}/actors/{aid}/private_notes", get(sessions::agent_private_notes))
         .route("/sessions/{id}/channels", get(channels::list_channels).post(channels::create_channel))
         .route("/sessions/{id}/channels/{cid}", get(channels::get_channel).delete(channels::delete_channel))
@@ -126,6 +140,13 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/sessions/{id}/channels/{cid}/approval-rules", axum::routing::put(channels::update_channel_approval_rules))
         .route("/sessions/{id}/channels/{cid}/description", axum::routing::put(channels::update_channel_description))
         .route("/sessions/{id}/channels/{cid}/restore", post(channels::restore_channel))
+        .route("/sessions/{id}/channels/{cid}/uses-workspace", axum::routing::put(workspaces::set_uses_workspace))
+        .route("/sessions/{id}/channels/{cid}/workspace", get(workspaces::channel_workspace))
+        .route("/sessions/{id}/channels/{cid}/workspace/files", get(workspaces::channel_files))
+        .route(
+            "/sessions/{id}/channels/{cid}/workspace/files/{*path}",
+            get(workspaces::download_channel_file).put(workspaces::upload_channel_file).delete(workspaces::delete_channel_file),
+        )
         .route(
             "/sessions/{id}/channels/{cid}/messages/{mid}",
             axum::routing::put(channels::modify_message).delete(channels::revoke_message),

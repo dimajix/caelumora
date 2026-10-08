@@ -278,6 +278,14 @@ impl SessionView {
             let name = self.views.name_of(participant.actor_id()).await;
             participants.push(ParticipantSnapshot { id: participant.actor_id(), name });
         }
+        // Absent, too, where it is gone or the viewer may not read it.
+        let workspace = match self.session.workspace {
+            Some(id) => match self.views.workspace(id).await {
+                Ok(workspace) => Some(workspace.snapshot().await),
+                Err(_) => None,
+            },
+            None => None,
+        };
         SessionSnapshot {
             id: self.session.id,
             name: self.session.name.to_string(),
@@ -288,6 +296,7 @@ impl SessionView {
             can_change: self.may_change().await,
             participants,
             channels,
+            workspace,
         }
     }
 }

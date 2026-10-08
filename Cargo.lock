@@ -341,6 +341,7 @@ dependencies = [
  "clap",
  "futures",
  "jsonwebtoken",
+ "percent-encoding",
  "rand 0.10.3",
  "serde",
  "serde_json",

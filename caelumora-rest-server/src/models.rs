@@ -7,11 +7,14 @@ use caelumora_model::message::{Message, TokenUsage};
 use caelumora_model::value::language::Language;
 use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
+use caelumora_model::scope::Scope;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::template::{SessionTemplate, SessionTemplateId};
 use caelumora_model::user::UserProfile;
 use caelumora_model::value::text::{Briefing, Introduction, Summary};
 use caelumora_model::work::TurnId;
+use caelumora_model::workspace::WorkspaceId;
+use caelumora_model::value::text::Description;
 use caelumora_model::snapshot;
 use caelumora_runtime::view::{Reached, SessionView};
 use serde::{Deserialize, Serialize};
@@ -297,6 +300,10 @@ pub struct SessionSnapshot {
     /// Everyone who takes part in the session - whom a new channel can be
     /// made of (issue 09).
     pub participants: Vec<ParticipantResponse>,
+    /// The workspace attached to it (issue 253), if you may read it - its
+    /// owner; absent otherwise. Who uses it learns of it in a channel.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<WorkspaceResponse>,
 }
 
 impl From<snapshot::SessionSnapshot> for SessionSnapshot {
@@ -312,6 +319,7 @@ impl From<snapshot::SessionSnapshot> for SessionSnapshot {
             channels: view.channels.into_iter().map(Into::into).collect(),
             // Every participant is a user, an agent or an approver.
             participants: view.participants.into_iter().filter_map(ParticipantResponse::of).collect(),
+            workspace: view.workspace.map(Into::into),
         }
     }
 }
@@ -334,6 +342,121 @@ impl ParticipantResponse {
 #[derive(Debug, Deserialize)]
 pub struct RenameSessionRequest {
     pub name: String,
+}
+
+/// A workspace (issue 253) as its owner, or a member of a channel using
+/// it, sees it.
+#[derive(Debug, Serialize)]
+pub struct WorkspaceResponse {
+    pub id: WorkspaceId,
+    pub name: String,
+    /// Where it lies: `session` - made for one session and used in it
+    /// alone, which `session_id` names -, `user` or `global`.
+    pub scope: WorkspaceScope,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<SessionId>,
+    /// The storage its files lie in, by its configured name.
+    pub storage: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<Description>,
+    pub classification: Classification,
+    /// Whether you may change it - rename, describe, reclassify - and
+    /// attach it to a session: its owner.
+    pub can_change: bool,
+}
+
+impl From<snapshot::WorkspaceSnapshot> for WorkspaceResponse {
+    fn from(view: snapshot::WorkspaceSnapshot) -> Self {
+        let (scope, session_id) = match view.scope {
+            Scope::SessionScope { session_id } => (WorkspaceScope::Session, Some(session_id)),
+            Scope::UserScope { .. } => (WorkspaceScope::User, None),
+            // A workspace lies in no other (`Workspace::validate`).
+            _ => (WorkspaceScope::Global, None),
+        };
+        Self { id: view.id, name: view.name, scope, session_id, storage: view.storage, description: view.description, classification: view.classification, can_change: view.can_change }
+    }
+}
+
+/// Where a workspace lies (issue 251, decision 13). One of a session's
+/// scope is made by a session template, not here.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceScope {
+    Session,
+    /// Its owner's: found by its name among theirs.
+    #[default]
+    User,
+    /// The global one: its name unique among all.
+    Global,
+}
+
+/// A workspace to make (issue 253), in a configured storage; in its
+/// owner's scope and `internal` without compartments unless named.
+#[derive(Debug, Deserialize)]
+pub struct CreateWorkspaceRequest {
+    pub name: String,
+    #[serde(default)]
+    pub scope: WorkspaceScope,
+    pub storage: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub classification: Option<Classification>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RenameWorkspaceRequest {
+    pub name: String,
+}
+
+/// What a workspace holds, replacing what it said: `null` or empty removes
+/// it.
+#[derive(Debug, Deserialize)]
+pub struct WorkspaceDescriptionRequest {
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+/// A configured storage workspaces can be made in.
+#[derive(Debug, Serialize)]
+pub struct StorageResponse {
+    pub name: String,
+}
+
+/// The workspace to attach to a session (issue 253).
+#[derive(Debug, Deserialize)]
+pub struct AttachWorkspaceRequest {
+    pub workspace_id: WorkspaceId,
+}
+
+/// Whether a channel uses the session's workspace (issue 251).
+#[derive(Debug, Deserialize)]
+pub struct UsesWorkspaceRequest {
+    pub uses: bool,
+}
+
+/// Where in a workspace: a directory to list; the workspace itself if
+/// absent.
+#[derive(Debug, Deserialize)]
+pub struct FilesQuery {
+    #[serde(default)]
+    pub path: String,
+}
+
+/// An entry of a directory of a workspace.
+#[derive(Debug, Serialize)]
+pub struct FileResponse {
+    pub name: String,
+    pub is_dir: bool,
+    pub size: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modified: Option<DateTime<Utc>>,
+}
+
+impl From<caelumora_runtime::terminal::FileEntry> for FileResponse {
+    fn from(entry: caelumora_runtime::terminal::FileEntry) -> Self {
+        Self { name: entry.name, is_dir: entry.is_dir, size: entry.size, modified: entry.modified }
+    }
 }
 
 /// What a session or channel is for (issue 245), replacing what it said:
@@ -418,6 +541,9 @@ pub struct ChannelResponse {
     /// What it restricts of the tool calls made in it (issue 13): rules that
     /// ask or deny.
     pub approval_rules: Vec<ApprovalRule>,
+    /// Whether its members work on the session's workspace here (issue
+    /// 251), where the classifications let them.
+    pub uses_workspace: bool,
     /// Whether the requesting user may rename the channel, add or remove
     /// its participants (issue 46) and set its approval rules.
     pub can_change: bool,
@@ -440,6 +566,7 @@ impl From<snapshot::ChannelSnapshot> for ChannelResponse {
             classification: view.classification,
             language: view.language,
             approval_rules: view.approval_rules,
+            uses_workspace: view.uses_workspace,
             can_change: view.can_change,
             former_members: view.former_members.into_iter().filter_map(ChannelMemberResponse::of).collect(),
         }

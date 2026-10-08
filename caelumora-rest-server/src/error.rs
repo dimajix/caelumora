@@ -469,6 +469,25 @@ mod tests {
         assert_eq!(answer(anyhow::Error::new(ChannelError::NotAnAgentsMessage { message, channel }), Subject::Session), (409, "not_an_agents_message"));
         assert_eq!(answer(anyhow::Error::new(ChannelError::NotUnderWay { turn: caelumora_model::work::TurnId::new(), channel }), Subject::Session), (409, "not_under_way"));
         assert_eq!(answer(anyhow::Error::new(ChannelError::NotCleared { participant: someone, channel }), Subject::Participant), (403, "not_cleared"));
+        {
+            use caelumora_runtime::terminal::TerminalError;
+            use caelumora_runtime::workspace::WorkspaceError;
+            let id = caelumora_model::workspace::WorkspaceId::new();
+            let workspace = |e: WorkspaceError| answer(anyhow::Error::new(e), Subject::Workspace);
+            assert_eq!(workspace(WorkspaceError::NotFound(id)), (404, "workspace_not_found"));
+            assert_eq!(workspace(WorkspaceError::UnknownStorage("nfs".to_string())), (400, "unknown_storage"));
+            assert_eq!(workspace(WorkspaceError::NotCleared), (403, "not_cleared"));
+            assert_eq!(workspace(WorkspaceError::Store(StoreError::NameTaken { entity: "workspace" })), (409, "name_taken"), "a store error inside, though transparent");
+            assert_eq!(workspace(WorkspaceError::Store(StoreError::PermissionDenied)), (403, "workspace_forbidden"));
+            assert_eq!(workspace(WorkspaceError::Terminal(TerminalError::TooLarge { limit: 1 })), (413, "file_too_large"));
+            let file = |e: TerminalError| answer(anyhow::Error::new(e), Subject::Workspace);
+            assert_eq!(file(TerminalError::InvalidPath("../x".to_string())), (400, "invalid_path"));
+            assert_eq!(file(TerminalError::NotFound("a".to_string())), (404, "file_not_found"));
+            assert_eq!(file(TerminalError::NotEmpty("a".to_string())), (409, "directory_not_empty"));
+            assert_eq!(file(TerminalError::Unavailable("permission denied".to_string())), (503, "storage_unavailable"));
+            assert_eq!(answer(not_found("workspace"), Subject::Session), (404, "workspace_not_found"), "as attaching reports it");
+            assert_eq!(answer(anyhow::Error::new(SessionError::WorkspaceOutOfScope(id)), Subject::Session), (400, "workspace_out_of_scope"));
+        }
         use caelumora_model::question::{QuestionError, QuestionId};
         let question = |reason| anyhow::Error::new(ChannelError::Question { question: QuestionId::new(), channel, reason });
         assert_eq!(answer(question(QuestionError::NotOpen), Subject::Session), (404, "question_not_found"));

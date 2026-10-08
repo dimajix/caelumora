@@ -80,6 +80,10 @@ pub struct SessionSnapshot {
     /// The channels the viewer may read, in the order of the session -
     /// with `Detail::CHANNELS`.
     pub channels: Vec<ChannelSnapshot>,
+    /// The workspace attached to it (issue 253), if the viewer may read it
+    /// - its owner, who attached it. Who uses it in a channel learns of it
+    /// there (`ChannelView::workspace`).
+    pub workspace: Option<WorkspaceSnapshot>,
 }
 
 /// A participant of a session.
@@ -244,6 +248,9 @@ pub struct DeletedSnapshot<I> {
 pub struct WorkspaceSnapshot {
     pub id: crate::workspace::WorkspaceId,
     pub name: String,
+    /// Where it lies (issue 251): a session's scope, its owner's or the
+    /// global one.
+    pub scope: crate::scope::Scope,
     /// The storage its files lie in, by its configured name.
     pub storage: String,
     pub description: Option<crate::value::text::Description>,

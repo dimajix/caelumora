@@ -103,6 +103,7 @@ impl WorkspaceView {
         WorkspaceSnapshot {
             id: self.workspace.id,
             name: self.workspace.name.to_string(),
+            scope: self.workspace.name.scope.clone(),
             storage: self.workspace.storage.clone(),
             description: self.workspace.description.clone(),
             classification: self.workspace.classification.clone(),
