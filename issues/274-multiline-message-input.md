@@ -1,6 +1,6 @@
 # 274 — The message field of the web UI has a single line that neither wraps nor takes a line break
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -78,3 +78,17 @@ component of its own, used by both.
 
 - 2026-10-09: Opened, at the maintainer's request: the message field neither wraps long lines nor
   takes a manual line break, and should grow to several lines before it scrolls.
+- 2026-10-09: Done. The message field is a `GrowingTextarea`, a component of its own: a textarea of
+  one line that sets its height from its `scrollHeight` whenever its text or its width changes,
+  capped by the `max-height` its caller gives it (a third of the window for the message field).
+  `Enter` sends through the form, `Shift+Enter` breaks the line - also while the completion list is
+  open, where `Enter` still chooses - and a key ending an input method's composition does neither.
+  The controls beside the field keep the height of one line and sit at its bottom. Choosing a
+  command no longer swallows a line break after its name. A user's message is rendered with hard
+  line breaks (`remark-breaks`, new dependency), an agent's as before. `QuestionCard` keeps its
+  single-line field for now.
+- 2026-10-09: Alongside: the components composed their Tailwind classes in two ways - five with a
+  `cn` of their own (`clsx` and `tailwind-merge`), five with plain `clsx` under the same name. They
+  now share one `cn` in `src/classNames.ts`, the merging one, so that a `className` handed in
+  overrides a component's own everywhere; no call combined conflicting classes, so nothing looks
+  different.

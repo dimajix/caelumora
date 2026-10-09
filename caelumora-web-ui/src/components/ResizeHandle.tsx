@@ -5,7 +5,7 @@
 // panel holds.
 
 import React, {useRef} from 'react';
-import {clsx as cn} from 'clsx';
+import {cn} from '../classNames';
 import type {PanelWidth} from '../panelWidth';
 
 /** How far an arrow key moves the edge, and with Shift held. */

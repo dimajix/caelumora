@@ -1,13 +1,9 @@
 import React, {useMemo} from 'react';
 import ReactMarkdown, {type Components} from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import {type ClassValue, clsx} from 'clsx';
-import {twMerge} from 'tailwind-merge';
+import remarkBreaks from 'remark-breaks';
+import {cn} from '../classNames';
 import {mentionSpans} from '../mention';
-
-function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
 
 const MENTION_URL_PREFIX = '#mention:';
 
@@ -65,12 +61,17 @@ interface MarkdownMessageProps {
   invert?: boolean;
   /** Handles of the participants this message mentions; matching `@handle`s are highlighted. */
   mentions?: Set<string>;
+  /**
+   * Show every line break as one, not only the Markdown ones (a blank line, two trailing spaces):
+   * for text a user typed into a chat field, where a line break is meant as written (issue 274).
+   */
+  hardBreaks?: boolean;
 }
 
-export const MarkdownMessage: React.FC<MarkdownMessageProps> = ({ content, className, invert, mentions }) => {
+export const MarkdownMessage: React.FC<MarkdownMessageProps> = ({ content, className, invert, mentions, hardBreaks }) => {
   const remarkPlugins = useMemo(
-    () => [remarkGfm, remarkMentions(mentions ?? new Set())],
-    [mentions]
+    () => [remarkGfm, ...(hardBreaks ? [remarkBreaks] : []), remarkMentions(mentions ?? new Set())],
+    [mentions, hardBreaks]
   );
   const components = useMemo<Components>(() => ({
     a: ({href, title, children}) => {

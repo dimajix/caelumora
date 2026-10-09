@@ -6,7 +6,7 @@
 
 import React, {useId, useState} from 'react';
 import {createPortal} from 'react-dom';
-import {clsx as cn} from 'clsx';
+import {cn} from '../classNames';
 import {useFloating} from './floating';
 
 interface HoverCardProps {

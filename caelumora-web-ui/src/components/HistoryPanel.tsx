@@ -11,7 +11,7 @@ import React, {useEffect, useState} from 'react';
 import {ChevronRight, History, ScrollText, Undo2, X} from 'lucide-react';
 import type {ActorId, ChannelMember, GivenUpReason, HistoryItem, HistoryMessage, Message} from '../types';
 import {classificationLabel} from '../confidentiality';
-import {clsx as cn} from 'clsx';
+import {cn} from '../classNames';
 import {api} from '../api';
 import {actorKey, actorUuid} from '../mention';
 import {ApiRequestError, reportError} from '../errors';

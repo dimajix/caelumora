@@ -5,18 +5,13 @@ import React, {useState} from 'react';
 import {Brain, Check, ChevronDown, ChevronRight, Copy, EyeOff, Info} from 'lucide-react';
 import type {ChannelMember, Message} from '../types';
 import type {WorkspaceFiles} from '../api';
-import {type ClassValue, clsx} from 'clsx';
-import {twMerge} from 'tailwind-merge';
+import {cn} from '../classNames';
 import {MarkdownMessage} from './MarkdownMessage';
 import {mentionedHandles} from '../mention';
 import {formatTimestamp, usageGroups} from '../messages';
 import {HoverCard} from './HoverCard';
 import {UsageStats} from './UsageStats';
 import {ToolCallView} from './ToolCallView';
-
-function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
 
 /** When a message was written: date and time, the full form on hover (issue 43). */
 export const MessageTime: React.FC<{timestamp?: string; className?: string}> = ({timestamp, className}) => {
@@ -171,6 +166,7 @@ export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, 
       <MarkdownMessage
         content={msg.content}
         invert={msg.role === 'User'}
+        hardBreaks={msg.role === 'User'}
         mentions={mentionedHandles(msg, members)}
       />
     )}
