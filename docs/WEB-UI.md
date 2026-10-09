@@ -199,8 +199,12 @@ else who may read it - the session's owner, say - is shown its history and no in
     The `file_read`, `file_write` and `file_edit` handlers show the file's path and its text as it
     is - its lines kept, a long line wrapped at word boundaries, a long text scrolling in its box:
     what was read, with which lines of how many and where to read on; what was written, and how
-    many bytes; the text replaced and the text put in its place, and how many places. The `plan`
-    handler shows a plan's summary and its steps, numbered (issue 263).
+    many bytes; the text replaced and the text put in its place, and how many places. The
+    `file_list` and `file_search` handlers (issue 265) show a directory listed - its path, its
+    entries as the file browser shows them, and whether the listing was cut off - and a search -
+    its pattern and where, its matches by file with their line numbers, and whether it stopped
+    early or skipped files. The `plan` handler shows a plan's summary and its steps, numbered
+    (issue 263).
     Where a result keeps the record of the questions its call asked (`answers`, issue 165), the
     frame shows each question with its answer, and who answered or declined. A question's text keeps
     its line breaks, so that an approver reads a command of several lines as it was written.

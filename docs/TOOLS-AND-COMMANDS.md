@@ -585,10 +585,11 @@ between is overwritten. What was read is recorded as the turn's knowledge
 (`KnowledgeSource::Workspace`, see [MEMORY.md](MEMORY.md#recording-what-was-read)), a file's
 content by its digest. The approver reads a change whole - what is written, what is replaced by
 what -, and a rule derived from an approved change covers the file, whatever is written into it
-(`ToolProvider::matcher`, the path alone). `read_file`, `write_file` and `replace_in_file` are
-presented as `file_read`, `file_write` and `file_edit` (`ToolPresentation`): the web UI shows the
-file's path and its text - what was read, what is written, what is replaced by what - wrapped as
-text; the others as every call.
+(`ToolProvider::matcher`, the path alone). `list_files`, `read_file`, `grep_files`, `write_file`
+and `replace_in_file` are presented as `file_list`, `file_read`, `file_search`, `file_write` and
+`file_edit` (`ToolPresentation`, issue 265): the web UI shows the file's path and its text - what
+was read, what is written, what is replaced by what - wrapped as text, a directory's entries as the
+file browser shows them, and a search's matches by file and line; `delete_file` as every call.
 
 **Commands.** A command runs in the workspace's directory, every one anew - a `cd` does not carry
 over - and is seen only from the channel it was started in.

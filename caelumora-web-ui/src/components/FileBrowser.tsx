@@ -9,22 +9,8 @@ import {ChevronRight, File, Folder, RefreshCw, Trash2, Upload} from 'lucide-reac
 import type {FileEntry} from '../types';
 import type {WorkspaceFiles} from '../api';
 import {reportError} from '../errors';
-import {formatTimestamp} from '../messages';
+import {formatSize, formatTimestamp} from '../messages';
 import {ActionMenu} from './ActionMenu';
-
-const SIZE = new Intl.NumberFormat(undefined, {maximumFractionDigits: 1});
-
-/** A size in bytes as people read it, e.g. `1.4 MB`. */
-function formatSize(bytes: number): string {
-  const units = ['B', 'kB', 'MB', 'GB'];
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1000 && unit < units.length - 1) {
-    value /= 1000;
-    unit += 1;
-  }
-  return `${SIZE.format(value)} ${units[unit]}`;
-}
 
 /** `name` in the directory `dir`; `''` is the workspace itself. */
 function join(dir: string, name: string): string {

@@ -5,9 +5,9 @@
 // their record.
 
 import React from 'react';
-import {CheckCircle2, EyeOff, FileDiff, FilePen, FileText, MessageCircleQuestion, Terminal, Wrench, XCircle} from 'lucide-react';
+import {CheckCircle2, EyeOff, File, FileDiff, FilePen, FileText, Folder, FolderOpen, MessageCircleQuestion, TextSearch, Terminal, Wrench, XCircle} from 'lucide-react';
 import type {Answers, QuestionResponse, ToolCall, ToolPresentation, ToolResult, ToolResultStatus, ToolVisibility} from '../types';
-import {formatArguments, formatTimestamp} from '../messages';
+import {formatArguments, formatSize, formatTimestamp} from '../messages';
 
 const TOOL_STATUS_LABELS: Record<Exclude<ToolResultStatus, 'ok'>, string> = {
   denied: 'Denied',
@@ -378,6 +378,143 @@ const FileEditToolCallContent: React.FC<ToolCallContentProps> = ({call, result})
   );
 };
 
+/** A count of things, e.g. `1 match` or `3 matches`. */
+function counted(count: number, one: string, many: string): string {
+  return `${count} ${count === 1 ? one : many}`;
+}
+
+/** A directory of the workspace as a call names it: its path, `.` for the workspace's top. */
+function directoryPath(path: string | null): string | null {
+  return path === '' ? '.' : path;
+}
+
+/** The fields of each object of `list`, or `null` if it is no list of objects. */
+function objectsOf(list: unknown): Record<string, unknown>[] | null {
+  if (!Array.isArray(list)) return null;
+  const objects = list.map(argumentsObject);
+  return objects.every(o => o !== null) ? objects as Record<string, unknown>[] : null;
+}
+
+/** A box of entries or matches, as a file's text is boxed: a long one scrolls within it. */
+const ResultBox: React.FC<{children: React.ReactNode}> = ({children}) => (
+  <div className={`mt-1 text-[11px] max-h-80 overflow-y-auto p-1.5 rounded-sm border ${TEXT_TONES.plain}`}>
+    {children}
+  </div>
+);
+
+/**
+ * A directory listed (issue 265): its path and how many entries it has, and the entries as the file
+ * browser shows them - a directory or a file, its name, a file's size, when it was changed.
+ */
+const FileListToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) => {
+  if (call.arguments === null) return <span className="text-[11px] italic opacity-60">Directory not shown</span>;
+  const args = argumentsObject(call.arguments);
+  const listed = resultObject(result);
+  const entries = objectsOf(listed?.entries);
+  const complete = listed?.complete !== false;
+  const detail = entries !== null ? (complete ? counted(entries.length, 'entry', 'entries') : `first ${counted(entries.length, 'entry', 'entries')}`) : null;
+  return (
+    <>
+      <FilePath icon={<FolderOpen size={12} />} path={directoryPath(textOf(listed, 'path') ?? textOf(args, 'path') ?? '')} detail={detail} />
+      {resultHidden(result) ? (
+        <div className="mt-2 text-[11px] italic opacity-60">Entries not shown</div>
+      ) : entries !== null ? (
+        <>
+          <ResultBox>
+            {entries.length === 0 ? <span className="italic opacity-60">empty</span> : (
+              <ul className="space-y-0.5">
+                {entries.map((entry, i) => {
+                  const isDir = entry.is_dir === true;
+                  const size = numberOf(entry, 'size');
+                  const modified = formatTimestamp(textOf(entry, 'modified') ?? undefined);
+                  return (
+                    <li key={i} className="flex items-center gap-2">
+                      {isDir ? <Folder size={12} className="shrink-0 opacity-50" /> : <File size={12} className="shrink-0 opacity-50" />}
+                      <span className="flex-1 min-w-0 font-mono break-all">{textOf(entry, 'name') ?? '?'}{isDir && '/'}</span>
+                      {!isDir && size !== null && <span className="shrink-0 opacity-60">{formatSize(size)}</span>}
+                      {modified && <span className="shrink-0 opacity-60 hidden lg:inline" title={modified.full}>{modified.short}</span>}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </ResultBox>
+          {!complete && <div className="mt-1 text-[11px] opacity-60">The directory has more entries than one listing gives.</div>}
+        </>
+      ) : (
+        <FailedResult result={result} />
+      )}
+    </>
+  );
+};
+
+/** The matches of a search, those in one file together, in the order they were found. */
+function matchesByFile(matches: Record<string, unknown>[]): {path: string; lines: {line: number | null; text: string}[]}[] {
+  const files: {path: string; lines: {line: number | null; text: string}[]}[] = [];
+  for (const match of matches) {
+    const path = textOf(match, 'path') ?? '?';
+    const line = {line: numberOf(match, 'line'), text: textOf(match, 'text') ?? ''};
+    const last = files[files.length - 1];
+    if (last?.path === path) last.lines.push(line);
+    else files.push({path, lines: [line]});
+  }
+  return files;
+}
+
+/**
+ * Files searched (issue 265): the pattern and where it was searched, how many matches in how many
+ * files, and the matches by file - each its line number and its line. A search that stopped
+ * before its end, and files skipped as no text, say so.
+ */
+const FileSearchToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) => {
+  if (call.arguments === null) return <span className="text-[11px] italic opacity-60">Search not shown</span>;
+  const args = argumentsObject(call.arguments);
+  const pattern = textOf(args, 'pattern');
+  const found = resultObject(result);
+  const matches = objectsOf(found?.matches);
+  const files = matches !== null ? matchesByFile(matches) : null;
+  const searched = numberOf(found, 'files_searched');
+  const skipped = numberOf(found, 'files_skipped') ?? 0;
+  const detail = matches !== null && files !== null
+    ? [`${counted(matches.length, 'match', 'matches')} in ${counted(files.length, 'file', 'files')}`, searched !== null ? `${counted(searched, 'file', 'files')} searched` : null].filter(Boolean).join(' · ')
+    : null;
+  return (
+    <>
+      <FilePath icon={<TextSearch size={12} />} path={directoryPath(textOf(args, 'path') ?? '')} detail={detail} />
+      {pattern !== null ? (
+        <pre className="mt-1 text-[11px] font-mono whitespace-pre-wrap break-all"><span className="select-none opacity-50">/</span>{pattern}<span className="select-none opacity-50">/</span></pre>
+      ) : (
+        <code className="text-[11px] font-mono break-all">{formatArguments(call.arguments)}</code>
+      )}
+      {resultHidden(result) ? (
+        <div className="mt-2 text-[11px] italic opacity-60">Matches not shown</div>
+      ) : files !== null ? (
+        <>
+          {files.length > 0 && (
+            <ResultBox>
+              {files.map((file, i) => (
+                <div key={i} className={i > 0 ? 'mt-1.5' : undefined}>
+                  <div className="font-mono font-medium break-all">{file.path}</div>
+                  {file.lines.map((match, j) => (
+                    <div key={j} className="flex gap-2 font-mono">
+                      <span className="shrink-0 min-w-8 text-right select-none opacity-50">{match.line ?? '?'}</span>
+                      <span className="min-w-0 whitespace-pre-wrap wrap-break-word">{match.text}</span>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </ResultBox>
+          )}
+          {found?.complete === false && <div className="mt-1 text-[11px] opacity-60">The search stopped before its end, at the most matches or files it gives.</div>}
+          {skipped > 0 && <div className="mt-1 text-[11px] opacity-60">{counted(skipped, 'file', 'files')} skipped: no text, or too large.</div>}
+        </>
+      ) : (
+        <FailedResult result={result} />
+      )}
+    </>
+  );
+};
+
 /** The handler of each presentation; one the server knows and this client does not falls back to the default. */
 const PRESENTATIONS: Record<ToolPresentation, React.FC<ToolCallContentProps>> = {
   default: DefaultToolCallContent,
@@ -386,6 +523,8 @@ const PRESENTATIONS: Record<ToolPresentation, React.FC<ToolCallContentProps>> = 
   file_read: FileReadToolCallContent,
   file_write: FileWriteToolCallContent,
   file_edit: FileEditToolCallContent,
+  file_list: FileListToolCallContent,
+  file_search: FileSearchToolCallContent,
 };
 
 interface ToolCallViewProps {
