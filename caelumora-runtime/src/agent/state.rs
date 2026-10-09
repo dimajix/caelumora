@@ -39,30 +39,25 @@ pub struct AgentStateHandle {
     /// channels may remember at the same time, and each needs its number at
     /// once to tell the model.
     next_memory_id: AtomicU32,
-    /// Where the state is stored and changes are announced, with the
-    /// agent's attributes that decide who hears of them; `None` for a
-    /// detached handle.
-    backing: Option<Backing>,
-}
-
-/// Where an attached handle stores its state and announces its changes.
-#[derive(Debug)]
-struct Backing {
     state_store: Arc<dyn StateStore>,
     events: Arc<dyn EventPublisher>,
+    /// The agent's attributes: whoever may read the agent hears of changes
+    /// to its state.
     attributes: SecurityAttributes,
 }
 
 impl AgentStateHandle {
-    fn new(agent_id: AgentId, state: AgentState, backing: Option<Backing>) -> Self {
+    fn new(agent_id: AgentId, state: AgentState, state_store: Arc<dyn StateStore>, events: Arc<dyn EventPublisher>, attributes: SecurityAttributes) -> Self {
         let next_memory_id = AtomicU32::new(state.memory.next_id().0);
-        Self { agent_id, current: ArcSwap::from_pointee(state), write: Mutex::new(()), next_memory_id, backing }
+        Self { agent_id, current: ArcSwap::from_pointee(state), write: Mutex::new(()), next_memory_id, state_store, events, attributes }
     }
 
-    /// A handle of an empty state that is kept in memory only and stored
-    /// nowhere - for turns outside of a running agent, e.g. in tests.
-    pub fn detached() -> Arc<Self> {
-        Arc::new(Self::new(AgentId::default(), AgentState::default(), None))
+    /// A handle of an empty state, stored in a store of its own and
+    /// announced to nobody - for turns in tests.
+    #[cfg(test)]
+    pub(crate) fn detached() -> Arc<Self> {
+        let state_store = Arc::new(caelumora_model::store::memory::MemoryStore::new());
+        Arc::new(Self::new(AgentId::default(), AgentState::default(), state_store, Arc::new(()), SecurityAttributes::default()))
     }
 
     /// The state as it is now. A snapshot: changes applied afterwards do not
@@ -94,14 +89,10 @@ impl AgentStateHandle {
         for (change, origin) in changes {
             state.memory.push(change, origin, after);
         }
-        if let Some(backing) = &self.backing {
-            backing.state_store.put_agent_state(self.agent_id, &mut state).await
-                .with_context(|| format!("Cannot store the state of agent {}", self.agent_id))?;
-        }
+        self.state_store.put_agent_state(self.agent_id, &mut state).await
+            .with_context(|| format!("Cannot store the state of agent {}", self.agent_id))?;
         self.current.store(Arc::new(state));
-        if let Some(backing) = &self.backing {
-            backing.events.publish(GlobalEvent::AgentStateChanged(self.agent_id), backing.attributes.clone());
-        }
+        self.events.publish(GlobalEvent::AgentStateChanged(self.agent_id), self.attributes.clone());
         debug!("Applied {} changes to the state of agent {}", count, self.agent_id);
         Ok(())
     }
@@ -135,8 +126,7 @@ impl AgentStates {
         }
         let state = self.state_store.get_agent_state(agent_id).await
             .with_context(|| format!("Cannot load the state of agent {}", agent_id))?;
-        let backing = Backing { state_store: Arc::clone(&self.state_store), events: Arc::clone(&self.events), attributes };
-        let handle = Arc::new(AgentStateHandle::new(agent_id, state, Some(backing)));
+        let handle = Arc::new(AgentStateHandle::new(agent_id, state, Arc::clone(&self.state_store), Arc::clone(&self.events), attributes));
         handles.retain(|_, h| h.strong_count() > 0);
         handles.insert(agent_id, Arc::downgrade(&handle));
         Ok(handle)
