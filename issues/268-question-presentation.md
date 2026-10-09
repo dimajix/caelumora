@@ -1,6 +1,6 @@
 # 268 — Choices stand side by side, and an answered question is shown as raw JSON
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -89,3 +89,10 @@ without raw JSON; the record of any call that asked looks the same; `WEB-UI.md` 
 - **2026-10-09** — Decided with the maintainer: B. The record of a call's answers becomes the
   presentation of answered questions, for every tool that asks; `ask_user` is presented as
   `questions`, which shows nothing raw.
+- **2026-10-09** — Done as decided:
+  - `QuestionView` draws a question - `QuestionHeading`, and `ChoiceRows` one below the other,
+    with controls in `QuestionCard` and without in the record - and holds `AnswersRecord`, which
+    replaces the frame's `QuestionsRecord` in `ToolCallView`.
+  - `ToolPresentation::Questions`, set by `ask_user`; its handler shows the questions and whom they
+    wait for until answered, then nothing beyond the record, which the frame sets apart only where
+    the presentation shows something.

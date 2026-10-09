@@ -144,6 +144,10 @@ pub enum ToolPresentation {
     /// `to`, and whether its result says it was `renamed` - moved within
     /// its directory.
     FileMove,
+    /// Questions put to users (issue 268): its `questions` as they were
+    /// put, and whom they wait for (`ask`); once answered, nothing beyond
+    /// the record of the answers every call that asked shows.
+    Questions,
 }
 
 impl ToolPresentation {

@@ -2,12 +2,13 @@
 // presentation says (issue 165). The frame is the same for every call; what is inside it is the
 // handler's of the call's presentation, the default one for every call that declares none. The
 // frame also shows the questions a call asked and how they were answered, where its result keeps
-// their record.
+// their record (`AnswersRecord`, issue 268).
 
 import React from 'react';
-import {CheckCircle2, EyeOff, File, FileDiff, FileInput, FilePen, FileText, Folder, FolderOpen, MessageCircleQuestion, TextSearch, Terminal, Wrench, XCircle} from 'lucide-react';
-import type {Answers, QuestionResponse, ToolCall, ToolPresentation, ToolResult, ToolResultStatus, ToolVisibility} from '../types';
+import {CheckCircle2, EyeOff, File, FileDiff, FileInput, FilePen, FileText, Folder, FolderOpen, TextSearch, Terminal, Wrench, XCircle} from 'lucide-react';
+import type {Question, ToolCall, ToolPresentation, ToolResult, ToolResultStatus, ToolVisibility} from '../types';
 import {formatArguments, formatSize, formatTimestamp} from '../messages';
+import {AnswersRecord, ChoiceRows, QuestionHeading} from './QuestionView';
 
 const TOOL_STATUS_LABELS: Record<Exclude<ToolResultStatus, 'ok'>, string> = {
   denied: 'Denied',
@@ -54,36 +55,6 @@ function toolResultText(result: ToolResult): string {
   }
   return result.content;
 }
-
-/** A response as the record shows it. */
-function responseText(response: QuestionResponse | undefined): string {
-  switch (response?.kind) {
-    case 'text': return response.text;
-    case 'chosen': return [...(response.chosen ?? []), ...(response.other ? [response.other] : [])].join(', ');
-    default: return 'declined';
-  }
-}
-
-/** The record of the questions a call asked and of their answers (issue 165). */
-const QuestionsRecord: React.FC<{answers: Answers}> = ({answers}) => {
-  const declined = answers.responses.every(r => r.kind === 'declined');
-  return (
-    <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700 space-y-1">
-      <div className="text-[11px] uppercase opacity-50 flex items-center gap-1">
-        <MessageCircleQuestion size={11} />
-        {declined ? `Declined by ${answers.answered_by_name}` : `Answered by ${answers.answered_by_name}`}
-      </div>
-      {answers.questions.questions.map((question, index) => (
-        <div key={index} className="text-xs">
-          <span className="opacity-70 whitespace-pre-wrap">{question.question}</span>{' '}
-          <span className={answers.responses[index]?.kind === 'declined' ? 'italic opacity-60' : 'font-medium'}>
-            {responseText(answers.responses[index])}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-};
 
 /** What a presentation's handler is given: the call, and its result once it has one. */
 export interface ToolCallContentProps {
@@ -545,6 +516,41 @@ const FileMoveToolCallContent: React.FC<ToolCallContentProps> = ({call, result})
   );
 };
 
+/** The questions of a call's arguments, or `null` if they are no list of questions. */
+function questionsOf(args: Record<string, unknown> | null): Question[] | null {
+  const questions = args?.questions;
+  if (!Array.isArray(questions)) return null;
+  return questions.every(q => typeof q?.header === 'string' && typeof q?.question === 'string') ? questions as Question[] : null;
+}
+
+/**
+ * Questions put to users (issue 268): nothing raw. While they wait, the questions as they were put
+ * and whom they wait for - the card is where they are answered -; once answered, nothing of the
+ * call's own, since the frame's record of the answers says it all. A call that failed shows why.
+ */
+const QuestionsToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) => {
+  if (call.arguments === null) return <span className="text-[11px] italic opacity-60">Questions not shown</span>;
+  if (result?.answers) return null;
+  if (result && result.status && result.status !== 'ok') return <FailedResult result={result} />;
+  const args = argumentsObject(call.arguments);
+  const questions = questionsOf(args);
+  if (questions === null) return <code className="text-[11px] font-mono break-all">{formatArguments(call.arguments)}</code>;
+  const asked = Array.isArray(args?.ask) ? args.ask.filter((a): a is string => typeof a === 'string') : [];
+  return (
+    <div className="space-y-3">
+      {questions.map((question, index) => (
+        <div key={index} className="space-y-1">
+          <QuestionHeading question={question} compact />
+          {question.choices?.length ? <ChoiceRows question={question} chosen={[]} compact /> : null}
+        </div>
+      ))}
+      <div className="text-[11px] italic opacity-60">
+        {result ? 'Answered' : `Waiting for ${asked.join(', ') || 'whoever was asked'} to answer`}
+      </div>
+    </div>
+  );
+};
+
 /** The handler of each presentation; one the server knows and this client does not falls back to the default. */
 const PRESENTATIONS: Record<ToolPresentation, React.FC<ToolCallContentProps>> = {
   default: DefaultToolCallContent,
@@ -556,6 +562,7 @@ const PRESENTATIONS: Record<ToolPresentation, React.FC<ToolCallContentProps>> = 
   file_list: FileListToolCallContent,
   file_search: FileSearchToolCallContent,
   file_move: FileMoveToolCallContent,
+  questions: QuestionsToolCallContent,
 };
 
 interface ToolCallViewProps {
@@ -612,7 +619,12 @@ export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, abandon
       </div>
       <div className="p-2">
         <Content call={call} result={result} />
-        {result?.answers && <QuestionsRecord answers={result.answers} />}
+        {result?.answers && (
+          // Set apart from what the presentation shows, where it shows anything.
+          <div className="not-first:mt-2 not-first:pt-2 not-first:border-t border-gray-200 dark:border-gray-700">
+            <AnswersRecord answers={result.answers} />
+          </div>
+        )}
       </div>
     </div>
   );

@@ -49,7 +49,7 @@ The UI shows what the server says and repeats no rule of its own:
 | `src/panelWidth.ts` | The widths of the panels beside the chat, kept in browser storage |
 | `src/moderator.ts`, `src/confidentiality.ts`, `src/workspace.ts` | Labels and explanations of responder policies, classifications and where a workspace lies |
 | `src/App.tsx` | Login state, keep-alive, the error banner, the layout |
-| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `ToolCallView`, `QuestionCard`, `MarkdownMessage`, `ContextPanel`, `HistoryPanel`, `ToolsPanel`, `PrivateNotesPanel`, `ToolSetList`, `DeletedList`, `NotesList`, `TokenGauge`, `HoverCard`, `ActionMenu`, `ResizeHandle`, `UsageStats`, `NewSessionDialog`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ApprovalRulesDialog`, `ErrorBanner`, `WorkspacePage`, `FileBrowser`, `ChannelWorkspacePanel`, `NewWorkspaceDialog`, `WorkspaceClassificationFields`, `SessionWorkspaceDialog` |
+| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `ToolCallView`, `QuestionCard`, `QuestionView`, `MarkdownMessage`, `ContextPanel`, `HistoryPanel`, `ToolsPanel`, `PrivateNotesPanel`, `ToolSetList`, `DeletedList`, `NotesList`, `TokenGauge`, `HoverCard`, `ActionMenu`, `ResizeHandle`, `UsageStats`, `NewSessionDialog`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ApprovalRulesDialog`, `ErrorBanner`, `WorkspacePage`, `FileBrowser`, `ChannelWorkspacePanel`, `NewWorkspaceDialog`, `WorkspaceClassificationFields`, `SessionWorkspaceDialog` |
 
 ## Talking to the server
 
@@ -216,8 +216,12 @@ else who may read it - the session's owner, say - is shown its history and no in
     and where it lies now, and whether it was renamed or moved. The `plan` handler shows a plan's
     summary and its steps, numbered (issue 263).
     Where a result keeps the record of the questions its call asked (`answers`, issue 165), the
-    frame shows each question with its answer, and who answered or declined. A question's text keeps
-    its line breaks, so that an approver reads a command of several lines as it was written.
+    frame shows it (`AnswersRecord`, issue 268): who answered or declined, and each question with
+    every choice that was offered, one below the other, the chosen ones marked and the others
+    muted, "Other" with its text, a written answer as a quote, a skipped question as such. A
+    question's text keeps its line breaks, so that an approver reads a command of several lines as
+    it was written. The `questions` handler of `ask_user` shows nothing raw: while it waits, its
+    questions as they were put and whom they wait for; once answered, nothing beyond the record.
 *   **While an agent answers**, its partial message is shown as it streams, its reasoning
     included: folded under "Thinking" until the answer begins (issue 216). Several agents answering
     at once each have an answer of their own, in the order they began (issue 203). Answers under
@@ -295,8 +299,10 @@ else who may read it - the session's owner, say - is shown its history and no in
     ("Answered by your rule"), from their own answer as their actor shows it.
 *   **Questions.** The questions an agent's call waits for the answers to (issue 165) are shown to
     everybody the server sends them to, above the approvals (`QuestionCard`): each question with
-    its header, its choices as buttons - one or several to choose, the recommended one marked - an
-    "Other" field beside them, or a text field without choices. Only the users they are put to get
+    its header, its choices one below the other, each a row of the full width with what it means -
+    a circle where one is chosen, a box where several may be, the recommended one marked (issue
+    268) - an "Other" field below them, or a text field without choices. The card and the record of
+    the answers draw a question alike (`QuestionView`). Only the users they are put to get
     the controls, everybody else whom they wait for; a question may be skipped, the whole of them
     declined. Sensitive questions mask the input and say that the answers go to the tool alone;
     the others that they go to the agent, and that writing a message instead declines them. Sent

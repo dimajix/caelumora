@@ -1,17 +1,12 @@
 // The questions of an agent's tool call that wait for an answer (issue 165): shown to everybody
 // they reach, with controls only for those they are put to. Each question is answered as it asks -
-// text, or choosing among its choices, one or several, or writing another answer - or skipped;
-// the whole of them may be declined.
+// text, or choosing among its choices, one or several, each a row with what it means (issue 268),
+// or writing another answer - or skipped; the whole of them may be declined.
 
 import React, {useState} from 'react';
 import {HelpCircle, Lock} from 'lucide-react';
 import type {Question, QuestionRequest, QuestionResponse} from '../types';
-import {type ClassValue, clsx} from 'clsx';
-import {twMerge} from 'tailwind-merge';
-
-function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
+import {ChoiceRows, QuestionHeading} from './QuestionView';
 
 /** What the user has given so far for one question. */
 interface Draft {
@@ -85,38 +80,12 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({request, asked, asked
         const disabled = !editable || draft.skipped;
         return (
           <fieldset key={index} className="space-y-2" disabled={!editable}>
-            <legend className="text-sm">
-              <span className="text-[11px] uppercase tracking-wider text-gray-500 mr-2">{question.header}</span>
-              <span className="font-medium whitespace-pre-wrap">{question.question}</span>
+            <legend>
+              <QuestionHeading question={question} />
             </legend>
             {question.choices?.length ? (
               <>
-                <div className="flex flex-wrap gap-2" role="group" aria-label={question.header}>
-                  {question.choices.map(choice => (
-                    <button
-                      key={choice.label}
-                      type="button"
-                      disabled={disabled}
-                      aria-pressed={draft.chosen.includes(choice.label)}
-                      onClick={() => choose(index, question, choice.label)}
-                      title={choice.description}
-                      className={cn(
-                        "text-sm px-3 py-1 rounded-md border transition-colors disabled:opacity-60",
-                        draft.chosen.includes(choice.label)
-                          ? "bg-blue-600 border-blue-600 text-white"
-                          : "border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700",
-                      )}
-                    >
-                      {choice.label}
-                      {choice.recommended && <span className="ml-1 text-[11px] opacity-75">(recommended)</span>}
-                    </button>
-                  ))}
-                </div>
-                {question.choices.some(c => c.description) && (
-                  <ul className="text-xs text-gray-500 dark:text-gray-400 space-y-0.5">
-                    {question.choices.filter(c => c.description).map(c => <li key={c.label}><span className="font-medium">{c.label}:</span> {c.description}</li>)}
-                  </ul>
-                )}
+                <ChoiceRows question={question} chosen={draft.chosen} onChoose={label => choose(index, question, label)} disabled={disabled} />
                 {asked && (
                   <input
                     type={sensitive ? 'password' : 'text'}

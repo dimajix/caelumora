@@ -12,7 +12,7 @@ use crate::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::tool::{arguments, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::question::{Addressee, Answers, Question, Questions, MAX_CHOICES, MAX_HEADER_CHARS, MAX_QUESTIONS};
-use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
+use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -81,7 +81,7 @@ impl ToolProvider for AskUserToolProvider {
             requires_approval: false,
             visibility: ToolVisibility::SHOWN,
             classification: None,
-            presentation: Default::default(),
+            presentation: ToolPresentation::Questions,
         }]
     }
 
@@ -141,6 +141,11 @@ mod tests {
         let without_ask = serde_json::json!({ "questions": [{ "header": "Name", "question": "Who?" }] });
         assert!(matches!(tool.questions(ASK_USER_TOOL_NAME, &without_ask), Err(ToolError::InvalidParameter(_))), "`ask` is required");
         assert!(matches!(tool.questions("other", &params), Err(ToolError::UnknownTool(_))));
+    }
+
+    #[test]
+    fn its_calls_are_presented_as_questions() {
+        assert_eq!(AskUserToolProvider.tools().remove(0).presentation, ToolPresentation::Questions);
     }
 
     #[tokio::test]

@@ -392,7 +392,10 @@ the answers are handed to its `execute`. They are no messages, and the model lea
 what the tool puts into its result. The turn waits for them as for an approval, without blocking:
 the call is parked, the turn stored, and it goes on with the result once the answers have come.
 The built-in tool `ask_user` (`ask_user_tool`) is the simplest such tool: the model writes the
-questions and names whom to ask by their handles, and the tool's result is the answers.
+questions and names whom to ask by their handles, and the tool's result is the answers. Its calls
+are presented as `questions` (`ToolPresentation::Questions`, issue 268): frontends show the
+questions, and once answered the record of the answers that every call that asked keeps, nothing
+raw.
 
 1.  **Admission.** `GuardedToolExecutor::admit` asks the tool for the call's questions after
     `describe`, checks them (`Questions::check`: one to five, each with a header of at most twelve
