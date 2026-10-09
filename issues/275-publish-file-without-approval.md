@@ -1,6 +1,6 @@
 # 275 — `publish_file` asks for approval, though it gives nothing away
 
-**Status:** open
+**Status:** done
 **Area:** Tools and approvals
 
 ## The problem
@@ -31,3 +31,6 @@ stays a tool that only reads, so that the knowledge it records stays as it is.
 ## History
 
 - 2026-10-09: Opened at the maintainer's request: `publish_file` should need no approval.
+- 2026-10-09: Done. `publish_file` is offered with `requires_approval` false, whatever is
+  configured, as `command_output` and `kill_command` are; it stays among the tools that only read.
+  The test of which calls ask, the comments of `terminal_tool` and both documents say so.

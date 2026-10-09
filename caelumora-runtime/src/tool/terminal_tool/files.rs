@@ -7,7 +7,8 @@
 //!   is recorded as the turn's knowledge (`KnowledgeSource::Workspace`), a
 //!   file's content by its digest. `publish_file` reads too: it offers a
 //!   file for download as a link to it as it is now, with its digest
-//!   (issue 273), to those who may use the workspace in the channel.
+//!   (issue 273), to those who may use the workspace in the channel - which
+//!   gives nothing away, so it never needs approval (issue 275).
 //! - `write_file`, `replace_in_file`, `move_file` and `delete_file` change;
 //!   the approver reads the change whole, and a rule derived from an
 //!   approved one covers the file, whatever is written - for a move, that
@@ -235,7 +236,9 @@ pub(super) fn tools(config: &TerminalToolConfig) -> Vec<Tool> {
                 ],
                 ["path"],
             ),
-            asks(PUBLISH_FILE),
+            // Never asked (issue 275): it changes nothing, and hands the file
+            // to nobody who could not download it already.
+            false,
             ToolPresentation::FilePublish,
         ),
     ]

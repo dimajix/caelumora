@@ -193,7 +193,7 @@ published before anyone else can take it.
 | [254](254-commands-run-unbounded.md) | open | A command an agent's call hands back as running runs until the model ends it - past its turn, its session and the channel's access to the workspace. |
 | [267](267-move-file.md) | done | Agents cannot move or rename a file of the workspace, although both storages can, except by reading, writing and deleting it or through a shell. |
 | [273](273-publish-file.md) | done | An agent cannot point a user to a file of the workspace to download; it can only say in text where it lies. |
-| [275](275-publish-file-without-approval.md) | open | `publish_file` asks for approval like the other file tools, though it changes nothing and gives the file to nobody who could not download it already. |
+| [275](275-publish-file-without-approval.md) | done | `publish_file` asks for approval like the other file tools, though it changes nothing and gives the file to nobody who could not download it already. |
 
 ## User interaction
 
