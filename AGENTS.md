@@ -140,8 +140,19 @@ feature in somehow. Proposing such refactorings is part of the work, not an extr
     without behaviour changes, so that both can be reviewed separately.
 
 ### Branches and commits
-Until further notice, work directly on `main`. Do not create feature branches unless asked to.
+Every piece of work happens on a branch of its own, never directly on `main` - unless the
+maintainer explicitly asks for a change on `main`. Before the first change, create a dedicated
+branch from the current `main` and name it after the work (with the issue number if there is one,
+e.g. `issue-264-read-channel`). If you are already on such a branch for the same work, keep using
+it.
 
 Do not commit on your own: leave the changes in the working tree and say what they are, so that the
 maintainer can review them first. Commit only when explicitly asked to - and then only what was
 reviewed. The same holds for pushing.
+
+When the work is done, ask whether the branch should be merged into `main`, and merge only after
+the maintainer agreed. Before merging, update `main` from the remote repository (`git fetch`, then
+fast-forward `main` to `origin/main`), then merge the branch into it. Resolve merge conflicts so
+that the intent of both sides is kept; where that is not clear, ask instead of guessing. After a
+merge that needed conflict resolution, run the tests and `cargo clippy --workspace --all-targets`
+again before reporting the merge as done.
