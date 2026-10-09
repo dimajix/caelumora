@@ -399,3 +399,10 @@ downloading; the documents say so.
   `WorkspaceScope` is `OwnedScope` - where a user's own workspace or artifact lies, with its
   mappings `of` and `of_user` -, and `WorkspaceDescriptionRequest` is `ItemDescriptionRequest`; the
   JSON stays as it was.
+- **2026-10-09** — Step 5 done: the web UI presents `artifact_publish` as a card - the
+  artifact's name, version, size, path and description, a download of that version through the
+  channel (`api.channelArtifacts`, handed by `ChatView` through `MessageView` and `ToolCallView` as
+  the channel's files are), and "Keep" for its owner while it lies in the session's scope. Whether
+  the viewer is its owner the card learns by asking for the artifact as theirs
+  (`GET /artifacts/{id}`), which is refused to anyone else. The card's layout is shared with
+  `publish_file`'s (`DownloadCard`). `OwnedScope` is the name in the web UI's types as well.

@@ -1,9 +1,9 @@
 // How workspaces are shown (issue 253): labels of what the server says.
 
-import type {StorageResponse, WorkspaceScope} from './types';
+import type {StorageResponse, OwnedScope} from './types';
 
 /** Where a workspace lies, as people read it. */
-export function workspaceScopeLabel(workspace: {scope: WorkspaceScope}): string {
+export function workspaceScopeLabel(workspace: {scope: OwnedScope}): string {
   switch (workspace.scope) {
     case 'session': return 'of one session';
     case 'global': return 'global';

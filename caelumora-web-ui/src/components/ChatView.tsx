@@ -231,6 +231,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   const [workspaceVersion, setWorkspaceVersion] = useState(0);
   // The workspace's files as this user may use them here: what a call offers is downloaded from them (issue 273).
   const workspaceFiles = useMemo(() => api.channelFiles(sessionId, channelId), [sessionId, channelId]);
+  // The channel's artifacts as this user reaches them: what a call published is downloaded from them (issue 271).
+  const channelArtifacts = useMemo(() => api.channelArtifacts(sessionId, channelId), [sessionId, channelId]);
   // The widths of the channel panel and of the panel showing an agent's
   // context, history or tools (issue 231). The channel panel keeps the key
   // it had as the members panel (issue 245), so that its width stays.
@@ -1206,6 +1208,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
       members={members}
       files={workspaceFiles}
       filesVersion={workspaceVersion}
+      artifacts={channelArtifacts}
       badges={channel && msg.classification && !sameClassification(msg.classification, channel.classification)
         ? [`released: ${classificationLabel(msg.classification)}`]
         : undefined}

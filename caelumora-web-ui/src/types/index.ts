@@ -209,7 +209,7 @@ export interface ToolVisibility {
  * How a tool's calls and their results are shown (issue 165), declared by the tool and stamped on
  * each call; absent means `default`. Display only.
  */
-export type ToolPresentation = 'default' | 'shell' | 'plan' | 'file_read' | 'file_write' | 'file_edit' | 'file_list' | 'file_search' | 'file_move' | 'questions' | 'file_publish';
+export type ToolPresentation = 'default' | 'shell' | 'plan' | 'file_read' | 'file_write' | 'file_edit' | 'file_list' | 'file_search' | 'file_move' | 'questions' | 'file_publish' | 'artifact_publish';
 
 export interface ToolCall {
   id?: string;
@@ -315,13 +315,14 @@ export interface SessionSnapshot {
 }
 
 /** Where a workspace lies (issue 251): made for one session, the owner's, or global. */
-export type WorkspaceScope = 'session' | 'user' | 'global';
+/** Where a user's own workspace or artifact lies (issues 253, 271). */
+export type OwnedScope = 'session' | 'user' | 'global';
 
 /** A workspace (issue 253), as its owner or a member of a channel using it sees it. */
 export interface WorkspaceResponse {
   id: string;
   name: string;
-  scope: WorkspaceScope;
+  scope: OwnedScope;
   /** The session it was made for, if it lies in a session's scope. */
   session_id?: string;
   /** The storage its files lie in, by its configured name. */
@@ -332,6 +333,33 @@ export interface WorkspaceResponse {
   has_shell: boolean;
   /** Whether you may change it and attach it to a session: its owner. */
   can_change: boolean;
+}
+
+/** An artifact (issue 271): its owner's, with every version, or as a reader of a channel sees it, with the versions published there. */
+export interface ArtifactResponse {
+  id: string;
+  name: string;
+  /** `session`: published in it, and gone with it unless kept. */
+  scope: OwnedScope;
+  session_id?: string;
+  description?: string;
+  classification: Classification;
+  /** Oldest first. */
+  versions: ArtifactVersion[];
+  /** Whether you may keep, describe or delete it: its owner. */
+  can_change: boolean;
+}
+
+/** A version of an artifact: what was published, where and by whom. */
+export interface ArtifactVersion {
+  number: number;
+  size: number;
+  digest: string;
+  media_type?: string;
+  session_id: string;
+  channel_id: string;
+  published_by: ActorId;
+  published_at: string;
 }
 
 export interface CreateWorkspaceRequest {
@@ -608,7 +636,7 @@ export interface SessionTemplate {
 export interface TemplateWorkspace {
   name: string;
   /** `session`: made for every session anew. */
-  scope: WorkspaceScope;
+  scope: OwnedScope;
   storage: string;
 }
 

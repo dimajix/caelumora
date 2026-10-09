@@ -24,6 +24,7 @@ import type {
   SessionSnapshot,
   SessionTemplate,
   SessionWorkspaceRequest,
+  ArtifactResponse,
   Compartment,
   ProfileRequest,
   ProfileResponse,
@@ -56,6 +57,13 @@ export interface WorkspaceFiles {
   upload(path: string, file: Blob): Promise<void>;
   /** Removes a file, or a directory if it is empty. */
   remove(path: string): Promise<void>;
+}
+
+/** The artifacts of a channel as a reader of it reaches them (issue 271): those published there, and where their versions are downloaded. */
+export interface ChannelArtifacts {
+  list(): Promise<ArtifactResponse[]>;
+  /** Where version `version` of artifact `artifact` is downloaded - a plain link; the cookie goes with it. */
+  url(artifact: string, version: number): string;
 }
 
 /** The files under `base`, an API path ending before `/files`. */
@@ -643,6 +651,37 @@ export const api = {
   /** The files of the session's workspace, through the channel. */
   channelFiles(sessionId: string, channelId: string): WorkspaceFiles {
     return filesAt(`/sessions/${sessionId}/channels/${channelId}/workspace`);
+  },
+
+  /** The artifacts published in a channel, as its reader reaches them (issue 271). */
+  channelArtifacts(sessionId: string, channelId: string): ChannelArtifacts {
+    const base = `/sessions/${sessionId}/channels/${channelId}/artifacts`;
+    return {
+      async list() {
+        const res = await request(base);
+        await ensureOk(res, 'Failed to list the artifacts');
+        return res.json();
+      },
+      url: (artifact, version) => `${API_BASE}${base}/${artifact}/versions/${version}/content`,
+    };
+  },
+
+  /** The user's artifact `artifactId`, with every version; refused for one not theirs. */
+  async getArtifact(artifactId: string): Promise<ArtifactResponse> {
+    const res = await request(`/artifacts/${artifactId}`);
+    await ensureOk(res, 'Failed to fetch the artifact');
+    return res.json();
+  },
+
+  /** Keeps the user's artifact beyond its session, in their scope or the global one. */
+  async keepArtifact(artifactId: string, scope: 'user' | 'global'): Promise<ArtifactResponse> {
+    const res = await request(`/artifacts/${artifactId}/scope`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({scope}),
+    });
+    await ensureOk(res, 'Failed to keep the artifact');
+    return res.json();
   },
 
   /** Attaches one of the user's workspaces to their session, or with `null` takes it away. */
