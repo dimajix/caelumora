@@ -171,6 +171,7 @@ export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, 
       <MarkdownMessage
         content={msg.content}
         invert={msg.role === 'User'}
+        hardBreaks={msg.role === 'User'}
         mentions={mentionedHandles(msg, members)}
       />
     )}

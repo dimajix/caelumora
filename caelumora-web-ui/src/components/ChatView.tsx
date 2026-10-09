@@ -69,6 +69,7 @@ import {ApiRequestError, reportError} from '../errors';
 import {type ClassValue, clsx} from 'clsx';
 import {twMerge} from 'tailwind-merge';
 import {MarkdownMessage} from './MarkdownMessage';
+import {GrowingTextarea} from './GrowingTextarea';
 import {MessageFooter, MessageView, Reasoning} from './MessageView';
 import {chatMessages, chatRows, commandNotice, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, mergeToolResults, planStepMark} from '../messages';
 import {PlanSteps} from './PlanSteps';
@@ -277,7 +278,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   const [hasMore, setHasMore] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   // `@`-completion: the caret position the suggestions were computed for, the
   // highlighted suggestion, and the query the user dismissed with Escape.
   const [caret, setCaret] = useState(0);
@@ -927,14 +928,15 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
     }
   };
 
-  const updateInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const updateInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInputText(e.target.value);
     setCaret(e.target.selectionStart ?? e.target.value.length);
     setSuggestionIndex(0);
   };
 
   const selectCommand = (command: Command, handle?: string) => {
-    const rest = inputText.slice(caret).replace(/^\S*\s*/, '');
+    // The rest of the name typed, and the blanks after it - not a line break.
+    const rest = inputText.slice(caret).replace(/^\S*[^\S\n]*/, '');
     const inserted = handle ? `/${command.name} @${handle} ` : `/${command.name} `;
     const newCaret = inserted.length;
     setInputText(inserted + rest);
@@ -966,20 +968,28 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
     });
   };
 
-  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (suggestions.length === 0) return;
-    if (e.key === 'ArrowDown') {
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // A key that ends an input method's composition is the composition's.
+    if (e.nativeEvent.isComposing) return;
+    // Shift+Enter is a line break, also while completing (issue 274).
+    const enter = e.key === 'Enter' && !e.shiftKey;
+    if (suggestions.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSuggestionIndex(i => (i + 1) % suggestions.length);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSuggestionIndex(i => (i - 1 + suggestions.length) % suggestions.length);
+      } else if (enter || e.key === 'Tab') {
+        e.preventDefault();
+        selectSuggestion(suggestions[Math.min(suggestionIndex, suggestions.length - 1)]);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        setDismissedMention(suggestionStart);
+      }
+    } else if (enter) {
       e.preventDefault();
-      setSuggestionIndex(i => (i + 1) % suggestions.length);
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setSuggestionIndex(i => (i - 1 + suggestions.length) % suggestions.length);
-    } else if (e.key === 'Enter' || e.key === 'Tab') {
-      e.preventDefault();
-      selectSuggestion(suggestions[Math.min(suggestionIndex, suggestions.length - 1)]);
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      setDismissedMention(suggestionStart);
+      e.currentTarget.form?.requestSubmit();
     }
   };
 
@@ -1454,14 +1464,21 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
               You do not take part in this channel: its history is shown as it is, not followed live, and you cannot write here.
             </p>
           ) : (
-          <form onSubmit={handleSendMessage} className="flex space-x-2">
+          <form
+            onSubmit={handleSendMessage}
+            // The controls beside the field stay one line of it high, at its
+            // bottom, while it grows (issue 274).
+            className="flex items-end space-x-2"
+          >
             {channel && (
-              <ClassificationPicker
-                channel={channel.classification}
-                compartments={compartments}
-                value={release ?? channel.classification}
-                onChange={(c) => setRelease(sameClassification(c, channel.classification) ? null : c)}
-              />
+              <div className="h-10.5 flex">
+                <ClassificationPicker
+                  channel={channel.classification}
+                  compartments={compartments}
+                  value={release ?? channel.classification}
+                  onChange={(c) => setRelease(sameClassification(c, channel.classification) ? null : c)}
+                />
+              </div>
             )}
             <div className="relative flex-1 flex">
               {suggestions.length > 0 && (
@@ -1503,9 +1520,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
                   })}
                 </ul>
               )}
-              <input
+              <GrowingTextarea
                 ref={inputRef}
-                type="text"
                 value={inputText}
                 onChange={updateInput}
                 onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? inputText.length)}
@@ -1523,7 +1539,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
                 role="combobox"
                 aria-expanded={suggestions.length > 0}
                 aria-autocomplete="list"
-                className="flex-1 p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-transparent dark:text-white focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+                className="flex-1 min-h-10.5 max-h-[33vh] p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-transparent dark:text-white focus:outline-hidden focus:ring-2 focus:ring-blue-500"
               />
             </div>
             <button
@@ -1532,7 +1548,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
               // takes a message at any time, and an agent in a turn hears it
               // once the turn ends.
               disabled={isSending || !inputText.trim()}
-              className="p-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-md transition-colors"
+              className="h-10.5 p-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-md transition-colors"
             >
               <Send size={20} />
             </button>
@@ -1540,7 +1556,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
               <button
                 type="button"
                 onClick={handleStopGeneration}
-                className="p-2 bg-red-600 hover:bg-red-700 text-white rounded-md transition-colors"
+                className="h-10.5 p-2 bg-red-600 hover:bg-red-700 text-white rounded-md transition-colors"
                 title="Stop generation"
               >
                 <Square size={20} fill="currentColor" />

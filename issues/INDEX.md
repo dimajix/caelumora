@@ -240,7 +240,7 @@ published before anyone else can take it.
 | [266](266-workspace-on-new-session.md) | done | A new session's workspace cannot be chosen when it is made, and one for that session alone cannot be made without a template naming it. |
 | [268](268-question-presentation.md) | done | An agent's question offers its choices side by side, their meanings in a list apart, and once answered is shown as raw JSON beside a record without the choices offered. |
 | [269](269-agent-commands.md) | done | A user command can act on the channel but not on an agent - its transcript has one writer, the agent's actor - so neither `/compact` nor loading a skill for an agent can be built. |
-| [274](274-multiline-message-input.md) | open | The message field of the web UI is a single line: a long message scrolls sideways instead of wrapping, and no line break can be entered. |
+| [274](274-multiline-message-input.md) | done | The message field of the web UI is a single line: a long message scrolls sideways instead of wrapping, and no line break can be entered. |
 
 ## Context and knowledge
 
