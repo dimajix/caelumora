@@ -1,4 +1,4 @@
-# Demo data (issue 105): personalities and session templates that a binary
+# Demo data (issue 105): personalities, session templates and skills that a binary
 # puts into its entity store at startup, when `seed` in its configuration
 # names this file (see config.yaml). Every document is stored under the id it
 # has here, and only if the store has no document with that id yet - so
@@ -10,6 +10,10 @@
 # Templates refer to personalities by id. Within a template, channels refer
 # to the template's participants by name; "user" is whoever creates the
 # session, and a channel without an approver gets one anyway.
+#
+# Skills (issue 22) lie in the global scope: every agent whose personality
+# has the `skills` component finds them, loads them when a task calls for one,
+# and a member gives one to an agent with `/skill @agent <name>`.
 
 personalities:
 - id: 6c109a76-8e67-4e44-ac8d-f97d4be9d3fb
@@ -55,6 +59,9 @@ personalities:
   - id: ask-user-tool
     kind: ask_user_tool
     fail_policy: FailClosed
+  - id: skills
+    kind: skills
+    fail_policy: FailOpen
   - id: workspace
     kind: workspace_prompt_provider
     fail_policy: FailClosed
@@ -102,6 +109,9 @@ personalities:
   - id: ask-user-tool
     kind: ask_user_tool
     fail_policy: FailClosed
+  - id: skills
+    kind: skills
+    fail_policy: FailOpen
 # An agent that runs elsewhere, reached over A2A (issue 179) - for instance
 # a Hermes Agent with its A2A plugin. Set the endpoint's `url` to where it
 # publishes its agent card, and keep its token in the secret HERMES_A2A_TOKEN. It sees
@@ -303,3 +313,17 @@ session_templates:
     - approval
     - Jonathan
     - Hermes
+
+skills:
+- id: 8bdb7961-a455-4063-8be6-98a2f16b46f5
+  name: quiz-round
+  description: How to run a round of a quiz with the people in the channel
+  classification:
+    level: internal
+  body: |-
+    1. Announce the topic and how many questions the round has - five unless asked otherwise.
+    2. Ask one question at a time, and wait for every answer before you go on.
+    3. Say who was right, with the correct answer and one sentence on why.
+    4. Keep the score in a note, and give it after every question.
+    5. At the end, name the winner and offer another round.
+

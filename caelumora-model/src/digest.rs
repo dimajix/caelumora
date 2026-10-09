@@ -353,6 +353,13 @@ impl ContentDigest {
     }
 }
 
+/// The digest of a skill's body as it was loaded (issue 22).
+pub fn skill(body: &str) -> Digest {
+    let mut e = Encoder::new("caelumora.skill.v1");
+    e.str(body);
+    e.finish()
+}
+
 /// The digest of a prompt part: the system prompt, or any other text an
 /// agent's model is given besides the conversation (issue 47).
 pub fn prompt(prompt: &str) -> Digest {

@@ -106,7 +106,7 @@ pub struct TemplateResponse {
 #[derive(Debug, Serialize)]
 pub struct TemplateWorkspaceResponse {
     pub name: String,
-    pub scope: WorkspaceScope,
+    pub scope: ScopeKind,
     pub storage: String,
 }
 
@@ -115,9 +115,9 @@ impl From<&SessionTemplate> for TemplateResponse {
         // One of a group's scope is left out: no session is made from it.
         let workspace = template.workspace.as_ref().and_then(|w| {
             let scope = match w.scope {
-                ScopeTemplate::SessionScope => WorkspaceScope::Session,
-                ScopeTemplate::UserScope => WorkspaceScope::User,
-                ScopeTemplate::GlobalScope => WorkspaceScope::Global,
+                ScopeTemplate::SessionScope => ScopeKind::Session,
+                ScopeTemplate::UserScope => ScopeKind::User,
+                ScopeTemplate::GlobalScope => ScopeKind::Global,
                 ScopeTemplate::GroupScope => return None,
             };
             Some(TemplateWorkspaceResponse { name: w.name.to_string(), scope, storage: w.storage.clone() })
@@ -409,7 +409,7 @@ pub struct WorkspaceResponse {
     pub name: String,
     /// Where it lies: `session` - made for one session and used in it
     /// alone, which `session_id` names -, `user` or `global`.
-    pub scope: WorkspaceScope,
+    pub scope: ScopeKind,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<SessionId>,
     /// The storage its files lie in, by its configured name.
@@ -426,22 +426,18 @@ pub struct WorkspaceResponse {
 
 impl From<snapshot::WorkspaceSnapshot> for WorkspaceResponse {
     fn from(view: snapshot::WorkspaceSnapshot) -> Self {
-        let (scope, session_id) = match view.scope {
-            Scope::SessionScope { session_id } => (WorkspaceScope::Session, Some(session_id)),
-            Scope::UserScope { .. } => (WorkspaceScope::User, None),
-            // A workspace lies in no other (`Workspace::validate`).
-            _ => (WorkspaceScope::Global, None),
-        };
+        let (scope, session_id) = ScopeKind::of(&view.scope);
         Self { id: view.id, name: view.name, scope, session_id, storage: view.storage, description: view.description, classification: view.classification, has_shell: view.has_shell, can_change: view.can_change }
     }
 }
 
-/// Where a workspace lies (issue 251, decision 13). One of a session's
-/// scope is made with the session - by its template or as chosen when it
-/// is made (issue 266) -, not on its own.
+/// Where a workspace (issue 251, decision 13) or a skill (issue 22) lies.
+/// One of a session's scope is made with the session - a workspace by its
+/// template or as chosen when it is made (issue 266), a skill by an agent
+/// in it -, not on its own.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum WorkspaceScope {
+pub enum ScopeKind {
     Session,
     /// Its owner's: found by its name among theirs.
     #[default]
@@ -450,13 +446,85 @@ pub enum WorkspaceScope {
     Global,
 }
 
+impl ScopeKind {
+    /// The kind of `scope`, and the session it names if it is a session's.
+    /// A workspace and a skill lie in no other than these three
+    /// (`Stored::validate`).
+    pub fn of(scope: &Scope) -> (Self, Option<SessionId>) {
+        match scope {
+            Scope::SessionScope { session_id } => (ScopeKind::Session, Some(*session_id)),
+            Scope::UserScope { .. } => (ScopeKind::User, None),
+            _ => (ScopeKind::Global, None),
+        }
+    }
+}
+
+/// A skill (issue 22) as whoever may read it sees it; with its `body` where
+/// it is asked for alone, not where skills are listed.
+#[derive(Debug, Serialize)]
+pub struct SkillResponse {
+    pub id: caelumora_model::skill::SkillId,
+    pub name: String,
+    /// Where it lies: `session` - written by an agent for one session,
+    /// which `session_id` names -, `user` or `global`.
+    pub scope: ScopeKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<SessionId>,
+    pub description: Description,
+    pub classification: Classification,
+    /// Whose it is: a user, or the system for a skill of the seed.
+    pub owner: ActorId,
+    /// Whether you may change it - rename, describe, rewrite, reclassify -
+    /// and delete it: its owner.
+    pub can_change: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<caelumora_model::value::text::SkillBody>,
+}
+
+impl From<snapshot::SkillSnapshot> for SkillResponse {
+    fn from(view: snapshot::SkillSnapshot) -> Self {
+        let (scope, session_id) = ScopeKind::of(&view.scope);
+        Self { id: view.id, name: view.name, scope, session_id, description: view.description, classification: view.classification, owner: view.owner, can_change: view.can_change, body: None }
+    }
+}
+
+/// A skill to make (issue 22): in the user's scope or the global one, and
+/// classified `internal` without compartments unless named.
+#[derive(Debug, Deserialize)]
+pub struct CreateSkillRequest {
+    pub name: String,
+    #[serde(default)]
+    pub scope: ScopeKind,
+    pub description: String,
+    pub body: String,
+    #[serde(default)]
+    pub classification: Option<Classification>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RenameSkillRequest {
+    pub name: String,
+}
+
+/// What a skill is for, in a line, replacing what it said.
+#[derive(Debug, Deserialize)]
+pub struct SkillDescriptionRequest {
+    pub description: String,
+}
+
+/// What a skill tells the model, replacing what it told.
+#[derive(Debug, Deserialize)]
+pub struct SkillBodyRequest {
+    pub body: String,
+}
+
 /// A workspace to make (issue 253), in a configured storage; in its
 /// owner's scope and `internal` without compartments unless named.
 #[derive(Debug, Deserialize)]
 pub struct CreateWorkspaceRequest {
     pub name: String,
     #[serde(default)]
-    pub scope: WorkspaceScope,
+    pub scope: ScopeKind,
     pub storage: String,
     #[serde(default)]
     pub description: Option<String>,
@@ -937,12 +1005,15 @@ pub struct KnowledgeRefResponse {
     /// Whether the channel was deleted (issue 164) - told only to whoever
     /// could read it were it there; for anyone else, it never was.
     pub channel_deleted: bool,
-    /// `"notes"`, `"private_notes"`, `"memory"`, `"history"` or
-    /// `"workspace"`.
+    /// `"notes"`, `"private_notes"`, `"memory"`, `"history"`,
+    /// `"workspace"` or `"skill"`.
     pub source: &'static str,
     /// The workspace whose files were read, for `"workspace"`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<caelumora_model::workspace::WorkspaceId>,
+    /// The skill loaded, for `"skill"` (issue 22).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skill_id: Option<caelumora_model::skill::SkillId>,
     /// Whose notes, for `"notes"` and `"private_notes"`.
     pub agent_id: Option<ActorId>,
     pub agent_name: Option<String>,
@@ -977,10 +1048,12 @@ impl KnowledgeRefResponse {
             KnowledgeSource::History { digest, start } => ("history", None, digest, start),
             KnowledgeSource::Memory { agent, digest } => ("memory", Some(ActorId::Agent(agent)), digest, None),
             KnowledgeSource::Workspace { digest, .. } => ("workspace", None, digest, None),
+            KnowledgeSource::Skill { digest, .. } => ("skill", None, Some(digest), None),
         };
-        let workspace_id = match knowledge.source {
-            KnowledgeSource::Workspace { workspace, .. } => Some(workspace),
-            _ => None,
+        let (workspace_id, skill_id) = match knowledge.source {
+            KnowledgeSource::Workspace { workspace, .. } => (Some(workspace), None),
+            KnowledgeSource::Skill { skill, .. } => (None, Some(skill)),
+            _ => (None, None),
         };
         let agent_name = match (agent_id, &channel) {
             (Some(id), Some(channel)) => channel.member(id).await.ok().and_then(|m| m.name().map(str::to_string)),
@@ -993,6 +1066,7 @@ impl KnowledgeRefResponse {
             channel_deleted,
             source,
             workspace_id,
+            skill_id,
             agent_id,
             agent_name,
             digest,
@@ -1270,5 +1344,21 @@ mod tests {
         assert_eq!(request.preferred_language.as_deref(), Some("Deutsch"), "checked by the profile, not as the request is read");
         let request: CreateChannelRequest = serde_json::from_str(r#"{"name": "side"}"#).unwrap();
         assert_eq!(request.language, None, "the preferred one when left out");
+    }
+
+    #[test]
+    fn a_skill_is_answered_with_its_scope_and_its_body_only_alone() {
+        use caelumora_model::skill::SkillId;
+        let session_id = SessionId::new();
+        let snapshot = snapshot::SkillSnapshot {
+            id: SkillId::new(), name: "deploy".to_string(), scope: Scope::SessionScope { session_id },
+            description: Description::new("How we deploy").unwrap(), classification: Classification::CHANNEL_DEFAULT,
+            owner: ActorId::System, can_change: false,
+        };
+        let listed = serde_json::to_value(SkillResponse::from(snapshot.clone())).unwrap();
+        assert_eq!((listed["scope"].clone(), listed["session_id"].clone()), (serde_json::json!("session"), serde_json::to_value(session_id).unwrap()));
+        assert!(listed.get("body").is_none(), "not where skills are listed");
+        let alone = SkillResponse { body: Some(caelumora_model::value::text::SkillBody::new("1. Build.").unwrap()), ..snapshot.into() };
+        assert_eq!(serde_json::to_value(alone).unwrap()["body"], "1. Build.");
     }
 }

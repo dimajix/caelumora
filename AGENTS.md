@@ -16,6 +16,7 @@ change something, read the document on its subject:
 | tools, tool execution, approvals, user commands | [TOOLS-AND-COMMANDS.md](docs/TOOLS-AND-COMMANDS.md) |
 | the agent's cognitive cycle, `Turn`, transcript, prompt parts | [AGENT-TURN.md](docs/AGENT-TURN.md) |
 | notes, private notes, agent memory, reading other channels | [MEMORY.md](docs/MEMORY.md) |
+| skills: the catalogue, loading and writing them | [SKILLS.md](docs/SKILLS.md) |
 | sessions, channels, actors, participants, moderators | [CHANNELS.md](docs/CHANNELS.md) |
 | the event bus | [EVENTS.md](docs/EVENTS.md) |
 | the REST API, login and tokens, server-sent event streams | [REST-SERVER.md](docs/REST-SERVER.md) |

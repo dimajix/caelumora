@@ -1,12 +1,14 @@
 //! Demo data a binary puts into its entity store at startup (issue 105):
-//! the files `AppConfig::seed` names, each holding personalities and
-//! session templates as the store keeps them (`examples/seed.yaml`). One
+//! the files `AppConfig::seed` names, each holding personalities, session
+//! templates and skills as the store keeps them (`examples/seed.yaml`). One
 //! definition for the REST server and the TUI alike.
 
 use anyhow::Context;
+use caelumora_model::actor::ActorId;
 use caelumora_model::agent::Personality;
+use caelumora_model::skill::Skill;
 use caelumora_model::config::parse_yaml;
-use caelumora_model::security::SecurityContext;
+use caelumora_model::security::{SecurityAttributes, SecurityContext};
 use caelumora_model::store::{EntityStore, StoreResultExt};
 use caelumora_model::template::SessionTemplate;
 use serde::Deserialize;
@@ -19,6 +21,9 @@ use tracing::info;
 pub struct Seed {
     pub personalities: Vec<Personality>,
     pub session_templates: Vec<SessionTemplate>,
+    /// Skills of the system (issue 22), in the global scope, found by every
+    /// agent with the `skills` component.
+    pub skills: Vec<Skill>,
 }
 
 impl Seed {
@@ -52,6 +57,15 @@ impl Seed {
             if store.get_session_template(&system, template.id).await.optional()?.is_none() {
                 store.create_session_template(&system, template).await?;
                 info!("Seeded session template {} ({})", template.name, template.id);
+            }
+        }
+        for skill in &self.skills {
+            if store.get_skill(&system, skill.id).await.optional()?.is_none() {
+                // The system's, as everything seeded: a skill says so, since
+                // nobody's is no skill at all (`Skill::validate`).
+                let owned = Skill { security_attributes: SecurityAttributes::owned_by(ActorId::System), ..skill.clone() };
+                store.create_skill(&system, &owned).await?;
+                info!("Seeded skill {} ({})", skill.name, skill.id);
             }
         }
         Ok(())
@@ -106,6 +120,9 @@ mod tests {
         assert_eq!(store.list_personalities(&system).await.unwrap().len(), seed.personalities.len(), "nothing twice");
         assert_eq!(store.list_session_templates(&system).await.unwrap().len(), seed.session_templates.len());
         assert_eq!(store.get_personality(&system, changed.id).await.unwrap().description, changed.description);
+        let skills = store.list_skills(&system).await.unwrap();
+        assert!(!skills.is_empty() && skills.len() == seed.skills.len(), "the skills, once (issue 22)");
+        assert!(skills.iter().all(|s| s.security_attributes.owner_id == ActorId::System), "the system's");
     }
 
     #[test]

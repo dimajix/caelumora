@@ -12,8 +12,9 @@ use crate::removal::{Deletable, Removal, Stored};
 use crate::scope::Scoped;
 use crate::value::name::ScopedName;
 use crate::security::{DummySecurityManager, SecurityManager};
-use crate::store::access::{name_free, Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, USERS, USER_PROFILES, WORKSPACES};
+use crate::store::access::{name_free, Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, SKILLS, USERS, USER_PROFILES, WORKSPACES};
 use crate::workspace::{Workspace, WorkspaceId};
+use crate::skill::{Skill, SkillId};
 use std::fmt::Display;
 use std::hash::Hash;
 
@@ -28,6 +29,7 @@ pub struct MemoryStore {
     users: RwLock<HashMap<UserId, User>>,
     user_profiles: RwLock<HashMap<UserId, UserProfile>>,
     workspaces: RwLock<HashMap<WorkspaceId, Workspace>>,
+    skills: RwLock<HashMap<SkillId, Skill>>,
     agent_states: RwLock<HashMap<AgentId, AgentState>>,
     agent_channel_states: RwLock<HashMap<(AgentId, ChannelId), AgentChannelState>>,
     channel_states: RwLock<HashMap<ChannelId, ChannelState>>,
@@ -59,6 +61,7 @@ impl MemoryStore {
             users: Default::default(),
             user_profiles: Default::default(),
             workspaces: Default::default(),
+            skills: Default::default(),
             agent_states: Default::default(),
             agent_channel_states: Default::default(),
             channel_states: Default::default(),
@@ -505,6 +508,38 @@ impl EntityStore for MemoryStore {
     }
     async fn find_workspace_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Workspace> {
         self.find_in(ctx, &self.workspaces, &WORKSPACES, name).await
+    }
+
+    // Skills (issue 22)
+    async fn create_skill(&self, ctx: &SecurityContext, value: &Skill) -> StoreResult<()> {
+        self.create_named_in(ctx, &self.skills, &SKILLS, value.id, value).await
+    }
+    async fn get_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<Skill> {
+        self.get_in(ctx, &self.skills, &SKILLS, &id).await
+    }
+    async fn update_skill(&self, ctx: &SecurityContext, value: &Skill) -> StoreResult<()> {
+        self.update_named_in(ctx, &self.skills, &SKILLS, value.id, value).await
+    }
+    async fn delete_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<bool> {
+        self.delete_in(ctx, &self.skills, &SKILLS, id).await
+    }
+    async fn list_skills(&self, ctx: &SecurityContext) -> StoreResult<Vec<Skill>> {
+        self.list_in(ctx, &self.skills, &SKILLS).await
+    }
+    async fn restore_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<()> {
+        self.restore_named_in(ctx, &self.skills, &SKILLS, id).await
+    }
+    async fn purge_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<bool> {
+        self.purge_in(ctx, &self.skills, &SKILLS, &id).await
+    }
+    async fn get_deleted_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<Skill> {
+        self.get_deleted_in(ctx, &self.skills, &SKILLS, &id).await
+    }
+    async fn list_deleted_skills(&self, ctx: &SecurityContext) -> StoreResult<Vec<Skill>> {
+        self.list_deleted_in(ctx, &self.skills, &SKILLS).await
+    }
+    async fn find_skill_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Skill> {
+        self.find_in(ctx, &self.skills, &SKILLS, name).await
     }
 }
 

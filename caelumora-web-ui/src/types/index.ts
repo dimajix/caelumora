@@ -314,14 +314,14 @@ export interface SessionSnapshot {
   workspace?: WorkspaceResponse;
 }
 
-/** Where a workspace lies (issue 251): made for one session, the owner's, or global. */
-export type WorkspaceScope = 'session' | 'user' | 'global';
+/** Where a workspace (issue 251) or a skill (issue 22) lies: of one session, the owner's, or global. */
+export type ScopeKind = 'session' | 'user' | 'global';
 
 /** A workspace (issue 253), as its owner or a member of a channel using it sees it. */
 export interface WorkspaceResponse {
   id: string;
   name: string;
-  scope: WorkspaceScope;
+  scope: ScopeKind;
   /** The session it was made for, if it lies in a session's scope. */
   session_id?: string;
   /** The storage its files lie in, by its configured name. */
@@ -332,6 +332,36 @@ export interface WorkspaceResponse {
   has_shell: boolean;
   /** Whether you may change it and attach it to a session: its owner. */
   can_change: boolean;
+}
+
+/**
+ * A skill (issue 22): a procedure written down for agents, as whoever may read
+ * it sees it - with its `body` where it is fetched alone, not where skills are
+ * listed.
+ */
+export interface SkillResponse {
+  id: string;
+  name: string;
+  scope: ScopeKind;
+  /** The session it was written for, if it lies in a session's scope. */
+  session_id?: string;
+  /** What it is for, in a line: what agents are shown to choose it by. */
+  description: string;
+  classification: Classification;
+  /** Whose it is: a user, or the system for a skill of the seed. */
+  owner: ActorId;
+  /** Whether you may change it and delete it: its owner. */
+  can_change: boolean;
+  body?: string;
+}
+
+export interface CreateSkillRequest {
+  name: string;
+  /** `user` unless given; one of a session's scope is written by an agent in it. */
+  scope?: 'user' | 'global';
+  description: string;
+  body: string;
+  classification?: Classification;
 }
 
 export interface CreateWorkspaceRequest {
@@ -608,7 +638,7 @@ export interface SessionTemplate {
 export interface TemplateWorkspace {
   name: string;
   /** `session`: made for every session anew. */
-  scope: WorkspaceScope;
+  scope: ScopeKind;
   storage: string;
 }
 
@@ -870,9 +900,11 @@ export interface KnowledgeRef {
   channel_name: string | null;
   /** Whether the channel was deleted (issue 164) - told only to whoever could read it were it there. */
   channel_deleted: boolean;
-  source: 'notes' | 'private_notes' | 'history' | 'memory' | 'workspace';
+  source: 'notes' | 'private_notes' | 'history' | 'memory' | 'workspace' | 'skill';
   /** The workspace whose files were read, for `workspace` (issue 251). */
   workspace_id?: string;
+  /** The skill loaded, for `skill` (issue 22). */
+  skill_id?: string;
   /** Whose notes or memory, for `notes`, `private_notes` and `memory`. */
   agent_id: ActorId | null;
   agent_name: string | null;

@@ -266,6 +266,15 @@ pub(crate) const WORKSPACES: Actions = Actions {
     delete: |a| ActionType::DeleteWorkspace(a),
 };
 
+pub(crate) const SKILLS: Actions = Actions {
+    entity: EntityKind::Skill,
+    get: |a| ActionType::GetSkill(a),
+    list: ActionType::ListSkills,
+    create: |a| ActionType::CreateSkill(a),
+    update: |a| ActionType::UpdateSkill(a),
+    delete: |a| ActionType::DeleteSkill(a),
+};
+
 pub(crate) const COMPONENTS: Actions = Actions {
     entity: EntityKind::Component,
     get: |a| ActionType::GetComponent(a),

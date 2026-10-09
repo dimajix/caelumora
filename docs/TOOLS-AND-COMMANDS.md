@@ -633,6 +633,10 @@ agent alike.
 | `move_file` | `terminal_tool` | `from`, `to` | as configured, yes by default | `SHOWN` | Moves or renames a file or a directory of the workspace, never over something, its directories made (issue 267). |
 | `publish_file` | `terminal_tool` | `path`, `name`, `description` (optional) | as configured; not under `"unless_read_only"` | `SHOWN` | Offers a file of the workspace for download at its message, as a link to the file as it is now, with its digest (issue 273). |
 | `delete_file` | `terminal_tool` | `path` | as configured, yes by default | `SHOWN` | Deletes a file or an empty directory of the workspace. |
+| `list_skills` | `skills` | - | no | `SHOWN` | Lists the skills the agent may load here, each with what it is for ([SKILLS.md](SKILLS.md)). |
+| `load_skill` | `skills` | `name` | no | `CALL_ONLY` | Gives the skill's text as plain text, classified as the skill; recorded as knowledge. |
+| `create_skill` | `skills` | `name`, `description`, `body`, `scope` (`session` or `user`) | as configured, yes by default | `SHOWN` | Writes a skill of the agent's owner, classified as the turn's label. |
+| `update_skill` | `skills` | `name`, `description` (optional), `body` (optional) | as configured, yes by default | `SHOWN` | Changes a skill of the owner's, raised first to what the turn has seen. |
 | `read_history` | `channel_history` | `channel`, `last` (optional, default 20, at most 100), `query` (optional) | no | `SHOWN` | Reads the latest messages of another channel, or those containing a text. |
 
 `stop`, `bye` and `silence` end the turn with the current tool step (`Turn::request_state`). Notes,
@@ -706,6 +710,7 @@ nothing bounds how long it runs yet (issue [254](../issues/254-commands-run-unbo
 |---|---|---|---|---|---|
 | `/help` | the channel | `help_command` | `[command]` | private | Lists the commands the user may use - the channel's and the agents' -, or describes one. |
 | `/wakeup` | the channel | `wakeup_command` | `[agent]` | channel-wide | Wakes the sleeping agents of the channel, or the one named (`@handle` or `handle`). |
+| `/skill` | the agent | `skills` | `@agent <name>` | private | Gives the agent a skill: its text goes into the agent's transcript in the issuer's name ([SKILLS.md](SKILLS.md)). |
+| `/skills` | the agent | `skills` | `@agent` | private | Lists the skills the agent may load here. |
 
-No built-in component carries out a command of an agent yet; the first are `/skill`
-([22](../issues/22-skill-management.md)) and `/compact` ([16](../issues/16-context-compression.md)).
+`/compact` ([16](../issues/16-context-compression.md)) is to follow as a command of an agent.

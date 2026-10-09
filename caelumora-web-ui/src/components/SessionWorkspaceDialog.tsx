@@ -7,7 +7,7 @@ import React, {useState} from 'react';
 import {X} from 'lucide-react';
 import type {SessionSnapshot, WorkspaceResponse} from '../types';
 import {ApiRequestError, reportError} from '../errors';
-import {workspaceScopeLabel} from '../workspace';
+import {scopeLabel} from '../scope';
 
 interface SessionWorkspaceDialogProps {
   session: SessionSnapshot;
@@ -69,7 +69,7 @@ export const SessionWorkspaceDialog: React.FC<SessionWorkspaceDialogProps> = ({s
           <div>
             <span className="text-xs text-gray-400">Attached: </span>
             {session.workspace
-              ? <span>{session.workspace.name} <span className="text-xs text-gray-500">({workspaceScopeLabel(session.workspace)})</span></span>
+              ? <span>{session.workspace.name} <span className="text-xs text-gray-500">({scopeLabel(session.workspace)})</span></span>
               : <span className="italic text-gray-500">none of yours</span>}
           </div>
 
@@ -81,7 +81,7 @@ export const SessionWorkspaceDialog: React.FC<SessionWorkspaceDialogProps> = ({s
                 onChange={(e) => setChosen(e.target.value)}
                 className="w-full rounded-md border border-gray-700 bg-gray-800 px-2 py-1"
               >
-                {offered.map(w => <option key={w.id} value={w.id}>{w.name} ({workspaceScopeLabel(w)})</option>)}
+                {offered.map(w => <option key={w.id} value={w.id}>{w.name} ({scopeLabel(w)})</option>)}
               </select>
             </label>
           )}

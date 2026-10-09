@@ -2,6 +2,7 @@ import {useCallback, useEffect, useState} from 'react';
 import {Sidebar} from './components/Sidebar';
 import {ChatView} from './components/ChatView';
 import {WorkspacePage} from './components/WorkspacePage';
+import {SkillPage} from './components/SkillPage';
 import {Login} from './components/Login';
 import {ErrorBanner} from './components/ErrorBanner';
 import {api} from './api';
@@ -67,26 +68,40 @@ interface LayoutProps {
   onLogout: () => void;
 }
 
-/** The sidebar, and beside it a channel or one of the user's workspaces. */
+/** The sidebar, and beside it a channel, one of the user's workspaces or a skill. */
 function Layout({ user, onLogout }: LayoutProps) {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
   // One of the user's workspaces (issue 253), shown in the place of a channel.
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
+  // A skill (issue 22), likewise.
+  const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
 
   const handleSelectChannel = (sessionId: string, channelId: string) => {
     setSelectedWorkspaceId(null);
+    setSelectedSkillId(null);
     setSelectedSessionId(sessionId);
     setSelectedChannelId(channelId);
   };
 
   const handleSelectWorkspace = (workspaceId: string) => {
     setSelectedChannelId(null);
+    setSelectedSkillId(null);
     setSelectedWorkspaceId(workspaceId);
+  };
+
+  const handleSelectSkill = (skillId: string) => {
+    setSelectedChannelId(null);
+    setSelectedWorkspaceId(null);
+    setSelectedSkillId(skillId);
   };
 
   const handleWorkspaceDeleted = useCallback((workspaceId: string) => {
     setSelectedWorkspaceId(current => (current === workspaceId ? null : current));
+  }, []);
+
+  const handleSkillDeleted = useCallback((skillId: string) => {
+    setSelectedSkillId(current => (current === skillId ? null : current));
   }, []);
 
   const handleChannelDeleted = useCallback((channelId: string) => {
@@ -113,11 +128,16 @@ function Layout({ user, onLogout }: LayoutProps) {
         selectedWorkspaceId={selectedWorkspaceId}
         onSelectWorkspace={handleSelectWorkspace}
         onWorkspaceDeleted={handleWorkspaceDeleted}
+        selectedSkillId={selectedSkillId}
+        onSelectSkill={handleSelectSkill}
+        onSkillDeleted={handleSkillDeleted}
       />
       
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {selectedWorkspaceId ? (
           <WorkspacePage key={selectedWorkspaceId} workspaceId={selectedWorkspaceId} onDeleted={handleWorkspaceDeleted} />
+        ) : selectedSkillId ? (
+          <SkillPage key={selectedSkillId} skillId={selectedSkillId} onDeleted={handleSkillDeleted} />
         ) : selectedSessionId && selectedChannelId ? (
           <ChatView
             sessionId={selectedSessionId}

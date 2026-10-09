@@ -1,5 +1,7 @@
 import type {
   AddParticipantRequest,
+  CreateSkillRequest,
+  SkillResponse,
   Description,
   AgentToolsResponse,
   ApprovalRule,
@@ -626,6 +628,96 @@ export const api = {
   async purgeWorkspace(workspaceId: string): Promise<void> {
     const res = await request(`/workspaces/${workspaceId}/purge`, {method: 'POST'});
     await ensureOk(res, 'Failed to delete the workspace for good');
+  },
+
+  /** The skills the user may read and is cleared for (issue 22), without their bodies. */
+  async getSkills(): Promise<SkillResponse[]> {
+    const res = await request('/skills');
+    await ensureOk(res, 'Failed to fetch the skills');
+    return res.json();
+  },
+
+  /** The user's skills they deleted, the trash. */
+  async getDeletedSkills(): Promise<Deleted[]> {
+    const res = await request('/skills?deleted=true');
+    await ensureOk(res, 'Failed to fetch the deleted skills');
+    return res.json();
+  },
+
+  /** One skill, with its body. */
+  async getSkill(skillId: string): Promise<SkillResponse> {
+    const res = await request(`/skills/${skillId}`);
+    await ensureOk(res, 'Failed to fetch the skill');
+    return res.json();
+  },
+
+  async createSkill(payload: CreateSkillRequest): Promise<SkillResponse> {
+    const res = await request('/skills', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    await ensureOk(res, 'Failed to create the skill');
+    return res.json();
+  },
+
+  async renameSkill(skillId: string, name: string): Promise<SkillResponse> {
+    const res = await request(`/skills/${skillId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    await ensureOk(res, 'Failed to rename the skill');
+    return res.json();
+  },
+
+  /** Says anew what the skill is for, in a line. */
+  async describeSkill(skillId: string, description: string): Promise<SkillResponse> {
+    const res = await request(`/skills/${skillId}/description`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ description }),
+    });
+    await ensureOk(res, 'Failed to describe the skill');
+    return res.json();
+  },
+
+  /** Writes anew what the skill tells agents. */
+  async rewriteSkill(skillId: string, body: string): Promise<SkillResponse> {
+    const res = await request(`/skills/${skillId}/body`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body }),
+    });
+    await ensureOk(res, 'Failed to save the skill');
+    return res.json();
+  },
+
+  async reclassifySkill(skillId: string, classification: Classification): Promise<SkillResponse> {
+    const res = await request(`/skills/${skillId}/classification`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(classification),
+    });
+    await ensureOk(res, 'Failed to reclassify the skill');
+    return res.json();
+  },
+
+  /** Deletes the skill: kept until it is purged. */
+  async deleteSkill(skillId: string): Promise<void> {
+    const res = await request(`/skills/${skillId}`, {method: 'DELETE'});
+    await ensureOk(res, 'Failed to delete the skill');
+  },
+
+  async restoreSkill(skillId: string): Promise<SkillResponse> {
+    const res = await request(`/skills/${skillId}/restore`, {method: 'POST'});
+    await ensureOk(res, 'Failed to restore the skill');
+    return res.json();
+  },
+
+  async purgeSkill(skillId: string): Promise<void> {
+    const res = await request(`/skills/${skillId}/purge`, {method: 'POST'});
+    await ensureOk(res, 'Failed to delete the skill for good');
   },
 
   /** The files of the user's own workspace, outside a session. */

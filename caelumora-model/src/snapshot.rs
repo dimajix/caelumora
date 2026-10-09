@@ -247,6 +247,23 @@ pub struct DeletedSnapshot<I> {
     pub can_purge: bool,
 }
 
+/// A skill as the viewer sees it (issue 22), without its body, which is
+/// read on its own.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SkillSnapshot {
+    pub id: crate::skill::SkillId,
+    pub name: String,
+    /// Where it lies: the global scope, its owner's or a session's.
+    pub scope: crate::scope::Scope,
+    pub description: crate::value::text::Description,
+    pub classification: Classification,
+    /// Whose it is.
+    pub owner: ActorId,
+    /// Whether the viewer may change it - rename, describe, rewrite,
+    /// reclassify - and delete it (`UpdateSkill`).
+    pub can_change: bool,
+}
+
 /// A workspace as the viewer sees it (issue 253): its own, in the list of
 /// workspaces, or a session's where they may use it in a channel.
 #[derive(Debug, Clone, PartialEq)]

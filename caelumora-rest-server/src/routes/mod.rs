@@ -23,6 +23,7 @@ mod profile;
 mod sessions;
 mod templates;
 mod workspaces;
+mod skills;
 
 pub async fn ensure_session(
     state: &Arc<AppState>,
@@ -105,6 +106,13 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/agents/{id}", axum::routing::delete(agents::delete_agent))
         .route("/agents/{id}/restore", post(agents::restore_agent))
         .route("/agents/{id}/purge", post(agents::purge_agent))
+        .route("/skills", get(skills::list_skills).post(skills::create_skill))
+        .route("/skills/{id}", get(skills::get_skill).patch(skills::rename_skill).delete(skills::delete_skill))
+        .route("/skills/{id}/description", axum::routing::put(skills::describe_skill))
+        .route("/skills/{id}/body", axum::routing::put(skills::rewrite_skill))
+        .route("/skills/{id}/classification", axum::routing::put(skills::reclassify_skill))
+        .route("/skills/{id}/restore", post(skills::restore_skill))
+        .route("/skills/{id}/purge", post(skills::purge_skill))
         .route("/workspaces", get(workspaces::list_workspaces).post(workspaces::create_workspace))
         .route("/workspaces/storages", get(workspaces::list_storages))
         .route("/workspaces/{id}", get(workspaces::get_workspace).patch(workspaces::rename_workspace).delete(workspaces::delete_workspace))

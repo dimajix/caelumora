@@ -1,5 +1,5 @@
-// The classification of a workspace to make (issues 253, 266): a level and compartments, one for
-// all its files. Shared by the dialogs that make one - on its own, or with a session.
+// The classification of something to make - a workspace (issues 253, 266), a skill (issue 22): a
+// level and compartments, one for all of it. Shared by the dialogs that make one.
 
 import React, {useEffect, useState} from 'react';
 import type {Compartment} from '../types';
@@ -7,12 +7,12 @@ import {api} from '../api';
 import {reportError} from '../errors';
 import {CONFIDENTIALITY_LEVELS, confidentialityInfo, type Classification, type ConfidentialityLevel} from '../confidentiality';
 
-interface WorkspaceClassificationFieldsProps {
+interface ClassificationFieldsProps {
   value: Classification;
   onChange: (classification: Classification) => void;
 }
 
-export const WorkspaceClassificationFields: React.FC<WorkspaceClassificationFieldsProps> = ({value, onChange}) => {
+export const ClassificationFields: React.FC<ClassificationFieldsProps> = ({value, onChange}) => {
   const [compartments, setCompartments] = useState<Compartment[]>([]);
   const chosen = new Set(value.compartments ?? []);
 

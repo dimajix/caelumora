@@ -99,6 +99,21 @@ pub enum ActionType<'a> {
     /// contributors - with its attributes as stored.
     UpdateWorkspace(&'a SecurityAttributes),
     DeleteWorkspace(&'a SecurityAttributes),
+    /// Reading a skill (issue 22): its name, description and body - in the
+    /// list of skills, on its own, to change it.
+    GetSkill(&'a SecurityAttributes),
+    ListSkills,
+    CreateSkill(&'a SecurityAttributes),
+    /// Changing a skill - its name, description, body, classification - with
+    /// its attributes as stored.
+    UpdateSkill(&'a SecurityAttributes),
+    DeleteSkill(&'a SecurityAttributes),
+    /// Loading a skill into a turn (issue 22): what the agent then follows,
+    /// asked in the turn's context - the agent for its owner, whoever asked
+    /// as initiator. Apart from reading, so that a policy can let a skill be
+    /// read but not used, or the other way round; whether its classification
+    /// may flow into the channel is asked besides (`Publish`).
+    UseSkill(&'a SecurityAttributes),
     /// Ending the current turn of every agent in a channel, carrying the
     /// channel's attributes.
     CancelChannel(&'a SecurityAttributes),
@@ -245,6 +260,12 @@ impl ActionType<'_> {
             ActionType::CreateWorkspace(_) => "CreateWorkspace".into(),
             ActionType::UpdateWorkspace(_) => "UpdateWorkspace".into(),
             ActionType::DeleteWorkspace(_) => "DeleteWorkspace".into(),
+            ActionType::GetSkill(_) => "GetSkill".into(),
+            ActionType::ListSkills => "ListSkills".into(),
+            ActionType::CreateSkill(_) => "CreateSkill".into(),
+            ActionType::UpdateSkill(_) => "UpdateSkill".into(),
+            ActionType::DeleteSkill(_) => "DeleteSkill".into(),
+            ActionType::UseSkill(_) => "UseSkill".into(),
             ActionType::CancelChannel(_) => "CancelChannel".into(),
             ActionType::WakeChannel(_) => "WakeChannel".into(),
             ActionType::RetryMessage(_) => "RetryMessage".into(),
@@ -492,6 +513,15 @@ pub trait AccessQuestions {
     /// Whether `context` may remove an entity of `kind` with `attributes`
     /// for good (`Purge`, issue 164).
     async fn may_purge(&self, context: &SecurityContext, kind: EntityKind, attributes: &SecurityAttributes) -> bool;
+
+    /// Whether `context` may change the skill with `skill` attributes - its
+    /// name, description, body, classification - and delete it
+    /// (`UpdateSkill`, issue 22).
+    async fn may_change_skill(&self, context: &SecurityContext, skill: &SecurityAttributes) -> bool;
+
+    /// Whether `context` may load the skill with `skill` attributes into a
+    /// turn (`UseSkill`, issue 22).
+    async fn may_use_skill(&self, context: &SecurityContext, skill: &SecurityAttributes) -> bool;
 }
 
 #[async_trait]
@@ -577,6 +607,14 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
 
     async fn may_purge(&self, context: &SecurityContext, kind: EntityKind, attributes: &SecurityAttributes) -> bool {
         self.check(context, ActionType::Purge(kind, attributes)).await
+    }
+
+    async fn may_change_skill(&self, context: &SecurityContext, skill: &SecurityAttributes) -> bool {
+        self.check(context, ActionType::UpdateSkill(skill)).await
+    }
+
+    async fn may_use_skill(&self, context: &SecurityContext, skill: &SecurityAttributes) -> bool {
+        self.check(context, ActionType::UseSkill(skill)).await
     }
 }
 
@@ -726,7 +764,11 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::GetComponent(a)
             | ActionType::GetUser(a)
             | ActionType::GetUserProfile(a)
-            | ActionType::GetWorkspace(a) => Self::may_read(a, me) || Self::may_read(a, context.caller_id),
+            | ActionType::GetWorkspace(a)
+            | ActionType::GetSkill(a) => Self::may_read(a, me) || Self::may_read(a, context.caller_id),
+            // Using a skill is granted as reading it is: what the owner may
+            // read the agent may follow (issue 22).
+            ActionType::UseSkill(a) => Self::may_read(a, me) || Self::may_read(a, context.caller_id),
             ActionType::CancelChannel(a)
             | ActionType::WakeChannel(a)
             | ActionType::RetryMessage(a)
@@ -764,6 +806,7 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::CreateUser(a)
             | ActionType::CreateUserProfile(a)
             | ActionType::CreateWorkspace(a)
+            | ActionType::CreateSkill(a)
             | ActionType::CreateComponent(a) => a.owner_id == me && me != ActorId::None,
             ActionType::UpdatePersonality(a)
             | ActionType::DeletePersonality(a)
@@ -783,6 +826,8 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::DeleteUserProfile(a)
             | ActionType::UpdateWorkspace(a)
             | ActionType::DeleteWorkspace(a)
+            | ActionType::UpdateSkill(a)
+            | ActionType::DeleteSkill(a)
             | ActionType::UpdateComponent(a)
             | ActionType::DeleteComponent(a)
             | ActionType::ReadDeleted(_, a)
@@ -798,6 +843,7 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::ListUsers
             | ActionType::ListUserProfiles
             | ActionType::ListWorkspaces
+            | ActionType::ListSkills
             | ActionType::ListComponents => true,
             ActionType::ShowCommand(_)
             | ActionType::ExecuteCommand(_)
@@ -923,6 +969,11 @@ mod tests {
         assert!(allows(carol, run(&owners, &systems, &theirs)).await, "an agent of the system: whose channel it is");
         assert!(!allows(bob, ActionType::UpdateSession(&hers)).await);
         assert!(!allows(bob, ActionType::DeleteSession(&hers)).await);
+        // A skill (issue 22) is used as it is read; changed by its owner.
+        assert!(allows(bob, ActionType::UseSkill(&hers)).await, "a contributor uses it");
+        assert!(!allows(carol, ActionType::UseSkill(&hers)).await, "nobody else");
+        assert!(allows(carol, ActionType::UseSkill(&systems)).await, "the system's, everybody");
+        assert!(allows(bob, ActionType::GetSkill(&hers)).await && !allows(bob, ActionType::UpdateSkill(&hers)).await, "read, not changed");
     }
 
     /// A channel of the session `session_id`, a private one of nobody.

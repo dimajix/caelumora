@@ -12,7 +12,7 @@ use crate::auth::AuthenticatedUser;
 use crate::error::{ApiError, Json, Path, Subject};
 use crate::models::{
     AttachWorkspaceRequest, ChannelResponse, CreateWorkspaceRequest, DeletedResponse, FileResponse, FilesQuery, ListOptions, RenameWorkspaceRequest,
-    SessionSnapshot, StorageResponse, UsesWorkspaceRequest, WorkspaceDescriptionRequest, WorkspaceResponse, WorkspaceScope,
+    SessionSnapshot, StorageResponse, UsesWorkspaceRequest, WorkspaceDescriptionRequest, WorkspaceResponse, ScopeKind,
 };
 use crate::state::AppState;
 use axum::body::Body;
@@ -56,9 +56,9 @@ pub async fn list_storages(State(state): State<Arc<AppState>>, _user: Authentica
 /// Makes a workspace of the user's, in their scope or the global one.
 pub async fn create_workspace(State(state): State<Arc<AppState>>, user: AuthenticatedUser, Json(request): Json<CreateWorkspaceRequest>) -> Result<(StatusCode, Json<WorkspaceResponse>), ApiError> {
     let scope = match request.scope {
-        WorkspaceScope::User => Scope::UserScope { user_id: user.id },
-        WorkspaceScope::Global => Scope::GlobalScope,
-        WorkspaceScope::Session => return Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid_scope", "A workspace of a session's scope is made with the session")),
+        ScopeKind::User => Scope::UserScope { user_id: user.id },
+        ScopeKind::Global => Scope::GlobalScope,
+        ScopeKind::Session => return Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid_scope", "A workspace of a session's scope is made with the session")),
     };
     let classification = request.classification.unwrap_or(Classification::CHANNEL_DEFAULT);
     let made = state.runtime_manager.workspace_manager()

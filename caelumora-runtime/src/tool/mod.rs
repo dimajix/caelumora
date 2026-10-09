@@ -142,14 +142,17 @@ fn unsuccessful_result(status: ToolResultStatus, message: &str) -> String {
 /// it (issue 66), i.e. if the call's content is its owner's
 /// (`Visibility::Owner`). The answer text is always published, so a result
 /// the channel does not see is worthless redacted if the model quotes it.
+/// A value that is text - a skill loaded, the text of a remote tool - is
+/// given as the text it is (issue 22), not as a JSON string; any other as
+/// JSON.
 pub fn successful_result(value: Value, visibility: ToolVisibility) -> String {
-    if visibility.content.is_channel() {
-        return value.to_string();
+    const OWNERS: &str = "Only you see this result - the channel does not. Do not quote or reveal it in your answers.";
+    match (value, visibility.content.is_channel()) {
+        (Value::String(text), true) => text,
+        (Value::String(text), false) => format!("{text}\n\n[{OWNERS}]"),
+        (value, true) => value.to_string(),
+        (value, false) => serde_json::json!({ "result": value, "note": OWNERS }).to_string(),
     }
-    serde_json::json!({
-        "result": value,
-        "note": "Only you see this result - the channel does not. Do not quote or reveal it in your answers.",
-    }).to_string()
 }
 
 /// The result for a call a user declined.
@@ -1088,5 +1091,13 @@ mod tests {
         let hidden = parse(&successful_result(value.clone(), ToolVisibility::CALL_ONLY));
         assert_eq!(hidden["result"], value);
         assert!(hidden["note"].as_str().unwrap().contains("Do not quote or reveal it"));
+    }
+
+    #[test]
+    fn a_result_that_is_text_is_given_as_text() {
+        let text = json!("1. Collect.\n2. Group.");
+        assert_eq!(successful_result(text.clone(), ToolVisibility::SHOWN), "1. Collect.\n2. Group.", "not a JSON string");
+        let hidden = successful_result(text, ToolVisibility::CALL_ONLY);
+        assert!(hidden.starts_with("1. Collect.\n2. Group.\n\n[") && hidden.contains("Do not quote or reveal it"), "{hidden}");
     }
 }

@@ -10,8 +10,9 @@ import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
 import {DEFAULT_CLASSIFICATION, type Classification} from '../confidentiality';
 import {loadLastTemplate, saveLastTemplate} from '../session';
-import {storageLabel, workspaceScopeLabel} from '../workspace';
-import {WorkspaceClassificationFields} from './WorkspaceClassificationFields';
+import {storageLabel} from '../workspace';
+import {scopeLabel} from '../scope';
+import {ClassificationFields} from './ClassificationFields';
 
 /** What the workspace select offers besides the user's workspaces, which it names by their id. */
 const AS_TEMPLATE = 'template';
@@ -166,10 +167,10 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, o
               className="w-full rounded-md border border-gray-700 bg-gray-800 px-2 py-1"
             >
               {templateWorkspace && (
-                <option value={AS_TEMPLATE}>As the template says: {templateWorkspace.name} ({workspaceScopeLabel(templateWorkspace)})</option>
+                <option value={AS_TEMPLATE}>As the template says: {templateWorkspace.name} ({scopeLabel(templateWorkspace)})</option>
               )}
               <option value={NONE}>None</option>
-              {offered.map(w => <option key={w.id} value={w.id}>{w.name} ({workspaceScopeLabel(w)})</option>)}
+              {offered.map(w => <option key={w.id} value={w.id}>{w.name} ({scopeLabel(w)})</option>)}
               <option value={NEW}>New, for this session alone</option>
             </select>
             <span className="block text-xs text-gray-500">
@@ -201,7 +202,7 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, o
                   <span className="block text-xs text-red-400">No storage is configured: no workspace can be made.</span>
                 )}
               </label>
-              <WorkspaceClassificationFields value={classification} onChange={setClassification} />
+              <ClassificationFields value={classification} onChange={setClassification} />
             </>
           )}
 

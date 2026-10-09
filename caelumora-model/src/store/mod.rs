@@ -18,6 +18,7 @@ use crate::template::{SessionTemplate, SessionTemplateId};
 use crate::user::{User, UserId, UserProfile};
 use crate::value::name::ScopedName;
 use crate::workspace::{Workspace, WorkspaceId};
+use crate::skill::{Skill, SkillId};
 
 
 #[derive(Debug, thiserror::Error)]
@@ -101,6 +102,7 @@ pub enum EntityKind {
     User,
     UserProfile,
     Workspace,
+    Skill,
     Component,
 }
 
@@ -116,6 +118,7 @@ impl EntityKind {
             EntityKind::User => "user",
             EntityKind::UserProfile => "user_profile",
             EntityKind::Workspace => "workspace",
+            EntityKind::Skill => "skill",
             EntityKind::Component => "component",
         }
     }
@@ -140,7 +143,7 @@ impl std::fmt::Display for EntityKind {
 /// over `list_x`.
 ///
 /// What is `Scoped` - personalities, session templates, agents, channels,
-/// users, workspaces - has a name unique of its kind in its scope (issue
+/// users, workspaces, skills - has a name unique of its kind in its scope (issue
 /// 250): `create`,
 /// `update` and `restore` refuse one that another has there (`NameTaken`),
 /// checked against every one of the kind that is not deleted, also those
@@ -256,6 +259,18 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn get_deleted_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace>;
     async fn list_deleted_workspaces(&self, ctx: &SecurityContext) -> StoreResult<Vec<Workspace>>;
     async fn find_workspace_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Workspace>;
+
+    // Skills (issue 22)
+    async fn create_skill(&self, ctx: &SecurityContext, value: &Skill) -> StoreResult<()>;
+    async fn get_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<Skill>;
+    async fn update_skill(&self, ctx: &SecurityContext, value: &Skill) -> StoreResult<()>;
+    async fn delete_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<bool>;
+    async fn list_skills(&self, ctx: &SecurityContext) -> StoreResult<Vec<Skill>>;
+    async fn restore_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<()>;
+    async fn purge_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<bool>;
+    async fn get_deleted_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<Skill>;
+    async fn list_deleted_skills(&self, ctx: &SecurityContext) -> StoreResult<Vec<Skill>>;
+    async fn find_skill_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Skill>;
 }
 
 /// The preconfigured components: runtime configuration that personalities

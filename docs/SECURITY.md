@@ -41,7 +41,7 @@ A policy defined outside the binary is [24](../issues/24-opa-security-manager.md
 
 ## Ownership
 
-Every stored entity - session, channel, agent, personality, session template, workspace,
+Every stored entity - session, channel, agent, personality, session template, workspace, skill,
 preconfigured component - carries `SecurityAttributes`: an `owner_id` and a list of `contributors`
 (issue 11). This is the one place ownership is recorded.
 
@@ -55,6 +55,11 @@ preconfigured component - carries `SecurityAttributes`: an `owner_id` and a list
     (`UpdateWorkspace`). In a session it is shared through the channels, whose members use it
     where the channel uses it and the classifications let them (see
     [CHANNELS.md](CHANNELS.md#its-workspace)) - no `GetWorkspace` is asked of them.
+*   A skill (issue [22](../issues/22-skill-management.md)) is owned by the user it was made for -
+    by an agent's tool, its owner - or by the system for a skill of the seed; its contributors read
+    and use it. Using it - loading it into a turn - is `UseSkill`, granted as reading: what the
+    owner may read, the agent may follow. A user is shown one only if cleared for its
+    classification; see [SKILLS.md](SKILLS.md#who-may-do-what).
 *   Initial data belongs to the system.
 *   A `User` record belongs to the system, too (issue 94): only the user providers and the setup
     write it, so that nobody can grant themselves roles. What a user writes about themselves lives

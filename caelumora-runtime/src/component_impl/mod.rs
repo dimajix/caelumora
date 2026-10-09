@@ -16,6 +16,7 @@ pub mod channel_members_prompt_provider;
 pub mod create_plan_tool;
 pub mod notes;
 pub mod private_notes;
+pub mod skills;
 pub mod turn_context_provider;
 pub mod external_context_provider;
 pub mod static_system_prompt_provider;
@@ -36,6 +37,7 @@ pub fn register_all(registry: &mut ComponentRegistry) {
     create_plan_tool::register(registry);
     notes::register(registry);
     private_notes::register(registry);
+    skills::register(registry);
     turn_context_provider::register(registry);
     external_context_provider::register(registry);
     static_system_prompt_provider::register(registry);

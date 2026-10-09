@@ -291,6 +291,25 @@ impl AgentChannelState {
         turn.work.context.transcript = self.transcript.digest();
     }
 
+    /// Records `message`, given to the agent to read in the turn under way
+    /// (issue 22) - a skill a user loaded for it -: the turn's from now on
+    /// (`Message::turn_id`), into the transcript and the history without a
+    /// context - the agent did not produce it -, and the turn's context
+    /// moved on past it, so that what the turn says next is produced from it.
+    /// Not published: it is what the agent read, not what it said. Between
+    /// turns it is recorded as heard would be.
+    pub fn given(&mut self, mut message: Message) {
+        if let Some(turn) = self.turn.as_mut() {
+            message.turn_id = Some(turn.work.turn_id);
+            turn.work.see_message(&message);
+        }
+        self.transcript.push(message.clone());
+        self.history.push(message, None);
+        if let Some(turn) = self.turn.as_mut() {
+            turn.work.context.transcript = self.transcript.digest();
+        }
+    }
+
     /// What answering again instead of the message `id` of the agent `own`
     /// takes back (issue 234): the message, and what follows it on the
     /// active path of the transcript - which may only be the rest of its
@@ -753,6 +772,20 @@ pub(crate) mod tests {
         assert_eq!(state.history.messages().last().and_then(|m| m.turn_id), Some(turn_id));
         assert_eq!(state.recorded_context_of(answer.id), Some((produced_from, turn_id)), "with what it was produced from, and in which turn");
         assert_eq!(state.notes.current().len(), 1);
+    }
+
+    #[test]
+    fn a_message_given_in_a_turn_is_read_not_said() {
+        let mut state = a_state_that_heard("hello", Classification::CHANNEL_DEFAULT);
+        begin(&mut state, Vec::new());
+        let turn_id = state.turn.as_ref().unwrap().work.turn_id;
+        let skill = Message { role: MessageRole::User, ..said("Collect, group, write.", Classification::CHANNEL_DEFAULT) };
+
+        state.given(skill.clone());
+        assert_eq!(state.transcript.messages().last().map(|m| (m.id, m.turn_id)), Some((skill.id, Some(turn_id))), "into the transcript, the turn's");
+        assert_eq!(state.turn.as_ref().unwrap().work.context.transcript, state.transcript.digest(), "what the turn says next is produced from it");
+        assert_eq!(state.recorded_context_of(skill.id), None, "the agent did not produce it");
+        assert_eq!(state.history.messages().last().map(|m| m.id), Some(skill.id), "and its history keeps it, as what it was given");
     }
 
     #[test]

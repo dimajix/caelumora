@@ -153,6 +153,9 @@ function knowledgeLabel(knowledge: KnowledgeRef, sessionId: string): string {
     case 'workspace':
       // The digest is a file's content as read; none for a listing or a search.
       return knowledge.digest ? `A file of the workspace, read in ${channel}` : `The files of the workspace, listed or searched in ${channel}`;
+    case 'skill':
+      // The digest is the skill's text as it was loaded (issue 22).
+      return `A skill, loaded in ${channel}`;
     default:
       // A reader who joined later saw only part of it (issue 72).
       return knowledge.history_start ? `History of ${channel}, from when it was granted` : `History of ${channel}`;

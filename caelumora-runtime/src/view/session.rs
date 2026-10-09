@@ -184,8 +184,7 @@ impl SessionView {
     /// reading a channel one is not cleared for is the same as reading one
     /// that does not exist.
     async fn cleared_for(&self, classification: &Classification) -> bool {
-        let roles = self.views.roles().await;
-        self.views.security().may_see_channel(self.views.context(), &roles, classification).await
+        self.views.cleared_for(classification).await
     }
 
     /// The document of channel `id`, if the session has it, with its loop

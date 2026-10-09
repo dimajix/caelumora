@@ -1,5 +1,5 @@
 //! What lies in a scope goes with what holds it (issue 178): the
-//! personalities, session templates, agents and workspaces of a session's
+//! personalities, session templates, agents, workspaces and skills of a session's
 //! scope - and of the scopes of its channels - are deleted with the
 //! session, restored with it and purged with it, a workspace with its
 //! place (issue 251); those of a channel's scope are deleted and restored
@@ -44,6 +44,10 @@ pub(crate) async fn delete_scoped_in(store: &dyn EntityStore, events: &EventBus,
         store.delete_workspace(&system, workspace.id).await?;
         events.publish(GlobalEvent::WorkspaceDeleted(workspace.id), workspace.security_attributes.clone());
     }
+    for skill in lying_in(store.list_skills(&system).await?, holder) {
+        store.delete_skill(&system, skill.id).await?;
+        events.publish(GlobalEvent::SkillDeleted(skill.id), skill.security_attributes.clone());
+    }
     Ok(())
 }
 
@@ -72,6 +76,11 @@ pub(crate) async fn restore_scoped_in(store: &dyn EntityStore, events: &EventBus
     for workspace in deleted_with(store.list_deleted_workspaces(&system).await?, holder, since) {
         if unless_taken(store.restore_workspace(&system, workspace.id).await, "workspace", &workspace.name)? {
             events.publish(GlobalEvent::WorkspaceRestored(workspace.id), workspace.security_attributes.clone());
+        }
+    }
+    for skill in deleted_with(store.list_deleted_skills(&system).await?, holder, since) {
+        if unless_taken(store.restore_skill(&system, skill.id).await, "skill", &skill.name)? {
+            events.publish(GlobalEvent::SkillRestored(skill.id), skill.security_attributes.clone());
         }
     }
     Ok(())
@@ -107,6 +116,9 @@ pub(crate) async fn purge_scoped_in(store: &dyn EntityStore, states: &dyn StateS
     for agent in lying_in(store.list_deleted_agents(&system).await?, holder) {
         store.purge_agent(&system, agent.id).await?;
         states.delete_agent_state(agent.id).await?;
+    }
+    for skill in lying_in(store.list_deleted_skills(&system).await?, holder) {
+        store.purge_skill(&system, skill.id).await?;
     }
     workspaces.purge_lying_in(holder).await?;
     Ok(())

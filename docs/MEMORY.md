@@ -195,7 +195,9 @@ another session can be told, issue 134), and what was read there (`KnowledgeSour
     recalled were written in;
 *   `Workspace { workspace, digest }` - the files of the session's workspace, read through the
     channel with `terminal_tool` (issue 251): the digest of a file's content as it was read, none
-    for a listing or a search.
+    for a listing or a search;
+*   `Skill { skill, digest }` - a skill loaded into the turn, by `load_skill` or `/skill` (issue
+    22): the digest of its text as it was loaded.
 
 `Turn::record_knowledge` records a read together with the number of messages the turn had produced
 by then. `Turn::commit` puts it into the `ContextRef` of every message produced after it
@@ -228,6 +230,10 @@ behind them are recorded). "Branches" means: follows the branch of the conversat
 | **Agent knowledge** | What an agent keeps across sessions, committed from notes ([18](../issues/18-knowledge-sharing.md)). | agent | permanent | no |
 | **Shared knowledge** | Knowledge shared by several agents or users ([18](../issues/18-knowledge-sharing.md)). | group / global | permanent | no |
 | **Workspace** | Documents several channels edit together; outside the branches, every change an effect ([20](../issues/20-transactional-effects.md)). | session or beyond | until deleted | no |
+
+A **skill** is no tier of memory ([SKILLS.md](SKILLS.md)): not what an agent knows but how a task is
+done, a document a user owns and edits, which an agent loads into a turn - where it stands in the
+transcript as any message does - and may write for its owner.
 
 Two technical words are not tiers: **state** is the container the `StateStore` keeps (history,
 context, turn state and notes live *in* state), as opposed to **entities** in the `EntityStore`; and
