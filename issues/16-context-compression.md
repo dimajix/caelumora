@@ -72,3 +72,12 @@ every turn.
   stored history. Which agent it compacts in a channel with several - `/compact [agent]` like
   `/wakeup` - and who may compact a shared agent ([14](14-approval-privilege.md)) are decided with
   it.
+- **2026-10-09** — The shape of `/compact` changes with [269](269-agent-commands.md): a command the
+  user's actor runs cannot change an agent's transcript, which only the agent's actor writes. It
+  becomes a command *of the agent* - an `AgentCommandProvider` component of the personality
+  (`compact_command`), sent to the agent as `CommandRequested`, carried out by it in a turn of its
+  own and answered channel-wide with `CommandExecuted`. The agent is always named - `/compact
+  @bob`, `/compact @all` -; who may compact a shared agent is the command's `owners_only`, decided
+  by the ownership policy as approving its calls is; an external agent compacts only if its
+  component has a word for it. 269 comes first; also: a skill loaded into the transcript (22) must
+  survive a compaction.

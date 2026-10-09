@@ -101,3 +101,26 @@ a mechanism people already rely on means taking capability away from them.
 
 - **2026-09-13** — Issue created. Nothing named `skill` exists in the workspace yet, so this is a
   design issue first and an implementation issue second.
+- **2026-10-09** — Design discussed with the maintainer; no longer blocked on 12, which 255
+  settled (an agent acts for its owner, whoever asked is its initiator). Decided so far:
+  - A `Skill` is an entity built as the workspace is (253): `ScopedName` in the global, a user's or
+    a session's scope - no channel scope -, a one-line description for the catalogue, a Markdown
+    body, one `classification`, `SecurityAttributes`, `deleted`. `GetSkill`, `ListSkills`,
+    `CreateSkill`, `UpdateSkill`, `DeleteSkill` as for the workspace, and a `UseSkill` of its own
+    for loading one into a turn, beside `CopyInformation` for its classification into the channel.
+  - A skill reaches the model only through the agent's own transcript, never through the system
+    prompt (the prompt cache, the digest record, branching) and never as a message of the channel's
+    history (others would receive text they may not read). Two ways in: the model calls
+    `load_skill` and gets the body as a tool result, plain text under a title, `CALL_ONLY`; a user
+    types `/skill <name>` and the agent puts the body into its transcript in the user's role, as
+    the notices of 236 are put, through the mechanism of [269](269-agent-commands.md), which this
+    issue now waits for. The catalogue - name and description of what may be loaded here - is a
+    prompt part, `Start` by default.
+  - One component `skills`, as `notes` is: the catalogue (`PromptProvider`), `list_skills`,
+    `load_skill`, `create_skill`, `update_skill` (`ToolProvider`), `/skills` and `/skill`
+    (commands). Reads are recorded as `KnowledgeSource::Skill`.
+  - Agents may create skills, within guard rails: owned by the agent's owner, in the session's or
+    the owner's scope only, classified as the turn's label (168), with approval by default;
+    `update_skill` for the owner's own skills alone. Instructions only, no executable content.
+  - Related: 166 wants the same shape for memory (an index in the context, the body by tool); the
+    form is shared, the storage is not. A loaded skill must survive compaction (16).
