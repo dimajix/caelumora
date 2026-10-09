@@ -88,3 +88,6 @@ file changed or is gone; tests, `TOOLS-AND-COMMANDS.md`, `COMPONENTS.md` and `WE
     (`404 workspace_not_found`, or any refusal).
   - No test of its own in the security suite: it is a call on the workspace that asks what
     `read_file` asks, and the download is the channel's file route, which has its own.
+- **2026-10-09** — Decided with 271's plan: `publish_file` stays a link to the file of the
+  workspace for good, beside a tool of its own that publishes artifacts (`publish_artifact`),
+  rather than turning into it as "Built to be kept" above expected.

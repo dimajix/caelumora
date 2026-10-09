@@ -1,6 +1,6 @@
 # 271 — An agent cannot offer a file for download, and nothing outlives the workspace it lies in
 
-**Status:** open
+**Status:** in progress
 **Area:** Context and knowledge
 
 ## The problem
@@ -134,6 +134,168 @@ So the three levels proposed are the three scopes Caelumora already has, and nee
 5. **Reclaiming workspace space** is not part of this; it becomes possible without loss once
    results live elsewhere, and is an issue of its own when wanted.
 
+## Plan
+
+Proposed 2026-10-09, along the way `Workspace` is built (issue 253) - every step below has its
+counterpart there. To be confirmed before code is written; the open points are at the end.
+
+### The model (`caelumora-model/src/artifact.rs`)
+
+```rust
+define_id!(ArtifactId);
+
+pub struct Artifact {
+    pub id: ArtifactId,
+    #[serde(flatten)]
+    pub name: ScopedName,          // unique in its scope (issue 250); a file name, at most 100 characters
+    pub storage: String,           // the configured artifact storage, fixed when it is made
+    pub description: Option<Description>,
+    pub classification: Classification,  // the workspace's it was first published from, fixed
+    pub versions: Vec<ArtifactVersion>,  // oldest first, never empty; none is removed but with the artifact
+    pub security_attributes: SecurityAttributes,  // owned by the user the agent acts for
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub deleted: Option<Removal>,
+}
+
+pub struct ArtifactVersion {
+    pub number: u32,               // 1, 2, ...; its content's key is `<artifact id>/<number>`
+    pub size: u64,
+    pub digest: Digest,
+    pub media_type: Option<String>, // where its producer says (208); `publish_file` says none
+    pub published_in: (SessionId, ChannelId),
+    pub published_by: ActorId,     // the agent
+    pub call: Option<String>,      // the tool call that published it
+    pub published_at: DateTime<Utc>,
+}
+```
+
+- `Stored` (`validate`: owned by a user, no contributors, in a session's scope, its owner's or the
+  global one - as a workspace), `Deletable`, `Secured`, `Scoped`; `EntityKind::Artifact`.
+- Versions live in the document: a handful of small records, read and written with it; a version
+  of its own as a document would need its own lifecycle for nothing.
+
+### The stores
+
+- `EntityStore`: `create_`, `get_`, `update_`, `delete_`, `list_artifacts`, `restore_`, `purge_`,
+  `get_deleted_`, `list_deleted_artifacts`, `find_artifact_by_name` - the memory and the JSON store
+  through their generic helpers, the JSON store under `runtime/artifacts`; entries in the store
+  suite (`lifecycle!`, `found_by_name!`, `unique_by_name!`).
+- `ArtifactStorage` (`caelumora-runtime/src/artifact/storage.rs`): `put(key, stream, limit)`,
+  `get(key) -> (size, stream)`, `delete(key)`, `remove_all(artifact)`, `destination()`; a `local`
+  implementation keeping `<root>/<artifact id>/<number>`, written to a part file and renamed, as
+  workspace files are.
+
+### Security
+
+- `ActionType::GetArtifact`, `ListArtifacts`, `CreateArtifact`, `UpdateArtifact`,
+  `DeleteArtifact`; `ReadDeleted`, `Restore`, `Purge` with `EntityKind::Artifact`. The ownership
+  policy decides them as for workspaces: the owner reads and changes, only the system purges.
+- **Who downloads a version**: its owner, through `GetArtifact`; anyone else only through the
+  channel it was published in - whoever may read that channel's history (`GetChannel`, through the
+  channel's view, as the history is read) - and only where the version's label may be seen there,
+  which it may since it was published there and labels are fixed. So a version is reached two
+  ways, as a workspace is: owned (`/artifacts/...`) and through its channel
+  (`/sessions/.../channels/.../artifacts/...`).
+- Security suite: publishing (asks what a call on the workspace asks, plus `CreateArtifact` or
+  `UpdateArtifact` in the owner's name), downloading by the owner, by a reader of the channel, not
+  by someone who may not read it, not a version through a channel it was not published in; keeping;
+  deleting with the session; a storage refusing a label above its `destination`.
+
+### Runtime
+
+- `ArtifactManager` (`caelumora-runtime/src/artifact/mod.rs`), owned by the `RuntimeManager`, built
+  from `ArtifactsConfig`: `publish(ctx, workspace, path, name, description, channel, call)` - finds
+  the artifact of that name in the session's scope or makes it, refuses a label other than the
+  first version's, streams the file from the workspace's terminal into the storage, adds the
+  version -; `content(ctx, id, number)`; `keep(ctx, id, scope)` - from the session's scope into
+  its owner's or the global one, a name taken there refused -; `delete`, `restore`, `purge`,
+  `purge_lying_in` (with the session, as `WorkspaceManager::purge_lying_in`).
+- Events: `ArtifactPublished(id, number)`, `ArtifactUpdated` (kept, described), `ArtifactDeleted`,
+  `ArtifactRestored`, delivered under `GetArtifact` - and a channel's readers learn of a version
+  from the message that published it, as now.
+- `scoped.rs`: a loop for artifacts in `delete_scoped_in` and `restore_scoped_in`, and
+  `purge_scoped_in` hands them to `ArtifactManager::purge_lying_in`.
+- Views: `ChannelView::artifact(id, number)` for the channel's route; `Views::artifacts()` and
+  `deleted_artifacts()` for the owner.
+
+### Configuration
+
+```yaml
+artifacts:
+  max_bytes: 52428800          # the largest version; 50 MiB
+  publish_to: files            # the storage new artifacts are made in; needed when there are several
+  storage:
+    files:
+      provider: local
+      root: "local/artifacts"
+      destination: { level: confidential }   # optional, as for workspace storages
+```
+
+### `publish_artifact`, beside `publish_file`
+
+Two tools, both offered: `publish_file` stays what issue 273 built - a link to the file of the
+workspace as it is now, cheap, read-only -, and `publish_artifact` publishes a fixed copy. The model
+is told the difference in their descriptions: a link for a result to look at now, an artifact for
+one to be kept.
+
+- Parameters as `publish_file`'s: `path`, `name`, `description`. It finds the artifact of that name
+  in the session's scope or makes it, and adds a version; its result is
+  `{artifact, version, name, size, digest, description, path}`.
+- It changes the store: approved where changes are (`"unless_read_only"` asks); the approver reads
+  "Publish 'out/r.csv' as artifact 'Report.csv', version 2".
+- Presented as `artifact_publish`: a card like `publish_file`'s - sharing its layout - with the
+  version, a download of that version through the channel's route, and "Keep" for its owner while
+  it lies in the session's scope.
+- **Which component offers it**: components are not given the runtime's services when they are
+  built; a tool reaches the workspace through the turn's views when it is called, and
+  `publish_artifact` reaches the `ArtifactManager` the same way. Without an artifact storage
+  configured, a call fails and says so. It can be offered by `terminal_tool`, beside the file tools
+  it reads from, or by a component of its own (`artifact_tool`) that a personality includes only
+  where artifacts are wanted - decided: its own component, `artifact_tool`.
+
+### REST
+
+| Route | What |
+|---|---|
+| `GET /artifacts`, `?deleted=true` | the user's own artifacts, or their trash |
+| `GET /artifacts/{id}` | one, with its versions |
+| `GET /artifacts/{id}/versions/{n}/content` | a version's content, as the owner |
+| `PUT /artifacts/{id}/scope` `{scope: user\|global}` | keep it beyond its session |
+| `PUT /artifacts/{id}/description` | describe it |
+| `DELETE /artifacts/{id}`, `POST …/restore`, `POST …/purge` | as for workspaces |
+| `GET /sessions/{id}/channels/{cid}/artifacts` | the artifacts with a version published in the channel |
+| `GET /sessions/{id}/channels/{cid}/artifacts/{aid}/versions/{n}/content` | a version's content, as a reader of the channel |
+
+A download is always an attachment, `application/octet-stream`, `nosniff`, `no-store`, as a
+workspace file's.
+
+### Web UI
+
+- The `artifact_publish` card shows the artifact's name, version and size, downloads the version,
+  and offers its owner "Keep" (into their scope) while it lies in the session's.
+- The list of a user's kept artifacts, with their trash and a page of versions, is a later step.
+
+### Steps
+
+1. **Model and stores** - `Artifact`, the store methods in both stores and the suite, the actions
+   and their policy, the scoped cascade; no behaviour visible yet.
+2. **Storage and manager** - `ArtifactsConfig`, `ArtifactStorage` with `local`, `ArtifactManager`,
+   events, views; the security suite.
+3. **`publish_artifact`** - the component `artifact_tool` and its tool over the manager, its
+   approval and description.
+4. **REST** - the routes, error mapping, `REST-SERVER.md`.
+5. **Web UI** - the `artifact_publish` card with "Keep"; the list of kept artifacts is a later step.
+6. **Documents** - `STORAGE.md`, `CONFIGURATION.md`, `TOOLS-AND-COMMANDS.md`, `SECURITY.md`,
+   `WEB-UI.md`, `examples/config.yaml`.
+
+### Open points
+
+Decided 2026-10-09 (see History): both tools side by side; a label other than the first version's
+refused; `artifacts.publish_to`; the card with "Keep" only in this issue; `publish_artifact` offered
+by a component of its own, `artifact_tool`; an artifact's name at most 100 characters
+(`publish_file` keeps its 255). None is open.
+
 ## Done when
 
 An agent offers a file of the workspace for download with one call; the user downloads it from the
@@ -186,3 +348,14 @@ downloading; the documents say so.
     the artifact, the earlier ones kept and downloadable, as artifacts on claude.ai and in Claude
     Code keep theirs. Artifacts that are rendered and edited in place, as claude.ai's are, are a
     step beyond this issue and an issue of their own when wanted.
+- **2026-10-09** — Plan written (above); decided with the maintainer on it:
+  - **Both ways side by side**, as two tools: `publish_file` stays a link to the file of the
+    workspace (issue 273), and `publish_artifact` publishes a fixed copy. This replaces what was
+    recorded above - that this issue would keep `publish_file`'s tool and only change what lies
+    behind it.
+  - Republishing with a label other than the first version's is **refused**.
+  - New artifacts go to the storage **`artifacts.publish_to`** names.
+  - The web UI of this issue is **the card with "Keep"**; the list of kept artifacts comes later.
+- **2026-10-09** — Decided as well: `publish_artifact` is offered by a component of its own,
+  `artifact_tool`, which a personality includes where artifacts are wanted and where later tools on
+  artifacts go; an artifact's name is a `Name`, at most 100 characters. Status: in progress.
