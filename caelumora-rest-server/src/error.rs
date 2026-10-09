@@ -132,6 +132,7 @@ pub enum Subject {
     Command,
     Context,
     Workspace,
+    Skill,
 }
 
 impl Subject {
@@ -144,6 +145,7 @@ impl Subject {
             Subject::Command => "command_forbidden",
             Subject::Context => "context_forbidden",
             Subject::Workspace => "workspace_forbidden",
+            Subject::Skill => "skill_forbidden",
         }
     }
 
@@ -156,6 +158,7 @@ impl Subject {
             Subject::Command => "command_failed",
             Subject::Context => "context_failed",
             Subject::Workspace => "workspace_failed",
+            Subject::Skill => "skill_failed",
         }
     }
 }
@@ -185,6 +188,7 @@ impl ApiError {
         use caelumora_model::store::StoreError;
         use caelumora_runtime::terminal::TerminalError;
         use caelumora_runtime::workspace::WorkspaceError;
+        use caelumora_runtime::skill::SkillError;
 
         let detail = error.to_string();
         let bad_request = |code| Self::new(StatusCode::BAD_REQUEST, code, detail.clone());
@@ -225,6 +229,20 @@ impl ApiError {
                 // A caller that is no user, or the store broke: not the
                 // client's request.
                 WorkspaceError::OwnerNotAUser | WorkspaceError::Store(_) => {}
+            }
+        }
+        if let Some(e) = error.downcast_ref::<SkillError>() {
+            match e {
+                SkillError::NotFound(_) | SkillError::Store(StoreError::NotFound { .. }) => return Self::not_found("skill_not_found", detail),
+                SkillError::ClassificationRefused => return bad_request("invalid_classification"),
+                SkillError::NotCleared => return Self::forbidden("not_cleared", detail),
+                SkillError::Invalid(e) => return Self::invalid_value(e),
+                SkillError::Store(StoreError::NameTaken { .. }) => return Self::conflict("name_taken", detail),
+                SkillError::Store(StoreError::Validation(_)) => return bad_request("invalid_scope"),
+                SkillError::Store(StoreError::PermissionDenied) => return Self::forbidden(subject.forbidden(), format!("{} is not permitted", capitalize(action))),
+                // A caller that is no user, or the store broke: not the
+                // client's request.
+                SkillError::OwnerNotAUser | SkillError::Store(_) => {}
             }
         }
         if let Some(e) = error.downcast_ref::<TerminalError>() {

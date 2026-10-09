@@ -11,7 +11,7 @@ import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
 import {DEFAULT_CLASSIFICATION, type Classification} from '../confidentiality';
 import {storageLabel} from '../workspace';
-import {WorkspaceClassificationFields} from './WorkspaceClassificationFields';
+import {ClassificationFields} from './ClassificationFields';
 
 interface NewWorkspaceDialogProps {
   onCreated: (workspace: WorkspaceResponse) => void;
@@ -141,7 +141,7 @@ export const NewWorkspaceDialog: React.FC<NewWorkspaceDialogProps> = ({onCreated
             />
           </label>
 
-          <WorkspaceClassificationFields value={classification} onChange={setClassification} />
+          <ClassificationFields value={classification} onChange={setClassification} />
 
           {problem && <div role="alert" className="text-xs text-red-400">{problem}</div>}
         </div>

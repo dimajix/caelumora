@@ -13,7 +13,7 @@ import {CONFIDENTIALITY_LEVELS, classificationDescription, classificationLabel} 
 import {ActionMenu} from './ActionMenu';
 import {ClassificationDialog} from './ClassificationDialog';
 import {FileBrowser} from './FileBrowser';
-import {workspaceScopeLabel} from '../workspace';
+import {scopeLabel} from '../scope';
 
 interface WorkspacePageProps {
   workspaceId: string;
@@ -97,7 +97,7 @@ export const WorkspacePage: React.FC<WorkspacePageProps> = ({workspaceId, onDele
               <p className="text-sm text-gray-600 dark:text-gray-400">{workspace.description || <span className="italic">No description</span>}</p>
             )}
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
-              <span>Name space: {workspaceScopeLabel(workspace)}</span>
+              <span>Name space: {scopeLabel(workspace)}</span>
               <span>Storage: {workspace.storage}</span>
               <span className="flex items-center gap-1" title={classificationDescription(workspace.classification)}>
                 <Shield size={12} /> {classificationLabel(workspace.classification)}

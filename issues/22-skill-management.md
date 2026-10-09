@@ -407,3 +407,13 @@ tools, then authoring, then REST, the web UI and the seed, then the documents.
     turn's label, as issue 168 decided for everything a turn writes.
   - The catalogue's and `list_skills`' classification is the bounded join (`join_within` the
     turn's classification), not the plain one, which has no answer for disjoint compartments.
+- **2026-10-09** — Step 4 (E) done: REST (`routes/skills.rs`, `SkillResponse` with the body only
+  where a skill is fetched alone, `Subject::Skill`, the errors of `SkillError`), the web UI
+  (`SkillPage` with the text edited in place, `NewSkillDialog`, a *Skills* section with its trash
+  in the sidebar following `Skill…` events, "A skill, loaded in …" in the context panel) and the
+  seed (`skills:`, given to the system as it is applied; one skill and the component for both
+  assistants in `examples/seed.yaml`). Two names were the workspace's for what is now shared and
+  became general: `WorkspaceScope` is `ScopeKind` (REST and web UI, the same on the wire), and the
+  web UI's `WorkspaceClassificationFields` is `ClassificationFields`, `workspaceScopeLabel` is
+  `scopeLabel` in `scope.ts`. A skill's timestamps and attributes take defaults when left out, for
+  a seed written by hand. The web UI was type-checked and linted, not tried in a browser.

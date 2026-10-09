@@ -49,9 +49,15 @@ pub struct Skill {
     /// a turn that loaded it has seen.
     pub classification: Classification,
     /// Its owner - a user, or the system for a skill of the seed - and the
-    /// contributors it is shared with, who read and use it.
+    /// contributors it is shared with, who read and use it. Left out in a
+    /// seed, which gives its skills to the system (`Seed::apply`).
+    #[serde(default)]
     pub security_attributes: SecurityAttributes,
+    /// When it was made and last changed; left out in a seed, written by
+    /// hand, when it is read.
+    #[serde(default = "Utc::now")]
     pub created_at: DateTime<Utc>,
+    #[serde(default = "Utc::now")]
     pub updated_at: DateTime<Utc>,
     /// Set when it was deleted (issue 164): it stays stored, hidden from
     /// every read but those for what was deleted.
