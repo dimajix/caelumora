@@ -67,8 +67,9 @@ its text to members who may not read the skill.
     it changes rarely, and the model has to know what it could load. Classified as the bounded join
     of the skills it lists (`join_within` the turn's classification); nothing where there are none.
 *   **`load_skill(name)`** - the model loads one: the result is the skill's text as plain text
-    under `[Skill: <name>]`, classified as the skill. Its content is the owner's (`CALL_ONLY`): the
-    channel sees that a skill was loaded, not what it says, and the model is told not to quote it.
+    under `[Skill: <name>]`, classified as the skill. Its result is the owner's (`WITHOUT_RESULT`,
+    issue 281): the channel sees which skill was loaded, not what it says, and the model is told
+    not to quote it.
 *   **`/skill @agent <name>`** - a member gives one to an agent, a command the agent carries out
     itself (issue [269](../issues/269-agent-commands.md)). In its command turn the skill's text goes
     into its transcript as a message in the member's name and role (`Turn::give`, which records a

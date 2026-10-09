@@ -5,12 +5,13 @@
 // their record (`AnswersRecord`, issue 268).
 
 import React, {useEffect, useState} from 'react';
-import {CheckCircle2, Download, EyeOff, Package, PackageCheck, File, FileDiff, FileDown, FileInput, FilePen, FileText, Folder, FolderOpen, TextSearch, Terminal, Wrench, XCircle} from 'lucide-react';
+import {BookOpen, CheckCircle2, Download, EyeOff, Package, PackageCheck, File, FileDiff, FileDown, FileInput, FilePen, FileText, Folder, FolderOpen, TextSearch, Terminal, Wrench, XCircle} from 'lucide-react';
 import type {ArtifactResponse, Question, ToolCall, ToolPresentation, ToolResult, ToolResultStatus, ToolVisibility} from '../types';
 import {api, type ChannelArtifacts, type WorkspaceFiles} from '../api';
 import {ApiRequestError, reportError} from '../errors';
-import {formatArguments, formatSize, formatTimestamp} from '../messages';
+import {formatArguments, formatSize, formatTimestamp, ownerOnly} from '../messages';
 import {AnswersRecord, ChoiceRows, QuestionHeading} from './QuestionView';
+import {MarkdownMessage} from './MarkdownMessage';
 
 const TOOL_STATUS_LABELS: Record<Exclude<ToolResultStatus, 'ok'>, string> = {
   denied: 'Denied',
@@ -26,14 +27,14 @@ const TOOL_STATUS_LABELS: Record<Exclude<ToolResultStatus, 'ok'>, string> = {
 };
 
 /**
- * What of a call only the agent's owner sees (issues 54, 133), or `null`
+ * What of a call only the agent's owner sees (issues 54, 133, 281), or `null`
  * if the channel sees all of it. The channel shows such a call without
- * arguments and result, or not at all; the owner sees it in full in the
+ * what is the owner's, or not at all; the owner sees it in full in the
  * context panel.
  */
 function visibilityLabel(labels: ToolVisibility | undefined): string | null {
-  if (!labels || (labels.call === 'channel' && labels.content === 'channel')) return null;
-  return labels.call === 'channel' ? 'Arguments and result: owner only' : 'Call: owner only';
+  const owners = ownerOnly(labels);
+  return owners && `${owners.charAt(0).toUpperCase()}${owners.slice(1)}: owner only`;
 }
 
 /** How long a tool ran, e.g. `240 ms`, `3.1 s` or `2 min 5 s`; `null` if it did not run. */
@@ -68,6 +69,8 @@ export interface ToolCallContentProps {
   filesVersion?: number;
   /** The artifacts of the channel as the user reaches them; absent outside the chat. */
   artifacts?: ChannelArtifacts;
+  /** Opens a skill's page in the place of the channel; absent outside the chat. */
+  onSelectSkill?: (skillId: string) => void;
 }
 
 /** The default presentation: the call's arguments and its result, as they are. */
@@ -81,7 +84,7 @@ const DefaultToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) 
         <code className="text-[11px] font-mono break-all">{formatArguments(call.arguments)}</code>
       )}
     </div>
-    {result && result.content === '' && (result.visibility?.content ?? 'channel') !== 'channel' ? (
+    {resultHidden(result) ? (
       <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700 text-[11px] italic opacity-60">
         Result not shown
       </div>
@@ -162,7 +165,7 @@ const ShellToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) =>
       ) : (
         <code className="text-[11px] font-mono break-all">{formatArguments(call.arguments)}</code>
       )}
-      {result && result.content === '' && (result.visibility?.content ?? 'channel') !== 'channel' ? (
+      {resultHidden(result) ? (
         <div className="mt-2 text-[11px] italic opacity-60">Output not shown</div>
       ) : answered ? (
         <div className="mt-2">
@@ -230,9 +233,9 @@ function resultObject(result: ToolResult | undefined): Record<string, unknown> |
   return argumentsObject(result.content);
 }
 
-/** Whether `result` was emptied for the channel: its content is the owner's (issue 133). */
+/** Whether `result` was emptied for the channel: it is the owner's (issues 133, 281). */
 function resultHidden(result: ToolResult | undefined): boolean {
-  return !!result && result.content === '' && (result.visibility?.content ?? 'channel') !== 'channel';
+  return !!result && result.content === '' && (result.visibility?.result ?? 'channel') !== 'channel';
 }
 
 /** A field of `fields` if it is a string, else `null`. */
@@ -720,6 +723,47 @@ const ArtifactPublishToolCallContent: React.FC<ToolCallContentProps> = ({call, r
   );
 };
 
+/**
+ * A skill loaded, written or changed (issue 281): its name - linked to its page where the result
+ * names the skill and the chat can open it -, what it is for and its text, rendered as Markdown,
+ * where the arguments hold them. A loaded skill's text, the result, is never shown: it is the
+ * agent's to follow.
+ */
+const SkillToolCallContent: React.FC<ToolCallContentProps> = ({call, result, onSelectSkill}) => {
+  if (call.arguments === null) return <span className="text-[11px] italic opacity-60">Skill not shown</span>;
+  const args = argumentsObject(call.arguments);
+  const answered = resultObject(result);
+  const name = textOf(answered, 'name') ?? textOf(args, 'name');
+  const skillId = textOf(answered, 'skill_id');
+  const status = textOf(answered, 'status');
+  const description = textOf(args, 'description');
+  const body = textOf(args, 'body');
+  return (
+    <>
+      <div className="flex items-start gap-1.5 text-[11px]">
+        <BookOpen size={12} className="mt-0.5 opacity-60 shrink-0" />
+        <span className="min-w-0">
+          {skillId !== null && onSelectSkill ? (
+            <button type="button" onClick={() => onSelectSkill(skillId)} title="Open the skill" className="font-medium text-blue-600 dark:text-blue-400 hover:underline break-all">
+              {name ?? '?'}
+            </button>
+          ) : (
+            <span className="font-medium break-all">{name ?? '?'}</span>
+          )}
+          {status && <span className="opacity-60"> · {status}</span>}
+        </span>
+      </div>
+      {description !== null && <div className="mt-1 text-xs">{description}</div>}
+      {body !== null && (
+        <div className="mt-1 max-h-80 overflow-y-auto p-1.5 rounded-sm border bg-white dark:bg-gray-950 border-gray-100 dark:border-gray-900">
+          <MarkdownMessage content={body} className="text-xs" />
+        </div>
+      )}
+      <FailedResult result={result} />
+    </>
+  );
+};
+
 /** The handler of each presentation; one the server knows and this client does not falls back to the default. */
 const PRESENTATIONS: Record<ToolPresentation, React.FC<ToolCallContentProps>> = {
   default: DefaultToolCallContent,
@@ -734,6 +778,7 @@ const PRESENTATIONS: Record<ToolPresentation, React.FC<ToolCallContentProps>> = 
   questions: QuestionsToolCallContent,
   file_publish: FilePublishToolCallContent,
   artifact_publish: ArtifactPublishToolCallContent,
+  skill: SkillToolCallContent,
 };
 
 interface ToolCallViewProps {
@@ -748,9 +793,11 @@ interface ToolCallViewProps {
   filesVersion?: number;
   /** The artifacts of the channel, for a call that published one (issue 271). */
   artifacts?: ChannelArtifacts;
+  /** Opens a skill's page, for a call that names one (issue 281). */
+  onSelectSkill?: (skillId: string) => void;
 }
 
-export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, abandoned, files, filesVersion, artifacts}) => {
+export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, abandoned, files, filesVersion, artifacts, onSelectSkill}) => {
   const Content = PRESENTATIONS[call.presentation ?? 'default'] ?? DefaultToolCallContent;
   return (
     <div className="bg-gray-50 dark:bg-gray-800 rounded-sm border border-gray-200 dark:border-gray-600 overflow-hidden">
@@ -795,7 +842,7 @@ export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, abandon
         </div>
       </div>
       <div className="p-2">
-        <Content call={call} result={result} files={files} filesVersion={filesVersion} artifacts={artifacts} />
+        <Content call={call} result={result} files={files} filesVersion={filesVersion} artifacts={artifacts} onSelectSkill={onSelectSkill} />
         {result?.answers && (
           // Set apart from what the presentation shows, where it shows anything.
           <div className="not-first:mt-2 not-first:pt-2 not-first:border-t border-gray-200 dark:border-gray-700">

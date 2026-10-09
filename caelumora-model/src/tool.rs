@@ -74,26 +74,31 @@ impl ToolParameters {
     }
 }
 
-/// Who sees a tool's calls (issues 54, 133): the call itself - that the
-/// tool was called - and its content, the arguments and the result. The
-/// content is never seen by more than the call. The agent keeps every call
-/// in full; what it publishes to its channel is redacted by these flags
-/// (`Message::published`). How sensitive a result is, is another question:
-/// its classification (`ToolCallResult::classification`, issue 133).
+/// Who sees a tool's calls (issues 54, 133, 281): the call itself - that
+/// the tool was called -, its arguments, and its result. Neither the
+/// arguments nor the result are seen by more than the call. The agent keeps
+/// every call in full; what it publishes to its channel is redacted by
+/// these flags (`Message::published`). How sensitive a result is, is
+/// another question: its classification (`ToolCallResult::classification`,
+/// issue 133).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolVisibility {
     pub call: Visibility,
-    pub content: Visibility,
+    pub arguments: Visibility,
+    pub result: Visibility,
 }
 
 impl ToolVisibility {
     /// Call, arguments and result are published to the channel.
-    pub const SHOWN: ToolVisibility = ToolVisibility { call: Visibility::Channel, content: Visibility::Channel };
+    pub const SHOWN: ToolVisibility = ToolVisibility { call: Visibility::Channel, arguments: Visibility::Channel, result: Visibility::Channel };
+    /// Others may see that the tool was called and with what, but not what
+    /// it returned.
+    pub const WITHOUT_RESULT: ToolVisibility = ToolVisibility { call: Visibility::Channel, arguments: Visibility::Channel, result: Visibility::Owner };
     /// Others may see that the tool was called, but not with what or what
     /// it returned.
-    pub const CALL_ONLY: ToolVisibility = ToolVisibility { call: Visibility::Channel, content: Visibility::Owner };
+    pub const CALL_ONLY: ToolVisibility = ToolVisibility { call: Visibility::Channel, arguments: Visibility::Owner, result: Visibility::Owner };
     /// Nothing of the call leaves the agent.
-    pub const HIDDEN: ToolVisibility = ToolVisibility { call: Visibility::Owner, content: Visibility::Owner };
+    pub const HIDDEN: ToolVisibility = ToolVisibility { call: Visibility::Owner, arguments: Visibility::Owner, result: Visibility::Owner };
 
     pub fn is_shown(&self) -> bool {
         *self == Self::SHOWN
@@ -156,6 +161,10 @@ pub enum ToolPresentation {
     /// `name`, `version`, `size`, `description` and the `artifact` it is
     /// downloaded from.
     ArtifactPublish,
+    /// A skill loaded, written or changed (issue 281): its `name`, and
+    /// where the arguments hold them its `description` and its `body`, as
+    /// Markdown; its result's `skill_id`, where it has one, to link to.
+    Skill,
 }
 
 impl ToolPresentation {
@@ -249,7 +258,7 @@ impl From<RecordedToolSets> for Vec<ToolSet> {
 pub struct ToolCall {
     pub id: Option<String>,
     pub function_name: String,
-    /// `Null` where the call was published without its content.
+    /// `Null` where the call was published without its arguments.
     pub arguments: Value,
     /// The labels of the tool at the time of the call, stamped by the agent:
     /// what applied then counts, even if the tool changes later.
@@ -309,7 +318,7 @@ pub struct ToolCallResult {
     #[serde(default, skip_serializing_if = "ToolResultStatus::is_ok")]
     pub status: ToolResultStatus,
     /// Who sees it: the call's flags; `content` is empty where it was
-    /// published without its content.
+    /// published without its result.
     #[serde(default, skip_serializing_if = "ToolVisibility::is_shown")]
     pub visibility: ToolVisibility,
     /// How sensitive `content` is and for whom (issue 133): as the tool
@@ -320,8 +329,8 @@ pub struct ToolCallResult {
     /// When the tool started and finished running - or was interrupted
     /// (issue 161) - only for a call that ran, not for one a decision or a
     /// check answered. Stored with the
-    /// history; published with the call, even where its content is
-    /// withheld: when it ran is the call's, not the content's.
+    /// history; published with the call, even where its result is
+    /// withheld: when it ran is the call's, not the result's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at: Option<chrono::DateTime<chrono::Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

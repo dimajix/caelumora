@@ -8,8 +8,8 @@
 //!   skills it lists.
 //! - **`list_skills`** gives the catalogue as a tool, for a model whose
 //!   prompt was built before a skill appeared; **`load_skill`** gives a
-//!   skill's text as the call's result, its content hidden from the channel,
-//!   classified as the skill.
+//!   skill's text as the call's result, hidden from the channel, which sees
+//!   only which skill was loaded (issue 281), classified as the skill.
 //! - **`create_skill`** and **`update_skill`** let the agent write down
 //!   what it has learnt to do (issue 22, decision 6): a skill of its owner's,
 //!   in the session's scope or the owner's - never the global one -,
@@ -46,7 +46,7 @@ use caelumora_model::question::Answers;
 use caelumora_model::scope::Scope;
 use caelumora_model::store::StoreError;
 use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
+use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -214,13 +214,13 @@ impl ToolProvider for SkillsComponent {
             Tool {
                 name: LOAD_SKILL_TOOL_NAME.to_string(),
                 description: "Load a skill by its name and get its text - a procedure to follow for the task at hand. \
-                    The channel sees that you loaded it, not what it says; do not quote it to them."
+                    The channel sees which skill you loaded, not what it says; do not quote it to them."
                     .to_string(),
                 parameters: ToolParameters::object([("name", ToolParameters::string("The name of the skill"))], ["name"]),
                 requires_approval: false,
-                visibility: ToolVisibility::CALL_ONLY,
+                visibility: ToolVisibility::WITHOUT_RESULT,
                 classification: None,
-                presentation: Default::default(),
+                presentation: ToolPresentation::Skill,
             },
             Tool {
                 name: CREATE_SKILL_TOOL_NAME.to_string(),
@@ -242,7 +242,7 @@ impl ToolProvider for SkillsComponent {
                 requires_approval: self.requires_approval.required(false),
                 visibility: ToolVisibility::SHOWN,
                 classification: None,
-                presentation: Default::default(),
+                presentation: ToolPresentation::Skill,
             },
             Tool {
                 name: UPDATE_SKILL_TOOL_NAME.to_string(),
@@ -260,7 +260,7 @@ impl ToolProvider for SkillsComponent {
                 requires_approval: self.requires_approval.required(false),
                 visibility: ToolVisibility::SHOWN,
                 classification: None,
-                presentation: Default::default(),
+                presentation: ToolPresentation::Skill,
             },
         ]
     }
@@ -319,7 +319,7 @@ impl ToolProvider for SkillsComponent {
                 let made = session.views().skill_manager()
                     .create(&context, name.trim(), scope, &description, &body, turn.label()).await
                     .map_err(tool_error)?;
-                Ok(ToolOutput::classified(serde_json::json!({ "status": "created", "name": made.name.name.as_str() }), turn.label()))
+                Ok(ToolOutput::classified(serde_json::json!({ "status": "created", "name": made.name.name.as_str(), "skill_id": made.id }), turn.label()))
             }
             UPDATE_SKILL_TOOL_NAME => {
                 let Update { name, description, body } = arguments(params)?;
@@ -342,7 +342,7 @@ impl ToolProvider for SkillsComponent {
                 if let Some(body) = body {
                     manager.rewrite(&context, skill.id(), &body).await.map_err(tool_error)?;
                 }
-                Ok(ToolOutput::classified(serde_json::json!({ "status": "updated", "name": skill.name(), "classification": raised.to_string() }), turn.label()))
+                Ok(ToolOutput::classified(serde_json::json!({ "status": "updated", "name": skill.name(), "skill_id": skill.id(), "classification": raised.to_string() }), turn.label()))
             }
             _ => Err(ToolError::UnknownTool(name.to_string())),
         }
@@ -496,6 +496,7 @@ mod tests {
         let mut turn = world.turn(&mut state);
         let created = call(&component, &mut turn, CREATE_SKILL_TOOL_NAME, serde_json::json!({ "name": "deploy", "description": "How we deploy", "body": "1. Build.", "scope": "session" })).await.unwrap();
         assert_eq!(created.value["status"], "created");
+        let created_id = created.value["skill_id"].clone();
         let global = call(&component, &mut turn, CREATE_SKILL_TOOL_NAME, serde_json::json!({ "name": "other", "description": "d", "body": "b", "scope": "global" })).await;
         assert!(matches!(global, Err(ToolError::InvalidParameter(_))), "never global");
         let twice = call(&component, &mut turn, CREATE_SKILL_TOOL_NAME, serde_json::json!({ "name": "Deploy", "description": "d", "body": "b", "scope": "session" })).await;
@@ -519,11 +520,13 @@ mod tests {
         turn.see(&internal);
         let updated = call(&component, &mut turn, UPDATE_SKILL_TOOL_NAME, serde_json::json!({ "name": "deploy", "body": "1. Build.\n2. Ship." })).await.unwrap();
         assert_eq!(updated.value["status"], "updated");
+        assert_eq!(updated.value["skill_id"], created_id, "the skill it changed, for a frontend to link to");
         let nothing = call(&component, &mut turn, UPDATE_SKILL_TOOL_NAME, serde_json::json!({ "name": "deploy" })).await;
         assert!(matches!(nothing, Err(ToolError::InvalidParameter(_))), "nothing to change");
         drop(turn);
         let deploy = world.runtime.entity_store().get_skill(&SecurityContext::system(), deploy.id).await.unwrap();
         assert_eq!((deploy.body.as_str(), &deploy.classification), ("1. Build.\n2. Ship.", &internal), "the new steps, classified as what was seen");
+        assert_eq!(created_id, serde_json::json!(deploy.id), "the skill it made");
     }
 
     #[test]
@@ -538,10 +541,12 @@ mod tests {
     }
 
     #[test]
-    fn load_skill_shows_the_channel_that_it_was_called_not_what_it_gave() {
+    fn load_skill_shows_the_channel_which_skill_it_loaded_not_what_it_gave() {
         let tools = SkillsComponent { position: PromptPosition::Start, requires_approval: ApprovalMode::Always }.tools();
         let load = tools.iter().find(|t| t.name == LOAD_SKILL_TOOL_NAME).unwrap();
-        assert_eq!(load.visibility, ToolVisibility::CALL_ONLY);
+        assert_eq!(load.visibility, ToolVisibility::WITHOUT_RESULT);
+        let skills: Vec<_> = tools.iter().filter(|t| t.presentation == ToolPresentation::Skill).map(|t| t.name.as_str()).collect();
+        assert_eq!(skills, [LOAD_SKILL_TOOL_NAME, CREATE_SKILL_TOOL_NAME, UPDATE_SKILL_TOOL_NAME], "shown as a skill; the catalogue as a call");
         assert!(tools.iter().filter(|t| t.name == LOAD_SKILL_TOOL_NAME || t.name == LIST_SKILLS_TOOL_NAME).all(|t| !t.requires_approval), "reading needs no approval");
     }
 }

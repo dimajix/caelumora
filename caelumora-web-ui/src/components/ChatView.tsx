@@ -216,9 +216,11 @@ interface ChatViewProps {
   channelId: string;
   /** Who is logged in: only a participant follows the channel live. */
   user: UserResponse;
+  /** Opens a skill's page in the place of the channel, for a call that names one (issue 281). */
+  onSelectSkill: (skillId: string) => void;
 }
 
-export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }) => {
+export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, onSelectSkill }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [channel, setChannel] = useState<ChannelResponse | null>(null);
   const [notes, setNotes] = useState<PublishedNotes[]>([]);
@@ -1238,6 +1240,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
       files={workspaceFiles}
       filesVersion={workspaceVersion}
       artifacts={channelArtifacts}
+      onSelectSkill={onSelectSkill}
       badges={channel && msg.classification && !sameClassification(msg.classification, channel.classification)
         ? [`released: ${classificationLabel(msg.classification)}`]
         : undefined}
