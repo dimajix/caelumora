@@ -692,6 +692,12 @@ pub struct ChannelMemberResponse {
     /// that does not run.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state: Option<ActorState>,
+    /// The commands an agent carries out itself that the requesting user
+    /// may see (issue 269), as `GET …/commands` gives the channel's - for
+    /// completion; written `/name @handle …`. Absent if there are none, and
+    /// in a channel that does not run.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub commands: Vec<caelumora_model::command::Command>,
     /// How the participant is introduced (issues 176, 244): an agent by its
     /// personality, a user by themselves. Given for a participant asked for
     /// alone, not where channels are listed; absent if there is none.
@@ -732,6 +738,7 @@ impl ChannelMemberResponse {
             can_delete: view.can_delete,
             turn_under_way: view.turn_under_way,
             state: view.state,
+            commands: view.commands,
             introduction: view.introduction,
             personality: view.personality,
             personality_kind: view.personality_kind,
@@ -790,10 +797,15 @@ pub struct ExecuteCommandRequest {
 /// What a command answered. `output` is set only if the answer is for the
 /// caller alone; an answer for the whole channel arrives on the channel's
 /// event stream as a `CommandExecuted`, like everybody else sees it.
+/// `span_id` is set for a command sent to agents (issue 269), whose answers
+/// arrive on the stream in that span - `output` then names the agents that
+/// were not asked, if any were left out.
 #[derive(Debug, Serialize)]
 pub struct CommandReplyResponse {
     pub command: String,
     pub output: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub span_id: Option<uuid::Uuid>,
 }
 
 /// An item of a history (issue 258), as the API gives it: a message said -
@@ -809,6 +821,8 @@ pub enum HistoryItemResponse<M> {
     TurnFinished { turn_id: TurnId, actor: ActorId, at: DateTime<Utc> },
     TurnGivenUp { turn_id: TurnId, actor: ActorId, reason: caelumora_model::turn::GivenUpReason, at: DateTime<Utc> },
     PlanStepStarted { turn_id: TurnId, actor: ActorId, step_index: usize, total_steps: usize, description: String, at: DateTime<Utc> },
+    /// An agent carried out a command in its turn (issue 269).
+    CommandExecuted { turn_id: TurnId, actor: ActorId, issuer: ActorId, command: String, args: String, at: DateTime<Utc> },
 }
 
 impl<M> HistoryItemResponse<M> {
@@ -821,6 +835,7 @@ impl<M> HistoryItemResponse<M> {
             HistoryEntry::TurnFinished { turn_id, actor, at } => Some(Self::TurnFinished { turn_id, actor, at }),
             HistoryEntry::TurnGivenUp { turn_id, actor, reason, at } => Some(Self::TurnGivenUp { turn_id, actor, reason, at }),
             HistoryEntry::PlanStepStarted { turn_id, actor, step_index, total_steps, description, at } => Some(Self::PlanStepStarted { turn_id, actor, step_index, total_steps, description, at }),
+            HistoryEntry::CommandExecuted { turn_id, actor, issuer, command, args, at } => Some(Self::CommandExecuted { turn_id, actor, issuer, command, args, at }),
             HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. } => None,
         }
     }
@@ -1067,13 +1082,18 @@ mod tests {
         let json = serde_json::to_value(step).unwrap();
         assert_eq!((json["plan_step_started"]["step_index"].clone(), json["plan_step_started"]["total_steps"].clone()), (serde_json::json!(1), serde_json::json!(3)));
         assert_eq!(json["plan_step_started"]["description"], "second");
+        let issuer = ActorId::User(UserId::new());
+        let command = HistoryItemResponse::<Message>::of(HistoryEntry::CommandExecuted { turn_id: turn, actor, issuer, command: "compact".to_string(), args: String::new(), at: chrono::Utc::now() }, |m| m).unwrap();
+        let json = serde_json::to_value(command).unwrap();
+        assert_eq!(json["command_executed"]["command"], "compact");
+        assert_eq!(json["command_executed"]["issuer"], serde_json::to_value(issuer).unwrap());
         assert!(HistoryItemResponse::<Message>::of(HistoryEntry::Fitted { channel: Classification::PUBLIC }, |m| m).is_none(), "a change is in the message it changed");
     }
 
     #[test]
     fn a_channel_view_is_answered_with_kinds_and_a_name_for_the_deleted() {
         let (alice, approver) = (ActorId::User(UserId::new()), ActorId::Approver(ApproverId(Uuid::new_v4())));
-        let member = |id, name: Option<&str>| snapshot::MemberSnapshot { id, name: name.map(str::to_string), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), pending_questions: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None, introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
+        let member = |id, name: Option<&str>| snapshot::MemberSnapshot { id, name: name.map(str::to_string), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), pending_questions: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None, commands: Vec::new(), introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
         let view = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(),
             uses_workspace: true,
             id: ChannelId::new(),
@@ -1123,7 +1143,7 @@ mod tests {
         };
         let member = |id, name: &str, notes: Vec<Note>| snapshot::MemberSnapshot {
             id, name: Some(name.to_string()), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes, pending_approvals: Vec::new(), pending_questions: Vec::new(),
-            left: None, can_delete: false, turn_under_way: None, state: None,
+            left: None, can_delete: false, turn_under_way: None, state: None, commands: Vec::new(),
             introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None,
         };
         let channel = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(),
@@ -1165,7 +1185,7 @@ mod tests {
     fn a_former_member_is_answered_apart_with_who_removed_it_and_when() {
         let (alice, helper) = (ActorId::User(UserId::new()), ActorId::Agent(caelumora_model::agent::AgentId::new()));
         let left = caelumora_model::removal::Removal::now(alice);
-        let member = |id, left| snapshot::MemberSnapshot { id, name: Some("x".to_string()), handle: None, can_read_context: true, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), pending_questions: Vec::new(), left, can_delete: false, turn_under_way: None, state: None, introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
+        let member = |id, left| snapshot::MemberSnapshot { id, name: Some("x".to_string()), handle: None, can_read_context: true, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), pending_questions: Vec::new(), left, can_delete: false, turn_under_way: None, state: None, commands: Vec::new(), introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
         let view = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(),
             uses_workspace: true,
             id: ChannelId::new(),
@@ -1188,7 +1208,7 @@ mod tests {
     #[test]
     fn what_a_participant_used_is_answered_only_where_it_was_read() {
         let usage = TokenUsage { calls: 2, prompt_tokens: 300, completion_tokens: 20, last_call_tokens: 170, context_size: Some(8192) };
-        let member = |usage| snapshot::MemberSnapshot { id: ActorId::User(UserId::new()), name: Some("alice".to_string()), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage, notes: Vec::new(), pending_approvals: Vec::new(), pending_questions: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None, introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
+        let member = |usage| snapshot::MemberSnapshot { id: ActorId::User(UserId::new()), name: Some("alice".to_string()), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage, notes: Vec::new(), pending_approvals: Vec::new(), pending_questions: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None, commands: Vec::new(), introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
 
         let json = serde_json::to_value(ChannelMemberResponse::of(member(Some(usage))).unwrap()).unwrap();
         assert_eq!(json["usage"], serde_json::json!({ "calls": 2, "prompt_tokens": 300, "completion_tokens": 20, "last_call_tokens": 170, "context_size": 8192 }));
@@ -1201,12 +1221,16 @@ mod tests {
         assert!(json.get("state").is_none(), "where nothing runs, no state");
         let json = serde_json::to_value(ChannelMemberResponse::of(snapshot::MemberSnapshot { state: Some(ActorState::WaitingForUser), ..member(None) }).unwrap()).unwrap();
         assert_eq!(json["state"], serde_json::json!("WaitingForUser"), "named as `StateChanged` names it (issue 243)");
+        assert!(json.get("commands").is_none(), "absent without commands");
+        let mark = caelumora_model::command::Command { name: "mark".to_string(), description: "Marks.".to_string(), usage: None, owners_only: false };
+        let json = serde_json::to_value(ChannelMemberResponse::of(snapshot::MemberSnapshot { commands: vec![mark], ..member(None) }).unwrap()).unwrap();
+        assert_eq!(json["commands"][0]["name"], "mark", "an agent's commands, as `GET …/commands` gives the channel's (issue 269)");
     }
 
     #[test]
     fn a_participants_profile_is_answered_only_where_it_was_read() {
         let carol = UserId::new();
-        let member = snapshot::MemberSnapshot { id: ActorId::Agent(caelumora_model::agent::AgentId::new()), name: Some("Helper".to_string()), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), pending_questions: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None, introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
+        let member = snapshot::MemberSnapshot { id: ActorId::Agent(caelumora_model::agent::AgentId::new()), name: Some("Helper".to_string()), handle: None, can_read_context: false, can_read_tools: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), pending_questions: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None, commands: Vec::new(), introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
 
         let json = serde_json::to_value(ChannelMemberResponse::of(member.clone()).unwrap()).unwrap();
         for field in ["introduction", "personality", "personality_kind", "owner", "owner_name"] {

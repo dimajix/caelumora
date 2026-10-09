@@ -238,7 +238,10 @@ else who may read it - the session's owner, say - is shown its history and no in
     [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reasoning)). A turn given up (`TurnGivenUp`, issue 258)
     is shown in the chat with why: a failure as an alert naming what failed, any other reason as a
     notice - the channel lowered, the answer asked for again; it is not stored yet and gone on
-    reload. The channel-wide answer of a command is shown but never stored. An agent removed while
+    reload. The channel-wide answer of a command is shown but never stored. A command an agent
+    carried out (issue 269) is shown as the agent's notice - with what it answered, live, to the
+    issuer or to everybody -, kept once by its turn, and from the history after a reload without the
+    answer; one it did not carry out is a notice for the issuer alone. An agent removed while
     it answers gives its turn up and says so, which is shown as any turn given up (issue 262); once
     it has ended, the channel says so with `ParticipantRemoved`, and nothing of it follows: what
     an agent aborted without a word left - its partial answer, the stop button, its calls still
@@ -316,7 +319,8 @@ else who may read it - the session's owner, say - is shown its history and no in
     icon on an answer under way ends that agent's turn alone (`POST …/participants/{aid}/cancel`,
     issue 235); the other answers go on.
 *   **Input.** A line starting with `/` is sent as a command, `//` as a literal slash
-    (`command.ts`). Typing `@` completes the members' handles, `/` the commands the user may see. An
+    (`command.ts`). Typing `@` completes the members' handles, `/` the commands the user may see -
+    the channel's, and the agents' with each handle that carries one out and `@all` (issue 269). An
     unsent draft survives a forced re-login, in the session storage. A message can be sent while
     an agent answers (issue 202): an agent in a turn hears it once the turn ends and answers it in
     a turn of its own, if asked to; the turn under way does not see it.
@@ -491,4 +495,5 @@ A turn the agent gave up (issues 146, 258) is marked where it ended, after what 
 failed, stopped, the channel lowered, asked for again - and when, as the history's items say. Its
 messages stand among the others, each with its context where it is recorded. A turn given up
 because the agent was removed from the channel is shown in its history panel, offered among the
-former members (issue 164).
+former members (issue 164). A command the agent carried out (issue 269) is marked where it was:
+which, with its arguments, on whose word, and when.

@@ -268,7 +268,8 @@ fn turn_ended(scheme: &str, previous: Option<&Digest>, turn: TurnId, actor: Opti
 /// that every digest recorded before issue 197 names what it named; the
 /// channel's classification fitted into (issue 133), a turn's end (issue
 /// 258) and the start of a step of its plan (issue 263) in schemes of their
-/// own - the step by what it says, not when; a message modified, taken back or
+/// own - the step by what it says, not when -, a command carried out (issue
+/// 269) likewise; a message modified, taken back or
 /// reclassified as `message_modified`, `message_revoked` and
 /// `message_reclassified`.
 pub fn history_chain(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest {
@@ -292,6 +293,16 @@ pub fn history_chain(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest 
             e.json(&to_json(actor));
             e.json(&serde_json::json!([step_index, total_steps]));
             e.str(description);
+            e.finish()
+        }
+        HistoryEntry::CommandExecuted { turn_id, actor, issuer, command, args, .. } => {
+            let mut e = Encoder::new("caelumora.history-command-executed.v1");
+            e.opt_digest(previous);
+            e.bytes(turn_id.0.as_bytes());
+            e.json(&to_json(actor));
+            e.json(&to_json(issuer));
+            e.str(command);
+            e.str(args);
             e.finish()
         }
     }

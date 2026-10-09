@@ -183,6 +183,11 @@ pub struct MemberSnapshot {
     /// channel - only ever for agents taking part; `None` in a channel that
     /// does not run. Kept up by `ActorEvent::StateChanged`.
     pub state: Option<ActorState>,
+    /// The commands an agent member carries out itself that the viewer may
+    /// see (issue 269), read from the running channel - for completion and
+    /// `/help`. Empty for any other member, and in a channel that does not
+    /// run, where nothing could carry them out.
+    pub commands: Vec<crate::command::Command>,
     /// What an agent member's model calls in the channel used (issue 209),
     /// with `Detail::USAGE`; `None` also for a member whose calls report
     /// no tokens (an external agent, a user), before its first call, and if

@@ -8,6 +8,7 @@ use crate::moderator::Moderator;
 use crate::moderator::ResponderPolicy;
 use caelumora_model::actor::{ActorId, ActorState};
 use caelumora_model::approval::ApprovalRequest;
+use caelumora_model::command::Command;
 use caelumora_model::channel::{Channel, ChannelState, Participant};
 use caelumora_model::value::text::{Briefing, Summary};
 use caelumora_model::confidentiality::Classification;
@@ -492,6 +493,18 @@ impl MemberView {
         self.channel.running().filter(|_| !self.former)?.actor_by_id(self.id()).map(|actor| actor.state())
     }
 
+    /// The commands the member carries out itself that the viewer may see
+    /// (issue 269), read from its actor, which asks the policy: none if it
+    /// carries out none here - it is no agent, has left - and none while the
+    /// channel does not run, when nothing could carry them out.
+    pub async fn commands(&self) -> Vec<Command> {
+        if self.former {
+            return Vec::new();
+        }
+        let Some(actor) = self.channel.running().and_then(|channel| channel.actor_by_id(self.id())) else { return Vec::new() };
+        actor.commands(self.views().context()).await
+    }
+
     /// The tools the member has now, in their tool sets (issue 194), as it
     /// would offer them at the start of its next turn - read from its
     /// actor, since an agent's tools are built for each of its channels.
@@ -667,6 +680,7 @@ impl MemberView {
             can_delete: self.may_delete().await,
             turn_under_way: self.turn_under_way(),
             state: self.state(),
+            commands: self.commands().await,
             usage,
             notes,
             pending_approvals,

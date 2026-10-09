@@ -1,0 +1,156 @@
+//! The commands an agent carries out itself (issue 269), the same for both
+//! kinds of agent - the `AgentActor` and the `ExternalAgentActor`: which it
+//! has, who may ask for them, and carrying one out in a turn of its own.
+
+use super::Answering;
+use crate::agent::state::AgentStateHandle;
+use crate::agent::turn::Turn;
+use crate::command::{AgentCommandProvider, CommandError, CommandExecutor, CommandResult};
+use crate::component::{ComponentContainer, ComponentError, ComponentResult};
+use crate::controller::AgentController;
+use crate::runtime::ActorRuntime;
+use crate::transport::EventSender;
+use crate::view::ViewsFactory;
+use caelumora_model::actor::{ActorEvent, ActorId, Envelope};
+use caelumora_model::agent::AgentChannelState;
+use caelumora_model::command::{Command, CommandVisibility};
+use caelumora_model::context::ModelProfile;
+use caelumora_model::security::SecurityContext;
+use caelumora_model::turn::CommandRequest;
+use std::sync::Arc;
+use tracing::{debug, info, warn};
+
+/// The commands of one agent in one channel (issue 269): the
+/// `AgentCommandProvider`s of its personality behind the executor that
+/// checks who may see and ask for them, and what carrying one out needs of
+/// the agent's actor - its state, its views, where it stores.
+#[derive(Debug)]
+pub(super) struct AgentCommands {
+    executor: CommandExecutor<dyn AgentCommandProvider>,
+    agent: Arc<AgentController>,
+    /// Whose rights it acts with: its owner's (issue 255).
+    principal: ActorId,
+    /// How its model is given its context, kept with every turn of it; the
+    /// default for an agent that runs elsewhere.
+    profile: ModelProfile,
+    runtime: ActorRuntime,
+    agent_state: Arc<AgentStateHandle>,
+    views: ViewsFactory,
+}
+
+impl AgentCommands {
+    /// The commands the components of `components` provide, for the agent
+    /// `agent` acting for `principal`, with `profile` for its turns.
+    ///
+    /// # Errors
+    /// `ComponentError::InvalidConfig` if two components provide the same
+    /// name, or one provides a name the session's commands have: the
+    /// session's would hide it (issue 37).
+    pub(super) fn new(
+        components: &ComponentContainer,
+        agent: Arc<AgentController>,
+        principal: ActorId,
+        profile: ModelProfile,
+        runtime: ActorRuntime,
+        agent_state: Arc<AgentStateHandle>,
+    ) -> ComponentResult<Self> {
+        let providers = components.get_all::<dyn AgentCommandProvider>(None);
+        for provider in &providers {
+            if let Some(command) = provider.commands().into_iter().find(|c| runtime.command_executor().has(&c.name)) {
+                return Err(ComponentError::InvalidConfig(format!(
+                    "command /{} of component '{}' is a command of the session too, which would hide it",
+                    command.name, provider.id
+                )));
+            }
+        }
+        let executor = CommandExecutor::new(Arc::clone(runtime.security_manager()), providers)?;
+        let views = runtime.views();
+        Ok(Self { executor, agent, principal, profile, runtime, agent_state, views })
+    }
+
+    /// The commands `issuer` may see of the agent in its channel, sorted by
+    /// name; none without a channel.
+    pub(super) async fn visible(&self, issuer: &SecurityContext) -> Vec<Command> {
+        let Some(channel) = self.runtime.channel_loop() else { return Vec::new() };
+        let agent = self.agent.load().security_attributes.clone();
+        self.executor.visible(issuer, &agent, &channel.security_attributes()).await
+    }
+
+    /// The command `name`, if `issuer` may ask the agent for it in its
+    /// channel.
+    ///
+    /// # Errors
+    /// As `CommandExecutor::admitted`; `Unknown` without a channel.
+    pub(super) async fn admit(&self, name: &str, issuer: &SecurityContext) -> CommandResult<Command> {
+        let Some(channel) = self.runtime.channel_loop() else { return Err(CommandError::Unknown(name.to_string())) };
+        let agent = self.agent.load().security_attributes.clone();
+        self.executor.admitted(name, issuer, &agent, &channel.security_attributes()).await
+    }
+
+    /// Carries out the `CommandRequested` in `request` in a turn of its own,
+    /// begun on `state` in the request's contexts continued in the agent's
+    /// name (`Answering::to`): its owner's rights, whoever asked its
+    /// initiator. The executor asks again, in the context the request came
+    /// with, whether the issuer may ask for it.
+    ///
+    /// Carried out, the turn is taken over - what the command staged applied,
+    /// the command recorded before the turn's end - and stored, and the
+    /// agent answers `CommandExecuted`, to the issuer alone for a private
+    /// answer. Not carried out, the turn is dropped as if it had never begun:
+    /// nothing was said or applied, so nothing is recorded, and the agent
+    /// answers `CommandFailed` to the issuer. A command turn is no answer:
+    /// it announces neither its start nor its end, asks nobody to respond and
+    /// is never asked for again.
+    pub(super) async fn carry_out(&self, state: &mut AgentChannelState, request: &Envelope, output: &dyn EventSender) {
+        let ActorEvent::CommandRequested { command, args, .. } = &request.event else { return };
+        let issuer = request.context.sender_id;
+        let (agent_id, name) = (self.agent.id(), self.agent.name());
+        let answering = Answering::to(request, ActorId::Agent(agent_id), name.clone(), self.principal);
+        let Some(channel) = self.runtime.channel_loop() else {
+            warn!("Agent {} has no channel to carry out /{} in", agent_id, command);
+            return;
+        };
+        let (attributes, channel_attributes) = (self.agent.load().security_attributes.clone(), channel.security_attributes());
+        let kept = CommandRequest { command: command.clone(), args: args.clone(), issuer };
+        let turn_id = state.begin_command_turn(
+            answering.event_context.clone(),
+            answering.security_context.clone(),
+            channel.classification(),
+            self.profile,
+            kept,
+        );
+        let Some(mut turn) = Turn::of(agent_id, name.clone(), state, Arc::clone(&self.agent_state)).map(|turn| turn.with_views(self.views.clone())) else {
+            warn!("Agent {} lost the turn it began for /{}", agent_id, command);
+            return;
+        };
+        let carried_out = self.executor.execute(command, args, &request.security, &attributes, &channel_attributes, &mut turn).await;
+        let event = match carried_out {
+            Ok(answer) => {
+                let committed = turn.commit(false, output).await;
+                if let Err(e) = self.runtime.store_channel_state(state).await {
+                    warn!("Agent {} cannot store its state after /{}: {:#}", agent_id, command, e);
+                }
+                if committed.channel_state_changed {
+                    self.runtime.announce_channel_state_changed();
+                }
+                info!("Agent {} {} carried out /{} for {}", agent_id, name, command, issuer);
+                let to = (answer.visibility == CommandVisibility::Private).then_some(issuer);
+                ActorEvent::CommandExecuted { command: command.clone(), args: args.clone(), output: answer.text, to, turn_id: Some(turn_id) }
+            }
+            Err(e) => {
+                drop(turn);
+                // Never begun, as far as anything shows: nothing was said or
+                // applied, so the turn leaves no end behind.
+                state.turn = None;
+                match &e {
+                    CommandError::Failed { .. } => warn!("Agent {} {} could not carry out /{} for {}: {}", agent_id, name, command, issuer, e),
+                    _ => debug!("Agent {} {} does not carry out /{} for {}: {}", agent_id, name, command, issuer, e),
+                }
+                ActorEvent::CommandFailed { command: command.clone(), reason: e.to_string(), to: issuer }
+            }
+        };
+        if let Err(e) = answering.send(event, output).await {
+            warn!("{:#}", e);
+        }
+    }
+}

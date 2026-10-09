@@ -60,8 +60,8 @@ impl Turn<'_> {
         // What it said is in the transcript already (issue 260).
         let final_messages = self.agent_channel_state.transcript.of_turn(turn_id).into_iter().filter(|m| !m.internal).collect();
         // Every part is used up exactly once.
-        let TurnState { memory, notes, private_notes, .. } = turn;
-        let channel_state_changed = self.agent_channel_state.finish_turn(turn_id, ActorId::Agent(self.agent_id), notes, private_notes);
+        let TurnState { memory, notes, private_notes, command, .. } = turn;
+        let channel_state_changed = self.agent_channel_state.finish_turn(turn_id, ActorId::Agent(self.agent_id), notes, private_notes, command);
         if let Err(e) = self.agent_state.apply(memory, self.agent_channel_state.history.last_message_id()).await {
             warn!("Agent {}: the changes of its turn to its own state are lost: {:#}", self.agent_id, e);
         }

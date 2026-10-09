@@ -99,6 +99,23 @@ pub struct TurnState {
     /// (issue 157).
     #[serde(default)]
     pub model_calls: u32,
+    /// The command the turn carries out (issue 269), `None` for a turn
+    /// that answers. A command turn has no tools and no context of its
+    /// own; one resumed after a restart runs its command again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<CommandRequest>,
+}
+
+/// A command an agent was asked to carry out (issue 269), as the turn
+/// keeps it: the command's name without the slash, its arguments as they
+/// came - without the handle that named the agent -, and who asked, the
+/// request's initiator, kept here so that the record of the turn's end
+/// needs nothing else.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommandRequest {
+    pub command: String,
+    pub args: String,
+    pub issuer: ActorId,
 }
 
 impl TurnState {

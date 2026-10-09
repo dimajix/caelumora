@@ -4,15 +4,16 @@
 // late or was asleep heard what it heard. What its perceive processors did
 // not pass on to its transcript is marked; what each of its own messages was
 // produced from opens as that message's context. A turn it gave up is shown
-// where it ended, after what it said, with why (issues 146, 258).
+// where it ended, after what it said, with why (issues 146, 258), and a
+// command it carried out where it did, with on whose word (issue 269).
 
 import React, {useEffect, useState} from 'react';
-import {History, ScrollText, Undo2, X} from 'lucide-react';
-import type {ChannelMember, GivenUpReason, HistoryItem, HistoryMessage, Message} from '../types';
+import {ChevronRight, History, ScrollText, Undo2, X} from 'lucide-react';
+import type {ActorId, ChannelMember, GivenUpReason, HistoryItem, HistoryMessage, Message} from '../types';
 import {classificationLabel} from '../confidentiality';
 import {clsx as cn} from 'clsx';
 import {api} from '../api';
-import {actorUuid} from '../mention';
+import {actorKey, actorUuid} from '../mention';
 import {ApiRequestError, reportError} from '../errors';
 import {MessageView} from './MessageView';
 import {formatTimestamp, givenUpText, mergeToolResults} from '../messages';
@@ -34,12 +35,16 @@ interface HistoryPanelProps {
 }
 
 /** A row of the panel: a message of the history, merged with its tool results, or a turn given up. */
-type Row = {kind: 'message'; message: Message} | {kind: 'givenUp'; turnId: string; reason: GivenUpReason; at: string};
+type Row =
+  | {kind: 'message'; message: Message}
+  | {kind: 'givenUp'; turnId: string; reason: GivenUpReason; at: string}
+  | {kind: 'command'; turnId: string; command: string; args: string; issuer: ActorId; at: string};
 
 /**
  * The rows of `items`, in the order they happened: the messages, each run of
- * them with its tool results merged in, and every turn given up where it
- * ended. A turn that finished shows nothing of its own.
+ * them with its tool results merged in, every turn given up where it ended,
+ * and every command carried out where it was. A turn that finished shows
+ * nothing of its own.
  */
 function rowsOf(items: HistoryItem<HistoryMessage>[]): Row[] {
   const rows: Row[] = [];
@@ -55,6 +60,10 @@ function rowsOf(items: HistoryItem<HistoryMessage>[]): Row[] {
       flush();
       const {turn_id, reason, at} = item.turn_given_up;
       rows.push({kind: 'givenUp', turnId: turn_id, reason, at});
+    } else if ('command_executed' in item) {
+      flush();
+      const {turn_id, command, args, issuer, at} = item.command_executed;
+      rows.push({kind: 'command', turnId: turn_id, command, args, issuer, at});
     }
   }
   flush();
@@ -130,6 +139,21 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({sessionId, channelId,
     );
   };
 
+  // A command the agent carried out (issue 269): which, on whose word, when.
+  const commandView = (row: Extract<Row, {kind: 'command'}>, key: React.Key) => {
+    const time = formatTimestamp(row.at);
+    const issuer = members.find(m => actorKey(m.id) === actorKey(row.issuer))?.name ?? 'someone';
+    return (
+      <div key={key} className="flex items-start gap-2 p-2 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/60 text-xs text-gray-700 dark:text-gray-300">
+        <ChevronRight size={14} className="mt-0.5 shrink-0" />
+        <span className="flex-1">
+          <span className="font-semibold">Carried out <span className="font-mono">/{row.command}{row.args ? ` ${row.args}` : ''}</span> for {issuer}</span>
+          {time && <span className="opacity-70" title={time.full}> · {time.short}</span>}
+        </span>
+      </div>
+    );
+  };
+
   return (
     <div className="w-full border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 flex flex-col min-h-0">
       <div className="p-4 border-b border-gray-200 dark:border-gray-700 space-y-2">
@@ -163,7 +187,9 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({sessionId, channelId,
             )}
             {rows.slice(firstShown).map((row, idx) => row.kind === 'givenUp'
               ? givenUpView(row.reason, row.at, `given-up-${row.turnId}`)
-              : messageView(row.message, row.message.id ?? `message-${idx}`))}
+              : row.kind === 'command'
+                ? commandView(row, `command-${row.turnId}`)
+                : messageView(row.message, row.message.id ?? `message-${idx}`))}
             {rows.length === 0 && (
               <div className="text-sm text-gray-500 dark:text-gray-400">The agent has heard nothing here yet.</div>
             )}

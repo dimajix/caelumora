@@ -162,15 +162,47 @@ pub enum ActorEvent {
         turn_id: TurnId,
         reason: GivenUpReason,
     },
-    /// A user ran a command whose answer concerns everybody in the channel,
-    /// e.g. `/wakeup` (issue 28). The envelope's sender is the user who ran
-    /// it; `command` is its name without the slash, `output` what it answered.
+    /// A user asks the agent `agent` to carry out the command `command`
+    /// with `args` (issue 269): sent by the user's actor, which checked that
+    /// the issuer may, and routed to `agent` alone, which checks again and
+    /// carries it out in a turn of its own. The envelope's sender is the
+    /// issuer, its security context theirs. It wakes nobody: an agent
+    /// carries a command out asleep, and a quiet channel delivers it.
+    CommandRequested {
+        command: String,
+        args: String,
+        agent: ActorId,
+    },
+    /// A command was carried out (issues 28, 269): `command` is its name
+    /// without the slash, `args` what it was given, `output` what it
+    /// answered. One of the session - `/wakeup` - the envelope's sender is
+    /// the user who ran it, sent only when the answer concerns everybody;
+    /// one an agent carried out, the sender is the agent, `turn_id` the
+    /// turn it was carried out in, and `to` the issuer alone if the answer
+    /// is theirs, `None` if it is everybody's - the issuer is the security
+    /// context's initiator either way.
     ///
-    /// Shown to users and never written to the history: commands address
-    /// the system, not the agents.
+    /// Shown to users, never heard by agents. A command of the session is
+    /// never written to the history - it addresses the system -; one an
+    /// agent carried out is recorded by the channel, without the output
+    /// (`HistoryEntry::CommandExecuted`).
     CommandExecuted {
         command: String,
+        args: String,
         output: String,
+        to: Option<ActorId>,
+        turn_id: Option<TurnId>,
+    },
+    /// The agent did not carry out the command `command` (issue 269): it
+    /// is none of its own, the issuer may not run it, its arguments are
+    /// invalid, or it failed. `reason` is worded for the issuer, `to`, as
+    /// `CommandError` words it - never the error itself, which stays in
+    /// the log. Shown to the issuer alone and never written to a history:
+    /// nothing happened.
+    CommandFailed {
+        command: String,
+        reason: String,
+        to: ActorId,
     },
     /// `participant` was removed from the channel (issue 162). The envelope's
     /// sender is who removed it - the runtime itself, `ActorId::System`, if
@@ -330,7 +362,9 @@ impl ActorEvent {
             ActorEvent::PlanStepStarted { .. } => "PlanStepStarted",
             ActorEvent::PlanStepFinished { .. } => "PlanStepFinished",
             ActorEvent::TurnGivenUp { .. } => "TurnGivenUp",
+            ActorEvent::CommandRequested { .. } => "CommandRequested",
             ActorEvent::CommandExecuted { .. } => "CommandExecuted",
+            ActorEvent::CommandFailed { .. } => "CommandFailed",
             ActorEvent::ParticipantRemoved { .. } => "ParticipantRemoved",
             ActorEvent::ChainCutOff { .. } => "ChainCutOff",
             ActorEvent::MessageModified(_) => "MessageModified",
@@ -454,8 +488,14 @@ impl Envelope {
             ActorEvent::TurnGivenUp { turn_id, reason } => {
                 format!("TurnGivenUp(sender_id={}, sender_name={}, turn_id={}, reason={})", ctx.sender_id, ctx.sender_name, turn_id, reason.cause())
             }
-            ActorEvent::CommandExecuted { command, .. } => {
-                format!("CommandExecuted(sender_id={}, sender_name={}, command={})", ctx.sender_id, ctx.sender_name, command)
+            ActorEvent::CommandRequested { command, agent, .. } => {
+                format!("CommandRequested(sender_id={}, sender_name={}, command={}, agent={})", ctx.sender_id, ctx.sender_name, command, agent)
+            }
+            ActorEvent::CommandExecuted { command, to, .. } => {
+                format!("CommandExecuted(sender_id={}, sender_name={}, command={}, to={})", ctx.sender_id, ctx.sender_name, command, to.map_or("everybody".to_string(), |to| to.to_string()))
+            }
+            ActorEvent::CommandFailed { command, to, .. } => {
+                format!("CommandFailed(sender_id={}, sender_name={}, command={}, to={})", ctx.sender_id, ctx.sender_name, command, to)
             }
             ActorEvent::ParticipantRemoved { participant } => {
                 format!("ParticipantRemoved(sender_id={}, sender_name={}, participant={})", ctx.sender_id, ctx.sender_name, participant)

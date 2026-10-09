@@ -102,7 +102,7 @@ Everything except `POST /auth/login` and `POST /auth/logout` requires a logged-i
 | `GET …/actors/{aid}/messages/{mid}/context` | What an agent's model saw when it wrote a message |
 | `GET …/actors/{aid}/history` | All that was offered to an agent and what it said itself, and how its turns ended, whole like the channel's history - as items (see below), each message with `has_context` and `in_transcript` (issues 207, 258); like the context, also for a former member (issue 164) |
 | `GET …/actors/{aid}/tools` | The tools an agent has now in the channel, in their tool sets - each tool with `requires_approval`, `visibility` and `classification` - as it would offer them at the start of its next turn (issue 194); `tool_sets` is empty where it has none here: no agent run here, a former member - and also a channel that does not run, whose agents' tools are not built. `403 agent_forbidden` for whoever may not see them (`ReadAgentTools`) |
-| `GET …/commands`, `POST …/commands` | The commands the user may see; run one |
+| `GET …/commands`, `POST …/commands` | The commands of the channel the user may see; issue one, `{name, args}`, answered with `{command, output?, span_id?}` - `output` for a private answer of the channel's command; `span_id` for a command sent to agents (issue 269), whose answers come on the stream, `output` then naming the agents not asked. What each agent carries out is in its member's `commands` |
 | `GET …/channels/{cid}/events` | The channel's stream |
 | `GET /events` | The global stream |
 

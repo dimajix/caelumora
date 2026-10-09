@@ -122,7 +122,9 @@ built-in defaults that a personality or the configuration can replace.
 
 Components are wired by type, much like Spring beans: a component asks for the facets it needs, and
 the container builds whatever provides them. User commands such as `/help` are components as well,
-built once per session.
+built once per session; a command that acts on an agent - `/compact` - is a component of its
+personality, which the user's actor sends to the agent and the agent carries out in a turn of its
+own (issue 269).
 
 ## Agents that run elsewhere
 

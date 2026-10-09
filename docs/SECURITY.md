@@ -100,6 +100,11 @@ themselves, an agent its owner (see [In whose name an agent acts](#in-whose-name
 *   A message is its author's to modify and to take back (`ModifyMessage`, `RevokeMessage`, issue
     [234](../issues/234-modify-revoke-and-retry-messages.md)): whoever said it - the context's
     caller, an agent for its own message even when it acts for its owner - not the channel's owner.
+*   A command an agent carries out itself (issue [269](../issues/269-agent-commands.md)) is
+    seen and asked for (`ShowAgentCommand`, `ExecuteAgentCommand`, each with the agent's and the
+    channel's attributes) by whoever may write in the channel - its contributors -, unless the
+    command says it is for the agent's owners alone (`Command::owners_only`): then by whoever
+    answers for the agent, as `ApproveToolCall` is granted. Who may not run one does not see it.
 *   Deleting an agent is its owner's (`DeleteAgent`). That it leaves channels owned by others is
     done in the runtime's name: it is a consequence of the deletion, not a change of those channels
     by the owner.

@@ -462,14 +462,16 @@ such questions `sensitive`. Then:
 ## User commands
 
 A line that starts with `/` addresses the system rather than the agents: `/help`, `/wakeup [agent]`
-([28](../issues/28-user-commands.md)). A command is not a message: it never enters the history and
-never reaches an agent's context.
+([28](../issues/28-user-commands.md)). A command is not a message: it never reaches an agent's
+context as something said. Commands of the channel never enter the history; what an agent carried
+out on someone's word does (see [Commands of an agent](#commands-of-an-agent)).
 
-Commands are for people; agents act through tools. A command is always run on behalf of a particular
-person, so it is run by that person's actor, `UserActor::execute_command(name, args)`, as messages
-and approvals are. REST reaches it the same way (`user_actor_of`, `403` for non-participants). Only
-`UserActor` runs commands. What a command does to the channel still goes through the channel's own,
-permission-checked operations (`ChannelLoop::wakeup`, `wakeup_actor`).
+Commands are for people; agents act through tools. A command is always issued on behalf of a
+particular person, so it is issued by that person's actor, `UserActor::execute_command(name,
+args)`, as messages and approvals are. REST reaches it the same way (`user_actor_of`, `403` for
+non-participants). Only `UserActor` issues commands. What a command of the channel does to the
+channel still goes through the channel's own, permission-checked operations (`ChannelLoop::wakeup`,
+`wakeup_actor`); a command of an agent is sent to the agent, which carries it out itself.
 
 ### Recognised by the frontend
 
@@ -486,8 +488,11 @@ answers is decided in one place.
 
 ### Commands are components
 
-A `CommandProvider` (`caelumora_runtime::command`) contributes commands, as a `ToolProvider`
-contributes tools, registered in the `ComponentRegistry`. They come from two places:
+A `ChannelCommandProvider` (`caelumora_runtime::command`) contributes commands run on the channel
+(`CommandContext`: the issuer, the `ChannelLoop`), as a `ToolProvider` contributes tools, registered
+in the `ComponentRegistry`. Its name says what a command is given: the facet for commands an agent
+carries out itself, given the agent's turn, is issue 269's. What every such facet says of its
+commands is `ProvidesCommands`. They come from two places:
 
 *   `AppConfig::commands`, the global set - by default `/help` and `/wakeup`; an empty list switches
     them off (see [CONFIGURATION.md](CONFIGURATION.md));
@@ -495,9 +500,12 @@ contributes tools, registered in the `ComponentRegistry`. They come from two pla
     into the `Session`, so a running session keeps its set.
 
 `RuntimeManager::new_command_executor` builds both once per session and hands the providers to a
-`CommandExecutor` shared by the session's channels. It is the counterpart of an agent's
-`ToolExecutor`, which likewise receives ready providers rather than a configuration. Two components
-providing the same name are a configuration error that keeps the session from starting.
+`CommandExecutor<dyn ChannelCommandProvider>` shared by the session's channels. It is the
+counterpart of an agent's `ToolExecutor`, which likewise receives ready providers rather than a
+configuration. Two components providing the same name are a configuration error that keeps the
+session from starting. The executor is generic over the facet: finding a command, refusing two of
+one name and asking the policy are the same whoever runs the commands, and only what a command is
+given to run with - the session, or an agent's turn - is the facet's.
 
 The two differ in one respect, deliberately (issue 127): the `CommandExecutor` is a runtime type,
 not a component, and checks permissions itself. How a command runs is the command's own business,
@@ -525,6 +533,69 @@ A command answers the issuer alone (`/help`) or the whole channel (`/wakeup`).
     an envelope back to its sender.
 *   The REST response carries the answer only when it is private, since the web UI receives the
     announcement on its stream.
+
+A command of an agent answers later, on the stream (see below): the REST response then carries the
+`span_id` of the requests instead, and an answer for the issuer alone is routed to them alone.
+
+## Commands of an agent
+
+Some commands act on an agent rather than on the channel (issue
+[269](../issues/269-agent-commands.md)): `/skill` puts a skill into its transcript, `/compact`
+compresses it. An agent's state in a channel has one writer, its actor there, so such a command is
+not run by the session but carried out by the agent itself - an agent run here and an external
+agent alike.
+
+*   **Contributed by components.** A component of the personality offers them through the facet
+    `AgentCommandProvider` (`caelumora_runtime::command`), as a tool is offered: `commands()` says
+    what it carries out, `execute(name, args, turn)` carries one out in the agent's `Turn`. Which
+    commands an agent carries out follows from its personality alone; a command every agent should
+    have is listed in every personality ([270](../issues/270-personality-inheritance.md)). Each
+    agent's actor holds a `CommandExecutor<dyn AgentCommandProvider>` (in `AgentCommands`); two
+    components of one name, or one that a command of the session has, keep the agent from starting.
+*   **Always addressed.** A command of an agent names its agent: `/compact @bob`, `/skill @bob
+    release-notes`; `@all` names every agent of the channel that carries it out. Without a handle,
+    or with one that names no such agent, it is refused with the handles to choose from. The
+    command is handed the rest of the line, without the handle.
+*   **Seen and asked for.** `ActionType::ShowAgentCommand` and `ExecuteAgentCommand` carry the
+    command and the attributes of the agent and of the channel. Under the ownership policy they
+    are granted to whoever may write in the channel, unless the command says it is for the agent's
+    owners alone (`Command::owners_only`): then to whoever answers for the agent, as approving its
+    calls (see [SECURITY.md](SECURITY.md#the-ownership-policy)). Who may not see a command finds it
+    unknown.
+*   **Sent, then carried out.** `UserActor::execute_command` asks the session's commands first; a
+    command they do not know it looks for among the agents of the channel
+    (`ChannelLoop::agent_commands`, what each agent carries out as the issuer may see it). It asks
+    each agent named whether the issuer may ask it (`Actor::admit_command`) - so that a refusal is
+    told at once - and sends `ActorEvent::CommandRequested { command, args, agent }` through its
+    own transport, one per agent under one span, with no wakeup ahead of it. The channel admits it
+    only from a user to an agent taking part; the moderator routes it to that agent alone. A quiet
+    channel delivers it as well.
+*   **Where it came.** The agent takes in what it was told up to the command (`take_in` ends the
+    batch there), carries the command out, and takes in the rest, so that what was said before and
+    after stands around it in its transcript as in the history. It does so asleep as well: a
+    command wakes nobody, and the agent does not respond to it. A command that comes while a turn
+    is under way waits for it.
+*   **In a turn of its own.** The agent begins a command turn
+    (`AgentChannelState::begin_command_turn`) in the request's contexts continued in its name - its
+    owner's rights, the issuer as initiator
+    ([SECURITY.md](SECURITY.md#in-whose-name-an-agent-acts)) - and its executor asks again, in the
+    context the request came with, whether the issuer may ask for it. The component stages what
+    the command changes, as a tool does. Carried out, the turn is taken over and stored; not carried
+    out, it is dropped as if it had never begun. A command turn is no answer: it announces neither
+    its start nor its end, asks nobody to respond, can be neither cancelled nor asked for again, and
+    is never stored under way - one found after a restart is dropped, unanswered.
+*   **Answered.** Carried out, the agent answers `ActorEvent::CommandExecuted` with its turn's id -
+    to the issuer alone (`to`) if the answer is private, to every user otherwise; not carried out,
+    `ActorEvent::CommandFailed` to the issuer alone, with why in the words of `CommandError`. A
+    command answers what it did, not what it read: nothing withholds its answer as a tool's result
+    is withheld.
+*   **Recorded.** What an agent carried out, with its arguments and on whose word, goes into the
+    channel's history and the agent's, before the end of its turn
+    (`HistoryEntry::CommandExecuted`) - not what it answered, which may have been the issuer's
+    alone. A command refused or failed did nothing and leaves no entry.
+*   **Listed.** `/help` lists the agents' commands after the channel's, each with the handles of the
+    agents that carry it out; the member snapshots carry what each agent carries out as the viewer
+    may see it (`MemberView::commands`), for completion.
 
 ## Built-in tools and commands
 
@@ -623,7 +694,10 @@ nothing bounds how long it runs yet (issue [254](../issues/254-commands-run-unbo
 
 ### Commands
 
-| Command | Component | Arguments | Answer | What it does |
-|---|---|---|---|---|
-| `/help` | `help_command` | `[command]` | private | Lists the commands the user may use, or describes one. |
-| `/wakeup` | `wakeup_command` | `[agent]` | channel-wide | Wakes the sleeping agents of the channel, or the one named (`@handle` or `handle`). |
+| Command | Of | Component | Arguments | Answer | What it does |
+|---|---|---|---|---|---|
+| `/help` | the channel | `help_command` | `[command]` | private | Lists the commands the user may use - the channel's and the agents' -, or describes one. |
+| `/wakeup` | the channel | `wakeup_command` | `[agent]` | channel-wide | Wakes the sleeping agents of the channel, or the one named (`@handle` or `handle`). |
+
+No built-in component carries out a command of an agent yet; the first are `/skill`
+([22](../issues/22-skill-management.md)) and `/compact` ([16](../issues/16-context-compression.md)).

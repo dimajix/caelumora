@@ -218,6 +218,16 @@ lowered below it, the turn is given up as `Lowered`, whatever it was about to do
 the turn over after a cancel - and the users are told with `TurnGivenUp` (issue 141, see
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
 
+**A command turn** (issue [269](../issues/269-agent-commands.md)) carries out a command a user
+asked the agent for, rather than answering: `AgentChannelState::begin_command_turn` begins it with
+no tools and the command kept in `TurnState::command`, and the component that carries the command
+out stages on it as a tool does. Taken over, it records the command before its end
+(`HistoryEntry::CommandExecuted`, with whom it was asked by); not carried out, it is dropped
+without an end - nothing was said or applied. It announces neither its start nor its end, is not
+the turn under way that a cancel or a retry reaches, and is never stored under way: one found
+after a restart is dropped. See
+[TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md#commands-of-an-agent).
+
 Both use the turn up and hand back the contexts it had as an `Answering` (`crate::actor`), which
 sends the turn's last event - `TurnFinished`, or `TurnGivenUp { turn_id, reason }` for
 every reason but a stop, the agent having left (issue 258) - with the publication the turn had, and

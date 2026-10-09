@@ -106,7 +106,7 @@ fn attributes_of<'a>(action: &ActionType<'a>) -> Option<&'a SecurityAttributes> 
     match *action {
         GetPersonality(a) | CreatePersonality(a) | UpdatePersonality(a) | DeletePersonality(a)
         | GetSessionTemplate(a) | CreateSessionTemplate(a) | UpdateSessionTemplate(a) | DeleteSessionTemplate(a)
-        | CreateAgent(a) | GetAgent(a) | ReadAgentContext(a) | ReadAgentTools { agent: a, .. } | ApproveToolCall { agent: a, .. } | UpdateAgent(a) | DeleteAgent(a)
+        | CreateAgent(a) | GetAgent(a) | ReadAgentContext(a) | ReadAgentTools { agent: a, .. } | ApproveToolCall { agent: a, .. } | ShowAgentCommand { agent: a, .. } | ExecuteAgentCommand { agent: a, .. } | UpdateAgent(a) | DeleteAgent(a)
         | CreateSession(a) | GetSession(a) | UpdateSession(a) | DeleteSession(a) | StopSession(a)
         | GetChannel(a) | CreateChannel(a) | UpdateChannel(a) | DeleteChannel(a)
         | GetUser(a) | CreateUser(a) | UpdateUser(a) | DeleteUser(a)
@@ -2482,3 +2482,108 @@ async fn a_workspace_chosen_as_a_session_is_made_takes_the_place_of_its_template
     }
 }
 
+// --- Commands an agent carries out itself (issue 269) ------------------------
+
+/// A component whose agent carries out `/mark`, for whoever may write in the
+/// channel, and `/seal`, for its owners alone; it keeps the context of every
+/// turn it carries one out in.
+#[derive(Debug)]
+struct Commanded(Arc<Mutex<Vec<SecurityContext>>>);
+
+impl caelumora_runtime::command::ProvidesCommands for Commanded {
+    fn commands(&self) -> Vec<caelumora_model::command::Command> {
+        let command = |name: &str, owners_only| caelumora_model::command::Command { name: name.to_string(), description: String::new(), usage: None, owners_only };
+        vec![command("mark", false), command("seal", true)]
+    }
+}
+
+#[async_trait]
+impl caelumora_runtime::command::AgentCommandProvider for Commanded {
+    async fn execute(&self, name: &str, _args: &str, turn: &mut caelumora_runtime::agent::turn::Turn<'_>) -> caelumora_runtime::command::CommandResult<caelumora_model::command::CommandOutput> {
+        self.0.lock().unwrap().push(turn.security_context().clone());
+        Ok(caelumora_model::command::CommandOutput::private(format!("{name}: done")))
+    }
+}
+
+/// A session of alice and bob with alice's `helper`, which carries out the
+/// commands of `Commanded`; what its turns ran in, and how bob's stream
+/// shows the answers to his commands.
+async fn with_a_commanded_agent() -> (World, Arc<SessionLoop>, Arc<caelumora_runtime::channel::ChannelLoop>, Arc<Mutex<Vec<SecurityContext>>>, caelumora_runtime::actor::user::ChannelWatch) {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let world = World::with_kinds(|registry| {
+        register_once(registry, "silent", caelumora_model::message::Message::new(Classification::PUBLIC));
+        let seen = Arc::clone(&seen);
+        registry.register(ComponentKind::new("commanded").provides::<dyn caelumora_runtime::command::AgentCommandProvider>(), move |_, _| {
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn caelumora_runtime::command::AgentCommandProvider>(Arc::new(Commanded(Arc::clone(&seen))));
+            Ok(facets)
+        });
+    }).await;
+    let commanded = Personality {
+        components: ComponentConfig { component_nodes: vec![
+            ComponentDescriptor::new("model", "silent"),
+            ComponentDescriptor::new("commands", "commanded"),
+        ] },
+        ..world.personality("commanded", None, &[]).await
+    };
+    world.store.update_personality(&World::system(), &commanded).await.unwrap();
+    let helper = world.agent("helper", world.alice, &commanded).await;
+    let session = world.shared_session(&[helper], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    let his = main.user_actor(world.bob).expect("he takes part").watch();
+    (world, session, main, seen, his)
+}
+
+/// What was asked about the commands of agents, of `asked`.
+fn about_agent_commands(asked: &[String]) -> Vec<&str> {
+    asked.iter().filter(|line| line.contains("AgentCommand")).map(String::as_str).collect()
+}
+
+/// A command of an agent (issue 269) is seen and asked for by whoever may
+/// write in the channel - bob, taking part -, unless it is for the agent's
+/// owners alone: `/seal` bob neither sees nor asks for, alice, the agent's
+/// owner, does. Bob's actor asks before it sends, and the agent asks again,
+/// in the context the request came with, before it carries it out.
+#[tokio::test]
+async fn a_bystander_asks_an_agent_for_its_command_but_not_for_one_of_its_owners() {
+    let (world, session, main, _, mut his) = with_a_commanded_agent().await;
+    let bob = main.user_actor(world.bob).unwrap();
+
+    let ((sent, answer), asked) = world.asked(async {
+        let sent = bob.execute_command("mark", "@helper").await;
+        (sent, shown(&mut his, "CommandExecuted").await)
+    }).await;
+    sent.expect("his to ask for");
+    assert!(matches!(answer, caelumora_model::actor::ActorEvent::CommandExecuted { ref output, .. } if output == "mark: done"), "{answer:?}");
+    assert_eq!(about_agent_commands(&asked), [
+        "bob: ShowAgentCommand(alice's) yes",
+        "bob: ShowAgentCommand(alice's) no",
+        "bob: ShowAgentCommand(alice's) yes",
+        "bob: ExecuteAgentCommand(alice's) yes",
+        "bob: ShowAgentCommand(alice's) yes",
+        "bob: ExecuteAgentCommand(alice's) yes",
+    ], "what he sees, what he may ask for, and the agent asking again");
+
+    let refused = bob.execute_command("seal", "@helper").await.expect_err("not his");
+    assert!(matches!(refused.downcast_ref::<caelumora_runtime::command::CommandError>(), Some(caelumora_runtime::command::CommandError::Unknown(name)) if name == "seal"), "unknown to him: {refused}");
+    let mut hers = main.user_actor(world.alice).unwrap().watch();
+    main.user_actor(world.alice).unwrap().execute_command("seal", "@helper").await.expect("hers, as its owner");
+    assert!(matches!(shown(&mut hers, "CommandExecuted").await, caelumora_model::actor::ActorEvent::CommandExecuted { ref output, .. } if output == "seal: done"));
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// An agent carries a command out for its owner, on the word of whoever
+/// asked (issue 255): bob's `/mark` runs in a turn whose caller is the agent,
+/// whose principal is alice, and whose initiator is bob.
+#[tokio::test]
+async fn an_agents_command_runs_for_its_owner_on_the_word_of_whoever_asked() {
+    let (world, session, main, seen, mut his) = with_a_commanded_agent().await;
+    let helper = main.members().into_iter().find(|m| m.name == "helper").expect("helper takes part").id;
+
+    main.user_actor(world.bob).unwrap().execute_command("mark", "@helper").await.expect("his to ask for");
+    shown(&mut his, "CommandExecuted").await;
+    let turn = seen.lock().unwrap().pop().expect("carried out");
+    assert_eq!((turn.caller_id, turn.principal_id, turn.initiator_id), (helper, ActorId::User(world.alice), ActorId::User(world.bob)));
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
