@@ -231,13 +231,17 @@ else who may read it - the session's owner, say - is shown its history and no in
     entries as the file browser shows them, and whether the listing was cut off - and a search -
     its pattern and where, its matches by file with their line numbers, and whether it stopped
     early or skipped files. The `file_move` handler (issue 267) shows where a file or directory lay
-    and where it lies now, and whether it was renamed or moved. The `file_publish` handler (issue
-    273) shows a file offered for download as a card - its name, size and what it is - with a
-    download through the channel's workspace (`files`, which `ChatView` hands through
+    and where it lies now, and whether it was renamed or moved. The `artifact_publish` handler
+    (issue 271) shows a published version as a card like `file_publish`'s (`DownloadCard`) - the
+    artifact's name, version, size and description, a download of that version through the
+    channel (`artifacts`, handed as `files` is), and "Keep" for its owner while it lies in the
+    session's scope, which it learns by asking for the artifact as theirs. The `file_publish`
+    handler (issue 273) shows a file offered for download as a card - its name, size and what it
+    is - with a download through the channel's workspace (`files`, which `ChatView` hands through
     `MessageView`), and says when the file changed since it was offered - its size or when it was
-    changed differ - or is gone; whoever cannot use the workspace there, and every view outside the
-    chat, gets the card without the download. The `plan` handler shows a plan's
-    summary and its steps, numbered (issue 263).
+    changed differ - or is gone; whoever cannot use the workspace there, and every view outside
+    the chat, gets the card without the download. The `plan` handler shows a plan's summary and
+    its steps, numbered (issue 263).
     Where a result keeps the record of the questions its call asked (`answers`, issue 165), the
     frame shows it (`AnswersRecord`, issue 268): who answered or declined, and each question with
     every choice that was offered, one below the other, the chosen ones marked and the others

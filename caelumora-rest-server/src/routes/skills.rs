@@ -5,13 +5,12 @@
 //! an agent with `/skill`.
 use crate::auth::AuthenticatedUser;
 use crate::error::{ApiError, Json, Path, Subject};
-use crate::models::{CreateSkillRequest, DeletedResponse, ListOptions, RenameSkillRequest, ScopeKind, SkillBodyRequest, SkillDescriptionRequest, SkillResponse};
+use crate::models::{CreateSkillRequest, DeletedResponse, ListOptions, RenameSkillRequest, SkillBodyRequest, SkillDescriptionRequest, SkillResponse};
 use crate::state::AppState;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::scope::Scope;
 use caelumora_model::skill::SkillId;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -36,11 +35,8 @@ pub async fn list_skills(State(state): State<Arc<AppState>>, Query(options): Que
 
 /// Makes a skill of the user's, in their scope or the global one.
 pub async fn create_skill(State(state): State<Arc<AppState>>, user: AuthenticatedUser, Json(request): Json<CreateSkillRequest>) -> Result<(StatusCode, Json<SkillResponse>), ApiError> {
-    let scope = match request.scope {
-        ScopeKind::User => Scope::UserScope { user_id: user.id },
-        ScopeKind::Global => Scope::GlobalScope,
-        ScopeKind::Session => return Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid_scope", "A skill of a session's scope is written by an agent in it")),
-    };
+    let scope = request.scope.of_user(user.id)
+        .ok_or_else(|| ApiError::new(StatusCode::BAD_REQUEST, "invalid_scope", "A skill of a session's scope is written by an agent in it"))?;
     let classification = request.classification.unwrap_or(Classification::CHANNEL_DEFAULT);
     let made = state.runtime_manager.skill_manager()
         .create(&user.security_context(), &request.name, scope, &request.description, &request.body, classification).await

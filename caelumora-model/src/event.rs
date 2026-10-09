@@ -4,6 +4,7 @@ use crate::session::{SessionId, SessionUpdateEvent};
 use crate::user::{UserId, UserProfile, UserUpdateEvent};
 use crate::workspace::{WorkspaceId, WorkspaceUpdateEvent};
 use crate::skill::{SkillId, SkillUpdateEvent};
+use crate::artifact::ArtifactId;
 use crate::security::SecurityAttributes;
 use serde::{Deserialize, Serialize};
 
@@ -66,6 +67,15 @@ pub enum GlobalEvent {
     SkillUpdated(SkillId, SkillUpdateEvent),
     SkillDeleted(SkillId),
     SkillRestored(SkillId),
+    /// About an artifact (issue 271), which belongs to a user. Published
+    /// with the artifact's attributes: its owner receives them; the readers
+    /// of a channel learn of a version from the message that published it.
+    /// A version was published - the first makes the artifact.
+    ArtifactPublished(ArtifactId, u32),
+    /// Kept in another scope, or described anew.
+    ArtifactUpdated(ArtifactId),
+    ArtifactDeleted(ArtifactId),
+    ArtifactRestored(ArtifactId),
 }
 
 pub trait EventPublisher: Send + Sync + std::fmt::Debug {

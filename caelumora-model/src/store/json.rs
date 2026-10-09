@@ -5,13 +5,14 @@ use crate::removal::{Deletable, Removal, Stored};
 use crate::scope::Scoped;
 use crate::security::SecurityManager;
 use crate::value::name::ScopedName;
-use crate::store::access::{name_free, Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, SKILLS, USERS, USER_PROFILES, WORKSPACES};
+use crate::store::access::{name_free, Access, Actions, AGENTS, ARTIFACTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, SKILLS, USERS, USER_PROFILES, WORKSPACES};
 use crate::session::{Session, SessionId};
 use crate::store::{ComponentStore, EntityKind, EntityStore, Journaled, StateStore, StoreError, StoreResult};
 use crate::template::{SessionTemplate, SessionTemplateId};
 use crate::user::{User, UserId, UserProfile};
 use crate::workspace::{Workspace, WorkspaceId};
 use crate::skill::{Skill, SkillId};
+use crate::artifact::{Artifact, ArtifactId};
 use async_trait::async_trait;
 use tracing::{debug, info, warn};
 use serde::de::DeserializeOwned;
@@ -57,7 +58,7 @@ impl JsonFileStore {
             root,
             security_manager,
             journal_floor: DEFAULT_JOURNAL_FLOOR,
-            name_locks: [EntityKind::Personality, EntityKind::SessionTemplate, EntityKind::Agent, EntityKind::Channel, EntityKind::User, EntityKind::Workspace, EntityKind::Skill]
+            name_locks: [EntityKind::Personality, EntityKind::SessionTemplate, EntityKind::Agent, EntityKind::Channel, EntityKind::User, EntityKind::Workspace, EntityKind::Skill, EntityKind::Artifact]
                 .into_iter().map(|kind| (kind, Mutex::new(()))).collect(),
         };
         store.ensure_layout()?;
@@ -86,6 +87,7 @@ impl JsonFileStore {
             self.user_profiles_dir(),
             self.workspaces_dir(),
             self.skills_dir(),
+            self.artifacts_dir(),
             self.agent_states_dir(),
             self.agent_channel_states_dir(),
             self.channel_states_dir(),
@@ -124,6 +126,10 @@ impl JsonFileStore {
 
     fn skills_dir(&self) -> PathBuf {
         self.root.join("runtime").join("skills")
+    }
+
+    fn artifacts_dir(&self) -> PathBuf {
+        self.root.join("runtime").join("artifacts")
     }
 
     fn sessions_dir(&self) -> PathBuf {
@@ -185,6 +191,10 @@ impl JsonFileStore {
 
     fn skill_path(&self, id: SkillId) -> PathBuf {
         self.skills_dir().join(format!("{id}.json"))
+    }
+
+    fn artifact_path(&self, id: ArtifactId) -> PathBuf {
+        self.artifacts_dir().join(format!("{id}.json"))
     }
 
     fn agent_channel_state_path(&self, agent_id: AgentId, channel_id: ChannelId) -> PathBuf {
@@ -821,6 +831,39 @@ impl EntityStore for JsonFileStore {
     }
     async fn find_skill_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Skill> {
         self.find_dir(ctx, &SKILLS, self.skills_dir(), name).await
+    }
+
+    // Artifacts (issue 271) - the documents; their content lies in their
+    // storage.
+    async fn create_artifact(&self, ctx: &SecurityContext, value: &Artifact) -> StoreResult<()> {
+        self.create_named_file(ctx, &ARTIFACTS, self.artifact_path(value.id), value.id.to_string(), value).await
+    }
+    async fn get_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<Artifact> {
+        self.get_file(ctx, &ARTIFACTS, self.artifact_path(id), id.to_string()).await
+    }
+    async fn update_artifact(&self, ctx: &SecurityContext, value: &Artifact) -> StoreResult<()> {
+        self.update_named_file(ctx, &ARTIFACTS, self.artifact_path(value.id), value.id.to_string(), value).await
+    }
+    async fn delete_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<bool> {
+        self.delete_file::<Artifact>(ctx, &ARTIFACTS, self.artifact_path(id)).await
+    }
+    async fn list_artifacts(&self, ctx: &SecurityContext) -> StoreResult<Vec<Artifact>> {
+        self.list_dir(ctx, &ARTIFACTS, self.artifacts_dir()).await
+    }
+    async fn restore_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<()> {
+        self.restore_named_file::<Artifact>(ctx, &ARTIFACTS, self.artifact_path(id), id.to_string()).await
+    }
+    async fn purge_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<bool> {
+        self.purge_file::<Artifact>(ctx, &ARTIFACTS, self.artifact_path(id)).await
+    }
+    async fn get_deleted_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<Artifact> {
+        self.get_deleted_file(ctx, &ARTIFACTS, self.artifact_path(id), id.to_string()).await
+    }
+    async fn list_deleted_artifacts(&self, ctx: &SecurityContext) -> StoreResult<Vec<Artifact>> {
+        self.list_deleted_dir(ctx, &ARTIFACTS, self.artifacts_dir()).await
+    }
+    async fn find_artifact_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Artifact> {
+        self.find_dir(ctx, &ARTIFACTS, self.artifacts_dir(), name).await
     }
 }
 

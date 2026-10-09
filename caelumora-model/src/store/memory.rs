@@ -12,9 +12,10 @@ use crate::removal::{Deletable, Removal, Stored};
 use crate::scope::Scoped;
 use crate::value::name::ScopedName;
 use crate::security::{DummySecurityManager, SecurityManager};
-use crate::store::access::{name_free, Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, SKILLS, USERS, USER_PROFILES, WORKSPACES};
+use crate::store::access::{name_free, Access, Actions, AGENTS, ARTIFACTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, SKILLS, USERS, USER_PROFILES, WORKSPACES};
 use crate::workspace::{Workspace, WorkspaceId};
 use crate::skill::{Skill, SkillId};
+use crate::artifact::{Artifact, ArtifactId};
 use std::fmt::Display;
 use std::hash::Hash;
 
@@ -30,6 +31,7 @@ pub struct MemoryStore {
     user_profiles: RwLock<HashMap<UserId, UserProfile>>,
     workspaces: RwLock<HashMap<WorkspaceId, Workspace>>,
     skills: RwLock<HashMap<SkillId, Skill>>,
+    artifacts: RwLock<HashMap<ArtifactId, Artifact>>,
     agent_states: RwLock<HashMap<AgentId, AgentState>>,
     agent_channel_states: RwLock<HashMap<(AgentId, ChannelId), AgentChannelState>>,
     channel_states: RwLock<HashMap<ChannelId, ChannelState>>,
@@ -62,6 +64,7 @@ impl MemoryStore {
             user_profiles: Default::default(),
             workspaces: Default::default(),
             skills: Default::default(),
+            artifacts: Default::default(),
             agent_states: Default::default(),
             agent_channel_states: Default::default(),
             channel_states: Default::default(),
@@ -540,6 +543,38 @@ impl EntityStore for MemoryStore {
     }
     async fn find_skill_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Skill> {
         self.find_in(ctx, &self.skills, &SKILLS, name).await
+    }
+
+    // Artifacts (issue 271)
+    async fn create_artifact(&self, ctx: &SecurityContext, value: &Artifact) -> StoreResult<()> {
+        self.create_named_in(ctx, &self.artifacts, &ARTIFACTS, value.id, value).await
+    }
+    async fn get_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<Artifact> {
+        self.get_in(ctx, &self.artifacts, &ARTIFACTS, &id).await
+    }
+    async fn update_artifact(&self, ctx: &SecurityContext, value: &Artifact) -> StoreResult<()> {
+        self.update_named_in(ctx, &self.artifacts, &ARTIFACTS, value.id, value).await
+    }
+    async fn delete_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<bool> {
+        self.delete_in(ctx, &self.artifacts, &ARTIFACTS, id).await
+    }
+    async fn list_artifacts(&self, ctx: &SecurityContext) -> StoreResult<Vec<Artifact>> {
+        self.list_in(ctx, &self.artifacts, &ARTIFACTS).await
+    }
+    async fn restore_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<()> {
+        self.restore_named_in(ctx, &self.artifacts, &ARTIFACTS, id).await
+    }
+    async fn purge_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<bool> {
+        self.purge_in(ctx, &self.artifacts, &ARTIFACTS, &id).await
+    }
+    async fn get_deleted_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<Artifact> {
+        self.get_deleted_in(ctx, &self.artifacts, &ARTIFACTS, &id).await
+    }
+    async fn list_deleted_artifacts(&self, ctx: &SecurityContext) -> StoreResult<Vec<Artifact>> {
+        self.list_deleted_in(ctx, &self.artifacts, &ARTIFACTS).await
+    }
+    async fn find_artifact_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Artifact> {
+        self.find_in(ctx, &self.artifacts, &ARTIFACTS, name).await
     }
 }
 

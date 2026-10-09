@@ -133,6 +133,7 @@ pub enum Subject {
     Context,
     Workspace,
     Skill,
+    Artifact,
 }
 
 impl Subject {
@@ -146,6 +147,7 @@ impl Subject {
             Subject::Context => "context_forbidden",
             Subject::Workspace => "workspace_forbidden",
             Subject::Skill => "skill_forbidden",
+            Subject::Artifact => "artifact_forbidden",
         }
     }
 
@@ -159,6 +161,7 @@ impl Subject {
             Subject::Context => "context_failed",
             Subject::Workspace => "workspace_failed",
             Subject::Skill => "skill_failed",
+            Subject::Artifact => "artifact_failed",
         }
     }
 }
@@ -189,6 +192,7 @@ impl ApiError {
         use caelumora_runtime::terminal::TerminalError;
         use caelumora_runtime::workspace::WorkspaceError;
         use caelumora_runtime::skill::SkillError;
+        use caelumora_runtime::artifact::ArtifactError;
 
         let detail = error.to_string();
         let bad_request = |code| Self::new(StatusCode::BAD_REQUEST, code, detail.clone());
@@ -209,6 +213,7 @@ impl ApiError {
                 ViewError::MemberNotFound { .. } => return Self::not_found("actor_not_found", detail),
                 ViewError::WorkspaceNotFound(_) => return Self::not_found("workspace_not_found", detail),
                 ViewError::SkillNotFound(_) | ViewError::NoSkillNamed(_) => return Self::not_found("skill_not_found", detail),
+                ViewError::ArtifactNotFound(_) => return Self::not_found("artifact_not_found", detail),
                 ViewError::NoContext { .. } => return Self::not_found("context_not_recorded", detail),
                 ViewError::Forbidden { .. } => return Self::forbidden(subject.forbidden(), detail),
                 ViewError::Failed(_) => {}
@@ -243,6 +248,26 @@ impl ApiError {
                 // A caller that is no user, or the store broke: not the
                 // client's request.
                 SkillError::OwnerNotAUser | SkillError::Store(_) => {}
+            }
+        }
+        if let Some(e) = error.downcast_ref::<ArtifactError>() {
+            match e {
+                ArtifactError::NotFound(_) | ArtifactError::Store(StoreError::NotFound { .. }) => return Self::not_found("artifact_not_found", detail),
+                ArtifactError::VersionNotFound { .. } => return Self::not_found("version_not_found", detail),
+                ArtifactError::NotConfigured => return bad_request("artifacts_not_configured"),
+                ArtifactError::UnknownStorage(_) => return bad_request("unknown_storage"),
+                ArtifactError::StorageNotCleared(_) => return bad_request("storage_not_cleared"),
+                ArtifactError::ClassifiedOtherwise(_) => return Self::conflict("classified_otherwise", detail),
+                ArtifactError::TooLarge { .. } => return bad_request("too_large"),
+                ArtifactError::Changed => return Self::conflict("changed", detail),
+                ArtifactError::NotInChannel | ArtifactError::InvalidScope => return bad_request("invalid_scope"),
+                ArtifactError::Invalid(e) => return Self::invalid_value(e),
+                ArtifactError::Terminal(e) => return Self::of_terminal(e),
+                ArtifactError::Store(StoreError::NameTaken { .. }) => return Self::conflict("name_taken", detail),
+                ArtifactError::Store(StoreError::PermissionDenied) => return Self::forbidden(subject.forbidden(), format!("{} is not permitted", capitalize(action))),
+                // A caller that is no user, the workspace's own failure, the
+                // storage or the store broke: not the client's request.
+                ArtifactError::OwnerNotAUser | ArtifactError::Workspace(_) | ArtifactError::Unavailable(_) | ArtifactError::Store(_) => {}
             }
         }
         if let Some(e) = error.downcast_ref::<TerminalError>() {
@@ -508,6 +533,16 @@ mod tests {
             assert_eq!(file(TerminalError::Unavailable("permission denied".to_string())), (503, "storage_unavailable"));
             assert_eq!(answer(not_found("workspace"), Subject::Session), (404, "workspace_not_found"), "as attaching reports it");
             assert_eq!(answer(anyhow::Error::new(SessionError::WorkspaceOutOfScope(id)), Subject::Session), (400, "workspace_out_of_scope"));
+        {
+            use caelumora_runtime::artifact::ArtifactError;
+            let artifact = caelumora_model::artifact::ArtifactId::new();
+            assert_eq!(answer(anyhow::Error::new(ArtifactError::NotFound(artifact)), Subject::Artifact), (404, "artifact_not_found"));
+            assert_eq!(answer(anyhow::Error::new(ArtifactError::VersionNotFound { artifact, version: 2 }), Subject::Artifact), (404, "version_not_found"));
+            assert_eq!(answer(anyhow::Error::new(ArtifactError::ClassifiedOtherwise("r.csv".to_string())), Subject::Artifact), (409, "classified_otherwise"));
+            assert_eq!(answer(anyhow::Error::new(ArtifactError::Store(StoreError::PermissionDenied)), Subject::Artifact), (403, "artifact_forbidden"));
+            assert_eq!(answer(anyhow::Error::new(ArtifactError::Store(StoreError::NameTaken { entity: "artifact" })), Subject::Artifact), (409, "name_taken"));
+            assert_eq!(answer(anyhow::Error::new(ArtifactError::Unavailable("broken".to_string())), Subject::Artifact).0, 500, "the storage's failure is not the client's");
+        }
         }
         use caelumora_model::question::{QuestionError, QuestionId};
         let question = |reason| anyhow::Error::new(ChannelError::Question { question: QuestionId::new(), channel, reason });

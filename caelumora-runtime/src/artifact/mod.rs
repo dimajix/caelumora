@@ -1,0 +1,422 @@
+//! The one owner of "an artifact and its content" (issue 271): it publishes
+//! versions - their content kept first, then the document, then announced -,
+//! keeps artifacts in another scope, deletes and purges them, and is the
+//! only code that holds the `ArtifactStorage`s, one per configured storage.
+//! Deleting and restoring artifacts with what holds their scope is
+//! `scoped.rs`'s, which marks them as it marks every kind.
+//!
+//! A version is read in one of two ways:
+//!
+//! - *by its owner* (`content`): `GetArtifact`, wherever it lies;
+//! - *in the channel it was published in* (`published_content`): by
+//!   whoever may read that channel - asked by the channel's view before it
+//!   asks here -, and only a version published there.
+//!
+//! An artifact is published into its session's scope, made with the first
+//! version of its name there and gone with the session, until its owner
+//! keeps it in their own scope or the global one (`keep`). Its
+//! classification is the workspace's its first version was copied from;
+//! a later version from a workspace classified otherwise is refused.
+
+mod local;
+
+use crate::component::{ComponentError, ComponentResult};
+use crate::event::EventBus;
+use crate::terminal::{ByteStream, Terminal, TerminalError, WorkspacePath};
+use async_trait::async_trait;
+use caelumora_model::actor::ActorId;
+use caelumora_model::artifact::{Artifact, ArtifactId, ArtifactVersion};
+use caelumora_model::config::{ArtifactStorageConfig, ArtifactsConfig};
+use caelumora_model::confidentiality::Classification;
+use caelumora_model::digest::ContentDigest;
+use caelumora_model::event::GlobalEvent;
+use caelumora_model::scope::{Scope, Scoped};
+use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityAttributes, SecurityContext, SecurityManager};
+use caelumora_model::session::{ChannelId, SessionId};
+use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResultExt};
+use caelumora_model::value::name::ScopedName;
+use caelumora_model::value::text::Description;
+use caelumora_model::value::ValueError;
+use caelumora_model::workspace::Workspace;
+use chrono::Utc;
+use futures::StreamExt;
+use local::LocalArtifactStorage;
+use std::collections::BTreeMap;
+use std::fmt;
+use std::sync::{Arc, Mutex as SyncMutex, PoisonError};
+use tokio::sync::Mutex;
+use tracing::{info, warn};
+
+#[derive(Debug, thiserror::Error)]
+pub enum ArtifactError {
+    #[error("no artifact {0}")]
+    NotFound(ArtifactId),
+    #[error("no version {version} of artifact {artifact}")]
+    VersionNotFound { artifact: ArtifactId, version: u32 },
+    #[error("no storage of artifacts is configured")]
+    NotConfigured,
+    #[error("the storage '{0}' of artifacts is not configured")]
+    UnknownStorage(String),
+    #[error("an artifact is published by a user, or for one")]
+    OwnerNotAUser,
+    /// What is so classified may not be put into the storage.
+    #[error("the storage '{0}' of artifacts may not hold what is so classified")]
+    StorageNotCleared(String),
+    /// A later version from a workspace classified otherwise than the first.
+    #[error("the artifact '{0}' is classified otherwise than the workspace; publish it under another name")]
+    ClassifiedOtherwise(String),
+    #[error("the version is larger than the {limit} bytes an artifact may be")]
+    TooLarge { limit: u64 },
+    #[error("the file changed while it was published; publish it again once it is written")]
+    Changed,
+    /// Published from a workspace not reached through a channel.
+    #[error("an artifact is published in a channel")]
+    NotInChannel,
+    /// The workspace to publish from may no longer be used.
+    #[error(transparent)]
+    Workspace(#[from] crate::workspace::WorkspaceError),
+    /// Kept in a scope an artifact cannot lie in.
+    #[error("an artifact is kept in its owner's scope or the global one")]
+    InvalidScope,
+    #[error(transparent)]
+    Invalid(#[from] ValueError),
+    /// Reading the file to publish failed.
+    #[error(transparent)]
+    Terminal(#[from] TerminalError),
+    /// The storage failed: what happened, never where.
+    #[error("the storage of artifacts failed: {0}")]
+    Unavailable(String),
+    #[error(transparent)]
+    Store(#[from] StoreError),
+}
+
+pub type ArtifactResult<T> = Result<T, ArtifactError>;
+
+/// `NotFound` for artifact `id` where the store found nothing.
+fn store_error(id: ArtifactId) -> impl FnOnce(StoreError) -> ArtifactError {
+    move |e| match e {
+        StoreError::NotFound { .. } => ArtifactError::NotFound(id),
+        e => ArtifactError::Store(e),
+    }
+}
+
+/// Where the content of artifacts lies (issue 271): one piece per version,
+/// by artifact and number, without permissions - which are the manager's.
+#[async_trait]
+pub(crate) trait ArtifactStorage: Send + Sync + fmt::Debug {
+    /// Keeps `content` as version `version` of `artifact`, at most `limit`
+    /// bytes, or nothing; answers how many bytes were kept.
+    async fn put(&self, artifact: ArtifactId, version: u32, content: ByteStream, limit: u64) -> ArtifactResult<u64>;
+    /// The content of version `version` of `artifact`, with its size.
+    async fn get(&self, artifact: ArtifactId, version: u32) -> ArtifactResult<(u64, ByteStream)>;
+    /// Removes version `version` of `artifact`; nothing there is no error.
+    async fn delete(&self, artifact: ArtifactId, version: u32) -> ArtifactResult<()>;
+    /// Removes every version of `artifact`; nothing there is no error.
+    async fn remove(&self, artifact: ArtifactId) -> ArtifactResult<()>;
+    /// What may be put into it: the classification an artifact in it may
+    /// have at most; `None` for no bound.
+    fn destination(&self) -> Option<&Classification>;
+}
+
+pub struct ArtifactManager {
+    entities: Arc<dyn EntityStore>,
+    events: Arc<EventBus>,
+    security: Arc<dyn SecurityManager>,
+    storages: BTreeMap<String, Arc<dyn ArtifactStorage>>,
+    /// The storage new artifacts are made in.
+    publish_to: Option<String>,
+    max_bytes: u64,
+    /// Held while a document and its content are changed together, so that
+    /// two versions of one artifact are not numbered alike.
+    writing: Mutex<()>,
+}
+
+impl fmt::Debug for ArtifactManager {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ArtifactManager").field("storages", &self.storages.keys().collect::<Vec<_>>()).field("publish_to", &self.publish_to).finish()
+    }
+}
+
+impl ArtifactManager {
+    pub(crate) fn new(entities: Arc<dyn EntityStore>, events: Arc<EventBus>, security: Arc<dyn SecurityManager>, config: &ArtifactsConfig) -> ComponentResult<Self> {
+        config.check().map_err(|why| ComponentError::InvalidConfig(format!("artifacts: {why}")))?;
+        let storages = config.storage.iter()
+            .map(|(name, storage)| {
+                let storage: Arc<dyn ArtifactStorage> = match storage {
+                    ArtifactStorageConfig::Local { root, destination } => Arc::new(LocalArtifactStorage::new(root.clone(), destination.clone())),
+                };
+                (name.clone(), storage)
+            })
+            .collect();
+        Ok(Self { entities, events, security, storages, publish_to: config.publish_to().map(String::from), max_bytes: config.max_bytes, writing: Mutex::new(()) })
+    }
+
+    /// Whether artifacts can be published: a storage is configured.
+    pub fn is_configured(&self) -> bool {
+        self.publish_to.is_some()
+    }
+
+    fn storage(&self, name: &str) -> ArtifactResult<&Arc<dyn ArtifactStorage>> {
+        self.storages.get(name).ok_or_else(|| ArtifactError::UnknownStorage(name.to_string()))
+    }
+
+    /// Publishes the file `at` of `workspace`, read through `terminal`, as
+    /// a version of the artifact `name` in the session `session`'s scope,
+    /// published in `channel` by the agent `ctx` names as its caller, for
+    /// the user it acts for: the artifact of that name there gains a
+    /// version, or is made with its first. Its owner may change it, or
+    /// make it (`UpdateArtifact`, `CreateArtifact`), asked before anything
+    /// is kept; its storage may hold what is classified as the workspace.
+    /// The content is kept first, its digest taken as it is; a document
+    /// that cannot be stored leaves no content. Answers the artifact as it
+    /// is now, and the number of the new version.
+    ///
+    /// # Errors
+    /// `NotConfigured`, `OwnerNotAUser`, `Invalid` for a name that is
+    /// none, `ClassifiedOtherwise`, `StorageNotCleared`, `TooLarge`,
+    /// `Changed`, a `TerminalError` of reading the file, `Unavailable`, or
+    /// whatever the store reports - `PermissionDenied` and `NameTaken`
+    /// among it.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn publish(&self, ctx: &SecurityContext, terminal: &dyn Terminal, workspace: &Workspace, at: &WorkspacePath, name: &str, description: Option<&str>, session: SessionId, channel: ChannelId) -> ArtifactResult<(Artifact, u32)> {
+        let ActorId::User(owner) = ctx.principal_id else { return Err(ArtifactError::OwnerNotAUser) };
+        let name = ScopedName::new(name, Scope::SessionScope { session_id: session })?;
+        let description = Description::optional(description)?;
+        let _writing = self.writing.lock().await;
+        let existing = self.entities.find_artifact_by_name(ctx, &name).await.optional()?;
+        let (id, number, storage_name) = match &existing {
+            Some(artifact) => {
+                if artifact.classification != workspace.classification {
+                    return Err(ArtifactError::ClassifiedOtherwise(artifact.name.name.to_string()));
+                }
+                self.security.require(ctx, ActionType::UpdateArtifact(&artifact.security_attributes), || StoreError::PermissionDenied).await?;
+                (artifact.id, artifact.latest().map_or(1, |latest| latest.number + 1), artifact.storage.clone())
+            }
+            None => {
+                let attributes = SecurityAttributes::owned_by(ActorId::User(owner));
+                self.security.require(ctx, ActionType::CreateArtifact(&attributes), || StoreError::PermissionDenied).await?;
+                (ArtifactId::new(), 1, self.publish_to.clone().ok_or(ArtifactError::NotConfigured)?)
+            }
+        };
+        let storage = self.storage(&storage_name)?;
+        if let Some(destination) = storage.destination() {
+            if !self.security.may_publish(ctx, ctx.caller_id, &workspace.classification, destination).await {
+                return Err(ArtifactError::StorageNotCleared(storage_name));
+            }
+        }
+
+        let (size, content) = terminal.read(at).await?;
+        if size > self.max_bytes {
+            return Err(ArtifactError::TooLarge { limit: self.max_bytes });
+        }
+        let digest = Arc::new(SyncMutex::new(ContentDigest::new(size)));
+        let digesting = Arc::clone(&digest);
+        let content: ByteStream = Box::pin(content.inspect(move |chunk| {
+            if let Ok(chunk) = chunk {
+                digesting.lock().unwrap_or_else(PoisonError::into_inner).update(chunk);
+            }
+        }));
+        let kept = storage.put(id, number, content, self.max_bytes).await?;
+        let digest = match Arc::try_unwrap(digest) {
+            Ok(digest) if kept == size => digest.into_inner().unwrap_or_else(PoisonError::into_inner).finish(),
+            _ => {
+                self.forget(storage, id, number, existing.is_none()).await;
+                return Err(ArtifactError::Changed);
+            }
+        };
+
+        let version = ArtifactVersion { number, size, digest, media_type: None, session_id: session, channel_id: channel, published_by: ctx.caller_id, published_at: Utc::now() };
+        let stored = match existing {
+            Some(mut artifact) => {
+                artifact.add_version(version);
+                if description.is_some() {
+                    artifact.description = description;
+                }
+                self.entities.update_artifact(ctx, &artifact).await.map(|()| artifact)
+            }
+            None => {
+                let mut artifact = Artifact::new(id, name, storage_name, workspace.classification.clone(), owner, version);
+                artifact.description = description;
+                self.entities.create_artifact(ctx, &artifact).await.map(|()| artifact)
+            }
+        };
+        let artifact = match stored {
+            Ok(artifact) => artifact,
+            Err(e) => {
+                self.forget(storage, id, number, number == 1).await;
+                return Err(e.into());
+            }
+        };
+        self.events.publish(GlobalEvent::ArtifactPublished(id, number), artifact.security_attributes.clone());
+        info!(artifact = %id, version = number, by = %ctx.caller_id, "Artifact published");
+        Ok((artifact, number))
+    }
+
+    /// Removes what was kept of version `number` of artifact `id` for a
+    /// publication that failed after - all of it for an artifact that was
+    /// to be made by it. Logged where it fails: the failure that led here
+    /// is what the caller is told.
+    async fn forget(&self, storage: &Arc<dyn ArtifactStorage>, id: ArtifactId, number: u32, made: bool) {
+        let removed = if made { storage.remove(id).await } else { storage.delete(id, number).await };
+        if let Err(e) = removed {
+            warn!(artifact = %id, version = number, "What was kept of a publication that failed stays: {e}");
+        }
+    }
+
+    /// The content of version `number` of artifact `id`, read by its owner
+    /// (`GetArtifact`), wherever it lies.
+    ///
+    /// # Errors
+    /// `NotFound` if there is none the caller may read, `VersionNotFound`,
+    /// `UnknownStorage`, or `Unavailable`.
+    pub async fn content(&self, ctx: &SecurityContext, id: ArtifactId, number: u32) -> ArtifactResult<(Artifact, u64, ByteStream)> {
+        let artifact = self.entities.get_artifact(ctx, id).await.map_err(store_error(id))?;
+        self.content_of(artifact, number).await
+    }
+
+    /// The content of version `number` of artifact `id`, if it was
+    /// published in `channel` of `session` - read for whoever may read that
+    /// channel, which the channel's view asked before it asks here.
+    ///
+    /// # Errors
+    /// `NotFound` if there is no such artifact, `VersionNotFound` if it has
+    /// no such version published there, `UnknownStorage`, or `Unavailable`.
+    pub(crate) async fn published_content(&self, id: ArtifactId, number: u32, session: SessionId, channel: ChannelId) -> ArtifactResult<(Artifact, u64, ByteStream)> {
+        let artifact = self.entities.get_artifact(&SecurityContext::system(), id).await.map_err(store_error(id))?;
+        match artifact.version(number) {
+            Some(version) if version.session_id == session && version.channel_id == channel => self.content_of(artifact, number).await,
+            _ => Err(ArtifactError::VersionNotFound { artifact: id, version: number }),
+        }
+    }
+
+    /// The artifacts with a version published in `channel` of `session`,
+    /// each with those versions alone - read for whoever may read that
+    /// channel, which the channel's view asked before it asks here.
+    ///
+    /// # Errors
+    /// Whatever the store reports.
+    pub(crate) async fn published_in(&self, session: SessionId, channel: ChannelId) -> ArtifactResult<Vec<Artifact>> {
+        let all = self.entities.list_artifacts(&SecurityContext::system()).await?;
+        Ok(all.into_iter()
+            .filter_map(|mut artifact| {
+                artifact.versions.retain(|version| version.session_id == session && version.channel_id == channel);
+                (!artifact.versions.is_empty()).then_some(artifact)
+            })
+            .collect())
+    }
+
+    async fn content_of(&self, artifact: Artifact, number: u32) -> ArtifactResult<(Artifact, u64, ByteStream)> {
+        if artifact.version(number).is_none() {
+            return Err(ArtifactError::VersionNotFound { artifact: artifact.id, version: number });
+        }
+        let (size, content) = self.storage(&artifact.storage)?.get(artifact.id, number).await?;
+        Ok((artifact, size, content))
+    }
+
+    /// Keeps artifact `id` in `scope` - its owner's or the global one -,
+    /// beyond the session it was published in (`UpdateArtifact`, its
+    /// owner's act).
+    ///
+    /// # Errors
+    /// `NotFound`, `InvalidScope` for another scope, or whatever the store
+    /// reports - `PermissionDenied` and `NameTaken` among it.
+    pub async fn keep(&self, ctx: &SecurityContext, id: ArtifactId, scope: Scope) -> ArtifactResult<Artifact> {
+        let _writing = self.writing.lock().await;
+        let mut artifact = self.entities.get_artifact(ctx, id).await.map_err(store_error(id))?;
+        self.security.require(ctx, ActionType::UpdateArtifact(&artifact.security_attributes), || StoreError::PermissionDenied).await?;
+        match (&scope, artifact.owner()) {
+            (Scope::GlobalScope, _) => {}
+            (Scope::UserScope { user_id }, Some(owner)) if *user_id == owner => {}
+            _ => return Err(ArtifactError::InvalidScope),
+        }
+        artifact.name.scope = scope;
+        artifact.updated_at = Utc::now();
+        self.entities.update_artifact(ctx, &artifact).await?;
+        self.events.publish(GlobalEvent::ArtifactUpdated(id), artifact.security_attributes.clone());
+        info!(artifact = %id, by = %ctx.caller_id, "Artifact kept");
+        Ok(artifact)
+    }
+
+    /// Says what artifact `id` is; `None` or empty takes it away
+    /// (`UpdateArtifact`, its owner's act).
+    ///
+    /// # Errors
+    /// `NotFound`, `Invalid` for a description that does not fit, or
+    /// whatever the store reports - `PermissionDenied` among it.
+    pub async fn describe(&self, ctx: &SecurityContext, id: ArtifactId, description: Option<&str>) -> ArtifactResult<Artifact> {
+        let _writing = self.writing.lock().await;
+        let mut artifact = self.entities.get_artifact(ctx, id).await.map_err(store_error(id))?;
+        self.security.require(ctx, ActionType::UpdateArtifact(&artifact.security_attributes), || StoreError::PermissionDenied).await?;
+        artifact.description = Description::optional(description)?;
+        artifact.updated_at = Utc::now();
+        self.entities.update_artifact(ctx, &artifact).await?;
+        self.events.publish(GlobalEvent::ArtifactUpdated(id), artifact.security_attributes.clone());
+        Ok(artifact)
+    }
+
+    /// Deletes artifact `id` (`DeleteArtifact`), its content kept until it
+    /// is purged; `false` if there was none the caller could see.
+    ///
+    /// # Errors
+    /// Whatever the store reports, `PermissionDenied` included.
+    pub async fn delete(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<bool> {
+        let _writing = self.writing.lock().await;
+        let Some(artifact) = self.entities.get_artifact(ctx, id).await.optional()? else { return Ok(false) };
+        if !self.entities.delete_artifact(ctx, id).await? {
+            return Ok(false);
+        }
+        self.events.publish(GlobalEvent::ArtifactDeleted(id), artifact.security_attributes);
+        info!(artifact = %id, by = %ctx.caller_id, "Artifact deleted");
+        Ok(true)
+    }
+
+    /// Takes the deletion of artifact `id` back (`Restore`).
+    ///
+    /// # Errors
+    /// `NotFound` if it is not deleted or not the caller's to restore, or
+    /// whatever else the store reports - `NameTaken` among it.
+    pub async fn restore(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<()> {
+        let _writing = self.writing.lock().await;
+        self.entities.restore_artifact(ctx, id).await.map_err(store_error(id))?;
+        let artifact = self.entities.get_artifact(ctx, id).await.map_err(store_error(id))?;
+        self.events.publish(GlobalEvent::ArtifactRestored(id), artifact.security_attributes);
+        info!(artifact = %id, by = %ctx.caller_id, "Artifact restored");
+        Ok(())
+    }
+
+    /// Removes the deleted artifact `id` for good, its content first
+    /// (`Purge`, asked before anything is removed). Content that cannot be
+    /// removed leaves the document, so that the next purge tries again.
+    /// `false` if there was nothing deleted the caller could see.
+    ///
+    /// # Errors
+    /// `PermissionDenied`, `UnknownStorage`, `Unavailable`, or whatever
+    /// the store reports.
+    pub async fn purge(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<bool> {
+        let _writing = self.writing.lock().await;
+        let Some(artifact) = self.entities.get_deleted_artifact(ctx, id).await.optional()? else { return Ok(false) };
+        self.security.require(ctx, ActionType::Purge(EntityKind::Artifact, &artifact.security_attributes), || StoreError::PermissionDenied).await?;
+        self.storage(&artifact.storage)?.remove(id).await?;
+        let purged = self.entities.purge_artifact(ctx, id).await?;
+        info!(artifact = %id, by = %ctx.caller_id, "Artifact purged");
+        Ok(purged)
+    }
+
+    /// Purges the deleted artifacts that lie in `holder` or within it,
+    /// their content first.
+    ///
+    /// # Errors
+    /// `UnknownStorage`, `Unavailable`, or whatever the store reports;
+    /// what was purged before stays purged.
+    pub(crate) async fn purge_lying_in(&self, holder: &Scope) -> ArtifactResult<()> {
+        let system = SecurityContext::system();
+        let _writing = self.writing.lock().await;
+        for artifact in self.entities.list_deleted_artifacts(&system).await? {
+            if holder.contains(&artifact.scoped_name().scope) {
+                self.storage(&artifact.storage)?.remove(artifact.id).await?;
+                self.entities.purge_artifact(&system, artifact.id).await?;
+            }
+        }
+        Ok(())
+    }
+}

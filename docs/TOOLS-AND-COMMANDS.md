@@ -632,6 +632,7 @@ agent alike.
 | `replace_in_file` | `terminal_tool` | `path`, `old_text`, `new_text`, `replace_all` (optional) | as configured, yes by default | `SHOWN` | Replaces text that occurs once - or every occurrence - in a text file of the workspace. |
 | `move_file` | `terminal_tool` | `from`, `to` | as configured, yes by default | `SHOWN` | Moves or renames a file or a directory of the workspace, never over something, its directories made (issue 267). |
 | `publish_file` | `terminal_tool` | `path`, `name`, `description` (optional) | no (issue 275) | `SHOWN` | Offers a file of the workspace for download at its message, as a link to the file as it is now, with its digest (issue 273). |
+| `publish_artifact` | `artifact_tool` | `path`, `name`, `description` (optional) | as configured, yes by default | `SHOWN` | Publishes a file of the workspace as a version of an artifact: a fixed copy, kept beyond the workspace (issue 271, see [Artifacts](#artifacts)). |
 | `delete_file` | `terminal_tool` | `path` | as configured, yes by default | `SHOWN` | Deletes a file or an empty directory of the workspace. |
 | `list_skills` | `skills` | - | no | `SHOWN` | Lists the skills the agent may load here, each with what it is for ([SKILLS.md](SKILLS.md)). |
 | `load_skill` | `skills` | `name` | no | `CALL_ONLY` | Gives the skill's text as plain text, classified as the skill; recorded as knowledge. |
@@ -669,20 +670,20 @@ neither moved nor moved over. `publish_file` offers a file for download at the m
 when it was changed and the digest of its content, read in parts up to `max_file_bytes` -,
 downloaded through the channel's workspace by whoever may use it there; it changes nothing and hands
 nothing to anyone who could not download the file already, so it reads, and never needs approval,
-whatever is configured (issue 275). Artifacts that keep what was
-offered, beyond the workspace, are issue 271. What was read is recorded as the turn's knowledge
-(`KnowledgeSource::Workspace`, see [MEMORY.md](MEMORY.md#recording-what-was-read)), a file's content
-by its digest; a move reads nothing. The approver reads a change whole - what is written, what is
-replaced by what, what is renamed or moved where -, and a rule derived from an approved change
-covers the file, whatever is written into it (`ToolProvider::matcher`, the path alone) - for a move,
-that move: both `from` and `to`, since it changes two places. `list_files`, `read_file`,
-`grep_files`, `write_file`, `replace_in_file`, `move_file` and `publish_file` are presented as
-`file_list`, `file_read`, `file_search`, `file_write`, `file_edit`, `file_move` and `file_publish`
-(`ToolPresentation`, issues 265, 267, 273): the web UI shows the file's path and its text - what was
-read, what is written, what is replaced by what - wrapped as text, a directory's entries as the file
-browser shows them, a search's matches by file and line, and a move as where it lay and where it
-lies now, and a file offered as a card with its download, saying when the file changed since or is
-gone (`file_publish`); `delete_file` as every call.
+whatever is configured (issue 275). What is to be kept as it was offered, beyond the workspace, is
+published with `publish_artifact` (see [Artifacts](#artifacts)). What was read is recorded as the
+turn's knowledge (`KnowledgeSource::Workspace`, see [MEMORY.md](MEMORY.md#recording-what-was-read)),
+a file's content by its digest; a move reads nothing. The approver reads a change whole - what is
+written, what is replaced by what, what is renamed or moved where -, and a rule derived from an
+approved change covers the file, whatever is written into it (`ToolProvider::matcher`, the path
+alone) - for a move, that move: both `from` and `to`, since it changes two places. `list_files`,
+`read_file`, `grep_files`, `write_file`, `replace_in_file`, `move_file` and `publish_file` are
+presented as `file_list`, `file_read`, `file_search`, `file_write`, `file_edit`, `file_move` and
+`file_publish` (`ToolPresentation`, issues 265, 267, 273): the web UI shows the file's path and its
+text - what was read, what is written, what is replaced by what - wrapped as text, a directory's
+entries as the file browser shows them, a search's matches by file and line, and a move as where it
+lay and where it lies now, and a file offered as a card with its download, saying when the file
+changed since or is gone (`file_publish`); `delete_file` as every call.
 
 **Commands.** A command runs in the workspace's directory, every one anew - a `cd` does not carry
 over - and is seen only from the channel it was started in.
@@ -704,6 +705,32 @@ whatever it starts to its own future": a command lives with the storage, so that
 as running outlives the call, and one left running by a dropped call would go on writing into the
 workspace after the turn that started it. A command handed back as running is the model's to end;
 nothing bounds how long it runs yet (issue [254](../issues/254-commands-run-unbounded.md)).
+
+### Artifacts
+
+`publish_artifact` (component `artifact_tool`, issue [271](../issues/271-publishing-artifacts.md))
+publishes a file of the session's workspace as a version of an artifact: a fixed copy of it as it
+is, kept in an artifact storage beyond the workspace, downloaded at the message that published it.
+Beside it, `publish_file` offers a file as a link to it as it is now; a model is told the difference
+in their descriptions - a link for a look now, an artifact for a result to be kept.
+
+It is reached as the file tools are, through the turn's views and the workspace of the channel
+(`tool::channel_workspace`), and publishes in the name of whoever the agent acts for: its owner, who
+makes the artifact (`CreateArtifact`) or adds to theirs (`UpdateArtifact`), asked before anything is
+kept. An artifact is published into the session's scope, under its name - the file's unless given,
+at most 100 characters -, made with its first version and given one more by every later publication
+under that name. It is classified as the workspace, fixed with its first version; a later version
+from a workspace classified otherwise is refused - publish it under another name. A storage takes
+nothing above its `destination`. The content is read up to `artifacts.max_bytes` and kept as it
+streams, its digest taken as it passes. Its result is `{artifact, version, name, size, digest, path,
+description?}`, classified as the artifact, and is presented as `artifact_publish`. It changes what
+is kept, so it is approved where changes are; the approver reads which file is published as which
+artifact.
+
+Whoever reads the channel as a whole downloads the versions published there; the artifact's owner
+reads every version and keeps it beyond the session, in their scope or the global one; one that is
+not kept goes with the session, its content too (see [STORAGE.md](STORAGE.md) and
+[SECURITY.md](SECURITY.md#ownership)).
 
 ### Commands
 

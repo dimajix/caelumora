@@ -4,7 +4,7 @@
 import React, {useState} from 'react';
 import {Brain, Check, ChevronDown, ChevronRight, Copy, EyeOff, Info} from 'lucide-react';
 import type {ChannelMember, Message} from '../types';
-import type {WorkspaceFiles} from '../api';
+import type {ChannelArtifacts, WorkspaceFiles} from '../api';
 import {cn} from '../classNames';
 import {MarkdownMessage} from './MarkdownMessage';
 import {mentionedHandles} from '../mention';
@@ -141,9 +141,11 @@ interface MessageViewProps {
   files?: WorkspaceFiles;
   /** Changes whenever those files may have changed. */
   filesVersion?: number;
+  /** The artifacts of the channel, where its calls published one (issue 271). */
+  artifacts?: ChannelArtifacts;
 }
 
-export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, badges, actions, className, files, filesVersion}) => (
+export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, badges, actions, className, files, filesVersion, artifacts}) => (
   <div
     className={cn(
       "max-w-[80%] p-3 rounded-lg shadow-xs",
@@ -174,7 +176,7 @@ export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, 
     {msg.tool_calls && msg.tool_calls.length > 0 && (
       <div className="mt-2 space-y-2">
         {msg.tool_calls.map((call, cidx) => (
-          <ToolCallView key={cidx} call={call} result={msg.tool_results?.find(r => r.id === call.id)} abandoned={msg.abandoned} files={files} filesVersion={filesVersion} />
+          <ToolCallView key={cidx} call={call} result={msg.tool_results?.find(r => r.id === call.id)} abandoned={msg.abandoned} files={files} filesVersion={filesVersion} artifacts={artifacts} />
         ))}
       </div>
     )}

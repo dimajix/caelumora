@@ -5,10 +5,10 @@
 // their record (`AnswersRecord`, issue 268).
 
 import React, {useEffect, useState} from 'react';
-import {CheckCircle2, Download, EyeOff, File, FileDiff, FileDown, FileInput, FilePen, FileText, Folder, FolderOpen, TextSearch, Terminal, Wrench, XCircle} from 'lucide-react';
-import type {Question, ToolCall, ToolPresentation, ToolResult, ToolResultStatus, ToolVisibility} from '../types';
-import type {WorkspaceFiles} from '../api';
-import {ApiRequestError} from '../errors';
+import {CheckCircle2, Download, EyeOff, Package, PackageCheck, File, FileDiff, FileDown, FileInput, FilePen, FileText, Folder, FolderOpen, TextSearch, Terminal, Wrench, XCircle} from 'lucide-react';
+import type {ArtifactResponse, Question, ToolCall, ToolPresentation, ToolResult, ToolResultStatus, ToolVisibility} from '../types';
+import {api, type ChannelArtifacts, type WorkspaceFiles} from '../api';
+import {ApiRequestError, reportError} from '../errors';
 import {formatArguments, formatSize, formatTimestamp} from '../messages';
 import {AnswersRecord, ChoiceRows, QuestionHeading} from './QuestionView';
 
@@ -66,6 +66,8 @@ export interface ToolCallContentProps {
   files?: WorkspaceFiles;
   /** Changes whenever those files may have changed. */
   filesVersion?: number;
+  /** The artifacts of the channel as the user reaches them; absent outside the chat. */
+  artifacts?: ChannelArtifacts;
 }
 
 /** The default presentation: the call's arguments and its result, as they are. */
@@ -611,28 +613,110 @@ const FilePublishToolCallContent: React.FC<ToolCallContentProps> = ({call, resul
   };
   const downloadable = files && path !== null && (state === 'current' || state === 'changed' || state === 'checking');
   return (
-    <div className="flex items-start gap-3 rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-950 p-2.5">
-      <FileDown size={20} className="shrink-0 mt-0.5 text-blue-600 dark:text-blue-400" />
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium break-all">{name ?? '?'}</div>
-        <div className="text-[11px] opacity-60">
-          {[size !== null ? formatSize(size) : null, path].filter(Boolean).join(' · ')}
-        </div>
-        {textOf(offered, 'description') && <div className="text-xs mt-1 whitespace-pre-wrap">{textOf(offered, 'description')}</div>}
-        {notes[state] && (
-          <div className={`text-[11px] mt-1 ${state === 'changed' ? 'text-amber-600 dark:text-amber-400' : 'italic opacity-60'}`}>{notes[state]}</div>
-        )}
-      </div>
-      {downloadable && (
-        <a
-          href={files.url(path)}
-          download={name ?? undefined}
-          className="shrink-0 flex items-center gap-1 rounded-md bg-blue-600 hover:bg-blue-700 text-white text-xs px-2.5 py-1.5"
-        >
+    <DownloadCard
+      icon={<FileDown size={20} />}
+      name={name ?? '?'}
+      details={[size !== null ? formatSize(size) : null, path]}
+      description={textOf(offered, 'description')}
+      note={notes[state]}
+      warning={state === 'changed'}
+      href={downloadable ? files.url(path) : null}
+    />
+  );
+};
+
+/**
+ * A card of something offered for download (issues 271, 273): an icon, its name, what is known of
+ * it, what it is, a note on it, the download where there is one, and further actions.
+ */
+const DownloadCard: React.FC<{
+  icon: React.ReactNode;
+  name: string;
+  details: (string | null)[];
+  description?: string | null;
+  note?: string | null;
+  /** Whether the note warns rather than informs. */
+  warning?: boolean;
+  href?: string | null;
+  actions?: React.ReactNode;
+}> = ({icon, name, details, description, note, warning, href, actions}) => (
+  <div className="flex items-start gap-3 rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-950 p-2.5">
+    <span className="shrink-0 mt-0.5 text-blue-600 dark:text-blue-400">{icon}</span>
+    <div className="min-w-0 flex-1">
+      <div className="text-sm font-medium break-all">{name}</div>
+      <div className="text-[11px] opacity-60">{details.filter(Boolean).join(' · ')}</div>
+      {description && <div className="text-xs mt-1 whitespace-pre-wrap">{description}</div>}
+      {note && <div className={`text-[11px] mt-1 ${warning ? 'text-amber-600 dark:text-amber-400' : 'italic opacity-60'}`}>{note}</div>}
+    </div>
+    <div className="shrink-0 flex flex-col items-end gap-1.5">
+      {href && (
+        <a href={href} download={name} className="flex items-center gap-1 rounded-md bg-blue-600 hover:bg-blue-700 text-white text-xs px-2.5 py-1.5">
           <Download size={12} /> Download
         </a>
       )}
+      {actions}
     </div>
+  </div>
+);
+
+/** The user's own artifact `id` as they see it - `null` if it is not theirs, or not known yet - and keeping it. */
+function useOwnedArtifact(id: string | null): [ArtifactResponse | null, () => Promise<void>] {
+  const [owned, setOwned] = useState<ArtifactResponse | null>(null);
+  useEffect(() => {
+    if (id === null) return;
+    let current = true;
+    // Refused for whoever is not its owner: then there is nothing to keep.
+    api.getArtifact(id).then(found => { if (current) setOwned(found); }).catch(() => { if (current) setOwned(null); });
+    return () => { current = false; };
+  }, [id]);
+  const keep = async () => {
+    if (id === null) return;
+    try {
+      setOwned(await api.keepArtifact(id, 'user'));
+    } catch (error) {
+      reportError('Failed to keep the artifact', error);
+    }
+  };
+  return [owned, keep];
+}
+
+/**
+ * A file published as a version of an artifact (issue 271): a card with its name, version and size,
+ * a download of that version - fixed, whatever became of the file -, and for its owner "Keep" while
+ * it lies in the session's scope, so that it outlives the session.
+ */
+const ArtifactPublishToolCallContent: React.FC<ToolCallContentProps> = ({call, result, artifacts}) => {
+  const args = argumentsObject(call.arguments);
+  const published = resultObject(result);
+  const id = textOf(published, 'artifact');
+  const version = numberOf(published, 'version');
+  const [owned, keep] = useOwnedArtifact(id);
+  if (call.arguments === null) return <span className="text-[11px] italic opacity-60">File not shown</span>;
+  const path = textOf(published, 'path') ?? textOf(args, 'path');
+  if (!published) {
+    return result ? <FailedResult result={result} /> : <FilePath icon={<Package size={12} />} path={path} detail="being published" />;
+  }
+  const size = numberOf(published, 'size');
+  const kept = owned && owned.scope !== 'session' ? (owned.scope === 'global' ? 'Kept for everyone.' : 'Kept in your artifacts.') : null;
+  return (
+    <DownloadCard
+      icon={<Package size={20} />}
+      name={textOf(published, 'name') ?? '?'}
+      details={[version !== null ? `version ${version}` : null, size !== null ? formatSize(size) : null, path]}
+      description={textOf(published, 'description')}
+      note={kept ?? (artifacts ? null : 'Download it from the chat.')}
+      href={artifacts && id !== null && version !== null ? artifacts.url(id, version) : null}
+      actions={owned?.can_change && owned.scope === 'session' && (
+        <button
+          type="button"
+          onClick={() => void keep()}
+          title="Keep it beyond this session, among your artifacts"
+          className="flex items-center gap-1 rounded-md border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 text-xs px-2.5 py-1"
+        >
+          <PackageCheck size={12} /> Keep
+        </button>
+      )}
+    />
   );
 };
 
@@ -649,6 +733,7 @@ const PRESENTATIONS: Record<ToolPresentation, React.FC<ToolCallContentProps>> = 
   file_move: FileMoveToolCallContent,
   questions: QuestionsToolCallContent,
   file_publish: FilePublishToolCallContent,
+  artifact_publish: ArtifactPublishToolCallContent,
 };
 
 interface ToolCallViewProps {
@@ -661,9 +746,11 @@ interface ToolCallViewProps {
   files?: WorkspaceFiles;
   /** Changes whenever those files may have changed. */
   filesVersion?: number;
+  /** The artifacts of the channel, for a call that published one (issue 271). */
+  artifacts?: ChannelArtifacts;
 }
 
-export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, abandoned, files, filesVersion}) => {
+export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, abandoned, files, filesVersion, artifacts}) => {
   const Content = PRESENTATIONS[call.presentation ?? 'default'] ?? DefaultToolCallContent;
   return (
     <div className="bg-gray-50 dark:bg-gray-800 rounded-sm border border-gray-200 dark:border-gray-600 overflow-hidden">
@@ -708,7 +795,7 @@ export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, abandon
         </div>
       </div>
       <div className="p-2">
-        <Content call={call} result={result} files={files} filesVersion={filesVersion} />
+        <Content call={call} result={result} files={files} filesVersion={filesVersion} artifacts={artifacts} />
         {result?.answers && (
           // Set apart from what the presentation shows, where it shows anything.
           <div className="not-first:mt-2 not-first:pt-2 not-first:border-t border-gray-200 dark:border-gray-700">

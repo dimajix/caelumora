@@ -20,6 +20,7 @@ use crate::removal::{Deletable, Removal};
 use crate::user::{User, UserId, UserProfile};
 use crate::workspace::{Workspace, WorkspaceId};
 use crate::skill::{Skill, SkillId};
+use crate::artifact::{Artifact, ArtifactId};
 use chrono::Utc;
 use uuid::Uuid;
 
@@ -183,6 +184,20 @@ fn workspace_named(name: ScopedName) -> Workspace {
     Workspace::new(name, "main", Classification::CHANNEL_DEFAULT, owner)
 }
 
+fn artifact(owner: UserId) -> Artifact {
+    artifact_named(ScopedName::new("report.csv", Scope::UserScope { user_id: owner }).unwrap())
+}
+
+/// An artifact of `name`, owned by the user whose scope it lies in, else by
+/// another.
+fn artifact_named(name: ScopedName) -> Artifact {
+    let owner = match name.scope {
+        Scope::UserScope { user_id } => user_id,
+        _ => UserId::new(),
+    };
+    Artifact::new(ArtifactId::new(), name, "files", Classification::CHANNEL_DEFAULT, owner, crate::artifact::tests::version(b"a,b", SessionId::new()))
+}
+
 fn component() -> StoredComponent {
     StoredComponent::new(ComponentDescriptor::new("search", "web_search"), Default::default())
 }
@@ -246,6 +261,8 @@ pub(crate) async fn entity_store_behaves(store: &dyn EntityStore) {
         create_workspace, get_workspace, update_workspace, delete_workspace, list_workspaces);
     lifecycle!(store, skill(UserId::new()), |v: &Skill| v.id, name.name, "skill",
         create_skill, get_skill, update_skill, delete_skill, list_skills);
+    lifecycle!(store, artifact(UserId::new()), |v: &Artifact| v.id, name.name, "artifact",
+        create_artifact, get_artifact, update_artifact, delete_artifact, list_artifacts);
 
     let ctx = SecurityContext::default();
     let alice = user("alice");
@@ -283,6 +300,11 @@ pub(crate) async fn entity_store_behaves(store: &dyn EntityStore) {
         create_skill, delete_skill, find_skill_by_name);
     let nobodys = store.create_skill(&ctx, &Skill { security_attributes: Default::default(), ..skill(UserId::new()) }).await;
     assert!(matches!(nobodys, Err(StoreError::Validation(_))), "skill: one that belongs to nobody is not stored, got {nobodys:?}");
+
+    found_by_name!(store, artifact_named, "artifact",
+        create_artifact, delete_artifact, find_artifact_by_name);
+    let versionless = store.create_artifact(&ctx, &Artifact { versions: vec![], ..artifact(UserId::new()) }).await;
+    assert!(matches!(versionless, Err(StoreError::Validation(_))), "artifact: one without a version is not stored, got {versionless:?}");
 }
 
 /// Of one kind, a name is unique in its name space (issue 250): creating,
@@ -350,6 +372,10 @@ pub(crate) async fn names_are_unique(store: &dyn EntityStore) {
         elsewhere: |name| Skill { name: in_scope(name, &Scope::UserScope { user_id: bob }), id: SkillId::new(), ..skill(bob) },
         rename: |value: Skill, name| Skill { name: in_scope(name, &value.name.scope), ..value }, "skill",
         create_skill, update_skill, delete_skill, restore_skill);
+    unique_by_name!(store, |name| Artifact { name: in_scope(name, &global), id: ArtifactId::new(), ..artifact(alice) },
+        elsewhere: |name| Artifact { name: in_scope(name, &Scope::UserScope { user_id: bob }), id: ArtifactId::new(), ..artifact(bob) },
+        rename: |value: Artifact, name| Artifact { name: in_scope(name, &value.name.scope), ..value }, "artifact",
+        create_artifact, update_artifact, delete_artifact, restore_artifact);
 
     // Moved into a scope where its name is taken.
     let ctx = SecurityContext::default();

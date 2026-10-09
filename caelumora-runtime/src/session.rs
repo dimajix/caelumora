@@ -988,7 +988,7 @@ impl SessionManager {
             state_store.delete_channel_state(channel_id).await?;
         }
         // And what lay in its scope and in its channels' (issue 178).
-        purge_scoped_in(store.as_ref(), state_store.as_ref(), self.runtime_manager.workspace_manager(), &Scope::SessionScope { session_id: id }).await?;
+        purge_scoped_in(store.as_ref(), state_store.as_ref(), self.runtime_manager.workspace_manager(), self.runtime_manager.artifact_manager(), &Scope::SessionScope { session_id: id }).await?;
         self.starts.remove(&id);
         info!("Session {} purged by {}", id, context.caller_id);
         Ok(())

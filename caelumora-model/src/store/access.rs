@@ -275,6 +275,15 @@ pub(crate) const SKILLS: Actions = Actions {
     delete: |a| ActionType::DeleteSkill(a),
 };
 
+pub(crate) const ARTIFACTS: Actions = Actions {
+    entity: EntityKind::Artifact,
+    get: |a| ActionType::GetArtifact(a),
+    list: ActionType::ListArtifacts,
+    create: |a| ActionType::CreateArtifact(a),
+    update: |a| ActionType::UpdateArtifact(a),
+    delete: |a| ActionType::DeleteArtifact(a),
+};
+
 pub(crate) const COMPONENTS: Actions = Actions {
     entity: EntityKind::Component,
     get: |a| ActionType::GetComponent(a),

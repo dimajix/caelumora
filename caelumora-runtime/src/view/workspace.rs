@@ -4,8 +4,10 @@
 //! reachable past it but through `terminal`, which asks again.
 
 use super::{ViewError, Views};
-use crate::terminal::Terminal;
+use crate::artifact::{ArtifactError, ArtifactResult};
+use crate::terminal::{Terminal, WorkspacePath};
 use crate::workspace::{WorkspaceError, WorkspaceResult};
+use caelumora_model::artifact::Artifact;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::security::AccessQuestions;
 use caelumora_model::session::{ChannelId, SessionId};
@@ -107,6 +109,22 @@ impl WorkspaceView {
             }
         };
         self.views.workspace_manager().terminal(&workspace).await
+    }
+
+    /// Publishes its file `at` as a version of the artifact `name` (issue
+    /// 271), in the viewer's name, in the channel they reached it through:
+    /// an artifact is published where it is offered, so only a workspace
+    /// reached through a channel publishes. Its terminal is reached as
+    /// `terminal` reaches it, asked again. Answers the artifact and the
+    /// number of the new version.
+    ///
+    /// # Errors
+    /// `NotInChannel` for a workspace reached directly, `Workspace` if it
+    /// may no longer be used, or what `ArtifactManager::publish` reports.
+    pub async fn publish_artifact(&self, at: &WorkspacePath, name: &str, description: Option<&str>) -> ArtifactResult<(Artifact, u32)> {
+        let Way::InChannel { session, channel } = self.way else { return Err(ArtifactError::NotInChannel) };
+        let terminal = self.terminal().await?;
+        self.views.artifact_manager().publish(self.views.context(), terminal.as_ref(), &self.workspace, at, name, description, session, channel).await
     }
 
     pub async fn snapshot(&self) -> WorkspaceSnapshot {

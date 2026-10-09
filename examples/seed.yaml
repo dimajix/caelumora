@@ -68,6 +68,9 @@ personalities:
   - id: terminal-tool
     kind: terminal_tool
     fail_policy: FailClosed
+  - id: artifact-tool
+    kind: artifact_tool
+    fail_policy: FailClosed
 - id: 9e11411a-0aa5-41c8-a17f-61bf7b0352ce
   name: sassy-assistant
   description: A sassy and witty assistant

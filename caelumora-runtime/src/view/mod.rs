@@ -48,7 +48,7 @@ use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::removal::Removal;
 use caelumora_model::security::{AccessQuestions, Place, SecurityContext, SecurityManager};
 use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::snapshot::{AgentSnapshot, DeletedSnapshot};
+use caelumora_model::snapshot::{AgentSnapshot, ArtifactSnapshot, DeletedSnapshot};
 use caelumora_model::workspace::WorkspaceId;
 use caelumora_model::skill::SkillId;
 use caelumora_model::scope::{found_from, Scope, Scoped};
@@ -112,6 +112,8 @@ pub enum ViewError {
     /// where it is, alike whether there is one at all (issue 22).
     #[error("there is no skill named \"{0}\" that can be loaded here")]
     NoSkillNamed(String),
+    #[error("There is no artifact {0}")]
+    ArtifactNotFound(caelumora_model::artifact::ArtifactId),
     /// Asked for by name, as an agent's tools do: no such channel, or
     /// nothing in it that can be read from where the viewer reads.
     #[error("there is no channel named \"{0}\" that can be read from here")]
@@ -177,6 +179,7 @@ pub struct Views {
     components: Arc<ComponentRegistry>,
     workspaces: Arc<WorkspaceManager>,
     skills: Arc<SkillManager>,
+    artifacts: Arc<crate::artifact::ArtifactManager>,
     running: Arc<dyn RunningSessions>,
     viewer: Viewer,
 }
@@ -190,6 +193,7 @@ impl Views {
             components: Arc::clone(runtime.component_registry()),
             workspaces: Arc::clone(runtime.workspace_manager()),
             skills: Arc::clone(runtime.skill_manager()),
+            artifacts: Arc::clone(runtime.artifact_manager()),
             running,
             viewer,
         }
@@ -235,6 +239,10 @@ impl Views {
     /// reach the workspace manager.
     pub(crate) fn skill_manager(&self) -> &Arc<SkillManager> {
         &self.skills
+    }
+
+    pub(crate) fn artifact_manager(&self) -> &Arc<crate::artifact::ArtifactManager> {
+        &self.artifacts
     }
 
     /// Every session the viewer may read, in the order the store lists
@@ -391,6 +399,64 @@ impl Views {
             Ok(None) => Err(ViewError::WorkspaceNotFound(id)),
             Err(e) => Err(ViewError::Failed(anyhow::Error::new(e).context("reading a workspace"))),
         }
+    }
+
+    /// The viewer's own artifacts (issue 271), in the order the store lists
+    /// them, each with every version: an artifact has no contributors, so
+    /// these are the ones they own.
+    ///
+    /// # Errors
+    /// `Failed` if the store cannot list them.
+    pub async fn artifacts(&self) -> ViewResult<Vec<ArtifactSnapshot>> {
+        let artifacts = self.entities.list_artifacts(self.viewer.context()).await
+            .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context("listing the artifacts")))?;
+        let mut snapshots = Vec::with_capacity(artifacts.len());
+        for artifact in artifacts {
+            snapshots.push(self.artifact_snapshot(artifact).await);
+        }
+        Ok(snapshots)
+    }
+
+    /// Artifact `id`, if the viewer may read it (`GetArtifact`): its owner.
+    ///
+    /// # Errors
+    /// `ArtifactNotFound` if there is none they may read.
+    pub async fn artifact(&self, id: caelumora_model::artifact::ArtifactId) -> ViewResult<ArtifactSnapshot> {
+        match self.entities.get_artifact(self.viewer.context(), id).await.optional() {
+            Ok(Some(artifact)) => Ok(self.artifact_snapshot(artifact).await),
+            Ok(None) => Err(ViewError::ArtifactNotFound(id)),
+            Err(e) => Err(ViewError::Failed(anyhow::Error::new(e).context("reading an artifact"))),
+        }
+    }
+
+    /// `artifact` as the viewer sees it: whether they may change it.
+    pub(crate) async fn artifact_snapshot(&self, artifact: caelumora_model::artifact::Artifact) -> ArtifactSnapshot {
+        let can_change = self.security.may_change_artifact(self.viewer.context(), &artifact.security_attributes).await;
+        ArtifactSnapshot { artifact, can_change }
+    }
+
+    /// The artifacts the viewer deleted and may read as such (issue 271):
+    /// the trash of artifacts.
+    ///
+    /// # Errors
+    /// `Failed` if the store cannot list them.
+    pub async fn deleted_artifacts(&self) -> ViewResult<Vec<DeletedSnapshot<caelumora_model::artifact::ArtifactId>>> {
+        let artifacts = self.entities.list_deleted_artifacts(self.viewer.context()).await
+            .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context("listing the deleted artifacts")))?;
+        let policy = &self.security;
+        let mut deleted = Vec::with_capacity(artifacts.len());
+        for artifact in artifacts {
+            let Some(removal) = artifact.deleted.clone() else { continue };
+            let attributes = &artifact.security_attributes;
+            deleted.push(DeletedSnapshot {
+                id: artifact.id,
+                name: artifact.name.to_string(),
+                deleted: removal,
+                can_restore: policy.may_restore(self.viewer.context(), EntityKind::Artifact, attributes).await,
+                can_purge: policy.may_purge(self.viewer.context(), EntityKind::Artifact, attributes).await,
+            });
+        }
+        Ok(deleted)
     }
 
     /// The workspaces the viewer deleted and may read as such (issue 253):

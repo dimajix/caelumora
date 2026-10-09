@@ -4,6 +4,7 @@
 //! kind. A component that offers tools along with another facet - a prompt
 //! part, say - stays in `component_impl`.
 
+pub mod artifact_tool;
 pub mod ask_user_tool;
 pub mod calculator_tool;
 pub mod default_tool_executor;
@@ -79,6 +80,19 @@ pub fn arguments<T: DeserializeOwned>(params: &Value) -> ToolResult<T> {
     let empty = Value::Object(Default::default());
     let params = if params.is_null() { &empty } else { params };
     T::deserialize(params).map_err(|e| ToolError::InvalidParameter(e.to_string()))
+}
+
+/// The workspace of the turn's channel, if the agent may use it there - for
+/// the tools that work on it (issues 251, 271).
+///
+/// # Errors
+/// `ExecutionFailed` where there is none it may use, or the turn is in no
+/// session.
+pub(crate) async fn channel_workspace(turn: &Turn<'_>) -> ToolResult<crate::view::WorkspaceView> {
+    let session = turn.session().ok_or_else(|| ToolError::ExecutionFailed("the turn is in no session".to_string()))?;
+    let channel = session.channel(turn.channel_id()).await?;
+    channel.workspace().await?
+        .ok_or_else(|| ToolError::ExecutionFailed("there is no workspace you can use in this channel".to_string()))
 }
 
 /// The parameter `id` of a tool that takes the number of an entry, e.g. a
@@ -637,6 +651,7 @@ impl GuardedToolExecutor {
 pub fn register_all(registry: &mut ComponentRegistry) {
     registry.single::<dyn ToolExecutor>(Some(default_tool_executor::DEFAULT_TOOL_EXECUTOR_KIND));
 
+    artifact_tool::register(registry);
     ask_user_tool::register(registry);
     calculator_tool::register(registry);
     default_tool_executor::register(registry);

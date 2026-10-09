@@ -152,6 +152,10 @@ pub enum ToolPresentation {
     /// `name`, `size`, `description` and `path`, and whether the file is
     /// still as it was (`size`, `modified`) or gone.
     FilePublish,
+    /// A file published as a version of an artifact (issue 271): its
+    /// `name`, `version`, `size`, `description` and the `artifact` it is
+    /// downloaded from.
+    ArtifactPublish,
 }
 
 impl ToolPresentation {

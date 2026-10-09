@@ -66,7 +66,9 @@ which refer to the participants by name. Creating a session from a template has 
 A session may have a **workspace** attached (issue 253): a tree of files that belongs to a user,
 with one classification, used by the members of those channels of the session where it and the
 channel flow both ways. Its files lie in a configured storage and are reached through a
-`Terminal`.
+`Terminal`. What an agent hands over to keep it publishes as an **artifact** (issue 271): a fixed
+copy of a file, in a version of an artifact that belongs to a user, kept in an artifact storage
+beyond the workspace and downloaded where it was published.
 
 Sessions and channels hold their users and agents by reference - `Participant::User(UserId)`,
 `Participant::Agent(AgentId)` - not as copies (issue 120). The records live in the `EntityStore`; a

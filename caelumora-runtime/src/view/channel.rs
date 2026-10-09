@@ -76,6 +76,42 @@ impl ChannelView {
         Ok(usable.map(|workspace| WorkspaceView::in_channel(self.views().clone(), workspace, self.session.id(), self.channel.id)))
     }
 
+    /// The artifacts with a version published in this channel, each with
+    /// those versions alone (issue 271), if the viewer reads the channel as
+    /// a whole - as `artifact_content` reads them; none otherwise.
+    ///
+    /// # Errors
+    /// What the artifacts' manager reports.
+    pub async fn artifacts(&self) -> crate::artifact::ArtifactResult<Vec<caelumora_model::snapshot::ArtifactSnapshot>> {
+        if self.readable != Readable::Whole {
+            return Ok(Vec::new());
+        }
+        let published = self.views().artifact_manager().published_in(self.session.id(), self.channel.id).await?;
+        let mut snapshots = Vec::with_capacity(published.len());
+        for artifact in published {
+            snapshots.push(self.views().artifact_snapshot(artifact).await);
+        }
+        Ok(snapshots)
+    }
+
+    /// The content of version `number` of artifact `id`, if it was
+    /// published in this channel and the viewer reads the channel as a
+    /// whole (issue 271) - whoever may read the message that published it.
+    /// A viewer who reads it entry by entry - an agent of another channel -
+    /// gets none of it: nothing yet asks whether an artifact's label may
+    /// reach their place.
+    ///
+    /// # Errors
+    /// `VersionNotFound` if there is no such version published here, or
+    /// it is not this viewer's to read; whatever else the artifacts'
+    /// manager reports.
+    pub async fn artifact_content(&self, id: caelumora_model::artifact::ArtifactId, number: u32) -> crate::artifact::ArtifactResult<(caelumora_model::artifact::Artifact, u64, crate::terminal::ByteStream)> {
+        if self.readable != Readable::Whole {
+            return Err(crate::artifact::ArtifactError::VersionNotFound { artifact: id, version: number });
+        }
+        self.views().artifact_manager().published_content(id, number, self.session.id(), self.channel.id).await
+    }
+
     pub fn id(&self) -> ChannelId {
         self.channel.id
     }
