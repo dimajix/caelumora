@@ -1,6 +1,6 @@
 # 264 — An agent reads channels of its session that its owner may not read
 
-**Status:** open
+**Status:** done
 **Area:** Identity and access management
 
 ## The problem
@@ -383,3 +383,11 @@ then the two questions. Then the close.
   `an_agent_reaches_the_workspace_of_a_session_its_owner_does_not_take_part_in` is new - it fails
   with the old read rule. SECURITY.md, CONFIDENTIALITY.md and MEMORY.md say it; 133, 17 and 255
   have entries. No stored data changes.
+- **2026-10-09** — Closed. Both points of *Done when* hold: membership limits what an agent reads
+  of another channel - it reaches one its owner may read or it takes part in itself -, written in
+  SECURITY.md and CONFIDENTIALITY.md; the policy decides it (`GetChannel` for the principal or the
+  caller, `CopyInformation` by the rules), and the suite pins an agent whose owner may not read a
+  channel (`an_agent_does_not_read_a_channel_its_owner_may_not_read`), one that takes part in it
+  (`an_agent_reads_a_channel_it_takes_part_in_whose_owner_may_not`) and one whose owner does not
+  take part in its session (`an_agent_reaches_the_workspace_of_a_session_its_owner_does_not_take_part_in`).
+  Left as decided: `Publish` stays an action of its own beside `CopyInformation`.
