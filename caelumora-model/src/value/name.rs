@@ -52,6 +52,13 @@ impl Name {
         Ok(Self { text, key })
     }
 
+    /// A name the code itself gives, such as every approver's
+    /// (`ActorId::approver_name`): taken unchecked, so that it needs no
+    /// error that cannot happen; each is checked by a test instead.
+    pub(crate) fn fixed(text: &'static str) -> Self {
+        Self { text: Text::fixed(text), key: fold(text) }
+    }
+
     /// The name as written.
     pub fn as_str(&self) -> &str {
         self.text.as_str()

@@ -3,7 +3,6 @@
 use crate::command::{CommandContext, CommandError, CommandResult, ProvidesCommands, ChannelCommandProvider};
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use async_trait::async_trait;
-use caelumora_model::actor::ActorId;
 use caelumora_model::command::{Command, CommandOutput, WAKEUP_COMMAND_KIND};
 use std::sync::Arc;
 
@@ -47,7 +46,7 @@ impl ProvidesCommands for WakeupCommandProvider {
 #[async_trait]
 impl ChannelCommandProvider for WakeupCommandProvider {
     async fn execute(&self, _name: &str, args: &str, context: &CommandContext<'_>) -> CommandResult<CommandOutput> {
-        let wanted = args.trim().trim_start_matches('@');
+        let wanted = args.trim();
         if wanted.is_empty() {
             let mut woken = context.channel.wakeup(context.issuer).await.map_err(channel_error)?;
             woken.sort();
@@ -59,18 +58,26 @@ impl ChannelCommandProvider for WakeupCommandProvider {
             return Ok(CommandOutput::channel(text));
         }
 
-        let agents: Vec<_> = context.channel.members().into_iter()
-            .filter(|m| matches!(m.id, ActorId::Agent(_)))
-            .collect();
-        let Some(agent) = agents.iter().find(|m| m.handle.as_deref() == Some(wanted)) else {
-            let mut handles: Vec<String> = agents.iter().filter_map(|m| m.handle.clone()).map(|h| format!("@{h}")).collect();
-            handles.sort();
-            let reason = if handles.is_empty() {
-                "there are no agents in this channel".to_string()
-            } else {
-                format!("no agent '{}' in this channel; the agents are {}", wanted, names(&handles))
-            };
-            return Err(CommandError::InvalidArguments { command: WAKEUP_COMMAND_NAME.to_string(), reason });
+        let invalid = |reason: String| CommandError::InvalidArguments { command: WAKEUP_COMMAND_NAME.to_string(), reason };
+        let agent = match context.channel.agents_named(wanted).as_slice() {
+            [agent] => agent.clone(),
+            [] => {
+                let mut handles: Vec<String> = context.channel.members().into_iter()
+                    .filter(|m| m.id.as_agent_id().is_some())
+                    .filter_map(|m| m.handle)
+                    .map(|h| format!("@{h}"))
+                    .collect();
+                handles.sort();
+                return Err(invalid(if handles.is_empty() {
+                    "there are no agents in this channel".to_string()
+                } else {
+                    format!("no agent '{}' in this channel; the agents are {}", wanted, names(&handles))
+                }));
+            }
+            several => {
+                let several: Vec<String> = several.iter().map(|m| m.name.to_string()).collect();
+                return Err(invalid(format!("'{}' names several agents: {}", wanted, names(&several))));
+            }
         };
 
         let was_asleep = context.channel.wakeup_actor(context.issuer, agent.id).await.map_err(channel_error)?;

@@ -57,6 +57,7 @@ use caelumora_model::work::{TurnId, Work};
 use caelumora_model::message::{Message, MessageId, MessageRole};
 use caelumora_model::transcript::TranscriptEntry;
 use caelumora_model::security::{AccessQuestions, SecurityContext, SecurityManager};
+use caelumora_model::value::name::Name;
 use chrono::Utc;
 use futures::stream::{BoxStream, SelectAll};
 use futures::StreamExt;
@@ -279,7 +280,7 @@ impl ExternalAgentActor {
         if let Err(e) = self.actor_runtime.store_channel_state(state).await {
             warn!("External agent {} cannot store what it heard: {:#}", self.id(), e);
         }
-        reject_retries(retries, caelumora_model::agent::RetryRefused::Elsewhere, self.id(), &self.name(), self.security_context.principal_id, output).await;
+        reject_retries(retries, caelumora_model::agent::RetryRefused::Elsewhere, self.id(), self.name().as_str(), self.security_context.principal_id, output).await;
         request
     }
 
@@ -658,7 +659,7 @@ impl ExternalAgentActor {
             content,
             id: MessageId(Uuid::new_v4()),
             sender_id: self.id(),
-            sender_name: self.name(),
+            sender_name: self.name().to_string(),
             timestamp: Utc::now(),
             turn_id,
             ..Message::new(classification)
@@ -872,8 +873,8 @@ impl Actor for ExternalAgentActor {
         "external_agent".to_string()
     }
 
-    fn name(&self) -> String {
-        self.agent_controller.name()
+    fn name(&self) -> Name {
+        self.agent_controller.load().name.name.clone()
     }
 
     fn event_filter(&self) -> fn(&Envelope) -> bool {

@@ -537,6 +537,16 @@ A command answers the issuer alone (`/help`) or the whole channel (`/wakeup`).
 A command of an agent answers later, on the stream (see below): the REST response then carries the
 `span_id` of the requests instead, and an answer for the issuer alone is routed to them alone.
 
+### Naming an agent
+
+A command that takes an agent - `/wakeup sassy`, `/compact @sassy` - finds it with
+`ChannelLoop::agents_named` (issue [277](../issues/277-command-agent-by-name.md)), so that every
+command names agents alike. The text is taken as a `Name` first: "Sassy", "sassy" and "Zoe" for
+"Zoë" are the agent's name, compared as names are. Only if it is no agent's name is it taken as a
+handle, with or without its `@`, normalised as a mention is (`handle_of`): `@dr-who` for "Dr. Who".
+A handle is coarser than a name, so it can name several agents; a command then refuses with their
+names rather than picking one.
+
 ## Commands of an agent
 
 Some commands act on an agent rather than on the channel (issue
@@ -553,9 +563,11 @@ agent alike.
     agent's actor holds a `CommandExecutor<dyn AgentCommandProvider>` (in `AgentCommands`); two
     components of one name, or one that a command of the session has, keep the agent from starting.
 *   **Always addressed.** A command of an agent names its agent: `/compact @bob`, `/skill @bob
-    release-notes`; `@all` names every agent of the channel that carries it out. Without a handle,
-    or with one that names no such agent, it is refused with the handles to choose from. The
-    command is handed the rest of the line, without the handle.
+    release-notes`; `@all` names every agent of the channel that carries it out. The agent is found
+    as any command finds it (see *Naming an agent* above), so `@Bob` names bob as well. Without a
+    handle, or with one that names no such agent, it is refused with the handles to choose from;
+    with one that names several, with their names. The command is handed the rest of the line,
+    without the handle.
 *   **Seen and asked for.** `ActionType::ShowAgentCommand` and `ExecuteAgentCommand` carry the
     command and the attributes of the agent and of the channel. Under the ownership policy they
     are granted to whoever may write in the channel, unless the command says it is for the agent's
