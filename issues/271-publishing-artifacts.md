@@ -383,3 +383,11 @@ downloading; the documents say so.
     file that local workspaces and local artifacts share.
   - Security suite:
     `an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who_reads_the_channel`.
+- **2026-10-09** — Step 3 done: the component `artifact_tool` with `publish_artifact` (`path`,
+  `name`, `description`), approved as a change unless configured otherwise, presented as
+  `artifact_publish` (`ToolPresentation::ArtifactPublish`); its result is `artifact`, `version`,
+  `name`, `size`, `digest`, `path` and `description`, classified as the artifact. The way to the
+  workspace of the turn's channel is shared with `terminal_tool` (`tool::channel_workspace`), and so
+  is how a terminal's errors are told to the model. The security suite's helper for a call on the
+  workspace takes the component and when the call has arrived (`asked_for_a_call`);
+  `an_agents_artifact_is_published_for_its_owner`.

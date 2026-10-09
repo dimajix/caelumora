@@ -2331,6 +2331,15 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
 /// session's workspace, where the files `present` lie already - one that
 /// leaves `made`, a file of the workspace.
 async fn asked_for_a_call_on_the_workspace(function: &str, arguments: serde_json::Value, present: &[&str], made: &str, owner: fn(&World) -> UserId) -> Vec<String> {
+    let kind = caelumora_runtime::tool::terminal_tool::TERMINAL_TOOL_KIND;
+    asked_for_a_call(kind, function, arguments, present, |_, place| place.join(made).is_file(), owner).await
+}
+
+/// What is asked when the agent of `owner`, with a component of `kind`,
+/// asked by bob, makes `call` in the session's workspace, where the files
+/// `present` lie already - until `done` says the call arrived, given where
+/// the storages keep their files and where the workspace's lie.
+async fn asked_for_a_call(kind: &str, function: &str, arguments: serde_json::Value, present: &[&str], done: impl Fn(&std::path::Path, &std::path::Path) -> bool, owner: fn(&World) -> UserId) -> Vec<String> {
     use caelumora_model::message::{Message, MessageRole};
     use caelumora_model::tool::{ToolCall, ToolVisibility};
 
@@ -2350,7 +2359,7 @@ async fn asked_for_a_call_on_the_workspace(function: &str, arguments: serde_json
             ComponentDescriptor::new("model", "once"),
             ComponentDescriptor {
                 params: serde_json::json!({ "requires_approval": false }),
-                ..ComponentDescriptor::new("workspace", caelumora_runtime::tool::terminal_tool::TERMINAL_TOOL_KIND)
+                ..ComponentDescriptor::new("workspace", kind)
             },
         ] },
         ..world.personality("working", None, &[]).await
@@ -2368,11 +2377,10 @@ async fn asked_for_a_call_on_the_workspace(function: &str, arguments: serde_json
         std::fs::create_dir_all(place.join(file).parent().unwrap()).unwrap();
         std::fs::write(place.join(file), "present").unwrap();
     }
-    let made = place.join(made);
     let (_, asked) = world.asked(async {
         main.user_actor(world.bob).unwrap().send_message("@helper do it".to_string(), None).await.expect("sent");
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
-            while !made.is_file() {
+            while !done(world.files.path(), &place) {
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
         }).await.expect("the call reached the workspace");
@@ -2418,6 +2426,18 @@ async fn an_agents_file_tool_asks_what_a_command_asks() {
 async fn an_agents_move_of_a_file_asks_what_a_change_asks() {
     let asked = asked_for_a_call_on_the_workspace("move_file", serde_json::json!({ "from": "notes/a.md", "to": "archive/a.md" }), &["notes/a.md"], "archive/a.md", |world| world.alice).await;
     asked_as_a_call_on_the_workspace(&asked);
+}
+
+/// An agent's publication of an artifact (issue 271) asks what a call on
+/// the workspace asks, and makes the artifact its owner's - asked in the
+/// same context, `CreateArtifact` for alice.
+#[tokio::test]
+async fn an_agents_artifact_is_published_for_its_owner() {
+    let kind = caelumora_runtime::tool::artifact_tool::ARTIFACT_TOOL_KIND;
+    let kept = |files: &std::path::Path, _: &std::path::Path| std::fs::read_dir(files.join("artifacts")).is_ok_and(|mut entries| entries.next().is_some());
+    let asked = asked_for_a_call(kind, "publish_artifact", serde_json::json!({ "path": "notes/a.md" }), &["notes/a.md"], kept, |world| world.alice).await;
+    asked_as_a_call_on_the_workspace(&asked);
+    assert!(asked.contains(&"alice as helper, asked by bob: CreateArtifact(alice's) yes".to_string()), "its owner's: {asked:?}");
 }
 
 /// An agent reaches the workspace of a session its owner does not take

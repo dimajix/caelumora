@@ -28,7 +28,6 @@ use crate::agent::turn::Turn;
 use crate::component::{config_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::terminal::TerminalError;
 use crate::tool::{ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
-use crate::view::WorkspaceView;
 use async_trait::async_trait;
 use caelumora_model::approval::ToolMatcher;
 use caelumora_model::question::Answers;
@@ -87,23 +86,13 @@ fn tool(name: &str, description: String, parameters: ToolParameters, requires_ap
 /// What a terminal reports, as the model is told it: what names something
 /// that is not there, or is not what the call needs, is the model's to
 /// correct; that the storage failed is not.
-fn failed(error: TerminalError) -> ToolError {
+pub(crate) fn failed(error: TerminalError) -> ToolError {
     match error {
         TerminalError::Unavailable(_) => ToolError::ExecutionFailed(error.to_string()),
         TerminalError::InvalidPath(_) | TerminalError::NotFound(_) | TerminalError::Exists(_) | TerminalError::IsADirectory(_)
         | TerminalError::NotADirectory(_) | TerminalError::NotEmpty(_) | TerminalError::TooLarge { .. } | TerminalError::UnknownCommand(_) => {
             ToolError::InvalidParameter(error.to_string())
         }
-    }
-}
-
-impl TerminalTool {
-    /// The workspace of the turn's channel, if the agent may use it there.
-    async fn workspace(&self, turn: &Turn<'_>) -> ToolResult<WorkspaceView> {
-        let session = turn.session().ok_or_else(|| ToolError::ExecutionFailed("the turn is in no session".to_string()))?;
-        let channel = session.channel(turn.channel_id()).await?;
-        channel.workspace().await?
-            .ok_or_else(|| ToolError::ExecutionFailed("there is no workspace you can use in this channel".to_string()))
     }
 }
 
@@ -145,7 +134,7 @@ impl ToolProvider for TerminalTool {
         if !is_shell && !files::TOOLS.contains(&name) {
             return Err(ToolError::UnknownTool(name.to_string()));
         }
-        let workspace = self.workspace(turn).await?;
+        let workspace = crate::tool::channel_workspace(turn).await?;
         let terminal = workspace.terminal().await.map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
         let value = match is_shell {
             true => shell::execute(&self.config, name, params, terminal.as_ref(), turn).await?,
