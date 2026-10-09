@@ -300,11 +300,12 @@ nothing inside to fit.
 ## Reading another channel
 
 Reading from another channel is decided per entry: per message of its history, per note, per memory
-entry. It is `ActionType::ReadChannel { reader, source }`, each side a `Place`: the channel's id,
-how the entry - or the reading channel - is classified, and the channel's session as privacy sees it
-(`SessionPrivacy` - its id, policy, owner and people, issue 134), asked with
-`AccessQuestions::may_channel_read`. It is asked in the name of the agent that reads - the security
-context it acts in, its owner's - because the agent passes on what it reads (issue 131). With it go
+entry. It is asked as copying the entry into the reading channel, `ActionType::CopyInformation {
+from, into }` (issue 264) - each side a `Place`: the channel's id, how the entry - or the reading
+channel - is classified, and the channel's session as privacy sees it (`SessionPrivacy` - its id,
+policy, owner and people, issue 134) -, with `AccessQuestions::may_copy_information`. It is asked
+in the name of the agent that reads - the security context it acts in, its owner's - because the
+agent passes on what it reads (issue 131). With it go
 the attributes of the source channel when what is read is the channel's - its history, its notes,
 what was released from it -, none for what the agent knows itself of it: what it remembered there,
 its private notes. A channel may always read itself. Otherwise the ownership policy allows it if
@@ -504,11 +505,11 @@ In detail:
 *   **Notes** (issue 17) and **private notes** (issue 51) carry their classification
     (`NoteChange::Add`, `Note::classification`). Other channels read them note by note; the agent is
     shown the private notes of every other channel of the session that its current channel may read
-    (`AccessQuestions::may_channel_read`).
+    (`AccessQuestions::may_copy_information`).
 *   **Agent memory** (issue 62) entries carry the label they were written with, and are recalled
     only in channels that may read it (`AgentMemory::recalled`, which asks
-    `AccessQuestions::may_channel_read` like the private notes, issue 131). The reading channel is
-    judged by the classification the turn began with: what the turn may read is bounded by its
+    `AccessQuestions::may_copy_information` like the private notes, issue 131). The reading channel
+    is judged by the classification the turn began with: what the turn may read is bounded by its
     channel, not by its label.
 
 This is sound because an agent never sees anything that may not flow into its channel, and what it
@@ -572,4 +573,4 @@ is complete. What is still open:
 *   **One enforcement for component state.** When the state of notes becomes generic component state
     ([65](../issues/65-generic-component-state.md)), the rules are to be applied by the core, not
     re-implemented per component. Today every component that reads across channels asks
-    `AccessQuestions::may_channel_read` itself (issue 131).
+    `AccessQuestions::may_copy_information` itself (issue 131).

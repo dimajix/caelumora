@@ -494,16 +494,16 @@ impl ConfidentialityRules {
         Self { roles: Some(roles), ..self }
     }
 
-    /// Whether `reader` may read from `source`: a channel itself always;
-    /// within a session as the classifications decide; beyond it only
-    /// where the source's session permits it as well (issue 134) - whatever
-    /// the classification, `public` included.
-    pub fn may_read_from(&self, reader: &Place, source: &Place) -> bool {
-        if source.channel == reader.channel {
+    /// Whether what is at `from` may be copied into `into` (issue 264): a
+    /// channel into itself always; within a session as the classifications
+    /// decide; beyond it only where the session of `from` permits it as
+    /// well (issue 134) - whatever the classification, `public` included.
+    pub fn may_copy(&self, from: &Place, into: &Place) -> bool {
+        if from.channel == into.channel {
             return true;
         }
-        let consented = source.session.id == reader.session.id || source.session.permits(&reader.session);
-        consented && source.classification.flows_to(&reader.classification, &self.compartments)
+        let consented = from.session.id == into.session.id || from.session.permits(&into.session);
+        consented && from.classification.flows_to(&into.classification, &self.compartments)
     }
 
     /// Whether `classification` may be given at all: if its compartments

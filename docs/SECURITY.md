@@ -107,8 +107,8 @@ themselves, an agent its owner (see [In whose name an agent acts](#in-whose-name
 *   The runtime acting on its own uses `SecurityContext::system()` (`ActorId::System`), which may do
     everything. This is deliberate and never a default: an empty context has no rights.
 
-The confidentiality actions (`ReadChannel`, `Classify`, `Reclassify`, `Publish`, `JoinChannel`) are
-decided by classifications, not by ownership: the ownership policy applies the
+The confidentiality actions (`CopyInformation`, `Classify`, `Reclassify`, `Publish`,
+`JoinChannel`) are decided by classifications, not by ownership: the ownership policy applies the
 `ConfidentialityRules` of the configured compartments and roles to them, and adds only what is about
 ownership - the actor putting a message into a channel is the one acting, a channel is reclassified
 by its owner, what is a channel's is read from another only by an agent whose owner may read that
@@ -229,7 +229,7 @@ asked:
     the operation it counts for, with `Enforcement::require`.
 
 The questions are `may_read_channel`, `may_change_channel`, `may_change_session`,
-`may_channel_read`, `may_read_agent_context`, `may_read_agent_tools`, `may_approve`,
+`may_copy_information`, `may_read_agent_context`, `may_read_agent_tools`, `may_approve`,
 `may_delete_agent`, `may_call_tool`, `may_publish`, `may_modify_message`, `may_revoke_message`,
 `may_reclassify`, `may_retry_message`, `may_cancel_channel`, `may_see_channel`, `may_restore` and
 `may_purge`.

@@ -1807,7 +1807,7 @@ mod tests {
                 use caelumora_model::security::AccessQuestions;
                 use caelumora_model::security::Place;
                 let place = |channel: &ChannelLoop| Place { channel: channel.id(), classification: channel.classification(), session: channel.session_loop().map(|s| s.privacy()).unwrap_or_default() };
-                security.may_channel_read(&context, &place(&reader), &place(&source), Some(&source.channel().security_attributes)).await
+                security.may_copy_information(&context, &place(&source), &place(&reader), Some(&source.channel().security_attributes)).await
             }
         };
         assert!(may_read(&secret, &secret).await, "a channel reads itself");

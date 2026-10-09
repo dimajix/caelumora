@@ -34,7 +34,7 @@ impl AgentMemory {
     /// What may be recalled in `turn`'s channel: entries written in a
     /// channel it may read, as the memory is now - without the turn's own
     /// changes. Whether it may is asked of `security` in the work's context -
-    /// the agent's, with its owner's rights (`AccessQuestions::may_channel_read`,
+    /// the agent's, with its owner's rights (`AccessQuestions::may_copy_information`,
     /// issues 131, 255), once per
     /// channel, classification and session the entries come with; the
     /// turn's channel is judged by the classification the turn began with.
@@ -86,9 +86,9 @@ impl AgentMemory {
         // Where it was written, with its session as privacy sees it then or now.
         let source = |session: SessionPrivacy| Place { channel: origin.channel, classification: entry.classification.clone(), session };
         if origin.session.id == here.session.id {
-            return security.may_channel_read(context, here, &source(here.session.clone()), None).await;
+            return security.may_copy_information(context, &source(here.session.clone()), here, None).await;
         }
-        if !security.may_channel_read(context, here, &source(origin.session.clone()), None).await {
+        if !security.may_copy_information(context, &source(origin.session.clone()), here, None).await {
             return false;
         }
         let id = origin.session.id;
@@ -106,7 +106,7 @@ impl AgentMemory {
             },
         };
         match current {
-            Some(current) => security.may_channel_read(context, here, &source(current), None).await,
+            Some(current) => security.may_copy_information(context, &source(current), here, None).await,
             None => true,
         }
     }

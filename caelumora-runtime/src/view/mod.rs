@@ -15,7 +15,7 @@
 //! channel if they may read its document and are cleared for it (issues
 //! 70, 133). An **agent** reads *from its channel* (`Viewer::from_place`,
 //! issue 17): another channel as a whole if its channel may read it by
-//! their classifications (`AccessQuestions::may_channel_read`, issue 133),
+//! their classifications (`AccessQuestions::may_copy_information`, issue 133),
 //! else entry by entry - only what was released to it - and a channel it
 //! may not read at all is one that does not exist. Its root is its own
 //! session, reached through its turn (`Turn::session`); a frontend's root
@@ -60,7 +60,7 @@ pub struct Viewer {
     context: SecurityContext,
     /// Where an agent reads from: its channel, the classification it reads
     /// at (its turn's, issue 67) and its session's privacy (issue 134) -
-    /// the `reader` of every `may_channel_read` it asks.
+    /// what every `may_copy_information` it asks copies into.
     from: Option<Place>,
 }
 
@@ -421,14 +421,14 @@ impl Views {
         Ok(deleted)
     }
 
-    /// Whether the viewer, reading from its place, may read what `source`
-    /// holds (`AccessQuestions::may_channel_read`, issue 133): of the
-    /// channel with `channel` attributes, or - `None` - what the viewer's
-    /// agent knows itself of it (issue 264). A viewer without a place reads
-    /// by other questions and is not asked this one.
-    pub(crate) async fn may_read_from(&self, source: &Place, channel: Option<&SecurityAttributes>) -> bool {
-        let Some(from) = &self.viewer.from else { return true };
-        self.security.may_channel_read(self.viewer.context(), from, source, channel).await
+    /// Whether what `from` holds may be copied into the viewer's place
+    /// (`AccessQuestions::may_copy_information`, issue 133): of the channel
+    /// with `channel` attributes, or - `None` - what the viewer's agent
+    /// knows itself of it (issue 264). A viewer without a place reads by
+    /// other questions and is not asked this one.
+    pub(crate) async fn may_copy_from(&self, from: &Place, channel: Option<&SecurityAttributes>) -> bool {
+        let Some(into) = &self.viewer.from else { return true };
+        self.security.may_copy_information(self.viewer.context(), from, into, channel).await
     }
 
     /// The name of `actor`; `None` for a user or agent that no longer

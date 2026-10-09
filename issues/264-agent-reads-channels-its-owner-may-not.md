@@ -359,3 +359,10 @@ then the two questions. Then the close.
   by the maintainer why the attributes were an `Option`: because `None` meant the agent's own
   knowledge - which made leaving them out the lesser check. What step 1 decides stays; how it is
   carried out is replaced.
+- **2026-10-09** — Step 1 of the revised plan done: `ActionType::ReadChannel { reader, source,
+  channel }` is `CopyInformation { from, into, channel }`, `AccessQuestions::may_channel_read`
+  is `may_copy_information(context, from, into, channel)`, `ConfidentialityRules::may_read_from`
+  is `may_copy(from, into)`, `Views::may_read_from` is `may_copy_from`; every caller passes *from*
+  first, the memory its entry's place, the views the channel read. The model's test helper is
+  `copy(from, into)`. The suite records `CopyInformation` and answers alike; the documents use the
+  new names. No behaviour changes.

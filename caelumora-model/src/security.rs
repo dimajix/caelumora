@@ -114,19 +114,20 @@ pub enum ActionType<'a> {
     /// on the conversation, like asking for another answer. Whether the
     /// one answering was asked is the agent's to check, not the policy's.
     AnswerQuestion(&'a SecurityAttributes),
-    /// Reading something of the channel `source` - a message, a note, a
-    /// memory entry, classified as `source` says - from another channel,
-    /// `reader` (issue 17). Decided per entry by how it and the reader are
-    /// classified (issue 133) and, across sessions, by whether the source's
-    /// session lets the reader's read it (issue 134). An entry released
-    /// below its channel's classification may be read where the channel as
-    /// a whole may not - but a release adds no readers (issue 264).
-    /// `channel` are the attributes of the source channel when what is read
-    /// is the channel's - its history, its notes -, so that a policy may ask
-    /// who may read it; `None` for what the reading agent knows itself of
-    /// it - what it remembered, its private notes -, which does not change
-    /// when someone joins or leaves the channel.
-    ReadChannel { reader: &'a Place, source: &'a Place, channel: Option<&'a SecurityAttributes> },
+    /// Copying something of the channel `from` - a message, a note, a
+    /// memory entry, classified as `from` says - into another channel,
+    /// `into`, where an agent reads it (issues 17, 264). Decided per entry
+    /// by how it and `into` are classified (issue 133) and, across
+    /// sessions, by whether the session of `from` lets that of `into` read
+    /// it (issue 134). An entry released below its channel's classification
+    /// may be copied where the channel as a whole may not - but a release
+    /// adds no readers (issue 264). `channel` are the attributes of the
+    /// channel of `from` when what is copied is the channel's - its
+    /// history, its notes -, so that a policy may ask who may read it;
+    /// `None` for what the reading agent knows itself of it - what it
+    /// remembered, its private notes -, which does not change when someone
+    /// joins or leaves the channel.
+    CopyInformation { from: &'a Place, into: &'a Place, channel: Option<&'a SecurityAttributes> },
     /// `actor` putting what is classified `classification` into a channel
     /// classified `channel` (issue 133): a message or a tool result into its history - asked by
     /// the channel for every one that enters it - or a tool result into the
@@ -176,7 +177,7 @@ pub enum ActionType<'a> {
     Purge(EntityKind, &'a SecurityAttributes),
 }
 
-/// One side of a [`ActionType::ReadChannel`]: a channel, the
+/// One side of a [`ActionType::CopyInformation`]: a channel, the
 /// classification of what is read there or of the channel that reads, and
 /// the session it belongs to as privacy sees it (issue 134). Whether two
 /// places are one channel, or in one session, is told by their ids.
@@ -242,8 +243,8 @@ impl ActionType<'_> {
             ActionType::WakeChannel(_) => "WakeChannel".into(),
             ActionType::RetryMessage(_) => "RetryMessage".into(),
             ActionType::AnswerQuestion(_) => "AnswerQuestion".into(),
-            ActionType::ReadChannel { reader, source, .. } => {
-                format!("ReadChannel({} of {} from {})", source.classification, source.channel, reader.channel)
+            ActionType::CopyInformation { from, into, .. } => {
+                format!("CopyInformation({} of {} into {})", from.classification, from.channel, into.channel)
             }
             ActionType::Publish { classification, actor, channel } => format!("Publish({classification} by {actor} into {channel})"),
             ActionType::ModifyMessage { author, .. } => format!("ModifyMessage(of {author})"),
@@ -408,13 +409,14 @@ pub trait AccessQuestions {
     /// (`UpdateWorkspace`, issue 253).
     async fn may_change_workspace(&self, context: &SecurityContext, workspace: &SecurityAttributes) -> bool;
 
-    /// Whether the channel of `reader` may read what comes from `source` - a
-    /// message, a note, or what an agent remembered there (`ReadChannel`,
-    /// issues 17, 131, 133, 134 and 264): asked in `context`, the agent's
-    /// who reads and passes it on; with the attributes of the source
-    /// `channel` for what is the channel's, none for what the agent knows
-    /// itself. A channel may always read itself.
-    async fn may_channel_read(&self, context: &SecurityContext, reader: &Place, source: &Place, channel: Option<&SecurityAttributes>) -> bool;
+    /// Whether what comes from `from` - a message, a note, or what an agent
+    /// remembered there - may be copied into the channel of `into`
+    /// (`CopyInformation`, issues 17, 131, 133, 134 and 264): asked in
+    /// `context`, the agent's who reads and passes it on; with the
+    /// attributes of the `channel` of `from` for what is the channel's,
+    /// none for what the agent knows itself. A channel may always be
+    /// copied into itself.
+    async fn may_copy_information(&self, context: &SecurityContext, from: &Place, into: &Place, channel: Option<&SecurityAttributes>) -> bool;
 
     /// Whether `context` may see what the agent with `agent` attributes saw
     /// when it wrote a message (`ReadAgentContext`, issue 41).
@@ -508,11 +510,11 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
         self.check(context, ActionType::UpdateWorkspace(workspace)).await
     }
 
-    async fn may_channel_read(&self, context: &SecurityContext, reader: &Place, source: &Place, channel: Option<&SecurityAttributes>) -> bool {
-        if reader.channel == source.channel {
+    async fn may_copy_information(&self, context: &SecurityContext, from: &Place, into: &Place, channel: Option<&SecurityAttributes>) -> bool {
+        if from.channel == into.channel {
             return true;
         }
-        self.check(context, ActionType::ReadChannel { reader, source, channel }).await
+        self.check(context, ActionType::CopyInformation { from, into, channel }).await
     }
 
     async fn may_read_agent_context(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool {
@@ -718,7 +720,7 @@ impl SecurityManager for OwnershipSecurityManager {
             ActionType::ApproveToolCall { agent, .. } => agent.owner_id == me || agent.contributors.contains(&me),
             // Of a channel, what its owner may read or what it takes part
             // in itself (issue 264); what it knows itself, by the rules.
-            ActionType::ReadChannel { reader, source, channel } => self.rules.may_read_from(reader, source)
+            ActionType::CopyInformation { from, into, channel } => self.rules.may_copy(from, into)
                 && channel.is_none_or(|a| Self::may_read(a, me) || Self::may_read(a, context.caller_id)),
             ActionType::Classify(classification) => self.rules.may_classify(classification),
             ActionType::Reclassify { target, new, channel, .. } => {
@@ -857,8 +859,8 @@ mod tests {
         }
         let session_id = SessionId::new();
         let (own, other) = (channel(session_id, Confidentiality::Confidential, &[]), channel(session_id, Confidentiality::Public, &[]));
-        assert!(DenyAll.may_channel_read(&context(alice), &own, &own, None).await, "a channel reads itself, whatever the policy");
-        assert!(!DenyAll.may_channel_read(&context(alice), &own, &other, None).await, "another channel only as the policy decides");
+        assert!(DenyAll.may_copy_information(&context(alice), &own, &own, None).await, "a channel is copied into itself, whatever the policy");
+        assert!(!DenyAll.may_copy_information(&context(alice), &other, &own, None).await, "another channel only as the policy decides");
     }
 
     #[tokio::test]
@@ -901,10 +903,10 @@ mod tests {
         Place { channel: ChannelId::new(), classification, session }
     }
 
-    /// Reading what `source` holds at the classification it names, as the
-    /// reading agent knows it itself: by the rules alone.
-    fn read<'a>(source: &'a Place, reader: &'a Place) -> ActionType<'a> {
-        ActionType::ReadChannel { reader, source, channel: None }
+    /// Copying what `from` holds, at the classification it names, into
+    /// `into`, as the reading agent knows it itself: by the rules alone.
+    fn copy<'a>(from: &'a Place, into: &'a Place) -> ActionType<'a> {
+        ActionType::CopyInformation { from, into, channel: None }
     }
 
     /// What `source` holds classified `classification`.
@@ -925,8 +927,8 @@ mod tests {
         let session = SessionId::new();
         let (team, secret) = (channel(session, Confidentiality::Internal, &[]), channel(session, Confidentiality::Confidential, &[]));
         for actor in [user(), user()] {
-            assert!(allows(actor, read(&team, &secret)).await);
-            assert!(!allows(actor, read(&secret, &team)).await);
+            assert!(allows(actor, copy(&team, &secret)).await);
+            assert!(!allows(actor, copy(&secret, &team)).await);
         }
     }
 
@@ -938,13 +940,13 @@ mod tests {
         let (hers, his, other) = (ActorId::Agent(crate::agent::AgentId::new()), ActorId::Agent(crate::agent::AgentId::new()), ActorId::Agent(crate::agent::AgentId::new()));
         let alices = SecurityAttributes { owner_id: alice, contributors: vec![other] };
         let policy = OwnershipSecurityManager::new();
-        let reading = |channel| ActionType::ReadChannel { reader: &team, source: &side, channel };
+        let reading = |channel| ActionType::CopyInformation { from: &side, into: &team, channel };
         assert!(policy.check(&context(bob).next(hers, alice), reading(Some(&alices))).await, "her agent, whoever asked");
         assert!(!policy.check(&context(bob).next(his, bob), reading(Some(&alices))).await, "not his: he may not read it");
         assert!(policy.check(&context(bob).next(other, bob), reading(Some(&alices))).await, "but an agent taking part in it");
         assert!(policy.check(&context(bob).next(his, bob), reading(None)).await, "what an agent knows itself, by the rules alone");
         let secret = channel(session, Confidentiality::Confidential, &[]);
-        assert!(!policy.check(&context(alice).next(hers, alice), ActionType::ReadChannel { reader: &team, source: &secret, channel: Some(&alices) }).await, "and never past the flow rule");
+        assert!(!policy.check(&context(alice).next(hers, alice), ActionType::CopyInformation { from: &secret, into: &team, channel: Some(&alices) }).await, "and never past the flow rule");
     }
 
     #[tokio::test]
@@ -955,10 +957,10 @@ mod tests {
             channel(session, Confidentiality::Internal, &["finance"]),
             channel(session, Confidentiality::Internal, &[]),
         );
-        assert!(policy.check(&alice, read(&finance, &hr)).await, "HR reads finance");
-        assert!(!policy.check(&alice, read(&hr, &finance)).await, "not the other way round");
-        assert!(!policy.check(&alice, read(&hr, &general)).await, "nor a general channel");
-        assert!(policy.check(&alice, read(&general, &hr)).await, "what is general flows anywhere");
+        assert!(policy.check(&alice, copy(&finance, &hr)).await, "HR reads finance");
+        assert!(!policy.check(&alice, copy(&hr, &finance)).await, "not the other way round");
+        assert!(!policy.check(&alice, copy(&hr, &general)).await, "nor a general channel");
+        assert!(policy.check(&alice, copy(&general, &hr)).await, "what is general flows anywhere");
     }
 
     #[tokio::test]
@@ -974,11 +976,11 @@ mod tests {
         let elsewhere = |policy, level| in_session(hers(policy, &[bob]), level, &[]);
         let agent = ActorId::Agent(crate::agent::AgentId::new());
 
-        assert!(!allows(agent, read(&elsewhere(PrivacyConfig::Private, Confidentiality::Internal), &reader)).await, "a private session is read by no other");
-        assert!(!allows(agent, read(&elsewhere(PrivacyConfig::Private, Confidentiality::Public), &reader)).await, "not even what is public");
-        assert!(allows(agent, read(&elsewhere(PrivacyConfig::SameOwner, Confidentiality::Internal), &reader)).await, "her other sessions, where she lets them");
-        assert!(allows(agent, read(&elsewhere(PrivacyConfig::SharedAudience, Confidentiality::Internal), &reader)).await, "she took part there");
-        assert!(!allows(agent, read(&elsewhere(PrivacyConfig::SameOwner, Confidentiality::Confidential), &reader)).await, "and still only what flows into the reader");
+        assert!(!allows(agent, copy(&elsewhere(PrivacyConfig::Private, Confidentiality::Internal), &reader)).await, "a private session is read by no other");
+        assert!(!allows(agent, copy(&elsewhere(PrivacyConfig::Private, Confidentiality::Public), &reader)).await, "not even what is public");
+        assert!(allows(agent, copy(&elsewhere(PrivacyConfig::SameOwner, Confidentiality::Internal), &reader)).await, "her other sessions, where she lets them");
+        assert!(allows(agent, copy(&elsewhere(PrivacyConfig::SharedAudience, Confidentiality::Internal), &reader)).await, "she took part there");
+        assert!(!allows(agent, copy(&elsewhere(PrivacyConfig::SameOwner, Confidentiality::Confidential), &reader)).await, "and still only what flows into the reader");
     }
 
     #[tokio::test]
@@ -986,11 +988,11 @@ mod tests {
         let (policy, session, alice) = (hr_reads_finance(), SessionId::new(), context(user()));
         let (hr, finance) = (channel(session, Confidentiality::Confidential, &["hr"]), channel(session, Confidentiality::Confidential, &["finance"]));
         let released = Classification::new(Confidentiality::Confidential, [Compartment::new("hr"), Compartment::new("finance")]).unwrap();
-        assert!(!policy.check(&alice, read(&hr, &finance)).await, "finance does not read HR");
+        assert!(!policy.check(&alice, copy(&hr, &finance)).await, "finance does not read HR");
         let released = self::released(&hr, &released);
-        assert!(policy.check(&alice, read(&released, &finance)).await, "but what HR released to it");
+        assert!(policy.check(&alice, copy(&released, &finance)).await, "but what HR released to it");
         let elsewhere = channel(SessionId::new(), Confidentiality::Confidential, &["finance"]);
-        assert!(!policy.check(&alice, read(&released, &elsewhere)).await, "not from another session");
+        assert!(!policy.check(&alice, copy(&released, &elsewhere)).await, "not from another session");
     }
 
     #[tokio::test]

@@ -9,7 +9,7 @@
 //! other channels and sessions neither lose nor overwrite them. The prompt
 //! part shows the entries that may be recalled in the current channel: those
 //! written in a channel it may read, as the policy decides when the
-//! component asks in the agent's name (`AccessQuestions::may_channel_read`,
+//! component asks in the agent's name (`AccessQuestions::may_copy_information`,
 //! issue 131). Under the ownership policy that is the flow rule of issue
 //! 133 - the entry's channel's classification must flow into this one's -
 //! within the session, and beyond it only where the entry's session permits
@@ -455,7 +455,7 @@ mod tests {
     #[async_trait]
     impl SecurityManager for OnlyFor {
         async fn check(&self, context: &SecurityContext, action: ActionType<'_>) -> bool {
-            matches!(action, ActionType::ReadChannel { channel: None, .. }) && context.principal_id == self.0
+            matches!(action, ActionType::CopyInformation { channel: None, .. }) && context.principal_id == self.0
         }
     }
 

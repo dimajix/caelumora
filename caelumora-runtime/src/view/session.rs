@@ -157,7 +157,7 @@ impl SessionView {
         let context = self.views.context();
         if self.views.viewer().place().is_some() {
             let source = Place { channel: channel.id, classification: channel.classification.clone(), session: self.privacy() };
-            let whole = self.views.may_read_from(&source, Some(&channel.security_attributes)).await;
+            let whole = self.views.may_copy_from(&source, Some(&channel.security_attributes)).await;
             return Some(if whole { Readable::Whole } else { Readable::Released });
         }
         let readable = security.may_read_channel(context, &channel.security_attributes).await

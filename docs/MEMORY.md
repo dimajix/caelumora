@@ -84,7 +84,7 @@ The `private_notes` component (issue 51) gives an agent a second chain per chann
 *   **Prompt part.** Its `BeforeTurnInput` part shows the agent its private notes of this channel
     and - through the turn's views, `SessionView::private_notes_of`, which reads
     `MemberView::private_notes` in each - of every other channel of the session that this channel
-    may read (`AccessQuestions::may_channel_read`, the same rule as
+    may read (`AccessQuestions::may_copy_information`, the same rule as
     for [reading another channel](#reading-other-channels)). A note carries [the turn's
     label](CONFIDENTIALITY.md#what-a-turn-writes-as) - the classification of what the turn had seen,
     at most its channel's - stamped when it is written, and is read note by note;
@@ -112,9 +112,9 @@ notes, chosen per personality ([68](../issues/68-notes-in-agent-state.md)).
     classification of what the turn had seen, at most its channel's
     ([CONFIDENTIALITY.md](CONFIDENTIALITY.md#what-a-turn-writes-as), issue 168) - and is recalled
     only where that may be read. The component asks the policy in the context of the turn it is
-    called in - the agent's, with its owner's rights (`AccessQuestions::may_channel_read` through
-    the `SecurityManager` of its `ComponentContext`, issues 131, 255) -, once per channel the
-    entries come from. Under the ownership policy an entry is
+    called in - the agent's, with its owner's rights (`AccessQuestions::may_copy_information`
+    through the `SecurityManager` of its `ComponentContext`, issues 131, 255) -, once per channel
+    the entries come from. Under the ownership policy an entry is
     recalled where its own classification - the turn's label when it was written, unless it was
     reclassified - flows into the current channel's (the flow rule of issue
     133) - within the session, and beyond it only where the entry's session permits it
@@ -158,9 +158,9 @@ nothing.
     through its channel (`ChannelLoop::session_loop()`, a weak handle the `SessionLoop` sets on each
     of its channels with `ChannelLoop::attach`, issue 123).
 *   **Who may read what.** Another channel is read as a whole if the agent's channel may read it by
-    their classifications (`AccessQuestions::may_channel_read`, `ActionType::ReadChannel`) and the
-    agent's owner may read it or the agent takes part in it (issue
-    [264](../issues/264-agent-reads-channels-its-owner-may-not.md)) - those are what
+    their classifications (`AccessQuestions::may_copy_information`,
+    `ActionType::CopyInformation`) and the agent's owner may read it or the agent takes part in it
+    (issue [264](../issues/264-agent-reads-channels-its-owner-may-not.md)) - those are what
     `SessionView::channels` lists; the rest (`all_channels`, `channel_named`) entry by entry -
     message, note - as each entry's classification may be read, of a channel the agent may read at
     all. An entry released below its channel is read where the channel as a whole is not (see

@@ -1413,12 +1413,12 @@ async fn asked_to_read_side(world: &World, main: &caelumora_runtime::channel::Ch
 /// it (issue 255): bob asks alice's `reader` to read her channel "side",
 /// which he may not read himself - the agent reads it as alice, asked by
 /// bob, and as far as the flow rule lets it into the channel he asked in
-/// (`ReadChannel`). What the decision accepts: her agent, asked without
+/// (`CopyInformation`). What the decision accepts: her agent, asked without
 /// approval, lets every member read through it what she may.
 #[tokio::test]
 async fn an_agent_reads_another_channel_with_its_owners_rights_whoever_asked() {
     let (world, session, main) = with_a_reader_of(|world| world.alice, false).await;
-    let asked = asked_to_read_side(&world, &main, "alice as reader, asked by bob: ReadChannel yes").await;
+    let asked = asked_to_read_side(&world, &main, "alice as reader, asked by bob: CopyInformation yes").await;
     let readers: Vec<&String> = asked.iter().filter(|line| line.contains("as reader")).collect();
     assert!(readers.iter().all(|line| line.starts_with("alice as reader, asked by bob:")), "with her rights, asked by him: {asked:?}");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
@@ -1432,9 +1432,9 @@ async fn an_agent_reads_another_channel_with_its_owners_rights_whoever_asked() {
 #[tokio::test]
 async fn an_agent_does_not_read_a_channel_its_owner_may_not_read() {
     let (world, session, main) = with_a_reader_of(|world| world.bob, false).await;
-    let asked = asked_to_read_side(&world, &main, "bob as reader: ReadChannel no").await;
-    let reading: Vec<&String> = asked.iter().filter(|line| line.contains("ReadChannel")).collect();
-    assert!(reading.len() >= 2 && reading.iter().all(|line| *line == "bob as reader: ReadChannel no"), "nothing of side, as a whole nor entry by entry: {asked:?}");
+    let asked = asked_to_read_side(&world, &main, "bob as reader: CopyInformation no").await;
+    let reading: Vec<&String> = asked.iter().filter(|line| line.contains("CopyInformation")).collect();
+    assert!(reading.len() >= 2 && reading.iter().all(|line| *line == "bob as reader: CopyInformation no"), "nothing of side, as a whole nor entry by entry: {asked:?}");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
@@ -1444,8 +1444,8 @@ async fn an_agent_does_not_read_a_channel_its_owner_may_not_read() {
 #[tokio::test]
 async fn an_agent_reads_a_channel_it_takes_part_in_whose_owner_may_not() {
     let (world, session, main) = with_a_reader_of(|world| world.bob, true).await;
-    let asked = asked_to_read_side(&world, &main, "bob as reader: ReadChannel yes").await;
-    assert!(asked.iter().filter(|line| line.contains("ReadChannel")).all(|line| line.ends_with(" yes")), "{asked:?}");
+    let asked = asked_to_read_side(&world, &main, "bob as reader: CopyInformation yes").await;
+    assert!(asked.iter().filter(|line| line.contains("CopyInformation")).all(|line| line.ends_with(" yes")), "{asked:?}");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

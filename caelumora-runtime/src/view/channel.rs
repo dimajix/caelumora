@@ -140,7 +140,7 @@ impl ChannelView {
             Readable::Whole => true,
             Readable::Released => {
                 let channel = (!own).then_some(&self.channel.security_attributes);
-                self.views().may_read_from(&self.place(classification), channel).await
+                self.views().may_copy_from(&self.place(classification), channel).await
             }
         }
     }
