@@ -271,6 +271,7 @@ published before anyone else can take it.
 | [166](166-memory-as-topic-documents.md) | open | Agent memory is a flat list of one-line entries, all of them in every prompt, with nothing to group, revise or fetch them by topic. |
 | [253](253-workspace.md) | done | Nothing in Caelumora holds a file: agents and people have no workspace to keep, share and work on files in, and an executor would have to own them. |
 | [256](256-workspace-versions.md) | open | A workspace has no versions: what a person, a file tool or a command overwrote cannot be taken back, and who changed what is not recorded. |
+| [271](271-publishing-artifacts.md) | open | An agent cannot offer a file for download, and nothing it hands over outlives the workspace it lies in. |
 | [98](98-context-provider-facet.md) | done | `ContextProvider` is a facet with one implementation, and a second one would silently overwrite the first. |
 | [101](101-chain-component-helpers.md) | done | The three chain components copy their helpers, and `AgentNotes`/`AgentMemory` are constructed only to be called once. |
 | [117](117-message-prev-id.md) | done | `Message::prev_id` is excluded from the digest because the chain owns it, yet two places still set it. |
