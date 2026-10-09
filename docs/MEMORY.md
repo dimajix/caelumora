@@ -82,10 +82,11 @@ The `private_notes` component (issue 51) gives an agent a second chain per chann
 *   **Staging.** Changes are staged and taken over with the turn like public ones
     (`NoteKind::Private`).
 *   **Prompt part.** Its `BeforeTurnInput` part shows the agent its private notes of this channel
-    and - through the turn's views, `SessionView::private_notes_of`, which reads
-    `MemberView::private_notes` in each - of every other channel of the session that this channel
-    may read (`AccessQuestions::may_copy_information`, the same rule as
-    for [reading another channel](#reading-other-channels)). A note carries [the turn's
+    and - through the turn's views, `SessionView::own_private_notes`, which reaches them through
+    the agent itself, not through the channels (issue 264) - of every other channel of the session
+    it takes or took part in, as far as they may be copied into this one
+    (`AccessQuestions::may_copy_information`, see [reading another
+    channel](#reading-other-channels)). A note carries [the turn's
     label](CONFIDENTIALITY.md#what-a-turn-writes-as) - the classification of what the turn had seen,
     at most its channel's - stamped when it is written, and is read note by note;
     `reclassify_private_note` changes it (see
@@ -147,26 +148,33 @@ notes, chosen per personality ([68](../issues/68-notes-in-agent-state.md)).
 
 Components read what other channels know through the views of the turn they are called with
 (`Turn::session`, issue 163; see [SECURITY.md](SECURITY.md#views)): the agent's session, from which
-they reach its channels (`SessionView::channels`, `channel_named`), their notes and histories
-(`ChannelView::notes`, `history`) and the agent's own private notes there
-(`MemberView::private_notes`). A turn outside of a channel - in tests - has no session and reads
-nothing.
+they reach its channels (`SessionView::channels`, `channel_named`) and their notes and histories
+(`ChannelView::notes`, `history`), and the agent's own private notes of the other channels
+(`SessionView::own_private_notes`). A turn outside of a channel - in tests - has no session and
+reads nothing.
 
 *   **From the own channel.** The agent reads as a viewer *from a place* (`Viewer::from_place`, a
     `Place`): its channel, the classification its turn began with (issue 67) and its session's
     privacy. The views are built once per turn from the actor's runtime, which reaches the session
     through its channel (`ChannelLoop::session_loop()`, a weak handle the `SessionLoop` sets on each
     of its channels with `ChannelLoop::attach`, issue 123).
-*   **Who may read what.** Another channel is read as a whole if the agent's channel may read it by
-    their classifications (`AccessQuestions::may_copy_information`,
-    `ActionType::CopyInformation`) and the agent's owner may read it or the agent takes part in it
-    (issue [264](../issues/264-agent-reads-channels-its-owner-may-not.md)) - those are what
-    `SessionView::channels` lists; the rest (`all_channels`, `channel_named`) entry by entry -
-    message, note - as each entry's classification may be read, of a channel the agent may read at
-    all. An entry released below its channel is read where the channel as a whole is not (see
-    [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reading-another-channel)). What the agent wrote itself -
-    its private notes there (`ChannelView::may_read_entry` with `own`) - and what it remembered are
-    its own knowledge: read by the classifications alone, whoever takes part in the channel now.
+*   **Who may read what.** Another channel is reached if the agent's owner may read it or the
+    agent takes part in it itself (`GetChannel`, issue
+    [264](../issues/264-agent-reads-channels-its-owner-may-not.md)), as a user reaches a channel
+    they may read. Of a channel reached, the agent reads it as a whole if it may be copied into its
+    own by their classifications (`AccessQuestions::may_copy_information`,
+    `ActionType::CopyInformation`) - those are what `SessionView::channels` lists -, the rest
+    (`all_channels`, `channel_named`) entry by entry - message, note - as each entry's
+    classification may be copied. An entry released below its channel is read where the channel as
+    a whole is not (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reading-another-channel)), but no
+    release reaches an agent that may not reach its channel.
+*   **What the agent knows itself.** Its private notes of the session's other channels
+    (`SessionView::own_private_notes`) and its memory are reached through the agent, not through
+    the channels: no `GetChannel` is asked, each entry is copied by the classifications alone. It
+    heard or wrote them, and keeps them whoever takes part in those channels now - also of a
+    channel it left and its owner may not read. A user who looks at an agent's private notes
+    (`SessionView::private_notes_of`) reaches them through the channels, as far as they may read
+    them.
 *   **No probing.** A channel that does not exist and one that may not be read, and of which nothing
     was released, are the same error (`ViewError::NoChannelNamed`), so channels cannot be probed. A
     tool passes it on with `?` (`From<ViewError> for ToolError`).

@@ -6,10 +6,12 @@
 //! private notes in the current channel - taken over when the turn
 //! completes, like public notes (`notes`). Its prompt part gives the model
 //! its private notes from this channel and from every other channel of the
-//! session that this channel may read by their classifications
-//! (`AccessQuestions::may_copy_information`, issue 133): a note carries the
-//! classification of the channel it was written in, checked when it is
-//! read. It is a
+//! session it takes or took part in, as far as they may be copied into
+//! this one (`SessionView::own_private_notes`,
+//! `AccessQuestions::may_copy_information`, issues 133, 264): a note
+//! carries the classification of the channel it was written in, checked
+//! when it is read; whoever may read that channel now does not matter, the
+//! notes are the agent's own. It is a
 //! `BeforeTurnInput` part, and every chain it shows is recorded as a
 //! `KnowledgeRef`.
 //!
@@ -23,20 +25,18 @@ use crate::agent::turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::context::{render_sections, Prompt, PromptPosition, PromptProvider, Section};
 use crate::agent::work::AgentWork;
+use crate::view::PrivateNotesElsewhere;
 use crate::tool::{classification_argument, id_argument, reclassify_parameters, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::question::Answers;
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::session::ChannelId;
-use caelumora_model::digest::Digest;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::note::{Note, NoteId};
 use caelumora_model::security::SecurityManager;
 use caelumora_model::tool::{Tool, ToolVisibility, ToolParameters};
 use serde_json::Value;
 use std::sync::Arc;
-use tracing::warn;
 
 pub const PRIVATE_NOTES_KIND: &str = "private_notes";
 
@@ -155,17 +155,12 @@ impl PromptProvider for PrivateNotesComponent {
 
     async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt> {
         let own = AgentNotes::current(work, NoteKind::Private);
-        let mut elsewhere = Vec::new();
-        if let Some(session) = work.session() {
-            match session.private_notes_of(work.agent_id()).await {
-                Ok(found) => elsewhere.extend(found.into_iter()
-                    // This channel's come from the turn, with its own changes.
-                    .filter(|(channel, ..)| channel.id() != work.channel_id())
-                    .map(|(channel, notes, digest)| Elsewhere { channel: channel.id(), name: channel.name().to_string(), notes, digest })),
-                // The agent can still answer without them.
-                Err(e) => warn!("Reading the private notes of agent {} failed: {}", work.agent_id(), e),
-            }
-        }
+        // This channel's come from the turn, with its own changes; the
+        // others' through the agent itself.
+        let elsewhere = match work.session() {
+            Some(session) => session.own_private_notes().await,
+            None => Vec::new(),
+        };
 
         let private = |channel, digest, notes: &[Note]| KnowledgeRef {
             channel,
@@ -182,18 +177,9 @@ impl PromptProvider for PrivateNotesComponent {
     }
 }
 
-/// The agent's private notes in another channel of the session, as far as
-/// they may be read here.
-struct Elsewhere {
-    channel: ChannelId,
-    name: String,
-    notes: Vec<Note>,
-    digest: Option<Digest>,
-}
-
 /// The prompt part for the private notes of this channel (`own`) and of
 /// others; empty if there are none.
-fn render(own: &[Note], elsewhere: &[Elsewhere]) -> String {
+fn render(own: &[Note], elsewhere: &[PrivateNotesElsewhere]) -> String {
     let mut sections = vec![Section::new(
         format!("In this channel (change them with `{NOTE_PRIVATE_TOOL_NAME}` and `{REVOKE_PRIVATE_NOTE_TOOL_NAME}`):"),
         own.iter().map(|n| format!("#{}: {}", n.id, n.text)).collect(),
@@ -244,7 +230,7 @@ mod tests {
 
     #[test]
     fn the_prompt_part_shows_this_channel_first_then_the_others_by_name() {
-        let elsewhere = [Elsewhere { channel: ChannelId::default(), name: "research".to_string(), notes: vec![note(1, "Kaya prefers short answers.")], digest: None }];
+        let elsewhere = [PrivateNotesElsewhere { channel: caelumora_model::session::ChannelId::default(), name: "research".to_string(), notes: vec![note(1, "Kaya prefers short answers.")], digest: None }];
         let text = render(&[note(2, "Remind Kaya of the deadline.")], &elsewhere);
         assert!(text.find("#2: Remind Kaya").unwrap() < text.find("From channel research (change them only there):").unwrap(), "{text}");
         assert!(text.contains("- Kaya prefers short answers."), "unnumbered: it cannot be revoked here");

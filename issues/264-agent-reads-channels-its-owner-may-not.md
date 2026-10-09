@@ -366,3 +366,20 @@ then the two questions. Then the close.
   first, the memory its entry's place, the views the channel read. The model's test helper is
   `copy(from, into)`. The suite records `CopyInformation` and answers alike; the documents use the
   new names. No behaviour changes.
+- **2026-10-09** — Step 2 of the revised plan done: `CopyInformation { from, into }` without
+  attributes, decided by `ConfidentialityRules::may_copy` alone; the ownership policy lets `Get*`
+  be read by the principal or the caller, the actions on a channel stay the principal's.
+  `SessionView::readable` asks every viewer `GetChannel` first - an agent's channel it may not
+  reach is not found, also by name. `may_read_entry` and `released` lost `own`.
+  `SessionView::own_private_notes` reaches the viewing agent's private notes of the session's other
+  channels through its state there, for every channel it takes or took part in, without
+  `GetChannel`, each as far as it may be copied; it returns `PrivateNotesElsewhere`, the
+  component's `Elsewhere` moved into the view, and leaves the agent's own channel out. The private
+  notes prompt part uses it; `private_notes_of` stays for users. Tests: in the model
+  `an_agent_reads_what_its_owner_may_read_or_it_takes_part_in_and_changes_as_its_owner`; the view
+  test is `an_agent_does_not_reach_a_channel_its_owner_may_not_read_but_knows_what_it_wrote_there`;
+  in the suite the reader tests record `GetChannel` before `CopyInformation`, bob's reader outside
+  "side" a `GetChannel no` and nothing to copy, and
+  `an_agent_reaches_the_workspace_of_a_session_its_owner_does_not_take_part_in` is new - it fails
+  with the old read rule. SECURITY.md, CONFIDENTIALITY.md and MEMORY.md say it; 133, 17 and 255
+  have entries. No stored data changes.

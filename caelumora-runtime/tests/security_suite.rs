@@ -1411,30 +1411,31 @@ async fn asked_to_read_side(world: &World, main: &caelumora_runtime::channel::Ch
 
 /// An agent reads another channel with its owner's rights, whoever asked
 /// it (issue 255): bob asks alice's `reader` to read her channel "side",
-/// which he may not read himself - the agent reads it as alice, asked by
-/// bob, and as far as the flow rule lets it into the channel he asked in
-/// (`CopyInformation`). What the decision accepts: her agent, asked without
-/// approval, lets every member read through it what she may.
+/// which he may not read himself - the agent reaches it as alice, asked by
+/// bob (`GetChannel`, issue 264), and copies it as far as the flow rule
+/// lets it into the channel he asked in (`CopyInformation`). What the
+/// decision accepts: her agent, asked without approval, lets every member
+/// read through it what she may.
 #[tokio::test]
 async fn an_agent_reads_another_channel_with_its_owners_rights_whoever_asked() {
     let (world, session, main) = with_a_reader_of(|world| world.alice, false).await;
     let asked = asked_to_read_side(&world, &main, "alice as reader, asked by bob: CopyInformation yes").await;
     let readers: Vec<&String> = asked.iter().filter(|line| line.contains("as reader")).collect();
     assert!(readers.iter().all(|line| line.starts_with("alice as reader, asked by bob:")), "with her rights, asked by him: {asked:?}");
+    assert!(readers.contains(&&"alice as reader, asked by bob: GetChannel(alice's) yes".to_string()), "reached first: {asked:?}");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// An agent does not read a channel of its session that its owner may not
-/// read and it takes no part in (issue 264): bob's `reader` reads nothing
-/// of alice's "side" - not as a whole, though the flow rule would let it,
-/// and none of what was said there entry by entry: a release adds no
-/// readers.
+/// read and it takes no part in (issue 264): bob's `reader` does not reach
+/// alice's "side" (`GetChannel`), and nothing of it is asked to be copied -
+/// not as a whole, though the flow rule would let it, nor entry by entry:
+/// a release adds no readers.
 #[tokio::test]
 async fn an_agent_does_not_read_a_channel_its_owner_may_not_read() {
     let (world, session, main) = with_a_reader_of(|world| world.bob, false).await;
-    let asked = asked_to_read_side(&world, &main, "bob as reader: CopyInformation no").await;
-    let reading: Vec<&String> = asked.iter().filter(|line| line.contains("CopyInformation")).collect();
-    assert!(reading.len() >= 2 && reading.iter().all(|line| *line == "bob as reader: CopyInformation no"), "nothing of side, as a whole nor entry by entry: {asked:?}");
+    let asked = asked_to_read_side(&world, &main, "bob as reader: GetChannel(alice's) no").await;
+    assert!(!asked.iter().any(|line| line.contains("CopyInformation")), "nothing of side to copy: {asked:?}");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
@@ -1445,6 +1446,7 @@ async fn an_agent_does_not_read_a_channel_its_owner_may_not_read() {
 async fn an_agent_reads_a_channel_it_takes_part_in_whose_owner_may_not() {
     let (world, session, main) = with_a_reader_of(|world| world.bob, true).await;
     let asked = asked_to_read_side(&world, &main, "bob as reader: CopyInformation yes").await;
+    assert!(asked.contains(&"bob as reader: GetChannel(alice's) yes".to_string()), "reached as taking part: {asked:?}");
     assert!(asked.iter().filter(|line| line.contains("CopyInformation")).all(|line| line.ends_with(" yes")), "{asked:?}");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
@@ -2258,9 +2260,9 @@ async fn a_workspace_is_not_used_in_a_channel_by_who_is_not_in_it() {
     world.manager.stop_session(&alice, session.id()).await.unwrap();
 }
 
-/// What is asked when alice's agent, asked by bob, makes `call` in the
+/// What is asked when the agent of `owner`, asked by bob, makes `call` in the
 /// session's workspace - one that leaves `made`, a file of the workspace.
-async fn asked_for_a_call_on_the_workspace(function: &str, arguments: serde_json::Value, made: &str) -> Vec<String> {
+async fn asked_for_a_call_on_the_workspace(function: &str, arguments: serde_json::Value, made: &str, owner: fn(&World) -> UserId) -> Vec<String> {
     use caelumora_model::message::{Message, MessageRole};
     use caelumora_model::tool::{ToolCall, ToolVisibility};
 
@@ -2286,7 +2288,7 @@ async fn asked_for_a_call_on_the_workspace(function: &str, arguments: serde_json
         ..world.personality("working", None, &[]).await
     };
     world.store.update_personality(&World::system(), &working).await.unwrap();
-    let helper = world.agent("helper", world.alice, &working).await;
+    let helper = world.agent("helper", owner(&world), &working).await;
     let alice = World::as_user(world.alice);
     let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "shell", None, Classification::general(Confidentiality::Internal)).await.unwrap();
     let session = world.shared_session(&[helper], &[]).await;
@@ -2326,15 +2328,25 @@ fn asked_as_a_call_on_the_workspace(asked: &[String]) {
 /// An agent's command (issue 251).
 #[tokio::test]
 async fn an_agents_command_is_called_for_its_owner_and_reaches_the_workspace_through_its_channel() {
-    let asked = asked_for_a_call_on_the_workspace("run_command", serde_json::json!({ "command": "echo ran > ran.txt" }), "ran.txt").await;
+    let asked = asked_for_a_call_on_the_workspace("run_command", serde_json::json!({ "command": "echo ran > ran.txt" }), "ran.txt", |world| world.alice).await;
     asked_as_a_call_on_the_workspace(&asked);
 }
 
 /// An agent's change of a file (issue 251, step 9) asks what a command asks.
 #[tokio::test]
 async fn an_agents_file_tool_asks_what_a_command_asks() {
-    let asked = asked_for_a_call_on_the_workspace("write_file", serde_json::json!({ "path": "notes/a.md", "content": "written" }), "notes/a.md").await;
+    let asked = asked_for_a_call_on_the_workspace("write_file", serde_json::json!({ "path": "notes/a.md", "content": "written" }), "notes/a.md", |world| world.alice).await;
     asked_as_a_call_on_the_workspace(&asked);
+}
+
+/// An agent reaches the workspace of a session its owner does not take
+/// part in (issue 264): carol's agent, in alice's session with bob, reaches
+/// the terminal through the session it takes part in itself - read as
+/// carol, by the agent's own taking part.
+#[tokio::test]
+async fn an_agent_reaches_the_workspace_of_a_session_its_owner_does_not_take_part_in() {
+    let asked = asked_for_a_call_on_the_workspace("run_command", serde_json::json!({ "command": "echo ran > ran.txt" }), "ran.txt", |world| world.carol).await;
+    assert!(asked.contains(&"carol as helper, asked by bob: GetSession(alice's) yes".to_string()), "the session it takes part in: {asked:?}");
 }
 
 /// A template of the system whose sessions have a workspace "files" in

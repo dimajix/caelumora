@@ -33,7 +33,7 @@ mod workspace;
 
 pub use channel::{ChannelView, MemberView};
 pub use context::{AgentContextView, ContextError};
-pub use session::SessionView;
+pub use session::{PrivateNotesElsewhere, SessionView};
 pub use workspace::WorkspaceView;
 
 use crate::runtime::{ActorRuntime, RuntimeManager};
@@ -44,7 +44,7 @@ use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::removal::Removal;
-use caelumora_model::security::{AccessQuestions, Place, SecurityAttributes, SecurityContext, SecurityManager};
+use caelumora_model::security::{AccessQuestions, Place, SecurityContext, SecurityManager};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::snapshot::{AgentSnapshot, DeletedSnapshot};
 use caelumora_model::workspace::WorkspaceId;
@@ -422,13 +422,11 @@ impl Views {
     }
 
     /// Whether what `from` holds may be copied into the viewer's place
-    /// (`AccessQuestions::may_copy_information`, issue 133): of the channel
-    /// with `channel` attributes, or - `None` - what the viewer's agent
-    /// knows itself of it (issue 264). A viewer without a place reads by
-    /// other questions and is not asked this one.
-    pub(crate) async fn may_copy_from(&self, from: &Place, channel: Option<&SecurityAttributes>) -> bool {
+    /// (`AccessQuestions::may_copy_information`, issues 133, 264). A viewer
+    /// without a place reads by other questions and is not asked this one.
+    pub(crate) async fn may_copy_from(&self, from: &Place) -> bool {
         let Some(into) = &self.viewer.from else { return true };
-        self.security.may_copy_information(self.viewer.context(), from, into, channel).await
+        self.security.may_copy_information(self.viewer.context(), from, into).await
     }
 
     /// The name of `actor`; `None` for a user or agent that no longer
@@ -932,11 +930,11 @@ mod tests {
 
     /// An agent reads another channel of its session only where its owner
     /// may read it or it takes part in it itself (issue 264): bob's agent,
-    /// which left alice's channel "hers", reads nothing of it from "team" -
-    /// not even what is classified as "team" is, which a release would not
-    /// change - but still what it wrote there itself, its private notes.
+    /// which left alice's channel "hers", does not reach it from "team" -
+    /// though what it holds is classified as "team" is - but still knows
+    /// what it wrote there itself, its private notes, through itself.
     #[tokio::test]
-    async fn an_agent_reads_of_a_channel_its_owner_may_not_read_only_what_it_wrote_there_itself() {
+    async fn an_agent_does_not_reach_a_channel_its_owner_may_not_read_but_knows_what_it_wrote_there() {
         use caelumora_model::channel::{ChannelState, FormerParticipant};
         use caelumora_model::ledger::Change;
         use caelumora_model::message::{Message, MessageId};
@@ -982,12 +980,11 @@ mod tests {
         let from_team = manager.views(Viewer::from_place(context, from)).session(session.id).await.unwrap();
         let names: Vec<String> = from_team.channels().await.iter().map(|c| c.name().to_string()).collect();
         assert_eq!(names, ["team"], "not hers as a whole");
-        let reached = from_team.channel_named("hers").await.expect("reached entry by entry, as any channel");
-        assert!(matches!(reached.history().await, Err(ViewError::NoChannelNamed(_))), "nothing of its history: it answers as absent");
-        assert!(matches!(reached.notes().await, Err(ViewError::NoChannelNamed(_))), "nor of its notes");
-        let own = from_team.private_notes_of(helper.id).await.expect("its own to read");
-        let own: Vec<_> = own.iter().map(|(channel, notes, _)| (channel.name().as_str(), notes[0].text.as_str())).collect();
-        assert_eq!(own, [("hers", "noted for itself")], "what it wrote there itself, by the flow rule alone");
+        assert!(matches!(from_team.channel_named("hers").await, Err(ViewError::NoChannelNamed(_))), "not reached at all: it answers as absent");
+        assert!(matches!(from_team.channel(hers.id).await, Err(ViewError::ChannelNotFound { .. })), "also by its id");
+        assert!(from_team.all_channels().await.iter().all(|c| c.id() != hers.id), "nor entry by entry");
+        let own: Vec<_> = from_team.own_private_notes().await.into_iter().map(|found| (found.name, found.notes[0].text.clone())).collect();
+        assert_eq!(own, [("hers".to_string(), "noted for itself".to_string())], "what it wrote there itself, by the flow rule alone");
     }
 
     #[tokio::test]

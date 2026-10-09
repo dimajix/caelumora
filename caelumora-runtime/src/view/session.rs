@@ -20,6 +20,18 @@ use caelumora_model::store::EntityKind;
 use std::sync::Arc;
 use tracing::warn;
 
+/// An agent's private notes in another channel of its session, as far as
+/// they may be read where it reads from (`SessionView::own_private_notes`):
+/// what of that channel it knows itself - no view of the channel, which it
+/// may no longer reach.
+#[derive(Debug, Clone)]
+pub struct PrivateNotesElsewhere {
+    pub channel: ChannelId,
+    pub name: String,
+    pub notes: Vec<Note>,
+    pub digest: Option<Digest>,
+}
+
 /// A session the viewer may read.
 #[derive(Debug, Clone)]
 pub struct SessionView {
@@ -148,21 +160,24 @@ impl SessionView {
     }
 
     /// How the viewer may read `channel`: as a whole, entry by entry, or
-    /// not at all (`None`). A user reads a channel as a whole or not at
-    /// all; an agent reads what its channel may read by their
-    /// classifications - of a channel its owner may read or it takes part
-    /// in (issue 264) -, and the rest entry by entry.
+    /// not at all (`None`). Whoever may not read the channel - its owner,
+    /// its participants, an agent's owner or the agent itself (issue 264) -
+    /// reads none of it (`GetChannel`). Beyond that, a user reads it as a
+    /// whole if cleared for it; an agent as a whole if it may be copied
+    /// into its own channel by their classifications, and else entry by
+    /// entry.
     async fn readable(&self, channel: &Channel) -> Option<Readable> {
         let security = self.views.security();
         let context = self.views.context();
+        if !security.may_read_channel(context, &channel.security_attributes).await {
+            return None;
+        }
         if self.views.viewer().place().is_some() {
-            let source = Place { channel: channel.id, classification: channel.classification.clone(), session: self.privacy() };
-            let whole = self.views.may_copy_from(&source, Some(&channel.security_attributes)).await;
+            let from = Place { channel: channel.id, classification: channel.classification.clone(), session: self.privacy() };
+            let whole = self.views.may_copy_from(&from).await;
             return Some(if whole { Readable::Whole } else { Readable::Released });
         }
-        let readable = security.may_read_channel(context, &channel.security_attributes).await
-            && self.cleared_for(&channel.classification).await;
-        readable.then_some(Readable::Whole)
+        self.cleared_for(&channel.classification).await.then_some(Readable::Whole)
     }
 
     /// Whether the viewer is cleared for `classification` (issue 133):
@@ -208,6 +223,49 @@ impl SessionView {
                 channels
             }
         }
+    }
+
+    /// The private notes the viewing agent wrote in the session's other
+    /// channels (issues 51, 264), each with its channel and the digest of
+    /// its chain, sorted by the channel's name: its own knowledge, reached
+    /// through itself rather than through the channels - no `GetChannel` is
+    /// asked, so that it keeps them also of a channel it left and its owner
+    /// may not read. Each note is read as far as it may be copied into the
+    /// viewer's place. Of every channel it takes or took part in; channels
+    /// without any are left out, as is its own. None for a viewer that is
+    /// no agent reading from a place; a state that cannot be read is
+    /// logged and left out.
+    pub async fn own_private_notes(&self) -> Vec<PrivateNotesElsewhere> {
+        let ActorId::Agent(agent) = self.views.context().caller_id else { return Vec::new() };
+        let Some(here) = self.views.viewer().place().map(|place| place.channel) else { return Vec::new() };
+        let mut found = Vec::new();
+        for (channel, _) in self.channel_documents().await {
+            let actor = ActorId::Agent(agent);
+            let took_part = channel.participants.iter().any(|p| p.actor_id() == actor)
+                || channel.former.iter().any(|f| f.participant.actor_id() == actor);
+            if channel.id == here || !took_part {
+                continue;
+            }
+            let state = match self.views.states().get_agent_channel_state(agent, channel.id).await {
+                Ok(state) => state,
+                Err(e) => {
+                    warn!("Reading the private notes of agent {} in channel {} failed: {}", agent, channel.id, e);
+                    continue;
+                }
+            };
+            let mut notes = Vec::new();
+            for note in state.private_notes.current() {
+                let from = Place { channel: channel.id, classification: note.classification.clone(), session: self.privacy() };
+                if self.views.may_copy_from(&from).await {
+                    notes.push(note);
+                }
+            }
+            if !notes.is_empty() {
+                found.push(PrivateNotesElsewhere { channel: channel.id, name: channel.name.to_string(), notes, digest: state.private_notes.digest() });
+            }
+        }
+        found.sort_by(|l, r| l.name.cmp(&r.name));
+        found
     }
 
     /// The private notes agent `agent` wrote in the channels of the session

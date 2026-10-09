@@ -347,3 +347,7 @@ in behaviour; the rule, in the policy; one context per piece of work. Each is re
   `AskAgent` of its owner's), and a chain once there are subagents.
 - **2026-10-08** — What step 3 found about reading another channel of the same session is issue
   [264](264-agent-reads-channels-its-owner-may-not.md).
+- **2026-10-09** — Widened by issue [264](264-agent-reads-channels-its-owner-may-not.md): an agent
+  reads (`Get*`) what its owner may read or what it takes part in itself, as the caller; everything
+  else it does as its owner. That also lets it reach the session of a channel it takes part in
+  where its owner does not, which the terminal asks (`GetSession`).

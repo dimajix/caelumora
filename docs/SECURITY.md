@@ -88,6 +88,10 @@ themselves, an agent its owner (see [In whose name an agent acts](#in-whose-name
     wake a channel, ask an agent in it to answer again (`RetryMessage`, issue 234), answer the
     questions of an agent's call (`AnswerQuestion`, issue 165 - whether they were asked is the
     agent's to check, not the policy's). What belongs to the system, everybody may read and use.
+*   An agent reads (`Get*`) what its owner may read, and what it takes part in itself - as the
+    caller, a contributor of the channel or session (issue
+    [264](../issues/264-agent-reads-channels-its-owner-may-not.md)). Everything else it does, it
+    does as its owner: changing, deleting, cancelling and the rest are the principal's.
 *   Creating is only allowed with oneself as owner; changing and deleting only for the owner.
 *   What was deleted (issue 164) is the owner's to read (`ReadDeleted`) and to restore
     (`Restore`). Removing it for good (`Purge`) is the system's alone - the retention policy's
@@ -111,8 +115,9 @@ The confidentiality actions (`CopyInformation`, `Classify`, `Reclassify`, `Publi
 `JoinChannel`) are decided by classifications, not by ownership: the ownership policy applies the
 `ConfidentialityRules` of the configured compartments and roles to them, and adds only what is about
 ownership - the actor putting a message into a channel is the one acting, a channel is reclassified
-by its owner, what is a channel's is read from another only by an agent whose owner may read that
-channel or that takes part in it (issue 264). Another policy may apply other rules (issue
+by its owner. `CopyInformation` is decided by the rules alone: whether an agent may reach the
+channel it copies from at all is asked before, as `GetChannel` (issue 264). Another policy may apply
+other rules (issue
 [138](../issues/138-confidentiality-policy-in-ownership.md)); see
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md#who-applies-the-rules).
 
@@ -172,8 +177,10 @@ something - they check the request, and carry it out with their own rights. In t
     agent reads - other channels, its notes and memory, the session's workspace through its channel
     -, the tools it calls (`CallTool`), the credentials they reach with (`ReadSecret`: an MCP
     server's token in `mcp_tool`, an external agent's through its endpoint) and the clearance it is
-    judged by are its owner's, whoever asked - within its session too: of another channel, it reads
-    what its owner may read and what it takes part in itself, and what it knows itself (issue
+    judged by are its owner's, whoever asked - within its session too: it reaches another channel
+    if its owner may read it or it takes part in it itself (`GetChannel`), and copies from it what
+    the flow rule lets into its own (`CopyInformation`); what it knows itself - its memory, its
+    private notes - it reaches through itself, by the flow rule alone (issue
     [264](../issues/264-agent-reads-channels-its-owner-may-not.md)). An agent must not see more than
     the person responsible for it (issue [142](../issues/142-roles.md)), and it passes on whatever
     it read to whoever it answers next (issue
@@ -296,9 +303,12 @@ question, in the viewer's name:
     viewer, `session(id)` asks `GetSession` (`may_read_session`). An agent's root is its own
     session, through its turn (`Turn::session`); it reads from its channel by the confidentiality
     rules, see [MEMORY.md](MEMORY.md#reading-other-channels);
-*   `SessionView::channels()` lists the channels the viewer may read (`GetChannel`, and cleared for
-    their classification, issue 133), `channel(id)` asks the same of one; `may_change()` asks
-    `UpdateSession`;
+*   `SessionView::channels()` lists the channels the viewer may read (`GetChannel` - for an agent
+    also by its own taking part, issue 264 - and, for a user, cleared for their classification,
+    issue 133; for an agent, what may be copied into its channel as a whole), `channel(id)` asks
+    the same of one; `may_change()` asks `UpdateSession`; `own_private_notes()` reaches, for an
+    agent, its own private notes of the session's other channels through itself, without
+    `GetChannel`, each as far as it may be copied into its channel;
 *   `ChannelView::members()` and `member(actor)` - which also reaches an agent that took part and
     left, by the messages it left in the history (`MemberView::former`), so that what it saw stays
     readable; `may_change()` asks `UpdateChannel`;

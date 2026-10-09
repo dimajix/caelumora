@@ -332,3 +332,8 @@ channel dialog and message rendering, and the prompt notes of [66](66-channel-le
   it. `ReadChannel` carries the source channel's attributes for that; what the agent knows itself,
   its memory and its private notes, stays decided by the channels' classifications alone, as this
   issue wanted. A release adds no readers.
+- **2026-10-09** — Revised with issue [264](264-agent-reads-channels-its-owner-may-not.md):
+  `ReadChannel` is `CopyInformation { from, into }` and decided by the classifications and privacy
+  alone again, as this issue wanted; whether an agent may reach another channel at all is asked
+  before, as `GetChannel` - its owner's rights or its own taking part. The entry above about the
+  attributes in `ReadChannel` describes a state that lasted one step.

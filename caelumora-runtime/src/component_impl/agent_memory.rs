@@ -447,15 +447,15 @@ mod tests {
         assert!(memory.get_prompt(&turn.work()).await.unwrap().text.is_empty(), "no session to recall in");
     }
 
-    /// Lets channels read each other only in the name of `owner`, and only
-    /// what an agent knows itself: what it remembered is not the channel's
-    /// (issue 264), whoever may read that channel now.
+    /// Lets channels read each other only in the name of `owner` - and asks
+    /// nothing else: what an agent remembered is its own, recalled whoever
+    /// may read its channel now (issue 264).
     #[derive(Debug)]
     struct OnlyFor(ActorId);
     #[async_trait]
     impl SecurityManager for OnlyFor {
         async fn check(&self, context: &SecurityContext, action: ActionType<'_>) -> bool {
-            matches!(action, ActionType::CopyInformation { channel: None, .. }) && context.principal_id == self.0
+            matches!(action, ActionType::CopyInformation { .. }) && context.principal_id == self.0
         }
     }
 

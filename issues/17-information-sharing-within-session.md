@@ -159,3 +159,7 @@ Phases 1 and 2 of the order of work in [19](19-memory-tiers.md), whose principle
 - **2026-10-09** — An agent reads the history and notes of another channel of its session only
   where its owner may read that channel or it takes part in it, besides the flow rule (issue
   [264](264-agent-reads-channels-its-owner-may-not.md)).
+- **2026-10-09** — Revised with issue [264](264-agent-reads-channels-its-owner-may-not.md): an
+  agent reaches another channel as a user does, by `GetChannel` - its owner may read it or it takes
+  part in it -, and copies from it by the flow rule (`CopyInformation`). Its private notes of other
+  channels it reaches through itself (`SessionView::own_private_notes`).

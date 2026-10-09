@@ -121,13 +121,11 @@ pub enum ActionType<'a> {
     /// sessions, by whether the session of `from` lets that of `into` read
     /// it (issue 134). An entry released below its channel's classification
     /// may be copied where the channel as a whole may not - but a release
-    /// adds no readers (issue 264). `channel` are the attributes of the
-    /// channel of `from` when what is copied is the channel's - its
-    /// history, its notes -, so that a policy may ask who may read it;
-    /// `None` for what the reading agent knows itself of it - what it
-    /// remembered, its private notes -, which does not change when someone
-    /// joins or leaves the channel.
-    CopyInformation { from: &'a Place, into: &'a Place, channel: Option<&'a SecurityAttributes> },
+    /// adds no readers: whether the agent may reach the channel of `from`
+    /// at all is asked before, as `GetChannel` (issue 264). What it knows
+    /// itself of a channel - what it remembered, its private notes - is
+    /// asked only this.
+    CopyInformation { from: &'a Place, into: &'a Place },
     /// `actor` putting what is classified `classification` into a channel
     /// classified `channel` (issue 133): a message or a tool result into its history - asked by
     /// the channel for every one that enters it - or a tool result into the
@@ -412,11 +410,9 @@ pub trait AccessQuestions {
     /// Whether what comes from `from` - a message, a note, or what an agent
     /// remembered there - may be copied into the channel of `into`
     /// (`CopyInformation`, issues 17, 131, 133, 134 and 264): asked in
-    /// `context`, the agent's who reads and passes it on; with the
-    /// attributes of the `channel` of `from` for what is the channel's,
-    /// none for what the agent knows itself. A channel may always be
-    /// copied into itself.
-    async fn may_copy_information(&self, context: &SecurityContext, from: &Place, into: &Place, channel: Option<&SecurityAttributes>) -> bool;
+    /// `context`, the agent's who reads and passes it on. A channel may
+    /// always be copied into itself.
+    async fn may_copy_information(&self, context: &SecurityContext, from: &Place, into: &Place) -> bool;
 
     /// Whether `context` may see what the agent with `agent` attributes saw
     /// when it wrote a message (`ReadAgentContext`, issue 41).
@@ -510,11 +506,11 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
         self.check(context, ActionType::UpdateWorkspace(workspace)).await
     }
 
-    async fn may_copy_information(&self, context: &SecurityContext, from: &Place, into: &Place, channel: Option<&SecurityAttributes>) -> bool {
+    async fn may_copy_information(&self, context: &SecurityContext, from: &Place, into: &Place) -> bool {
         if from.channel == into.channel {
             return true;
         }
-        self.check(context, ActionType::CopyInformation { from, into, channel }).await
+        self.check(context, ActionType::CopyInformation { from, into }).await
     }
 
     async fn may_read_agent_context(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool {
@@ -633,7 +629,10 @@ impl SecurityManager for DummySecurityManager {
 /// - Reading - which also covers using, e.g. starting a session from a
 ///   template, or working on a workspace outside a session - is allowed to
 ///   the owner, to contributors, and to everybody
-///   for entities owned by the system or by no one.
+///   for entities owned by the system or by no one. An agent reads what
+///   its owner may read, and what it takes part in itself - a contributor
+///   as the caller (issue 264); everything else it does, it does as its
+///   owner.
 /// - Creating is allowed only with oneself as owner.
 /// - Changing, deleting and stopping are the owner's alone, and so is reading what an
 ///   agent saw: its context holds more than the conversation - its system
@@ -643,9 +642,6 @@ impl SecurityManager for DummySecurityManager {
 ///   138): reading from another channel, giving a classification, joining
 ///   or reading a channel by clearance. The system overrides them, as it
 ///   overrides everything.
-/// - What is a channel's is read from another only by an agent whose owner
-///   may read that channel or that takes part in it itself (issue 264);
-///   what an agent knows itself, by the rules alone.
 /// - A message may be put into a channel by the actor that is acting - its
 ///   author, who may release what they write - if the rules let it flow
 ///   there.
@@ -697,6 +693,8 @@ impl SecurityManager for OwnershipSecurityManager {
             return true;
         }
         match action {
+            // Reading: what the principal may read, or the caller itself -
+            // an agent what it takes part in (issue 264).
             ActionType::GetPersonality(a)
             | ActionType::GetSessionTemplate(a)
             | ActionType::GetAgent(a)
@@ -705,8 +703,8 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::GetComponent(a)
             | ActionType::GetUser(a)
             | ActionType::GetUserProfile(a)
-            | ActionType::GetWorkspace(a)
-            | ActionType::CancelChannel(a)
+            | ActionType::GetWorkspace(a) => Self::may_read(a, me) || Self::may_read(a, context.caller_id),
+            ActionType::CancelChannel(a)
             | ActionType::WakeChannel(a)
             | ActionType::RetryMessage(a)
             | ActionType::AnswerQuestion(a) => Self::may_read(a, me),
@@ -718,10 +716,7 @@ impl SecurityManager for OwnershipSecurityManager {
             // channel it is.
             ActionType::ApproveToolCall { agent, channel } if Self::system_owned(agent) => channel.owner_id == me && me != ActorId::None,
             ActionType::ApproveToolCall { agent, .. } => agent.owner_id == me || agent.contributors.contains(&me),
-            // Of a channel, what its owner may read or what it takes part
-            // in itself (issue 264); what it knows itself, by the rules.
-            ActionType::CopyInformation { from, into, channel } => self.rules.may_copy(from, into)
-                && channel.is_none_or(|a| Self::may_read(a, me) || Self::may_read(a, context.caller_id)),
+            ActionType::CopyInformation { from, into } => self.rules.may_copy(from, into),
             ActionType::Classify(classification) => self.rules.may_classify(classification),
             ActionType::Reclassify { target, new, channel, .. } => {
                 let owns = |attributes: &SecurityAttributes| attributes.owner_id == me && me != ActorId::None;
@@ -859,8 +854,8 @@ mod tests {
         }
         let session_id = SessionId::new();
         let (own, other) = (channel(session_id, Confidentiality::Confidential, &[]), channel(session_id, Confidentiality::Public, &[]));
-        assert!(DenyAll.may_copy_information(&context(alice), &own, &own, None).await, "a channel is copied into itself, whatever the policy");
-        assert!(!DenyAll.may_copy_information(&context(alice), &other, &own, None).await, "another channel only as the policy decides");
+        assert!(DenyAll.may_copy_information(&context(alice), &own, &own).await, "a channel is copied into itself, whatever the policy");
+        assert!(!DenyAll.may_copy_information(&context(alice), &other, &own).await, "another channel only as the policy decides");
     }
 
     #[tokio::test]
@@ -906,7 +901,7 @@ mod tests {
     /// Copying what `from` holds, at the classification it names, into
     /// `into`, as the reading agent knows it itself: by the rules alone.
     fn copy<'a>(from: &'a Place, into: &'a Place) -> ActionType<'a> {
-        ActionType::CopyInformation { from, into, channel: None }
+        ActionType::CopyInformation { from, into }
     }
 
     /// What `source` holds classified `classification`.
@@ -933,20 +928,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn what_is_a_channels_is_read_by_an_agent_whose_owner_may_read_it_or_that_takes_part() {
-        let session = SessionId::new();
-        let (team, side) = (channel(session, Confidentiality::Internal, &[]), channel(session, Confidentiality::Internal, &[]));
+    async fn an_agent_reads_what_its_owner_may_read_or_it_takes_part_in_and_changes_as_its_owner() {
         let (alice, bob) = (user(), user());
-        let (hers, his, other) = (ActorId::Agent(crate::agent::AgentId::new()), ActorId::Agent(crate::agent::AgentId::new()), ActorId::Agent(crate::agent::AgentId::new()));
-        let alices = SecurityAttributes { owner_id: alice, contributors: vec![other] };
+        let (hers, his, member) = (ActorId::Agent(crate::agent::AgentId::new()), ActorId::Agent(crate::agent::AgentId::new()), ActorId::Agent(crate::agent::AgentId::new()));
+        let alices = SecurityAttributes { owner_id: alice, contributors: vec![member] };
         let policy = OwnershipSecurityManager::new();
-        let reading = |channel| ActionType::CopyInformation { from: &side, into: &team, channel };
-        assert!(policy.check(&context(bob).next(hers, alice), reading(Some(&alices))).await, "her agent, whoever asked");
-        assert!(!policy.check(&context(bob).next(his, bob), reading(Some(&alices))).await, "not his: he may not read it");
-        assert!(policy.check(&context(bob).next(other, bob), reading(Some(&alices))).await, "but an agent taking part in it");
-        assert!(policy.check(&context(bob).next(his, bob), reading(None)).await, "what an agent knows itself, by the rules alone");
-        let secret = channel(session, Confidentiality::Confidential, &[]);
-        assert!(!policy.check(&context(alice).next(hers, alice), ActionType::CopyInformation { from: &secret, into: &team, channel: Some(&alices) }).await, "and never past the flow rule");
+        assert!(policy.check(&context(bob).next(hers, alice), ActionType::GetChannel(&alices)).await, "her agent, whoever asked");
+        assert!(!policy.check(&context(bob).next(his, bob), ActionType::GetChannel(&alices)).await, "not his: he may not read it");
+        assert!(policy.check(&context(bob).next(member, bob), ActionType::GetChannel(&alices)).await, "but an agent taking part in it");
+        assert!(policy.check(&context(bob).next(member, bob), ActionType::GetSession(&alices)).await, "so for every read");
+        assert!(!policy.check(&context(bob).next(member, bob), ActionType::UpdateChannel(&alices)).await, "changing stays its owner's");
+        assert!(!policy.check(&context(bob).next(member, bob), ActionType::CancelChannel(&alices)).await, "and so does acting on it");
     }
 
     #[tokio::test]

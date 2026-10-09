@@ -305,22 +305,23 @@ from, into }` (issue 264) - each side a `Place`: the channel's id, how the entry
 channel - is classified, and the channel's session as privacy sees it (`SessionPrivacy` - its id,
 policy, owner and people, issue 134) -, with `AccessQuestions::may_copy_information`. It is asked
 in the name of the agent that reads - the security context it acts in, its owner's - because the
-agent passes on what it reads (issue 131). With it go
-the attributes of the source channel when what is read is the channel's - its history, its notes,
-what was released from it -, none for what the agent knows itself of it: what it remembered there,
-its private notes. A channel may always read itself. Otherwise the ownership policy allows it if
+agent passes on what it reads (issue 131). A channel may always be copied into itself. Otherwise
+the ownership policy allows it if
 
-*   the entry's classification flows into the reader's,
+*   the entry's classification flows into the reader's, and
 *   both channels belong to the same session, or the source's session lets the reader's read it
-    (`SessionPrivacy::permits`), and
-*   for what is the channel's, the agent's owner may read the channel or the agent takes part in it
-    now (issue [264](../issues/264-agent-reads-channels-its-owner-may-not.md)): an agent reads what
-    its owner may, and besides what it takes part in itself. What it knows itself is not the
-    channel's, and stays readable whoever joins or leaves - it heard or wrote it.
+    (`SessionPrivacy::permits`).
+
+That is a question of classification and privacy alone. Whether the agent may reach the other
+channel at all is asked before, as for a user: `GetChannel`, which an agent may if its owner may
+read the channel or it takes part in it itself (issue
+[264](../issues/264-agent-reads-channels-its-owner-may-not.md)). What it knows itself of a channel -
+what it remembered there, its private notes - it reaches through itself, without `GetChannel`, and
+copies by the two conditions alone: it heard or wrote it, whoever takes part in that channel now.
 
 So a channel reads the entries of another that were released to it, even where it may not read that
-channel as a whole - but only where its agent may read that channel at all: a release adds no
-readers. Whether it may, is the question asked with the source channel's own
+channel as a whole - but only where its agent may reach that channel: a release adds no readers.
+Whether it may read it as a whole, is the question asked with the source channel's own
 classification: a channel is listed among the readable ones (`SessionView::channels`) only then, and
 one that may not be read as a whole and of which nothing was released reads as absent, so that
 channels cannot be probed.
