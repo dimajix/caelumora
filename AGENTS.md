@@ -141,14 +141,29 @@ feature in somehow. Proposing such refactorings is part of the work, not an extr
 
 ### Branches and commits
 Every piece of work happens on a branch of its own, never directly on `main` - unless the
-maintainer explicitly asks for a change on `main`. Before the first change, create a dedicated
-branch from the current `main` and name it after the work (with the issue number if there is one,
-e.g. `issue-264-read-channel`). If you are already on such a branch for the same work, keep using
-it.
+maintainer explicitly asks for a change on `main`, and except for opening an issue (below). Before
+the first change, create a dedicated branch from the current `main` and name it after the work
+(with the issue number if there is one, e.g. `issue-264-read-channel`). If you are already on such
+a branch for the same work, keep using it.
+
+A new issue is opened on `main` alone, so that issue numbers are counted consistently: a number is
+taken where everybody takes them, and is published before anyone else can take it.
+
+1.  Before opening it, update `main` from the remote repository (`git fetch`, then fast-forward
+    `main` to `origin/main`), and take the next free number from that.
+2.  The commit holds the issue alone - its file, its line in the index and the regenerated
+    `issues/OPEN.md` - and no change of code or of anything else.
+3.  As soon as that commit is made, push it, without waiting to be asked again: an issue that is
+    committed but not pushed holds a number nobody else can see.
+4.  Only then, for implementing the issue, create its branch from `main`.
+
+Changing an existing issue - its status, its history, a decision recorded - belongs to the work on
+it and happens on that work's branch.
 
 Do not commit on your own: leave the changes in the working tree and say what they are, so that the
 maintainer can review them first. Commit only when explicitly asked to - and then only what was
-reviewed. The same holds for pushing.
+reviewed. The same holds for pushing, except for a new issue, which is pushed as soon as it is
+committed (above).
 
 When the work is done, ask whether the branch should be merged into `main`, and merge only after
 the maintainer agreed. Before merging, update `main` from the remote repository (`git fetch`, then
