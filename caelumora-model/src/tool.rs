@@ -140,6 +140,10 @@ pub enum ToolPresentation {
     /// `matches` of its result - each `path`, `line` and `text` - with how
     /// many files were searched and skipped, and whether it is `complete`.
     FileSearch,
+    /// A file or directory moved or renamed (issue 267): its `from` and
+    /// `to`, and whether its result says it was `renamed` - moved within
+    /// its directory.
+    FileMove,
 }
 
 impl ToolPresentation {

@@ -9,8 +9,9 @@
 //!   back with its id. `command_output` follows it further, `kill_command`
 //!   ends it.
 //! - The files (`files`): `list_files`, `read_file` and `grep_files` read;
-//!   `write_file`, `replace_in_file` and `delete_file` change. What was read
-//!   is recorded as the turn's knowledge (`KnowledgeSource::Workspace`).
+//!   `write_file`, `replace_in_file`, `move_file` and `delete_file` change.
+//!   What was read is recorded as the turn's knowledge
+//!   (`KnowledgeSource::Workspace`).
 //!
 //! The workspace is reached through the turn's views on every call, before
 //! anything is sent: as a member of the channel, where the channel uses it
@@ -37,7 +38,7 @@ use std::sync::Arc;
 
 pub const TERMINAL_TOOL_KIND: &str = "terminal_tool";
 
-pub use files::{DELETE_FILE, GREP_FILES, LIST_FILES, READ_FILE, REPLACE_IN_FILE, WRITE_FILE};
+pub use files::{DELETE_FILE, GREP_FILES, LIST_FILES, MOVE_FILE, READ_FILE, REPLACE_IN_FILE, WRITE_FILE};
 pub use shell::{COMMAND_OUTPUT, KILL_COMMAND, RUN_COMMAND};
 
 fn default_wait_secs() -> u64 {
@@ -130,7 +131,8 @@ impl ToolProvider for TerminalTool {
     }
 
     /// For a change of a file, its path: a rule derived from an approved
-    /// write covers the file, whatever is written into it.
+    /// write covers the file, whatever is written into it; one derived from
+    /// a move, that move.
     fn matcher(&self, name: &str, params: &Value) -> ToolMatcher {
         files::matcher(name, params).unwrap_or_else(|| {
             ToolMatcher::exact(&ToolCall { id: None, function_name: name.to_string(), arguments: params.clone(), visibility: ToolVisibility::SHOWN, presentation: Default::default() })
@@ -211,11 +213,11 @@ mod tests {
     fn which_calls_ask_is_configured_for_all_none_or_all_but_what_only_reads() {
         let asking = |mode: Value| -> Vec<(String, bool)> { tool(json!({ "requires_approval": mode })).tools().into_iter().map(|t| (t.name, t.requires_approval)).collect() };
         let asks = |mode: Value, name: &str| asking(mode).into_iter().find(|(n, _)| n == name).map(|(_, asks)| asks).unwrap();
-        for name in [RUN_COMMAND, WRITE_FILE, REPLACE_IN_FILE, DELETE_FILE, READ_FILE] {
+        for name in [RUN_COMMAND, WRITE_FILE, REPLACE_IN_FILE, MOVE_FILE, DELETE_FILE, READ_FILE] {
             assert!(asks(json!(true), name), "{name}, by default too");
             assert!(!asks(json!(false), name), "{name}");
         }
-        for (name, asked) in [(RUN_COMMAND, true), (WRITE_FILE, true), (REPLACE_IN_FILE, true), (DELETE_FILE, true), (LIST_FILES, false), (READ_FILE, false), (GREP_FILES, false)] {
+        for (name, asked) in [(RUN_COMMAND, true), (WRITE_FILE, true), (REPLACE_IN_FILE, true), (MOVE_FILE, true), (DELETE_FILE, true), (LIST_FILES, false), (READ_FILE, false), (GREP_FILES, false)] {
             assert_eq!(asks(json!("unless_read_only"), name), asked, "{name}");
         }
         for name in [COMMAND_OUTPUT, KILL_COMMAND] {

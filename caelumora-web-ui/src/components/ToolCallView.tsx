@@ -5,7 +5,7 @@
 // their record.
 
 import React from 'react';
-import {CheckCircle2, EyeOff, File, FileDiff, FilePen, FileText, Folder, FolderOpen, MessageCircleQuestion, TextSearch, Terminal, Wrench, XCircle} from 'lucide-react';
+import {CheckCircle2, EyeOff, File, FileDiff, FileInput, FilePen, FileText, Folder, FolderOpen, MessageCircleQuestion, TextSearch, Terminal, Wrench, XCircle} from 'lucide-react';
 import type {Answers, QuestionResponse, ToolCall, ToolPresentation, ToolResult, ToolResultStatus, ToolVisibility} from '../types';
 import {formatArguments, formatSize, formatTimestamp} from '../messages';
 
@@ -515,6 +515,36 @@ const FileSearchToolCallContent: React.FC<ToolCallContentProps> = ({call, result
   );
 };
 
+/**
+ * A file or directory moved or renamed (issue 267): where it lay and where it lies now, and whether
+ * it was renamed - moved within its directory - or moved, as its result says.
+ */
+const FileMoveToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) => {
+  if (call.arguments === null) return <span className="text-[11px] italic opacity-60">Move not shown</span>;
+  const args = argumentsObject(call.arguments);
+  const moved = resultObject(result);
+  const [from, to] = [textOf(moved, 'from') ?? textOf(args, 'from'), textOf(moved, 'to') ?? textOf(args, 'to')];
+  const renamed = moved?.renamed;
+  return (
+    <>
+      {from !== null && to !== null ? (
+        <div className="flex items-start gap-1.5 text-[11px]">
+          <span className="mt-0.5 opacity-60 shrink-0"><FileInput size={12} /></span>
+          <span className="min-w-0">
+            <code className="font-mono break-all">{directoryPath(from)}</code>
+            <span className="opacity-60"> → </span>
+            <code className="font-mono break-all">{directoryPath(to)}</code>
+            {typeof renamed === 'boolean' && <span className="opacity-60"> · {renamed ? 'renamed' : 'moved'}</span>}
+          </span>
+        </div>
+      ) : (
+        <code className="text-[11px] font-mono break-all">{formatArguments(call.arguments)}</code>
+      )}
+      <FailedResult result={result} />
+    </>
+  );
+};
+
 /** The handler of each presentation; one the server knows and this client does not falls back to the default. */
 const PRESENTATIONS: Record<ToolPresentation, React.FC<ToolCallContentProps>> = {
   default: DefaultToolCallContent,
@@ -525,6 +555,7 @@ const PRESENTATIONS: Record<ToolPresentation, React.FC<ToolCallContentProps>> = 
   file_edit: FileEditToolCallContent,
   file_list: FileListToolCallContent,
   file_search: FileSearchToolCallContent,
+  file_move: FileMoveToolCallContent,
 };
 
 interface ToolCallViewProps {

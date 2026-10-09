@@ -212,8 +212,9 @@ else who may read it - the session's owner, say - is shown its history and no in
     `file_list` and `file_search` handlers (issue 265) show a directory listed - its path, its
     entries as the file browser shows them, and whether the listing was cut off - and a search -
     its pattern and where, its matches by file with their line numbers, and whether it stopped
-    early or skipped files. The `plan` handler shows a plan's summary and its steps, numbered
-    (issue 263).
+    early or skipped files. The `file_move` handler (issue 267) shows where a file or directory lay
+    and where it lies now, and whether it was renamed or moved. The `plan` handler shows a plan's
+    summary and its steps, numbered (issue 263).
     Where a result keeps the record of the questions its call asked (`answers`, issue 165), the
     frame shows each question with its answer, and who answered or declined. A question's text keeps
     its line breaks, so that an approver reads a command of several lines as it was written.

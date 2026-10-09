@@ -6,9 +6,11 @@
 //! - `list_files`, `read_file` and `grep_files` only read; what they read
 //!   is recorded as the turn's knowledge (`KnowledgeSource::Workspace`), a
 //!   file's content by its digest.
-//! - `write_file`, `replace_in_file` and `delete_file` change; the approver
-//!   reads the change whole, and a rule derived from an approved one covers
-//!   the file, whatever is written (`matcher`).
+//! - `write_file`, `replace_in_file`, `move_file` and `delete_file` change;
+//!   the approver reads the change whole, and a rule derived from an
+//!   approved one covers the file, whatever is written - for a move, that
+//!   move (`matcher`). `move_file` renames as well (issue 267): renaming is
+//!   moving within a directory.
 //!
 //! A file is read whole, up to `READ_LIMIT`, and given as text: one that is
 //! no UTF-8 is refused. A replacement reads, replaces and writes: what
@@ -32,10 +34,11 @@ pub const READ_FILE: &str = "read_file";
 pub const GREP_FILES: &str = "grep_files";
 pub const WRITE_FILE: &str = "write_file";
 pub const REPLACE_IN_FILE: &str = "replace_in_file";
+pub const MOVE_FILE: &str = "move_file";
 pub const DELETE_FILE: &str = "delete_file";
 
 /// The file tools, by name.
-pub(super) const TOOLS: [&str; 6] = [LIST_FILES, READ_FILE, GREP_FILES, WRITE_FILE, REPLACE_IN_FILE, DELETE_FILE];
+pub(super) const TOOLS: [&str; 7] = [LIST_FILES, READ_FILE, GREP_FILES, WRITE_FILE, REPLACE_IN_FILE, MOVE_FILE, DELETE_FILE];
 
 /// The largest file read or searched.
 const READ_LIMIT: u64 = 4 * 1024 * 1024;
@@ -103,8 +106,20 @@ struct Replace {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct Move {
+    from: String,
+    to: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Delete {
     path: String,
+}
+
+/// Whether moving `from` to `to` renames it: both lie in one directory.
+fn renames(from: &WorkspacePath, to: &WorkspacePath) -> bool {
+    from.parent() == to.parent()
 }
 
 /// `text` as a path inside the workspace; the model's to correct if it is
@@ -175,6 +190,19 @@ pub(super) fn tools(config: &TerminalToolConfig) -> Vec<Tool> {
             ToolPresentation::FileEdit,
         ),
         tool(
+            MOVE_FILE,
+            "Move or rename a file, or a directory with what it holds, of the session's workspace; the directories it is moved into are made. Nothing is moved over: what lies at the target must be deleted first.".to_string(),
+            ToolParameters::object(
+                [
+                    ("from", string("The file or directory, relative to the workspace's top")),
+                    ("to", string("Where it is to lie, relative to the workspace's top - in the same directory to rename it")),
+                ],
+                ["from", "to"],
+            ),
+            asks(MOVE_FILE),
+            ToolPresentation::FileMove,
+        ),
+        tool(
             DELETE_FILE,
             "Delete a file, or an empty directory, of the session's workspace.".to_string(),
             ToolParameters::object([("path", string("The file or directory, relative to the workspace's top"))], ["path"]),
@@ -202,18 +230,27 @@ pub(super) fn describe(name: &str, params: &Value) -> ToolResult<String> {
             let how = if replace_all { "every occurrence" } else { "once" };
             format!("Replace in '{path}' in the workspace, {how}:\n--- old\n{old_text}\n+++ new\n{new_text}")
         }
+        MOVE_FILE => {
+            let Move { from, to } = arguments(params)?;
+            let how = if renames(&path(&from)?, &path(&to)?) { "Rename" } else { "Move" };
+            format!("{how} '{from}' to '{to}' in the workspace")
+        }
         _ => format!("Delete '{}' from the workspace", arguments::<Delete>(params)?.path),
     })
 }
 
-/// For a change, the calls changing the same file; `None` for the others,
-/// which are alike when exactly alike.
+/// For a change, the calls changing the same file - for a move, the same
+/// move, since it changes two places; `None` for the others, which are
+/// alike when exactly alike.
 pub(super) fn matcher(name: &str, params: &Value) -> Option<ToolMatcher> {
     if !TOOLS.contains(&name) || read_only(name) {
         return None;
     }
-    let path = params.get("path")?.as_str()?;
-    Some(ToolMatcher { tool: name.to_string(), arguments: BTreeMap::from([("path".to_string(), regex::escape(path))]) })
+    let keys: &[&str] = if name == MOVE_FILE { &["from", "to"] } else { &["path"] };
+    let arguments = keys.iter()
+        .map(|key| Some((key.to_string(), regex::escape(params.get(key)?.as_str()?))))
+        .collect::<Option<BTreeMap<_, _>>>()?;
+    Some(ToolMatcher { tool: name.to_string(), arguments })
 }
 
 /// The bytes of the file `at`, at most `READ_LIMIT`.
@@ -379,6 +416,15 @@ pub(super) async fn execute(config: &TerminalToolConfig, name: &str, params: &Va
             write(terminal, workspace, &at, replaced).await?;
             Ok(json!({ "path": at.to_string(), "replacements": found }))
         }
+        MOVE_FILE => {
+            let Move { from, to } = arguments(params)?;
+            let (from, to) = (path(&from)?, path(&to)?);
+            terminal.move_entry(&from, &to).await.map_err(|e| match e {
+                TerminalError::InvalidPath(_) if from.is_root() || to.is_root() => ToolError::InvalidParameter("the workspace itself cannot be moved, nor moved over".to_string()),
+                e => failed(e),
+            })?;
+            Ok(json!({ "from": from.to_string(), "to": to.to_string(), "renamed": renames(&from, &to) }))
+        }
         _ => {
             let at = path(&arguments::<Delete>(params)?.path)?;
             terminal.delete(&at).await.map_err(|e| match e {
@@ -489,6 +535,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_file_or_directory_is_renamed_or_moved_but_never_over_something() {
+        let world = session_with_workspace().await;
+        let mut state = AgentChannelState::default();
+        let mut turn = world.turn(&mut state);
+        let tool = terminal_tool(json!({}));
+        std::fs::create_dir_all(world.dir().join("docs")).unwrap();
+        std::fs::write(world.dir().join("docs/plan.md"), "plan").unwrap();
+        std::fs::write(world.dir().join("docs/notes.md"), "notes").unwrap();
+
+        let renamed = tool.execute(MOVE_FILE, &json!({ "from": "docs/plan.md", "to": "docs/plan-v2.md" }), None, &mut turn).await.unwrap();
+        assert_eq!(renamed.value, json!({ "from": "docs/plan.md", "to": "docs/plan-v2.md", "renamed": true }));
+        assert_eq!(renamed.classification.as_ref(), Some(&world.workspace.classification));
+        let moved = tool.execute(MOVE_FILE, &json!({ "from": "docs/plan-v2.md", "to": "archive/2026/plan.md" }), None, &mut turn).await.unwrap().value;
+        assert_eq!(moved["renamed"], false);
+        assert_eq!(std::fs::read_to_string(world.dir().join("archive/2026/plan.md")).unwrap(), "plan", "its directories made");
+
+        let over = tool.execute(MOVE_FILE, &json!({ "from": "docs/notes.md", "to": "archive/2026/plan.md" }), None, &mut turn).await;
+        assert!(matches!(over, Err(ToolError::InvalidParameter(_))), "nothing is moved over: {over:?}");
+        assert_eq!(std::fs::read_to_string(world.dir().join("archive/2026/plan.md")).unwrap(), "plan");
+        let missing = tool.execute(MOVE_FILE, &json!({ "from": "docs/gone.md", "to": "docs/here.md" }), None, &mut turn).await;
+        assert!(matches!(missing, Err(ToolError::InvalidParameter(_))), "{missing:?}");
+        let top = tool.execute(MOVE_FILE, &json!({ "from": "", "to": "elsewhere" }), None, &mut turn).await;
+        assert!(matches!(&top, Err(ToolError::InvalidParameter(why)) if why.contains("workspace itself")), "{top:?}");
+
+        tool.execute(MOVE_FILE, &json!({ "from": "docs", "to": "old/docs" }), None, &mut turn).await.expect("a directory with what it holds");
+        assert_eq!(std::fs::read_to_string(world.dir().join("old/docs/notes.md")).unwrap(), "notes");
+        drop(turn);
+        assert!(knowledge(&state).is_empty(), "a move reads nothing");
+    }
+
+    #[tokio::test]
     async fn a_write_beyond_what_the_workspace_takes_is_refused() {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
@@ -501,7 +578,7 @@ mod tests {
     }
 
     #[test]
-    fn the_approver_reads_the_change_whole_and_a_rule_covers_the_file() {
+    fn the_approver_reads_the_change_whole_and_a_rule_covers_the_file_or_the_move() {
         let tool = terminal_tool(json!({}));
         let write = json!({ "path": "docs/a.md", "content": "hello\nworld" });
         assert_eq!(tool.describe(WRITE_FILE, &write).unwrap(), "Write 'docs/a.md' in the workspace (11 bytes):\nhello\nworld");
@@ -510,6 +587,11 @@ mod tests {
         let matcher = tool.matcher(WRITE_FILE, &write);
         assert_eq!((matcher.tool.as_str(), matcher.arguments.keys().map(String::as_str).collect::<Vec<_>>()), (WRITE_FILE, vec!["path"]), "not what is written");
         assert_eq!(matcher.arguments["path"], regex::escape("docs/a.md"));
+        let moving = json!({ "from": "docs/a.md", "to": "docs/b.md" });
+        assert_eq!(tool.describe(MOVE_FILE, &moving).unwrap(), "Rename 'docs/a.md' to 'docs/b.md' in the workspace");
+        assert_eq!(tool.describe(MOVE_FILE, &json!({ "from": "docs/a.md", "to": "archive/a.md" })).unwrap(), "Move 'docs/a.md' to 'archive/a.md' in the workspace");
+        let matcher = tool.matcher(MOVE_FILE, &moving);
+        assert_eq!(matcher.arguments, BTreeMap::from([("from".to_string(), regex::escape("docs/a.md")), ("to".to_string(), regex::escape("docs/b.md"))]), "that move, both of its places");
         let reading = tool.matcher(READ_FILE, &json!({ "path": "a.md", "start_line": 2 }));
         assert_eq!(reading.arguments.len(), 2, "a read is alike when exactly alike");
     }
@@ -522,6 +604,7 @@ mod tests {
         assert_eq!(presented[GREP_FILES], ToolPresentation::FileSearch);
         assert_eq!(presented[WRITE_FILE], ToolPresentation::FileWrite);
         assert_eq!(presented[REPLACE_IN_FILE], ToolPresentation::FileEdit);
+        assert_eq!(presented[MOVE_FILE], ToolPresentation::FileMove);
         assert_eq!(presented[DELETE_FILE], ToolPresentation::Default, "a deletion as every call");
     }
 }

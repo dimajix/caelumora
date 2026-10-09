@@ -2262,8 +2262,9 @@ async fn a_workspace_is_not_used_in_a_channel_by_who_is_not_in_it() {
 }
 
 /// What is asked when the agent of `owner`, asked by bob, makes `call` in the
-/// session's workspace - one that leaves `made`, a file of the workspace.
-async fn asked_for_a_call_on_the_workspace(function: &str, arguments: serde_json::Value, made: &str, owner: fn(&World) -> UserId) -> Vec<String> {
+/// session's workspace, where the files `present` lie already - one that
+/// leaves `made`, a file of the workspace.
+async fn asked_for_a_call_on_the_workspace(function: &str, arguments: serde_json::Value, present: &[&str], made: &str, owner: fn(&World) -> UserId) -> Vec<String> {
     use caelumora_model::message::{Message, MessageRole};
     use caelumora_model::tool::{ToolCall, ToolVisibility};
 
@@ -2296,7 +2297,12 @@ async fn asked_for_a_call_on_the_workspace(function: &str, arguments: serde_json
     session.set_workspace(&alice, Some(docs.id)).await.unwrap();
     let main = Arc::clone(&session.channels()[0]);
 
-    let made = world.files.path().join("shell").join(docs.id.to_string()).join(made);
+    let place = world.files.path().join("shell").join(docs.id.to_string());
+    for file in present {
+        std::fs::create_dir_all(place.join(file).parent().unwrap()).unwrap();
+        std::fs::write(place.join(file), "present").unwrap();
+    }
+    let made = place.join(made);
     let (_, asked) = world.asked(async {
         main.user_actor(world.bob).unwrap().send_message("@helper do it".to_string(), None).await.expect("sent");
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
@@ -2329,14 +2335,22 @@ fn asked_as_a_call_on_the_workspace(asked: &[String]) {
 /// An agent's command (issue 251).
 #[tokio::test]
 async fn an_agents_command_is_called_for_its_owner_and_reaches_the_workspace_through_its_channel() {
-    let asked = asked_for_a_call_on_the_workspace("run_command", serde_json::json!({ "command": "echo ran > ran.txt" }), "ran.txt", |world| world.alice).await;
+    let asked = asked_for_a_call_on_the_workspace("run_command", serde_json::json!({ "command": "echo ran > ran.txt" }), &[], "ran.txt", |world| world.alice).await;
     asked_as_a_call_on_the_workspace(&asked);
 }
 
 /// An agent's change of a file (issue 251, step 9) asks what a command asks.
 #[tokio::test]
 async fn an_agents_file_tool_asks_what_a_command_asks() {
-    let asked = asked_for_a_call_on_the_workspace("write_file", serde_json::json!({ "path": "notes/a.md", "content": "written" }), "notes/a.md", |world| world.alice).await;
+    let asked = asked_for_a_call_on_the_workspace("write_file", serde_json::json!({ "path": "notes/a.md", "content": "written" }), &[], "notes/a.md", |world| world.alice).await;
+    asked_as_a_call_on_the_workspace(&asked);
+}
+
+/// An agent's move of a file (issue 267) asks what any change of a file
+/// asks.
+#[tokio::test]
+async fn an_agents_move_of_a_file_asks_what_a_change_asks() {
+    let asked = asked_for_a_call_on_the_workspace("move_file", serde_json::json!({ "from": "notes/a.md", "to": "archive/a.md" }), &["notes/a.md"], "archive/a.md", |world| world.alice).await;
     asked_as_a_call_on_the_workspace(&asked);
 }
 
@@ -2346,7 +2360,7 @@ async fn an_agents_file_tool_asks_what_a_command_asks() {
 /// carol, by the agent's own taking part.
 #[tokio::test]
 async fn an_agent_reaches_the_workspace_of_a_session_its_owner_does_not_take_part_in() {
-    let asked = asked_for_a_call_on_the_workspace("run_command", serde_json::json!({ "command": "echo ran > ran.txt" }), "ran.txt", |world| world.carol).await;
+    let asked = asked_for_a_call_on_the_workspace("run_command", serde_json::json!({ "command": "echo ran > ran.txt" }), &[], "ran.txt", |world| world.carol).await;
     assert!(asked.contains(&"carol as helper, asked by bob: GetSession(alice's) yes".to_string()), "the session it takes part in: {asked:?}");
 }
 
