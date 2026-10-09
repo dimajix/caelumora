@@ -84,7 +84,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [256](256-workspace-versions.md) | open | A workspace has no versions: what a person, a file tool or a command overwrote cannot be taken back, and who changed what is not recorded. |
 | [272](272-artifacts-in-s3.md) | open | Artifacts can be kept only on the server's own disk, not in S3 or another object storage. |
 | [237](237-erasing-a-message.md) | open | A message written by mistake can be taken back but not erased: it stays in every participant's record and in the contexts built on it. |
-| [279](279-agents-md-in-workspace.md) | open | An agent is not told of an `AGENTS.md` in its workspace, and there is no skill that helps it write one for an existing project. |
 
 ## Code structure
 

@@ -121,6 +121,9 @@ agents alike; an external agent gives a skill given to it to its remote agent wi
 *   **The web UI** lists them in the sidebar and shows one on a page of its own, where its owner
     edits it (see [WEB-UI.md](WEB-UI.md#skills)).
 *   **A seed** may hold skills of the system (`skills:`, see [CONFIGURATION.md](CONFIGURATION.md)).
+    The example seed has `quiz-round` and `write-agents-md`, which guides an agent through
+    exploring a project in its workspace and writing an `AGENTS.md` for it (issue 279); a
+    deployment without that seed has neither.
 
 ## Not decided yet
 

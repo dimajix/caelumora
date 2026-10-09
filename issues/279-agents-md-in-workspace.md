@@ -1,6 +1,6 @@
 # 279 — An agent is not told of an AGENTS.md in its workspace, and has no skill to write one
 
-**Status:** open
+**Status:** done
 **Area:** Context and knowledge
 
 ## The problem
@@ -126,3 +126,8 @@ Taken by the maintainer on 2026-10-09:
 - 2026-10-09: Decided (see *Decision*): the part names the files found at the root - a list of
   names, by default `AGENTS.md` and `CLAUDE.md` -, says in one sentence that a subdirectory may have
   its own without searching for them, and the skill goes into the example seed.
+- 2026-10-09: Done. `workspace_prompt_provider` takes `instruction_files` (by default `AGENTS.md`,
+  `CLAUDE.md`), looks each up at the workspace's root with `Terminal::stat` and names those found;
+  the sentence on a directory's own file stands in every part of a workspace, phrased as what to do
+  where one is met, so that it sends no agent looking. A storage that cannot be reached leaves the
+  files out with a warning. The example seed has the skill `write-agents-md`.

@@ -290,7 +290,7 @@ published before anyone else can take it.
 | [224](224-what-agents-hear-of-others.md) | done | What an agent hears of others is shaped by the moderator and again by the external agent, and an agent run here that joins takes others' answers from the history unshaped, as if they were its own. |
 | [237](237-erasing-a-message.md) | open | A message written by mistake can be taken back but not erased: it stays in every participant's record and in the contexts built on it. |
 | [249](249-prompt-part-titles.md) | done | Some prompt parts have no title and run into the others, and some have one that is a paragraph. |
-| [279](279-agents-md-in-workspace.md) | open | An agent is not told of an `AGENTS.md` in its workspace, and there is no skill that helps it write one for an existing project. |
+| [279](279-agents-md-in-workspace.md) | done | An agent is not told of an `AGENTS.md` in its workspace, and there is no skill that helps it write one for an existing project. |
 
 ## Maintenance
 
