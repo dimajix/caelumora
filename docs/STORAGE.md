@@ -23,6 +23,9 @@ The `EntityStore` trait (in `caelumora-model`) stores the long-lived domain enti
     [253](../issues/253-workspace.md)), with one classification for all of it. The document names
     the storage its files lie in; the files are no part of it, and the store does not touch them.
     A session names the workspace attached to it (`Session::workspace`), at most one.
+*   **Skills**: procedures written down for agents (issue [22](../issues/22-skill-management.md)),
+    in the global scope, a user's or a session's, with one classification each. The
+    `SkillManager` is their one writer; see [SKILLS.md](SKILLS.md).
 
 The files of workspaces lie in the configured storages (`workspaces` in
 [CONFIGURATION.md](CONFIGURATION.md)), each served by one `TerminalProvider`

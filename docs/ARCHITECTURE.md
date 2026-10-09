@@ -10,10 +10,10 @@ that holds the details; the list at the end names them all.
 The project is a Rust workspace, with a web UI next to it:
 
 *   **`caelumora-model`** - the domain: entities (`Session`, `Channel`, `Agent`, `Personality`,
-    `User`, `SessionTemplate`), the values with rules their fields hold (`value`: `Name`,
-    `Language`, free text such as `Summary`), messages and events, the traits of the stores, the
-    security and confidentiality model, and the configuration (`AppConfig`). It holds data and
-    rules, but runs nothing.
+    `User`, `SessionTemplate`, `Workspace`, `Skill`), the values with rules their fields hold
+    (`value`: `Name`, `Language`, free text such as `Summary`), messages and events, the traits of
+    the stores, the security and confidentiality model, and the configuration (`AppConfig`). It
+    holds data and rules, but runs nothing.
 *   **`caelumora-runtime`** - everything that runs: sessions, channels and their actors, the agent's
     cognitive cycle, components, the event bus, the controllers that keep entities live, and the
     store implementations.
@@ -154,6 +154,19 @@ transcript is a chain of digests.
 
 Details: [MEMORY.md](MEMORY.md), [AGENT-TURN.md](AGENT-TURN.md).
 
+## What an agent can look up
+
+What an agent knows how to do need not be built into its personality: a **skill** (issue 22) is a
+procedure written down - instructions only, no tools - that a user owns, shares and edits like a
+document, kept in the `EntityStore`. An agent with the `skills` component is shown a catalogue of
+the skills it may load where it is - name and description - and loads one when a task calls for it;
+a member can give it one with `/skill`. Either way the skill's text goes into the agent's own
+transcript, never into the system prompt or the channel's history, and loading it is a decision of
+its own (`UseSkill`), besides whether its classification may flow into the channel. An agent may
+also write a skill down, for its owner, with approval.
+
+Details: [SKILLS.md](SKILLS.md).
+
 ## Reading what is there
 
 What is in the system is read through one navigation, the **views** (`caelumora_runtime::view`):
@@ -239,6 +252,8 @@ The design repeats a few decisions; new code follows them.
     prompt parts.
 *   [MEMORY.md](MEMORY.md) - notes, private notes, agent memory, reading other channels, the terms
     for what an agent remembers.
+*   [SKILLS.md](SKILLS.md) - skills: what they are, who may use and write them, how they reach the
+    model.
 *   [CHANNELS.md](CHANNELS.md) - sessions, channels, actors, participants, moderators and mentions.
 *   [EVENTS.md](EVENTS.md) - the event bus.
 *   [REST-SERVER.md](REST-SERVER.md) - the REST API, authentication, errors and the server-sent

@@ -1,6 +1,6 @@
 # 22 — Managing skills, and who is allowed to use them
 
-**Status:** in progress
+**Status:** done
 **Area:** Context & knowledge
 
 ## The problem
@@ -417,3 +417,12 @@ tools, then authoring, then REST, the web UI and the seed, then the documents.
   web UI's `WorkspaceClassificationFields` is `ClassificationFields`, `workspaceScopeLabel` is
   `scopeLabel` in `scope.ts`. A skill's timestamps and attributes take defaults when left out, for
   a seed written by hand. The web UI was type-checked and linted, not tried in a browser.
+- **2026-10-09** — Documents written: `docs/SKILLS.md`, and skills where the others touch them -
+  `AGENTS.md`, `ARCHITECTURE.md`, `TOOLS-AND-COMMANDS.md`, `COMPONENTS.md`, `MEMORY.md`,
+  `SECURITY.md`, `STORAGE.md`, `CONFIGURATION.md`, `REST-SERVER.md`, `WEB-UI.md`, `AGENT-TURN.md`.
+  Closed: a `Skill` entity with a decided content model - instructions only - in the
+  `EntityStore` with its attributes; `GetSkill` … `DeleteSkill` checked by the store and REST,
+  `UseSkill` by the views the component loads through; a catalogue of only what may be loaded; and
+  the agent reaches skills through `PromptProvider`, `ToolProvider` and the `AgentCommandProvider`
+  of 269, without a stage of its own. Left for later: preloading by a personality, importing
+  `SKILL.md`, resources beside a skill, and keeping a loaded skill through a compaction (16).

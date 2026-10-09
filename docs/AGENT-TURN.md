@@ -218,6 +218,12 @@ lowered below it, the turn is given up as `Lowered`, whatever it was about to do
 the turn over after a cancel - and the users are told with `TurnGivenUp` (issue 141, see
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
 
+**A message given** to the agent to read in a turn - a skill a member loaded for it with `/skill`
+(issue [22](../issues/22-skill-management.md)) - is recorded by `Turn::give`
+(`AgentChannelState::given`): into the transcript and the agent's history without a context, since
+the agent did not produce it, and the turn's context moved on past it. It is not published, and the
+turn has seen it.
+
 **A command turn** (issue [269](../issues/269-agent-commands.md)) carries out a command a user
 asked the agent for, rather than answering: `AgentChannelState::begin_command_turn` begins it with
 no tools and the command kept in `TurnState::command`, and the component that carries the command

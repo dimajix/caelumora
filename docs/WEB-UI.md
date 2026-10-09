@@ -47,9 +47,9 @@ The UI shows what the server says and repeats no rule of its own:
 | `src/command.ts`, `src/mention.ts` | The lexical rules mirrored from the model |
 | `src/messages.ts` | Helpers for showing messages, shared by the chat and the context panel |
 | `src/panelWidth.ts` | The widths of the panels beside the chat, kept in browser storage |
-| `src/moderator.ts`, `src/confidentiality.ts`, `src/workspace.ts` | Labels and explanations of responder policies, classifications and where a workspace lies |
+| `src/moderator.ts`, `src/confidentiality.ts`, `src/workspace.ts`, `src/scope.ts` | Labels and explanations of responder policies, classifications, storages, and where a workspace or a skill lies |
 | `src/App.tsx` | Login state, keep-alive, the error banner, the layout |
-| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `ToolCallView`, `QuestionCard`, `QuestionView`, `MarkdownMessage`, `ContextPanel`, `HistoryPanel`, `ToolsPanel`, `PrivateNotesPanel`, `ToolSetList`, `DeletedList`, `NotesList`, `TokenGauge`, `HoverCard`, `ActionMenu`, `ResizeHandle`, `UsageStats`, `NewSessionDialog`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ApprovalRulesDialog`, `ErrorBanner`, `WorkspacePage`, `FileBrowser`, `ChannelWorkspacePanel`, `NewWorkspaceDialog`, `WorkspaceClassificationFields`, `SessionWorkspaceDialog` |
+| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `ToolCallView`, `QuestionCard`, `QuestionView`, `MarkdownMessage`, `ContextPanel`, `HistoryPanel`, `ToolsPanel`, `PrivateNotesPanel`, `ToolSetList`, `DeletedList`, `NotesList`, `TokenGauge`, `HoverCard`, `ActionMenu`, `ResizeHandle`, `UsageStats`, `NewSessionDialog`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ApprovalRulesDialog`, `ErrorBanner`, `WorkspacePage`, `FileBrowser`, `ChannelWorkspacePanel`, `NewWorkspaceDialog`, `ClassificationFields`, `SessionWorkspaceDialog`, `SkillPage`, `NewSkillDialog` |
 
 ## Talking to the server
 
@@ -184,6 +184,23 @@ not know the difference.
 A session's menu has "Workspace" (`SessionWorkspaceDialog`): the workspace attached, if the user
 may read it - its owner -, and to whoever may change the session one of their workspaces to attach,
 not one made for another session, or taking it away.
+
+### Skills
+
+The skills the user may read and is cleared for (issue [22](../issues/22-skill-management.md)) are
+listed below the workspaces, each with where it lies where that is not their own scope, and a
+folded "Deleted skills" - the trash. The list is loaded again on every event about a skill
+(`SkillCreated`, `…Updated`, `…Deleted`, `…Restored`). "+" opens `NewSkillDialog`: its name, what
+it is for in a line, where it lies - the user's scope or the global one -, its classification and
+its text, Markdown. What the server refuses - a taken name, a text too long, a classification the
+user is not cleared for - is shown in the dialog.
+
+A skill opens on a page of its own (`SkillPage`), in the place of a channel: its name, what it is
+for, where it lies, whether it is the system's, its classification, and its text, shown as Markdown.
+Its owner renames it, says anew what it is for, reclassifies and deletes it from its menu, and edits
+its text in place. In the chat nothing is new: `/skill` is shown as every command of an agent, the
+skill's text stands in the agent's history panel as what the issuer gave it, and the context panel
+lists the skill under "Knowledge read" ("A skill, loaded in …").
 
 ### A channel
 
