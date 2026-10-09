@@ -928,6 +928,22 @@ impl ChannelLoop {
             .collect()
     }
 
+    /// The agents of the channel that carry out commands themselves (issue
+    /// 269), each with the commands `issuer` may see of it, by handle; an
+    /// agent with none is left out.
+    pub(crate) async fn agent_commands(&self, issuer: &SecurityContext) -> Vec<(ChannelMember, Vec<caelumora_model::command::Command>)> {
+        let mut found = Vec::new();
+        for member in self.members().into_iter().filter(|m| m.id.as_agent_id().is_some()) {
+            let Some(actor) = self.actor_by_id(member.id) else { continue };
+            let commands = actor.commands(issuer).await;
+            if !commands.is_empty() {
+                found.push((member, commands));
+            }
+        }
+        found.sort_by(|(l, _), (r, _)| l.handle.cmp(&r.handle));
+        found
+    }
+
     /// `questions` as put to the users of the channel (issue 165): every
     /// addressee found among them - a handle as its participants are
     /// mentioned, the agent's owner as `owner` (`Questions::resolve`).
@@ -1256,6 +1272,12 @@ impl ChannelLoop {
             ActorEvent::RetryRequested { target: RetryTarget::Turn(_), author } => {
                 self.security.may_retry_message(&event.security, &channel).await
                     && author.as_agent_id().is_some() && self.actor_by_id(*author).is_some()
+            }
+            // A command for an agent (issue 269): from a user, to an agent
+            // taking part. Whether the issuer may ask for it was asked by
+            // their actor and is asked again by the agent.
+            ActorEvent::CommandRequested { agent, .. } => {
+                event.context.sender_id.as_user_id().is_some() && agent.as_agent_id().is_some() && self.actor_by_id(*agent).is_some()
             }
             _ => return true,
         };
@@ -1756,7 +1778,7 @@ mod tests {
 
         let reply = actor.execute_command("help", "").await.expect("/help runs");
         assert_eq!(reply.visibility, caelumora_model::command::CommandVisibility::Private, "/help answers the issuer alone");
-        let text = reply.output;
+        let text = reply.output.expect("/help answers here");
         assert!(text.contains("/help"), "{text}");
         assert!(!text.contains("/wakeup"), "a hidden command is not listed: {text}");
         let names: Vec<String> = actor.visible_commands().await.into_iter().map(|c| c.name).collect();
@@ -1785,7 +1807,7 @@ mod tests {
         let reply = actor.execute_command("wakeup", "").await.expect("/wakeup runs");
         assert!(matches!(following.try_recv().map(|e| e.event), Ok(ActorEvent::CommandExecuted { .. })), "the issuer sees it from its own actor (issue 220)");
         assert_eq!(reply.visibility, caelumora_model::command::CommandVisibility::Channel, "the answer goes to the channel");
-        assert_eq!(reply.output, "No agent was asleep.", "and back to the issuer, whom the channel does not route it to");
+        assert_eq!(reply.output.as_deref(), Some("No agent was asleep."), "and back to the issuer, whom the channel does not route it to");
 
         let envelope = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
             .await
@@ -2603,6 +2625,7 @@ mod tests {
         );
         register_no_secrets(&mut registry);
         register_asking_tool(&mut registry);
+        register_marking_command(&mut registry);
         let defaults = caelumora_model::component::ComponentConfig {
             component_nodes: vec![caelumora_model::component::ComponentDescriptor {
                 id: "model".to_string(),
@@ -4118,6 +4141,179 @@ mod tests {
                 sensitive: self.sensitive,
             }))
         }
+    }
+
+    /// A component whose agent carries out `/mark [text]` (issue 269): it
+    /// notes "marked <text>" and answers the issuer alone - with `fail`, it
+    /// notes and then fails, so that nothing of it may stay.
+    #[derive(Debug)]
+    struct Marking;
+
+    impl crate::command::ProvidesCommands for Marking {
+        fn commands(&self) -> Vec<caelumora_model::command::Command> {
+            vec![caelumora_model::command::Command { name: "mark".to_string(), description: "Marks.".to_string(), usage: Some("[text]".to_string()), owners_only: false }]
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl crate::command::AgentCommandProvider for Marking {
+        async fn execute(&self, _name: &str, args: &str, turn: &mut crate::agent::turn::Turn<'_>) -> crate::command::CommandResult<caelumora_model::command::CommandOutput> {
+            crate::agent::notes::AgentNotes::note(turn, crate::agent::notes::NoteKind::Public, format!("marked {args}"));
+            if args == "fail" {
+                return Err(crate::command::CommandError::Failed { command: "mark".to_string(), reason: "it was told to".to_string() });
+            }
+            Ok(caelumora_model::command::CommandOutput::private("Marked."))
+        }
+    }
+
+    fn register_marking_command(registry: &mut crate::component::ComponentRegistry) {
+        registry.register(
+            crate::component::ComponentKind::new("test_marking").provides::<dyn crate::command::AgentCommandProvider>(),
+            |_descriptor, _context| {
+                let mut facets = crate::component::ComponentFacets::empty();
+                facets.insert::<dyn crate::command::AgentCommandProvider>(Arc::new(Marking));
+                Ok(facets)
+            },
+        );
+    }
+
+    /// A running channel with alice and an agent, `helper`, that carries
+    /// out `/mark`, idle after it answered alice's "hello" - or asleep, if
+    /// it said good-bye.
+    async fn with_a_marking_agent(asleep: bool) -> Stuck {
+        use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+        use caelumora_model::message::MessageRole;
+        use caelumora_model::tool::{ToolCall, ToolVisibility};
+        let stop = ToolCall { id: Some("1".to_string()), function_name: "stop".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
+        let hi = Message {
+            role: MessageRole::Assistant,
+            content: Some("Hi.".to_string()),
+            tool_calls: if asleep { vec![stop] } else { Vec::new() },
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        };
+        let components = ComponentConfig { component_nodes: vec![
+            ComponentDescriptor::new("marking", "test_marking"),
+            ComponentDescriptor::new("stop", crate::tool::stop_tool::STOP_TOOL_KIND),
+        ] };
+        let mut stuck = with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([hi].into()))), components).await;
+        answered(&mut stuck.events, stuck.agent).await;
+        settled(&stuck.helper, if asleep { ActorState::Sleeping } else { ActorState::Idle }).await;
+        stuck
+    }
+
+    /// The answer to a command that reaches `watch`.
+    async fn command_answer(watch: &mut crate::actor::user::ChannelWatch) -> Envelope {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let envelope = watch.events.recv().await.expect("the channel is running");
+                if matches!(envelope.event, ActorEvent::CommandExecuted { .. } | ActorEvent::CommandFailed { .. }) {
+                    break envelope;
+                }
+            }
+        }).await.expect("the command is answered")
+    }
+
+    #[tokio::test]
+    async fn an_agent_carries_out_a_command_in_a_turn_of_its_own_and_answers_the_issuer_alone() {
+        let Stuck { channel, context, agent, helper, running, .. } = with_a_marking_agent(false).await;
+        let alice = alice_of(&context);
+        let actor = channel.user_actor(alice).unwrap();
+        let mut watch = actor.watch();
+
+        let reply = actor.execute_command("mark", "@helper twice").await.expect("sent to the agent");
+        assert!(reply.output.is_none() && reply.span_id.is_some(), "answered later, on the stream: {reply:?}");
+        let answer = command_answer(&mut watch).await;
+        let ActorEvent::CommandExecuted { command, args, output, to, turn_id } = answer.event else { panic!("carried out, not {:?}", answer.event) };
+        assert_eq!((command.as_str(), args.as_str(), output.as_str(), to), ("mark", "twice", "Marked.", Some(ActorId::User(alice))), "without the handle, to her alone");
+        assert_eq!(answer.context.sender_id, ActorId::Agent(agent));
+        assert_eq!(answer.context.span_id, reply.span_id.unwrap(), "in the span of the request");
+        assert_eq!((answer.security.caller_id, answer.security.initiator_id), (ActorId::Agent(agent), ActorId::User(alice)), "carried out by the agent, on her word");
+
+        let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+        assert_eq!(state.notes.current().iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["marked twice"], "what it staged is applied");
+        assert!(state.turn.is_none(), "the turn is over");
+        let ends: Vec<String> = state.history.items().iter().filter_map(|item| match item {
+            HistoryEntry::CommandExecuted { turn_id: t, command, .. } if Some(*t) == turn_id => Some(format!("/{command}")),
+            HistoryEntry::TurnFinished { turn_id: t, .. } if Some(*t) == turn_id => Some("finished".to_string()),
+            _ => None,
+        }).collect();
+        assert_eq!(ends, ["/mark", "finished"], "its history records the command before the turn's end");
+        let recorded = channel.state.lock().await.history.items().into_iter()
+            .any(|item| matches!(item, HistoryEntry::CommandExecuted { issuer, actor, ref command, .. } if issuer == ActorId::User(alice) && actor == ActorId::Agent(agent) && command == "mark"));
+        assert!(recorded, "the channel's history records what was carried out, and on whose word");
+        assert_eq!(helper.state(), ActorState::Idle, "no answer begun");
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn a_command_that_fails_is_told_to_the_issuer_and_leaves_nothing_behind() {
+        let Stuck { channel, context, agent, running, .. } = with_a_marking_agent(false).await;
+        let alice = alice_of(&context);
+        let actor = channel.user_actor(alice).unwrap();
+        let mut watch = actor.watch();
+        let before = channel.state.lock().await.history.items().len();
+
+        actor.execute_command("mark", "@helper fail").await.expect("sent to the agent");
+        let answer = command_answer(&mut watch).await;
+        let ActorEvent::CommandFailed { command, reason, to } = answer.event else { panic!("failed, not {:?}", answer.event) };
+        assert_eq!((command.as_str(), to), ("mark", ActorId::User(alice)));
+        assert!(reason.contains("it was told to"), "{reason}");
+
+        let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+        assert!(state.notes.current().is_empty(), "nothing it staged is applied");
+        assert!(state.turn.is_none());
+        assert!(!state.history.items().iter().any(|item| matches!(item, HistoryEntry::CommandExecuted { .. } | HistoryEntry::TurnGivenUp { .. })), "no command, no turn given up: nothing happened");
+        assert_eq!(channel.state.lock().await.history.items().len(), before, "nor in the channel's");
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn a_command_of_an_agent_names_its_agent() {
+        let Stuck { channel, context, running, .. } = with_a_marking_agent(false).await;
+        let actor = channel.user_actor(alice_of(&context)).unwrap();
+        let error = |result: Result<crate::command::CommandReply>| result.expect_err("refused");
+
+        let unnamed = error(actor.execute_command("mark", "twice").await);
+        assert!(matches!(command_error(&unnamed), crate::command::CommandError::InvalidArguments { reason, .. } if reason.contains("@helper") && reason.contains("@all")), "{unnamed}");
+        let nobody = error(actor.execute_command("mark", "@nobody twice").await);
+        assert!(matches!(command_error(&nobody), crate::command::CommandError::InvalidArguments { reason, .. } if reason.contains("@helper")), "{nobody}");
+        let unknown = error(actor.execute_command("nonsense", "@helper").await);
+        assert!(matches!(command_error(&unknown), crate::command::CommandError::Unknown(name) if name == "nonsense"), "{unknown}");
+        let all = actor.execute_command("mark", "@all").await.expect("every agent that carries it out");
+        assert!(all.span_id.is_some() && all.output.is_none(), "all of them asked: {all:?}");
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn a_sleeping_agent_carries_out_a_command_and_sleeps_on() {
+        let Stuck { channel, context, agent, helper, running, .. } = with_a_marking_agent(true).await;
+        let actor = channel.user_actor(alice_of(&context)).unwrap();
+        let mut watch = actor.watch();
+
+        actor.execute_command("mark", "@helper asleep").await.expect("sent to the agent");
+        let answer = command_answer(&mut watch).await;
+        assert!(matches!(answer.event, ActorEvent::CommandExecuted { .. }), "carried out asleep: {:?}", answer.event);
+        let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+        assert_eq!(state.notes.current().len(), 1);
+        assert_eq!(helper.state(), ActorState::Sleeping, "a command wakes nobody");
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn help_lists_the_commands_of_the_agents_with_their_handles() {
+        use crate::command::ChannelCommandProvider;
+        let Stuck { channel, context, running, .. } = with_a_marking_agent(false).await;
+        // This channel's session has no commands of its own: `/help` is run
+        // as it would be among them.
+        let executor = CommandExecutor::empty(Arc::new(DummySecurityManager::new()));
+        let issuer = SecurityContext::new(context.initiator_id, channel.session_id, channel.id);
+        let help = crate::command::CommandContext { issuer: &issuer, channel: &channel, executor: &executor };
+
+        let all = HelpCommandProvider.execute("help", "", &help).await.expect("/help runs").text;
+        assert!(all.contains("`/mark @agent [text]` — Marks. (@helper)"), "{all}");
+        let one = HelpCommandProvider.execute("help", "mark", &help).await.expect("/help runs").text;
+        assert!(one.contains("Carried out by @helper"), "{one}");
+        running.abort();
     }
 
     fn register_asking_tool(registry: &mut crate::component::ComponentRegistry) {

@@ -25,9 +25,11 @@
 //! when it began, its answer classified as what it has seen - and given up
 //! when the channel was lowered since.
 
+use super::commands::AgentCommands;
 use super::intake::{catch_up, take_in};
 use super::{failure_message, reject_retries};
 use crate::actor::{Actor, Answering};
+use crate::command::CommandResult;
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::agent::state::AgentStateHandle;
 use crate::component_impl::external_context_provider::EXTERNAL_CONTEXT_PROVIDER_KIND;
@@ -46,7 +48,8 @@ use caelumora_model::agent::{AgentId, Personality};
 use caelumora_model::channel::Channel;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-use caelumora_model::context::PromptPart;
+use caelumora_model::command::Command;
+use caelumora_model::context::{ModelProfile, PromptPart};
 use caelumora_model::agent::AgentChannelState;
 use caelumora_model::external_agent::{OpenTaskState, TaskId};
 use caelumora_model::turn::GivenUpReason;
@@ -91,6 +94,10 @@ pub struct ExternalAgentActor {
     agent_state: Arc<AgentStateHandle>,
     /// What its prompt providers navigate, as a turn does (issue 163).
     views: ViewsFactory,
+    /// The commands it carries out itself (issue 269), as an agent run here
+    /// does: what they stage is in its transcript, given to the remote
+    /// agent with its next call.
+    commands: AgentCommands,
     /// Its state in this channel, held by the run loop for as long as it
     /// runs.
     state: Mutex<AgentChannelState>,
@@ -172,6 +179,7 @@ impl ExternalAgentActor {
         let state = actor_runtime.load_channel_state().await?;
         let agent_state = actor_runtime.agent_state(attributes).await?;
         let views = actor_runtime.views();
+        let commands = AgentCommands::new(&components, Arc::clone(&agent_controller), security_context.principal_id, ModelProfile::default(), actor_runtime.clone(), Arc::clone(&agent_state))?;
         Ok(Self {
             agent_id,
             agent_controller,
@@ -183,6 +191,7 @@ impl ExternalAgentActor {
             pending_prompts: std::sync::Mutex::new(Vec::new()),
             agent_state,
             views,
+            commands,
             state: Mutex::new(state),
             processing: ProcessingStateHolder::new(ActorState::Idle),
             current: std::sync::Mutex::new(CancellationToken::new()),
@@ -257,9 +266,16 @@ impl ExternalAgentActor {
     /// respond, if any. A request to answer again is rejected (issue 234):
     /// the remote agent keeps what it was given, and nothing here can take
     /// its answer back from it. A message it was given that was modified
-    /// or taken back since is told to it by a notice (`tell`, issue 236).
+    /// or taken back since is told to it by a notice (`tell`, issue 236). A
+    /// command is carried out where it came (issue 269).
     async fn hear(&self, state: &mut AgentChannelState, received: Envelope, rx: &mut Box<dyn EventReceiver>, output: &dyn EventSender) -> Option<Envelope> {
-        let (request, retries) = take_in(state, received, rx, &self.perceive_in_processors, &self.security_context, tell).await;
+        let mut taken = take_in(state, received, rx, &self.perceive_in_processors, &self.security_context, tell).await;
+        while let Some(command) = taken.command.take() {
+            self.commands.carry_out(state, &command, output).await;
+            let Some(next) = rx.try_recv() else { break };
+            taken = taken.then(take_in(state, next, rx, &self.perceive_in_processors, &self.security_context, tell).await);
+        }
+        let (request, retries) = (taken.request, taken.retries);
         if let Err(e) = self.actor_runtime.store_channel_state(state).await {
             warn!("External agent {} cannot store what it heard: {:#}", self.id(), e);
         }
@@ -861,7 +877,15 @@ impl Actor for ExternalAgentActor {
     }
 
     fn event_filter(&self) -> fn(&Envelope) -> bool {
-        |event| matches!(event.event, ActorEvent::ResponseRequested | ActorEvent::CompleteMessageGenerated(_) | ActorEvent::MessageModified(_) | ActorEvent::MessageRevoked { .. } | ActorEvent::MessageReclassified { .. } | ActorEvent::RetryRequested { .. })
+        |event| matches!(event.event, ActorEvent::ResponseRequested | ActorEvent::CompleteMessageGenerated(_) | ActorEvent::MessageModified(_) | ActorEvent::MessageRevoked { .. } | ActorEvent::MessageReclassified { .. } | ActorEvent::RetryRequested { .. } | ActorEvent::CommandRequested { .. })
+    }
+
+    async fn commands(&self, issuer: &SecurityContext) -> Vec<Command> {
+        self.commands.visible(issuer).await
+    }
+
+    async fn admit_command(&self, name: &str, issuer: &SecurityContext) -> CommandResult<Command> {
+        self.commands.admit(name, issuer).await
     }
 
     /// Takes in what it missed as what it hears (issues 190, 196, 206); the

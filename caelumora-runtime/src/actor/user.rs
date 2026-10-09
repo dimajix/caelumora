@@ -1,5 +1,5 @@
 use crate::actor::Actor;
-use crate::command::{CommandContext, CommandReply};
+use crate::command::{CommandContext, CommandError, CommandReply};
 use crate::runtime::ActorRuntime;
 use crate::transport::{EventReceiver, EventSender, TransportError};
 use anyhow::{anyhow, Result};
@@ -469,13 +469,16 @@ impl UserActor {
         Some(self.envelope(Self::answer(response, approved), envelope.context.span_id))
     }
 
-    /// Runs the user command `name` with `args` on behalf of this user
-    /// (issue 28). Commands are for people, so only a `UserActor` runs them.
+    /// Issues the user command `name` with `args` on behalf of this user
+    /// (issue 28). Commands are for people, so only a `UserActor` issues
+    /// them.
     ///
-    /// A command answers either this user alone or the whole channel; in the
-    /// latter case this actor announces it as a `CommandExecuted`, in its own
-    /// name. The answer is returned in both cases. Commands never enter the
-    /// history.
+    /// A command of the channel runs here and answers either this user alone
+    /// or the whole channel; in the latter case this actor announces it as a
+    /// `CommandExecuted`, in its own name. The answer is returned in both
+    /// cases. A command the session's set does not know is looked for among
+    /// the agents of the channel (`request_command`, issue 269). Commands
+    /// never enter the history; what an agent carried out does.
     ///
     /// # Errors
     /// A `CommandError` if the command is unknown, refused or fails; an error
@@ -486,12 +489,70 @@ impl UserActor {
         let executor = self.actor_runtime.command_executor();
         let context = CommandContext { issuer: &self.security_context, channel: &channel, executor };
         debug!("UserActor {} runs /{}", self.id, name);
-        let output = executor.execute(name, args, &context).await?;
+        let output = match executor.execute(name, args, &context).await {
+            Err(CommandError::Unknown(_)) => return self.request_command(&channel, name, args).await,
+            result => result?,
+        };
         if output.visibility == CommandVisibility::Channel {
             let event = ActorEvent::CommandExecuted { command: name.to_string(), args: args.to_string(), output: output.text.clone(), to: None, turn_id: None };
             self.send(self.envelope(event, Uuid::new_v4())).await?;
         }
-        Ok(CommandReply { command: name.to_string(), output: output.text, visibility: output.visibility })
+        Ok(CommandReply { command: name.to_string(), output: Some(output.text), visibility: output.visibility, span_id: None })
+    }
+
+    /// Asks agents of `channel` to carry out the command `name` (issue 269).
+    /// `args` begins with whom: `@handle` names one agent, `@all` every
+    /// agent here that carries the command out; the rest is the command's.
+    /// Asked here first - which agents carry it out as this user sees them
+    /// (`ChannelLoop::agent_commands`), and whether this user may ask each
+    /// (`Actor::admit_command`) - so that they learn of a refusal at once;
+    /// each agent asks again. Sent as `CommandRequested`, one per agent
+    /// under one span, through this actor's transport; no wakeup ahead of
+    /// it - a sleeping agent carries a command out asleep.
+    ///
+    /// # Errors
+    /// `CommandError::Unknown` if no agent here carries it out as this user
+    /// sees it; `InvalidArguments` if `args` names no agent that does;
+    /// `Forbidden` if this user may ask none of those named; an error if a
+    /// request cannot be sent.
+    async fn request_command(&self, channel: &crate::channel::ChannelLoop, name: &str, args: &str) -> anyhow::Result<CommandReply> {
+        let understanding: Vec<_> = channel.agent_commands(&self.security_context).await.into_iter()
+            .filter(|(_, commands)| commands.iter().any(|c| c.name == name))
+            .filter_map(|(member, _)| channel.actor_by_id(member.id).map(|actor| (member, actor)))
+            .collect();
+        if understanding.is_empty() {
+            return Err(CommandError::Unknown(name.to_string()).into());
+        }
+        let handles: Vec<String> = understanding.iter().filter_map(|(m, _)| m.handle.as_ref()).map(|h| format!("@{h}")).collect();
+        let invalid = |reason: String| CommandError::InvalidArguments { command: name.to_string(), reason };
+        let (whom, rest) = args.split_once(char::is_whitespace).unwrap_or((args, ""));
+        let targets: Vec<_> = match whom.strip_prefix('@') {
+            Some("all") => understanding,
+            Some(handle) => understanding.into_iter().filter(|(m, _)| m.handle.as_deref() == Some(handle)).collect(),
+            None => return Err(invalid(format!("name the agent: {}, or @all", handles.join(", "))).into()),
+        };
+        if targets.is_empty() {
+            return Err(invalid(format!("{whom} does not carry it out here; name {}, or @all", handles.join(", "))).into());
+        }
+        let single = targets.len() == 1;
+        let span_id = Uuid::new_v4();
+        let (mut asked, mut refused) = (0, Vec::new());
+        for (member, actor) in targets {
+            match actor.admit_command(name, &self.security_context).await {
+                Ok(_) => {
+                    let event = ActorEvent::CommandRequested { command: name.to_string(), args: rest.trim().to_string(), agent: member.id };
+                    self.send(self.envelope(event, span_id)).await?;
+                    asked += 1;
+                }
+                Err(e) if single => return Err(e.into()),
+                Err(_) => refused.push(member.handle.map(|h| format!("@{h}")).unwrap_or(member.name)),
+            }
+        }
+        if asked == 0 {
+            return Err(CommandError::Forbidden(name.to_string()).into());
+        }
+        let output = (!refused.is_empty()).then(|| format!("You may not ask {} to run /{name}; the others were asked.", refused.join(", ")));
+        Ok(CommandReply { command: name.to_string(), output, visibility: CommandVisibility::Private, span_id: Some(span_id) })
     }
 
     /// The commands this user may see, e.g. for completion.

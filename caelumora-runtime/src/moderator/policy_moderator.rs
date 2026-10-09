@@ -136,8 +136,16 @@ impl Moderator for PolicyModerator {
             ActorEvent::QuestionClosed { .. } => {
                 self.actors().route_question_events(event)
             }
-            ActorEvent::TurnGivenUp { .. } | ActorEvent::CommandExecuted { .. } | ActorEvent::ParticipantRemoved { .. } => {
+            ActorEvent::TurnGivenUp { .. } | ActorEvent::CommandExecuted { to: None, .. } | ActorEvent::ParticipantRemoved { .. } => {
                 self.actors().route_to_users(event)
+            }
+            // A command for an agent goes to it alone; what it answers to
+            // the issuer alone, unless the answer is everybody's (issue 269).
+            ActorEvent::CommandRequested { agent, .. } => {
+                self.actors().route_to_agent(*agent, event)
+            }
+            ActorEvent::CommandExecuted { to: Some(user), .. } | ActorEvent::CommandFailed { to: user, .. } => {
+                self.actors().route_to_user(*user, event)
             }
             // A change to what was said reaches everyone who may hold the
             // message (issue 234); each applies it if it does.
@@ -299,6 +307,12 @@ impl ModeratorActors {
     /// e.g. a request to answer again instead of its message (issue 234).
     fn route_to_agent(&self, agent: ActorId, event: &Envelope) -> Vec<(ActorId, Envelope)> {
         self.agent_actors.contains_key(&agent).then(|| (agent, event.clone())).into_iter().collect()
+    }
+
+    /// Forwards `event` to the user `user` alone, if they take part: what is
+    /// theirs alone, e.g. the private answer to a command (issue 269).
+    fn route_to_user(&self, user: ActorId, event: &Envelope) -> Vec<(ActorId, Envelope)> {
+        self.user_actors.contains_key(&user).then(|| (user, event.clone())).into_iter().collect()
     }
 
     /// Forwards `event` to every user in the channel, e.g. a `TurnGivenUp`

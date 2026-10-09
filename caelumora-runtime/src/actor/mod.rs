@@ -5,6 +5,7 @@
 
 pub mod agent;
 pub mod approval;
+mod commands;
 pub mod external_agent;
 mod intake;
 pub mod user;
@@ -15,9 +16,11 @@ use std::any::Any;
 use std::fmt::Debug;
 use tracing::warn;
 
+use crate::command::{CommandError, CommandResult};
 use crate::transport::{EventReceiver, EventSender};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, RetryTarget};
 use caelumora_model::agent::RetryRefused;
+use caelumora_model::command::Command;
 use caelumora_model::message::Message;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::tool::ToolSet;
@@ -62,6 +65,24 @@ pub(crate) trait Actor: Any + Debug + Send + Sync {
     /// are its remote side's.
     async fn tool_sets(&self) -> Vec<ToolSet> {
         Vec::new()
+    }
+
+    /// The commands it carries out itself that `issuer` may see (issue
+    /// 269), sorted by name. None for an actor that carries out none - a
+    /// user, an approver, an agent whose personality provides none.
+    async fn commands(&self, _issuer: &SecurityContext) -> Vec<Command> {
+        Vec::new()
+    }
+
+    /// The command `name`, if `issuer` may ask it to carry it out (issue
+    /// 269) - asked before the request is sent, so that the issuer learns
+    /// of a refusal at once; the actor asks again as it carries it out.
+    ///
+    /// # Errors
+    /// `CommandError::Unknown` if it has no such command or the issuer may
+    /// not see it, `Forbidden` if they may see but not ask for it.
+    async fn admit_command(&self, name: &str, _issuer: &SecurityContext) -> CommandResult<Command> {
+        Err(CommandError::Unknown(name.to_string()))
     }
 
     /// Wakes the actor from `Sleeping`. Synchronous and infallible on

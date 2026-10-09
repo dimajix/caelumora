@@ -346,7 +346,7 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                                 match user_actor.execute_command(&name, &args).await {
                                     // Also for an answer to the whole channel: its
                                     // announcement is not routed back to its sender.
-                                    Ok(reply) => println!("{}", reply.output),
+                                    Ok(reply) => if let Some(output) = reply.output { println!("{}", output) },
                                     Err(e) => {
                                         tracing::warn!("Command /{} failed: {:#}", name, e);
                                         let message = caelumora_runtime::error::user_message(&e)

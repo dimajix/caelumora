@@ -510,8 +510,8 @@ pub async fn execute_command(
         .map_err(|e| ApiError::from_runtime(e, Subject::Command, &format!("running /{}", payload.name)))?;
     // An answer for the whole channel reaches this client on the channel's
     // stream, like everybody else; returning it here as well would show it twice.
-    let output = (reply.visibility == CommandVisibility::Private).then_some(reply.output);
-    Ok(Json(CommandReplyResponse { command: reply.command, output }))
+    let output = reply.output.filter(|_| reply.visibility == CommandVisibility::Private);
+    Ok(Json(CommandReplyResponse { command: reply.command, output, span_id: reply.span_id }))
 }
 
 

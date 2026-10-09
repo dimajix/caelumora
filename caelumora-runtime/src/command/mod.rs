@@ -1,21 +1,24 @@
 //! User commands (issue 28): `ChannelCommandProvider` components contribute
 //! commands, and a session's `CommandExecutor` finds and runs them on behalf
-//! of a user.
+//! of a user. `AgentCommandProvider` components of a personality contribute
+//! the commands an agent carries out itself (issue 269), which its actor's
+//! executor finds and the agent runs in a turn of its own.
 //!
-//! Commands are for people - agents act through tools. They are run by
-//! `UserActor::execute_command`, on behalf of the user the actor stands
-//! for, and never enter the conversation.
+//! Commands are for people - agents act through tools. They are issued
+//! through `UserActor::execute_command`, on behalf of the user the actor
+//! stands for, and never enter the conversation.
 //!
 //! The built-in command components live here too, one file per command.
 
 pub mod help_command;
 pub mod wakeup_command;
 
+use crate::agent::turn::Turn;
 use crate::channel::ChannelLoop;
 use crate::component::{ComponentError, ComponentImpl, ComponentRegistry, ComponentResult};
 use async_trait::async_trait;
 use caelumora_model::command::{Command, CommandOutput, CommandVisibility};
-use caelumora_model::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
+use caelumora_model::security::{ActionType, Enforcement, SecurityAttributes, SecurityContext, SecurityManager};
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -39,16 +42,23 @@ pub enum CommandError {
 
 pub type CommandResult<T> = Result<T, CommandError>;
 
-/// What running a command answered (see `UserActor::execute_command`).
+/// What issuing a command answered at once (see
+/// `UserActor::execute_command`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct CommandReply {
     /// The command's name, without the slash.
     pub command: String,
-    pub output: String,
+    /// What it answered: the answer of a command of the channel; for one
+    /// sent to agents, which of them were not asked, if any were left out.
+    pub output: Option<String>,
     /// `Channel` if the answer was also announced to the channel as a
     /// `CommandExecuted`. The issuer gets it here either way: the channel
     /// does not route an envelope back to its sender.
     pub visibility: CommandVisibility,
+    /// For a command sent to agents (issue 269), the span of the requests:
+    /// their answers come later, as `CommandExecuted` or `CommandFailed`
+    /// on the issuer's stream, in this span.
+    pub span_id: Option<uuid::Uuid>,
 }
 
 /// What a command of the channel runs with: who issued it, the channel,
@@ -82,6 +92,23 @@ pub trait ChannelCommandProvider: ProvidesCommands {
     /// `CommandError::Forbidden` if the action it performs is refused, and
     /// `CommandError::Failed` otherwise.
     async fn execute(&self, name: &str, args: &str, context: &CommandContext<'_>) -> CommandResult<CommandOutput>;
+}
+
+/// A component facet contributing commands an agent carries out itself
+/// (issue 269) - `/skill`, `/compact` -, of agents run here and elsewhere
+/// alike: given the turn the agent carries the command out in, as a tool is
+/// given the turn it is called in. What the command changes it stages on
+/// the turn, which is taken over when the command succeeded and dropped
+/// when it did not. Whom it was asked by is the turn's initiator.
+#[async_trait]
+pub trait AgentCommandProvider: ProvidesCommands {
+    /// Carries out the command `name` with `args`, the rest of the input
+    /// line after the name and the agent's handle, which the command parses
+    /// itself.
+    ///
+    /// # Errors
+    /// As `ChannelCommandProvider::execute`.
+    async fn execute(&self, name: &str, args: &str, turn: &mut Turn<'_>) -> CommandResult<CommandOutput>;
 }
 
 #[derive(Debug)]
@@ -135,10 +162,15 @@ impl<P: ?Sized + ProvidesCommands> CommandExecutor<P> {
         Self { security_manager, entries: Vec::new() }
     }
 
+    /// Whether it has a command `name`, whoever may see it.
+    pub fn has(&self, name: &str) -> bool {
+        self.entries.iter().any(|e| e.command.name == name)
+    }
+
     /// The commands `issuer` may see - those `show` of them is granted -,
     /// sorted by name: the order components are built in follows their
     /// dependencies, not the configuration, so it is no order to show.
-    async fn visible_by(&self, issuer: &SecurityContext, show: impl for<'c> Fn(&'c Command) -> ActionType<'c>) -> Vec<Command> {
+    async fn visible_by<'c>(&'c self, issuer: &SecurityContext, show: impl Fn(&'c Command) -> ActionType<'c>) -> Vec<Command> {
         let mut visible = Vec::new();
         for entry in &self.entries {
             if self.security_manager.check(issuer, show(&entry.command)).await {
@@ -153,13 +185,13 @@ impl<P: ?Sized + ProvidesCommands> CommandExecutor<P> {
     /// name; `Unknown` if there is no such command or `show` of it is not
     /// granted them - one they may not see is unknown to them, not refused;
     /// `Forbidden` if `execute` of it is not.
-    async fn admit(
-        &self,
+    async fn admit<'c>(
+        &'c self,
         name: &str,
         issuer: &SecurityContext,
-        show: impl for<'c> Fn(&'c Command) -> ActionType<'c>,
-        execute: impl for<'c> Fn(&'c Command) -> ActionType<'c>,
-    ) -> CommandResult<&CommandEntry<P>> {
+        show: impl Fn(&'c Command) -> ActionType<'c>,
+        execute: impl Fn(&'c Command) -> ActionType<'c>,
+    ) -> CommandResult<&'c CommandEntry<P>> {
         if name.is_empty() {
             return Err(CommandError::Empty);
         }
@@ -191,6 +223,49 @@ impl CommandExecutor<dyn ChannelCommandProvider> {
     pub async fn execute(&self, name: &str, args: &str, context: &CommandContext<'_>) -> CommandResult<CommandOutput> {
         let entry = self.admit(name, context.issuer, |c| ActionType::ShowCommand(&c.name), |c| ActionType::ExecuteCommand(&c.name)).await?;
         entry.provider.execute(name, args, context).await
+    }
+}
+
+/// The commands of an agent (issue 269): seen and asked for by
+/// `ShowAgentCommand` and `ExecuteAgentCommand`, with the agent's
+/// attributes and those of the channel it is asked in.
+impl CommandExecutor<dyn AgentCommandProvider> {
+    /// The commands `issuer` may see of the agent with `agent` attributes in
+    /// the channel with `channel` attributes, sorted by name.
+    pub async fn visible(&self, issuer: &SecurityContext, agent: &SecurityAttributes, channel: &SecurityAttributes) -> Vec<Command> {
+        self.visible_by(issuer, |command| ActionType::ShowAgentCommand { command, agent, channel }).await
+    }
+
+    /// The command `name`, if `issuer` may ask the agent with `agent`
+    /// attributes for it in the channel with `channel` attributes.
+    ///
+    /// # Errors
+    /// As `execute`, before anything is carried out.
+    pub async fn admitted(&self, name: &str, issuer: &SecurityContext, agent: &SecurityAttributes, channel: &SecurityAttributes) -> CommandResult<Command> {
+        Ok(self.admit_for(name, issuer, agent, channel).await?.command.clone())
+    }
+
+    /// Carries out the command `name` with `args` in `turn`, if `issuer` -
+    /// who asked, in the context the request came with - may ask the agent
+    /// with `agent` attributes for it in the channel with `channel`
+    /// attributes.
+    ///
+    /// # Errors
+    /// `CommandError::Empty` for an empty name; `Unknown` if the agent has
+    /// no such command or the issuer may not see it; `Forbidden` if they
+    /// may see but not ask for it; otherwise whatever the command reports.
+    pub async fn execute(&self, name: &str, args: &str, issuer: &SecurityContext, agent: &SecurityAttributes, channel: &SecurityAttributes, turn: &mut Turn<'_>) -> CommandResult<CommandOutput> {
+        let entry = self.admit_for(name, issuer, agent, channel).await?;
+        entry.provider.execute(name, args, turn).await
+    }
+
+    async fn admit_for<'c>(&'c self, name: &str, issuer: &SecurityContext, agent: &'c SecurityAttributes, channel: &'c SecurityAttributes) -> CommandResult<&'c CommandEntry<dyn AgentCommandProvider>> {
+        self.admit(
+            name,
+            issuer,
+            |command| ActionType::ShowAgentCommand { command, agent, channel },
+            |command| ActionType::ExecuteAgentCommand { command, agent, channel },
+        ).await
     }
 }
 

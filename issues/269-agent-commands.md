@@ -495,3 +495,33 @@ is never retryable; a command carried out is recorded in the history.
   - The policy's rule for `ApproveToolCall` is now `answers_for`, shared with the owners-only
     commands. `HistoryItemResponse` and the web UI's types mirror the new entry and events
     already; nothing stored has to be deleted.
+- **2026-10-09** — Step 4 (E) done, except the documents, which come with the frontends. Where it
+  differs from the plan:
+  - **A command turn is no answer.** It announces neither `ResponseStarted` nor `StateChanged`
+    nor `TurnFinished`, asks nobody to respond and is not registered as the turn under way
+    (`RunControl::begin_turn`), so it can be neither cancelled nor asked for again - "never
+    retryable" holds without a rule. The agent stays in `Idle` or `Sleeping` while it carries one
+    out. `/compact` (16), which calls a model, will want a state to show and a way to cancel it;
+    that is 16's to add.
+  - **Not resumed, dropped.** A command turn is begun and ended between two stores of the agent's
+    state, so it is never stored under way; `prepare_resume` drops one it finds, unanswered, as a
+    request lost with a restart is. The plan's "run it again" is not needed.
+  - **`AgentCommandProvider::execute(name, args, turn)`**, without the issuer: who asked is the
+    turn's initiator.
+  - **`Actor::commands(issuer)` and `Actor::admit_command(name, issuer)`** on the actor trait, as
+    `tool_sets` is, instead of `Actor::commands()` and a second check in the user's actor: the
+    check is the agent's executor's, asked by the user's actor before it sends and by the agent
+    before it carries out, in one place. `ChannelLoop::agent_commands(issuer)` lists the agents
+    with what the issuer may see of them, for `request_command`, `/help` and the views.
+  - **`AgentCommands`** (`actor/commands.rs`) holds an agent's executor and what carrying out
+    needs - the controller, the principal, the model's profile, the runtime, the agent's state,
+    the views - and carries a command out; both kinds of agent hold one. Both run the same short
+    loop over `take_in` (`TakenIn::then` joins two batches): five lines twice, which a shared
+    intake for both actors would fold.
+  - **`CommandReply`** has `output: Option<String>` and `span_id`; for `@all`, `output` names the
+    agents the issuer may not ask, the others are asked. `CommandReplyResponse` has `span_id`
+    already; `MemberSnapshot::commands` is filled by the views but not yet on
+    `ChannelMemberResponse` - that is step F.
+  - **A provider stages**, as a tool does; what it writes into the state directly stays when it
+    fails. `Turn` has no way yet to stage a message for the transcript alone, which `/skill`
+    needs - that is 22's.

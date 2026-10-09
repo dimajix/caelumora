@@ -1,5 +1,6 @@
 mod run_control;
 
+use super::commands::AgentCommands;
 use super::intake::{catch_up, take_in};
 use super::{failure_message, reject_retries, retry_target};
 use crate::message::apply_stage_processors;
@@ -12,6 +13,7 @@ use crate::context::ContextProvider;
 use crate::llm::LLMClient;
 use crate::message::{EmitOutProcessor, PerceiveInProcessor};
 use crate::runtime::ActorRuntime;
+use crate::command::CommandResult;
 use crate::tool::{GuardedToolExecutor, ToolExecutor};
 use crate::transport::{EventReceiver, EventSender};
 use anyhow::{anyhow, Context, Result};
@@ -19,6 +21,7 @@ use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, RetryTarget};
 use crate::agent::state::AgentStateHandle;
 use caelumora_model::agent::{AgentChannelState, AgentId, Personality, RetryRefused};
+use caelumora_model::command::Command;
 use caelumora_model::turn::TurnState;
 use caelumora_model::work::TurnId;
 use crate::controller::{AgentController, ChannelController};
@@ -57,6 +60,9 @@ pub struct AgentActor {
     reasoning_visibility: Visibility,
     /// What its turns navigate (issue 163), as the agent.
     views: ViewsFactory,
+    /// The commands it carries out itself (issue 269), from its
+    /// personality's components.
+    commands: AgentCommands,
 
     // State
     /// The agent's own state, shared with its actors in other channels and
@@ -118,6 +124,7 @@ impl AgentActor {
         let agent_state = actor_runtime.agent_state(attributes).await?;
         let control = RunControl::new(agent_channel_state.processing_state, agent_channel_state.turn.as_ref().map(|t| t.work.turn_id));
         let views = actor_runtime.views();
+        let commands = AgentCommands::new(&components, Arc::clone(&agent_controller), security_context.principal_id, llm_client.profile(), actor_runtime.clone(), Arc::clone(&agent_state))?;
 
         Ok(AgentActor {
             agent_id,
@@ -131,6 +138,7 @@ impl AgentActor {
             tool_executor,
             reasoning_visibility: personality.reasoning_visibility,
             views,
+            commands,
             agent_state,
             state: Mutex::new(agent_channel_state),
             control,
@@ -290,8 +298,9 @@ impl AgentActor {
     /// gone already, else the last - and the others are rejected as asked
     /// again. A retry accepted and a request to respond in the same batch
     /// are one turn, answering the conversation as it stands, in the
-    /// contexts of the request; a retry alone begins one in its own. `None`
-    /// once the actor's input is closed.
+    /// contexts of the request; a retry alone begins one in its own. A
+    /// command is carried out where it came in the batch, asleep or not
+    /// (issue 269). `None` once the actor's input is closed.
     async fn handle_waiting(
         &self,
         state: &mut AgentChannelState,
@@ -310,7 +319,14 @@ impl AgentActor {
         let Some(received) = received else { return Ok(None) };
         // It gives its transcript nowhere else: of a change it does not hold on
         // its path there is nobody to tell.
-        let (request, mut retries) = take_in(state, received, rx, &self.perceive_in_processors, &self.security_context, |_, _| {}).await;
+        let mut taken = take_in(state, received, rx, &self.perceive_in_processors, &self.security_context, |_, _| {}).await;
+        // A command where it came (issue 269), then the rest of the batch.
+        while let Some(command) = taken.command.take() {
+            self.commands.carry_out(state, &command, output).await;
+            let Some(next) = rx.try_recv() else { break };
+            taken = taken.then(take_in(state, next, rx, &self.perceive_in_processors, &self.security_context, |_, _| {}).await);
+        }
+        let (request, mut retries) = (taken.request, taken.retries);
         // Read once taken in, not before waiting: the channel wakes an agent
         // before it delivers the message that asks it, and the request comes
         // in the same batch.
@@ -815,6 +831,13 @@ fn prepare_resume(state: &mut AgentChannelState) -> usize {
     if state.processing_state.in_turn() && state.turn.is_none() {
         state.processing_state = ActorState::Idle;
     }
+    // A command turn is carried out between two stores and never stored
+    // under way (issue 269); one found is dropped as its request would have
+    // been, unanswered.
+    if state.turn.as_ref().is_some_and(|turn| turn.command.is_some()) {
+        warn!("A command turn was stored under way; it is dropped");
+        state.turn = None;
+    }
     let Some(turn) = state.turn.as_mut().filter(|_| state.processing_state == ActorState::ExecutingTools) else {
         return 0;
     };
@@ -856,8 +879,17 @@ impl Actor for AgentActor {
                     | ActorEvent::MessageReclassified { .. }
                     | ActorEvent::RetryRequested { .. }
                     | ActorEvent::ResponseRequested
+                    | ActorEvent::CommandRequested { .. }
             )
         }
+    }
+
+    async fn commands(&self, issuer: &SecurityContext) -> Vec<Command> {
+        self.commands.visible(issuer).await
+    }
+
+    async fn admit_command(&self, name: &str, issuer: &SecurityContext) -> CommandResult<Command> {
+        self.commands.admit(name, issuer).await
     }
 
     /// Takes in what it missed as what it hears (issues 190, 196): all of

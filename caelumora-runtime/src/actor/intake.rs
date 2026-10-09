@@ -105,8 +105,11 @@ async fn take_in_modified(
 /// take is handed to `elsewhere` where it came (issue 236) - so in order
 /// with what was said - as the agent hears it, a modification of which
 /// nothing passes as taken back: for an actor that gave its transcript
-/// elsewhere to tell. Neither commits nor stores: when that happens is the
-/// actor's.
+/// elsewhere to tell. A command it is asked to carry out (issue 269) ends
+/// the batch: it is returned, and what follows it stays in `rx`, so that the
+/// actor carries it out where it came - after what was said before it,
+/// before what was said after - and then takes in the rest. Neither commits
+/// nor stores: when that happens is the actor's.
 pub(super) async fn take_in(
     state: &mut AgentChannelState,
     received: Envelope,
@@ -114,11 +117,14 @@ pub(super) async fn take_in(
     processors: &[ComponentImpl<dyn PerceiveInProcessor>],
     security: &SecurityContext,
     elsewhere: fn(&mut AgentChannelState, TranscriptEntry),
-) -> (Option<Envelope>, Vec<Envelope>) {
+) -> TakenIn {
     let mut request = None;
     let mut retries = Vec::new();
     let mut next = Some(received);
     while let Some(event) = next {
+        if matches!(event.event, ActorEvent::CommandRequested { .. }) {
+            return TakenIn { request, retries, command: Some(event) };
+        }
         let span = crate::logging::envelope_span(&event.context, event.event.kind());
         let asked = async {
             debug!("Received {}", event.describe());
@@ -157,7 +163,27 @@ pub(super) async fn take_in(
         request = asked.or(request);
         next = rx.try_recv();
     }
-    (request, retries)
+    TakenIn { request, retries, command: None }
+}
+
+/// What `take_in` found in what it took in: the last request to respond,
+/// the requests to answer again in order, and the command that ended the
+/// batch, if one did.
+pub(super) struct TakenIn {
+    pub(super) request: Option<Envelope>,
+    pub(super) retries: Vec<Envelope>,
+    pub(super) command: Option<Envelope>,
+}
+
+impl TakenIn {
+    /// This batch followed by `next`, taken in after the command that ended
+    /// this one was carried out: the later request to respond, the requests
+    /// to answer again of both in order, and the command that ended `next`.
+    pub(super) fn then(self, next: TakenIn) -> TakenIn {
+        let mut retries = self.retries;
+        retries.extend(next.retries);
+        TakenIn { request: next.request.or(self.request), retries, command: next.command }
+    }
 }
 
 /// Takes in what an actor of an agent missed of its channel as what it
@@ -221,14 +247,39 @@ mod tests {
             tx.try_send(event).expect("room");
         }
 
-        let (request, _) = take_in(&mut state, heard("one"), &mut rx, &[], &security, |_, _| {}).await;
+        let request = take_in(&mut state, heard("one"), &mut rx, &[], &security, |_, _| {}).await.request;
         assert_eq!(texts(&state.transcript.messages()), ["one", "two", "three"], "all of it, in order, also what came after the last request");
         assert_eq!(request.map(|r| r.security.caller_id), Some(caelumora_model::actor::ActorId::System), "the last request");
         assert!(rx.try_recv().is_none(), "nothing left behind");
 
-        let (request, _) = take_in(&mut state, heard("four"), &mut rx, &[], &security, |_, _| {}).await;
+        let request = take_in(&mut state, heard("four"), &mut rx, &[], &security, |_, _| {}).await.request;
         assert!(request.is_none(), "heard, but nobody asked");
         assert_eq!(texts(&state.transcript.messages()), ["one", "two", "three", "four"]);
+    }
+
+    #[tokio::test]
+    async fn a_command_ends_the_batch_and_what_follows_it_stays_queued() {
+        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        let mut rx: Box<dyn EventReceiver> = Box::new(crate::transport::InMemoryEventReceiver::new(rx));
+        let mut state = AgentChannelState::default();
+        let security = SecurityContext::default();
+        let heard = |text: &str| envelope(ActorEvent::CompleteMessageGenerated(said(text)));
+        let command = envelope(ActorEvent::CommandRequested { command: "mark".to_string(), args: String::new(), agent: caelumora_model::actor::ActorId::None });
+        for event in [envelope(ActorEvent::ResponseRequested), heard("two"), command, heard("three"), envelope(ActorEvent::ResponseRequested)] {
+            tx.try_send(event).expect("room");
+        }
+
+        let first = take_in(&mut state, heard("one"), &mut rx, &[], &security, |_, _| {}).await;
+        assert_eq!(texts(&state.transcript.messages()), ["one", "two"], "what was said before the command");
+        assert!(matches!(first.command.as_ref().map(|c| &c.event), Some(ActorEvent::CommandRequested { .. })), "the command that ended the batch");
+        assert!(first.request.is_some(), "the request before it is kept");
+
+        // The actor carries it out here, then takes in the rest.
+        let next = rx.try_recv().expect("what follows the command stays queued");
+        let rest = take_in(&mut state, next, &mut rx, &[], &security, |_, _| {}).await;
+        assert_eq!(texts(&state.transcript.messages()), ["one", "two", "three"], "in the order it was said");
+        let all = first.then(rest);
+        assert!(all.command.is_none() && all.request.is_some(), "no command left, and the later request");
     }
 
     #[tokio::test]
