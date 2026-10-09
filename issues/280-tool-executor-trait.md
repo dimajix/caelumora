@@ -1,6 +1,6 @@
 # 280 — `ToolExecutor` is a replaceable facet with a single implementation that cannot do what it was made replaceable for
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -80,3 +80,11 @@ none.
 - 2026-10-09: Opened at the maintainer's request: the `ToolExecutor` trait has only
   `DefaultToolExecutor` as its implementation and can go; `GuardedToolExecutor` is to be renamed
   `ToolExecutor`.
+- 2026-10-09: Done. The trait `ToolExecutor`, the component kind `default_tool_executor` and its
+  registration as a facet of which there is one are gone. `DefaultToolExecutor` is now
+  `ToolProviders` (`tool/providers.rs`, private to the module): it refuses two providers of one
+  tool name, finds a call's provider and makes the tool sets, with its tests. The runtime's
+  executor is called `ToolExecutor` and builds it itself: `ToolExecutor::new` takes the agent's
+  `ToolProvider`s (`ComponentContainer::get_all`) and fails as `ToolProviders::new` does. The
+  documents and the example in AGENTS.md follow; the open issues 226, 270 and 276 say so in their
+  history.

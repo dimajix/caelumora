@@ -71,3 +71,8 @@ running tools "in parallel" can be tried by configuring a different `ToolExecuto
   concurrently was asked about as a way of waiting on all of them and the token at once. Waiting on
   the token needs no concurrency, so 161 was done with the calls in order; this records what
   concurrency would cost.
+- **2026-10-09** — With [280](280-tool-executor-trait.md) the `ToolExecutor` trait and the
+  component kind `default_tool_executor` are gone: the runtime's executor, formerly
+  `GuardedToolExecutor`, is now called `ToolExecutor` and is no component. Running calls
+  concurrently can no longer be tried by configuration at all; the option of this issue is the
+  agent's loop, as described above.

@@ -58,7 +58,7 @@ pub struct ChannelRuntime {
     runtime_manager: Arc<RuntimeManager>,
     command_executor: Arc<CommandExecutor<dyn ChannelCommandProvider>>,
     /// The session the channel belongs to, live: what its agents' tool
-    /// calls are guarded by (`GuardedToolExecutor`).
+    /// calls are guarded by (`ToolExecutor`).
     session: Arc<SessionController>,
     channel: ChannelHandle,
 }
@@ -239,7 +239,7 @@ impl ActorRuntime {
     }
 
     /// The channel the actor is in, for what the actor is built with and
-    /// reaches it later (`GuardedToolExecutor`).
+    /// reaches it later (`ToolExecutor`).
     pub(crate) fn channel_handle(&self) -> ChannelHandle {
         self.runtime.channel.clone()
     }

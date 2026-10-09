@@ -100,7 +100,7 @@ object; raise it rather than building around it.
 Solve problems along the patterns the codebase already has before inventing new ones: a new
 capability that resembles an existing one is built the same way (commands like tools: a `…Provider`
 component facet, and something that receives the ready providers and checks permissions - for tools
-the runtime's `GuardedToolExecutor` in front of the agent's `ToolExecutor` component, issue 127).
+the runtime's `ToolExecutor`, issues 127 and 280).
 When a proposal adds a second implementation of something that exists, look for differences between
 the two that have no reason — naming, construction, error handling — and propose aligning them, in
 whichever direction is the better one. A deliberate difference is fine, but say why it exists.

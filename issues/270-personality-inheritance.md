@@ -65,3 +65,5 @@ nothing about the facets an agent has many of, and nothing a personality could b
 - **2026-10-09** — Issue created, out of [269](269-agent-commands.md): the commands an agent
   carries out are configured per personality like its tools, and the chore of listing `/compact`
   in every personality is this issue's, not a default set for commands.
+- **2026-10-09** — With [280](280-tool-executor-trait.md) the `ToolExecutor` is no facet any
+  more; of the facets of which an agent has exactly one, `LLMClient` and `ContextProvider` remain.

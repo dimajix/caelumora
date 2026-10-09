@@ -39,7 +39,6 @@ A component offers one or more *facets*: traits it implements to take part in th
 | Facet | What it contributes | Where the trait lives |
 |---|---|---|
 | `ToolProvider` | tools the model may call | `crate::tool` |
-| `ToolExecutor` | how the agent runs its tool calls | `crate::tool` |
 | `ChannelCommandProvider` | user commands run on the channel | `crate::command` |
 | `AgentCommandProvider` | user commands an agent carries out itself, of agents and external agents alike (issue 269) | `crate::command` |
 | `PromptProvider` | prompt parts, of agents and external agents alike (issue 204) | `crate::context` |
@@ -83,11 +82,11 @@ Components are wired the way Spring Boot wires beans (issue 99).
 
 ### Facets of which there is exactly one
 
-Of some facets an agent has exactly one: the `ContextProvider` (issue 98), the `ToolExecutor`
-(issue 127) and the `LLMClient` (issue 130), an external agent exactly one `ExternalAgent` (issue
-179); a channel has exactly one `Moderator` and one `ResponderPolicy` (issue 174). They are
-registered with `ComponentRegistry::single::<T>(default_kind)` in the `register_all` of the
-module that holds the default kind (`component_impl`, `tool`, `llm`, `external`, `moderator`).
+Of some facets an agent has exactly one: the `ContextProvider` (issue 98) and the `LLMClient` (issue
+130), an external agent exactly one `ExternalAgent` (issue 179); a channel has exactly one
+`Moderator` and one `ResponderPolicy` (issue 174). They are registered with
+`ComponentRegistry::single::<T>(default_kind)` in the `register_all` of the module that holds the
+default kind (`component_impl`, `llm`, `external`, `moderator`).
 
 *   Two components of one container that provide such a facet are refused before anything is built.
 *   If none does, a default is built the first time the facet is asked for
@@ -145,11 +144,11 @@ channels did.
 The built-in components live in `caelumora-runtime/src/`, **one file per component kind**, named
 after the kind (`calculator_tool.rs`, `notes.rs`, ...), in the module of the facet that is their
 purpose. That module's `mod.rs` holds the facet trait - with what consumes it, such as the
-`GuardedToolExecutor` - and `register_all`; its other files are the components:
+`ToolExecutor` - and `register_all`; its other files are the components:
 
 | Module | Components |
 |---|---|
-| `tool/` | tool providers and the `ToolExecutor` (`calculator_tool`, `mcp_tool`, `default_tool_executor`, ...) |
+| `tool/` | tool providers (`calculator_tool`, `mcp_tool`, ...) |
 | `command/` | command providers (`help_command`, `wakeup_command`, `nudge_command`) |
 | `llm/` | language models (`ollama_client`) |
 | `moderator/` | the moderator and its responder policies |
@@ -173,7 +172,7 @@ They follow one convention (issue 101):
 *   **Names:** every tool and command name is a constant (`CALCULATE_TOOL_NAME`,
     `HELP_COMMAND_NAME`).
 *   **Construction:** the factory fills `facets` and builds the struct literally. There is a `new`
-    only where something is checked, as in `DefaultToolExecutor::new`.
+    only where something is checked.
 *   **Parameters:** the turn is always the parameter `turn`.
 
 What components share lives beside the facet: `tool::text_argument` and `id_argument` for tool
@@ -230,7 +229,6 @@ unknown field is refused. In messages the endpoint is shown without credentials,
 | `external_context_provider` | `ContextProvider` | - | The default context provider of an external agent (issue 214): each prompt part on its own, with the component it came from, for its actor to give the remote agent when it changed ([CHANNELS.md](CHANNELS.md)). |
 | `a2a_agent` | `ExternalAgent` | `endpoint` (its `url` the agent's base URL, or its card's own; its timeout 30 s, per request, a streamed one until its stream begins), `classification` (the channel's), `sender_format` (`prefix`) and `sender_style` (`handle`) - how it is told who said what, in the content: A2A has no sender ([AGENT-TURN.md](AGENT-TURN.md#who-said-what)) | An external agent reached over A2A 1.x by JSON-RPC (issue 179): reads its agent card, streams over server-sent events where the card offers it; where not, is answered at once with the task and asks for it until it ends or asks back (issue 186). A card it cannot read, or one that offers no JSON-RPC of A2A 1.x, fails when the agent is asked, not when it is built. |
 | `ollama_client` | `LLMClient` | `endpoint` (`url: http://127.0.0.1:11434`, no timeout, no `auth`), `model` (`gemma4:26b`), `think`, `reasoning_history` (`current_turn`), `system_messages` (`only_at_start`), `sender_format` (`prefix`), `sender_style` (`handle`), `context_size` (Ollama's default) | The default model: a model served by Ollama ([CONFIGURATION.md](CONFIGURATION.md#the-model)). Defuses the model's control tokens in every text it sends (issue 149). |
-| `default_tool_executor` | `ToolExecutor` | - | The default executor: runs a call on the `ToolProvider` that has the tool ([TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md)). |
 | `policy_moderator` | `Moderator` | `max_agent_hops` (`3`) | The default moderator of a channel: routes as every channel does and asks its `ResponderPolicy` whom to ask; ends a chain between agents after `max_agent_hops` hops ([CHANNELS.md](CHANNELS.md#chains-between-agents)). |
 | `broadcast_policy` | `ResponderPolicy` | - | Asks every agent. |
 | `round_robin_policy` | `ResponderPolicy` | - | The default policy: the agents take turns. |

@@ -378,7 +378,7 @@ flags is listed in [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md).
 A tool result carries a classification of its own (`ToolCallResult::classification`, issue 133): a
 tool classifies each of its results by what it read or the source it drew on (`ToolOutput`), a tool
 can be configured with one for all of its results (`Tool::classification`, e.g. the `classification`
-of an `mcp_tool`), and otherwise a result is the channel's. The `GuardedToolExecutor` applies them
+of an `mcp_tool`), and otherwise a result is the channel's. The `ToolExecutor` applies them
 in this order.
 
 **Before the model, not after it.** A result that may not flow into the channel - asked as
@@ -397,7 +397,7 @@ may not read stays unread.
 What an agent writes into the arguments of a call leaves the system where the tool has a remote
 side (issue [180](../issues/180-outbound-flow-unchecked.md)). A tool set says where they go - the
 classification its remote side is cleared for (`ToolSet::destination`, from
-`ToolProvider::destination`) - and the `GuardedToolExecutor` judges it when it assembles the tools
+`ToolProvider::destination`) - and the `ToolExecutor` judges it when it assembles the tools
 of a turn, with the channel the turn begins in: a set whose destination the channel may not flow
 to - asked as `ActionType::Publish` of the channel's classification into the destination, with the
 agent's owner's rights - is offered as unavailable, without its tools, so that the model

@@ -25,7 +25,7 @@ it.
 ### One manager per process
 
 One `SecurityManager` is built per process and handed to everything that checks: the stores, the
-`SecretManager` and the `RuntimeManager`, from which the agent's `GuardedToolExecutor` and every
+`SecretManager` and the `RuntimeManager`, from which the agent's `ToolExecutor` and every
 `ChannelLoop` take it.
 
 It is a constructor argument rather than something built where it is needed. That way a deployment's
@@ -202,7 +202,7 @@ something - they check the request, and carry it out with their own rights. In t
     it read to whoever it answers next (issue
     [131](../issues/131-agent-memory-bypasses-policy.md)) - so what it may read is fixed by its
     owner, not by who happens to ask.
-2.  **The owner checks the request**, where a call is admitted (`GuardedToolExecutor::admit`): the
+2.  **The owner checks the request**, where a call is admitted (`ToolExecutor::admit`): the
     policy, the owner's rules for the place - evaluated in their name, as their own answer (issue
     13) - and the approval of the owner or their contributors, for an agent of the system the
     channel's owner (see [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md#who-may-approve)). A

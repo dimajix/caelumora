@@ -118,9 +118,10 @@ What an agent can do is not programmed into the `AgentActor` but configured: a p
 **components**, and each component offers one or more **facets** - traits through which it takes
 part in the turn. A component contributes tools (`ToolProvider`), text for the model
 (`PromptProvider`), or filters incoming messages (`PerceiveInProcessor`). Of some facets an agent
-has exactly one: the `LLMClient`, the language model it talks to; the `ContextProvider`, which
-assembles the model's context; and the `ToolExecutor`, which runs tool calls. All three have
-built-in defaults that a personality or the configuration can replace.
+has exactly one: the `LLMClient`, the language model it talks to, and the `ContextProvider`, which
+assembles the model's context. Both have built-in defaults that a personality or the configuration
+can replace. Tool calls are run by the runtime's `ToolExecutor` with the tools of the agent's
+providers; it is no component, so that what it checks is never a personality's choice.
 
 Components are wired by type, much like Spring beans: a component asks for the facets it needs, and
 the container builds whatever provides them. User commands such as `/help` are components as well,

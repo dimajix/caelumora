@@ -1,21 +1,22 @@
-//! Tools (issue 52): the facets `ToolProvider` and `ToolExecutor`, the
-//! `GuardedToolExecutor` the runtime puts in front of an agent's executor
-//! (issue 127), and the built-in tool components, one file per component
-//! kind. A component that offers tools along with another facet - a prompt
+//! Tools (issue 52): the facet `ToolProvider`, the `ToolExecutor` that
+//! runs an agent's tool calls with the tools of its providers and with the
+//! checks the runtime keeps to itself (issues 127, 280), and the built-in
+//! tool components, one file per component kind. A component that offers tools along with another facet - a prompt
 //! part, say - stays in `component_impl`.
 
 pub mod artifact_tool;
 pub mod ask_user_tool;
 pub mod calculator_tool;
-pub mod default_tool_executor;
 pub mod echo_tool;
 pub mod mcp_tool;
+mod providers;
 pub mod sleep_tool;
 pub mod stop_tool;
 pub mod terminal_tool;
 
 use crate::agent::turn::Turn;
-use crate::component::{ComponentImpl, ComponentRegistry};
+use crate::component::{ComponentImpl, ComponentRegistry, ComponentResult};
+use providers::ToolProviders;
 use crate::controller::{ChannelController, SessionController};
 use async_trait::async_trait;
 use caelumora_model::approval::{ApprovalRule, RuleDecision, ToolMatcher};
@@ -49,7 +50,7 @@ pub type ToolResult<T> = Result<T, ToolError>;
 /// What a tool gives back (issue 133): its value and, if the tool
 /// classifies it - by its input, by what it read, by the source it drew
 /// on - how sensitive it is. `None` leaves it to the tool's configuration
-/// or the channel (`GuardedToolExecutor`).
+/// or the channel (`ToolExecutor`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToolOutput {
     pub value: Value,
@@ -319,42 +320,8 @@ pub trait ToolProvider: Send + Sync + Debug {
     }
 }
 
-
-/// How an agent's tool calls are run - a component facet of which an agent
-/// has exactly one (issue 127): the component of its personality that
-/// provides it, or the default `default_tool_executor`, unless the
-/// configuration names another (`AppConfig::component_defaults`). It decides
-/// how a tool is run, never whether, and not what the model is told: the
-/// runtime checks the permission before it delegates, and makes the result
-/// ([`GuardedToolExecutor`]), so that no configured component can run a
-/// call the policy refuses or hand the model what it may not see.
-#[async_trait]
-pub trait ToolExecutor: Send + Sync + Debug {
-    /// Runs `call` with the tool that provides it: what the tool gave, or
-    /// what went wrong (`ToolError::UnknownTool` if no tool has the name).
-    /// Called only for calls the policy permits, with the `answers` to the
-    /// questions the tool asked for the call.
-    async fn execute(&self, call: &ToolCall, answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput>;
-    fn describe(&self, call: &ToolCall) -> ToolResult<String>;
-    /// What `call` asks a person before it runs, as its tool says (issue
-    /// 165). No default: an executor that left it out would run a tool
-    /// without the answers it needs.
-    fn questions(&self, call: &ToolCall) -> ToolResult<Option<Questions>>;
-    /// What other calls are like `call`, as its tool says (issue 13); by
-    /// default the calls exactly like it.
-    fn matcher(&self, call: &ToolCall) -> ToolMatcher {
-        ToolMatcher::exact(call)
-    }
-    /// The tools there are now, in the sets of the providers they come from
-    /// (issue 194), for the model and for labelling its calls. Asked of the
-    /// providers each time: a provider's tools may change while the agent
-    /// runs - an MCP server replaced by a newer one - and caching them is
-    /// the provider's (issue 100).
-    fn tool_sets(&self) -> Vec<ToolSet>;
-}
-
 /// How a tool call of the model is admitted, before anything runs
-/// (`GuardedToolExecutor::admit`, issue 155).
+/// (`ToolExecutor::admit`, issue 155).
 #[derive(Debug)]
 pub enum Admission {
     /// A user decides first; they are shown `description`. `explicit` if a
@@ -426,8 +393,9 @@ fn offered(call: &ToolCall, turn: &Turn<'_>) -> bool {
     turn.tools().iter().any(|tool| tool.name == call.function_name)
 }
 
-/// An agent's [`ToolExecutor`] with what the runtime keeps to itself
-/// (issues 127, 133): only an agent calls tools, and only what the policy
+/// Runs an agent's tool calls with the tools of its components' providers
+/// (`ToolProviders`), and with what the runtime keeps to itself (issues
+/// 127, 133, 280): only an agent calls tools, and only what the policy
 /// permits (`CallTool`) - asked before a call is put up for approval
 /// (`admit`, which also decides whether a user is asked) and again when
 /// it is run. And the result the model is
@@ -435,8 +403,10 @@ fn offered(call: &ToolCall, turn: &Turn<'_>) -> bool {
 /// wrong and what to do next (issue 15), classified - as the tool
 /// classified it, else as the tool is configured, else as the channel -
 /// and withheld if that may not flow into the channel, before the model
-/// sees it. Whatever executor a personality configures, it only ever sees
-/// permitted calls, and never decides what the model is told.
+/// sees it. A tool only ever sees permitted calls, and never decides what
+/// the model is told. It is no component: how a call runs is its tool's
+/// business (issue 280), and what is checked is never the choice of whoever
+/// may write a personality.
 ///
 /// The rules of the places the agent works in (issue 13) - the system's,
 /// its session's, its channel's - are applied here too, as they stand at
@@ -444,9 +414,9 @@ fn offered(call: &ToolCall, turn: &Turn<'_>) -> bool {
 /// anyone is asked and again when it is run, and a rule that asks puts the
 /// call to a person for a decision of their own, whatever its tool says.
 #[derive(Debug)]
-pub struct GuardedToolExecutor {
+pub struct ToolExecutor {
     security_manager: Arc<dyn SecurityManager>,
-    executor: ComponentImpl<dyn ToolExecutor>,
+    providers: ToolProviders,
     system_rules: Arc<[ApprovalRule]>,
     session: Arc<SessionController>,
     channel: Arc<ChannelController>,
@@ -454,13 +424,18 @@ pub struct GuardedToolExecutor {
     running: ChannelHandle,
 }
 
-impl GuardedToolExecutor {
-    /// `executor`, guarded by `security_manager` and by the rules of the
+impl ToolExecutor {
+    /// An executor for the tools of `providers`, in the order of the
+    /// configuration, guarded by `security_manager` and by the rules of the
     /// system (`system_rules`, `AppConfig::approvals`), of `session` and of
     /// `channel`, where the agent works - which, `running`, puts the
     /// questions of its calls to its users.
-    pub(crate) fn new(security_manager: Arc<dyn SecurityManager>, executor: ComponentImpl<dyn ToolExecutor>, system_rules: Arc<[ApprovalRule]>, session: Arc<SessionController>, channel: Arc<ChannelController>, running: ChannelHandle) -> Self {
-        Self { security_manager, executor, system_rules, session, channel, running }
+    ///
+    /// # Errors
+    /// `ComponentError::InvalidConfig` if two providers have a tool of the
+    /// same name (`ToolProviders::new`).
+    pub(crate) fn new(security_manager: Arc<dyn SecurityManager>, providers: Vec<ComponentImpl<dyn ToolProvider>>, system_rules: Arc<[ApprovalRule]>, session: Arc<SessionController>, channel: Arc<ChannelController>, running: ChannelHandle) -> ComponentResult<Self> {
+        Ok(Self { security_manager, providers: ToolProviders::new(providers)?, system_rules, session, channel, running })
     }
 
     /// What `call` asks before it runs, as its tool says, checked and put to
@@ -468,7 +443,7 @@ impl GuardedToolExecutor {
     /// principal of `turn`, not whoever asked (issue 255). Every error is the
     /// call's: it cannot be asked.
     fn questions(&self, call: &ToolCall, turn: &Turn<'_>) -> ToolResult<Option<Questions>> {
-        let Some(questions) = self.executor.questions(call)? else { return Ok(None) };
+        let Some(questions) = self.providers.questions(call)? else { return Ok(None) };
         questions.check().map_err(|e| ToolError::InvalidParameter(e.to_string()))?;
         let channel = self.running.get().ok_or_else(|| ToolError::ExecutionFailed("the channel does not run".to_string()))?;
         channel.put(questions, turn.security_context().principal_id)
@@ -500,7 +475,7 @@ impl GuardedToolExecutor {
         // A tool that is done when the turn ends has its result.
         let outcome = tokio::select! {
             biased;
-            outcome = self.executor.execute(call, answers, turn) => Some(outcome),
+            outcome = self.providers.execute(call, answers, turn) => Some(outcome),
             () = cancelled.cancelled() => None,
         };
         let finished_at = chrono::Utc::now();
@@ -580,7 +555,7 @@ impl GuardedToolExecutor {
             info!(rule = %rule.id, "Tool call '{}' by agent {} denied by a rule", call.function_name, agent);
             return Admission::Answered(ToolCallResult::of(call, ToolResultStatus::Forbidden, forbidden_result(), turn.label()));
         }
-        let description = match self.executor.describe(call) {
+        let description = match self.providers.describe(call) {
             Ok(description) => description,
             Err(e @ (ToolError::InvalidParameter(_) | ToolError::UnknownTool(_))) => {
                 info!("Tool call '{}' by agent {} cannot run: {}", call.function_name, agent, e);
@@ -601,7 +576,7 @@ impl GuardedToolExecutor {
         let explicit = rule.is_some_and(|r| r.decision == RuleDecision::Ask);
         let asks = explicit || turn.tools().iter().any(|t| t.name == call.function_name && t.requires_approval);
         match questions {
-            _ if asks => Admission::Ask { description, explicit, suggested: self.executor.matcher(call), questions },
+            _ if asks => Admission::Ask { description, explicit, suggested: self.providers.matcher(call), questions },
             Some(questions) => Admission::Await(questions),
             None => Admission::Run,
         }
@@ -614,7 +589,7 @@ impl GuardedToolExecutor {
     /// arguments would carry what the channel holds out of the system.
     pub async fn tool_sets(&self, context: &SecurityContext, channel: &Classification) -> Vec<ToolSet> {
         let mut offered = Vec::new();
-        for set in self.executor.tool_sets() {
+        for set in self.providers.tool_sets() {
             let withheld = match (&set.destination, &set.unavailable) {
                 (Some(destination), None) => !self.security_manager.may_publish(context, context.caller_id, channel, destination).await,
                 _ => false,
@@ -646,15 +621,11 @@ impl GuardedToolExecutor {
     }
 }
 
-/// Registers the tool kinds with `registry`, and the `ToolExecutor` as a
-/// facet of which an agent has exactly one, with its default kind.
+/// Registers the tool kinds with `registry`.
 pub fn register_all(registry: &mut ComponentRegistry) {
-    registry.single::<dyn ToolExecutor>(Some(default_tool_executor::DEFAULT_TOOL_EXECUTOR_KIND));
-
     artifact_tool::register(registry);
     ask_user_tool::register(registry);
     calculator_tool::register(registry);
-    default_tool_executor::register(registry);
     echo_tool::register(registry);
     mcp_tool::register(registry);
     sleep_tool::register(registry);
@@ -665,7 +636,6 @@ pub fn register_all(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tool::default_tool_executor::DefaultToolExecutor;
     use crate::agent::turn::Turn;
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::{AgentChannelState, AgentId};
@@ -794,7 +764,7 @@ mod tests {
         assert!(timed_out_result().contains("ask the user whether to try again"));
     }
 
-    fn executor(security: Arc<dyn SecurityManager>) -> GuardedToolExecutor {
+    fn executor(security: Arc<dyn SecurityManager>) -> ToolExecutor {
         guarded(security, true, Places::default())
     }
 
@@ -810,26 +780,25 @@ mod tests {
     /// guarded by `security` and the rules of `places`; the controllers of
     /// the session and the channel are returned, for their rules to be
     /// changed.
-    fn guarded_in(security: Arc<dyn SecurityManager>, requires_approval: bool, places: Places) -> (GuardedToolExecutor, Arc<SessionController>, Arc<ChannelController>) {
+    fn guarded_in(security: Arc<dyn SecurityManager>, requires_approval: bool, places: Places) -> (ToolExecutor, Arc<SessionController>, Arc<ChannelController>) {
         guarding(security, vec![("tools", Arc::new(MockToolProvider { requires_approval }))], places)
     }
 
     /// The tools of `providers`, by their component ids, guarded by
     /// `security` and the rules of `places`.
-    fn guarding(security: Arc<dyn SecurityManager>, providers: Vec<(&str, Arc<dyn ToolProvider>)>, places: Places) -> (GuardedToolExecutor, Arc<SessionController>, Arc<ChannelController>) {
+    fn guarding(security: Arc<dyn SecurityManager>, providers: Vec<(&str, Arc<dyn ToolProvider>)>, places: Places) -> (ToolExecutor, Arc<SessionController>, Arc<ChannelController>) {
         let providers = providers.into_iter().map(|(id, facet)| ComponentImpl { id: id.to_string(), fail_policy: Default::default(), facet }).collect();
-        let tools = DefaultToolExecutor::new(providers).unwrap();
         let store = Arc::new(caelumora_model::store::memory::MemoryStore::new());
         let session = crate::runtime::bare_session(caelumora_model::session::SessionId::new());
         let mut channel = caelumora_model::channel::Channel::build(session.id, ActorId::None, caelumora_model::value::name::Name::new("main").unwrap(), Default::default(), Classification::CHANNEL_DEFAULT, None, Vec::new());
         channel.approval_rules = places.channel;
         let session = Arc::new(SessionController::new(caelumora_model::session::Session { approval_rules: places.session, ..session }, Arc::new(()), Arc::clone(&store) as Arc<dyn caelumora_model::store::EntityStore>));
         let channel = Arc::new(ChannelController::new(channel, Arc::new(()), store));
-        let executor = GuardedToolExecutor::new(security, ComponentImpl { id: "executor".to_string(), fail_policy: Default::default(), facet: Arc::new(tools) }, places.system.into(), Arc::clone(&session), Arc::clone(&channel), Default::default());
+        let executor = ToolExecutor::new(security, providers, places.system.into(), Arc::clone(&session), Arc::clone(&channel), Default::default()).unwrap();
         (executor, session, channel)
     }
 
-    fn guarded(security: Arc<dyn SecurityManager>, requires_approval: bool, places: Places) -> GuardedToolExecutor {
+    fn guarded(security: Arc<dyn SecurityManager>, requires_approval: bool, places: Places) -> ToolExecutor {
         guarded_in(security, requires_approval, places).0
     }
 
@@ -840,7 +809,7 @@ mod tests {
     #[tokio::test]
     async fn a_rule_of_a_place_denies_a_call_or_asks_for_it_explicitly() {
         let security: Arc<dyn SecurityManager> = Arc::new(DummySecurityManager::new());
-        let admitted = |executor: GuardedToolExecutor| async move {
+        let admitted = |executor: ToolExecutor| async move {
             let mut agent_channel_state = agent_turn(&executor);
             let turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached()).expect("a turn is under way");
             executor.admit(&call("test_tool"), &turn).await
@@ -879,7 +848,7 @@ mod tests {
 
         let mut agent_channel_state = AgentChannelState::default();
         let agent_id = AgentId::new();
-        agent_channel_state.turn = Some(caelumora_model::turn::TurnState { work: caelumora_model::work::Work { security_context: SecurityContext { caller_id: ActorId::Agent(agent_id), ..SecurityContext::default() }, ..Default::default() }, tools: executor.executor.tool_sets().into_iter().flat_map(|set| set.tools).collect(), ..Default::default() });
+        agent_channel_state.turn = Some(caelumora_model::turn::TurnState { work: caelumora_model::work::Work { security_context: SecurityContext { caller_id: ActorId::Agent(agent_id), ..SecurityContext::default() }, ..Default::default() }, tools: executor.providers.tool_sets().into_iter().flat_map(|set| set.tools).collect(), ..Default::default() });
         let mut context = Turn::of(agent_id, "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached()).expect("a turn is under way");
 
         let admitted = executor.admit(&call("test_tool"), &context).await;
@@ -990,7 +959,7 @@ mod tests {
     #[tokio::test]
     async fn only_an_agent_calls_tools() {
         let executor = executor(Arc::new(DummySecurityManager::new()));
-        let mut agent_channel_state = AgentChannelState { turn: Some(caelumora_model::turn::TurnState { work: caelumora_model::work::Work { security_context: SecurityContext { caller_id: ActorId::User(caelumora_model::user::UserId::new()), ..SecurityContext::default() }, ..Default::default() }, tools: executor.executor.tool_sets().into_iter().flat_map(|set| set.tools).collect(), ..Default::default() }), ..Default::default() };
+        let mut agent_channel_state = AgentChannelState { turn: Some(caelumora_model::turn::TurnState { work: caelumora_model::work::Work { security_context: SecurityContext { caller_id: ActorId::User(caelumora_model::user::UserId::new()), ..SecurityContext::default() }, ..Default::default() }, tools: executor.providers.tool_sets().into_iter().flat_map(|set| set.tools).collect(), ..Default::default() }), ..Default::default() };
         let mut context = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached()).expect("a turn is under way");
 
         let result = executor.execute(&call("test_tool"), None, &mut context, &CancellationToken::new()).await;
@@ -999,11 +968,11 @@ mod tests {
 
     /// A turn of an agent in a general internal channel, with the tools of
     /// `executor` as it began with them.
-    fn agent_turn(executor: &GuardedToolExecutor) -> AgentChannelState {
+    fn agent_turn(executor: &ToolExecutor) -> AgentChannelState {
         AgentChannelState {
             turn: Some(caelumora_model::turn::TurnState {
                 work: caelumora_model::work::Work { security_context: SecurityContext { caller_id: ActorId::Agent(AgentId::new()), ..SecurityContext::default() }, ..Default::default() },
-                tools: executor.executor.tool_sets().into_iter().flat_map(|set| set.tools).collect(),
+                tools: executor.providers.tool_sets().into_iter().flat_map(|set| set.tools).collect(),
                 ..Default::default()
             }),
             ..Default::default()
