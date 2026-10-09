@@ -61,7 +61,10 @@ one, and one issue that brings a workspace from outside:
 |---|---|---|
 | [253](253-workspace.md) | The workspace of Caelumora's own: a user's tree of files in a configured storage, used in a session through its channels, in the web UI. | done |
 | [251](251-open-terminal.md) | Open Terminal: a container with files, a shell and processes, reached over REST; a component of its own with approval by kind of tool, long commands followed, a kill on interruption. | done - as the executor over 253, with `terminal_tool` and its file tools |
-| [208](208-generated-artifacts.md) | An `ArtifactStore` for binary content, references in messages, download, a panel. | open, well specified; now: an artifact as a file of the session's workspace |
+| [208](208-generated-artifacts.md) | An `ArtifactStore` for binary content, references in messages, download, a panel. | open; where artifacts are kept is decided by 271 - what remains is taking in A2A and MCP parts as artifacts |
+| [273](273-publish-file.md) | `publish_file`: an agent offers a file of the workspace for download, as a link to it as it is now. | open - the cheap first step |
+| [271](271-publishing-artifacts.md) | Artifacts of their own: fixed copies with a scope, a lifetime and versions, metadata in the entity store, content in an `ArtifactStorage`. | open, decided (B) - builds on 273 |
+| [272](272-artifacts-in-s3.md) | An `s3` provider of `ArtifactStorage`. | open - after 271 |
 | [169](169-changing-classified-content.md) | The rule for changing something classified from several places: fixed container, the writer's label must flow into it, every change records where it was made. | open, proposal complete |
 | [180](180-outbound-flow-unchecked.md) | What an agent sends out is checked by no rule; the proposal: a tool set whose remote side is not cleared for a channel is not offered there. | done |
 | [247](247-tool-own-matcher.md) | A matcher that understands a shell command, so that "and from now on" does not allow chained commands. | open, its first tool exists (`run_command`) - next |
@@ -106,7 +109,11 @@ a step of that plan - all three done; W4 is issue [256](256-workspace-versions.m
     **208 must be decided with it, not beside it**: an artifact a tool generates and a file an
     agent writes are both named binary content with a producer and a classification. Two stores
     and two panels for them would be the repeated logic AGENTS.md warns of. Recommended: one
-    store; a generated artifact is a file that a message refers to.
+    store; a generated artifact is a file that a message refers to. *Revised 2026-10-09 (271): the
+    difference has a reason - a workspace is the mutable working area, with one label for all its
+    files and a lifetime that may end; a result handed over is fixed, keeps its own label and
+    outlives the workspace. Artifacts are a kind of their own, published as copies; first comes
+    273, a link to a file of the workspace.*
 *   **W2 - Tools for agents** (a step of 251's plan, done, as file tools of `terminal_tool`): list,
     read (with ranges), search, write, edit by replacement, move, delete. Reads are recorded as
     knowledge (`KnowledgeRef`), writes are staged or effects (20), writing needs approval unless a
@@ -127,7 +134,9 @@ Order: decide **169**, the small part of **20** (tools declare *reads* or *has a
 at-least-once made visible, nothing more), and **W1 with 208, 180 and the role of 251** together →
 the refactoring of **226** (see B3) → W2 → **251** as the executor, with **247** → W3 → W4 → the
 rest of 208 (A2A and MCP parts taken in). *As built:* W1, W3 in part, 180, 251 and W2 are done,
-226 was not needed first; what remains is **247** → **W4 (256)** → the rest of W3 → 208.
+226 was not needed first; what remains is **247** → **W4 (256)** → the rest of W3 → 208. *Since
+2026-10-09:* **273** (`publish_file`, a link) → **271** (artifacts) → the rest of 208; **272**
+(S3) when wanted.
 
 ### B2. Sessions that last: context and memory
 
@@ -212,7 +221,7 @@ Each milestone leaves the system usable; decisions come before the code that dep
 3.  **A workspace.** Decide 169, the small part of 20, and W1 together with 208, 180 and the role
     of Open Terminal (251); refactor `ToolProvider::execute` (226, first step); then W2, 251 as the
     executor with 247, W3, W4, and the artifacts of 208. *Done: W1, W2, W3 in part, 180, 251;
-    open: 247, W4 (256), the rest of W3, 208, 169, 20.*
+    open: 247, W4 (256), the rest of W3, 273, 271, 208, 272, 169, 20.*
 4.  **Sessions that last.** 16 with `/compact`, 58; 126. If reading files hits the context window
     earlier, the tool-result rule of 16 moves into milestone 3.
 
@@ -249,7 +258,7 @@ The plan stands on assumptions the maintainer should confirm or correct:
 | Section | Issues |
 |---|---|
 | A - small | 07, 218, 223 |
-| B1 - workspace | 20 (part), 169, 208, 247, 254, 256 |
+| B1 - workspace | 20 (part), 169, 208, 247, 254, 256, 271, 272, 273 |
 | B2 - context and memory | 16, 22, 55, 58, 65, 166, 169 |
 | B3 - tools | 126, 226 |
 | B4 - sessions and team | 07, 10, 25, 140, 142, 221, 227, 125 (part) |

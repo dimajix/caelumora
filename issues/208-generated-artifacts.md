@@ -124,3 +124,9 @@ A2A is the first producer, not the shape of the design.
   file written into the session's workspace, where the channel uses one, and the message refers to
   it by workspace and path, with the digest of its content. What becomes of an artifact in a
   channel without a workspace, and whether a workspace is made for it, is still to be decided.
+- **2026-10-09** — Where artifacts are kept is decided by issue
+  [271](271-publishing-artifacts.md), against the recommendation above: not as files of the
+  session's workspace, but as artifacts of their own - an `Artifact` document in the entity store,
+  its content in an `ArtifactStorage`, in a scope of its own -, published there as fixed copies.
+  That also answers what becomes of an artifact in a channel without a workspace. What remains here
+  is taking in the file and data parts of A2A answers and MCP results as such artifacts.

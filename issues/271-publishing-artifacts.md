@@ -147,3 +147,42 @@ downloading; the documents say so.
   with a lifetime of their own on three levels - global, user, session - so that results are not
   lost when workspaces are cleaned up. The first question raised: whether artifact stores hang on
   the session or on the workspace.
+- **2026-10-09** — Decided with the maintainer: **B**, artifacts as a kind of their own, published
+  as fixed copies; PLAN.md's "one store" is revised for the reasons above - the workspace is the
+  mutable working area, the artifact the fixed result. In detail:
+  - **Metadata in the `EntityStore`**: an `Artifact` document in `caelumora-model` - name, media
+    type, size, digest, classification, producer (agent, call), channel and message, scope,
+    `SecurityAttributes`, `deleted` -, stored, filtered by permission, listed, deleted, restored
+    and purged as a `Workspace` is. Not beside the objects in the storage: listing, permission
+    filters and the trash are the entity store's.
+  - **Content in an `ArtifactStorage`**: a trait in `caelumora-runtime` - put, get as a stream,
+    delete, by key, no permissions -, one per storage configured under `artifacts.storage`, as
+    `workspaces.storage` names workspace storages; the document names the storage it lies in.
+    Named `…Storage`, not `…Store` (the stores keep documents, with a security context) nor
+    `…Provider` (facets). Only a `local` provider for now; object storage is issue
+    [272](272-artifacts-in-s3.md).
+  - **An `ArtifactManager`** in the runtime asks the permissions and keeps document and content
+    together, as the `WorkspaceManager` does.
+  - **Keyed by the artifact's id**, its digest kept in the document to check the content: no
+    deduplication, so that purging one artifact deletes its content without counting references.
+    Deduplication can come later.
+  - **Downloads are streamed through the server**, permission asked on every request, as for
+    workspace files (attachment, `nosniff`); no presigned links.
+  - **A storage takes nothing above its `destination`**, as a workspace storage does (issue 251,
+    part B2).
+  - **Scope:** the agent publishes into the session's scope alone; a person keeps an artifact by
+    moving it into their own scope or the global one, an act of theirs.
+  - **Owner:** the user the agent acts for (issue [255](255-whose-name-agents-act-in.md)).
+    Whoever may read the message it was published at may download it; in a user's or the global
+    scope, its owner also outside the session.
+  - **Classification:** the workspace's it was copied from, fixed when it is published.
+  - **208** keeps only taking in A2A and MCP parts as artifacts, through this issue's store.
+  - **A cheap step comes first**, issue [273](273-publish-file.md): `publish_file` offers a file of
+    the workspace as a link to it as it is now, with its digest, downloaded through the channel's
+    workspace. This issue builds on it and keeps its tool, parameters, presentation and card;
+    what changes is what lies behind them - publishing copies the file into an artifact, and the
+    card downloads the artifact.
+  - **Versions:** publishing again under the same name in the same scope makes a new version of
+    the artifact, the earlier ones kept and downloadable, as artifacts on claude.ai and in Claude
+    Code keep theirs. Artifacts that are rendered and edited in place, as claude.ai's are, are a
+    step beyond this issue and an issue of their own when wanted.
