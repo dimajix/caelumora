@@ -144,6 +144,12 @@ impl Moderator for PolicyModerator {
             ActorEvent::CommandRequested { agent, .. } => {
                 self.actors().route_to_agent(*agent, event)
             }
+            // A user nudges someone (issue 278): they alone are asked to
+            // respond, as if a message of the user had mentioned them - no
+            // policy is consulted, and no chain between agents counted.
+            ActorEvent::NudgeRequested { participant } => {
+                self.actors().route_to_participant(*participant, &event.forward(ActorEvent::ResponseRequested))
+            }
             ActorEvent::CommandExecuted { to: Some(user), .. } | ActorEvent::CommandFailed { to: user, .. } => {
                 self.actors().route_to_user(*user, event)
             }
@@ -301,6 +307,13 @@ impl ModeratorActors {
             .filter(|id| **id != event.context.sender_id)
             .map(|id| (*id, event.clone()))
             .collect()
+    }
+
+    /// Forwards `event` to `participant` alone, of whatever kind, if it is in
+    /// the channel - e.g. the request a nudge becomes (issue 278).
+    fn route_to_participant(&self, participant: ActorId, event: &Envelope) -> Vec<(ActorId, Envelope)> {
+        let present = [&self.agent_actors, &self.user_actors, &self.approval_actors].iter().any(|actors| actors.contains_key(&participant));
+        present.then(|| (participant, event.clone())).into_iter().collect()
     }
 
     /// Forwards `event` to the agent `agent` alone, if it is in the channel:
@@ -793,6 +806,27 @@ mod tests {
             // Commands address the system: the agents must not see them.
             assert!(decision.iter().all(|(to, _)| !agents.contains(to)), "{:?} must not route a command to agents", moderator);
             assert!(decision.iter().any(|(to, _)| *to == other), "{:?} must tell the other users", moderator);
+        }
+    }
+
+    #[tokio::test]
+    async fn every_moderator_turns_a_nudge_into_a_request_to_whom_it_names_alone() {
+        for moderator in moderators() {
+            let agents = add_agents(&moderator);
+            let (user, other) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
+            moderator.add_actor(Arc::new(TestActor { id: user, state: ActorState::Idle }));
+            moderator.add_actor(Arc::new(TestActor { id: other, state: ActorState::Idle }));
+
+            // The sleeping one, too: the channel wakes whom a decision asks;
+            // and a user as well as an agent.
+            for nudged in [agents[1], other] {
+                let decision = moderator.route(&envelope(user, ActorEvent::NudgeRequested { participant: nudged })).await;
+                assert_eq!(decision.len(), 1, "{:?} must tell nobody else", moderator);
+                assert_eq!(responders(&decision), vec![nudged], "{:?} must ask whom the nudge names, and no policy", moderator);
+                assert_eq!(decision[0].1.context.sender_id, user, "{:?} must ask in the name of who nudged", moderator);
+            }
+            let stranger = ActorId::Agent(caelumora_model::agent::AgentId::new());
+            assert!(moderator.route(&envelope(user, ActorEvent::NudgeRequested { participant: stranger })).await.is_empty(), "{:?} must ask nobody it does not know", moderator);
         }
     }
 

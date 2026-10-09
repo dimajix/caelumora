@@ -366,6 +366,39 @@ impl UserActor {
         self.send_retry(RetryTarget::Turn(turn), author).await
     }
 
+    /// Asks `participant` - an agent, another user, any actor of the
+    /// channel - to respond to the conversation as it stands (issue 278),
+    /// without a message: a `NudgeRequested`, which the moderator turns into
+    /// the request to `participant` alone. An agent answers it in a turn with
+    /// this user's authority; a user is shown it. It asks nothing of the
+    /// policy: an `@`-mention in a message asks the same. No
+    /// `WakeupRequested` goes ahead of it - that would wake every agent -;
+    /// the channel wakes the one it asks, and ends being quiet for it.
+    ///
+    /// Returns the `span_id` of the envelope, as `send_message` does.
+    ///
+    /// # Errors
+    /// `ChannelError::NotAParticipant` if `participant` takes no part in the
+    /// channel; `NudgesItself` if it is this user; `AlreadyResponding` if it
+    /// is in a turn, which it would otherwise follow with a second one; an
+    /// error if the channel is gone.
+    pub async fn request_response(&self, participant: ActorId) -> anyhow::Result<Uuid> {
+        use crate::channel::ChannelError;
+        let channel_loop = self.actor_runtime.channel_loop()
+            .ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))?;
+        let actor = channel_loop.actor_by_id(participant)
+            .ok_or(ChannelError::NotAParticipant { participant, channel: self.channel_id })?;
+        if participant == self.id {
+            return Err(ChannelError::NudgesItself { participant, channel: self.channel_id }.into());
+        }
+        if actor.state().in_turn() {
+            return Err(ChannelError::AlreadyResponding { participant, channel: self.channel_id }.into());
+        }
+        let span_id = Uuid::new_v4();
+        self.send(self.envelope(ActorEvent::NudgeRequested { participant }, span_id)).await?;
+        Ok(span_id)
+    }
+
     /// Whether this user may ask for another answer in `channel`
     /// (`RetryMessage`), refused as `ChannelError::Forbidden`.
     async fn require_retry(&self, channel: &crate::channel::ChannelLoop) -> anyhow::Result<()> {
@@ -411,11 +444,12 @@ impl UserActor {
     /// shows it to those who follow this actor: the channel sends nothing
     /// back to its sender, so as an agent takes its own messages in itself,
     /// this actor shows what its user says itself (issue 220) - all but the
-    /// request to wake the channel, which is not said to anyone, and answers
+    /// requests to wake the channel and to nudge an agent (issue 278),
+    /// which are not said to anyone, and answers
     /// to questions, which are for the tool asking alone (issue 165): their
     /// closing tells the user's frontends that they were answered.
     async fn send(&self, envelope: Envelope) -> anyhow::Result<()> {
-        let shown = (!matches!(envelope.event, ActorEvent::WakeupRequested | ActorEvent::QuestionAnswered { .. })).then(|| envelope.clone());
+        let shown = (!matches!(envelope.event, ActorEvent::WakeupRequested | ActorEvent::NudgeRequested { .. } | ActorEvent::QuestionAnswered { .. })).then(|| envelope.clone());
         self.user_tx.send(envelope).await?;
         if let Some(envelope) = shown {
             // An error only says that nobody listens.
@@ -488,7 +522,7 @@ impl UserActor {
         let channel = self.actor_runtime.channel_loop()
             .ok_or_else(|| anyhow!("channel {} no longer exists", self.channel_id))?;
         let executor = self.actor_runtime.command_executor();
-        let context = CommandContext { issuer: &self.security_context, channel: &channel, executor };
+        let context = CommandContext { issuer: self, channel: &channel, executor };
         debug!("UserActor {} runs /{}", self.id, name);
         let output = match executor.execute(name, args, &context).await {
             Err(CommandError::Unknown(_)) => return self.request_command(&channel, name, args).await,

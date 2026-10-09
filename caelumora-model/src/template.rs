@@ -475,7 +475,7 @@ mod tests {
         assert_eq!(approvers(&channels[0]), 1, "the template's approver, not a second one");
         assert_eq!(approvers(&channels[1]), 1, "a channel that names none gets one");
         assert!(matches!(channels[1].participants[0], Participant::User(u) if u == owner), "the template's \"user\" is the owner");
-        assert_eq!(session.commands.component_nodes.len(), 2, "the session keeps its template's commands");
+        assert_eq!(session.commands.component_nodes.len(), crate::command::default_commands().component_nodes.len(), "the session keeps its template's commands");
         assert_eq!(channels[0].classification, Classification::CHANNEL_DEFAULT);
         assert_eq!(session.privacy, PrivacyConfig::Private, "private unless the template says otherwise");
         let shared = SessionTemplate { privacy: PrivacyConfig::SharedAudience, ..template.clone() };

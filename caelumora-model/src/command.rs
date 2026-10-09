@@ -9,7 +9,7 @@
 use crate::component::{ComponentConfig, ComponentDescriptor};
 use serde::{Deserialize, Serialize};
 
-// Unlike every other kind constant, these two live in the model, not next to
+// Unlike every other kind constant, these live in the model, not next to
 // their component in the runtime: `default_commands` - the serde default of
 // `AppConfig::commands` - names them, and the model does not know the
 // runtime (issue 101).
@@ -18,6 +18,8 @@ use serde::{Deserialize, Serialize};
 pub const HELP_COMMAND_KIND: &str = "help_command";
 /// Component kind of the built-in `/wakeup` command.
 pub const WAKEUP_COMMAND_KIND: &str = "wakeup_command";
+/// Component kind of the built-in `/nudge` command (issue 278).
+pub const NUDGE_COMMAND_KIND: &str = "nudge_command";
 
 /// A command as users see it: in `/help` and in the frontends' completion.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,10 +91,14 @@ pub fn parse_input(input: &str) -> UserInput {
 }
 
 /// The commands a deployment has unless its configuration says otherwise:
-/// `/help` and `/wakeup`.
+/// `/help`, `/wakeup` and `/nudge`.
 pub fn default_commands() -> ComponentConfig {
     ComponentConfig {
-        component_nodes: vec![ComponentDescriptor::new("help", HELP_COMMAND_KIND), ComponentDescriptor::new("wakeup", WAKEUP_COMMAND_KIND)],
+        component_nodes: vec![
+            ComponentDescriptor::new("help", HELP_COMMAND_KIND),
+            ComponentDescriptor::new("wakeup", WAKEUP_COMMAND_KIND),
+            ComponentDescriptor::new("nudge", NUDGE_COMMAND_KIND),
+        ],
     }
 }
 
@@ -131,8 +137,8 @@ mod tests {
     }
 
     #[test]
-    fn the_default_commands_are_help_and_wakeup() {
+    fn the_default_commands_are_help_wakeup_and_nudge() {
         let kinds: Vec<String> = default_commands().component_nodes.into_iter().map(|n| n.kind).collect();
-        assert_eq!(kinds, vec![HELP_COMMAND_KIND, WAKEUP_COMMAND_KIND]);
+        assert_eq!(kinds, vec![HELP_COMMAND_KIND, WAKEUP_COMMAND_KIND, NUDGE_COMMAND_KIND]);
     }
 }
