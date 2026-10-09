@@ -7,7 +7,7 @@
 use anyhow::Context;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::Personality;
-use caelumora_model::component::StoredComponent;
+use caelumora_model::component::StoredComponents;
 use caelumora_model::skill::Skill;
 use caelumora_model::config::parse_yaml;
 use caelumora_model::security::{SecurityAttributes, SecurityContext};
@@ -23,7 +23,7 @@ use tracing::info;
 pub struct Seed {
     /// Preconfigured components (issue 270), which the personalities
     /// include by `kind: ref` - a bundle every agent of a kind shares.
-    pub components: Vec<StoredComponent>,
+    pub components: Vec<StoredComponents>,
     pub personalities: Vec<Personality>,
     pub session_templates: Vec<SessionTemplate>,
     /// Skills of the system (issue 22), in the global scope, found by every
@@ -54,8 +54,8 @@ impl Seed {
     pub async fn apply(&self, store: &dyn EntityStore, components: &dyn ComponentStore) -> anyhow::Result<()> {
         let system = SecurityContext::system();
         for component in &self.components {
-            if components.get_component(&system, component.id()).await.optional()?.is_none() {
-                components.create_component(&system, component).await?;
+            if components.get_components(&system, component.id()).await.optional()?.is_none() {
+                components.create_components(&system, component).await?;
                 info!("Seeded preconfigured component {}", component.id());
             }
         }

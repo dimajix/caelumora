@@ -21,7 +21,7 @@ use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId, Persona
 use caelumora_model::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
 use caelumora_model::channel::{moderation_components, Channel, HistoryAccess, Participant};
 use caelumora_model::config::{ArtifactStorageConfig, ArtifactsConfig, StorageConfig, WorkspacesConfig};
-use caelumora_model::component::{ComponentConfig, ComponentDescriptor, StoredComponent};
+use caelumora_model::component::{ComponentConfig, ComponentDescriptor, StoredComponents};
 use caelumora_model::external_agent::{ConversationId, TaskId};
 use caelumora_model::confidentiality::{Classification, Clearance, Compartments, ConfidentialityRules, Confidentiality, Roles};
 use caelumora_model::value::name::{Name, ScopedName};
@@ -116,7 +116,7 @@ fn attributes_of<'a>(action: &ActionType<'a>) -> Option<&'a SecurityAttributes> 
         | GetWorkspace(a) | CreateWorkspace(a) | UpdateWorkspace(a) | DeleteWorkspace(a)
         | GetSkill(a) | CreateSkill(a) | UpdateSkill(a) | DeleteSkill(a) | UseSkill(a)
         | GetArtifact(a) | CreateArtifact(a) | UpdateArtifact(a) | DeleteArtifact(a)
-        | GetComponent(a) | CreateComponent(a) | UpdateComponent(a) | DeleteComponent(a)
+        | GetComponents(a) | CreateComponents(a) | UpdateComponents(a) | DeleteComponents(a)
         | ReadDeleted(_, a) | Restore(_, a) | Purge(_, a) => Some(a),
         _ => None,
     }
@@ -466,8 +466,8 @@ async fn an_agents_introduction_reaches_whoever_sees_it_but_not_its_personality(
 #[tokio::test]
 async fn the_components_a_personality_includes_are_read_in_its_agents_name() {
     let world = World::new().await;
-    let tools = StoredComponent::new("bobs-tools", ComponentConfig { component_nodes: vec![ComponentDescriptor::new("calculator", "calculator_tool")] }, attributes(Some(world.bob), &[world.alice]));
-    world.store.create_component(&World::as_user(world.bob), &tools).await.expect("bob keeps his tools");
+    let tools = StoredComponents::new("bobs-tools", ComponentConfig { component_nodes: vec![ComponentDescriptor::new("calculator", "calculator_tool")] }, attributes(Some(world.bob), &[world.alice]));
+    world.store.create_components(&World::as_user(world.bob), &tools).await.expect("bob keeps his tools");
     let mut hers = world.personality("hers", Some(world.alice), &[]).await;
     hers.components = ComponentConfig { component_nodes: vec![ComponentDescriptor { params: serde_json::json!({ "id": "bobs-tools" }), ..ComponentDescriptor::new("tools", PRECONFIGURED_REF_KIND) }] };
     world.store.update_personality(&World::as_user(world.alice), &hers).await.unwrap();
@@ -475,16 +475,16 @@ async fn the_components_a_personality_includes_are_read_in_its_agents_name() {
 
     let (session, asked) = world.asked(world.shared_session(&[helper], &[])).await;
     let personality = asked.iter().position(|line| line == "alice as helper: GetPersonality(alice's) yes").expect("its personality is read in its name");
-    let components = asked.iter().position(|line| line == "alice as helper: GetComponent(bob's) yes").expect("and so are the components it includes");
+    let components = asked.iter().position(|line| line == "alice as helper: GetComponents(bob's) yes").expect("and so are the components it includes");
     assert!(personality < components, "first the personality, then what it includes: {asked:?}");
     assert!(session.channels()[0].actor_ids().contains(&ActorId::Agent(helper)), "it runs");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 
-    let withdrawn = StoredComponent { security_attributes: attributes(Some(world.bob), &[]), ..tools };
-    world.store.update_component(&World::as_user(world.bob), &withdrawn).await.expect("bob owns them");
+    let withdrawn = StoredComponents { security_attributes: attributes(Some(world.bob), &[]), ..tools };
+    world.store.update_components(&World::as_user(world.bob), &withdrawn).await.expect("bob owns them");
     let (reopened, asked) = world.asked(world.manager.open_session(&World::as_user(world.alice), session.id())).await;
     let reopened = reopened.expect("the session still opens: bob cannot stop alice's session so");
-    assert!(asked.contains(&"alice as helper: GetComponent(bob's) no".to_string()), "{asked:?}");
+    assert!(asked.contains(&"alice as helper: GetComponents(bob's) no".to_string()), "{asked:?}");
     assert!(!reopened.channels()[0].actor_ids().contains(&ActorId::Agent(helper)), "the agent is not run");
     assert!(reopened.channels()[0].actor_ids().contains(&ActorId::User(world.alice)), "everyone else is");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
@@ -887,8 +887,8 @@ async fn which_tools_an_agent_has_is_read_by_the_members_of_its_channel() {
 #[tokio::test]
 async fn which_components_an_agent_was_built_from_is_read_by_its_owner_alone() {
     let world = World::new().await;
-    let tools = StoredComponent::new("bobs-tools", ComponentConfig { component_nodes: vec![ComponentDescriptor::new("calculator", "calculator_tool")] }, attributes(Some(world.bob), &[world.alice]));
-    world.store.create_component(&World::as_user(world.bob), &tools).await.unwrap();
+    let tools = StoredComponents::new("bobs-tools", ComponentConfig { component_nodes: vec![ComponentDescriptor::new("calculator", "calculator_tool")] }, attributes(Some(world.bob), &[world.alice]));
+    world.store.create_components(&World::as_user(world.bob), &tools).await.unwrap();
     let mut hers = world.personality("hers", Some(world.alice), &[]).await;
     hers.components = ComponentConfig { component_nodes: vec![
         ComponentDescriptor::new("stop", "stop_tool"),

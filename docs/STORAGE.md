@@ -89,9 +89,9 @@ can be the state of neither a session nor a channel (issue 271). Object storage 
 [272](../issues/272-artifacts-in-s3.md).
 
 Preconfigured components are not among them. They are runtime configuration that personalities and
-templates refer to by `kind: "ref"`, and the `ComponentStore` keeps them: a `StoredComponent` - a
+templates refer to by `kind: "ref"`, and the `ComponentStore` keeps them: `StoredComponents` - a
 list of `ComponentDescriptor`s (one component, or several that personalities share, issue 270) with
-the attributes of who may use and change it - by its id, with the same five operations, checked
+the attributes of who may use and change them - by its id, with the same five operations, checked
 the same way. A descriptor inside a personality or template carries no attributes; it is covered by
 those of what holds it. Both implementations serve as component store too;
 `AppConfig::create_component_store` opens it where the entity store is, so the components stay in
@@ -201,7 +201,7 @@ by four operations of its own, for every deletable kind alike, each with a permi
 | `restore_x` | `ReadDeleted`, then `Restore` | takes the mark away |
 | `purge_x` | `ReadDeleted`, then `Purge` | removes the document for good - only if it is marked, also when it is removed |
 
-A preconfigured component has none of them: `delete_component` removes it for good. The state of
+Preconfigured components have none of them: `delete_components` removes them for good. The state of
 what was deleted stays in the `StateStore` until it is purged (see *Deleting state*).
 
 Purging only what is marked keeps a purge from removing what was restored meanwhile: the

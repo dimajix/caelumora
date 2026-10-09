@@ -123,3 +123,10 @@ as `{ id, components: [...], security_attributes }`. The stored preconfigured co
   `MemberView::components` and `GET …/actors/{aid}/components`, by its owner alone - the new
   action `ReadAgentComponents`, since what it includes may have been shared with the owner alone.
   The web UI has the flag `can_read_components`, but shows nothing of it yet.
+- **2026-10-09** — Named in the plural, without a change in behaviour: `StoredComponent` became
+  `StoredComponents`, the operations of the `ComponentStore` `create_components`, `get_components`,
+  `update_components` and `delete_components`, the actions `GetComponents`, `CreateComponents`,
+  `UpdateComponents` and `DeleteComponents`, and `EntityKind::Component` `Components`. Folding
+  `StoredComponents` into `ComponentConfig` was weighed and not done: a `ComponentConfig` held by
+  a personality, a channel or a template would carry an id and attributes that mean nothing there
+  (issue 177), and could no longer be written as a bare list (issue 201).

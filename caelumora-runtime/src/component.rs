@@ -425,7 +425,7 @@ impl ComponentRegistry {
         }
         let target: PreconfiguredRef = serde_json::from_value(node.params.clone())
             .map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
-        let components = match self.component_store.get_component(&context.security_context, &target.id).await {
+        let components = match self.component_store.get_components(&context.security_context, &target.id).await {
             Ok(stored) => stored.components,
             Err(cause @ (StoreError::NotFound { .. } | StoreError::PermissionDenied)) => return Err(ComponentError::Unavailable { id: target.id, cause }),
             Err(e) => return Err(ComponentError::InvalidConfig(format!("no preconfigured component '{}': {}", target.id, e))),
@@ -798,7 +798,7 @@ impl ComponentContainer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::component::StoredComponent;
+    use caelumora_model::component::StoredComponents;
     use caelumora_model::security::DummySecurityManager;
     use caelumora_model::session::SessionId;
     use caelumora_model::store::memory::MemoryStore;
@@ -838,7 +838,7 @@ mod tests {
     async fn store_with(preconfigured: &[(&str, &[(&str, &str)])]) -> Arc<MemoryStore> {
         let store = Arc::new(MemoryStore::new());
         for (id, nodes) in preconfigured {
-            store.create_component(&SecurityContext::default(), &StoredComponent::new(id, config(nodes), Default::default())).await.unwrap();
+            store.create_components(&SecurityContext::default(), &StoredComponents::new(id, config(nodes), Default::default())).await.unwrap();
         }
         store
     }
@@ -939,7 +939,7 @@ mod tests {
     async fn preconfigured_components_cannot_include_a_ref() {
         let store = Arc::new(MemoryStore::new());
         let nested = ComponentConfig { component_nodes: vec![descriptor("plain", "named", json!(null)), reference("inner", "b")] };
-        store.create_component(&SecurityContext::default(), &StoredComponent::new("a", nested, Default::default())).await.unwrap();
+        store.create_components(&SecurityContext::default(), &StoredComponents::new("a", nested, Default::default())).await.unwrap();
         let registry = named_registry(store);
         let config = ComponentConfig { component_nodes: vec![reference("ref-a", "a")] };
         let error = ComponentContainer::from_config(&config, &registry, &test_context()).await.unwrap_err();

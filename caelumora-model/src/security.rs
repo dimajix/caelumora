@@ -196,11 +196,11 @@ pub enum ActionType<'a> {
     ExecuteAgentCommand { command: &'a Command, agent: &'a SecurityAttributes, channel: &'a SecurityAttributes },
     CallTool(&'a ToolCall),
     ReadSecret(&'a str),
-    GetComponent(&'a SecurityAttributes),
+    GetComponents(&'a SecurityAttributes),
     ListComponents,
-    CreateComponent(&'a SecurityAttributes),
-    UpdateComponent(&'a SecurityAttributes),
-    DeleteComponent(&'a SecurityAttributes),
+    CreateComponents(&'a SecurityAttributes),
+    UpdateComponents(&'a SecurityAttributes),
+    DeleteComponents(&'a SecurityAttributes),
     /// Reading what was deleted of a kind - marked, not purged (issue 164):
     /// one entity, carrying its stored attributes, or for each entity of a
     /// listing. The trash.
@@ -305,11 +305,11 @@ impl ActionType<'_> {
             ActionType::ExecuteAgentCommand { command, .. } => format!("ExecuteAgentCommand(/{})", command.name),
             ActionType::CallTool(call) => format!("CallTool({})", call.function_name),
             ActionType::ReadSecret(key) => format!("ReadSecret({key})"),
-            ActionType::GetComponent(_) => "GetComponent".into(),
+            ActionType::GetComponents(_) => "GetComponents".into(),
             ActionType::ListComponents => "ListComponents".into(),
-            ActionType::CreateComponent(_) => "CreateComponent".into(),
-            ActionType::UpdateComponent(_) => "UpdateComponent".into(),
-            ActionType::DeleteComponent(_) => "DeleteComponent".into(),
+            ActionType::CreateComponents(_) => "CreateComponents".into(),
+            ActionType::UpdateComponents(_) => "UpdateComponents".into(),
+            ActionType::DeleteComponents(_) => "DeleteComponents".into(),
             ActionType::ReadDeleted(kind, _) => format!("ReadDeleted({kind})"),
             ActionType::Restore(kind, _) => format!("Restore({kind})"),
             ActionType::Purge(kind, _) => format!("Purge({kind})"),
@@ -799,7 +799,7 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::GetAgent(a)
             | ActionType::GetSession(a)
             | ActionType::GetChannel(a)
-            | ActionType::GetComponent(a)
+            | ActionType::GetComponents(a)
             | ActionType::GetUser(a)
             | ActionType::GetUserProfile(a)
             | ActionType::GetWorkspace(a)
@@ -847,7 +847,7 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::CreateWorkspace(a)
             | ActionType::CreateSkill(a)
             | ActionType::CreateArtifact(a)
-            | ActionType::CreateComponent(a) => a.owner_id == me && me != ActorId::None,
+            | ActionType::CreateComponents(a) => a.owner_id == me && me != ActorId::None,
             ActionType::UpdatePersonality(a)
             | ActionType::DeletePersonality(a)
             | ActionType::UpdateSessionTemplate(a)
@@ -871,8 +871,8 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::DeleteSkill(a)
             | ActionType::UpdateArtifact(a)
             | ActionType::DeleteArtifact(a)
-            | ActionType::UpdateComponent(a)
-            | ActionType::DeleteComponent(a)
+            | ActionType::UpdateComponents(a)
+            | ActionType::DeleteComponents(a)
             | ActionType::ReadDeleted(_, a)
             | ActionType::Restore(_, a) => a.owner_id == me && me != ActorId::None,
             // Until there is an administrator (issue 125): the system

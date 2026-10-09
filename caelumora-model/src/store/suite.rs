@@ -6,7 +6,7 @@
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
 use crate::turn::TurnState;
 use crate::channel::{Channel, ChannelId, ChannelState};
-use crate::component::{ComponentConfig, ComponentDescriptor, StoredComponent};
+use crate::component::{ComponentConfig, ComponentDescriptor, StoredComponents};
 use crate::confidentiality::{Classification, Visibility};
 use crate::external_agent::ConversationId;
 use crate::value::name::{Name, ScopedName};
@@ -198,15 +198,15 @@ fn artifact_named(name: ScopedName) -> Artifact {
     Artifact::new(ArtifactId::new(), name, "files", Classification::CHANNEL_DEFAULT, owner, crate::artifact::tests::version(b"a,b", SessionId::new()))
 }
 
-fn component() -> StoredComponent {
-    StoredComponent::new("search", ComponentConfig { component_nodes: vec![ComponentDescriptor::new("search", "web_search")] }, Default::default())
+fn component() -> StoredComponents {
+    StoredComponents::new("search", ComponentConfig { component_nodes: vec![ComponentDescriptor::new("search", "web_search")] }, Default::default())
 }
 
 /// Preconfigured components go through the same life as the entities.
 pub(crate) async fn component_store_behaves(store: &dyn ComponentStore) {
     lifecycle!(store, component(), component_id,
-        components = ComponentConfig { component_nodes: vec![ComponentDescriptor::new("search", "renamed")] }, "component",
-        create_component, get_component, update_component, delete_component, list_components);
+        components = ComponentConfig { component_nodes: vec![ComponentDescriptor::new("search", "renamed")] }, "components",
+        create_components, get_components, update_components, delete_components, list_components);
 }
 
 /// A definition of a kind is found by its name in exactly its scope (issue
@@ -237,7 +237,7 @@ macro_rules! found_by_name {
 
 // A named function rather than a closure: a closure returning a borrow of
 // its argument doesn't get the lifetime inferred.
-fn component_id(value: &StoredComponent) -> &str {
+fn component_id(value: &StoredComponents) -> &str {
     value.id()
 }
 

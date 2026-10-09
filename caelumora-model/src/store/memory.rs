@@ -1,6 +1,6 @@
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
 use crate::channel::{Channel, ChannelId, ChannelState};
-use crate::component::StoredComponent;
+use crate::component::StoredComponents;
 use crate::session::{Session, SessionId};
 use crate::store::{ComponentStore, EntityStore, Journaled, StateStore, StoreError, StoreResult};
 use crate::template::{SessionTemplate, SessionTemplateId};
@@ -35,7 +35,7 @@ pub struct MemoryStore {
     agent_states: RwLock<HashMap<AgentId, AgentState>>,
     agent_channel_states: RwLock<HashMap<(AgentId, ChannelId), AgentChannelState>>,
     channel_states: RwLock<HashMap<ChannelId, ChannelState>>,
-    components: RwLock<HashMap<String, StoredComponent>>,
+    components: RwLock<HashMap<String, StoredComponents>>,
 }
 
 impl Default for MemoryStore {
@@ -581,19 +581,19 @@ impl EntityStore for MemoryStore {
 /// Preconfigured components, kept like the entities (issue 164).
 #[async_trait]
 impl ComponentStore for MemoryStore {
-    async fn create_component(&self, ctx: &SecurityContext, value: &StoredComponent) -> StoreResult<()> {
+    async fn create_components(&self, ctx: &SecurityContext, value: &StoredComponents) -> StoreResult<()> {
         self.create_in(ctx, &self.components, &COMPONENTS, value.id().to_string(), value).await
     }
-    async fn get_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<StoredComponent> {
+    async fn get_components(&self, ctx: &SecurityContext, id: &str) -> StoreResult<StoredComponents> {
         self.get_in(ctx, &self.components, &COMPONENTS, &id.to_string()).await
     }
-    async fn update_component(&self, ctx: &SecurityContext, value: &StoredComponent) -> StoreResult<()> {
+    async fn update_components(&self, ctx: &SecurityContext, value: &StoredComponents) -> StoreResult<()> {
         self.update_in(ctx, &self.components, &COMPONENTS, value.id().to_string(), value).await
     }
-    async fn delete_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<bool> {
+    async fn delete_components(&self, ctx: &SecurityContext, id: &str) -> StoreResult<bool> {
         self.remove_in(ctx, &self.components, &COMPONENTS, &id.to_string()).await
     }
-    async fn list_components(&self, ctx: &SecurityContext) -> StoreResult<Vec<StoredComponent>> {
+    async fn list_components(&self, ctx: &SecurityContext) -> StoreResult<Vec<StoredComponents>> {
         self.list_in(ctx, &self.components, &COMPONENTS).await
     }
 }

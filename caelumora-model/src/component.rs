@@ -47,14 +47,14 @@ impl ComponentDescriptor {
 /// several personalities share (issue 270) -, with who may use and change
 /// it (issue 11).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StoredComponent {
+pub struct StoredComponents {
     pub id: String,
     pub components: ComponentConfig,
     #[serde(default)]
     pub security_attributes: SecurityAttributes,
 }
 
-impl StoredComponent {
+impl StoredComponents {
     /// `components`, kept under `id` with `security_attributes`.
     pub fn new(id: &str, components: ComponentConfig, security_attributes: SecurityAttributes) -> Self {
         Self { id: id.to_string(), components, security_attributes }
@@ -69,9 +69,9 @@ impl StoredComponent {
 /// Deleted for good, not marked (issue 164): it is runtime configuration,
 /// reached only through the personalities and templates that refer to it,
 /// and hidden with them.
-impl crate::removal::Stored for StoredComponent {}
+impl crate::removal::Stored for StoredComponents {}
 
-impl Secured for StoredComponent {
+impl Secured for StoredComponents {
     fn security_attributes(&self) -> &SecurityAttributes {
         &self.security_attributes
     }
@@ -94,13 +94,13 @@ mod tests {
     fn stored_components_are_written_as_their_id_their_list_and_their_attributes() {
         let owner = ActorId::System;
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor::new("search", "web_search"), ComponentDescriptor::new("stop", "stop_tool")] };
-        let stored = StoredComponent::new("basics", components.clone(), SecurityAttributes::owned_by(owner));
+        let stored = StoredComponents::new("basics", components.clone(), SecurityAttributes::owned_by(owner));
         let json = serde_json::to_value(&stored).unwrap();
         assert_eq!(json["id"], "basics");
         assert_eq!(json["components"][1]["kind"], "stop_tool", "the list directly under its key (issue 201)");
         assert_eq!(json["security_attributes"]["owner_id"], serde_json::to_value(owner).unwrap());
 
-        let read: StoredComponent = serde_json::from_value(json).unwrap();
+        let read: StoredComponents = serde_json::from_value(json).unwrap();
         assert_eq!(read.id(), "basics");
         assert_eq!(read.components, components, "in its order");
         assert_eq!(read.security_attributes.owner_id, owner);
