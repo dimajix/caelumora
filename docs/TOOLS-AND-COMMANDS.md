@@ -631,7 +631,7 @@ agent alike.
 | `write_file` | `terminal_tool` | `path`, `content` | as configured, yes by default | `SHOWN` | Writes a text file of the workspace, its directories made. |
 | `replace_in_file` | `terminal_tool` | `path`, `old_text`, `new_text`, `replace_all` (optional) | as configured, yes by default | `SHOWN` | Replaces text that occurs once - or every occurrence - in a text file of the workspace. |
 | `move_file` | `terminal_tool` | `from`, `to` | as configured, yes by default | `SHOWN` | Moves or renames a file or a directory of the workspace, never over something, its directories made (issue 267). |
-| `publish_file` | `terminal_tool` | `path`, `name`, `description` (optional) | as configured; not under `"unless_read_only"` | `SHOWN` | Offers a file of the workspace for download at its message, as a link to the file as it is now, with its digest (issue 273). |
+| `publish_file` | `terminal_tool` | `path`, `name`, `description` (optional) | no (issue 275) | `SHOWN` | Offers a file of the workspace for download at its message, as a link to the file as it is now, with its digest (issue 273). |
 | `delete_file` | `terminal_tool` | `path` | as configured, yes by default | `SHOWN` | Deletes a file or an empty directory of the workspace. |
 | `list_skills` | `skills` | - | no | `SHOWN` | Lists the skills the agent may load here, each with what it is for ([SKILLS.md](SKILLS.md)). |
 | `load_skill` | `skills` | `name` | no | `CALL_ONLY` | Gives the skill's text as plain text, classified as the skill; recorded as knowledge. |
@@ -668,7 +668,8 @@ neither moved nor moved over. `publish_file` offers a file for download at the m
 (issue 273): a link to the file as it is now - its path, the name it is offered under, its size,
 when it was changed and the digest of its content, read in parts up to `max_file_bytes` -,
 downloaded through the channel's workspace by whoever may use it there; it changes nothing and hands
-nothing to anyone who could not download the file already, so it reads. Artifacts that keep what was
+nothing to anyone who could not download the file already, so it reads, and never needs approval,
+whatever is configured (issue 275). Artifacts that keep what was
 offered, beyond the workspace, are issue 271. What was read is recorded as the turn's knowledge
 (`KnowledgeSource::Workspace`, see [MEMORY.md](MEMORY.md#recording-what-was-read)), a file's content
 by its digest; a move reads nothing. The approver reads a change whole - what is written, what is

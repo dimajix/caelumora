@@ -19,7 +19,8 @@
 //! and it and the channel flow both ways. A result is classified as the
 //! workspace. Which calls need approval is configured as for `mcp_tool`
 //! (`requires_approval`, an `ApprovalMode`): all, none, or all but those
-//! that only read.
+//! that only read; `command_output`, `kill_command` and `publish_file`
+//! never ask.
 
 mod files;
 mod shell;
@@ -65,7 +66,8 @@ struct TerminalToolConfig {
     /// command may act anywhere its place reaches (issue 150).
     /// `"unless_read_only"` spares the tools that only read files.
     /// `command_output` and `kill_command` concern a command that ran
-    /// already, and never do.
+    /// already, and never do; nor does `publish_file`, which gives nothing
+    /// away (issue 275).
     #[serde(default)]
     requires_approval: ApprovalMode,
     /// What the tool set is for, written for a model (issue 194); a text of
@@ -224,7 +226,8 @@ mod tests {
         for name in [COMMAND_OUTPUT, KILL_COMMAND] {
             assert!(!asks(json!(true), name), "{name} concerns a command approved already");
         }
+        assert!(!asks(json!(true), PUBLISH_FILE), "publishing gives nothing away");
         let defaults = TerminalTool { config: serde_json::from_value(json!({})).unwrap() };
-        assert!(defaults.tools().iter().all(|t| t.requires_approval || [COMMAND_OUTPUT, KILL_COMMAND].contains(&t.name.as_str())), "all that may, unless configured");
+        assert!(defaults.tools().iter().all(|t| t.requires_approval || [COMMAND_OUTPUT, KILL_COMMAND, PUBLISH_FILE].contains(&t.name.as_str())), "all that may, unless configured");
     }
 }
