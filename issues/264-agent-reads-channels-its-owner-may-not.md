@@ -181,6 +181,140 @@ reads of another channel -, the documents on the subject, then the close.
 - **A probe.** A channel the agent may not read answers as absent, also by name
   (`NoChannelNamed`), so that its existence is not told.
 
+## Decision, revised
+
+Decided with the maintainer on 2026-10-09, after step 1, and replacing how the decision above is
+carried out - not what it decides: an agent still reads of another channel what its owner may read
+and what it takes part in itself, and what it knows itself by the flow rule alone.
+
+1.  **Two questions, not one.** Whether an agent may reach a channel is `GetChannel` - ownership,
+    asked at the edge of the views where a channel is reached, for an agent as for a user. Whether
+    something may be copied from one place to another is a question of classification and privacy
+    alone. `ReadChannel` with the attributes of the source, as step 1 made it, mixed the two, and
+    `None` for what the agent knows itself made the lesser check the one a caller gets by leaving
+    something out.
+2.  **`CopyInformation { from, into }`** replaces `ReadChannel`: it never asked whether a channel
+    is read - the memory asks it of entries whose channel may be gone - but whether information may
+    pass from one place into another. `Publish`, which asks whether something of a classification
+    may enter a channel, stays an action of its own for now: it also asks who acts, and knows no
+    privacy across sessions.
+3.  **Reading is for the principal or the caller.** The ownership policy lets an agent read
+    (`Get*`) what its owner may read or what it takes part in itself - one rule for every read, not
+    only for channels. Changing stays the principal's. This also lets an agent reach the session
+    of the channel it takes part in where its owner does not (`GetSession`, as the terminal asks
+    it).
+4.  **What the agent knows itself is reached through itself.** Its private notes of other channels
+    are read by an edge of their own (`SessionView::own_private_notes`), for the viewing agent
+    alone, without `GetChannel` - that is the point - and each note copied as `CopyInformation`.
+    Its memory already is. A user who looks at an agent's private notes goes through the channels
+    as before (`SessionView::private_notes_of`): `GetChannel` at the edge, `ReadAgentContext` of
+    the member - what the agent knows of a channel the user may not read is not theirs to see.
+
+## Plan, revised
+
+Written against the code as of `a525785`. Two steps: the name, without a change in behaviour;
+then the two questions. Then the close.
+
+### A. What the code shows
+
+- **`ReadChannel`** (`caelumora-model/src/security.rs`) is asked through
+  `AccessQuestions::may_channel_read(context, reader, source, channel)` and decided by
+  `ConfidentialityRules::may_read_from(reader, source)` (`confidentiality.rs`) plus, since step 1,
+  the attributes. Its callers: `Views::may_read_from(source, channel)` (`view/mod.rs`) from
+  `SessionView::readable` and `ChannelView::may_read_entry(classification, own)`; the memory
+  (`agent/memory.rs`, three times, `None`); a test in `session.rs`; the memory's test policy
+  (`component_impl/agent_memory.rs`); the suite, by its label.
+- **The ownership policy's read arm** decides `Get*` together with `CancelChannel`,
+  `WakeChannel`, `RetryMessage` and `AnswerQuestion` by `may_read(a, me)`, `me` the principal.
+- **`SessionView::readable`** asks a user `GetChannel` and its clearance; an agent - a viewer with
+  a place - only `may_read_from`, `Whole` or else `Released`.
+- **The private notes prompt part** (`component_impl/private_notes.rs`) reads the agent's notes
+  of other channels through `SessionView::private_notes_of`, which goes over `all_channels()` and
+  asks `ReadAgentContext`; the component keeps what it found as `Elsewhere { channel, name,
+  notes, digest }`. The REST route `agent_private_notes` uses the same method for a user.
+
+### B. Step 1 - the name (`caelumora-model`, `caelumora-runtime`)
+
+1.  `ActionType::ReadChannel { reader, source, channel }` becomes `CopyInformation { from, into,
+    channel }` - the field goes in step 2 -, `describe` says `CopyInformation(<classification> of
+    <channel> into <channel>)`.
+2.  `AccessQuestions::may_channel_read` becomes `may_copy_information(context, from, into, ...)`,
+    `ConfidentialityRules::may_read_from(reader, source)` becomes `may_copy(from, into)`,
+    `Views::may_read_from` becomes `may_copy_from`. Arguments in the order *from, into*
+    everywhere; every caller is swapped with care, the unit tests of the rules prove it.
+3.  The suite's lines say `CopyInformation`; tests and documents (CONFIDENTIALITY.md, MEMORY.md,
+    SECURITY.md) the new names. No answer changes.
+
+### C. Step 2 - two questions
+
+4.  **The model.** `CopyInformation { from, into }` without `channel`; the ownership policy
+    decides it by `self.rules.may_copy(from, into)` alone. The read arm splits: `Get*` by
+    `Self::may_read(a, me) || Self::may_read(a, context.caller_id)`; the actions on a channel
+    (`CancelChannel`, `WakeChannel`, `RetryMessage`, `AnswerQuestion`) by the principal as before.
+    The doc comments say it; `may_copy_information` loses its last parameter.
+5.  **The edge.** `SessionView::readable` asks an agent `GetChannel` first
+    (`may_read_channel`); a channel it may not reach is `None` - not found, also by name -, one it
+    may reach is `Whole` if the whole may be copied into its place, else `Released`.
+    `ChannelView::may_read_entry` loses `own` and asks `may_copy_from` for each entry, as before
+    step 1; `MemberView::private_notes` and `notes_in` call `released` as before.
+6.  **The agent's own notes.** `SessionView::own_private_notes()`: for a viewer with a place whose
+    caller is an agent, the private notes it wrote in the session's other channels - read from
+    its state there (`AgentChannelState`, through the views' state store) for every channel it
+    takes or took part in (`participants`, `former`) -, each note as far as it may be copied into
+    the viewer's place; none for any other viewer. It returns no `ChannelView` - that would be an
+    edge past `GetChannel` - but what the prompt part needs: `Elsewhere` moves from the component
+    into the view as the return type (`PrivateNotesElsewhere` or the like), sorted by channel
+    name as `private_notes_of` sorts. The prompt part calls it instead of `private_notes_of`.
+7.  **The memory** passes nothing more; its test policy admits `CopyInformation`.
+
+### D. The frontends
+
+- Nothing. The REST server reads private notes through `private_notes_of`, unchanged.
+
+### E. Tests
+
+8.  **Step 1:** the existing ones, renamed; the suite answers alike.
+9.  **Step 2, model:** the read rule - an agent reads what its owner may read or it takes part
+    in, and changes only what its owner may; `CopyInformation` by the rules alone.
+10. **Step 2, views:** `an_agent_reads_of_a_channel_its_owner_may_not_read_only_what_it_wrote_there_itself`
+    reads its own notes through `own_private_notes`, and the channel `hers` is not found at all;
+    the released test (`an_agent_reads_another_channel_as_a_whole_by_their_classifications_...`)
+    keeps its answers, the agent being its owner's.
+11. **Step 2, suite:** the three reader tests keep their answers, with `GetChannel` before
+    `CopyInformation` in their lines - and for bob's reader outside "side" a `GetChannel no` and
+    no `CopyInformation` at all, the actor's own permission first; a test of an agent reaching
+    the terminal of a session its owner does not take part in, which `GetSession` refused before.
+
+### F. Documents
+
+- SECURITY.md: the ownership policy - reading for the principal or the caller; *In whose name an
+  agent acts* - the two questions; *Views* - the edge asks `GetChannel` of agents too, and the
+  edge to the agent's own knowledge.
+- CONFIDENTIALITY.md, *Reading another channel*: `CopyInformation`, decided by the rules alone;
+  reaching a channel is `GetChannel`; a release adds no readers, as it reaches nobody who may not
+  reach the channel.
+- MEMORY.md, *Reading other channels*: the edge, and that private notes are reached through the
+  agent itself.
+- Issues: 133, 17, 255 (the read rule) - history entries.
+
+### G. Steps
+
+1.  **The name** (B, E8, F as far as names go): one commit, no behaviour changes.
+2.  **Two questions** (C, E9-E11, F): one commit. The only change in behaviour: an agent reads
+    entities it takes part in where its owner may not.
+3.  **Close**: history, status `done`.
+
+### H. What to watch
+
+- **`may_read` and the system:** `Self::may_read(a, caller)` with the system's attributes is
+  true for everybody, as before; the system as caller never reaches the arm.
+- **An agent as contributor of its own definition** (`Agent::new`) may read itself (`GetAgent`)
+  by the caller now as well as by its owner - the reason it was made a contributor (issue 11).
+- **A channel's components** are built in its owner's context (`ChannelLoop::new`), caller and
+  principal one: unchanged.
+- **The order of the arguments** in `may_copy` is the one place a mistake reads as a silently
+  wrong rule: the unit tests of `ConfidentialityRules` and the suite pin it.
+
 ## Done when
 
 - It is decided whether membership of a channel limits what agents of its session read, and the
@@ -218,3 +352,10 @@ reads of another channel -, the documents on the subject, then the close.
   is released then, so it answers as absent; the agent's private notes there are read as its own
   (`own`), whoever may read the channel. `SessionView::readable` and `private_notes_of` are
   unchanged, and `all_channels` has no other caller. No stored data changes.
+- **2026-10-09** — Revised with the maintainer (*Decision, revised*, *Plan, revised*): two
+  questions instead of attributes in `ReadChannel` - `GetChannel` at the edge for an agent as for
+  a user, and `CopyInformation { from, into }` for the flow, by the rules alone; reading for the
+  principal or the caller, generally; the agent's private notes through an edge of its own. Asked
+  by the maintainer why the attributes were an `Option`: because `None` meant the agent's own
+  knowledge - which made leaving them out the lesser check. What step 1 decides stays; how it is
+  carried out is replaced.
