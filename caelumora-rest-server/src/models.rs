@@ -10,11 +10,11 @@ use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::template::{SessionTemplate, SessionTemplateId};
+use caelumora_model::template::{ScopeTemplate, SessionTemplate, SessionTemplateId};
 use caelumora_model::user::UserProfile;
 use caelumora_model::value::text::{Briefing, Introduction, Summary};
 use caelumora_model::work::TurnId;
-use caelumora_model::workspace::WorkspaceId;
+use caelumora_model::workspace::{WorkspaceChoice, WorkspaceId};
 use caelumora_model::value::text::Description;
 use caelumora_model::snapshot;
 use caelumora_runtime::view::{Reached, SessionView};
@@ -25,6 +25,39 @@ use uuid::Uuid;
 pub struct CreateSessionRequest {
     pub template_id: Uuid,
     pub name: Option<String>,
+    /// Its workspace in place of the template's (issue 266); the
+    /// template's if absent.
+    #[serde(default)]
+    pub workspace: Option<SessionWorkspaceRequest>,
+}
+
+/// The workspace a new session is given in place of its template's (issue
+/// 266).
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SessionWorkspaceRequest {
+    /// None, whatever the template names.
+    None,
+    /// One of the user's own.
+    Existing { workspace_id: WorkspaceId },
+    /// One made for the session alone, in a configured storage; `internal`
+    /// without compartments unless named, as a workspace made on its own.
+    New {
+        storage: String,
+        #[serde(default)]
+        classification: Option<Classification>,
+    },
+}
+
+impl From<SessionWorkspaceRequest> for WorkspaceChoice {
+    fn from(request: SessionWorkspaceRequest) -> Self {
+        match request {
+            SessionWorkspaceRequest::None => Self::None,
+            SessionWorkspaceRequest::Existing { workspace_id } => Self::Existing(workspace_id),
+            SessionWorkspaceRequest::New { storage, classification } =>
+                Self::New { storage, classification: classification.unwrap_or(Classification::CHANNEL_DEFAULT) },
+        }
+    }
 }
 
 /// A session in a list, or as creating or renaming it answers.
@@ -62,11 +95,34 @@ pub struct TemplateResponse {
     pub name: String,
     /// Empty if it says nothing.
     pub description: String,
+    /// The workspace its sessions have unless another is chosen (issue
+    /// 266); absent if it names none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<TemplateWorkspaceResponse>,
+}
+
+/// The workspace a template names: found by its name where it lies, or
+/// made there - in a session's scope, made for every session anew.
+#[derive(Debug, Serialize)]
+pub struct TemplateWorkspaceResponse {
+    pub name: String,
+    pub scope: WorkspaceScope,
+    pub storage: String,
 }
 
 impl From<&SessionTemplate> for TemplateResponse {
     fn from(template: &SessionTemplate) -> Self {
-        Self { id: template.id, name: template.name.to_string(), description: template.description.as_ref().map(ToString::to_string).unwrap_or_default() }
+        // One of a group's scope is left out: no session is made from it.
+        let workspace = template.workspace.as_ref().and_then(|w| {
+            let scope = match w.scope {
+                ScopeTemplate::SessionScope => WorkspaceScope::Session,
+                ScopeTemplate::UserScope => WorkspaceScope::User,
+                ScopeTemplate::GlobalScope => WorkspaceScope::Global,
+                ScopeTemplate::GroupScope => return None,
+            };
+            Some(TemplateWorkspaceResponse { name: w.name.to_string(), scope, storage: w.storage.clone() })
+        });
+        Self { id: template.id, name: template.name.to_string(), description: template.description.as_ref().map(ToString::to_string).unwrap_or_default(), workspace }
     }
 }
 
@@ -381,7 +437,8 @@ impl From<snapshot::WorkspaceSnapshot> for WorkspaceResponse {
 }
 
 /// Where a workspace lies (issue 251, decision 13). One of a session's
-/// scope is made by a session template, not here.
+/// scope is made with the session - by its template or as chosen when it
+/// is made (issue 266) -, not on its own.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceScope {
@@ -424,6 +481,9 @@ pub struct WorkspaceDescriptionRequest {
 #[derive(Debug, Serialize)]
 pub struct StorageResponse {
     pub name: String,
+    /// Whether its workspaces have a shell: agents can run commands in them
+    /// (issue 266).
+    pub has_shell: bool,
 }
 
 /// The workspace to attach to a session (issue 253).
@@ -1161,6 +1221,21 @@ mod tests {
         assert_eq!((&json["personality"], &json["personality_kind"]), (&serde_json::json!("plain"), &serde_json::json!("external")));
         assert_eq!(json["owner"], serde_json::to_value(ActorId::User(carol)).unwrap(), "as every actor is named");
         assert_eq!(json["owner_name"], "carol");
+    }
+
+    #[test]
+    fn a_new_session_s_workspace_is_chosen_by_its_kind_and_otherwise_the_template_s() {
+        let parse = |json: serde_json::Value| serde_json::from_value::<CreateSessionRequest>(json).unwrap().workspace.map(WorkspaceChoice::from);
+        let template = Uuid::new_v4();
+        assert_eq!(parse(serde_json::json!({ "template_id": template })), None, "the template's");
+        assert_eq!(parse(serde_json::json!({ "template_id": template, "workspace": { "kind": "none" } })), Some(WorkspaceChoice::None));
+        let id = WorkspaceId::new();
+        assert_eq!(parse(serde_json::json!({ "template_id": template, "workspace": { "kind": "existing", "workspace_id": id } })), Some(WorkspaceChoice::Existing(id)));
+        assert_eq!(
+            parse(serde_json::json!({ "template_id": template, "workspace": { "kind": "new", "storage": "sandbox" } })),
+            Some(WorkspaceChoice::New { storage: "sandbox".to_string(), classification: Classification::CHANNEL_DEFAULT }),
+            "internal unless classified",
+        );
     }
 
     #[test]

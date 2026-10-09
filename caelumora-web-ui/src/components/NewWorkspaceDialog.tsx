@@ -1,14 +1,17 @@
-// Making a workspace (issue 253): its name, the storage its files lie in,
-// where it lies - the user's scope or the global one; one of a session's
-// scope is made by a session template - what it holds, and its
-// classification, a level and compartments (issue 133).
+// Making a workspace (issue 253): its name, the storage its files lie in -
+// and what kind of workspace that makes (issue 266) -, where it lies - the
+// user's scope or the global one; one of a session's scope is made with the
+// session - what it holds, and its classification, a level and compartments
+// (issue 133).
 
 import React, {useEffect, useState} from 'react';
 import {X} from 'lucide-react';
-import type {Compartment, StorageResponse, WorkspaceResponse} from '../types';
+import type {StorageResponse, WorkspaceResponse} from '../types';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
-import {CONFIDENTIALITY_LEVELS, DEFAULT_CLASSIFICATION, confidentialityInfo, type ConfidentialityLevel} from '../confidentiality';
+import {DEFAULT_CLASSIFICATION, type Classification} from '../confidentiality';
+import {storageLabel} from '../workspace';
+import {WorkspaceClassificationFields} from './WorkspaceClassificationFields';
 
 interface NewWorkspaceDialogProps {
   onCreated: (workspace: WorkspaceResponse) => void;
@@ -21,9 +24,7 @@ export const NewWorkspaceDialog: React.FC<NewWorkspaceDialogProps> = ({onCreated
   const [storage, setStorage] = useState('');
   const [scope, setScope] = useState<'user' | 'global'>('user');
   const [description, setDescription] = useState('');
-  const [level, setLevel] = useState<ConfidentialityLevel>(DEFAULT_CLASSIFICATION.level);
-  const [compartments, setCompartments] = useState<Compartment[]>([]);
-  const [chosenCompartments, setChosenCompartments] = useState<Set<string>>(new Set());
+  const [classification, setClassification] = useState<Classification>(DEFAULT_CLASSIFICATION);
   const [problem, setProblem] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
 
@@ -37,18 +38,7 @@ export const NewWorkspaceDialog: React.FC<NewWorkspaceDialogProps> = ({onCreated
         reportError('Failed to fetch the storages', error);
         setStorages([]);
       });
-    api.getCompartments()
-      .then(setCompartments)
-      .catch(error => reportError('Failed to fetch the compartments', error));
   }, []);
-
-  const toggleCompartment = (compartment: string) => {
-    setChosenCompartments(prev => {
-      const next = new Set(prev);
-      if (next.has(compartment)) next.delete(compartment); else next.add(compartment);
-      return next;
-    });
-  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -61,8 +51,7 @@ export const NewWorkspaceDialog: React.FC<NewWorkspaceDialogProps> = ({onCreated
         scope,
         storage,
         description: description.trim() || undefined,
-        // Public takes no compartment.
-        classification: {level, compartments: level === 'public' ? [] : [...chosenCompartments]},
+        classification,
       });
       onCreated(workspace);
     } catch (error) {
@@ -118,7 +107,7 @@ export const NewWorkspaceDialog: React.FC<NewWorkspaceDialogProps> = ({onCreated
               disabled={!storages || storages.length === 0}
               className="w-full rounded-md border border-gray-700 bg-gray-800 px-2 py-1"
             >
-              {(storages ?? []).map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
+              {(storages ?? []).map(s => <option key={s.name} value={s.name}>{storageLabel(s)}</option>)}
             </select>
             {storages?.length === 0 && (
               <span className="block text-xs text-red-400">No storage is configured: no workspace can be made.</span>
@@ -152,37 +141,7 @@ export const NewWorkspaceDialog: React.FC<NewWorkspaceDialogProps> = ({onCreated
             />
           </label>
 
-          <label className="block space-y-1">
-            <span className="text-xs text-gray-400">Confidentiality</span>
-            <select
-              value={level}
-              onChange={(e) => setLevel(e.target.value as ConfidentialityLevel)}
-              className="w-full rounded-md border border-gray-700 bg-gray-800 px-2 py-1"
-            >
-              {CONFIDENTIALITY_LEVELS.map(l => (
-                <option key={l} value={l}>{confidentialityInfo(l).label}</option>
-              ))}
-            </select>
-            <span className="block text-xs text-gray-500">
-              One for all its files. In a session, a channel uses it only where the channel is classified alike.
-            </span>
-          </label>
-
-          {compartments.length > 0 && (
-            <fieldset className="space-y-1" disabled={level === 'public'}>
-              <legend className="text-xs text-gray-400">Compartments</legend>
-              {compartments.map(compartment => (
-                <label key={compartment.name} className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={level !== 'public' && chosenCompartments.has(compartment.name)}
-                    onChange={() => toggleCompartment(compartment.name)}
-                  />
-                  <span>{compartment.name}</span>
-                </label>
-              ))}
-            </fieldset>
-          )}
+          <WorkspaceClassificationFields value={classification} onChange={setClassification} />
 
           {problem && <div role="alert" className="text-xs text-red-400">{problem}</div>}
         </div>

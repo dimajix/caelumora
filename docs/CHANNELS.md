@@ -170,6 +170,13 @@ scope is made for every session anew, used within it alone (`Scope::admits`) and
 restored and purged with it, its files too; one in the owner's scope or the global one is found by
 every session of theirs that names it.
 
+Whoever makes a session may choose its workspace instead (`WorkspaceChoice`, issue
+[266](../issues/266-workspace-on-new-session.md)), which takes the place of the template's - that is
+then neither found nor made: none; one of their own, asked about as attaching it below, before
+anything is made, except for changing the session, which they are making; or one made for the
+session alone, in its scope and named as it, in the storage and with the classification they
+choose, as a template's of the session's scope is made.
+
 Otherwise only the workspace's owner attaches it, to a session they may change
 (`SessionLoop::set_workspace`: `UpdateSession`, then `GetWorkspace` and `UpdateWorkspace`) - not one
 of another session's scope (`SessionError::WorkspaceOutOfScope`); whoever may change the session

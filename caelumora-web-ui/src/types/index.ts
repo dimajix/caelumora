@@ -330,7 +330,7 @@ export interface WorkspaceResponse {
 
 export interface CreateWorkspaceRequest {
   name: string;
-  /** `user` unless given; one of a session's scope is made by a template. */
+  /** `user` unless given; one of a session's scope is made with the session. */
   scope?: 'user' | 'global';
   storage: string;
   description?: string;
@@ -340,6 +340,8 @@ export interface CreateWorkspaceRequest {
 /** A configured storage a workspace can be made in. */
 export interface StorageResponse {
   name: string;
+  /** Whether its workspaces have a shell: agents can run commands in them (issue 266). */
+  has_shell: boolean;
 }
 
 /** An entry of a directory of a workspace. */
@@ -574,12 +576,31 @@ export interface SessionTemplate {
   id: string;
   name: string;
   description: string;
+  /** The workspace its sessions have unless another is chosen (issue 266); absent if it names none. */
+  workspace?: TemplateWorkspace;
+}
+
+/** The workspace a template names: found by its name where it lies, or made there. */
+export interface TemplateWorkspace {
+  name: string;
+  /** `session`: made for every session anew. */
+  scope: WorkspaceScope;
+  storage: string;
 }
 
 export interface CreateSessionRequest {
   template_id: string;
   name: string;
+  /** Its workspace in place of the template's (issue 266); the template's if absent. */
+  workspace?: SessionWorkspaceRequest;
 }
+
+/** The workspace a new session is given in place of its template's (issue 266). */
+export type SessionWorkspaceRequest =
+  | {kind: 'none'}
+  | {kind: 'existing'; workspace_id: string}
+  /** Made for the session alone and named as it; `internal` unless classified. */
+  | {kind: 'new'; storage: string; classification?: Classification};
 
 /** A channel to create in a running session (issue 09). */
 export interface CreateChannelRequest {

@@ -50,7 +50,7 @@ pub async fn list_workspaces(State(state): State<Arc<AppState>>, Query(options):
 
 /// The storages a workspace can be made in, by name.
 pub async fn list_storages(State(state): State<Arc<AppState>>, _user: AuthenticatedUser) -> Json<Vec<StorageResponse>> {
-    Json(state.runtime_manager.workspace_manager().storages().map(|name| StorageResponse { name: name.to_string() }).collect())
+    Json(state.runtime_manager.workspace_manager().storages().map(|(name, has_shell)| StorageResponse { name: name.to_string(), has_shell }).collect())
 }
 
 /// Makes a workspace of the user's, in their scope or the global one.
@@ -58,7 +58,7 @@ pub async fn create_workspace(State(state): State<Arc<AppState>>, user: Authenti
     let scope = match request.scope {
         WorkspaceScope::User => Scope::UserScope { user_id: user.id },
         WorkspaceScope::Global => Scope::GlobalScope,
-        WorkspaceScope::Session => return Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid_scope", "A workspace of a session's scope is made with the session, by its template")),
+        WorkspaceScope::Session => return Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid_scope", "A workspace of a session's scope is made with the session")),
     };
     let classification = request.classification.unwrap_or(Classification::CHANNEL_DEFAULT);
     let made = state.runtime_manager.workspace_manager()

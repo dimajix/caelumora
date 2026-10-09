@@ -44,6 +44,7 @@ use caelumora_runtime::session::{ChannelSpec, SessionError, SessionLoop, Session
 use caelumora_runtime::terminal::{ByteStream, Terminal, WorkspacePath};
 use caelumora_runtime::view::{ViewError, Viewer};
 use caelumora_runtime::workspace::WorkspaceError;
+use caelumora_model::workspace::WorkspaceChoice;
 
 /// The ownership policy, recording every question it is asked - who acted
 /// with whose rights and for whom, what, of whose entity, and what it
@@ -333,7 +334,7 @@ async fn a_session_cannot_be_made_with_a_personality_the_user_may_not_read() {
     let bobs = world.personality("bobs-own", Some(world.bob), &[]).await;
     let template = world.template(Some(world.alice), &[], "helper", bobs.id).await;
 
-    let refused = world.manager.create_from_template(&World::as_user(world.alice), template, None).await.expect_err("not hers to use");
+    let refused = world.manager.create_from_template(&World::as_user(world.alice), template, None, None).await.expect_err("not hers to use");
     assert!(not_found(&refused), "answered as not there, so that it cannot be probed: {refused:#}");
     assert!(world.manager.views(Viewer::new(World::as_user(world.alice))).sessions().await.unwrap().is_empty(), "no session was stored");
     assert!(world.store.list_agents(&World::system()).await.unwrap().is_empty(), "nor an agent");
@@ -348,7 +349,7 @@ async fn a_shared_personality_makes_an_agent_of_whoever_uses_it() {
     let global = world.personality("global", None, &[]).await;
     for personality in [&shared, &global] {
         let template = world.template(Some(world.alice), &[], personality.name.name.as_str(), personality.id).await;
-        let session = world.manager.create_from_template(&World::as_user(world.alice), template, None).await.expect("hers to use");
+        let session = world.manager.create_from_template(&World::as_user(world.alice), template, None, None).await.expect("hers to use");
         let agents = world.store.list_agents(&World::as_user(world.alice)).await.unwrap();
         let agent = agents.iter().find(|a| a.personality_id == personality.id).expect("an agent of hers");
         assert_eq!(agent.security_attributes.owner_id, ActorId::User(world.alice), "owned by who made it");
@@ -466,10 +467,10 @@ async fn a_template_is_used_only_by_who_may_read_it() {
     let systems = world.template(None, &[], "public", global.id).await;
     let alice = World::as_user(world.alice);
 
-    let refused = world.manager.create_from_template(&alice, bobs, None).await.expect_err("not hers");
+    let refused = world.manager.create_from_template(&alice, bobs, None, None).await.expect_err("not hers");
     assert!(not_found(&refused), "{refused:#}");
     for usable in [shared, systems] {
-        let session = world.manager.create_from_template(&alice, usable, None).await.expect("hers to use");
+        let session = world.manager.create_from_template(&alice, usable, None, None).await.expect("hers to use");
         assert_eq!(session.session().security_attributes.owner_id, ActorId::User(world.alice), "the session is hers, not the template's owner's");
         world.manager.stop_session(&alice, session.id()).await.unwrap();
     }
@@ -1762,7 +1763,7 @@ async fn making_a_session_needs_the_template_the_personalities_and_creating_what
     let template = world.template(None, &[], "helper", shared.id).await;
     let (alice, carol) = (World::as_user(world.alice), World::as_user(world.carol));
 
-    let (made, asked) = world.asked(world.manager.create_from_template(&alice, template, None)).await;
+    let (made, asked) = world.asked(world.manager.create_from_template(&alice, template, None, None)).await;
     let session = made.expect("alice makes it");
     assert_eq!(asked, checks(&[
         "alice: GetSessionTemplate(system's) yes",
@@ -1782,19 +1783,19 @@ async fn making_a_session_needs_the_template_the_personalities_and_creating_what
 
     // Again: the agent is found, not made - its personality is not read
     // for making it, only in its own name, to run.
-    let (again, asked) = world.asked(world.manager.create_from_template(&alice, template, None)).await;
+    let (again, asked) = world.asked(world.manager.create_from_template(&alice, template, None, None)).await;
     assert!(again.is_ok());
     assert_eq!(asked.iter().filter(|line| line.contains("CreateAgent")).count(), 0, "{asked:?}");
     assert!(asked.contains(&"alice as helper: GetPersonality(bob's) yes".to_string()), "{asked:?}");
     world.manager.stop_session(&alice, again.unwrap().id()).await.unwrap();
 
     let private = world.template(Some(world.bob), &[], "private", shared.id).await;
-    let (refused, asked) = world.asked(world.manager.create_from_template(&carol, private, None)).await;
+    let (refused, asked) = world.asked(world.manager.create_from_template(&carol, private, None, None)).await;
     assert!(not_found(&refused.unwrap_err()));
     assert_eq!(asked, checks(&["carol: GetSessionTemplate(bob's) no"]), "a template one may not read: nothing more is asked");
 
     let unusable = world.template(Some(world.alice), &[], "unusable", bobs.id).await;
-    let (refused, asked) = world.asked(world.manager.create_from_template(&alice, unusable, None)).await;
+    let (refused, asked) = world.asked(world.manager.create_from_template(&alice, unusable, None, None)).await;
     assert!(not_found(&refused.unwrap_err()));
     assert_eq!(asked, checks(&[
         "alice: GetSessionTemplate(alice's) yes",
@@ -2369,8 +2370,8 @@ async fn a_workspace_of_a_session_s_scope_is_made_with_it_and_goes_with_it() {
     let world = World::new().await;
     let alice = World::as_user(world.alice);
     let template = template_with_workspace(&world, ScopeTemplate::SessionScope, "main").await;
-    let first = world.manager.create_from_template(&alice, template, None).await.expect("a session with its workspace");
-    let second = world.manager.create_from_template(&alice, template, None).await.unwrap();
+    let first = world.manager.create_from_template(&alice, template, None, None).await.expect("a session with its workspace");
+    let second = world.manager.create_from_template(&alice, template, None, None).await.unwrap();
     let (mine, others) = (first.session().workspace.expect("attached"), second.session().workspace.expect("attached"));
     assert_ne!(mine, others, "one for every session");
     let made = world.store.get_workspace(&alice, mine).await.expect("hers");
@@ -2401,18 +2402,69 @@ async fn a_workspace_of_the_user_s_scope_is_found_by_every_session_of_theirs() {
     let world = World::new().await;
     let alice = World::as_user(world.alice);
     let template = template_with_workspace(&world, ScopeTemplate::UserScope, "main").await;
-    let first = world.manager.create_from_template(&alice, template, None).await.unwrap();
-    let second = world.manager.create_from_template(&alice, template, None).await.unwrap();
+    let first = world.manager.create_from_template(&alice, template, None, None).await.unwrap();
+    let second = world.manager.create_from_template(&alice, template, None, None).await.unwrap();
     assert_eq!(first.session().workspace, second.session().workspace, "the same one");
-    let bobs = world.manager.create_from_template(&World::as_user(world.bob), template, None).await.unwrap();
+    let bobs = world.manager.create_from_template(&World::as_user(world.bob), template, None, None).await.unwrap();
     assert_ne!(bobs.session().workspace, first.session().workspace, "bob's own");
 
     let elsewhere = template_with_workspace(&world, ScopeTemplate::UserScope, "other").await;
-    let refused = world.manager.create_from_template(&alice, elsewhere, None).await.unwrap_err();
+    let refused = world.manager.create_from_template(&alice, elsewhere, None, None).await.unwrap_err();
     assert!(matches!(refused.downcast_ref::<TemplateError>(), Some(TemplateError::WorkspaceNameTaken(_))), "{refused}");
     for session in [first, second] {
         world.manager.stop_session(&alice, session.id()).await.unwrap();
     }
     world.manager.stop_session(&World::as_user(world.bob), bobs.id()).await.unwrap();
+}
+
+/// A workspace chosen as a session is made takes the place of its
+/// template's, which is then neither found nor made (issue 266): none; one
+/// of its maker's own - asked about as attaching it to a running session,
+/// before anything is made, and never another's nor one of another
+/// session's scope; or one made for the session alone, in its scope and
+/// named as it, which a classification its maker is not cleared for
+/// refuses, leaving no session behind.
+#[tokio::test]
+async fn a_workspace_chosen_as_a_session_is_made_takes_the_place_of_its_template_s() {
+    let world = World::new().await;
+    let workspaces = world.runtime.workspace_manager();
+    let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
+    let internal = Classification::general(Confidentiality::Internal);
+    let template = template_with_workspace(&world, ScopeTemplate::UserScope, "main").await;
+    let hers = workspaces.create(&alice, "hers", Scope::UserScope { user_id: world.alice }, "main", None, internal.clone()).await.unwrap();
+    let his = workspaces.create(&bob, "his", Scope::UserScope { user_id: world.bob }, "main", None, internal.clone()).await.unwrap();
+    let views = || world.manager.views(Viewer::new(alice.clone()));
+
+    let without = world.manager.create_from_template(&alice, template, None, Some(WorkspaceChoice::None)).await.expect("without one");
+    assert_eq!(without.session().workspace, None);
+
+    let (attached, asked) = world.asked(world.manager.create_from_template(&alice, template, None, Some(WorkspaceChoice::Existing(hers.id)))).await;
+    let attached = attached.expect("hers");
+    assert_eq!(attached.session().workspace, Some(hers.id));
+    assert_eq!(asked[..3], checks(&["alice: GetSessionTemplate(system's) yes", "alice: GetWorkspace(alice's) yes", "alice: UpdateWorkspace(alice's) yes"]), "{asked:?}");
+    assert!(!asked.iter().any(|line| line.contains("UpdateSession")), "she is making the session: {asked:?}");
+
+    let (refused, asked) = world.asked(world.manager.create_from_template(&alice, template, None, Some(WorkspaceChoice::Existing(his.id)))).await;
+    assert!(not_found(&refused.unwrap_err()), "not bob's");
+    assert_eq!(asked, checks(&["alice: GetSessionTemplate(system's) yes", "alice: GetWorkspace(bob's) no"]), "refused before anything is made");
+
+    let made = world.manager.create_from_template(&alice, template, Some("Report"), Some(WorkspaceChoice::New { storage: "main".to_string(), classification: internal.clone() })).await.expect("one of its own");
+    let own = world.store.get_workspace(&alice, made.session().workspace.expect("attached")).await.unwrap();
+    assert_eq!((own.name.name.as_str(), &own.name.scope, own.storage.as_str()), ("Report", &Scope::SessionScope { session_id: made.id() }, "main"));
+    assert_eq!(own.owner(), Some(world.alice));
+    let refused = world.manager.create_from_template(&alice, template, None, Some(WorkspaceChoice::Existing(own.id))).await.unwrap_err();
+    assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::WorkspaceOutOfScope(_))), "not of another session's scope: {refused}");
+
+    let sessions = views().sessions().await.unwrap().len();
+    let confidential = Classification::general(Confidentiality::Confidential);
+    let refused = world.manager.create_from_template(&alice, template, None, Some(WorkspaceChoice::New { storage: "main".to_string(), classification: confidential })).await.unwrap_err();
+    assert!(matches!(refused.downcast_ref::<WorkspaceError>(), Some(WorkspaceError::NotCleared)), "{refused}");
+    assert_eq!(views().sessions().await.unwrap().len(), sessions, "no session left behind");
+
+    let names: Vec<String> = views().workspaces().await.unwrap().iter().map(|w| w.name().to_string()).collect();
+    assert!(!names.contains(&"files".to_string()), "the template's was never made: {names:?}");
+    for session in [without, attached, made] {
+        world.manager.stop_session(&alice, session.id()).await.unwrap();
+    }
 }
 

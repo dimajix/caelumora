@@ -23,6 +23,7 @@ import type {
   SessionResponse,
   SessionSnapshot,
   SessionTemplate,
+  SessionWorkspaceRequest,
   Compartment,
   ProfileRequest,
   ProfileResponse,
@@ -181,10 +182,12 @@ export const api = {
     return res.json();
   },
 
-  async createSession(templateId: string, name: string): Promise<SessionResponse> {
+  /** A session from the template `templateId`, with `workspace` in place of the template's if given (issue 266). */
+  async createSession(templateId: string, name: string, workspace?: SessionWorkspaceRequest): Promise<SessionResponse> {
     const payload: CreateSessionRequest = {
       template_id: templateId,
       name: name,
+      workspace,
     };
     const res = await request(`/sessions`, {
       method: 'POST',

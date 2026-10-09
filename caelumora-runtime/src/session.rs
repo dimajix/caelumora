@@ -19,7 +19,8 @@ use caelumora_model::store::{EntityStore, StoreError, StoreResult, StoreResultEx
 use tracing::{info, warn};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::{ChannelId, Session, SessionId};
-use caelumora_model::template::SessionTemplateId;
+use caelumora_model::template::{ScopeTemplate, SessionTemplateId, WorkspaceTemplate};
+use caelumora_model::workspace::{WorkspaceChoice, WorkspaceId};
 use crate::scoped::{delete_scoped_in, purge_scoped_in, restore_scoped_in};
 use crate::controller::SessionController;
 use dashmap::DashMap;
@@ -270,15 +271,11 @@ impl SessionLoop {
     /// session or share the workspace, `StoreError::NotFound` if there is
     /// no workspace they may read, `SessionError::WorkspaceOutOfScope`, or
     /// whatever else storing reports.
-    pub async fn set_workspace(&self, context: &SecurityContext, workspace: Option<caelumora_model::workspace::WorkspaceId>) -> Result<()> {
+    pub async fn set_workspace(&self, context: &SecurityContext, workspace: Option<WorkspaceId>) -> Result<()> {
         let session = self.session();
         self.security.require(context, ActionType::UpdateSession(&session.security_attributes), || StoreError::PermissionDenied).await?;
         if let Some(id) = workspace {
-            let shared = self.entities.get_workspace(context, id).await?;
-            self.security.require(context, ActionType::UpdateWorkspace(&shared.security_attributes), || StoreError::PermissionDenied).await?;
-            if !shared.name.scope.admits(&Scope::SessionScope { session_id: self.id }) {
-                return Err(SessionError::WorkspaceOutOfScope(id).into());
-            }
+            require_attachable(self.security.as_ref(), self.entities.as_ref(), context, id, self.id).await?;
         }
         self.session_controller.update_workspace(context, workspace).await?;
         info!(session = %self.id, workspace = ?workspace, by = %context.caller_id, "Session's workspace changed");
@@ -609,6 +606,26 @@ pub struct SessionManager {
     events: Arc<EventBus>,
 }
 
+/// Asks whether `context` may attach the workspace `id` to the session
+/// `session_id` (issue 253): it must be theirs to share (`GetWorkspace`,
+/// `UpdateWorkspace` - its owner, issue 251, decision 12) and lie where the
+/// session may use it, not in another session's scope. Whether they may
+/// change the session is the caller's to ask - or not, for a session they
+/// are making (issue 266).
+///
+/// # Errors
+/// `StoreError::NotFound` if there is no workspace they may read,
+/// `StoreError::PermissionDenied` if they may not share it,
+/// `SessionError::WorkspaceOutOfScope`.
+async fn require_attachable(security: &dyn SecurityManager, entities: &dyn EntityStore, context: &SecurityContext, id: WorkspaceId, session_id: SessionId) -> Result<()> {
+    let shared = entities.get_workspace(context, id).await?;
+    security.require(context, ActionType::UpdateWorkspace(&shared.security_attributes), || StoreError::PermissionDenied).await?;
+    if !shared.name.scope.admits(&Scope::SessionScope { session_id }) {
+        return Err(SessionError::WorkspaceOutOfScope(id).into());
+    }
+    Ok(())
+}
+
 /// A session as [`SessionManager::find`] found it for a context that may
 /// read it: running or not, each asked about alike.
 #[expect(clippy::large_enum_variant, reason = "a value returned once and taken apart at once")]
@@ -692,29 +709,47 @@ impl SessionManager {
     /// Creates a session from the template `template_id` on behalf of
     /// `context`, whose user owns it and is the template's "user", names it
     /// `name` - the template's name if `None` - and starts it (issue 88).
-    /// The template's agents are found by name in their scope, or made.
+    /// The template's agents are found by name in their scope, or made. Its
+    /// workspace is `workspace` where one is chosen (issue 266) - none, one
+    /// of the user's own, or one made for it alone -, else the template's.
     ///
     /// # Errors
     /// `SessionError::OwnerNotAUser` if `context` acts for no user; a
     /// `StoreError` if the template, a user or a personality it names does
     /// not exist or may not be read; a `ValueError` if `name` is no name; a
     /// `TemplateError` if the template cannot be made into a session;
+    /// what attaching an existing workspace or making one reports;
     /// whatever creating the session reports.
-    pub async fn create_from_template(&self, context: &SecurityContext, template_id: SessionTemplateId, name: Option<&str>) -> Result<Arc<SessionLoop>> {
+    pub async fn create_from_template(&self, context: &SecurityContext, template_id: SessionTemplateId, name: Option<&str>, workspace: Option<WorkspaceChoice>) -> Result<Arc<SessionLoop>> {
         let owner = context.principal_id.as_user_id().ok_or(SessionError::OwnerNotAUser(context.principal_id))?;
         // Before anything is found or made for it.
         let name = Name::optional(name)?;
         let store = &self.entities;
         let template = store.get_session_template(context, template_id).await?;
         let id = SessionId::new();
+        // One of the user's chosen is asked about before anything is made.
+        let existing = match &workspace {
+            Some(WorkspaceChoice::Existing(chosen)) => {
+                require_attachable(self.security.as_ref(), store.as_ref(), context, *chosen, id).await?;
+                Some(*chosen)
+            }
+            _ => None,
+        };
         let participants = crate::template::resolve_participants(store.as_ref(), context, &template, id, owner).await?;
         let name = name.unwrap_or_else(|| template.name.name.clone());
         let language = preferred_language(store.as_ref(), context).await?;
+        // What is to be found or made: the template's, unless one was chosen.
+        let wanted = match workspace {
+            None => template.workspace.clone(),
+            Some(WorkspaceChoice::New { storage, classification }) =>
+                Some(WorkspaceTemplate { name: name.clone(), scope: ScopeTemplate::SessionScope, storage, classification, description: None }),
+            Some(WorkspaceChoice::None | WorkspaceChoice::Existing(_)) => None,
+        };
         let (mut session, channels) = template.build(id, owner, name, language.as_ref(), participants)?;
         let workspaces = self.runtime_manager.workspace_manager();
-        let workspace = match &template.workspace {
+        let workspace = match &wanted {
             Some(wanted) => Some(crate::template::resolve_workspace(workspaces, store.as_ref(), context, wanted, id, owner).await?),
-            None => None,
+            None => existing.map(|chosen| (chosen, false)),
         };
         session.workspace = workspace.as_ref().map(|(found, _)| *found);
         match self.create_session(context, session, channels).await {
@@ -1438,7 +1473,7 @@ mod tests {
         profile.preferred_language = Some(Language::new("de").unwrap());
         store.create_user_profile(&hers, &profile).await.unwrap();
 
-        let session = manager.create_from_template(&hers, template.id, None).await.expect("created and started");
+        let session = manager.create_from_template(&hers, template.id, None, None).await.expect("created and started");
         assert_eq!(session.name(), "pairing", "named after the template unless named");
         assert_eq!(session.session().security_attributes.owner_id, ActorId::User(owner));
         let main = session.channel_by_name("main").expect("the template's channel runs");
@@ -1448,9 +1483,9 @@ mod tests {
         assert!(stored.participants.iter().any(|p| matches!(p, Participant::Approver(a) if a.strategy == ApprovalStrategy::All)), "the template's approver");
         manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
 
-        let missing = manager.create_from_template(&hers, SessionTemplateId::new(), None).await.expect_err("no such template");
+        let missing = manager.create_from_template(&hers, SessionTemplateId::new(), None, None).await.expect_err("no such template");
         assert!(crate::error::is_not_found(&missing, "session_template"), "{missing}");
-        let not_a_user = manager.create_from_template(&SecurityContext::system(), template.id, None).await.expect_err("the system owns no session");
+        let not_a_user = manager.create_from_template(&SecurityContext::system(), template.id, None, None).await.expect_err("the system owns no session");
         assert!(matches!(not_a_user.downcast_ref::<SessionError>(), Some(SessionError::OwnerNotAUser(_))), "{not_a_user}");
     }
 

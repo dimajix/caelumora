@@ -1,6 +1,6 @@
 # 266 — A new session's workspace cannot be chosen when it is made
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -108,3 +108,16 @@ suite covers it; `CHANNELS.md`, `REST-SERVER.md` and `WEB-UI.md` say so.
 - **2026-10-09** — Opened after discussion with the maintainer: a dialog rather than a second
   dropdown; only the user's own workspaces offered; a workspace chosen overrides the template's; a
   new workspace for the session is made in a storage the user chooses, always offered.
+- **2026-10-09** — Decided with the maintainer: the choice is an enum of its own,
+  `WorkspaceChoice { None, Existing(WorkspaceId), New { storage, classification } }` in
+  `caelumora-model`; a new workspace is named as the session. Done:
+  - `SessionManager::create_from_template` takes `Option<WorkspaceChoice>`. An existing one is
+    asked about before anything is made, by `require_attachable`, which `SessionLoop::set_workspace`
+    now uses as well; a new one is made as a `WorkspaceTemplate` of the session's scope through
+    `resolve_workspace`, and goes again when the session cannot be created.
+  - REST: `CreateSessionRequest::workspace` (`none`, `existing`, `new`); `TemplateResponse` names
+    the template's workspace; `StorageResponse` says whether its workspaces have a shell.
+  - Web UI: "New Session" opens `NewSessionDialog`; the classification fields of
+    `NewWorkspaceDialog` became `WorkspaceClassificationFields`, which both use; both name each
+    storage with its kind (`storageLabel`).
+  - Security suite: `a_workspace_chosen_as_a_session_is_made_takes_the_place_of_its_template_s`.

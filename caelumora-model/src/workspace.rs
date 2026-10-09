@@ -135,6 +135,20 @@ impl Scoped for Workspace {
     }
 }
 
+/// The workspace a session is given as it is made (issue 266), in place of
+/// the one its template names.
+#[derive(Debug, Clone, PartialEq)]
+pub enum WorkspaceChoice {
+    /// None, whatever the template names.
+    None,
+    /// One of its maker's own, attached as to a running session - theirs to
+    /// share and of no other session's scope.
+    Existing(WorkspaceId),
+    /// One made for the session alone, in its scope and named as it is, as
+    /// a template's of the session's scope is made.
+    New { storage: String, classification: Classification },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

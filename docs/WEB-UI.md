@@ -49,7 +49,7 @@ The UI shows what the server says and repeats no rule of its own:
 | `src/panelWidth.ts` | The widths of the panels beside the chat, kept in browser storage |
 | `src/moderator.ts`, `src/confidentiality.ts`, `src/workspace.ts` | Labels and explanations of responder policies, classifications and where a workspace lies |
 | `src/App.tsx` | Login state, keep-alive, the error banner, the layout |
-| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `ToolCallView`, `QuestionCard`, `MarkdownMessage`, `ContextPanel`, `HistoryPanel`, `ToolsPanel`, `PrivateNotesPanel`, `ToolSetList`, `DeletedList`, `NotesList`, `TokenGauge`, `HoverCard`, `ActionMenu`, `ResizeHandle`, `UsageStats`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ApprovalRulesDialog`, `ErrorBanner`, `WorkspacePage`, `FileBrowser`, `ChannelWorkspacePanel`, `NewWorkspaceDialog`, `SessionWorkspaceDialog` |
+| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `ToolCallView`, `QuestionCard`, `MarkdownMessage`, `ContextPanel`, `HistoryPanel`, `ToolsPanel`, `PrivateNotesPanel`, `ToolSetList`, `DeletedList`, `NotesList`, `TokenGauge`, `HoverCard`, `ActionMenu`, `ResizeHandle`, `UsageStats`, `NewSessionDialog`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ApprovalRulesDialog`, `ErrorBanner`, `WorkspacePage`, `FileBrowser`, `ChannelWorkspacePanel`, `NewWorkspaceDialog`, `WorkspaceClassificationFields`, `SessionWorkspaceDialog` |
 
 ## Talking to the server
 
@@ -144,11 +144,18 @@ offers "Restore" where `can_restore` and "Delete for good" - confirmed by a seco
 `can_purge`; a channel only with its session. A restored session or channel is fetched again like
 a new one.
 
-A new session is created from a template; the one used last in this browser is preselected (issue
-40). A new channel is created with its name, responder policy, classification - a level and, if any
-are configured, compartments from `GET /compartments` (issue 133) - language, preset to the one the
-user prefers (issue 56), whether it uses the session's workspace, preset to yes (issue 253), and
-participants (`NewChannelDialog`, issue 09).
+"New Session" opens `NewSessionDialog` (issue [266](../issues/266-workspace-on-new-session.md)): the
+template - the one used last in this browser preselected (issue 40) -, the name, "New \<template\>"
+until the user changes it, and the workspace: as the template says, where it names one - its name
+and where it lies, from `GET /templates` -, none, one of the user's own - not one made for another
+session -, or a new one for the session alone, in a storage the user chooses, always offered, preset
+to the template's or the first, and classified as they say. Everything is preset, so that Enter
+makes a session as its template has it; a workspace chosen takes the place of the template's. What
+the server refuses - a workspace not the user's, a classification they are not cleared for - is
+shown in the dialog. A new channel is created with its name, responder policy, classification - a
+level and, if any are configured, compartments from `GET /compartments` (issue 133) - language,
+preset to the one the user prefers (issue 56), whether it uses the session's workspace, preset to
+yes (issue 253), and participants (`NewChannelDialog`, issue 09).
 
 ### Workspaces
 
@@ -156,8 +163,10 @@ The user's own workspaces (issue [253](../issues/253-workspace.md)) are listed b
 each with where it lies where that is not their own scope, and a folded "Deleted workspaces" - the
 trash, as for sessions - below them; the list is loaded again on every global event about a
 workspace (`WorkspaceCreated`, `…Updated`, `…Deleted`, `…Restored`). "+" opens `NewWorkspaceDialog`:
-its name, the storage from those the server names, whether its name lies in the user's scope or the
-global one, what it holds and its classification - what the server refuses, a name taken or a
+its name, the storage from those the server names - each with the kind of workspace it makes,
+files only or files and a shell (issue 266) -, whether its name lies in the user's scope or the
+global one, what it holds and its classification (`WorkspaceClassificationFields`, shared with
+`NewSessionDialog`) - what the server refuses, a name taken or a
 classification the user is not cleared for, is shown in the dialog.
 
 A workspace chosen there takes the place of a channel (`WorkspacePage`): what it is, the menu of

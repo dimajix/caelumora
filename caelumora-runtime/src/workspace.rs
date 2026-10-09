@@ -128,9 +128,10 @@ impl WorkspaceManager {
         self.max_file_bytes
     }
 
-    /// The configured storages, by name.
-    pub fn storages(&self) -> impl Iterator<Item = &str> {
-        self.storages.keys().map(String::as_str)
+    /// The configured storages, by name, each with whether its workspaces
+    /// have a shell - the kind of workspace it makes (issue 266).
+    pub fn storages(&self) -> impl Iterator<Item = (&str, bool)> {
+        self.storages.iter().map(|(name, provider)| (name.as_str(), provider.has_shell()))
     }
 
     fn provider(&self, workspace: &Workspace) -> WorkspaceResult<&Arc<dyn TerminalProvider>> {

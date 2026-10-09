@@ -20,7 +20,7 @@ pub async fn create_session(
 ) -> Result<Json<SessionResponse>, ApiError> {
     // The logged-in user owns the session and is its template's "user".
     let template_id = SessionTemplateId(payload.template_id);
-    let session_loop = state.session_manager.create_from_template(&user.security_context(), template_id, payload.name.as_deref()).await
+    let session_loop = state.session_manager.create_from_template(&user.security_context(), template_id, payload.name.as_deref(), payload.workspace.map(Into::into)).await
         .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("creating a session from template {template_id}")))?;
 
     Ok(Json(SessionResponse::from(&**session_loop.session())))

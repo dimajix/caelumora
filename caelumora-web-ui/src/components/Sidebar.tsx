@@ -14,11 +14,10 @@ import {
   User,
   Users
 } from 'lucide-react';
-import type {ChannelResponse, SessionSnapshot, SessionTemplate, UserResponse, WorkspaceResponse} from '../types';
+import type {ChannelResponse, SessionSnapshot, UserResponse, WorkspaceResponse} from '../types';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
 import {dispatchGlobalEvent, sessionChange} from '../globalEvents';
-import {loadLastTemplate, saveLastTemplate} from '../session';
 import {openEventStream} from '../stream';
 import {ActionMenu} from './ActionMenu';
 import {ResizeHandle} from './ResizeHandle';
@@ -30,6 +29,7 @@ import {ApprovalRulesDialog} from './ApprovalRulesDialog';
 import {DescriptionDialog} from './DescriptionDialog';
 import {ProfileDialog} from './ProfileDialog';
 import {NewWorkspaceDialog} from './NewWorkspaceDialog';
+import {NewSessionDialog} from './NewSessionDialog';
 import {SessionWorkspaceDialog} from './SessionWorkspaceDialog';
 import {workspaceScopeLabel} from '../workspace';
 import {privacyInfo} from '../privacy';
@@ -122,11 +122,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [workspaceOf, setWorkspaceOf] = useState<string | null>(null);
   const workspaceSession = sessions.find(s => s.id === workspaceOf) ?? null;
   const panel = usePanelWidth('sidebar');
-  const [templates, setTemplates] = useState<SessionTemplate[]>([]);
-  // The template a new session is created from, preselected with the one
-  // used last in this browser (issue 40).
-  const [lastTemplateId, setLastTemplateId] = useState<string | null>(() => loadLastTemplate());
-  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(() => loadLastTemplate());
+  // A new session is being made (issue 266): its template, name and workspace.
+  const [isCreatingSession, setIsCreatingSession] = useState(false);
   const [expandedSessions, setExpandedSessions] = useState<Record<string, boolean>>({});
   const [showProfile, setShowProfile] = useState(false);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
@@ -148,12 +145,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // the trash is loaded again (issue 164).
   const [trashVersion, setTrashVersion] = useState(0);
   const trashChanged = () => setTrashVersion(v => v + 1);
-
-  useEffect(() => {
-    api.getTemplates()
-      .then(setTemplates)
-      .catch(error => reportError('Failed to load templates', error));
-  }, []);
 
   useEffect(() => {
     let current = true;
@@ -242,25 +233,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setExpandedSessions(prev => ({ ...prev, [sessionId]: !prev[sessionId] }));
   };
 
-  // The chosen template if it still exists, else the first (the server sorts
-  // them by name).
-  const selectedTemplate = templates.find(t => t.id === selectedTemplateId) ?? templates[0];
-
-  const handleCreateSession = async () => {
+  const handleSessionCreated = async (sessionId: string) => {
+    setIsCreatingSession(false);
+    setExpandedSessions(prev => ({ ...prev, [sessionId]: true }));
     try {
-      const template = selectedTemplate;
-      if (!template) {
-        reportError('Cannot create a session', 'no session template is available');
-        return;
-      }
-      const name = `New ${template.name}`;
-      const newSession = await api.createSession(template.id, name);
-      saveLastTemplate(template.id);
-      setLastTemplateId(template.id);
-      setExpandedSessions(prev => ({ ...prev, [newSession.id]: true }));
-      await refreshSession(newSession.id);
+      await refreshSession(sessionId);
     } catch (error) {
-      reportError('Failed to create session', error);
+      reportError('Failed to load the new session', error);
     }
   };
 
@@ -339,37 +318,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
     <div className="shrink-0 bg-gray-900 text-gray-100 flex flex-col border-r border-gray-800" style={{width: panel.width}}>
       <div className="p-4 border-b border-gray-800 space-y-3">
         <h1 className="font-bold text-lg">Caelumora</h1>
-        <div className="flex items-center gap-2">
-          <select
-            value={selectedTemplate?.id ?? ''}
-            onChange={(e) => setSelectedTemplateId(e.target.value)}
-            disabled={templates.length === 0}
-            className="flex-1 min-w-0 bg-gray-800 border border-gray-700 rounded-md px-2 py-1 text-sm"
-            title={selectedTemplate?.description || 'Template of a new session'}
-            aria-label="Template of a new session"
-          >
-            {templates.map(template => (
-              <option
-                key={template.id}
-                value={template.id}
-                title={template.description}
-                // The one used last, in bold - where the browser styles
-                // options at all (not on macOS).
-                style={{fontWeight: template.id === lastTemplateId ? 'bold' : 'normal'}}
-              >
-                {template.name}
-              </option>
-            ))}
-          </select>
-          <button
-            onClick={handleCreateSession}
-            disabled={!selectedTemplate}
-            className="p-1 hover:bg-gray-800 rounded-md transition-colors disabled:opacity-50"
-            title={selectedTemplate ? `New ${selectedTemplate.name}` : 'New Session'}
-          >
-            <Plus size={20} />
-          </button>
-        </div>
+        <button
+          onClick={() => setIsCreatingSession(true)}
+          className="w-full flex items-center justify-center gap-2 rounded-md border border-gray-700 px-2 py-1 text-sm hover:bg-gray-800 transition-colors"
+          title="Make a session: its template, name and workspace"
+        >
+          <Plus size={16} />
+          New Session
+        </button>
       </div>
       
       <div className="flex-1 overflow-y-auto p-2">
@@ -568,6 +524,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
             setSessions(prev => upsert(prev, updated));
           }}
           onClose={() => setRulesOf(null)}
+        />
+      )}
+
+      {isCreatingSession && (
+        <NewSessionDialog
+          workspaces={workspaces}
+          onCreated={(session) => void handleSessionCreated(session.id)}
+          onClose={() => setIsCreatingSession(false)}
         />
       )}
 
