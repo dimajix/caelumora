@@ -232,6 +232,7 @@ argues against it, and what came out of the last attempt.
 | [263](263-plan-steps-not-in-chat.md) | done | The chat shows a plan only as the raw arguments of its call and its steps' messages as one block, without saying which message belongs to which step. |
 | [265](265-file-list-and-search-presentations.md) | done | The web UI shows a listing and a search of the workspace as raw JSON, while reading, writing and replacing in a file are shown as what they do. |
 | [266](266-workspace-on-new-session.md) | done | A new session's workspace cannot be chosen when it is made, and one for that session alone cannot be made without a template naming it. |
+| [268](268-question-presentation.md) | open | An agent's question offers its choices side by side, their meanings in a list apart, and once answered is shown as raw JSON beside a record without the choices offered. |
 
 ## Context and knowledge
 
