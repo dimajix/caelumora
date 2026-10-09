@@ -1,6 +1,6 @@
 # 270 — Personalities repeat their components
 
-**Status:** in progress
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -130,3 +130,5 @@ as `{ id, components: [...], security_attributes }`. The stored preconfigured co
   `StoredComponents` into `ComponentConfig` was weighed and not done: a `ComponentConfig` held by
   a personality, a channel or a template would carry an id and attributes that mean nothing there
   (issue 177), and could no longer be written as a bare list (issue 201).
+- **2026-10-09** — Done. Showing what an agent was built from in the web UI went to issue
+  [283](283-show-agent-components.md); the runtime and the REST server answer it.
