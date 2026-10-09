@@ -19,7 +19,8 @@ session loads them. Loading happens in the runtime's name, since starting a sess
 read must not fail on a channel the caller is not in.
 
 What lies in a session's scope - the personalities, session templates and agents of
-`Scope::SessionScope`, and those of its channels' scopes - goes with it (issue
+`Scope::SessionScope`, and those of its channels' scopes, its workspace if made for it and the
+artifacts published in it and not kept (issue 271) - goes with it (issue
 [178](../issues/178-scoped-lookup-by-name.md), `caelumora-runtime/src/scoped.rs`): deleting the
 session deletes them, restoring it restores those deleted with it - not one deleted by hand before,
 nor one whose name was taken meanwhile (issue [250](../issues/250-unique-names-per-name-space.md))

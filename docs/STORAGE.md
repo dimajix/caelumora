@@ -23,6 +23,10 @@ The `EntityStore` trait (in `caelumora-model`) stores the long-lived domain enti
     [253](../issues/253-workspace.md)), with one classification for all of it. The document names
     the storage its files lie in; the files are no part of it, and the store does not touch them.
     A session names the workspace attached to it (`Session::workspace`), at most one.
+*   **Artifacts**: results an agent published (issue [271](../issues/271-publishing-artifacts.md)),
+    each a user's, with one classification and its versions in the document - their size, digest,
+    the channel each was published in and by whom. The content of the versions is no part of it and
+    lies in a configured artifact storage, which the document names.
 
 The files of workspaces lie in the configured storages (`workspaces` in
 [CONFIGURATION.md](CONFIGURATION.md)), each served by one `TerminalProvider`
@@ -69,6 +73,18 @@ unused for `idle_stop_secs`, and any running container of the storage that no wo
 holds - one an earlier run left; stopping a container ends the commands in it. Removing a
 workspace removes its container and its volume.
 
+The content of artifacts lies in the storages configured under `artifacts` (see
+[CONFIGURATION.md](CONFIGURATION.md)), each an `ArtifactStorage` (`caelumora_runtime::artifact`):
+put, read as a stream and delete a version, by artifact and number, without permissions - `local`
+keeps a directory per artifact under its root and a file per version, written whole or not at all,
+as a local workspace's files are. The `ArtifactManager` is the one writer of artifact documents and
+the only code that holds the storages: a version's content is kept before the document says it
+exists, and removed again if the document cannot be stored; an artifact is purged with its content,
+the content first. Artifacts are entities, not state: each has its own owner and permissions, a name
+unique in its scope and a trash, and one that is kept leaves the session it was published in - it
+can be the state of neither a session nor a channel (issue 271). Object storage is issue
+[272](../issues/272-artifacts-in-s3.md).
+
 Preconfigured components are not among them. They are runtime configuration that personalities and
 templates refer to by `kind: "ref"`, and the `ComponentStore` keeps them: a `StoredComponent` - the
 `ComponentDescriptor` with the attributes of who may use and change it - by its id, with the same
@@ -94,7 +110,8 @@ Every entity has a name, and the fields that mean something for it (issue 177):
     channel's scope: `Stored::validate` refuses it, as a kind may refuse what cannot be stored. A
     workspace lies in a session's scope, its owner's or the global one - never a channel's, since a
     session's channels share one - and belongs to a user wherever it lies (issue
-    [251](../issues/251-open-terminal.md), decision 13).
+    [251](../issues/251-open-terminal.md), decision 13); so does an artifact, published into a
+    session's scope and kept, by its owner, in theirs or the global one (issue 271).
 *   What is offered for choosing - a personality, a session template - has a `description` as well,
     a catalogue line.
 

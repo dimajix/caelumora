@@ -62,8 +62,8 @@ one, and one issue that brings a workspace from outside:
 | [253](253-workspace.md) | The workspace of Caelumora's own: a user's tree of files in a configured storage, used in a session through its channels, in the web UI. | done |
 | [251](251-open-terminal.md) | Open Terminal: a container with files, a shell and processes, reached over REST; a component of its own with approval by kind of tool, long commands followed, a kill on interruption. | done - as the executor over 253, with `terminal_tool` and its file tools |
 | [208](208-generated-artifacts.md) | An `ArtifactStore` for binary content, references in messages, download, a panel. | open; where artifacts are kept is decided by 271 - what remains is taking in A2A and MCP parts as artifacts |
-| [273](273-publish-file.md) | `publish_file`: an agent offers a file of the workspace for download, as a link to it as it is now. | open - the cheap first step |
-| [271](271-publishing-artifacts.md) | Artifacts of their own: fixed copies with a scope, a lifetime and versions, metadata in the entity store, content in an `ArtifactStorage`. | open, decided (B) - builds on 273 |
+| [273](273-publish-file.md) | `publish_file`: an agent offers a file of the workspace for download, as a link to it as it is now. | done |
+| [271](271-publishing-artifacts.md) | Artifacts of their own: fixed copies with a scope, a lifetime and versions, metadata in the entity store, content in an `ArtifactStorage`. | done |
 | [272](272-artifacts-in-s3.md) | An `s3` provider of `ArtifactStorage`. | open - after 271 |
 | [169](169-changing-classified-content.md) | The rule for changing something classified from several places: fixed container, the writer's label must flow into it, every change records where it was made. | open, proposal complete |
 | [180](180-outbound-flow-unchecked.md) | What an agent sends out is checked by no rule; the proposal: a tool set whose remote side is not cleared for a channel is not offered there. | done |
@@ -221,7 +221,7 @@ Each milestone leaves the system usable; decisions come before the code that dep
 3.  **A workspace.** Decide 169, the small part of 20, and W1 together with 208, 180 and the role
     of Open Terminal (251); refactor `ToolProvider::execute` (226, first step); then W2, 251 as the
     executor with 247, W3, W4, and the artifacts of 208. *Done: W1, W2, W3 in part, 180, 251;
-    open: 247, W4 (256), the rest of W3, 273, 271, 208, 272, 169, 20.*
+    open: 247, W4 (256), the rest of W3, 208, 272, 169, 20; done since: 273, 271.*
 4.  **Sessions that last.** 16 with `/compact`, 58; 126. If reading files hits the context window
     earlier, the tool-result rule of 16 moves into milestone 3.
 

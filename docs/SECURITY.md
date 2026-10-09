@@ -41,7 +41,7 @@ A policy defined outside the binary is [24](../issues/24-opa-security-manager.md
 
 ## Ownership
 
-Every stored entity - session, channel, agent, personality, session template, workspace,
+Every stored entity - session, channel, agent, personality, session template, workspace, artifact,
 preconfigured component - carries `SecurityAttributes`: an `owner_id` and a list of `contributors`
 (issue 11). This is the one place ownership is recorded.
 
@@ -55,6 +55,12 @@ preconfigured component - carries `SecurityAttributes`: an `owner_id` and a list
     (`UpdateWorkspace`). In a session it is shared through the channels, whose members use it
     where the channel uses it and the classifications let them (see
     [CHANNELS.md](CHANNELS.md#its-workspace)) - no `GetWorkspace` is asked of them.
+*   An artifact is owned by the user the agent that published it acts for, always a user, and has no
+    contributors (issue [271](../issues/271-publishing-artifacts.md)): its owner reads every version
+    (`GetArtifact`), wherever it lies, and alone keeps, describes and deletes it (`UpdateArtifact`,
+    `DeleteArtifact`). A version is read by whoever reads the channel it was published in as a
+    whole, through the channel's view - no `GetArtifact` is asked of them, and none of the versions
+    published elsewhere is shown.
 *   Initial data belongs to the system.
 *   A `User` record belongs to the system, too (issue 94): only the user providers and the setup
     write it, so that nobody can grant themselves roles. What a user writes about themselves lives

@@ -632,6 +632,7 @@ agent alike.
 | `replace_in_file` | `terminal_tool` | `path`, `old_text`, `new_text`, `replace_all` (optional) | as configured, yes by default | `SHOWN` | Replaces text that occurs once - or every occurrence - in a text file of the workspace. |
 | `move_file` | `terminal_tool` | `from`, `to` | as configured, yes by default | `SHOWN` | Moves or renames a file or a directory of the workspace, never over something, its directories made (issue 267). |
 | `publish_file` | `terminal_tool` | `path`, `name`, `description` (optional) | as configured; not under `"unless_read_only"` | `SHOWN` | Offers a file of the workspace for download at its message, as a link to the file as it is now, with its digest (issue 273). |
+| `publish_artifact` | `artifact_tool` | `path`, `name`, `description` (optional) | as configured, yes by default | `SHOWN` | Publishes a file of the workspace as a version of an artifact: a fixed copy, kept beyond the workspace (issue 271, see [Artifacts](#artifacts)). |
 | `delete_file` | `terminal_tool` | `path` | as configured, yes by default | `SHOWN` | Deletes a file or an empty directory of the workspace. |
 | `read_history` | `channel_history` | `channel`, `last` (optional, default 20, at most 100), `query` (optional) | no | `SHOWN` | Reads the latest messages of another channel, or those containing a text. |
 
@@ -699,6 +700,32 @@ whatever it starts to its own future": a command lives with the storage, so that
 as running outlives the call, and one left running by a dropped call would go on writing into the
 workspace after the turn that started it. A command handed back as running is the model's to end;
 nothing bounds how long it runs yet (issue [254](../issues/254-commands-run-unbounded.md)).
+
+### Artifacts
+
+`publish_artifact` (component `artifact_tool`, issue [271](../issues/271-publishing-artifacts.md))
+publishes a file of the session's workspace as a version of an artifact: a fixed copy of it as it
+is, kept in an artifact storage beyond the workspace, downloaded at the message that published it.
+Beside it, `publish_file` offers a file as a link to it as it is now; a model is told the difference
+in their descriptions - a link for a look now, an artifact for a result to be kept.
+
+It is reached as the file tools are, through the turn's views and the workspace of the channel
+(`tool::channel_workspace`), and publishes in the name of whoever the agent acts for: its owner, who
+makes the artifact (`CreateArtifact`) or adds to theirs (`UpdateArtifact`), asked before anything is
+kept. An artifact is published into the session's scope, under its name - the file's unless given,
+at most 100 characters -, made with its first version and given one more by every later publication
+under that name. It is classified as the workspace, fixed with its first version; a later version
+from a workspace classified otherwise is refused - publish it under another name. A storage takes
+nothing above its `destination`. The content is read up to `artifacts.max_bytes` and kept as it
+streams, its digest taken as it passes. Its result is `{artifact, version, name, size, digest, path,
+description?}`, classified as the artifact, and is presented as `artifact_publish`. It changes what
+is kept, so it is approved where changes are; the approver reads which file is published as which
+artifact.
+
+Whoever reads the channel as a whole downloads the versions published there; the artifact's owner
+reads every version and keeps it beyond the session, in their scope or the global one; one that is
+not kept goes with the session, its content too (see [STORAGE.md](STORAGE.md) and
+[SECURITY.md](SECURITY.md#ownership)).
 
 ### Commands
 

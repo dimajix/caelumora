@@ -1,6 +1,6 @@
 # 271 — An agent cannot offer a file for download, and nothing outlives the workspace it lies in
 
-**Status:** in progress
+**Status:** done
 **Area:** Context and knowledge
 
 ## The problem
@@ -406,3 +406,11 @@ downloading; the documents say so.
   the viewer is its owner the card learns by asking for the artifact as theirs
   (`GET /artifacts/{id}`), which is refused to anyone else. The card's layout is shared with
   `publish_file`'s (`DownloadCard`). `OwnedScope` is the name in the web UI's types as well.
+- **2026-10-09** — Step 6 done, and with it the issue: `STORAGE.md` (artifacts among the
+  entities, their storage and manager, why they are entities and not state), `CONFIGURATION.md`
+  (`artifacts`), `TOOLS-AND-COMMANDS.md` (`publish_artifact`, a section of its own),
+  `COMPONENTS.md` (`artifact_tool`), `SECURITY.md` (who owns, reads and keeps an artifact),
+  `CHANNELS.md` (artifacts go with their session unless kept), `ARCHITECTURE.md` and `WEB-UI.md`;
+  `examples/config.yaml` keeps artifacts in `local/artifacts`, and the demo personality with the
+  workspace's tools has `artifact_tool` as well. Left for later, as decided: the list of a user's
+  kept artifacts in the web UI, and object storage (issue 272).

@@ -67,6 +67,18 @@ workspaces:
 #      idle_stop_secs: 900
 #      destination: { level: confidential }
 
+# Where the content of published artifacts lies (issue 271): storages by
+# name, each with its provider, and the one new artifacts go to where there
+# are several (`publish_to`). `local` keeps a directory per artifact under
+# `root`, a file per version. A storage takes no artifact classified above
+# its `destination`, if it has one.
+artifacts:
+  max_bytes: 52428800
+  storage:
+    kept:
+      provider: local
+      root: "local/artifacts"
+
 # Where users and their credentials come from. Without this section nobody
 # can authenticate. `accept_any` is a development stand-in that accepts ANY
 # username and password - never enable it on a server reachable from a network.
