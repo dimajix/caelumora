@@ -420,6 +420,8 @@ pub(crate) mod testing {
         /// What the agent acts in: for the workspace's owner.
         pub(crate) context: SecurityContext,
         pub(crate) workspace: Workspace,
+        /// What it runs on: where skills are made (issue 22).
+        pub(crate) runtime: Arc<RuntimeManager>,
     }
 
     impl WithWorkspace {
@@ -475,6 +477,6 @@ pub(crate) mod testing {
         store.create_channel(&system, &channel).await.unwrap();
         let session = SessionLoop::new(session, vec![channel], Arc::clone(&runtime)).await.unwrap();
         let context = SecurityContext::new(ActorId::User(owner), session_id, session.channels()[0].id()).next(ActorId::Agent(agent.id), ActorId::User(owner));
-        WithWorkspace { files, session, agent: agent.id, context, workspace }
+        WithWorkspace { files, session, agent: agent.id, context, workspace, runtime }
     }
 }

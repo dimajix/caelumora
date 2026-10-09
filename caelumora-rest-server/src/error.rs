@@ -204,6 +204,7 @@ impl ApiError {
                 ViewError::ChannelNotFound { .. } | ViewError::NoChannelNamed(_) => return Self::not_found("channel_not_found", detail),
                 ViewError::MemberNotFound { .. } => return Self::not_found("actor_not_found", detail),
                 ViewError::WorkspaceNotFound(_) => return Self::not_found("workspace_not_found", detail),
+                ViewError::SkillNotFound(_) | ViewError::NoSkillNamed(_) => return Self::not_found("skill_not_found", detail),
                 ViewError::NoContext { .. } => return Self::not_found("context_not_recorded", detail),
                 ViewError::Forbidden { .. } => return Self::forbidden(subject.forbidden(), detail),
                 ViewError::Failed(_) => {}

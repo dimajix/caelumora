@@ -373,3 +373,25 @@ tools, then authoring, then REST, the web UI and the seed, then the documents.
   `Turn::give`. Beyond the plan: `given` lets the turn see the message, so a skill loaded by
   `/skill` raises the turn's label as one loaded by `load_skill` does; `SkillSnapshot::owner`, for
   the web UI; `KnowledgeRefResponse::skill_id` already, since REST matches every source.
+- **2026-10-09** — Step 2 (C) done: `SkillManager` (`skill.rs`, held by the `RuntimeManager`),
+  skills deleted, restored and purged with a session's scope (`scoped.rs`), the views
+  (`Views::skills`, `skill`, `deleted_skills`, `usable_skills`, `usable_skill_named`,
+  `SkillView`), the component `skills` with the catalogue, `list_skills`, `load_skill`, `/skill`
+  and `/skills`. Beyond the plan, or decided while building it:
+  - **A text result is given as text** (`tool::successful_result`): a tool value that is a JSON
+    string reaches the model as the text it is - with the owner's note after it in brackets when
+    the channel does not see it -, any other value as JSON. That holds for every tool, so the
+    joined text of an `mcp_tool` call is no longer a quoted string either.
+  - `scope::found_from` lists what is found from a place, the innermost of every name, beside
+    `find_by_name`. The views filter first and choose after: a skill of the session the agent may
+    not use does not hide the global one of its name.
+  - `Views::cleared_for` moved up from `SessionView`, shared by channels and skills: a user is
+    shown a skill only if cleared for its classification, as a channel. The manager asks
+    `Classify` and the owner's clearance when a skill is made or reclassified, as for a
+    workspace, so that nobody writes what they could not read.
+  - `AccessQuestions::may_change_skill` and `may_use_skill`.
+  - `/skills @agent` lists what the agent may load for its owner, not what the issuer may read:
+    the agent answers for its owner, and whoever may ask it may ask what it knows (issue 255).
+    The names and descriptions of the owner's skills reach the issuer that way, privately - the
+    consequence of the owner putting the agent into the channel, not a gap in the rule.
+  - The parameter `requires_approval` comes with the authoring tools in step 3.

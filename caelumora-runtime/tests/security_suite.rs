@@ -2588,3 +2588,78 @@ async fn an_agents_command_runs_for_its_owner_on_the_word_of_whoever_asked() {
     assert_eq!((turn.caller_id, turn.principal_id, turn.initiator_id), (helper, ActorId::User(world.alice), ActorId::User(world.bob)));
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
+
+// --- Skills (issue 22) --------------------------------------------------------
+
+/// A session of alice and bob with alice's `helper`, which has the `skills`
+/// component, and a skill of alice's, `release-notes`, classified as the
+/// channel; and how bob's stream shows him what comes of his commands.
+async fn with_a_skilled_agent() -> (World, Arc<SessionLoop>, Arc<caelumora_runtime::channel::ChannelLoop>, AgentId, caelumora_runtime::actor::user::ChannelWatch) {
+    let world = World::with_kinds(|registry| register_once(registry, "silent", caelumora_model::message::Message::new(Classification::PUBLIC))).await;
+    let skilled = Personality {
+        components: ComponentConfig { component_nodes: vec![
+            ComponentDescriptor::new("model", "silent"),
+            ComponentDescriptor::new("skills", caelumora_runtime::component_impl::skills::SKILLS_KIND),
+        ] },
+        ..world.personality("skilled", None, &[]).await
+    };
+    world.store.update_personality(&World::system(), &skilled).await.unwrap();
+    let helper = world.agent("helper", world.alice, &skilled).await;
+    let internal = Classification::general(Confidentiality::Internal);
+    world.runtime.skill_manager()
+        .create(&World::as_user(world.alice), "release-notes", Scope::UserScope { user_id: world.alice }, "How we write a release note", "1. Collect.\n2. Group.", internal).await
+        .expect("hers to make");
+    let session = world.shared_session(&[helper], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    let his = main.user_actor(world.bob).expect("he takes part").watch();
+    (world, session, main, helper, his)
+}
+
+/// A skill loaded by a command (issue 22) is loaded by the agent for its
+/// owner, on the word of whoever asked: bob's `/skill` loads alice's skill
+/// into her agent - `UseSkill` asked as the agent for alice, bob the
+/// initiator. Its text goes into the agent's transcript in bob's name, and
+/// the channel's history records the command, not the text.
+#[tokio::test]
+async fn an_agent_loads_a_skill_for_its_owner_whoever_asked() {
+    let (world, session, main, helper, mut his) = with_a_skilled_agent().await;
+
+    let (answer, asked) = world.asked(async {
+        main.user_actor(world.bob).unwrap().execute_command("skill", "@helper release-notes").await.expect("his to give");
+        shown(&mut his, "CommandExecuted").await
+    }).await;
+    assert!(matches!(answer, caelumora_model::actor::ActorEvent::CommandExecuted { ref output, .. } if output.contains("release-notes")), "{answer:?}");
+    let using: Vec<&String> = asked.iter().filter(|line| line.contains("UseSkill")).collect();
+    assert_eq!(using, ["alice as helper, asked by bob: UseSkill(alice's) yes"], "for its owner, asked by him");
+
+    let state = world.store.get_agent_channel_state(helper, main.id()).await.unwrap();
+    let given = state.transcript.messages().into_iter().last().expect("given");
+    assert!(given.content.as_deref().is_some_and(|c| c.starts_with("[Skill: release-notes]\n1. Collect.")), "{given:?}");
+    assert_eq!((given.sender_id, given.role), (ActorId::User(world.bob), caelumora_model::message::MessageRole::User), "in his name");
+    let history = world.store.get_channel_state(main.id()).await.unwrap().history;
+    assert!(history.messages().iter().all(|m| !m.content.as_deref().unwrap_or_default().contains("Collect.")), "nothing of the text in the channel's history");
+    assert!(history.items().iter().any(|item| matches!(item, caelumora_model::message_history::HistoryEntry::CommandExecuted { command, issuer, .. } if command == "skill" && *issuer == ActorId::User(world.bob))), "but the command");
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// A skill classified above the channel (issue 22) may not flow into it:
+/// the agent neither lists it nor loads it, and answers for it as for one
+/// that does not exist.
+#[tokio::test]
+async fn a_skill_classified_above_the_channel_is_neither_listed_nor_loaded() {
+    let (world, session, main, _, mut his) = with_a_skilled_agent().await;
+    world.runtime.skill_manager()
+        .create(&World::system(), "secret-plan", Scope::GlobalScope, "What is not said", "Nothing.", Classification::general(Confidentiality::StrictlyConfidential)).await
+        .expect("the system's");
+    let bob = main.user_actor(world.bob).unwrap();
+
+    bob.execute_command("skills", "@helper").await.expect("his to ask");
+    let caelumora_model::actor::ActorEvent::CommandExecuted { output, .. } = shown(&mut his, "CommandExecuted").await else { unreachable!() };
+    assert!(output.contains("release-notes") && !output.contains("secret-plan"), "{output}");
+
+    bob.execute_command("skill", "@helper secret-plan").await.expect("sent");
+    let caelumora_model::actor::ActorEvent::CommandFailed { reason, .. } = shown(&mut his, "CommandFailed").await else { unreachable!() };
+    assert!(reason.contains("no skill named \"secret-plan\""), "as absent: {reason}");
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}

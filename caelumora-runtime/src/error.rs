@@ -17,6 +17,7 @@ use crate::view::{ContextError, ViewError};
 use crate::channel::ChannelError;
 use crate::terminal::TerminalError;
 use crate::workspace::WorkspaceError;
+use crate::skill::SkillError;
 use caelumora_model::store::StoreError;
 use caelumora_model::template::TemplateError;
 use caelumora_model::value::ValueError;
@@ -54,6 +55,12 @@ pub fn user_message(error: &anyhow::Error) -> Option<String> {
             // the workspace and what the caller wrote, never a place.
             match e {
                 WorkspaceError::Store(e) => store_message(e),
+                _ => Some(e.to_string()),
+            }
+        } else if let Some(e) = e.downcast_ref::<SkillError>() {
+            // As a workspace's: its store errors are judged as store errors.
+            match e {
+                SkillError::Store(e) => store_message(e),
                 _ => Some(e.to_string()),
             }
         } else if let Some(e) = e.downcast_ref::<TerminalError>() {

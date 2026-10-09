@@ -513,6 +513,15 @@ pub trait AccessQuestions {
     /// Whether `context` may remove an entity of `kind` with `attributes`
     /// for good (`Purge`, issue 164).
     async fn may_purge(&self, context: &SecurityContext, kind: EntityKind, attributes: &SecurityAttributes) -> bool;
+
+    /// Whether `context` may change the skill with `skill` attributes - its
+    /// name, description, body, classification - and delete it
+    /// (`UpdateSkill`, issue 22).
+    async fn may_change_skill(&self, context: &SecurityContext, skill: &SecurityAttributes) -> bool;
+
+    /// Whether `context` may load the skill with `skill` attributes into a
+    /// turn (`UseSkill`, issue 22).
+    async fn may_use_skill(&self, context: &SecurityContext, skill: &SecurityAttributes) -> bool;
 }
 
 #[async_trait]
@@ -598,6 +607,14 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
 
     async fn may_purge(&self, context: &SecurityContext, kind: EntityKind, attributes: &SecurityAttributes) -> bool {
         self.check(context, ActionType::Purge(kind, attributes)).await
+    }
+
+    async fn may_change_skill(&self, context: &SecurityContext, skill: &SecurityAttributes) -> bool {
+        self.check(context, ActionType::UpdateSkill(skill)).await
+    }
+
+    async fn may_use_skill(&self, context: &SecurityContext, skill: &SecurityAttributes) -> bool {
+        self.check(context, ActionType::UseSkill(skill)).await
     }
 }
 

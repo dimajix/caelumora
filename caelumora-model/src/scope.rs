@@ -106,6 +106,26 @@ pub fn find_by_name<'a, D: Scoped>(scoped: impl IntoIterator<Item = &'a D>, name
         .map(|(_, d)| d)
 }
 
+/// What `user` finds from `place` among `scoped`, by name: for every name
+/// visible from there the one `find_by_name` finds - what a catalogue of
+/// them lists (issue 22). In the order of their names.
+pub fn found_from<'a, D: Scoped>(scoped: impl IntoIterator<Item = &'a D>, place: &Scope, user: Option<UserId>) -> Vec<&'a D> {
+    let visible: Vec<(ScopedName, &D)> = scoped.into_iter()
+        .map(|d| (d.scoped_name(), d))
+        .filter(|(scoped_name, _)| scoped_name.scope.visible_from(place, user))
+        .collect();
+    let mut found: Vec<(ScopedName, &D)> = Vec::new();
+    for (scoped_name, d) in visible {
+        match found.iter_mut().find(|(other, _)| other.name == scoped_name.name) {
+            Some(entry) if scoped_name.scope.depth() > entry.0.scope.depth() => *entry = (scoped_name, d),
+            Some(_) => {}
+            None => found.push((scoped_name, d)),
+        }
+    }
+    found.sort_by(|(l, _), (r, _)| l.name.as_str().cmp(r.name.as_str()));
+    found.into_iter().map(|(_, d)| d).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -251,5 +271,22 @@ mod tests {
     fn of_two_equally_deep_the_first_is_found() {
         let items = [item("helper", Scope::GlobalScope, "first"), item("Helper", Scope::GlobalScope, "second")];
         assert_eq!(found(&items, "helper", &Scope::GlobalScope, None), Some("first"));
+    }
+
+    #[test]
+    fn what_is_found_from_a_place_is_the_innermost_of_every_name() {
+        let (alice, session_id) = (UserId::new(), SessionId::new());
+        let place = Scope::ChannelScope { session_id, channel_id: ChannelId::new() };
+        let items = [
+            item("notes", Scope::GlobalScope, "the global notes"),
+            item("notes", Scope::SessionScope { session_id }, "the session's notes"),
+            item("deploy", Scope::UserScope { user_id: alice }, "alice's deploy"),
+            item("audit", Scope::SessionScope { session_id: SessionId::new() }, "another session's"),
+            item("audit", Scope::UserScope { user_id: UserId::new() }, "another user's"),
+        ];
+        let listed: Vec<&str> = found_from(&items, &place, Some(alice)).into_iter().map(|d| d.what).collect();
+        assert_eq!(listed, ["alice's deploy", "the session's notes"], "by name, each the innermost; nothing of another session or user");
+        let as_nobody: Vec<&str> = found_from(&items, &place, None).into_iter().map(|d| d.what).collect();
+        assert_eq!(as_nobody, ["the session's notes"]);
     }
 }
