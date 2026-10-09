@@ -54,6 +54,7 @@ use caelumora_model::skill::SkillId;
 use caelumora_model::scope::{found_from, Scope, Scoped};
 use caelumora_model::value::name::Name;
 use crate::workspace::WorkspaceManager;
+use crate::skill::SkillManager;
 use caelumora_model::store::{EntityKind, EntityStore, StateStore, StoreResultExt};
 use crate::component::ComponentRegistry;
 use std::sync::Arc;
@@ -175,6 +176,7 @@ pub struct Views {
     states: Arc<dyn StateStore>,
     components: Arc<ComponentRegistry>,
     workspaces: Arc<WorkspaceManager>,
+    skills: Arc<SkillManager>,
     running: Arc<dyn RunningSessions>,
     viewer: Viewer,
 }
@@ -187,6 +189,7 @@ impl Views {
             states: Arc::clone(runtime.state_store()),
             components: Arc::clone(runtime.component_registry()),
             workspaces: Arc::clone(runtime.workspace_manager()),
+            skills: Arc::clone(runtime.skill_manager()),
             running,
             viewer,
         }
@@ -226,6 +229,12 @@ impl Views {
 
     pub(crate) fn workspace_manager(&self) -> &Arc<WorkspaceManager> {
         &self.workspaces
+    }
+
+    /// Where an agent's tools write skills (issue 22), as its file tools
+    /// reach the workspace manager.
+    pub(crate) fn skill_manager(&self) -> &Arc<SkillManager> {
+        &self.skills
     }
 
     /// Every session the viewer may read, in the order the store lists

@@ -395,3 +395,15 @@ tools, then authoring, then REST, the web UI and the seed, then the documents.
     The names and descriptions of the owner's skills reach the issuer that way, privately - the
     consequence of the owner putting the agent into the channel, not a gap in the rule.
   - The parameter `requires_approval` comes with the authoring tools in step 3.
+- **2026-10-09** — Step 3 (D) done: `create_skill` and `update_skill` in the component `skills`,
+  approved unless its parameter `requires_approval` (an `ApprovalMode`, as `terminal_tool` takes
+  it) says `false`; the approver is shown the skill whole. The views reach the `SkillManager` as
+  they reach the workspace manager. Beyond the plan:
+  - **Changing a skill raises it** to what the changing turn has seen, before its text changes
+    (`join_within` the turn's classification): otherwise a turn that saw something confidential
+    could write it into an internal skill (issue 169's question, answered for skills as for a
+    workspace's single classification).
+  - A skill a fresh turn writes is classified `public` if the turn had seen nothing above it - the
+    turn's label, as issue 168 decided for everything a turn writes.
+  - The catalogue's and `list_skills`' classification is the bounded join (`join_within` the
+    turn's classification), not the plain one, which has no answer for disjoint compartments.

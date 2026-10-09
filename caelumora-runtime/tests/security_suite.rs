@@ -2663,3 +2663,71 @@ async fn a_skill_classified_above_the_channel_is_neither_listed_nor_loaded() {
     assert!(reason.contains("no skill named \"secret-plan\""), "as absent: {reason}");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
+
+/// A session of alice and bob with alice's `helper`, whose model calls the
+/// tool `function` with `arguments` once it is asked, and which writes
+/// skills without approval; and a skill of bob's, `review`, shared with
+/// alice.
+async fn with_a_writing_agent(function: &str, arguments: serde_json::Value) -> (World, Arc<SessionLoop>, Arc<caelumora_runtime::channel::ChannelLoop>) {
+    use caelumora_model::message::{Message, MessageRole};
+    use caelumora_model::tool::{ToolCall, ToolVisibility};
+    let call = Message {
+        role: MessageRole::Assistant,
+        tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: function.to_string(), arguments, visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
+        ..Message::new(Classification::general(Confidentiality::Internal))
+    };
+    let world = World::with_kinds(|registry| register_once(registry, "writing", call)).await;
+    let writing = Personality {
+        components: ComponentConfig { component_nodes: vec![
+            ComponentDescriptor::new("model", "writing"),
+            ComponentDescriptor { params: serde_json::json!({ "requires_approval": false }), ..ComponentDescriptor::new("skills", caelumora_runtime::component_impl::skills::SKILLS_KIND) },
+        ] },
+        ..world.personality("writing", None, &[]).await
+    };
+    world.store.update_personality(&World::system(), &writing).await.unwrap();
+    let helper = world.agent("helper", world.alice, &writing).await;
+    let review = world.runtime.skill_manager()
+        .create(&World::as_user(world.bob), "review", Scope::GlobalScope, "How we review", "Read it twice.", Classification::general(Confidentiality::Internal)).await
+        .expect("his to make");
+    let shared = caelumora_model::skill::Skill { security_attributes: SecurityAttributes { owner_id: ActorId::User(world.bob), contributors: vec![ActorId::User(world.alice)] }, ..review };
+    world.store.update_skill(&World::as_user(world.bob), &shared).await.expect("shared with alice");
+    let session = world.shared_session(&[helper], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    (world, session, main)
+}
+
+/// A skill an agent writes (issue 22) is its owner's - asked as the agent
+/// for its owner, whoever asked - and lies in the session's scope it asked
+/// for, classified as what its turn had seen.
+#[tokio::test]
+async fn an_agents_skill_belongs_to_its_owner_and_lies_in_the_session() {
+    let arguments = serde_json::json!({ "name": "deploy", "description": "How we deploy", "body": "1. Build.", "scope": "session" });
+    let (world, session, main) = with_a_writing_agent("create_skill", arguments).await;
+
+    let (_, asked) = world.asked(async {
+        main.user_actor(world.bob).unwrap().send_message("@helper write it down".to_string(), None).await.expect("sent");
+        asked_for(&world, "alice as helper, asked by bob: CreateSkill(alice's) yes").await;
+    }).await;
+    assert!(asked.iter().any(|line| line == "alice as helper, asked by bob: CreateSkill(alice's) yes"), "{asked:?}");
+    let skills = world.store.list_skills(&World::system()).await.unwrap();
+    let deploy = skills.iter().find(|s| s.name.name.as_str() == "deploy").expect("written");
+    assert_eq!(deploy.security_attributes.owner_id, ActorId::User(world.alice), "the agent's owner's");
+    assert_eq!(deploy.name.scope, Scope::SessionScope { session_id: session.id() }, "in the session's scope");
+    assert!(deploy.classification.surely_flows_to(&main.classification()), "classified as what the turn saw, never above the channel");
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// A skill shared with the agent's owner is loaded, not changed: changing a
+/// skill (`UpdateSkill`) is its owner's alone, also through an agent.
+#[tokio::test]
+async fn an_agent_changes_only_skills_of_its_owners() {
+    let arguments = serde_json::json!({ "name": "review", "body": "Skip it." });
+    let (world, session, main) = with_a_writing_agent("update_skill", arguments).await;
+
+    main.user_actor(world.bob).unwrap().send_message("@helper change it".to_string(), None).await.expect("sent");
+    asked_for(&world, "alice as helper, asked by bob: UpdateSkill(bob's) no").await;
+    let review = world.store.find_skill_by_name(&World::system(), &ScopedName::new("review", Scope::GlobalScope).unwrap()).await.unwrap();
+    assert_eq!(review.body.as_str(), "Read it twice.", "unchanged");
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
