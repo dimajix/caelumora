@@ -35,6 +35,11 @@ argues against it, and what came out of the last attempt.
 
 ### Creating a new issue
 
+A new issue is opened on `main` alone, from its newest version, in a commit of its own that is
+pushed at once; its branch comes only with its implementation. Why, and how exactly, is in
+[AGENTS.md](../AGENTS.md#branches-and-commits): a number is taken where everybody takes them, and is
+published before anyone else can take it.
+
 1. Check this index first — an issue for it may already exist, in which case add to that file's `##
    History` rather than opening a second one.
 2. Take the next free number and create `issues/<number>-<slug>.md` with the status header, the
