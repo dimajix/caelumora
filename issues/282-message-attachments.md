@@ -77,29 +77,61 @@ store. Three ways to give it an attachment:
   in JSON documents that are written whole or as changes. Rejected for that.
 - **B. A reference in the message, the content in a storage** (recommended). An attachment is what
   is known of it - a name, a media type, a size, the digest of its content (`digest::content`) -
-  and its content lies in a storage of binary content, keyed by that digest. The message stays
-  small, every clone and copy refers to the same content, and the message's digest covers the
-  content through the digest of it. The price: the content has to be fetched where a model is given
-  it or a user downloads it.
+  and its content lies in a storage of binary content (see *How attachments are managed*). The
+  message stays small, every clone and copy refers to the same content, and the message's digest
+  covers the content through the digest of it. The price: the content has to be fetched where a
+  model is given it or a user downloads it.
 - **C. A reference that caches the content** (`#[serde(skip)]` beside it). Cheap where the content
   happens to be loaded, but whether it is depends on where the message came from - a state that
-  cannot be told from the type. Not recommended.
+  cannot be told from the type - if anything but one place fills it.
 
-### Which storage
+**Decided: B for what is stored, C for what the model is given.** Histories and transcripts hold
+only the reference with the digest. The copy of a message that the model is given carries the
+content beside it, `content: Option<bytes::Bytes>`, never serialized and not covered by the digest;
+a clone counts a reference and copies nothing, and `LLMClient::chat_completion` keeps its signature.
+Only the turn fills it (see *Giving it to the model*), on the copies it hands to the client, and a
+message with content is never stored. Where it is `None`, the client tells the model of the
+attachment in text.
 
-[271](271-publishing-artifacts.md) built an `ArtifactStorage` for binary content: content by
-artifact and version, a local provider, S3 to follow (272). An attachment is not an artifact: it
-has no owner of its own, no scope and no versions, and lives and dies with its message - deleted
-with its session, erased with it ([237](237-erasing-a-message.md)). But keeping bytes is the same
-thing twice. To decide: one storage of binary content under both - a key and bytes, without
-permissions - with artifacts and attachments as two users of it, or a storage of attachments of
-its own. The first avoids a second provider for each backend (local, S3); it means generalizing
-`ArtifactStorage` first, as a step of its own.
+### How attachments are managed - open
 
-Keyed by the session and the content's digest, the same content attached twice in a session is
-kept once, and deleting the session removes its attachments as a whole. Content is never reached by
-its digest alone: a digest of known content can be computed by anyone, and asking for it would tell
-whether someone attached it. It is reached through the message, by whoever may read the message.
+**Not by their digest.** Keeping content by its digest - kept once however often it is attached -
+leaves open when an object may finally be deleted: only once nothing refers to it any more, and
+references lie in every message of the same content, in the older versions of modified messages
+(234), in the participants' copies (120) and in the agents' transcripts. Erasing a message (237)
+would have to search all of them, and a mistake there is a leak. That is why `ArtifactStorage` keeps
+content by artifact and version, not by digest (`<root>/<artifact>/<version>`), with the digest as
+what is known of a version (`ArtifactVersion::digest`). Attachments keep to that: the digest is
+known of an attachment and covered by its message's digest, but it is no key in a storage. Content
+is shared only in memory, in the cache, by digest (see *Who fetches the content*). Nor is content
+ever reached by its digest alone: a digest of known content can be computed by anyone, and asking
+for it would tell whether someone attached it.
+
+Who an attachment belongs to and how long it lives is open. Two ways:
+
+- **A part of its message.** Kept by session and an id of its own, one object per attachment: it
+  belongs to exactly one message - copies and clones of the message refer to the same id - and goes
+  with its session or when its message is erased; nothing is ever counted. What is uploaded and not
+  yet sent lies in an area of its own, per user, and moves under the session when the message is
+  sent; what lies there too long can go without a check, since nothing refers to it. Simple, and
+  what is said in a session stays in it. But an image cannot be used again in another chat without
+  uploading it again.
+- **A file of the user's, as an artifact.** As Open WebUI does it: what a user uploads is a file of
+  theirs, not of a chat, available in general and attached to messages in any chat. Here it would be
+  an artifact of the user's ([271](271-publishing-artifacts.md)) - owned, in a scope, in versions,
+  its content in the `ArtifactStorage` - and a message refers to one version of it, which is fixed.
+  The scope gives both lifetimes: the session's scope is the first way, the user's own scope the
+  second. Deleting is then the owner's act, not a question of references. To decide with it: what
+  a message shows whose artifact was deleted (a note instead of the image, its digest still
+  standing), who may read the artifact - whoever may read a message it is attached to, as whoever
+  may read the channel it was published in may download an artifact today -, and how an
+  attachment's classification and its message's go together, when an artifact keeps the one it was
+  first made with.
+
+Either way, keeping bytes is the same thing as keeping an artifact's: one storage of binary
+content under both - a key and bytes, without permissions - rather than a second provider for each
+backend (local, S3, 272). With the first way that means generalizing `ArtifactStorage` first, as a
+step of its own; with the second, attachments are artifacts and use it as it is.
 
 ### Upload and the REST API
 
@@ -109,18 +141,19 @@ whether someone attached it. It is reached through the message, by whoever may r
   come with it. What is uploaded and never sent is removed after a while. The alternative - one
   multipart request with message and files - is simpler for the server, less so for the web UI.
 - **The media type is not taken from the client:** it is sniffed from the bytes and checked against
-  an allow-list (png, jpeg, webp, gif; PDF once it can be given to a model). A size limit per
-  attachment and a count per message, configured.
+  an allow-list (png, jpeg, webp; PDF once it can be given to a model - see *Image formats*). A size
+  limit per attachment and a count per message, configured.
 - **Download** through the message: `GET …/messages/{mid}/attachments/{n}`, as reading the message
   (`AccessQuestions`), with a test in the security suite. Served as the workspace serves files,
   `nosniff`; shown inline only for the image types of the allow-list - never SVG or HTML.
 
 ### Classification, changes, taking back
 
-An attachment is classified as its message. Whether a modified message (issue 234) may change its
-attachments, or only its text, is to be decided. A message taken back is read without its
-attachments, as without its content; erasing (237) has to remove the content too, unless another
-message of the session refers to the same digest.
+An attachment is classified as its message - or, as an artifact of the user's, has a classification
+of its own that has to fit the message's (see *How attachments are managed*). Whether a modified
+message (issue 234) may change its attachments, or only its text, is to be decided. A message taken
+back is read without its attachments, as without its content; erasing it (237) removes an
+attachment that is part of it, while a file of the user's stays theirs to delete.
 
 The message's digest (`digest::message_chain`) covers the attachments - name, media type and the
 content's digest - since they are part of what was said. That changes the digest: stored histories
@@ -135,11 +168,40 @@ and transcripts have to be deleted.
   API); or the agent fetches before it asks its model and hands the client the content beside the
   messages, which changes `LLMClient::chat_completion`. The first keeps the encoding where the API
   is known; the second keeps the client free of storage. Since every model call sends every image
-  again, the client or the reader should keep recently used content.
+  again, the content cannot be fetched from the storage for every call.
+
+  **Decided: the turn fetches, a shared cache keeps.** Not the `ContextProvider`: it gives the
+  prompt parts once, at the start of a turn, while `full_context` builds the conversation anew from
+  the transcript before every model call - what the provider added would be gone at the next call,
+  and an attachment that comes in during the turn (a tool result's image, 208) would never be
+  added. Instead:
+  - The turn holds the content its context needs, by digest (`Bytes`). Before every model call
+    it fetches, asynchronously, what it does not hold yet - as a rule nothing -, and `full_context`
+    puts the content on the copies it hands to the client. The client only encodes it for its API.
+  - The content is fetched through the owner of attachments, which keeps a **cache per process**,
+    keyed by session and digest: an image several agents of a channel are given lies in memory
+    once.
+  - **What leaves the cache** is a question of memory, not of meaning: least recently used first,
+    within a configured byte budget. A running turn holds the `Bytes` it uses itself, so the cache
+    cannot take from it what it needs; what was evicted is fetched from the storage at the next
+    turn again. Deleting a session and erasing a message (237) remove their content from the cache
+    explicitly.
+  - The client does not reach the storage, and a message with content is never stored.
 - **What the model can take.** Whether a model sees images, hears audio or reads PDFs is a property
   of the model - `ModelProfile`, filled from `/api/show`'s `capabilities` where the backend says so,
   configurable where it does not. A model that cannot take an attachment is told of it in text (its
   name, its type, that it cannot be shown) rather than sent bytes it ignores or the request failing.
+- **Image formats.** No API takes decoded pixels: each takes the image *file* - its bytes base64
+  encoded (Ollama's `/api/chat`), or as a data URL (the OpenAI-compatible APIs) - and decodes it,
+  scales it to the resolution of the model's vision encoder and cuts it into patches itself. What
+  all of them take is png, jpeg and webp (Ollama documents png and jpeg and converts webp; its
+  `/v1` rejects GIF; OpenAI takes non-animated GIF too). So the allow-list is png, jpeg and webp;
+  GIF and HEIC (photos from iPhones) are refused at first, converting them on upload can follow.
+  What was uploaded is kept as it is - its digest, its download and what the model is given are the
+  same bytes. Since the backend scales anyway, a photo of many megapixels gives the model nothing a
+  smaller copy would not, but costs transfer and a third more as base64; a scaled copy for sending,
+  kept in the cache, is a conversion (below) and not part of the first step. The tokens an image
+  costs depend on the model's encoder with Ollama, on its size and `detail` with OpenAI.
 - **Converting.** A PDF is given to most models only as text or as images of its pages. A converter
   between storage and client, chosen by what the model takes, whose results are kept by the
   digest of the source. Not part of the first step; the type must leave room for it.
@@ -166,8 +228,9 @@ size and a download.
 - An agent whose model can see is given the images of the messages in its context; one whose model
   cannot is told in text that an image was attached.
 - Who may read a message may download its attachments, nobody else; the security suite covers it.
-- Where the content lies is decided together with 271's `ArtifactStorage`, and 208 knows which
-  type it uses for what a model is to see.
+- How attachments are managed - as part of their message or as files of the user's - is decided,
+  their content lies in the same storage as artifacts' content, and 208 knows which type it uses for
+  what a model is to see.
 - CHANNELS.md, AGENT-TURN.md, STORAGE.md, REST-SERVER.md, WEB-UI.md and CONFIGURATION.md describe
   it; which stored data has to be deleted is said.
 
@@ -178,3 +241,14 @@ size and a download.
   that does not duplicate the content when a message is cloned, a store with only digests in the
   message as the alternative, the content to be fetched when given to Ollama, and PDFs that some
   models need converted. The section on the model APIs was researched for it.
+- **2026-10-09** — Decided with the maintainer, branch `issue-282-message-attachments`: what is
+  stored holds only the reference with the digest; the copies the model is given carry the content,
+  `Option<Bytes>`, unserialized (B with C, under *Where the content lies*). The turn, not the
+  `ContextProvider`, fetches what it lacks before every model call, through a cache per process
+  with a byte budget and least-recently-used eviction (*Who fetches the content*). Images are given
+  as files, not decoded: png, jpeg and webp, kept as uploaded (*Image formats*).
+- **2026-10-09** — Content is not kept by its digest: when an object could finally be deleted would
+  be unclear, as it was for artifacts; the digest is known of an attachment, content is shared only
+  in the cache. Left open at the maintainer's request: how attachments are managed - as part of
+  their message, kept by session and id, or as files of the user's, as artifacts, as Open WebUI
+  does it (*How attachments are managed*).
