@@ -247,6 +247,7 @@ published before anyone else can take it.
 | [277](277-command-agent-by-name.md) | done | A command such as `/wakeup` finds the agent it names only by its exact handle, so `/wakeup Sassy` or `@Sassy` names no agent. |
 | [278](278-nudge-command.md) | done | A user cannot ask an agent to respond to the conversation as it stands without writing a message, such as an empty `@sassy?`. |
 | [282](282-message-attachments.md) | open | A user cannot attach an image or a file to a message, so a model that can see, such as Gemma 4, is never shown one. |
+| [283](283-show-agent-components.md) | open | The web UI does not show what an agent was built from, so its owner cannot see which components it has or which came from an included list. |
 
 ## Context and knowledge
 

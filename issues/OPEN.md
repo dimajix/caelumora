@@ -68,6 +68,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [218](218-paged-histories.md) | open | A channel's history and an agent's history are returned whole over REST, though both grow without a limit and only their end is shown first. |
 | [227](227-agent-management.md) | open | Agents cannot be seen or managed on their own, only as members of channels: no list, no renaming, no trash in the web UI, nothing of what an agent has across channels. |
 | [282](282-message-attachments.md) | open | A user cannot attach an image or a file to a message, so a model that can see, such as Gemma 4, is never shown one. |
+| [283](283-show-agent-components.md) | open | The web UI does not show what an agent was built from, so its owner cannot see which components it has or which came from an included list. |
 
 ## Context and knowledge
 
