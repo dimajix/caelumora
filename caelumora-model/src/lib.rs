@@ -40,3 +40,4 @@ pub mod secret;
 pub mod user_provider;
 pub mod snapshot;
 pub mod workspace;
+pub mod artifact;

@@ -8,7 +8,7 @@
 use crate::actor::ActorId;
 use crate::confidentiality::Classification;
 use crate::removal::Removal;
-use crate::scope::{Scope, Scoped};
+use crate::scope::Scoped;
 use crate::security::{Secured, SecurityAttributes};
 use crate::user::UserId;
 use crate::value::name::ScopedName;
@@ -104,16 +104,7 @@ impl crate::removal::Stored for Workspace {
     /// scope, its owner's or the global one: not in a channel's, since a
     /// session's channels share one.
     fn validate(&self) -> Result<(), String> {
-        let Some(owner) = self.owner() else { return Err("a workspace belongs to a user".to_string()) };
-        if !self.security_attributes.contributors.is_empty() {
-            return Err("a workspace has no contributors: it is shared through channels".to_string());
-        }
-        match &self.name.scope {
-            Scope::SessionScope { .. } | Scope::GlobalScope => Ok(()),
-            Scope::UserScope { user_id } if *user_id == owner => Ok(()),
-            Scope::UserScope { .. } => Err("a workspace lies in no other user's scope than its owner's".to_string()),
-            Scope::ChannelScope { .. } | Scope::GroupScope { .. } => Err("a workspace lies in a session's scope, its owner's or the global one".to_string()),
-        }
+        crate::scope::validate_users_own("workspace", &self.security_attributes, &self.name.scope)
     }
 }
 
@@ -153,6 +144,7 @@ pub enum WorkspaceChoice {
 mod tests {
     use super::*;
     use crate::removal::Stored;
+    use crate::scope::Scope;
     use crate::session::{ChannelId, SessionId};
 
     fn named(scope: Scope) -> ScopedName {

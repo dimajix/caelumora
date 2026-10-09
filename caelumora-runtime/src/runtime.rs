@@ -41,6 +41,8 @@ pub struct RuntimeManager {
     agent_states: Arc<crate::agent::state::AgentStates>,
     /// The one owner of workspaces and their places (issue 253).
     workspaces: Arc<crate::workspace::WorkspaceManager>,
+    /// The one owner of artifacts and their content (issue 271).
+    artifacts: Arc<crate::artifact::ArtifactManager>,
 }
 
 /// What a channel runs with: the process-wide services of the
@@ -313,6 +315,7 @@ impl RuntimeManager {
         let controller_manager = Arc::new(ControllerManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus)));
         let agent_states = Arc::new(crate::agent::state::AgentStates::new(Arc::clone(&state_store), Arc::<EventBus>::clone(&event_bus)));
         let workspaces = Arc::new(crate::workspace::WorkspaceManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus), Arc::clone(&security_manager), &secret_manager, &config.workspaces)?);
+        let artifacts = Arc::new(crate::artifact::ArtifactManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus), Arc::clone(&security_manager), &config.artifacts)?);
 
         Ok(Self {
             security_manager,
@@ -326,6 +329,7 @@ impl RuntimeManager {
             approval_rules: config.approvals.rules.clone().into(),
             agent_states,
             workspaces,
+            artifacts,
         })
     }
 
@@ -383,6 +387,11 @@ impl RuntimeManager {
     /// The one owner of workspaces and their places (issue 253).
     pub fn workspace_manager(&self) -> &Arc<crate::workspace::WorkspaceManager> {
         &self.workspaces
+    }
+
+    /// The one owner of artifacts and their content (issue 271).
+    pub fn artifact_manager(&self) -> &Arc<crate::artifact::ArtifactManager> {
+        &self.artifacts
     }
 
     pub fn new_recorder(&self) -> Result<Box<dyn Recorder>> {

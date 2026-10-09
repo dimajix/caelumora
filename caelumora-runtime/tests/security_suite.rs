@@ -20,7 +20,7 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId, PersonalityKind};
 use caelumora_model::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
 use caelumora_model::channel::{moderation_components, Channel, HistoryAccess, Participant};
-use caelumora_model::config::{StorageConfig, WorkspacesConfig};
+use caelumora_model::config::{ArtifactStorageConfig, ArtifactsConfig, StorageConfig, WorkspacesConfig};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_model::external_agent::{ConversationId, TaskId};
 use caelumora_model::confidentiality::{Classification, Clearance, Compartments, ConfidentialityRules, Confidentiality, Roles};
@@ -44,6 +44,7 @@ use caelumora_runtime::session::{ChannelSpec, SessionError, SessionLoop, Session
 use caelumora_runtime::terminal::{ByteStream, Terminal, WorkspacePath};
 use caelumora_runtime::view::{ViewError, Viewer};
 use caelumora_runtime::workspace::WorkspaceError;
+use caelumora_runtime::artifact::ArtifactError;
 use caelumora_model::workspace::WorkspaceChoice;
 
 /// The ownership policy, recording every question it is asked - who acted
@@ -113,6 +114,7 @@ fn attributes_of<'a>(action: &ActionType<'a>) -> Option<&'a SecurityAttributes> 
         | GetUserProfile(a) | CreateUserProfile(a) | UpdateUserProfile(a) | DeleteUserProfile(a)
         | CancelChannel(a) | WakeChannel(a) | RetryMessage(a) | AnswerQuestion(a)
         | GetWorkspace(a) | CreateWorkspace(a) | UpdateWorkspace(a) | DeleteWorkspace(a)
+        | GetArtifact(a) | CreateArtifact(a) | UpdateArtifact(a) | DeleteArtifact(a)
         | GetComponent(a) | CreateComponent(a) | UpdateComponent(a) | DeleteComponent(a)
         | ReadDeleted(_, a) | Restore(_, a) | Purge(_, a) => Some(a),
         _ => None,
@@ -152,7 +154,8 @@ impl World {
         let files = tempfile::tempdir().unwrap();
         let shell = StorageConfig::Local { root: files.path().join("shell"), shell: true, destination: Some(Classification::general(Confidentiality::Internal)) };
         let workspaces = WorkspacesConfig { storage: [("main".to_string(), StorageConfig::Local { root: files.path().to_path_buf(), shell: false, destination: None }), ("shell".to_string(), shell)].into(), ..Default::default() };
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig { workspaces, ..Default::default() }, registry).unwrap());
+        let artifacts = ArtifactsConfig { storage: [("kept".to_string(), ArtifactStorageConfig::Local { root: files.path().join("artifacts"), destination: None })].into(), ..Default::default() };
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig { workspaces, artifacts, ..Default::default() }, registry).unwrap());
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let mut world = Self { policy: recorder, store, runtime, manager, alice: UserId::new(), bob: UserId::new(), carol: UserId::new(), files };
         world.alice = world.user("alice").await;
@@ -2259,6 +2262,69 @@ async fn a_workspace_is_not_used_in_a_channel_by_who_is_not_in_it() {
     let main = world.manager.views(Viewer::new(as_agent)).session(session.id()).await.unwrap().channel(session.channels()[0].id()).await.unwrap();
     assert!(main.workspace().await.unwrap().is_none());
     world.manager.stop_session(&alice, session.id()).await.unwrap();
+}
+
+/// The content of an artifact's version, as text.
+async fn kept(content: caelumora_runtime::terminal::ByteStream) -> String {
+    let chunks: Vec<_> = content.collect().await;
+    String::from_utf8(chunks.into_iter().flat_map(|chunk| chunk.unwrap().to_vec()).collect()).unwrap()
+}
+
+/// An artifact (issue 271) is published from the workspace of a channel,
+/// in the name of whoever publishes - its owner, who makes it
+/// (`CreateArtifact`) or adds a version (`UpdateArtifact`) -, into the
+/// session's scope. Its owner reads every version; whoever reads the
+/// channel reads the versions published there, and nothing as an owner;
+/// only its owner keeps it beyond the session, and what is not kept goes
+/// with the session, its content too.
+#[tokio::test]
+async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who_reads_the_channel() {
+    let world = World::new().await;
+    let artifacts = world.runtime.artifact_manager();
+    let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
+    let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
+    let session = world.shared_session(&[], &[]).await;
+    session.set_workspace(&alice, Some(docs.id)).await.unwrap();
+    let (session_id, main) = (session.id(), session.channels()[0].id());
+    let in_main = |ctx: &SecurityContext| {
+        let views = world.manager.views(Viewer::new(ctx.clone()));
+        async move { views.session(session_id).await.unwrap().channel(main).await.unwrap() }
+    };
+    let workspace = in_main(&alice).await.workspace().await.unwrap().expect("hers to use");
+    let terminal = workspace.terminal().await.unwrap();
+    let at = WorkspacePath::parse("out/report.csv").unwrap();
+    terminal.write(&at, file("a,b"), 100).await.unwrap();
+
+    let (published, asked) = world.asked(workspace.publish_artifact(&at, "report.csv", Some("The figures"))).await;
+    let (artifact, first) = published.expect("published");
+    assert_eq!((first, &artifact.name.scope, artifact.owner()), (1, &Scope::SessionScope { session_id }, Some(world.alice)));
+    assert!(asked.contains(&"alice: CreateArtifact(alice's) yes".to_string()), "made in her name: {asked:?}");
+    terminal.write(&at, file("a,b\n1,2"), 100).await.unwrap();
+    let (published, asked) = world.asked(workspace.publish_artifact(&at, "report.csv", None)).await;
+    assert_eq!(published.expect("a second version").1, 2);
+    assert!(asked.contains(&"alice: UpdateArtifact(alice's) yes".to_string()), "added to as hers: {asked:?}");
+
+    let (_, _, content) = artifacts.content(&alice, artifact.id, 1).await.expect("its owner reads every version");
+    assert_eq!(kept(content).await, "a,b", "as it was then");
+    let (_, size, content) = in_main(&bob).await.artifact_content(artifact.id, 2).await.expect("a reader of the channel reads what was published there");
+    assert_eq!((size, kept(content).await.as_str()), (7, "a,b\n1,2"));
+    assert!(matches!(artifacts.content(&bob, artifact.id, 1).await, Err(ArtifactError::NotFound(_))), "not as its owner");
+    assert!(matches!(in_main(&bob).await.artifact_content(artifact.id, 3).await, Err(ArtifactError::VersionNotFound { .. })));
+
+    let bobs = in_main(&bob).await.workspace().await.unwrap().expect("bob uses it too");
+    assert!(bobs.publish_artifact(&at, "report.csv", None).await.is_err(), "nor adds to alice's artifact of that name");
+    assert!(matches!(artifacts.keep(&bob, artifact.id, Scope::UserScope { user_id: world.bob }).await, Err(ArtifactError::NotFound(_))), "nor keeps it");
+    let kept_one = artifacts.keep(&alice, artifact.id, Scope::UserScope { user_id: world.alice }).await.expect("its owner keeps it");
+    assert_eq!(kept_one.name.scope, Scope::UserScope { user_id: world.alice });
+    let (left, _) = workspace.publish_artifact(&at, "draft.csv", None).await.unwrap();
+
+    world.manager.stop_session(&alice, session_id).await.unwrap();
+    world.manager.delete_session(&alice, session_id).await.unwrap();
+    world.manager.purge_session(&World::system(), session_id).await.unwrap();
+    assert!(world.store.get_artifact(&alice, artifact.id).await.is_ok(), "what was kept stays");
+    assert!(world.files.path().join("artifacts").join(artifact.id.to_string()).is_dir(), "with its content");
+    assert!(world.store.get_deleted_artifact(&World::system(), left.id).await.is_err(), "what was not kept went with the session");
+    assert!(!world.files.path().join("artifacts").join(left.id.to_string()).exists(), "its content too");
 }
 
 /// What is asked when the agent of `owner`, asked by bob, makes `call` in the

@@ -261,6 +261,9 @@ pub struct AppConfig {
     /// Where the files of workspaces lie (issue 253). No storage unless
     /// configured: then no workspace can be made.
     pub workspaces: WorkspacesConfig,
+    /// Where the content of published artifacts lies (issue 271). No
+    /// storage unless configured: then no artifact can be published.
+    pub artifacts: ArtifactsConfig,
 }
 
 /// The storages workspaces are made in (issue 253), each by the name a
@@ -337,6 +340,67 @@ pub enum StorageConfig {
     },
 }
 
+/// The storages artifacts are kept in (issue 271), each by the name an
+/// artifact refers to it with, which of them new artifacts go to, and how
+/// large a version may be.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(default, deny_unknown_fields)]
+pub struct ArtifactsConfig {
+    pub max_bytes: u64,
+    /// The storage new artifacts are made in; needed where there are
+    /// several, the one there is where there is one.
+    pub publish_to: Option<String>,
+    pub storage: BTreeMap<String, ArtifactStorageConfig>,
+}
+
+impl Default for ArtifactsConfig {
+    fn default() -> Self {
+        Self { max_bytes: DEFAULT_MAX_FILE_BYTES, publish_to: None, storage: BTreeMap::new() }
+    }
+}
+
+impl ArtifactsConfig {
+    /// The storage new artifacts are made in: `publish_to`, or the one
+    /// configured; `None` where there is none.
+    pub fn publish_to(&self) -> Option<&str> {
+        match (&self.publish_to, self.storage.len()) {
+            (Some(name), _) => Some(name.as_str()),
+            (None, 1) => self.storage.keys().next().map(String::as_str),
+            (None, _) => None,
+        }
+    }
+
+    /// Whether it fits together: `publish_to` names a configured storage,
+    /// and is given where there are several.
+    ///
+    /// # Errors
+    /// What does not fit.
+    pub fn check(&self) -> Result<(), String> {
+        match &self.publish_to {
+            Some(name) if !self.storage.contains_key(name) => Err(format!("publish_to names '{name}', which is no storage of artifacts")),
+            None if self.storage.len() > 1 => Err("publish_to is needed where there are several storages of artifacts".to_string()),
+            _ => Ok(()),
+        }
+    }
+}
+
+/// A storage of artifacts, by its provider (issue 271); object storage is
+/// issue 272.
+#[derive(Debug, Deserialize, Clone, PartialEq)]
+#[serde(tag = "provider", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ArtifactStorageConfig {
+    /// A directory per artifact under `root`, a file per version, on
+    /// Caelumora's host.
+    Local {
+        root: PathBuf,
+        /// What may be put into this storage: the classification an
+        /// artifact in it may have at most; no bound unless given, since
+        /// nothing then leaves the host.
+        #[serde(default)]
+        destination: Option<Classification>,
+    },
+}
+
 fn default_docker_network() -> String {
     "bridge".to_string()
 }
@@ -402,6 +466,7 @@ impl Default for AppConfig {
             server: ServerConfig::default(),
             approvals: ApprovalsConfig::default(),
             workspaces: WorkspacesConfig::default(),
+            artifacts: ArtifactsConfig::default(),
         }
     }
 }
@@ -454,6 +519,7 @@ impl AppConfig {
         for (name, storage) in &self.workspaces.storage {
             storage.check().map_err(|why| ConfigError::Invalid(format!("the storage '{name}' of workspaces: {why}")))?;
         }
+        self.artifacts.check().map_err(|why| ConfigError::Invalid(format!("artifacts: {why}")))?;
         for rule in &self.approvals.rules {
             rule.check_restricting().map_err(|e| ConfigError::Invalid(format!("an approval rule for `{}`: {e}", rule.matcher.tool)))?;
         }
@@ -572,6 +638,20 @@ persistence:
             assert_eq!(config.secrets.providers, SecretsConfig::default().providers);
             assert!(config.users.providers.is_empty(), "no user provider unless configured");
         }
+    }
+
+    #[test]
+    fn artifacts_are_kept_in_the_storage_publish_to_names_or_the_one_there_is() {
+        let one = AppConfig::from_yaml("artifacts:\n  storage:\n    files:\n      provider: local\n      root: local/artifacts\n").expect("one local storage");
+        assert_eq!(one.artifacts.publish_to(), Some("files"));
+        assert_eq!(one.artifacts.max_bytes, DEFAULT_MAX_FILE_BYTES);
+        let none = AppConfig::from_yaml("{}").unwrap();
+        assert_eq!(none.artifacts.publish_to(), None, "none configured");
+        let several = "artifacts:\n  storage:\n    a:\n      provider: local\n      root: a\n    b:\n      provider: local\n      root: b\n";
+        assert!(AppConfig::from_yaml(several).is_err(), "which one, among several, must be said");
+        let chosen = AppConfig::from_yaml(&format!("{several}  publish_to: b\n")).expect("chosen");
+        assert_eq!(chosen.artifacts.publish_to(), Some("b"));
+        assert!(AppConfig::from_yaml(&format!("{several}  publish_to: c\n")).is_err(), "not one that is not there");
     }
 
     #[test]

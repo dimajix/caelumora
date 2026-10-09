@@ -359,3 +359,27 @@ downloading; the documents say so.
 - **2026-10-09** — Decided as well: `publish_artifact` is offered by a component of its own,
   `artifact_tool`, which a personality includes where artifacts are wanted and where later tools on
   artifacts go; an artifact's name is a `Name`, at most 100 characters. Status: in progress.
+- **2026-10-09** — Weighed with the maintainer: artifacts belong to the `EntityStore`, not the
+  `StateStore`. The state store keeps the state *of* a channel or an agent - by its holder's id,
+  without a security context of its own, without names, scopes or trash, journaled because it
+  changes often, gone with its holder. An artifact has an identity of its own: its own owner and
+  permissions (`GetArtifact`), a name unique in its scope, a trash, and it leaves the session it was
+  published in when it is kept - so it cannot be the state of a session or a channel. Its versions
+  are few and added rarely; its content is in neither store. It would be channel state only if it
+  could never leave the session and were read through the channel alone.
+- **2026-10-09** — Steps 1 and 2 done:
+  - `Artifact` and `ArtifactVersion` in `caelumora-model`; the store methods in both stores and the
+    store suite; `Get`/`List`/`Create`/`Update`/`DeleteArtifact` decided as for workspaces;
+    `AccessQuestions::may_change_artifact`. Without the `call` of a version the plan named: a tool
+    is not told the id of its call, and a field always empty is left out until a producer fills it.
+  - `ArtifactsConfig` (`max_bytes`, `publish_to`, `storage`), `ArtifactStorage` with `local`,
+    `ArtifactManager` (`publish`, `content`, `published_content`, `keep`, `delete`, `restore`,
+    `purge`, `purge_lying_in`), the events, the cascade with the session in `scoped.rs`, the views'
+    edges `WorkspaceView::publish_artifact` and `ChannelView::artifact_content`. A version is read
+    through the channel only by who reads it as a whole: whether an artifact's label may reach the
+    place of an agent that reads it entry by entry is not asked yet.
+  - Two steps that remove what would have been written twice: `scope::validate_users_own`, the
+    rule a workspace and an artifact share, and `terminal::write_whole`, the writing through a part
+    file that local workspaces and local artifacts share.
+  - Security suite:
+    `an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who_reads_the_channel`.

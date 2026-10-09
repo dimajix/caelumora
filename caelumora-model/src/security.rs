@@ -99,6 +99,16 @@ pub enum ActionType<'a> {
     /// contributors - with its attributes as stored.
     UpdateWorkspace(&'a SecurityAttributes),
     DeleteWorkspace(&'a SecurityAttributes),
+    /// Reading an artifact (issue 271) with its versions' content, as its
+    /// owner, outside the channels it was published in - where whoever
+    /// may read the channel reads the versions published there.
+    GetArtifact(&'a SecurityAttributes),
+    ListArtifacts,
+    CreateArtifact(&'a SecurityAttributes),
+    /// Changing an artifact - a version added, its description, the scope
+    /// it is kept in - with its attributes as stored.
+    UpdateArtifact(&'a SecurityAttributes),
+    DeleteArtifact(&'a SecurityAttributes),
     /// Ending the current turn of every agent in a channel, carrying the
     /// channel's attributes.
     CancelChannel(&'a SecurityAttributes),
@@ -245,6 +255,11 @@ impl ActionType<'_> {
             ActionType::CreateWorkspace(_) => "CreateWorkspace".into(),
             ActionType::UpdateWorkspace(_) => "UpdateWorkspace".into(),
             ActionType::DeleteWorkspace(_) => "DeleteWorkspace".into(),
+            ActionType::GetArtifact(_) => "GetArtifact".into(),
+            ActionType::ListArtifacts => "ListArtifacts".into(),
+            ActionType::CreateArtifact(_) => "CreateArtifact".into(),
+            ActionType::UpdateArtifact(_) => "UpdateArtifact".into(),
+            ActionType::DeleteArtifact(_) => "DeleteArtifact".into(),
             ActionType::CancelChannel(_) => "CancelChannel".into(),
             ActionType::WakeChannel(_) => "WakeChannel".into(),
             ActionType::RetryMessage(_) => "RetryMessage".into(),
@@ -417,6 +432,11 @@ pub trait AccessQuestions {
     /// (`UpdateWorkspace`, issue 253).
     async fn may_change_workspace(&self, context: &SecurityContext, workspace: &SecurityAttributes) -> bool;
 
+    /// Whether `context` may change an artifact with these attributes -
+    /// keep it in another scope, describe it, delete it (`UpdateArtifact`,
+    /// issue 271).
+    async fn may_change_artifact(&self, context: &SecurityContext, artifact: &SecurityAttributes) -> bool;
+
     /// Whether what comes from `from` - a message, a note, or what an agent
     /// remembered there - may be copied into the channel of `into`
     /// (`CopyInformation`, issues 17, 131, 133, 134 and 264): asked in
@@ -514,6 +534,10 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
 
     async fn may_change_workspace(&self, context: &SecurityContext, workspace: &SecurityAttributes) -> bool {
         self.check(context, ActionType::UpdateWorkspace(workspace)).await
+    }
+
+    async fn may_change_artifact(&self, context: &SecurityContext, artifact: &SecurityAttributes) -> bool {
+        self.check(context, ActionType::UpdateArtifact(artifact)).await
     }
 
     async fn may_copy_information(&self, context: &SecurityContext, from: &Place, into: &Place) -> bool {
@@ -726,7 +750,8 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::GetComponent(a)
             | ActionType::GetUser(a)
             | ActionType::GetUserProfile(a)
-            | ActionType::GetWorkspace(a) => Self::may_read(a, me) || Self::may_read(a, context.caller_id),
+            | ActionType::GetWorkspace(a)
+            | ActionType::GetArtifact(a) => Self::may_read(a, me) || Self::may_read(a, context.caller_id),
             ActionType::CancelChannel(a)
             | ActionType::WakeChannel(a)
             | ActionType::RetryMessage(a)
@@ -764,6 +789,7 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::CreateUser(a)
             | ActionType::CreateUserProfile(a)
             | ActionType::CreateWorkspace(a)
+            | ActionType::CreateArtifact(a)
             | ActionType::CreateComponent(a) => a.owner_id == me && me != ActorId::None,
             ActionType::UpdatePersonality(a)
             | ActionType::DeletePersonality(a)
@@ -783,6 +809,8 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::DeleteUserProfile(a)
             | ActionType::UpdateWorkspace(a)
             | ActionType::DeleteWorkspace(a)
+            | ActionType::UpdateArtifact(a)
+            | ActionType::DeleteArtifact(a)
             | ActionType::UpdateComponent(a)
             | ActionType::DeleteComponent(a)
             | ActionType::ReadDeleted(_, a)
@@ -798,6 +826,7 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::ListUsers
             | ActionType::ListUserProfiles
             | ActionType::ListWorkspaces
+            | ActionType::ListArtifacts
             | ActionType::ListComponents => true,
             ActionType::ShowCommand(_)
             | ActionType::ExecuteCommand(_)

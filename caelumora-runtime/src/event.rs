@@ -50,6 +50,7 @@ impl PublishedEvent {
             GlobalEvent::UserCreated(_) | GlobalEvent::UserUpdated(..) | GlobalEvent::UserDeleted(_) => ActionType::GetUser(attributes),
             GlobalEvent::UserProfileUpdated(..) => ActionType::GetUserProfile(attributes),
             GlobalEvent::WorkspaceCreated(_) | GlobalEvent::WorkspaceUpdated(..) | GlobalEvent::WorkspaceDeleted(_) | GlobalEvent::WorkspaceRestored(_) => ActionType::GetWorkspace(attributes),
+            GlobalEvent::ArtifactPublished(..) | GlobalEvent::ArtifactUpdated(_) | GlobalEvent::ArtifactDeleted(_) | GlobalEvent::ArtifactRestored(_) => ActionType::GetArtifact(attributes),
             _ => ActionType::GetSession(attributes),
         }
     }
@@ -260,6 +261,8 @@ impl EventBus {
             // No topic of their own until something follows one workspace
             // (issue 253): `All`, and whoever may read it.
             GlobalEvent::WorkspaceCreated(_) | GlobalEvent::WorkspaceUpdated(..) | GlobalEvent::WorkspaceDeleted(_) | GlobalEvent::WorkspaceRestored(_) => {}
+            // Likewise for artifacts (issue 271).
+            GlobalEvent::ArtifactPublished(..) | GlobalEvent::ArtifactUpdated(_) | GlobalEvent::ArtifactDeleted(_) | GlobalEvent::ArtifactRestored(_) => {}
         }
 
         for topic in topics_to_notify {

@@ -10,6 +10,8 @@
 //! read; this only chooses among it, so it never widens what anybody
 //! reads.
 
+use crate::actor::ActorId;
+use crate::security::SecurityAttributes;
 use crate::session::{ChannelId, SessionId};
 use crate::user::UserId;
 use crate::value::name::{Name, ScopedName};
@@ -92,6 +94,25 @@ pub trait Scoped {
     /// Its name and the scope it lies in; made when asked by a kind that
     /// does not store it so.
     fn scoped_name(&self) -> ScopedName;
+}
+
+/// Whether `attributes` and `scope` are those of a user's own thing - a
+/// workspace (issue 253), an artifact (issue 271), named `kind` in what it
+/// says: it belongs to a user, has no contributors - it is shared through
+/// channels -, and lies in a session's scope, its owner's or the global
+/// one, never a channel's, since a session's channels share it. Checked
+/// when it is stored (`Stored::validate`).
+pub(crate) fn validate_users_own(kind: &str, attributes: &SecurityAttributes, scope: &Scope) -> Result<(), String> {
+    let ActorId::User(owner) = attributes.owner_id else { return Err(format!("a {kind} belongs to a user")) };
+    if !attributes.contributors.is_empty() {
+        return Err(format!("a {kind} has no contributors: it is shared through channels"));
+    }
+    match scope {
+        Scope::SessionScope { .. } | Scope::GlobalScope => Ok(()),
+        Scope::UserScope { user_id } if *user_id == owner => Ok(()),
+        Scope::UserScope { .. } => Err(format!("a {kind} lies in no other user's scope than its owner's")),
+        Scope::ChannelScope { .. } | Scope::GroupScope { .. } => Err(format!("a {kind} lies in a session's scope, its owner's or the global one")),
+    }
 }
 
 /// The one of `name` that `user` finds from `place` among `scoped` -

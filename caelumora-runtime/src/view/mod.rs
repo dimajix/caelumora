@@ -164,6 +164,7 @@ pub struct Views {
     states: Arc<dyn StateStore>,
     components: Arc<ComponentRegistry>,
     workspaces: Arc<WorkspaceManager>,
+    artifacts: Arc<crate::artifact::ArtifactManager>,
     running: Arc<dyn RunningSessions>,
     viewer: Viewer,
 }
@@ -176,6 +177,7 @@ impl Views {
             states: Arc::clone(runtime.state_store()),
             components: Arc::clone(runtime.component_registry()),
             workspaces: Arc::clone(runtime.workspace_manager()),
+            artifacts: Arc::clone(runtime.artifact_manager()),
             running,
             viewer,
         }
@@ -215,6 +217,10 @@ impl Views {
 
     pub(crate) fn workspace_manager(&self) -> &Arc<WorkspaceManager> {
         &self.workspaces
+    }
+
+    pub(crate) fn artifact_manager(&self) -> &Arc<crate::artifact::ArtifactManager> {
+        &self.artifacts
     }
 
     /// Every session the viewer may read, in the order the store lists

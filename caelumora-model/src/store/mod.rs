@@ -18,6 +18,7 @@ use crate::template::{SessionTemplate, SessionTemplateId};
 use crate::user::{User, UserId, UserProfile};
 use crate::value::name::ScopedName;
 use crate::workspace::{Workspace, WorkspaceId};
+use crate::artifact::{Artifact, ArtifactId};
 
 
 #[derive(Debug, thiserror::Error)]
@@ -101,6 +102,7 @@ pub enum EntityKind {
     User,
     UserProfile,
     Workspace,
+    Artifact,
     Component,
 }
 
@@ -116,6 +118,7 @@ impl EntityKind {
             EntityKind::User => "user",
             EntityKind::UserProfile => "user_profile",
             EntityKind::Workspace => "workspace",
+            EntityKind::Artifact => "artifact",
             EntityKind::Component => "component",
         }
     }
@@ -256,6 +259,19 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn get_deleted_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace>;
     async fn list_deleted_workspaces(&self, ctx: &SecurityContext) -> StoreResult<Vec<Workspace>>;
     async fn find_workspace_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Workspace>;
+
+    // Artifacts (issue 271) - their content is no part of the document, and
+    // whoever purges one removes it.
+    async fn create_artifact(&self, ctx: &SecurityContext, value: &Artifact) -> StoreResult<()>;
+    async fn get_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<Artifact>;
+    async fn update_artifact(&self, ctx: &SecurityContext, value: &Artifact) -> StoreResult<()>;
+    async fn delete_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<bool>;
+    async fn list_artifacts(&self, ctx: &SecurityContext) -> StoreResult<Vec<Artifact>>;
+    async fn restore_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<()>;
+    async fn purge_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<bool>;
+    async fn get_deleted_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<Artifact>;
+    async fn list_deleted_artifacts(&self, ctx: &SecurityContext) -> StoreResult<Vec<Artifact>>;
+    async fn find_artifact_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Artifact>;
 }
 
 /// The preconfigured components: runtime configuration that personalities

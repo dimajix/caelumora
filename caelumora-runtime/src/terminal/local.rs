@@ -149,6 +149,48 @@ fn partial(target: &Path) -> PathBuf {
     target.with_file_name(format!(".{name}.{}.part", uuid::Uuid::new_v4()))
 }
 
+/// Why writing a file whole failed (`write_whole`).
+#[derive(Debug)]
+pub(crate) enum WriteFailure {
+    /// More than the limit came.
+    TooLarge,
+    /// What was to be written broke off.
+    BrokeOff(ErrorKind),
+    /// The file could not be written.
+    Io(std::io::Error),
+}
+
+/// Writes `content` to `target` whole, at most `limit` bytes, or not at
+/// all: into a file beside it, renamed over it once complete. The directory
+/// it lies in must exist. Answers how many bytes were written. Shared by
+/// the files of a local workspace and the content of local artifacts
+/// (issue 271).
+pub(crate) async fn write_whole(target: &Path, mut content: ByteStream, limit: u64) -> Result<u64, WriteFailure> {
+    let part = partial(target);
+    let written = async {
+        let mut file = fs::File::create(&part).await.map_err(WriteFailure::Io)?;
+        let mut written: u64 = 0;
+        while let Some(chunk) = content.next().await {
+            let chunk = chunk.map_err(|e| WriteFailure::BrokeOff(e.kind()))?;
+            written += chunk.len() as u64;
+            if written > limit {
+                return Err(WriteFailure::TooLarge);
+            }
+            file.write_all(&chunk).await.map_err(WriteFailure::Io)?;
+        }
+        file.flush().await.map_err(WriteFailure::Io)?;
+        Ok(written)
+    }.await;
+    let renamed = match written {
+        Ok(written) => fs::rename(&part, target).await.map(|()| written).map_err(WriteFailure::Io),
+        Err(e) => Err(e),
+    };
+    if renamed.is_err() {
+        let _ = fs::remove_file(&part).await;
+    }
+    renamed
+}
+
 #[async_trait]
 impl Terminal for LocalTerminal {
     async fn list(&self, dir: &WorkspacePath) -> TerminalResult<Vec<FileEntry>> {
@@ -179,7 +221,7 @@ impl Terminal for LocalTerminal {
         Ok((metadata.len(), Box::pin(ReaderStream::new(file))))
     }
 
-    async fn write(&self, path: &WorkspacePath, mut content: ByteStream, limit: u64) -> TerminalResult<u64> {
+    async fn write(&self, path: &WorkspacePath, content: ByteStream, limit: u64) -> TerminalResult<u64> {
         if path.is_root() {
             return Err(TerminalError::IsADirectory(path.to_string()));
         }
@@ -189,34 +231,11 @@ impl Terminal for LocalTerminal {
         }
         let parent = path.parent();
         fs::create_dir_all(parent.under(&self.dir)).await.map_err(|e| failed(&parent, e))?;
-        let part = partial(&full);
-        let written = async {
-            let mut file = fs::File::create(&part).await.map_err(|e| failed(path, e))?;
-            let mut written: u64 = 0;
-            while let Some(chunk) = content.next().await {
-                let chunk = chunk.map_err(|e| TerminalError::Unavailable(format!("what was to be written broke off: {}", e.kind())))?;
-                written += chunk.len() as u64;
-                if written > limit {
-                    return Err(TerminalError::TooLarge { limit });
-                }
-                file.write_all(&chunk).await.map_err(|e| failed(path, e))?;
-            }
-            file.flush().await.map_err(|e| failed(path, e))?;
-            Ok(written)
-        }.await;
-        match written {
-            Ok(written) => match fs::rename(&part, &full).await {
-                Ok(()) => Ok(written),
-                Err(e) => {
-                    let _ = fs::remove_file(&part).await;
-                    Err(failed(path, e))
-                }
-            },
-            Err(e) => {
-                let _ = fs::remove_file(&part).await;
-                Err(e)
-            }
-        }
+        write_whole(&full, content, limit).await.map_err(|failure| match failure {
+            WriteFailure::TooLarge => TerminalError::TooLarge { limit },
+            WriteFailure::BrokeOff(kind) => TerminalError::Unavailable(format!("what was to be written broke off: {kind}")),
+            WriteFailure::Io(e) => failed(path, e),
+        })
     }
 
     async fn delete(&self, path: &WorkspacePath) -> TerminalResult<()> {
