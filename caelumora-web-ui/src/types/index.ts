@@ -109,6 +109,12 @@ export interface ChannelMember {
    */
   state?: ActorState;
   /**
+   * The commands an agent carries out itself that you may see (issue 269),
+   * written `/name @handle …`; absent if none, and in a channel that does
+   * not run.
+   */
+  commands?: Command[];
+  /**
    * The turn of the answer it is giving now (issue 240), as `ResponseStarted`
    * named it; absent if none - also for an external agent.
    */
@@ -412,9 +418,13 @@ export interface Message {
   // failure is in the server log.
   givenUp?: GivenUpReason;
   span_id?: string;
-  // UI only: the answer to a user command (never part of the history).
-  // `command` is its name; `private` if only the issuer sees it.
-  commandOutput?: {command: string; private: boolean};
+  // UI only: the answer to a user command. `command` is its name;
+  // `private` if only the issuer sees it. One an agent carried out (issue
+  // 269) also names the `agent`, its `args` and, from the history, the
+  // `issuer`; `failed` if the agent did not carry it out. A command of the
+  // channel is never part of the history, one an agent carried out is -
+  // without what it answered.
+  commandOutput?: {command: string; private: boolean; args?: string; agent?: string; issuer?: string; failed?: boolean};
   // UI only: its sender was removed from the channel before its tool calls
   // were answered (issue 162) - those without a result never will be.
   abandoned?: boolean;
@@ -547,12 +557,19 @@ export interface Command {
   name: string;
   description: string;
   usage: string | null;
+  /** Of an agent's command (issue 269): whether it is for the agent's owners alone. */
+  owners_only?: boolean;
 }
 
-/** What a command answered; `output` only if it was for the caller alone. */
+/**
+ * What a command answered; `output` only if it was for the caller alone.
+ * `span_id` is set for a command sent to agents (issue 269), whose answers
+ * come on the stream - `output` then names those that were not asked.
+ */
 export interface CommandReply {
   command: string;
   output: string | null;
+  span_id?: string;
 }
 
 export interface EventContext {

@@ -1,6 +1,6 @@
 # 269 — Commands an agent carries out itself
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -525,3 +525,15 @@ is never retryable; a command carried out is recorded in the history.
   - **A provider stages**, as a tool does; what it writes into the state directly stays when it
     fails. `Turn` has no way yet to stage a message for the transcript alone, which `/skill`
     needs - that is 22's.
+- **2026-10-09** — Frontends (F) and documents (H) done. REST: `ChannelMemberResponse::commands`
+  (the model's `Command`, as `GET …/commands` gives the channel's), `CommandReplyResponse::span_id`.
+  Web UI: the answer of a command an agent carried out is the agent's notice, kept once by its turn
+  (`commandNotice`, the same live and from the history, where it has no answer); `CommandFailed` a
+  notice for the issuer; completion offers the agents' commands with each handle and `@all`; the
+  agent's history panel marks what it carried out. TUI: prints both answers. The documents named
+  under H describe it. One thing that shows only now: the answer to a private command reaches the
+  issuer alone, but the history records the command for everybody - the others learn of it on
+  their next reload, not live. That follows from "the record is everybody's, a private answer the
+  issuer's"; a live notice without the answer for the others would close the gap, if it matters.
+- **2026-10-09** — Closed: every point of *Done when* holds. The first commands of an agent are
+  `/skill` ([22](22-skill-management.md)) and `/compact` ([16](16-context-compression.md)).

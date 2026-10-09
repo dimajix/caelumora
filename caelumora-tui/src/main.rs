@@ -207,8 +207,13 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                             GivenUpReason::Stopped | GivenUpReason::Retried => println!("\r{} gave its answer up: {}", sender, reason.cause()),
                         }
                     }
-                    Some(ActorEvent::CommandExecuted { command, output, .. }) => {
-                        println!("\r{} ran /{}: {}", sender, command, output);
+                    Some(ActorEvent::CommandExecuted { command, output, turn_id, .. }) => {
+                        // Carried out by an agent in a turn of its own (issue 269), or run by a user.
+                        let verb = if turn_id.is_some() { "carried out" } else { "ran" };
+                        println!("\r{} {} /{}: {}", sender, verb, command, output);
+                    }
+                    Some(ActorEvent::CommandFailed { command, reason, .. }) => {
+                        println!("\r{} did not carry out /{}: {}", sender, command, reason);
                     }
                     Some(ActorEvent::ParticipantRemoved { participant }) => {
                         let removed = handles.get(&participant).map(|handle| format!("@{handle}")).unwrap_or_else(|| participant.to_string());

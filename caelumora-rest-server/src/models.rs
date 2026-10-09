@@ -692,6 +692,12 @@ pub struct ChannelMemberResponse {
     /// that does not run.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state: Option<ActorState>,
+    /// The commands an agent carries out itself that the requesting user
+    /// may see (issue 269), as `GET …/commands` gives the channel's - for
+    /// completion; written `/name @handle …`. Absent if there are none, and
+    /// in a channel that does not run.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub commands: Vec<caelumora_model::command::Command>,
     /// How the participant is introduced (issues 176, 244): an agent by its
     /// personality, a user by themselves. Given for a participant asked for
     /// alone, not where channels are listed; absent if there is none.
@@ -732,6 +738,7 @@ impl ChannelMemberResponse {
             can_delete: view.can_delete,
             turn_under_way: view.turn_under_way,
             state: view.state,
+            commands: view.commands,
             introduction: view.introduction,
             personality: view.personality,
             personality_kind: view.personality_kind,
@@ -1214,6 +1221,10 @@ mod tests {
         assert!(json.get("state").is_none(), "where nothing runs, no state");
         let json = serde_json::to_value(ChannelMemberResponse::of(snapshot::MemberSnapshot { state: Some(ActorState::WaitingForUser), ..member(None) }).unwrap()).unwrap();
         assert_eq!(json["state"], serde_json::json!("WaitingForUser"), "named as `StateChanged` names it (issue 243)");
+        assert!(json.get("commands").is_none(), "absent without commands");
+        let mark = caelumora_model::command::Command { name: "mark".to_string(), description: "Marks.".to_string(), usage: None, owners_only: false };
+        let json = serde_json::to_value(ChannelMemberResponse::of(snapshot::MemberSnapshot { commands: vec![mark], ..member(None) }).unwrap()).unwrap();
+        assert_eq!(json["commands"][0]["name"], "mark", "an agent's commands, as `GET …/commands` gives the channel's (issue 269)");
     }
 
     #[test]

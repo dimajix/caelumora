@@ -238,7 +238,7 @@ published before anyone else can take it.
 | [265](265-file-list-and-search-presentations.md) | done | The web UI shows a listing and a search of the workspace as raw JSON, while reading, writing and replacing in a file are shown as what they do. |
 | [266](266-workspace-on-new-session.md) | done | A new session's workspace cannot be chosen when it is made, and one for that session alone cannot be made without a template naming it. |
 | [268](268-question-presentation.md) | done | An agent's question offers its choices side by side, their meanings in a list apart, and once answered is shown as raw JSON beside a record without the choices offered. |
-| [269](269-agent-commands.md) | open | A user command can act on the channel but not on an agent - its transcript has one writer, the agent's actor - so neither `/compact` nor loading a skill for an agent can be built. |
+| [269](269-agent-commands.md) | done | A user command can act on the channel but not on an agent - its transcript has one writer, the agent's actor - so neither `/compact` nor loading a skill for an agent can be built. |
 
 ## Context and knowledge
 

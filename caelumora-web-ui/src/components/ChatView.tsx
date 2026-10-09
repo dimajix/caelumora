@@ -70,7 +70,7 @@ import {type ClassValue, clsx} from 'clsx';
 import {twMerge} from 'tailwind-merge';
 import {MarkdownMessage} from './MarkdownMessage';
 import {MessageFooter, MessageView, Reasoning} from './MessageView';
-import {chatMessages, chatRows, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, mergeToolResults, planStepMark} from '../messages';
+import {chatMessages, chatRows, commandNotice, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, mergeToolResults, planStepMark} from '../messages';
 import {PlanSteps} from './PlanSteps';
 import {TokenGauge} from './TokenGauge';
 import {HoverCard} from './HoverCard';
@@ -145,9 +145,12 @@ function stateDot(member: ChannelMember): {className: string; title: string} | n
 }
 
 /** An entry of the completion list: a member to mention or a command to run. */
+// A command suggested: one of the channel, or one an agent carries out
+// (issue 269), with the handle it is written with - `all` for every agent
+// that carries it out.
 type Suggestion =
   | {kind: 'mention'; member: MentionableMember}
-  | {kind: 'command'; command: Command};
+  | {kind: 'command'; command: Command; handle?: string};
 
 /**
  * An agent's answer under way (issue 203): what of it has streamed in since
@@ -322,12 +325,25 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   const commandQuery = commandQueryAt(inputText, caret);
   // Where the completed token starts; a command always starts at 0.
   const suggestionStart = commandQuery !== null ? 0 : mentionQuery?.start ?? null;
+  // The commands the agents here carry out (issue 269), by name, with the
+  // handles of the agents that do: one is suggested for each of them, and
+  // for `@all` where several do.
+  const agentCommands = new Map<string, {command: Command; handles: string[]}>();
+  for (const member of members) {
+    if (!member.handle || member.left) continue;
+    for (const command of member.commands ?? []) {
+      const entry = agentCommands.get(command.name) ?? {command, handles: []};
+      entry.handles.push(member.handle);
+      agentCommands.set(command.name, entry);
+    }
+  }
+  const agentSuggestions = [...agentCommands.values()].flatMap(({command, handles}) =>
+    [...handles, ...(handles.length > 1 ? ['all'] : [])].map((handle): Suggestion => ({kind: 'command', command, handle})));
   const suggestions: Suggestion[] = suggestionStart === null || suggestionStart === dismissedMention
     ? []
     : commandQuery !== null
-      ? commands
-          .filter(c => c.name.startsWith(commandQuery.toLowerCase()))
-          .map(command => ({kind: 'command', command}))
+      ? [...commands.map((command): Suggestion => ({kind: 'command', command})), ...agentSuggestions]
+          .filter(s => s.kind === 'command' && s.command.name.startsWith(commandQuery.toLowerCase()))
       : members
           .filter((m): m is MentionableMember => {
             const query = (mentionQuery?.query ?? '').toLowerCase();
@@ -752,12 +768,33 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           answerEnded();
           readUsage();
         } else if (actorEvent.CommandExecuted) {
-          // Shown, but not part of the history.
+          const {command, args, output, to, turn_id} = actorEvent.CommandExecuted;
+          if (turn_id) {
+            // Carried out by an agent (issue 269): part of the history,
+            // kept once by its turn - live with what it answered, and to
+            // whom: the stream carries `to` only to the issuer.
+            const notice = commandNotice(turn_id, command, args, envelope.context.sender_id, envelope.context.sender_name, undefined, envelope.timestamp, {output, private: to !== null});
+            setMessages(prev => prev.some(m => m.id === notice.id) ? prev.map(m => m.id === notice.id ? notice : m) : [...prev, notice]);
+          } else {
+            // A command of the channel: shown, but not part of the history.
+            const notice: Message = {
+              role: 'System',
+              content: output,
+              sender_name: envelope.context.sender_name,
+              commandOutput: {command, private: false},
+              timestamp: envelope.timestamp,
+            };
+            setMessages(prev => [...prev, notice]);
+          }
+        } else if (actorEvent.CommandFailed) {
+          // An agent did not carry out a command (issue 269): for the issuer
+          // alone, and gone on reload - nothing happened.
+          const {command, reason} = actorEvent.CommandFailed;
           const notice: Message = {
             role: 'System',
-            content: actorEvent.CommandExecuted.output,
+            content: reason,
             sender_name: envelope.context.sender_name,
-            commandOutput: {command: actorEvent.CommandExecuted.command, private: false},
+            commandOutput: {command, private: true, agent: envelope.context.sender_name, failed: true},
             timestamp: envelope.timestamp,
           };
           setMessages(prev => [...prev, notice]);
@@ -894,9 +931,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
     setSuggestionIndex(0);
   };
 
-  const selectCommand = (command: Command) => {
+  const selectCommand = (command: Command, handle?: string) => {
     const rest = inputText.slice(caret).replace(/^\S*\s*/, '');
-    const inserted = `/${command.name} `;
+    const inserted = handle ? `/${command.name} @${handle} ` : `/${command.name} `;
     const newCaret = inserted.length;
     setInputText(inserted + rest);
     setCaret(newCaret);
@@ -908,7 +945,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   };
 
   const selectSuggestion = (suggestion: Suggestion) => {
-    if (suggestion.kind === 'command') selectCommand(suggestion.command);
+    if (suggestion.kind === 'command') selectCommand(suggestion.command, suggestion.handle);
     else selectMention(suggestion.member);
   };
 
@@ -1061,6 +1098,19 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
     }
   };
 
+  // The heading of a command's notice: who ran it - or, for one of an agent
+  // (issue 269), which agent carried it out or did not - and whether only
+  // you see it.
+  const commandHeading = (output: NonNullable<Message['commandOutput']>, sender: string | undefined) => {
+    const name = <span className="font-mono normal-case">/{output.command}{output.args ? ` ${output.args}` : ''}</span>;
+    const yours = output.private ? ' · only visible to you' : '';
+    if (output.failed) return <span>{output.agent} did not carry out {name}{yours}</span>;
+    if (output.agent) return <span>{output.agent} carried out {name}{output.issuer ? ` for ${output.issuer}` : ''}{yours}</span>;
+    return output.private
+      ? <span>{name} · only visible to you</span>
+      : <span>{sender} ran {name}</span>;
+  };
+
   // One message of the chat, as its kind shows it; `key` for the list it
   // is rendered in.
   const renderMessage = (msg: Message, key: React.Key) => msg.commandOutput ? (
@@ -1070,11 +1120,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
     >
       <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider mb-1 opacity-70">
         <ChevronRight size={14} />
-        {msg.commandOutput.private
-          ? <span><span className="font-mono normal-case">/{msg.commandOutput.command}</span> · only visible to you</span>
-          : <span>{msg.sender_name} ran <span className="font-mono normal-case">/{msg.commandOutput.command}</span></span>}
+        {commandHeading(msg.commandOutput, msg.sender_name)}
       </div>
-      <MarkdownMessage content={msg.content ?? ''} />
+      {msg.content && <MarkdownMessage content={msg.content} />}
       <MessageFooter message={msg} />
     </div>
   ) : msg.chainCutOff ? (
@@ -1419,11 +1467,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
                 >
                   {suggestions.map((suggestion, idx) => {
                     const [label, detail, description] = suggestion.kind === 'command'
-                      ? [`/${suggestion.command.name}`, suggestion.command.usage ?? '', suggestion.command.description]
+                      ? [`/${suggestion.command.name}`, [suggestion.handle && `@${suggestion.handle}`, suggestion.command.usage].filter(Boolean).join(' '), suggestion.command.description]
                       : [suggestion.member.name, `@${suggestion.member.handle}`, null];
                     return (
                       <li
-                        key={`${suggestion.kind}:${label}`}
+                        key={`${suggestion.kind}:${label}:${suggestion.kind === 'command' ? suggestion.handle ?? '' : ''}`}
                         role="option"
                         aria-selected={idx === suggestionIndex}
                         onMouseDown={(e) => { e.preventDefault(); selectSuggestion(suggestion); }}

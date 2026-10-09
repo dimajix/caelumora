@@ -76,10 +76,31 @@ export function planStepMark(turnId: string, step: PlanStep, actor: ActorId, nam
 }
 
 /**
+ * The notice of a command an agent carried out (issue 269), as the chat
+ * shows it - live and from the history alike, named for the turn it was
+ * carried out in so that it is shown once: which command, by which agent,
+ * when, on whose word where that is known, and - live, to whom it was
+ * answered - what it answered, which the history does not keep.
+ */
+export function commandNotice(turnId: string, command: string, args: string, agent: ActorId, agentName: string | undefined, issuer: string | undefined, at: string, answer?: {output: string; private: boolean}): Message {
+  return {
+    id: `command:${turnId}`,
+    role: 'System',
+    content: answer?.output ?? null,
+    sender_id: agent,
+    sender_name: agentName,
+    turn_id: turnId,
+    commandOutput: {command, args, private: answer?.private ?? false, agent: agentName ?? 'An agent', issuer},
+    timestamp: at,
+  };
+}
+
+/**
  * The chat's messages for `items` of a channel's history (issue 258): each
- * message said, the mark of each step of a plan begun (issue 263), and the
- * notice of a turn given up - whose, as `nameOf` names them. A turn that
- * finished shows nothing of its own.
+ * message said, the mark of each step of a plan begun (issue 263), the
+ * notice of a turn given up, and that of a command an agent carried out
+ * (issue 269) - whose, as `nameOf` names them. A turn that finished shows
+ * nothing of its own.
  */
 export function chatMessages(items: HistoryItem<Message>[], nameOf: (actor: ActorId) => string | undefined): Message[] {
   return items.flatMap((item): Message[] => {
@@ -91,6 +112,10 @@ export function chatMessages(items: HistoryItem<Message>[], nameOf: (actor: Acto
     if ('turn_given_up' in item) {
       const {turn_id, actor, reason, at} = item.turn_given_up;
       return [givenUpNotice(turn_id, reason, actor, nameOf(actor), at)];
+    }
+    if ('command_executed' in item) {
+      const {turn_id, actor, issuer, command, args, at} = item.command_executed;
+      return [commandNotice(turn_id, command, args, actor, nameOf(actor), nameOf(issuer), at)];
     }
     return [];
   });
