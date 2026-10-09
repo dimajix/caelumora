@@ -1,4 +1,4 @@
-//! User commands (issue 28): `SessionCommandProvider` components contribute
+//! User commands (issue 28): `ChannelCommandProvider` components contribute
 //! commands, and a session's `CommandExecutor` finds and runs them on behalf
 //! of a user.
 //!
@@ -51,15 +51,15 @@ pub struct CommandReply {
     pub visibility: CommandVisibility,
 }
 
-/// What a command of the session runs with: who issued it, in which
-/// channel, and the session's other commands. Deliberately no `Turn` - such
-/// a command runs outside of any agent's turn, often because none is
+/// What a command of the channel runs with: who issued it, the channel,
+/// and the session's other commands. Deliberately no `Turn` - such a
+/// command runs outside of any agent's turn, often because none is
 /// running.
 pub struct CommandContext<'a> {
     /// The issuing user's security context.
     pub issuer: &'a SecurityContext,
     pub channel: &'a ChannelLoop,
-    pub executor: &'a CommandExecutor<dyn SessionCommandProvider>,
+    pub executor: &'a CommandExecutor<dyn ChannelCommandProvider>,
 }
 
 /// What every facet contributing commands says of them, whoever runs them:
@@ -69,10 +69,11 @@ pub trait ProvidesCommands: Send + Sync + Debug {
     fn commands(&self) -> Vec<Command>;
 }
 
-/// A component facet contributing user commands the session runs - `/help`,
-/// `/wakeup` -, as `ToolProvider` contributes tools.
+/// A component facet contributing user commands run on the channel -
+/// `/help`, `/wakeup` -, as `ToolProvider` contributes tools: given the
+/// channel, not an agent's turn.
 #[async_trait]
-pub trait SessionCommandProvider: ProvidesCommands {
+pub trait ChannelCommandProvider: ProvidesCommands {
     /// Runs the command `name` with `args`, the rest of the input line after
     /// the name, which the command parses itself.
     ///
@@ -172,9 +173,10 @@ impl<P: ?Sized + ProvidesCommands> CommandExecutor<P> {
     }
 }
 
-/// The session's commands: seen and run by `ShowCommand` and
-/// `ExecuteCommand` of the name.
-impl CommandExecutor<dyn SessionCommandProvider> {
+/// The commands of the channel - the session's set, run in each of its
+/// channels: seen and run by `ShowCommand` and `ExecuteCommand` of the
+/// name.
+impl CommandExecutor<dyn ChannelCommandProvider> {
     /// The commands `issuer` may see (`ShowCommand`), sorted by name.
     pub async fn visible(&self, issuer: &SecurityContext) -> Vec<Command> {
         self.visible_by(issuer, |c| ActionType::ShowCommand(&c.name)).await
@@ -209,18 +211,18 @@ mod tests {
 
     impl ProvidesCommands for Named {
         fn commands(&self) -> Vec<Command> {
-            vec![Command { name: self.0.to_string(), description: String::new(), usage: None }]
+            vec![Command { name: self.0.to_string(), description: String::new(), usage: None, owners_only: false }]
         }
     }
 
     #[async_trait]
-    impl SessionCommandProvider for Named {
+    impl ChannelCommandProvider for Named {
         async fn execute(&self, _name: &str, _args: &str, _context: &CommandContext<'_>) -> CommandResult<CommandOutput> {
             Ok(CommandOutput::private(""))
         }
     }
 
-    fn provider(id: &str, command: &'static str) -> ComponentImpl<dyn SessionCommandProvider> {
+    fn provider(id: &str, command: &'static str) -> ComponentImpl<dyn ChannelCommandProvider> {
         ComponentImpl { id: id.to_string(), fail_policy: ComponentFailPolicy::FailOpen, facet: Arc::new(Named(command)) }
     }
 

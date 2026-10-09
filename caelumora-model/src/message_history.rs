@@ -52,6 +52,13 @@ pub enum HistoryEntry {
     /// is said in that step, until the next one begins or the turn gives
     /// its final answer. `description` is the step as the plan words it.
     PlanStepStarted { turn_id: TurnId, actor: ActorId, step_index: usize, total_steps: usize, description: String, at: DateTime<Utc> },
+    /// `actor`, an agent, carried out the command `command` with `args` in
+    /// its turn `turn_id` at `at`, on the word of `issuer` (issue 269):
+    /// recorded before the turn's end, without what it answered - a private
+    /// answer is the issuer's, the history everybody's. A command refused
+    /// or failed did nothing and leaves no entry; a command the session
+    /// runs is never recorded.
+    CommandExecuted { turn_id: TurnId, actor: ActorId, issuer: ActorId, command: String, args: String, at: DateTime<Utc> },
 }
 
 /// The conversation as it happened - a chain like a `Transcript`. What it
@@ -72,8 +79,9 @@ impl Chain<HistoryEntry> {
     /// The history of the active path as it stands, in the order it
     /// happened (issue 258): the messages said - `Said`, each as it stands,
     /// with every change since folded into it -, where the steps of a plan
-    /// began - `PlanStepStarted` (issue 263) - and how turns ended -
-    /// `TurnFinished` and `TurnGivenUp`. No other entry occurs: what changes
+    /// began - `PlanStepStarted` (issue 263) -, the commands carried out -
+    /// `CommandExecuted` (issue 269) - and how turns ended - `TurnFinished`
+    /// and `TurnGivenUp`. No other entry occurs: what changes
     /// a message is in the message, a fitting in every message.
     pub fn items(&self) -> Vec<HistoryEntry> {
         let mut folded: HashMap<Digest, Message> = self.fold_nodes().into_iter().collect();
@@ -81,7 +89,7 @@ impl Chain<HistoryEntry> {
             .filter_map(|node| match &node.entry {
                 HistoryEntry::Said { context, .. } => folded.remove(&node.digest)
                     .map(|message| HistoryEntry::Said { message, context: context.clone() }),
-                turn @ (HistoryEntry::PlanStepStarted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. }) => Some(turn.clone()),
+                turn @ (HistoryEntry::PlanStepStarted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::CommandExecuted { .. }) => Some(turn.clone()),
                 HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. } => None,
             })
             .collect()
@@ -140,7 +148,7 @@ impl Chain<HistoryEntry> {
                         message.classification = message.classification.fitted_into(channel);
                     }
                 }
-                HistoryEntry::PlanStepStarted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } => {}
+                HistoryEntry::PlanStepStarted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::CommandExecuted { .. } => {}
             }
         }
         messages
@@ -245,6 +253,13 @@ impl Chain<HistoryEntry> {
         self.record(start);
     }
 
+    /// Records that a command was carried out in a turn (issue 269):
+    /// `CommandExecuted`, before the turn's end.
+    pub fn record_command(&mut self, executed: HistoryEntry) {
+        debug_assert!(matches!(executed, HistoryEntry::CommandExecuted { .. }), "only a command carried out");
+        self.record(executed);
+    }
+
     fn record(&mut self, entry: HistoryEntry) {
         self.push_with(entry, crate::digest::history_chain);
     }
@@ -256,7 +271,7 @@ impl HistoryEntry {
         match self {
             HistoryEntry::Said { message, .. } => Some(message),
             HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. }
-            | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } => None,
+            | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. } => None,
         }
     }
 

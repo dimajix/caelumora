@@ -772,7 +772,7 @@ mod tests {
             let agents = add_agents(&moderator);
             let (user, other) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
             moderator.add_actor(Arc::new(TestActor { id: other, state: ActorState::Idle }));
-            let event = envelope(user, ActorEvent::CommandExecuted { command: "wakeup".to_string(), output: "Woke b.".to_string() });
+            let event = envelope(user, ActorEvent::CommandExecuted { command: "wakeup".to_string(), args: String::new(), output: "Woke b.".to_string(), to: None, turn_id: None });
 
             let decision = moderator.route(&event).await;
 

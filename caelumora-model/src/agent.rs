@@ -13,7 +13,7 @@ use crate::memory::{Memories, MemoryChain};
 use crate::message_history::{HistoryEntry, MessageHistory};
 use crate::transcript::{as_they_stand, Transcript, TranscriptEntry};
 use crate::turn::GivenUpReason;
-use crate::turn::TurnState;
+use crate::turn::{CommandRequest, TurnState};
 use crate::work::{TurnId, Work};
 use crate::note::{NoteChain, NoteChange, NoteOrigin, Notes};
 use crate::removal::Removal;
@@ -378,6 +378,25 @@ impl AgentChannelState {
         turn_id
     }
 
+    /// Begins a turn that carries out `request` (issue 269): as `begin_turn`
+    /// does, with no tools - a command turn offers its model nothing - and
+    /// the command kept with the turn, so that one resumed after a restart
+    /// knows what to do.
+    pub fn begin_command_turn(
+        &mut self,
+        event_context: EventContext,
+        security_context: SecurityContext,
+        classification: Classification,
+        profile: ModelProfile,
+        request: CommandRequest,
+    ) -> TurnId {
+        let turn_id = self.begin_turn(event_context, security_context, classification, Vec::new(), profile);
+        if let Some(turn) = &mut self.turn {
+            turn.command = Some(request);
+        }
+        turn_id
+    }
+
     /// Whether the agent answers anew after its turn `turn`, given up (issue
     /// 259): the turn's end is the last thing on the active path of the
     /// transcript, and it was given up for a reason that may be answered
@@ -404,9 +423,10 @@ impl AgentChannelState {
     /// the agent's `notes` and `private_notes` here, anchored at its last
     /// message, and its end, `TurnFinished`, after what it said - which is
     /// in the transcript and the history already (`said`, issue 260).
-    /// `actor` is the agent, whose turn it was. Returns whether there were
-    /// changes to the notes.
-    pub fn finish_turn(&mut self, turn_id: TurnId, actor: ActorId, notes: Vec<NoteChange>, private_notes: Vec<NoteChange>) -> bool {
+    /// `actor` is the agent, whose turn it was. A turn that carried out a
+    /// `command` (issue 269) records it in the history before its end.
+    /// Returns whether there were changes to the notes.
+    pub fn finish_turn(&mut self, turn_id: TurnId, actor: ActorId, notes: Vec<NoteChange>, private_notes: Vec<NoteChange>, command: Option<CommandRequest>) -> bool {
         // What branching (issue 08) will find the changes by: the turn's
         // last message, and the transcript as the turn left it.
         let after = self.history.last_message_id();
@@ -419,6 +439,9 @@ impl AgentChannelState {
             self.private_notes.push(change, origin.clone(), after);
         }
         let at = chrono::Utc::now();
+        if let Some(CommandRequest { command, args, issuer }) = command {
+            self.history.record_command(HistoryEntry::CommandExecuted { turn_id, actor, issuer, command, args, at });
+        }
         self.transcript.end_turn(TranscriptEntry::TurnFinished { turn_id, at });
         self.history.end_turn(HistoryEntry::TurnFinished { turn_id, actor, at });
         changed
@@ -720,7 +743,7 @@ pub(crate) mod tests {
         let note = NoteChange::Add { id: crate::note::NoteId(1), text: "sums".to_string(), classification: Classification::CHANNEL_DEFAULT };
 
         state.turn = None;
-        assert!(state.finish_turn(turn_id, ActorId::default(), vec![note], Vec::new()), "a note changed");
+        assert!(state.finish_turn(turn_id, ActorId::default(), vec![note], Vec::new(), None), "a note changed");
         assert_eq!(state.transcript.entries().count(), 4, "the turn's messages, followed by its end");
         assert!(matches!(state.transcript.last().map(|n| &n.entry), Some(TranscriptEntry::TurnFinished { turn_id: t, .. }) if *t == turn_id));
         assert!(matches!(state.history.last().map(|n| &n.entry), Some(HistoryEntry::TurnFinished { turn_id: t, .. }) if *t == turn_id));
@@ -730,6 +753,29 @@ pub(crate) mod tests {
         assert_eq!(state.history.messages().last().and_then(|m| m.turn_id), Some(turn_id));
         assert_eq!(state.recorded_context_of(answer.id), Some((produced_from, turn_id)), "with what it was produced from, and in which turn");
         assert_eq!(state.notes.current().len(), 1);
+    }
+
+    #[test]
+    fn a_command_turn_offers_no_tools_and_records_its_command_before_its_end() {
+        let mut state = a_state_that_heard("hello", Classification::CHANNEL_DEFAULT);
+        let issuer = ActorId::User(crate::user::UserId::new());
+        let request = CommandRequest { command: "compact".to_string(), args: "hard".to_string(), issuer };
+        let turn_id = state.begin_command_turn(EventContext::default(), SecurityContext::default(), Classification::CHANNEL_DEFAULT, ModelProfile::default(), request.clone());
+        let turn = state.turn.as_ref().expect("a turn was begun");
+        assert_eq!(turn.command.as_ref(), Some(&request), "kept with the turn, for one resumed");
+        assert!(turn.tools.is_empty() && turn.work.context.tools.is_none(), "a command turn offers its model nothing");
+
+        state.turn = None;
+        let agent = ActorId::Agent(AgentId::new());
+        assert!(!state.finish_turn(turn_id, agent, Vec::new(), Vec::new(), Some(request)));
+        let ends: Vec<String> = state.history.items().iter().filter_map(|item| match item {
+            HistoryEntry::CommandExecuted { turn_id: t, actor, issuer: by, command, args, .. } if *t == turn_id => Some(format!("{actor} ran /{command} {args} for {by}")),
+            HistoryEntry::TurnFinished { turn_id: t, .. } if *t == turn_id => Some("finished".to_string()),
+            _ => None,
+        }).collect();
+        assert_eq!(ends, [format!("{agent} ran /compact hard for {issuer}"), "finished".to_string()], "the command before the turn's end (issue 269)");
+        assert!(matches!(state.transcript.last().map(|n| &n.entry), Some(TranscriptEntry::TurnFinished { turn_id: t, .. }) if *t == turn_id));
+        assert_eq!(state.history.messages().len(), 1, "nothing said");
     }
 
     #[test]
@@ -779,7 +825,7 @@ pub(crate) mod tests {
         let mut state = a_state_that_heard("hello", Classification::CHANNEL_DEFAULT);
         begin(&mut state, Vec::new());
         let turn = state.turn.take().expect("a turn was begun").work.turn_id;
-        state.finish_turn(turn, ActorId::default(), Vec::new(), Vec::new());
+        state.finish_turn(turn, ActorId::default(), Vec::new(), Vec::new(), None);
         assert_eq!(state.answers_again_after(turn), Err(RetryRefused::Ended), "taken over, not given up");
     }
 

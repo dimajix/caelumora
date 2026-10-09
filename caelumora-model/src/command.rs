@@ -3,7 +3,7 @@
 //!
 //! Commands are recognised by the frontends, which send them to the channel
 //! as commands instead of as messages; [`parse_input`] is the rule they
-//! follow. What a command does is up to the `SessionCommandProvider` component that
+//! follow. What a command does is up to the `ChannelCommandProvider` component that
 //! contributes it (see `caelumora-runtime`).
 
 use crate::component::{ComponentConfig, ComponentDescriptor};
@@ -28,6 +28,12 @@ pub struct Command {
     pub description: String,
     /// The parameters, e.g. `[agent]`, or `None` if it takes none.
     pub usage: Option<String>,
+    /// Of a command an agent carries out itself (issue 269): whether it is
+    /// for the agent's owner and contributors alone - as approving its calls
+    /// is - rather than for everyone who may write in the channel. `false`
+    /// unless named; meaningless for a command the session runs.
+    #[serde(default)]
+    pub owners_only: bool,
 }
 
 /// Who sees what a command answers.

@@ -56,7 +56,7 @@ document" ([ARCHITECTURE.md](../docs/ARCHITECTURE.md#principles)).
   reused: its `execute` is given the session - the issuer, the channel, the other commands -
   and a command of an agent needs the agent's `Turn`, as a tool does. The two facets differ in
   what they are given, as `ToolProvider` and `CommandProvider` do, and are named by whose commands
-  they are: `SessionCommandProvider` (today's `CommandProvider`, renamed) and
+  they are: `ChannelCommandProvider` (today's `CommandProvider`, renamed) and
   `AgentCommandProvider`. The type that holds them, checks for duplicates and asks the policy is
   one, generic.
 - **An agent carries a command out in a turn of its own.** The alternative - changing
@@ -142,7 +142,7 @@ Commands for agents are built as the rest of the system is built: as components,
 carried out in turns.
 
 1.  A component facet `AgentCommandProvider` (in `crate::command`, beside today's
-    `CommandProvider`, which becomes `SessionCommandProvider`) contributes commands an agent
+    `CommandProvider`, which becomes `ChannelCommandProvider`) contributes commands an agent
     carries out, given the agent's `Turn`. Agents run here and external agents alike.
 2.  `CommandExecutor` becomes generic over the provider facet and serves both: the session's
     commands, run by the `UserActor`; an agent's commands, run by its actor. Finding, checking for
@@ -221,7 +221,7 @@ are `/skill` (22) and `/compact` (16) - so it is pinned by tests with a test pro
 
 ### B. Step 1 - one executor for both (`caelumora-runtime`, no change in behaviour)
 
-1.  `CommandProvider` is renamed `SessionCommandProvider`; `CommandContext` stays its context.
+1.  `CommandProvider` is renamed `ChannelCommandProvider`; `CommandContext` stays its context.
 2.  `CommandExecutor<P: ?Sized>` with `entries: Vec<CommandEntry<P>>`, `CommandEntry<P> {
     command, component, provider: Arc<P> }`. Shared for every `P`: `new(security_manager,
     providers: Vec<ComponentImpl<P>>)` with the duplicate check - which needs the commands of a
@@ -229,10 +229,10 @@ are `/skill` (22) and `/compact` (16) - so it is pinned by tests with a test pro
     facets extend -, `empty`, `visible(issuer)`, and a private `admit(name, issuer) ->
     CommandResult<&CommandEntry<P>>` holding today's `Empty` / `Unknown` / `ShowCommand` /
     `ExecuteCommand` sequence, with the actions it asks given by the instantiation.
-3.  `impl CommandExecutor<dyn SessionCommandProvider> { pub async fn execute(name, args,
+3.  `impl CommandExecutor<dyn ChannelCommandProvider> { pub async fn execute(name, args,
     &CommandContext) }` - `admit`, then the provider: today's `execute`, unchanged for its callers.
     The tests of `command/mod.rs` move with it. `RuntimeManager::new_command_executor` and the
-    `ActorRuntime` name the type `CommandExecutor<dyn SessionCommandProvider>`.
+    `ActorRuntime` name the type `CommandExecutor<dyn ChannelCommandProvider>`.
 
 ### C. Step 2 - `take_in` stops at a command (`caelumora-runtime`, no change in behaviour)
 
@@ -468,14 +468,30 @@ is never retryable; a command carried out is recorded in the history.
   agent's transcript, which only the agent writes; `/compact` (16) has the same need. Decided with
   the maintainer: an event the user's actor sends and the moderator routes to one agent, which
   carries the command out and answers with an event; agents understand commands through components
-  (a facet beside `CommandProvider`, which becomes `SessionCommandProvider`), not natively, so
+  (a facet beside `CommandProvider`, which becomes `ChannelCommandProvider`), not natively, so
   that `/help`, completion and the permission checks stay in one place; a command runs in a turn
   of the agent's own, for external agents too; the agent is always named (`@handle`, `@all`); a
   quiet channel carries commands out; a command turn is never retryable; a command carried out is
   recorded in the history. Plan written against `42a7483`.
-- **2026-10-09** — Step 1 (B) done: `CommandProvider` is `SessionCommandProvider`, with
+- **2026-10-09** — Step 1 (B) done: `CommandProvider` is `ChannelCommandProvider`, with
   `ProvidesCommands` as what every command facet says of its commands, and `CommandExecutor<P>` is
   generic with `visible_by` and `admit` shared and the session's `visible` / `execute` on the
   instantiation. Step 2 (C) is not a step of its own after all: without `CommandRequested` there is
   nothing for `take_in` to stop at, and a `TakenIn` of two fields is today's tuple under a name; it
   is built with step 4, where the third field and the loop over `take_in` arrive together.
+- **2026-10-09** — Step 3 (D) done, with three things the plan did not say:
+  - `CommandExecuted` carries `args` and `turn_id: Option<TurnId>` besides `to`, since the channel
+    records the history entry from the event: `Some` for a command an agent carried out, recorded;
+    `None` for one the session ran, not recorded. The issuer is the envelope's security context's
+    initiator, not a field.
+  - `CommandRequest` keeps the `issuer` with the command and its arguments, so that `finish_turn`
+    records the entry from the turn alone; `AgentChannelState::begin_command_turn` begins such a
+    turn without tools and `finish_turn` takes the command.
+  - A command turn that does not finish leaves no `TurnGivenUp`: nothing was said and nothing
+    committed, so there is nothing to record, and `CommandFailed` tells the issuer. That makes
+    "never retryable" hold in the model without a rule - no `TurnGivenUp` of a command turn is
+    ever the last given up -; only a command turn *under way* has to be refused, in the runtime
+    (step 4). Whether a command turn announces `ResponseStarted` at all is decided there too.
+  - The policy's rule for `ApproveToolCall` is now `answers_for`, shared with the owners-only
+    commands. `HistoryItemResponse` and the web UI's types mirror the new entry and events
+    already; nothing stored has to be deleted.

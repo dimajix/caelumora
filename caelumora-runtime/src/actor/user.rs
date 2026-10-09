@@ -488,7 +488,7 @@ impl UserActor {
         debug!("UserActor {} runs /{}", self.id, name);
         let output = executor.execute(name, args, &context).await?;
         if output.visibility == CommandVisibility::Channel {
-            let event = ActorEvent::CommandExecuted { command: name.to_string(), output: output.text.clone() };
+            let event = ActorEvent::CommandExecuted { command: name.to_string(), args: args.to_string(), output: output.text.clone(), to: None, turn_id: None };
             self.send(self.envelope(event, Uuid::new_v4())).await?;
         }
         Ok(CommandReply { command: name.to_string(), output: output.text, visibility: output.visibility })

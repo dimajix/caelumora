@@ -1,6 +1,7 @@
 use crate::actor::ActorId;
 use crate::session::SessionId;
 use crate::channel::ChannelId;
+use crate::command::Command;
 use crate::confidentiality::{Classification, ConfidentialityRules};
 use crate::privacy::SessionPrivacy;
 use crate::store::EntityKind;
@@ -156,6 +157,13 @@ pub enum ActionType<'a> {
     ShowCommand(&'a str),
     /// Running a user command, keyed by its name.
     ExecuteCommand(&'a str),
+    /// Seeing that an agent carries out `command` (issue 269) - in `/help`,
+    /// in completion, in the member's snapshot. Carries the agent's
+    /// attributes and those of the channel it is asked in.
+    ShowAgentCommand { command: &'a Command, agent: &'a SecurityAttributes, channel: &'a SecurityAttributes },
+    /// Asking the agent to carry out `command` (issue 269), alike. Whom the
+    /// command is for is the command's own word (`Command::owners_only`).
+    ExecuteAgentCommand { command: &'a Command, agent: &'a SecurityAttributes, channel: &'a SecurityAttributes },
     CallTool(&'a ToolCall),
     ReadSecret(&'a str),
     GetComponent(&'a SecurityAttributes),
@@ -251,6 +259,8 @@ impl ActionType<'_> {
             ActionType::Reclassify { target, current, new, channel } => format!("Reclassify({target:?} in {channel} from {current} to {new})"),
             ActionType::ShowCommand(name) => format!("ShowCommand(/{name})"),
             ActionType::ExecuteCommand(name) => format!("ExecuteCommand(/{name})"),
+            ActionType::ShowAgentCommand { command, .. } => format!("ShowAgentCommand(/{})", command.name),
+            ActionType::ExecuteAgentCommand { command, .. } => format!("ExecuteAgentCommand(/{})", command.name),
             ActionType::CallTool(call) => format!("CallTool({})", call.function_name),
             ActionType::ReadSecret(key) => format!("ReadSecret({key})"),
             ActionType::GetComponent(_) => "GetComponent".into(),
@@ -676,6 +686,19 @@ impl OwnershipSecurityManager {
         Self { rules }
     }
 
+    /// Whether `me` answers for the agent with `agent` attributes in the
+    /// channel with `channel` attributes - approves its calls, runs the
+    /// commands that are its owners' (issues 14, 269): who is responsible
+    /// for the agent, also in someone else's channel; for an agent of the
+    /// system, whose channel it is.
+    fn answers_for(agent: &SecurityAttributes, channel: &SecurityAttributes, me: ActorId) -> bool {
+        if Self::system_owned(agent) {
+            channel.owner_id == me && me != ActorId::None
+        } else {
+            agent.owner_id == me || agent.contributors.contains(&me)
+        }
+    }
+
     fn system_owned(attributes: &SecurityAttributes) -> bool {
         matches!(attributes.owner_id, ActorId::None | ActorId::System)
     }
@@ -711,11 +734,13 @@ impl SecurityManager for OwnershipSecurityManager {
             // What an agent can do is read by whoever reads the agent, and by
             // every member of the channel it works in with them.
             ActionType::ReadAgentTools { agent, channel } => Self::may_read(agent, me) || Self::may_read(channel, me),
-            // Who is responsible for an agent answers for its calls, also in
-            // someone else's channel; for an agent of the system, whose
-            // channel it is.
-            ActionType::ApproveToolCall { agent, channel } if Self::system_owned(agent) => channel.owner_id == me && me != ActorId::None,
-            ActionType::ApproveToolCall { agent, .. } => agent.owner_id == me || agent.contributors.contains(&me),
+            ActionType::ApproveToolCall { agent, channel } => Self::answers_for(agent, channel, me),
+            // A command of an agent is run by whoever may write in the
+            // channel - its contributors -, unless the command is for the
+            // agent's owners alone, as approving its calls is (issue 269).
+            ActionType::ShowAgentCommand { command, agent, channel } | ActionType::ExecuteAgentCommand { command, agent, channel } => {
+                if command.owners_only { Self::answers_for(agent, channel, me) } else { Self::may_read(channel, me) }
+            }
             ActionType::CopyInformation { from, into } => self.rules.may_copy(from, into),
             ActionType::Classify(classification) => self.rules.may_classify(classification),
             ActionType::Reclassify { target, new, channel, .. } => {
@@ -884,6 +909,18 @@ mod tests {
         assert!(allows(carol, approve(&systems, &theirs)).await, "an agent of the system: whose channel it is");
         assert!(!allows(alice, approve(&systems, &theirs)).await, "nobody else");
         assert!(!allows(bob, approve(&SecurityAttributes::default(), &hers)).await, "not even a contributor of the channel");
+        let command = |owners_only| Command { name: "x".to_string(), description: String::new(), usage: None, owners_only };
+        let (members, owners) = (command(false), command(true));
+        let run = |command, agent, channel| ActionType::ExecuteAgentCommand { command, agent, channel };
+        let show = |command, agent, channel| ActionType::ShowAgentCommand { command, agent, channel };
+        assert!(allows(carol, run(&members, &hers, &theirs)).await, "a command for the members: whoever may write in the channel");
+        assert!(allows(carol, show(&members, &hers, &theirs)).await);
+        assert!(!allows(bob, run(&members, &hers, &theirs)).await, "not the agent's contributor outside the channel");
+        assert!(allows(alice, run(&owners, &hers, &theirs)).await, "a command for the owners: the agent's owner");
+        assert!(allows(bob, run(&owners, &hers, &theirs)).await, "and its contributors");
+        assert!(!allows(carol, run(&owners, &hers, &theirs)).await, "not whose channel it is");
+        assert!(!allows(carol, show(&owners, &hers, &theirs)).await, "who may not run it does not see it");
+        assert!(allows(carol, run(&owners, &systems, &theirs)).await, "an agent of the system: whose channel it is");
         assert!(!allows(bob, ActionType::UpdateSession(&hers)).await);
         assert!(!allows(bob, ActionType::DeleteSession(&hers)).await);
     }

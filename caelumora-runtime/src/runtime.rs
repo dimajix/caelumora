@@ -1,5 +1,5 @@
 use crate::channel::ChannelLoop;
-use crate::command::{CommandExecutor, SessionCommandProvider};
+use crate::command::{CommandExecutor, ChannelCommandProvider};
 use crate::component::{ComponentContainer, ComponentContext, ComponentRegistry, ComponentResult};
 use crate::controller::{ControllerManager, SessionController};
 use crate::event::EventBus;
@@ -52,7 +52,7 @@ pub struct RuntimeManager {
 #[derive(Debug, Clone)]
 pub struct ChannelRuntime {
     runtime_manager: Arc<RuntimeManager>,
-    command_executor: Arc<CommandExecutor<dyn SessionCommandProvider>>,
+    command_executor: Arc<CommandExecutor<dyn ChannelCommandProvider>>,
     /// The session the channel belongs to, live: what its agents' tool
     /// calls are guarded by (`GuardedToolExecutor`).
     session: Arc<SessionController>,
@@ -78,7 +78,7 @@ impl ChannelHandle {
 impl ChannelRuntime {
     /// A runtime for a channel of the session `session` holds, whose user
     /// commands are `commands`.
-    pub fn new(runtime_manager: Arc<RuntimeManager>, command_executor: Arc<CommandExecutor<dyn SessionCommandProvider>>, session: Arc<SessionController>) -> Self {
+    pub fn new(runtime_manager: Arc<RuntimeManager>, command_executor: Arc<CommandExecutor<dyn ChannelCommandProvider>>, session: Arc<SessionController>) -> Self {
         Self { runtime_manager, command_executor, session, channel: ChannelHandle::default() }
     }
 
@@ -161,7 +161,7 @@ impl ActorRuntime {
 
     /// The user commands of the actor's session. Only a `UserActor` runs
     /// them: commands are for people, agents act through tools.
-    pub fn command_executor(&self) -> &Arc<CommandExecutor<dyn SessionCommandProvider>> {
+    pub fn command_executor(&self) -> &Arc<CommandExecutor<dyn ChannelCommandProvider>> {
         &self.runtime.command_executor
     }
 
@@ -271,7 +271,7 @@ impl ChannelRuntime {
     /// A runtime for a channel of the session `session_id` that is not
     /// running - in tests: its session holds nothing but its id, and no
     /// rules.
-    pub(crate) fn outside_a_session(runtime_manager: Arc<RuntimeManager>, command_executor: Arc<CommandExecutor<dyn SessionCommandProvider>>, session_id: SessionId) -> Self {
+    pub(crate) fn outside_a_session(runtime_manager: Arc<RuntimeManager>, command_executor: Arc<CommandExecutor<dyn ChannelCommandProvider>>, session_id: SessionId) -> Self {
         let session = runtime_manager.controller_manager().new_session_controller(bare_session(session_id));
         Self::new(runtime_manager, command_executor, session)
     }
@@ -336,7 +336,7 @@ impl RuntimeManager {
     /// # Errors
     /// A `ComponentError` if a command component cannot be built or two
     /// provide the same command - the session does not start then.
-    pub async fn new_command_executor(&self, session: &Session) -> ComponentResult<CommandExecutor<dyn SessionCommandProvider>> {
+    pub async fn new_command_executor(&self, session: &Session) -> ComponentResult<CommandExecutor<dyn ChannelCommandProvider>> {
         let owner: ActorId = session.security_attributes.owner_id;
         let security = SecurityContext::new(owner, session.id, Default::default());
         let context = ComponentContext::new(security, Arc::clone(self.security_manager()), Arc::clone(self.secret_manager()));
@@ -345,7 +345,7 @@ impl RuntimeManager {
         // be unique within one of them.
         for config in [&self.commands, &session.commands] {
             let container = ComponentContainer::from_config(config, &self.component_registry, &context).await?;
-            providers.extend(container.get_all::<dyn SessionCommandProvider>(None));
+            providers.extend(container.get_all::<dyn ChannelCommandProvider>(None));
         }
         CommandExecutor::new(Arc::clone(self.security_manager()), providers)
     }

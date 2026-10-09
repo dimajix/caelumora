@@ -1,6 +1,6 @@
 //! The built-in `/help` command (issue 28).
 
-use crate::command::{CommandContext, CommandError, CommandResult, ProvidesCommands, SessionCommandProvider};
+use crate::command::{CommandContext, CommandError, CommandResult, ProvidesCommands, ChannelCommandProvider};
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use async_trait::async_trait;
 use caelumora_model::command::{Command, CommandOutput, HELP_COMMAND_KIND};
@@ -26,12 +26,13 @@ impl ProvidesCommands for HelpCommandProvider {
             name: HELP_COMMAND_NAME.to_string(),
             description: "Lists the commands you can use, or describes one.".to_string(),
             usage: Some("[command]".to_string()),
+            owners_only: false,
         }]
     }
 }
 
 #[async_trait]
-impl SessionCommandProvider for HelpCommandProvider {
+impl ChannelCommandProvider for HelpCommandProvider {
     async fn execute(&self, _name: &str, args: &str, context: &CommandContext<'_>) -> CommandResult<CommandOutput> {
         let visible = context.executor.visible(context.issuer).await;
         let wanted = args.trim().trim_start_matches('/');
@@ -53,10 +54,10 @@ impl SessionCommandProvider for HelpCommandProvider {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(HELP_COMMAND_KIND).provides::<dyn SessionCommandProvider>(),
+        ComponentKind::new(HELP_COMMAND_KIND).provides::<dyn ChannelCommandProvider>(),
         |_descriptor, _context| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn SessionCommandProvider>(Arc::new(HelpCommandProvider));
+            facets.insert::<dyn ChannelCommandProvider>(Arc::new(HelpCommandProvider));
             Ok(facets)
         },
     );

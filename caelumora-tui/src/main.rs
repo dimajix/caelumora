@@ -207,7 +207,7 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                             GivenUpReason::Stopped | GivenUpReason::Retried => println!("\r{} gave its answer up: {}", sender, reason.cause()),
                         }
                     }
-                    Some(ActorEvent::CommandExecuted { command, output }) => {
+                    Some(ActorEvent::CommandExecuted { command, output, .. }) => {
                         println!("\r{} ran /{}: {}", sender, command, output);
                     }
                     Some(ActorEvent::ParticipantRemoved { participant }) => {

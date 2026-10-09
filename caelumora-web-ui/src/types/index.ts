@@ -491,8 +491,15 @@ export interface ActorEvent {
   /** An agent's turn was aborted by an error; the agent is idle again. */
   /** An agent gave its turn up (issues 145, 258); a stopped agent sends none. */
   TurnGivenUp?: { turn_id: string; reason: GivenUpReason };
-  /** A user ran a command whose answer concerns the whole channel (issue 28). */
-  CommandExecuted?: { command: string; output: string };
+  /**
+   * A command was carried out (issues 28, 269): by the session, sent by the
+   * user who ran it when its answer concerns the whole channel; or by an
+   * agent, the sender, in its turn `turn_id`, for the issuer alone (`to`) or
+   * for everybody.
+   */
+  CommandExecuted?: { command: string; args: string; output: string; to: ActorId | null; turn_id: string | null };
+  /** The agent did not carry out the command (issue 269); shown to the issuer alone. */
+  CommandFailed?: { command: string; reason: string; to: ActorId };
   /**
    * `participant` was removed from the channel by the envelope's sender
    * (issue 162); nothing of it follows, so whatever of it was under way has
@@ -781,7 +788,8 @@ export type HistoryItem<M> =
   | {said: M}
   | {plan_step_started: {turn_id: string; actor: ActorId; step_index: number; total_steps: number; description: string; at: string}}
   | {turn_finished: {turn_id: string; actor: ActorId; at: string}}
-  | {turn_given_up: {turn_id: string; actor: ActorId; reason: GivenUpReason; at: string}};
+  | {turn_given_up: {turn_id: string; actor: ActorId; reason: GivenUpReason; at: string}}
+  | {command_executed: {turn_id: string; actor: ActorId; issuer: ActorId; command: string; args: string; at: string}};
 
 /** What an agent's model saw when it produced a message (issues 06, 47). */
 export interface MessageContextResponse {

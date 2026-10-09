@@ -486,10 +486,11 @@ answers is decided in one place.
 
 ### Commands are components
 
-A `SessionCommandProvider` (`caelumora_runtime::command`) contributes commands the session runs,
-as a `ToolProvider` contributes tools, registered in the `ComponentRegistry`. Its name says whose
-commands they are: the facet for commands an agent carries out itself is issue 269's. What every
-such facet says of its commands is `ProvidesCommands`. They come from two places:
+A `ChannelCommandProvider` (`caelumora_runtime::command`) contributes commands run on the channel
+(`CommandContext`: the issuer, the `ChannelLoop`), as a `ToolProvider` contributes tools, registered
+in the `ComponentRegistry`. Its name says what a command is given: the facet for commands an agent
+carries out itself, given the agent's turn, is issue 269's. What every such facet says of its
+commands is `ProvidesCommands`. They come from two places:
 
 *   `AppConfig::commands`, the global set - by default `/help` and `/wakeup`; an empty list switches
     them off (see [CONFIGURATION.md](CONFIGURATION.md));
@@ -497,7 +498,7 @@ such facet says of its commands is `ProvidesCommands`. They come from two places
     into the `Session`, so a running session keeps its set.
 
 `RuntimeManager::new_command_executor` builds both once per session and hands the providers to a
-`CommandExecutor<dyn SessionCommandProvider>` shared by the session's channels. It is the
+`CommandExecutor<dyn ChannelCommandProvider>` shared by the session's channels. It is the
 counterpart of an agent's `ToolExecutor`, which likewise receives ready providers rather than a
 configuration. Two components providing the same name are a configuration error that keeps the
 session from starting. The executor is generic over the facet: finding a command, refusing two of

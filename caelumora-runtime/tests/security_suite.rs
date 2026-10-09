@@ -106,7 +106,7 @@ fn attributes_of<'a>(action: &ActionType<'a>) -> Option<&'a SecurityAttributes> 
     match *action {
         GetPersonality(a) | CreatePersonality(a) | UpdatePersonality(a) | DeletePersonality(a)
         | GetSessionTemplate(a) | CreateSessionTemplate(a) | UpdateSessionTemplate(a) | DeleteSessionTemplate(a)
-        | CreateAgent(a) | GetAgent(a) | ReadAgentContext(a) | ReadAgentTools { agent: a, .. } | ApproveToolCall { agent: a, .. } | UpdateAgent(a) | DeleteAgent(a)
+        | CreateAgent(a) | GetAgent(a) | ReadAgentContext(a) | ReadAgentTools { agent: a, .. } | ApproveToolCall { agent: a, .. } | ShowAgentCommand { agent: a, .. } | ExecuteAgentCommand { agent: a, .. } | UpdateAgent(a) | DeleteAgent(a)
         | CreateSession(a) | GetSession(a) | UpdateSession(a) | DeleteSession(a) | StopSession(a)
         | GetChannel(a) | CreateChannel(a) | UpdateChannel(a) | DeleteChannel(a)
         | GetUser(a) | CreateUser(a) | UpdateUser(a) | DeleteUser(a)

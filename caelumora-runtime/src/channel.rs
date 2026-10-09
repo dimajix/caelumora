@@ -1403,6 +1403,20 @@ impl ChannelLoop {
                 state.history.end_turn(HistoryEntry::TurnGivenUp { turn_id: *turn_id, actor: envelope.context.sender_id, reason: reason.clone(), at: envelope.timestamp });
                 true
             }
+            // A command an agent carried out is part of the record (issue
+            // 269), before its turn's end; who asked is the initiator. One
+            // the session ran addresses the system and is not.
+            ActorEvent::CommandExecuted { turn_id: Some(turn_id), command, args, .. } => {
+                state.history.record_command(HistoryEntry::CommandExecuted {
+                    turn_id: *turn_id,
+                    actor: envelope.context.sender_id,
+                    issuer: envelope.security.initiator_id,
+                    command: command.clone(),
+                    args: args.clone(),
+                    at: envelope.timestamp,
+                });
+                true
+            }
             ActorEvent::PlanStepStarted { turn_id, step_index, total_steps, description } => {
                 state.history.start_plan_step(HistoryEntry::PlanStepStarted {
                     turn_id: *turn_id,
@@ -1596,7 +1610,7 @@ mod tests {
             deleted: None,
             former: Vec::new(),
         };
-        let builtin = |id: &str, facet: Arc<dyn crate::command::SessionCommandProvider>| ComponentImpl { id: id.to_string(), fail_policy: ComponentFailPolicy::FailOpen, facet };
+        let builtin = |id: &str, facet: Arc<dyn crate::command::ChannelCommandProvider>| ComponentImpl { id: id.to_string(), fail_policy: ComponentFailPolicy::FailOpen, facet };
         let executor = CommandExecutor::new(
             Arc::clone(runtime.security_manager()),
             vec![builtin("help", Arc::new(HelpCommandProvider)), builtin("wakeup", Arc::new(WakeupCommandProvider))],
@@ -1779,7 +1793,7 @@ mod tests {
             .unwrap();
         assert_eq!(envelope.context.sender_id, ActorId::User(alice.id));
         match envelope.event {
-            ActorEvent::CommandExecuted { command, output } => {
+            ActorEvent::CommandExecuted { command, output, .. } => {
                 assert_eq!(command, "wakeup");
                 assert_eq!(output, "No agent was asleep.");
             }

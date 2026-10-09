@@ -809,6 +809,8 @@ pub enum HistoryItemResponse<M> {
     TurnFinished { turn_id: TurnId, actor: ActorId, at: DateTime<Utc> },
     TurnGivenUp { turn_id: TurnId, actor: ActorId, reason: caelumora_model::turn::GivenUpReason, at: DateTime<Utc> },
     PlanStepStarted { turn_id: TurnId, actor: ActorId, step_index: usize, total_steps: usize, description: String, at: DateTime<Utc> },
+    /// An agent carried out a command in its turn (issue 269).
+    CommandExecuted { turn_id: TurnId, actor: ActorId, issuer: ActorId, command: String, args: String, at: DateTime<Utc> },
 }
 
 impl<M> HistoryItemResponse<M> {
@@ -821,6 +823,7 @@ impl<M> HistoryItemResponse<M> {
             HistoryEntry::TurnFinished { turn_id, actor, at } => Some(Self::TurnFinished { turn_id, actor, at }),
             HistoryEntry::TurnGivenUp { turn_id, actor, reason, at } => Some(Self::TurnGivenUp { turn_id, actor, reason, at }),
             HistoryEntry::PlanStepStarted { turn_id, actor, step_index, total_steps, description, at } => Some(Self::PlanStepStarted { turn_id, actor, step_index, total_steps, description, at }),
+            HistoryEntry::CommandExecuted { turn_id, actor, issuer, command, args, at } => Some(Self::CommandExecuted { turn_id, actor, issuer, command, args, at }),
             HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. } => None,
         }
     }
@@ -1067,6 +1070,11 @@ mod tests {
         let json = serde_json::to_value(step).unwrap();
         assert_eq!((json["plan_step_started"]["step_index"].clone(), json["plan_step_started"]["total_steps"].clone()), (serde_json::json!(1), serde_json::json!(3)));
         assert_eq!(json["plan_step_started"]["description"], "second");
+        let issuer = ActorId::User(UserId::new());
+        let command = HistoryItemResponse::<Message>::of(HistoryEntry::CommandExecuted { turn_id: turn, actor, issuer, command: "compact".to_string(), args: String::new(), at: chrono::Utc::now() }, |m| m).unwrap();
+        let json = serde_json::to_value(command).unwrap();
+        assert_eq!(json["command_executed"]["command"], "compact");
+        assert_eq!(json["command_executed"]["issuer"], serde_json::to_value(issuer).unwrap());
         assert!(HistoryItemResponse::<Message>::of(HistoryEntry::Fitted { channel: Classification::PUBLIC }, |m| m).is_none(), "a change is in the message it changed");
     }
 
