@@ -26,11 +26,50 @@ is in [AGENT-TURN.md](AGENT-TURN.md).
     facets.
 
 A descriptor of the reserved kind `ref` (`PRECONFIGURED_REF_KIND`) builds no component of its own:
-its `params` are `{ "id": "..." }`, naming a preconfigured descriptor stored in the
-`ComponentStore`. It is read afresh every time it is built, in the context of the graph that refers
-to it, so secrets are resolved as that caller; the price is that the component is not shared
-between references (a preconfigured `mcp_tool` discovers its tools again for every personality that
-uses it).
+its `params` are `{ "id": "..." }`, naming preconfigured components stored in the `ComponentStore`:
+a list of descriptors under one id. The `ref` stands for all of them, in their order, where it is
+written. It is read afresh every time it is built, in the context of the graph that refers to it,
+so secrets are resolved as that caller and a list the caller may not read cannot be built; the
+price is that the components are not shared between references (a preconfigured `mcp_tool`
+discovers its tools again for every personality that uses it).
+
+### Sharing components between personalities
+
+What many personalities should have alike - the channel's context, the tools every agent needs - is
+kept once, as preconfigured components, and each personality includes it with a `ref` (issue 270):
+
+```yaml
+components:                      # of the seed: kept in the ComponentStore
+- id: channel-context
+  components:
+  - { id: channel-members, kind: channel_members_prompt_provider }
+  - { id: channel-language, kind: channel_language_prompt_provider }
+personalities:
+- name: jonathan-assistant
+  components:
+  - { id: system-prompt, kind: static_system_prompt_provider, params: { ... } }
+  - { id: channel-context, kind: ref, params: { id: channel-context } }
+  - { id: memory, kind: agent_memory }
+```
+
+*   An addition to a list reaches every personality that includes it, the next time its agents are
+    built - not a running agent, as a change of its own personality does not either.
+*   The entries of a `ComponentConfig` have unique ids, and so have the components they stand for.
+    A component of an included list that is written again - beside the `ref`, or through a second
+    `ref` - is a configuration error naming the `ref`, not an override; a personality that wants a
+    component otherwise does not include the list (or includes a finer one).
+*   Preconfigured components cannot include a `ref` themselves: there is no depth and no cycle.
+*   A list that cannot be read - gone, or a share withdrawn - fails as `ComponentError::Unavailable`
+    (`is_unavailable` also through the component it was building). An agent whose personality
+    includes it is left out of its channel, as one whose personality was withdrawn is; the channel
+    runs with everyone else ([CHANNELS.md](CHANNELS.md)).
+*   What an agent was built from is recorded, not computed again: `ComponentContainer::components`
+    gives the configuration with every `ref` resolved, its actor keeps it (`Actor::components`), and
+    `MemberView::components` reads it for the agent's owner (`ReadAgentComponents`), as
+    `GET …/actors/{aid}/components` does ([REST-SERVER.md](REST-SERVER.md)).
+*   Only components are shared. A personality's kind, roles, introduction and reasoning visibility
+    are its own.
+*   It serves every `ComponentConfig` alike - a channel's components and a session's commands, too.
 
 ## Facets
 
@@ -98,7 +137,7 @@ default kind (`component_impl`, `llm`, `external`, `moderator`).
     beforehand.
 *   What a container's single is, is known without building it: `ComponentRegistry::kind_of` names
     the kind of the component that provides it, or of the default - `None` if the container refers
-    to a preconfigured component, which might provide it.
+    to preconfigured components, which might provide it.
 *   The default comes from, in this order: the container's own component, the defaults the
     container was built with (`ComponentContainer::with_defaults`, issue 214 - an external agent's
     actor gives its `ContextProvider` so, `external_context_provider`), the configuration

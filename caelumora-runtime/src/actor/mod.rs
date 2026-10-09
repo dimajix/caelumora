@@ -21,6 +21,7 @@ use crate::transport::{EventReceiver, EventSender};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, RetryTarget};
 use caelumora_model::agent::RetryRefused;
 use caelumora_model::command::Command;
+use caelumora_model::component::ComponentConfig;
 use caelumora_model::message::Message;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::tool::ToolSet;
@@ -66,6 +67,13 @@ pub(crate) trait Actor: Any + Debug + Send + Sync {
     /// are its remote side's.
     async fn tool_sets(&self) -> Vec<ToolSet> {
         Vec::new()
+    }
+
+    /// What it was built from, its preconfigured components resolved (issue
+    /// 270). None for an actor that is built from no components - a user,
+    /// an approver.
+    fn components(&self) -> ComponentConfig {
+        ComponentConfig::default()
     }
 
     /// The commands it carries out itself that `issuer` may see (issue

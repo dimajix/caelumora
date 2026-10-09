@@ -42,6 +42,11 @@ pub enum ActionType<'a> {
     /// agent's attributes and those of the channel, where its tools are
     /// built.
     ReadAgentTools { agent: &'a SecurityAttributes, channel: &'a SecurityAttributes },
+    /// Reading which components an agent was built from in a channel, the
+    /// preconfigured ones it includes resolved (issue 270): its
+    /// configuration, with what was shared with its owner. Carries the
+    /// agent's attributes.
+    ReadAgentComponents(&'a SecurityAttributes),
     /// Answering whether a tool call of an agent may run (issue 14): an
     /// answer that counts for the approval it was asked for. Carries the
     /// agent's attributes and those of the channel the call is made in.
@@ -239,6 +244,7 @@ impl ActionType<'_> {
             ActionType::GetAgent(_) => "GetAgent".into(),
             ActionType::ReadAgentContext(_) => "ReadAgentContext".into(),
             ActionType::ReadAgentTools { .. } => "ReadAgentTools".into(),
+            ActionType::ReadAgentComponents(_) => "ReadAgentComponents".into(),
             ActionType::ApproveToolCall { .. } => "ApproveToolCall".into(),
             ActionType::ListAgents => "ListAgents".into(),
             ActionType::UpdateAgent(_) => "UpdateAgent".into(),
@@ -474,6 +480,10 @@ pub trait AccessQuestions {
     /// (`ReadAgentTools`, issue 194).
     async fn may_read_agent_tools(&self, context: &SecurityContext, agent: &SecurityAttributes, channel: &SecurityAttributes) -> bool;
 
+    /// Whether `context` may see which components the agent with `agent`
+    /// attributes was built from (`ReadAgentComponents`, issue 270).
+    async fn may_read_agent_components(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool;
+
     /// Whether `context` may approve the tool calls of the agent with
     /// `agent` attributes in the channel with `channel` attributes
     /// (`ApproveToolCall`, issue 14).
@@ -583,6 +593,10 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
 
     async fn may_read_agent_tools(&self, context: &SecurityContext, agent: &SecurityAttributes, channel: &SecurityAttributes) -> bool {
         self.check(context, ActionType::ReadAgentTools { agent, channel }).await
+    }
+
+    async fn may_read_agent_components(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool {
+        self.check(context, ActionType::ReadAgentComponents(agent)).await
     }
 
     async fn may_approve(&self, context: &SecurityContext, agent: &SecurityAttributes, channel: &SecurityAttributes) -> bool {
@@ -841,6 +855,7 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::UpdateAgent(a)
             | ActionType::DeleteAgent(a)
             | ActionType::ReadAgentContext(a)
+            | ActionType::ReadAgentComponents(a)
             | ActionType::UpdateSession(a)
             | ActionType::DeleteSession(a)
             | ActionType::StopSession(a)
@@ -971,6 +986,8 @@ mod tests {
         assert!(allows(bob, ActionType::CancelChannel(&hers)).await, "a contributor acts in it");
         assert!(allows(alice, ActionType::ReadAgentContext(&hers)).await);
         assert!(!allows(bob, ActionType::ReadAgentContext(&hers)).await, "what an agent saw is its owner's alone");
+        assert!(allows(alice, ActionType::ReadAgentComponents(&hers)).await);
+        assert!(!allows(bob, ActionType::ReadAgentComponents(&hers)).await, "and what it was built from, which may have been shared with its owner alone");
         let theirs = SecurityAttributes { owner_id: carol, contributors: vec![] };
         let tools = |agent, channel| ActionType::ReadAgentTools { agent, channel };
         assert!(allows(bob, tools(&hers, &theirs)).await, "who reads the agent sees what it can do");

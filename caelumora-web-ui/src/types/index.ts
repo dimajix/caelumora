@@ -88,6 +88,8 @@ export interface ChannelMember {
   can_read_context: boolean;
   /** Whether you may see which tools it has now - only ever an agent (issue 194). */
   can_read_tools: boolean;
+  /** Whether you may see which components it was built from - only ever an agent of yours (issue 270). */
+  can_read_components: boolean;
   /**
    * Whether you may approve its tool calls - only ever an agent taking part,
    * yours or one you contribute to (issue 14). Everybody sees what it waits

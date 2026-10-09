@@ -6,7 +6,7 @@
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
 use crate::turn::TurnState;
 use crate::channel::{Channel, ChannelId, ChannelState};
-use crate::component::{ComponentDescriptor, StoredComponent};
+use crate::component::{ComponentConfig, ComponentDescriptor, StoredComponent};
 use crate::confidentiality::{Classification, Visibility};
 use crate::external_agent::ConversationId;
 use crate::value::name::{Name, ScopedName};
@@ -199,12 +199,13 @@ fn artifact_named(name: ScopedName) -> Artifact {
 }
 
 fn component() -> StoredComponent {
-    StoredComponent::new(ComponentDescriptor::new("search", "web_search"), Default::default())
+    StoredComponent::new("search", ComponentConfig { component_nodes: vec![ComponentDescriptor::new("search", "web_search")] }, Default::default())
 }
 
 /// Preconfigured components go through the same life as the entities.
 pub(crate) async fn component_store_behaves(store: &dyn ComponentStore) {
-    lifecycle!(store, component(), component_id, descriptor.kind, "component",
+    lifecycle!(store, component(), component_id,
+        components = ComponentConfig { component_nodes: vec![ComponentDescriptor::new("search", "renamed")] }, "component",
         create_component, get_component, update_component, delete_component, list_components);
 }
 

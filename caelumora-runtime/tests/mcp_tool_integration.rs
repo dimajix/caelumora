@@ -166,12 +166,14 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
     store
         .create_component(
             &SecurityContext::default(),
-            &StoredComponent::new(ComponentDescriptor {
-                id: "shared-echo".to_string(),
-                kind: mcp_tool::MCP_TOOL_KIND.to_string(),
-                params: json!({ "endpoint": { "url": url } }),
-                tags: vec![],
-                fail_policy: ComponentFailPolicy::FailOpen,
+            &StoredComponent::new("shared-echo", ComponentConfig {
+                component_nodes: vec![ComponentDescriptor {
+                    id: "shared-echo".to_string(),
+                    kind: mcp_tool::MCP_TOOL_KIND.to_string(),
+                    params: json!({ "endpoint": { "url": url } }),
+                    tags: vec![],
+                    fail_policy: ComponentFailPolicy::FailOpen,
+                }],
             }, Default::default()),
         )
         .await

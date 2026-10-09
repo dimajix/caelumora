@@ -1,5 +1,5 @@
 use crate::auth::AuthenticatedUser;
-use crate::models::{AddParticipantRequest, DescriptionRequest, AgentToolsResponse, DeletedResponse, ListOptions, ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CreateChannelRequest, KnowledgeRefResponse, CommandReplyResponse, ExecuteCommandRequest, HistoryItemResponse, HistoryMessageResponse, LabelCauses, MessageContextResponse, SeenItemResponse, PublishedNotesResponse, MessageRequest, RetryTurnRequest, SendApprovalRequest, StreamOptions, AnswerQuestionsRequest};
+use crate::models::{AddParticipantRequest, DescriptionRequest, AgentToolsResponse, AgentComponentsResponse, DeletedResponse, ListOptions, ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CreateChannelRequest, KnowledgeRefResponse, CommandReplyResponse, ExecuteCommandRequest, HistoryItemResponse, HistoryMessageResponse, LabelCauses, MessageContextResponse, SeenItemResponse, PublishedNotesResponse, MessageRequest, RetryTurnRequest, SendApprovalRequest, StreamOptions, AnswerQuestionsRequest};
 use crate::state::AppState;
 use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response, Sse};
@@ -591,6 +591,20 @@ pub async fn agent_tools(
     let tool_sets = member_of(&channel, aid).await?.tool_sets().await
         .map_err(|e| ApiError::from_runtime(e.into(), Subject::Agent, "reading the tools"))?;
     Ok(Json(AgentToolsResponse { tool_sets }))
+}
+
+/// The components actor `aid` was built from in the channel, the
+/// preconfigured ones it includes resolved (issue 270), for whoever may see
+/// them (`ReadAgentComponents`).
+pub async fn agent_components(
+    State(state): State<Arc<AppState>>,
+    Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
+    user: AuthenticatedUser,
+) -> Result<Json<AgentComponentsResponse>, ApiError> {
+    let channel = crate::routes::channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let components = member_of(&channel, aid).await?.components().await
+        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Agent, "reading the components"))?;
+    Ok(Json(AgentComponentsResponse { components }))
 }
 
 pub async fn send_approval(

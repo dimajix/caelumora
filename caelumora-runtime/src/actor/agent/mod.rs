@@ -22,6 +22,7 @@ use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, RetryTar
 use crate::agent::state::AgentStateHandle;
 use caelumora_model::agent::{AgentChannelState, AgentId, Personality, RetryRefused};
 use caelumora_model::command::Command;
+use caelumora_model::component::ComponentConfig;
 use caelumora_model::turn::TurnState;
 use caelumora_model::work::TurnId;
 use crate::controller::{AgentController, ChannelController};
@@ -64,6 +65,9 @@ pub struct AgentActor {
     /// The commands it carries out itself (issue 269), from its
     /// personality's components.
     commands: AgentCommands,
+    /// What it was built from, its preconfigured components resolved
+    /// (issue 270).
+    built_from: ComponentConfig,
 
     // State
     /// The agent's own state, shared with its actors in other channels and
@@ -140,6 +144,7 @@ impl AgentActor {
             reasoning_visibility: personality.reasoning_visibility,
             views,
             commands,
+            built_from: components.components(),
             agent_state,
             state: Mutex::new(agent_channel_state),
             control,
@@ -884,6 +889,10 @@ impl Actor for AgentActor {
                     | ActorEvent::CommandRequested { .. }
             )
         }
+    }
+
+    fn components(&self) -> ComponentConfig {
+        self.built_from.clone()
     }
 
     async fn commands(&self, issuer: &SecurityContext) -> Vec<Command> {

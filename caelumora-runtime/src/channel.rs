@@ -4,7 +4,7 @@ use crate::actor::agent::AgentActor;
 use crate::actor::approval::ApproverActor;
 use crate::actor::external_agent::ExternalAgentActor;
 use crate::actor::user::UserActor;
-use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
+use crate::component::{ComponentContainer, ComponentContext, ComponentError, ComponentImpl};
 use crate::moderator::Moderator;
 use crate::session::SessionError;
 use crate::recorder::Recorder;
@@ -271,11 +271,13 @@ pub(crate) async fn require_admitted(runtime: &RuntimeManager, context: &Securit
     Ok(())
 }
 
-/// Whether `error` of `Member::of` says that the member cannot be run -
-/// its agent's personality is gone, or not the agent's to read - rather
-/// than that the store failed.
+/// Whether `error` of `Member::of` or of building the member's actor says
+/// that the member cannot be run - its agent's personality, or the
+/// preconfigured components it includes (issue 270), are gone or not the
+/// agent's to read - rather than that the store failed.
 fn cannot_run(error: &anyhow::Error) -> bool {
     matches!(error.downcast_ref::<StoreError>(), Some(StoreError::NotFound { .. } | StoreError::PermissionDenied))
+        || error.chain().any(|e| e.downcast_ref::<ComponentError>().is_some_and(ComponentError::is_unavailable))
 }
 
 /// The actor of a channel's participant, with what it was built from and
@@ -437,10 +439,11 @@ impl ChannelLoop {
         let participants = channel_loop.channel.load().participants.clone();
         for participant in &participants {
             // A user or agent deleted since it joined, or an agent that may
-            // not run - its personality withdrawn or gone: the channel runs
-            // without it rather than not at all (issues 120, 198). Its
-            // owner's loss must not keep everyone else out, nor can a third
-            // party - the personality's owner - stop someone's channel so.
+            // not run - its personality, or what it includes (issue 270),
+            // withdrawn or gone: the channel runs without it rather than not
+            // at all (issues 120, 198). Its owner's loss must not keep
+            // everyone else out, nor can a third party - the personality's
+            // owner, or the components' - stop someone's channel so.
             let found = channel_loop.member_of(participant).await;
             let member = match found {
                 Ok(Some(member)) => member,
@@ -454,7 +457,14 @@ impl ChannelLoop {
                 }
                 Err(e) => return Err(e),
             };
-            let actor = Self::create_actor(Arc::clone(&channel_loop.channel), &member, &channel_loop.runtime).await?;
+            let actor = match Self::create_actor(Arc::clone(&channel_loop.channel), &member, &channel_loop.runtime).await {
+                Ok(actor) => actor,
+                Err(e) if cannot_run(&e) => {
+                    warn!("{} of channel {} cannot be run and is left out: {:#}", participant.actor_id(), channel_loop.id, e);
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
             channel_loop.adopt(Arc::from(actor), member).await;
         }
         Ok(channel_loop)

@@ -7,7 +7,7 @@ use serde_json::Value;
 /// written by hand (configuration, seed files), so the fields with a
 /// default may be left out there (issue 108). Written as the list of its
 /// descriptors, directly under the key that holds it (issue 201).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ComponentConfig {
     pub component_nodes: Vec<ComponentDescriptor>,
@@ -15,7 +15,7 @@ pub struct ComponentConfig {
 
 /// One component, written by hand like its `ComponentConfig`: the fields
 /// with a default may be left out (issue 108).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ComponentDescriptor {
     pub id: String,
     pub kind: String,
@@ -41,27 +41,28 @@ impl ComponentDescriptor {
     }
 }
 
-/// A preconfigured component: a descriptor kept in the `ComponentStore`
-/// under its id, which personalities and templates refer to by `kind:
-/// "ref"`, with who may use and change it (issue 11). Stored as the
-/// descriptor with its attributes beside its fields.
+/// Preconfigured components: a list of descriptors kept in the
+/// `ComponentStore` under an id of its own, which a `ComponentConfig`
+/// includes by `kind: "ref"` - one component, or a bundle of them that
+/// several personalities share (issue 270) -, with who may use and change
+/// it (issue 11).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredComponent {
-    #[serde(flatten)]
-    pub descriptor: ComponentDescriptor,
+    pub id: String,
+    pub components: ComponentConfig,
     #[serde(default)]
     pub security_attributes: SecurityAttributes,
 }
 
 impl StoredComponent {
-    /// `descriptor`, kept with `security_attributes`.
-    pub fn new(descriptor: ComponentDescriptor, security_attributes: SecurityAttributes) -> Self {
-        Self { descriptor, security_attributes }
+    /// `components`, kept under `id` with `security_attributes`.
+    pub fn new(id: &str, components: ComponentConfig, security_attributes: SecurityAttributes) -> Self {
+        Self { id: id.to_string(), components, security_attributes }
     }
 
     /// What it is kept under.
     pub fn id(&self) -> &str {
-        &self.descriptor.id
+        &self.id
     }
 }
 
@@ -76,7 +77,7 @@ impl Secured for StoredComponent {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ComponentFailPolicy {
     #[default]
     FailOpen,
@@ -90,18 +91,18 @@ mod tests {
     use crate::actor::ActorId;
 
     #[test]
-    fn a_stored_component_is_written_as_the_descriptor_with_its_attributes_beside_its_fields() {
+    fn stored_components_are_written_as_their_id_their_list_and_their_attributes() {
         let owner = ActorId::System;
-        let stored = StoredComponent::new(ComponentDescriptor::new("search", "web_search"), SecurityAttributes::owned_by(owner));
+        let components = ComponentConfig { component_nodes: vec![ComponentDescriptor::new("search", "web_search"), ComponentDescriptor::new("stop", "stop_tool")] };
+        let stored = StoredComponent::new("basics", components.clone(), SecurityAttributes::owned_by(owner));
         let json = serde_json::to_value(&stored).unwrap();
-        assert_eq!(json["id"], "search");
-        assert_eq!(json["kind"], "web_search");
-        assert_eq!(json["security_attributes"]["owner_id"], serde_json::to_value(owner).unwrap(), "as before the store of its own");
+        assert_eq!(json["id"], "basics");
+        assert_eq!(json["components"][1]["kind"], "stop_tool", "the list directly under its key (issue 201)");
+        assert_eq!(json["security_attributes"]["owner_id"], serde_json::to_value(owner).unwrap());
 
-        let read: StoredComponent = serde_json::from_value(json.clone()).unwrap();
-        assert_eq!(read.id(), "search");
+        let read: StoredComponent = serde_json::from_value(json).unwrap();
+        assert_eq!(read.id(), "basics");
+        assert_eq!(read.components, components, "in its order");
         assert_eq!(read.security_attributes.owner_id, owner);
-        let descriptor: ComponentDescriptor = serde_json::from_value(json).unwrap();
-        assert_eq!(descriptor.kind, "web_search", "a descriptor with attributes written into it still reads");
     }
 }
