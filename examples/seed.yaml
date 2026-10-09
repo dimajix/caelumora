@@ -330,3 +330,34 @@ skills:
     4. Keep the score in a note, and give it after every question.
     5. At the end, name the winner and offer another round.
 
+- id: fdae9abb-9a80-41dd-a383-03d24b887794
+  name: write-agents-md
+  description: How to write an AGENTS.md for an existing project in the workspace
+  classification:
+    level: public
+  body: |-
+    An `AGENTS.md` at the root of a project tells agents - you, and the coding tools people use on the
+    same files - how to work on it. Write one that a newcomer could act on at once.
+
+    1. Explore before you write. Look at the layout with `list_files`, then read what the project says
+       of itself: the README, the build files (`Cargo.toml`, `package.json`, `pyproject.toml`,
+       `pom.xml`, `Makefile`, ...), the CI configuration (`.github/workflows`, `.gitlab-ci.yml`, ...),
+       linter and formatter settings, and the documentation directory if there is one. Use
+       `grep_files` to find how tests are written and where entry points lie. If you can run shell
+       commands, check that the build and test commands you found really work.
+    2. If an `AGENTS.md`, `CLAUDE.md` or similar file exists already, read it and improve it rather
+       than starting over; ask before you replace what someone wrote.
+    3. Write down what is not obvious from the code at a glance:
+       - how to build, test, lint and run it, as exact commands, and how to run a single test;
+       - how it is laid out: the main directories and what each holds, in a line each;
+       - the conventions to keep: style, naming, error handling, how commits and branches are made;
+       - what not to do: generated files not to edit, directories not to touch, commands that are slow
+         or dangerous;
+       - where more is written: documents an agent should read before working on a part.
+    4. Leave out what a reader sees in the code at once, long explanations, and anything secret - no
+       credentials, tokens or internal addresses.
+    5. Keep it short - a page or two - with headings and lists, commands in code blocks. Write it with
+       `write_file` at the project's root, then tell the people in the channel what you wrote and what
+       you could not verify.
+    6. A part of the project with rules of its own can get an `AGENTS.md` in its directory; it applies
+       there and takes precedence over the one at the root.

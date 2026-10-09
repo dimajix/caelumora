@@ -1,6 +1,6 @@
 # 279 — An agent is not told of an AGENTS.md in its workspace, and has no skill to write one
 
-**Status:** open
+**Status:** done
 **Area:** Context and knowledge
 
 ## The problem
@@ -81,11 +81,36 @@ Skills are entities, not files of the code: the system's own come only from a se
 **Recommendation:** option 1 now; the second is a question of its own once more than one skill
 should come with the system.
 
+## Decision
+
+Taken by the maintainer on 2026-10-09:
+
+1. **Option 2 for telling the agent.** The `workspace_prompt_provider` looks at the root of the
+   workspace at the start of every turn and names the files it finds there, asking the agent to
+   read them with `read_file` before it works on the files. Their content does not go into the
+   prompt.
+2. **Several names.** Which files it looks for is a parameter of the component, a list of names,
+   by default `AGENTS.md` and `CLAUDE.md`. Every one found at the root is named, not only the first:
+   often one of them only points to the other, and each costs one `stat`.
+3. **Subdirectories: one sentence, no search.** The part adds that a directory may have its own
+   such file, which applies there, is to be read before working there, and takes precedence over
+   one further up where they disagree - the rule of the `AGENTS.md` convention. The component does
+   not look for them: a search of the whole workspace at every turn start is costly on a large or
+   remote storage, changes the part whenever the layout changes, and finds mostly files of parts
+   the turn does not touch. If agents turn out to miss them, the file tools could point to an
+   unread one when they first touch its directory (as Claude Code does for nested `CLAUDE.md`) -
+   a change of its own, since `terminal_tool` would have to know the convention and what the agent
+   has already read (`KnowledgeSource::Workspace`).
+4. **The skill in the example seed** (option 1): `write-agents-md`, global. Skills shipped with the
+   code stay a question of their own.
+
 ## Done when
 
-- An agent whose workspace holds an `AGENTS.md` at its root is told so in the `[Your workspace]`
-  part and asked to read it before working on the files; one whose workspace holds none is not
-  told to look for it.
+- An agent whose workspace holds one of the configured files (by default `AGENTS.md`,
+  `CLAUDE.md`) at its root is told which in the `[Your workspace]` part and asked to read them
+  before working on the files; one whose workspace holds none is not told to look for them.
+- The part says that a subdirectory may have such a file of its own, which applies there and takes
+  precedence over one further up.
 - A storage that cannot be reached at turn start leaves the part as it is today, without failing
   the turn.
 - The example seed has a skill that guides an agent through writing an `AGENTS.md` for an existing
@@ -98,3 +123,11 @@ should come with the system.
 - 2026-10-09: Opened at the maintainer's request: the workspace's prompt part should tell an agent
   to read an existing `AGENTS.md`, and a skill should help an agent write one for an existing
   workspace.
+- 2026-10-09: Decided (see *Decision*): the part names the files found at the root - a list of
+  names, by default `AGENTS.md` and `CLAUDE.md` -, says in one sentence that a subdirectory may have
+  its own without searching for them, and the skill goes into the example seed.
+- 2026-10-09: Done. `workspace_prompt_provider` takes `instruction_files` (by default `AGENTS.md`,
+  `CLAUDE.md`), looks each up at the workspace's root with `Terminal::stat` and names those found;
+  the sentence on a directory's own file stands in every part of a workspace, phrased as what to do
+  where one is met, so that it sends no agent looking. A storage that cannot be reached leaves the
+  files out with a warning. The example seed has the skill `write-agents-md`.

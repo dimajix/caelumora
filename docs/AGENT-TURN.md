@@ -691,6 +691,25 @@ only the session's descriptions, and classified as the channel if it holds the c
 into the system prompt by default (`position`); with `changes_only`, for an external agent, it is
 told once and then only when something changed, the whole of it again, taking back included.
 
+### Its workspace
+
+An agent is told of the workspace it may use in its channel (issue 251) by the component
+`workspace_prompt_provider`, which a personality wires in next to its `terminal_tool`: its name,
+classification and description, whether it has a shell - or that there is none here. The part reads
+the workspace through the turn's views (`ChannelView::workspace`) at the start of every turn, is
+classified as the workspace, and goes into the system prompt by default (`position`).
+
+It names the files at the workspace's root that say how to work on its files (issue 279): those
+of the parameter `instruction_files` - by default `AGENTS.md` and `CLAUDE.md`, the convention of
+the coding tools people use on the same files - that are there, each looked up with one
+`Terminal::stat`. Every one found is named, since one often only points to the other, and the agent
+is asked to read them with `read_file` before it works on the files. Their content does not go into
+the prompt: the part changes only when one appears or goes, so the prompt cache holds, and what the
+agent reads of them is knowledge of the workspace like any file it reads. One sentence adds that a
+directory may hold such a file of its own, which applies there and takes precedence over one
+further up; the component does not look for them. A storage that cannot be reached leaves the files
+out, with a warning, not the turn.
+
 ### Instructions within a turn
 
 The runtime steers the model within a turn, too: while a plan is executed, it tells the model which

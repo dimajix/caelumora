@@ -666,9 +666,10 @@ workspace, where its channel may use it ([CHANNELS.md](CHANNELS.md#its-workspace
 a shell in it where its storage gives one. The workspace is reached through the turn's views on
 every call, before anything is sent, and a call where there is none - or a command where its
 storage has no shell - fails and says so. `workspace_prompt_provider` tells the model beforehand
-what it has. Which calls need approval is configured as for `mcp_tool` (`requires_approval`,
-`ApprovalMode`): all - the default -, none, or `"unless_read_only"`, all but those that only read
-files.
+what it has, and which files at its root - an `AGENTS.md`, say - it is to read before it works on
+the files ([AGENT-TURN.md](AGENT-TURN.md#its-workspace), issue 279). Which calls need approval
+is configured as for `mcp_tool` (`requires_approval`, `ApprovalMode`): all - the default -, none,
+or `"unless_read_only"`, all but those that only read files.
 
 **Files.** `list_files`, `read_file`, `grep_files` and `publish_file` read; `write_file`,
 `replace_in_file`, `move_file` and `delete_file` change - over the workspace's `Terminal`, whatever
