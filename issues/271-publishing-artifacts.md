@@ -391,3 +391,11 @@ downloading; the documents say so.
   is how a terminal's errors are told to the model. The security suite's helper for a call on the
   workspace takes the component and when the call has arrived (`asked_for_a_call`);
   `an_agents_artifact_is_published_for_its_owner`.
+- **2026-10-09** — Step 4 done: the REST routes as planned (`routes/artifacts.rs`), over views
+  that read for REST (`Views::artifacts`, `artifact`, `deleted_artifacts`, `ChannelView::artifacts`,
+  an `ArtifactSnapshot` of the artifact and whether the viewer may change it) and the manager's
+  `describe` and `published_in`; errors mapped with `Subject::Artifact`. A download is built by
+  `routes::attachment_response`, shared with workspace files. Two types renamed rather than doubled:
+  `WorkspaceScope` is `OwnedScope` - where a user's own workspace or artifact lies, with its
+  mappings `of` and `of_user` -, and `WorkspaceDescriptionRequest` is `ItemDescriptionRequest`; the
+  JSON stays as it was.

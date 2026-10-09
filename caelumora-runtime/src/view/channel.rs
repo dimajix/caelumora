@@ -76,6 +76,24 @@ impl ChannelView {
         Ok(usable.map(|workspace| WorkspaceView::in_channel(self.views().clone(), workspace, self.session.id(), self.channel.id)))
     }
 
+    /// The artifacts with a version published in this channel, each with
+    /// those versions alone (issue 271), if the viewer reads the channel as
+    /// a whole - as `artifact_content` reads them; none otherwise.
+    ///
+    /// # Errors
+    /// What the artifacts' manager reports.
+    pub async fn artifacts(&self) -> crate::artifact::ArtifactResult<Vec<caelumora_model::snapshot::ArtifactSnapshot>> {
+        if self.readable != Readable::Whole {
+            return Ok(Vec::new());
+        }
+        let published = self.views().artifact_manager().published_in(self.session.id(), self.channel.id).await?;
+        let mut snapshots = Vec::with_capacity(published.len());
+        for artifact in published {
+            snapshots.push(self.views().artifact_snapshot(artifact).await);
+        }
+        Ok(snapshots)
+    }
+
     /// The content of version `number` of artifact `id`, if it was
     /// published in this channel and the viewer reads the channel as a
     /// whole (issue 271) - whoever may read the message that published it.

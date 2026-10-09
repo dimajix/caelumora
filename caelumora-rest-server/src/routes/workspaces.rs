@@ -4,7 +4,7 @@
 //! 251, decision 10). The files are reached through the workspace's
 //! `Terminal` alike, whichever way it was reached.
 //!
-//! Downloads are always served as attachments of `application/octet-stream`,
+//! Downloads are always served as attachments (`routes::attachment_response`),
 //! never inline: a file of a workspace is anybody's content, and HTML or SVG
 //! would otherwise run in the web UI's origin (issue 208).
 
@@ -12,21 +12,19 @@ use crate::auth::AuthenticatedUser;
 use crate::error::{ApiError, Json, Path, Subject};
 use crate::models::{
     AttachWorkspaceRequest, ChannelResponse, CreateWorkspaceRequest, DeletedResponse, FileResponse, FilesQuery, ListOptions, RenameWorkspaceRequest,
-    SessionSnapshot, StorageResponse, UsesWorkspaceRequest, WorkspaceDescriptionRequest, WorkspaceResponse, WorkspaceScope,
+    SessionSnapshot, StorageResponse, UsesWorkspaceRequest, ItemDescriptionRequest, WorkspaceResponse,
 };
 use crate::state::AppState;
 use axum::body::Body;
 use axum::extract::{Query, State};
-use axum::http::{header, HeaderValue, StatusCode};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::scope::Scope;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::workspace::WorkspaceId;
 use caelumora_runtime::terminal::{Terminal, WorkspacePath};
 use caelumora_runtime::view::WorkspaceView;
 use futures::TryStreamExt;
-use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -55,11 +53,8 @@ pub async fn list_storages(State(state): State<Arc<AppState>>, _user: Authentica
 
 /// Makes a workspace of the user's, in their scope or the global one.
 pub async fn create_workspace(State(state): State<Arc<AppState>>, user: AuthenticatedUser, Json(request): Json<CreateWorkspaceRequest>) -> Result<(StatusCode, Json<WorkspaceResponse>), ApiError> {
-    let scope = match request.scope {
-        WorkspaceScope::User => Scope::UserScope { user_id: user.id },
-        WorkspaceScope::Global => Scope::GlobalScope,
-        WorkspaceScope::Session => return Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid_scope", "A workspace of a session's scope is made with the session")),
-    };
+    let scope = request.scope.of_user(user.id)
+        .ok_or_else(|| ApiError::new(StatusCode::BAD_REQUEST, "invalid_scope", "A workspace of a session's scope is made with the session"))?;
     let classification = request.classification.unwrap_or(Classification::CHANNEL_DEFAULT);
     let made = state.runtime_manager.workspace_manager()
         .create(&user.security_context(), &request.name, scope, &request.storage, request.description.as_deref(), classification).await
@@ -80,7 +75,7 @@ pub async fn rename_workspace(State(state): State<Arc<AppState>>, Path(id): Path
 }
 
 /// Says what the workspace holds; `null` or empty takes it away.
-pub async fn describe_workspace(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser, Json(request): Json<WorkspaceDescriptionRequest>) -> Result<Json<WorkspaceResponse>, ApiError> {
+pub async fn describe_workspace(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser, Json(request): Json<ItemDescriptionRequest>) -> Result<Json<WorkspaceResponse>, ApiError> {
     let id = WorkspaceId(id);
     state.runtime_manager.workspace_manager().describe(&user.security_context(), id, request.description.as_deref()).await
         .map_err(|e| ApiError::from_runtime(e.into(), Subject::Workspace, &format!("describing workspace {id}")))?;
@@ -246,16 +241,7 @@ async fn list(terminal: &dyn Terminal, dir: &str) -> Result<Json<Vec<FileRespons
 async fn download(terminal: &dyn Terminal, file: &str) -> Result<Response, ApiError> {
     let file = path(file)?;
     let (size, content) = terminal.read(&file).await.map_err(|e| file_error(e, "reading the file"))?;
-    let mut response = Body::from_stream(content).into_response();
-    let headers = response.headers_mut();
-    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
-    headers.insert(header::CONTENT_LENGTH, HeaderValue::from(size));
-    headers.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
-    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    if let Ok(disposition) = HeaderValue::from_str(&attachment(file.file_name().unwrap_or("file"))) {
-        headers.insert(header::CONTENT_DISPOSITION, disposition);
-    }
-    Ok(response)
+    Ok(crate::routes::attachment_response(size, content, file.file_name().unwrap_or("file")))
 }
 
 /// The request's body as the file, replacing what was there; `201`.
@@ -268,24 +254,4 @@ async fn upload(terminal: &dyn Terminal, file: &str, body: Body, limit: u64) -> 
 async fn remove(terminal: &dyn Terminal, file: &str) -> Result<StatusCode, ApiError> {
     terminal.delete(&path(file)?).await.map_err(|e| file_error(e, "deleting the file"))?;
     Ok(StatusCode::NO_CONTENT)
-}
-
-/// `Content-Disposition` of a download named `name` (RFC 6266): the name
-/// as it is, encoded, and plain for the clients that read only that.
-fn attachment(name: &str) -> String {
-    let plain: String = name.chars().map(|c| if c.is_ascii_alphanumeric() || "._-".contains(c) { c } else { '_' }).collect();
-    format!("attachment; filename=\"{plain}\"; filename*=UTF-8''{}", utf8_percent_encode(name, NON_ALPHANUMERIC))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_download_is_named_plainly_and_as_it_is() {
-        assert_eq!(attachment("report.md"), "attachment; filename=\"report.md\"; filename*=UTF-8''report%2Emd");
-        let named = attachment("Bericht \"Q3\" ü.pdf");
-        assert!(named.starts_with("attachment; filename=\"Bericht__Q3___.pdf\";"), "{named}");
-        assert!(named.ends_with("filename*=UTF-8''Bericht%20%22Q3%22%20%C3%BC%2Epdf"), "{named}");
-    }
 }

@@ -289,6 +289,22 @@ impl ArtifactManager {
         }
     }
 
+    /// The artifacts with a version published in `channel` of `session`,
+    /// each with those versions alone - read for whoever may read that
+    /// channel, which the channel's view asked before it asks here.
+    ///
+    /// # Errors
+    /// Whatever the store reports.
+    pub(crate) async fn published_in(&self, session: SessionId, channel: ChannelId) -> ArtifactResult<Vec<Artifact>> {
+        let all = self.entities.list_artifacts(&SecurityContext::system()).await?;
+        Ok(all.into_iter()
+            .filter_map(|mut artifact| {
+                artifact.versions.retain(|version| version.session_id == session && version.channel_id == channel);
+                (!artifact.versions.is_empty()).then_some(artifact)
+            })
+            .collect())
+    }
+
     async fn content_of(&self, artifact: Artifact, number: u32) -> ArtifactResult<(Artifact, u64, ByteStream)> {
         if artifact.version(number).is_none() {
             return Err(ArtifactError::VersionNotFound { artifact: artifact.id, version: number });
@@ -318,6 +334,23 @@ impl ArtifactManager {
         self.entities.update_artifact(ctx, &artifact).await?;
         self.events.publish(GlobalEvent::ArtifactUpdated(id), artifact.security_attributes.clone());
         info!(artifact = %id, by = %ctx.caller_id, "Artifact kept");
+        Ok(artifact)
+    }
+
+    /// Says what artifact `id` is; `None` or empty takes it away
+    /// (`UpdateArtifact`, its owner's act).
+    ///
+    /// # Errors
+    /// `NotFound`, `Invalid` for a description that does not fit, or
+    /// whatever the store reports - `PermissionDenied` among it.
+    pub async fn describe(&self, ctx: &SecurityContext, id: ArtifactId, description: Option<&str>) -> ArtifactResult<Artifact> {
+        let _writing = self.writing.lock().await;
+        let mut artifact = self.entities.get_artifact(ctx, id).await.map_err(store_error(id))?;
+        self.security.require(ctx, ActionType::UpdateArtifact(&artifact.security_attributes), || StoreError::PermissionDenied).await?;
+        artifact.description = Description::optional(description)?;
+        artifact.updated_at = Utc::now();
+        self.entities.update_artifact(ctx, &artifact).await?;
+        self.events.publish(GlobalEvent::ArtifactUpdated(id), artifact.security_attributes.clone());
         Ok(artifact)
     }
 

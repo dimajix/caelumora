@@ -267,6 +267,17 @@ pub struct WorkspaceSnapshot {
     pub can_change: bool,
 }
 
+/// An artifact as the viewer sees it (issue 271): its owner, among their
+/// artifacts - with every version -, or a reader of a channel - with the
+/// versions published there alone.
+#[derive(Debug, Clone)]
+pub struct ArtifactSnapshot {
+    pub artifact: crate::artifact::Artifact,
+    /// Whether the viewer may change it - keep it, describe it, delete it
+    /// (`UpdateArtifact`): its owner.
+    pub can_change: bool,
+}
+
 /// An agent as the viewer sees it in the list of agents (issue 164).
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentSnapshot {

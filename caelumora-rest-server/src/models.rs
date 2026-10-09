@@ -11,10 +11,11 @@ use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::template::{ScopeTemplate, SessionTemplate, SessionTemplateId};
-use caelumora_model::user::UserProfile;
+use caelumora_model::user::{UserId, UserProfile};
 use caelumora_model::value::text::{Briefing, Introduction, Summary};
 use caelumora_model::work::TurnId;
 use caelumora_model::workspace::{WorkspaceChoice, WorkspaceId};
+use caelumora_model::artifact::ArtifactId;
 use caelumora_model::value::text::Description;
 use caelumora_model::snapshot;
 use caelumora_runtime::view::{Reached, SessionView};
@@ -106,7 +107,7 @@ pub struct TemplateResponse {
 #[derive(Debug, Serialize)]
 pub struct TemplateWorkspaceResponse {
     pub name: String,
-    pub scope: WorkspaceScope,
+    pub scope: OwnedScope,
     pub storage: String,
 }
 
@@ -115,9 +116,9 @@ impl From<&SessionTemplate> for TemplateResponse {
         // One of a group's scope is left out: no session is made from it.
         let workspace = template.workspace.as_ref().and_then(|w| {
             let scope = match w.scope {
-                ScopeTemplate::SessionScope => WorkspaceScope::Session,
-                ScopeTemplate::UserScope => WorkspaceScope::User,
-                ScopeTemplate::GlobalScope => WorkspaceScope::Global,
+                ScopeTemplate::SessionScope => OwnedScope::Session,
+                ScopeTemplate::UserScope => OwnedScope::User,
+                ScopeTemplate::GlobalScope => OwnedScope::Global,
                 ScopeTemplate::GroupScope => return None,
             };
             Some(TemplateWorkspaceResponse { name: w.name.to_string(), scope, storage: w.storage.clone() })
@@ -409,7 +410,7 @@ pub struct WorkspaceResponse {
     pub name: String,
     /// Where it lies: `session` - made for one session and used in it
     /// alone, which `session_id` names -, `user` or `global`.
-    pub scope: WorkspaceScope,
+    pub scope: OwnedScope,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<SessionId>,
     /// The storage its files lie in, by its configured name.
@@ -426,22 +427,19 @@ pub struct WorkspaceResponse {
 
 impl From<snapshot::WorkspaceSnapshot> for WorkspaceResponse {
     fn from(view: snapshot::WorkspaceSnapshot) -> Self {
-        let (scope, session_id) = match view.scope {
-            Scope::SessionScope { session_id } => (WorkspaceScope::Session, Some(session_id)),
-            Scope::UserScope { .. } => (WorkspaceScope::User, None),
-            // A workspace lies in no other (`Workspace::validate`).
-            _ => (WorkspaceScope::Global, None),
-        };
+        let (scope, session_id) = OwnedScope::of(&view.scope);
         Self { id: view.id, name: view.name, scope, session_id, storage: view.storage, description: view.description, classification: view.classification, has_shell: view.has_shell, can_change: view.can_change }
     }
 }
 
-/// Where a workspace lies (issue 251, decision 13). One of a session's
-/// scope is made with the session - by its template or as chosen when it
-/// is made (issue 266) -, not on its own.
+/// Where a user's own thing lies - a workspace (issue 251, decision 13), an
+/// artifact (issue 271): a session's scope, its owner's or the global one.
+/// A workspace of a session's scope is made with the session - by its
+/// template or as chosen when it is made (issue 266) -, an artifact there
+/// by publishing it; neither is put there on its own.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum WorkspaceScope {
+pub enum OwnedScope {
     Session,
     /// Its owner's: found by its name among theirs.
     #[default]
@@ -450,13 +448,36 @@ pub enum WorkspaceScope {
     Global,
 }
 
+impl OwnedScope {
+    /// Where `scope` is, and the session it is the scope of, if it is one.
+    /// Only these three are scopes such a thing lies in
+    /// (`scope::validate_users_own`); any other is told as the global one.
+    pub fn of(scope: &Scope) -> (Self, Option<SessionId>) {
+        match scope {
+            Scope::SessionScope { session_id } => (Self::Session, Some(*session_id)),
+            Scope::UserScope { .. } => (Self::User, None),
+            _ => (Self::Global, None),
+        }
+    }
+
+    /// The scope of `user`'s own thing put here on its own: theirs or the
+    /// global one; `None` for a session's, which nothing is put into so.
+    pub fn of_user(self, user: UserId) -> Option<Scope> {
+        match self {
+            Self::User => Some(Scope::UserScope { user_id: user }),
+            Self::Global => Some(Scope::GlobalScope),
+            Self::Session => None,
+        }
+    }
+}
+
 /// A workspace to make (issue 253), in a configured storage; in its
 /// owner's scope and `internal` without compartments unless named.
 #[derive(Debug, Deserialize)]
 pub struct CreateWorkspaceRequest {
     pub name: String,
     #[serde(default)]
-    pub scope: WorkspaceScope,
+    pub scope: OwnedScope,
     pub storage: String,
     #[serde(default)]
     pub description: Option<String>,
@@ -469,12 +490,66 @@ pub struct RenameWorkspaceRequest {
     pub name: String,
 }
 
-/// What a workspace holds, replacing what it said: `null` or empty removes
-/// it.
+/// What a workspace holds, or what an artifact is (issue 271), replacing
+/// what it said: `null` or empty removes it.
 #[derive(Debug, Deserialize)]
-pub struct WorkspaceDescriptionRequest {
+pub struct ItemDescriptionRequest {
     #[serde(default)]
     pub description: Option<String>,
+}
+
+/// An artifact (issue 271) as its owner sees it, among their artifacts -
+/// with every version -, or a reader of a channel - with the versions
+/// published there alone.
+#[derive(Debug, Serialize)]
+pub struct ArtifactResponse {
+    pub id: ArtifactId,
+    pub name: String,
+    /// Where it lies: `session` - published in it and gone with it unless
+    /// kept, which `session_id` names -, `user` or `global`.
+    pub scope: OwnedScope,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<SessionId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<Description>,
+    pub classification: Classification,
+    /// Oldest first.
+    pub versions: Vec<ArtifactVersionResponse>,
+    /// Whether you may change it - keep it, describe it, delete it: its
+    /// owner.
+    pub can_change: bool,
+}
+
+/// A version of an artifact: what was published, where and by whom.
+#[derive(Debug, Serialize)]
+pub struct ArtifactVersionResponse {
+    pub number: u32,
+    pub size: u64,
+    pub digest: caelumora_model::digest::Digest,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub media_type: Option<String>,
+    pub session_id: SessionId,
+    pub channel_id: ChannelId,
+    pub published_by: ActorId,
+    pub published_at: DateTime<Utc>,
+}
+
+impl From<snapshot::ArtifactSnapshot> for ArtifactResponse {
+    fn from(view: snapshot::ArtifactSnapshot) -> Self {
+        let artifact = view.artifact;
+        let (scope, session_id) = OwnedScope::of(&artifact.name.scope);
+        let versions = artifact.versions.into_iter().map(|v| ArtifactVersionResponse {
+            number: v.number, size: v.size, digest: v.digest, media_type: v.media_type,
+            session_id: v.session_id, channel_id: v.channel_id, published_by: v.published_by, published_at: v.published_at,
+        }).collect();
+        Self { id: artifact.id, name: artifact.name.name.to_string(), scope, session_id, description: artifact.description, classification: artifact.classification, versions, can_change: view.can_change }
+    }
+}
+
+/// Where to keep an artifact beyond its session: `user` or `global`.
+#[derive(Debug, Deserialize)]
+pub struct KeepArtifactRequest {
+    pub scope: OwnedScope,
 }
 
 /// A configured storage workspaces can be made in.

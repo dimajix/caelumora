@@ -16,6 +16,7 @@ use caelumora_runtime::view::{ChannelView, Viewer, Views};
 use std::sync::Arc;
 
 mod agents;
+mod artifacts;
 mod channels;
 mod compartments;
 mod events;
@@ -81,6 +82,34 @@ pub fn views(state: &Arc<AppState>, user: &AuthenticatedUser) -> Views {
     state.session_manager.views(Viewer::new(user.security_context()))
 }
 
+/// `content` of `size` bytes, streamed, as a download named `name`: always
+/// an attachment of `application/octet-stream`, never shown inline and
+/// never sniffed - a file of a workspace or an artifact is anybody's
+/// content, and HTML or SVG would otherwise run in the web UI's origin
+/// (issues 208, 253, 271) -, and not cached.
+pub(crate) fn attachment_response(size: u64, content: caelumora_runtime::terminal::ByteStream, name: &str) -> axum::response::Response {
+    use axum::http::{header, HeaderValue};
+    use axum::response::IntoResponse;
+    let mut response = axum::body::Body::from_stream(content).into_response();
+    let headers = response.headers_mut();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
+    headers.insert(header::CONTENT_LENGTH, HeaderValue::from(size));
+    headers.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    if let Ok(disposition) = HeaderValue::from_str(&attachment(name)) {
+        headers.insert(header::CONTENT_DISPOSITION, disposition);
+    }
+    response
+}
+
+/// `Content-Disposition` of a download named `name` (RFC 6266): the name
+/// as it is, encoded, and plain for the clients that read only that.
+fn attachment(name: &str) -> String {
+    use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
+    let plain: String = name.chars().map(|c| if c.is_ascii_alphanumeric() || "._-".contains(c) { c } else { '_' }).collect();
+    format!("attachment; filename=\"{plain}\"; filename*=UTF-8''{}", utf8_percent_encode(name, NON_ALPHANUMERIC))
+}
+
 /// What changing a place failed with, as the API answers it: `400` with
 /// `code` - `invalid_rule` for an approval rule the place may not keep
 /// (issue 13) - and why, for what the place refused to keep; otherwise as
@@ -117,6 +146,13 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/workspaces/{id}/files/{*path}",
             get(workspaces::download_owned_file).put(workspaces::upload_owned_file).delete(workspaces::delete_owned_file),
         )
+        .route("/artifacts", get(artifacts::list_artifacts))
+        .route("/artifacts/{id}", get(artifacts::get_artifact).delete(artifacts::delete_artifact))
+        .route("/artifacts/{id}/scope", axum::routing::put(artifacts::keep_artifact))
+        .route("/artifacts/{id}/description", axum::routing::put(artifacts::describe_artifact))
+        .route("/artifacts/{id}/restore", post(artifacts::restore_artifact))
+        .route("/artifacts/{id}/purge", post(artifacts::purge_artifact))
+        .route("/artifacts/{id}/versions/{n}/content", get(artifacts::download_owned_version))
         .route("/sessions", get(sessions::list_sessions).post(sessions::create_session))
         .route(
             "/sessions/{id}",
@@ -139,6 +175,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/sessions/{id}/channels/{cid}/description", axum::routing::put(channels::update_channel_description))
         .route("/sessions/{id}/channels/{cid}/restore", post(channels::restore_channel))
         .route("/sessions/{id}/channels/{cid}/uses-workspace", axum::routing::put(workspaces::set_uses_workspace))
+        .route("/sessions/{id}/channels/{cid}/artifacts", get(artifacts::channel_artifacts))
+        .route("/sessions/{id}/channels/{cid}/artifacts/{aid}/versions/{n}/content", get(artifacts::download_channel_version))
         .route("/sessions/{id}/channels/{cid}/workspace", get(workspaces::channel_workspace))
         .route("/sessions/{id}/channels/{cid}/workspace/files", get(workspaces::channel_files))
         .route(
@@ -181,4 +219,17 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .with_state(Arc::clone(&state));
 
     crate::auth::router(Arc::clone(&state.auth)).merge(protected).merge(streams)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_download_is_named_plainly_and_as_it_is() {
+        assert_eq!(attachment("report.md"), "attachment; filename=\"report.md\"; filename*=UTF-8''report%2Emd");
+        let named = attachment("Bericht \"Q3\" ü.pdf");
+        assert!(named.starts_with("attachment; filename=\"Bericht__Q3___.pdf\";"), "{named}");
+        assert!(named.ends_with("filename*=UTF-8''Bericht%20%22Q3%22%20%C3%BC%2Epdf"), "{named}");
+    }
 }
