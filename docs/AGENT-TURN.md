@@ -434,12 +434,12 @@ message's sender.
 ### Tools offered
 
 A turn offers its model the agent's tools as they were when it began: they are asked for once, in
-their tool sets (`GuardedToolExecutor::tool_sets`, issue 194), in `AgentActor::request_response`,
+their tool sets (`ToolExecutor::tool_sets`, issue 194), in `AgentActor::request_response`,
 and fixed in the turn (`TurnState::tools`, flat, issue 137) like its classification and publication
 - a resumed turn keeps them. The model is told of a tool only its name, description and parameters -
 the backend sends no more (`LLMClient::chat_completion`); whether its calls need approval, who sees
 them and how its results are classified stay with the runtime, which labels the model's answer
-(`label` in `actor/agent/mod.rs`) and puts its calls up for approval (`GuardedToolExecutor::admit`)
+(`label` in `actor/agent/mod.rs`) and puts its calls up for approval (`ToolExecutor::admit`)
 by the same `Tool`s. A tool that changes or disappears during a turn is offered as it is from the
 next turn on; a call of one that is gone fails as unknown.
 

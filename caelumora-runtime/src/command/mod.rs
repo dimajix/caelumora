@@ -120,10 +120,10 @@ struct CommandEntry<P: ?Sized> {
 
 /// Finds and runs the commands of one set - the session's, from the global
 /// ones and the session's own - with the permission checks for seeing and
-/// running them, as `GuardedToolExecutor` does for an agent's tools. Unlike
-/// the tool executor it is not a component: how a command runs is the
-/// command's own business, and there is nothing about running them to try
-/// out. Generic over the facet that provides the commands, since what a
+/// running them, as the `ToolExecutor` does for an agent's tools. Like it,
+/// it is no component: how a command runs is the command's own business,
+/// and there is nothing about running them to try out. Generic over the
+/// facet that provides the commands, since what a
 /// command is given to run with is the facet's; finding one, refusing two
 /// of one name and asking the policy are the same for every facet.
 #[derive(Debug)]

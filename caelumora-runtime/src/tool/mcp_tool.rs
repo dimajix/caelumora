@@ -105,9 +105,9 @@ impl McpToolConfig {
 /// why, in general terms - if the server could not be asked for its tools.
 ///
 /// Tools are namespaced as `"{descriptor_id}__{remote_tool_name}"` to avoid
-/// collisions with built-in tools or other MCP servers, since
-/// `DefaultToolExecutor` dispatches by first matching name across all
-/// providers. No connection is held open between calls: the tool list is
+/// collisions with built-in tools or other MCP servers, since an agent's
+/// tools are found by name across all its providers, and two of one name
+/// are refused (`ToolProviders::new`). No connection is held open between calls: the tool list is
 /// discovered once at construction and cached, and `execute()` opens a fresh
 /// connection per call (the Streamable HTTP transport supports stateless
 /// operation), which keeps this provider free of any stale-connection state.

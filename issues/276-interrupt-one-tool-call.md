@@ -68,3 +68,5 @@ every tool; it does not replace a user's judgement that a call hangs. Can follow
 
 - 2026-10-09: Opened at the maintainer's request: a hanging tool - e.g. a shell command waiting for
   input - can only be ended with its whole turn or agent, not on its own.
+- 2026-10-09: With [280](280-tool-executor-trait.md), `GuardedToolExecutor` is called
+  `ToolExecutor`; what is said of it above holds for it under its new name.

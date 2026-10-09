@@ -62,7 +62,7 @@ that it cannot do what they do. While every set is available it contributes noth
 without it tells its model nothing of missing tools.
 
 A set may say where the arguments of its calls go (`ToolSet::destination`, issue 180): the
-`GuardedToolExecutor` offers it as unavailable - "its remote side is not cleared for this channel" -
+`ToolExecutor` offers it as unavailable - "its remote side is not cleared for this channel" -
 where the channel may not flow there, and answers a call of a tool the turn was not offered as
 unknown (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md#what-leaves-through-tools)).
 
@@ -80,7 +80,7 @@ told about results it must not quote is described in [CONFIDENTIALITY.md](CONFID
 
 ### Classified results
 
-How sensitive a result is, is its classification (issue 133). The `GuardedToolExecutor` gives every
+How sensitive a result is, is its classification (issue 133). The `ToolExecutor` gives every
 result one: as the tool classified it, else as the tool is configured (`Tool::classification`, as
 the turn began with its tools), else as the channel. A result that may not flow into the channel
 (`ActionType::Publish`, in the agent's name) never reaches the model: it is replaced by the status
@@ -95,29 +95,26 @@ what it has seen classifies what the turn writes (see
 
 ### Running tool calls
 
-How an agent runs its tool calls is a component too (issue 127): the `ToolExecutor`. An agent has
-exactly one - its personality's, the one `AppConfig::component_defaults` names, or else the default
-`default_tool_executor` (see [COMPONENTS.md](COMPONENTS.md#facets-of-which-there-is-exactly-one)).
-So another way of running tools - in parallel, with retries, cached - can be tried by configuration.
-
-The executor decides *how* a call runs, never *whether*, and not what the model is told. It answers
-with what the tool gave (`ToolOutput`) or a `ToolError` - `UnknownTool` if no tool has the name. The
-agent holds it behind the runtime's `GuardedToolExecutor`, which checks before it delegates:
+An agent's tool calls are run by the runtime's `ToolExecutor` (issues 127, 280), built with the
+`ToolProvider`s of its components in the order of the configuration. It finds the tool of a call by
+its name (`ToolProviders`, which refuses two providers of one tool name), and the tool answers with
+what it gave (`ToolOutput`) or a `ToolError` - `UnknownTool` if no tool has the name. The executor
+is no component: how a call runs is its tool's business, and the code that decides whether it runs
+and what the model is told is never the choice of whoever may write a personality. Before it hands a
+call to its tool, it checks:
 
 *   that the caller is an agent - only agents call tools;
 *   that the policy permits the call (`ActionType::CallTool`);
 
 and makes the result for the model afterwards: it times the call, turns an error into a status and a
 next step (issue 15), classifies the result and withholds what may not flow into the channel (issue
-133), and marks what only the owner sees (`successful_result`). The code that decides about
-permissions and about what the model sees is thus never the choice of whoever may write a
-personality.
+133), and marks what only the owner sees (`successful_result`).
 
-A call is not waited for longer than its turn lasts (issue 161). The guard runs it next to the
-turn's `CancellationToken`, which a cancel and a stop cancel; then the executor's future - and with
-it the tool's - is dropped wherever it stands, the call is answered as `interrupted`, and the agent
-starts no further call of the step. A tool that is done when the token is cancelled keeps its
-result. Dropping a tool does not undo what it did ([20](../issues/20-transactional-effects.md)):
+A call is not waited for longer than its turn lasts (issue 161). The executor runs it next to the
+turn's `CancellationToken`, which a cancel and a stop cancel; then the tool's future is dropped
+wherever it stands, the call is answered as `interrupted`, and the agent starts no further call of
+the step. A tool that is done when the token is cancelled keeps its result. Dropping a tool does not
+undo what it did ([20](../issues/20-transactional-effects.md)):
 the call keeps when it started, so that it counts as having run - a turn given up keeps the call
 and its result where they were said (issue 258) - and the model is told to check its effect
 before calling it again.
@@ -284,7 +281,7 @@ as it is, any other value as its compact JSON; it may expire. It decides one of 
 A place cannot allow: there is nobody at a place who would stand for an approval
 (`ApprovalRule::check_restricting` refuses an `allow` and a reach narrower than the place, and so
 do the configuration and the controllers). Of the rules of all three places that apply to a call,
-the strongest decides - `deny` before `ask` (`ApprovalRule::decide`). The `GuardedToolExecutor`
+the strongest decides - `deny` before `ask` (`ApprovalRule::decide`). The `ToolExecutor`
 reads them as they stand at every call, from the controllers of its session and channel; the
 approver is not involved. Patterns are matched with the `regex` crate, which has no backtracking,
 and are bounded in length and compiled size; a rule whose pattern cannot be matched - one written
@@ -348,9 +345,9 @@ they are asked to decide.
 
 ### Checked before anyone is asked
 
-Before a call is registered, the runtime's guard decides how it is admitted
-(`GuardedToolExecutor::admit`, issue 155): answered at once, put to a user if its tool requires
-approval, or run as it is. The actor only records what the guard decided.
+Before a call is registered, the runtime's `ToolExecutor` decides how it is admitted
+(`ToolExecutor::admit`, issue 155): answered at once, put to a user if its tool requires approval,
+or run as it is. The actor only records what the executor decided.
 
 *   **Policy.** A call the `SecurityManager` does not permit (`ActionType::CallTool`) is refused
     before any approval is requested, so users are not asked about calls that would be refused
@@ -397,7 +394,7 @@ are presented as `questions` (`ToolPresentation::Questions`, issue 268): fronten
 questions, and once answered the record of the answers that every call that asked keeps, nothing
 raw.
 
-1.  **Admission.** `GuardedToolExecutor::admit` asks the tool for the call's questions after
+1.  **Admission.** `ToolExecutor::admit` asks the tool for the call's questions after
     `describe`, checks them (`Questions::check`: one to five, each with a header of at most twelve
     characters, no choices or two to four with distinct labels, someone asked) and puts them to
     the users of the channel (`ChannelLoop::put`): a handle as participants are mentioned, with or
@@ -502,10 +499,10 @@ commands is `ProvidesCommands`. They come from two places:
 `RuntimeManager::new_command_executor` builds both once per session and hands the providers to a
 `CommandExecutor<dyn ChannelCommandProvider>` shared by the session's channels. It is the
 counterpart of an agent's `ToolExecutor`, which likewise receives ready providers rather than a
-configuration. Two components providing the same name are a configuration error that keeps the
-session from starting. The executor is generic over the facet: finding a command, refusing two of
-one name and asking the policy are the same whoever runs the commands, and only what a command is
-given to run with - the session, or an agent's turn - is the facet's.
+configuration and is no component either. Two components providing the same name are a configuration
+error that keeps the session from starting. The executor is generic over the facet: finding a
+command, refusing two of one name and asking the policy are the same whoever runs the commands, and
+only what a command is given to run with - the session, or an agent's turn - is the facet's.
 
 The two differ in one respect, deliberately (issue 127): the `CommandExecutor` is a runtime type,
 not a component, and checks permissions itself. How a command runs is the command's own business,

@@ -14,7 +14,7 @@ use crate::llm::LLMClient;
 use crate::message::{EmitOutProcessor, PerceiveInProcessor};
 use crate::runtime::ActorRuntime;
 use crate::command::CommandResult;
-use crate::tool::{GuardedToolExecutor, ToolExecutor};
+use crate::tool::{ToolExecutor, ToolProvider};
 use crate::transport::{EventReceiver, EventSender};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -53,9 +53,9 @@ pub struct AgentActor {
     llm_client: ComponentImpl<dyn LLMClient>,
     perceive_in_processors: Vec<ComponentImpl<dyn PerceiveInProcessor>>,
     emit_out_processors: Vec<ComponentImpl<dyn EmitOutProcessor>>,
-    /// Runs the agent's tool calls: its `ToolExecutor` component, behind
-    /// the runtime's permission checks (issue 127).
-    tool_executor: GuardedToolExecutor,
+    /// Runs the agent's tool calls with the tools of its components, behind
+    /// the runtime's permission checks (issues 127, 280).
+    tool_executor: ToolExecutor,
     /// Who sees its reasoning at least (issues 61, 133), from the
     /// personality.
     reasoning_visibility: Visibility,
@@ -108,14 +108,14 @@ impl AgentActor {
         let llm_client = components.one::<dyn LLMClient>().await?;
         let perceive_in_processors = components.get_all::<dyn PerceiveInProcessor>(None);
         let emit_out_processors = components.get_all::<dyn EmitOutProcessor>(None);
-        let tool_executor = GuardedToolExecutor::new(
+        let tool_executor = ToolExecutor::new(
             Arc::clone(actor_runtime.security_manager()),
-            components.one::<dyn ToolExecutor>().await?,
+            components.get_all::<dyn ToolProvider>(None),
             Arc::clone(actor_runtime.approval_rules()),
             Arc::clone(actor_runtime.session_controller()),
             channel_controller,
             actor_runtime.channel_handle(),
-        );
+        )?;
 
         let mut agent_channel_state = actor_runtime.load_channel_state().await?;
         let not_executed = prepare_resume(&mut agent_channel_state);
@@ -542,7 +542,7 @@ impl AgentActor {
     }
 
     /// Takes the model's `tool_calls` into the turn as the tool guard admits
-    /// them (`GuardedToolExecutor::admit`) and asks for the approvals they
+    /// them (`ToolExecutor::admit`) and asks for the approvals they
     /// wait for. Only records them: whether the turn goes on to run them or
     /// waits is `handle_executing_tools`'s to decide.
     async fn request_approvals(
