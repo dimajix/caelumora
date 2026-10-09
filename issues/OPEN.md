@@ -92,6 +92,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | No. | Status | Issue |
 |---|---|---|
 | [270](270-personality-inheritance.md) | open | Every personality writes out its whole list of components, so what every agent should have is repeated in each and a later addition reaches only those touched by hand. |
+| [280](280-tool-executor-trait.md) | open | `ToolExecutor` is a replaceable facet whose only implementation is `DefaultToolExecutor`, and its shape cannot serve the variations it was made replaceable for. |
 
 ## Open architecture questions
 
