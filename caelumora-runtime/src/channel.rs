@@ -1596,7 +1596,7 @@ mod tests {
             deleted: None,
             former: Vec::new(),
         };
-        let builtin = |id: &str, facet: Arc<dyn crate::command::CommandProvider>| ComponentImpl { id: id.to_string(), fail_policy: ComponentFailPolicy::FailOpen, facet };
+        let builtin = |id: &str, facet: Arc<dyn crate::command::SessionCommandProvider>| ComponentImpl { id: id.to_string(), fail_policy: ComponentFailPolicy::FailOpen, facet };
         let executor = CommandExecutor::new(
             Arc::clone(runtime.security_manager()),
             vec![builtin("help", Arc::new(HelpCommandProvider)), builtin("wakeup", Arc::new(WakeupCommandProvider))],

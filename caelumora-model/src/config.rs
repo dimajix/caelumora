@@ -229,7 +229,7 @@ pub struct AppConfig {
     pub users: UsersConfig,
     pub auth: AuthConfig,
     pub logging: LoggingConfig,
-    /// The user commands every session has (issue 28), as `CommandProvider`
+    /// The user commands every session has (issue 28), as `SessionCommandProvider`
     /// components; a session template can add its own. Defaults to `/help`
     /// and `/wakeup`; an empty list switches them off.
     pub commands: ComponentConfig,

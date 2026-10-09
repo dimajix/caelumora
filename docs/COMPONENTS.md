@@ -40,7 +40,7 @@ A component offers one or more *facets*: traits it implements to take part in th
 |---|---|---|
 | `ToolProvider` | tools the model may call | `crate::tool` |
 | `ToolExecutor` | how the agent runs its tool calls | `crate::tool` |
-| `CommandProvider` | user commands | `crate::command` |
+| `SessionCommandProvider` | user commands | `crate::command` |
 | `PromptProvider` | prompt parts, of agents and external agents alike (issue 204) | `crate::context` |
 | `ContextProvider` | what the model is given | `crate::context` |
 | `LLMClient` | the language model the agent talks to | `crate::llm` |
@@ -233,8 +233,8 @@ unknown field is refused. In messages the endpoint is shown without credentials,
 | `round_robin_policy` | `ResponderPolicy` | - | The default policy: the agents take turns. |
 | `random_policy` | `ResponderPolicy` | - | Asks one agent, chosen at random. |
 | `mentions_only_policy` | `ResponderPolicy` | - | Asks nobody: agents answer only when mentioned. |
-| `help_command` | `CommandProvider` | - | The user command `/help`. |
-| `wakeup_command` | `CommandProvider` | - | The user command `/wakeup`. |
+| `help_command` | `SessionCommandProvider` | - | The user command `/help`. |
+| `wakeup_command` | `SessionCommandProvider` | - | The user command `/wakeup`. |
 
 The tools and commands themselves are listed with their parameters in
 [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md#built-in-tools-and-commands).

@@ -1,6 +1,6 @@
 //! The built-in `/wakeup` command (issue 28).
 
-use crate::command::{CommandContext, CommandError, CommandProvider, CommandResult};
+use crate::command::{CommandContext, CommandError, CommandResult, ProvidesCommands, SessionCommandProvider};
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
@@ -33,8 +33,7 @@ fn names(names: &[String]) -> String {
     }
 }
 
-#[async_trait]
-impl CommandProvider for WakeupCommandProvider {
+impl ProvidesCommands for WakeupCommandProvider {
     fn commands(&self) -> Vec<Command> {
         vec![Command {
             name: WAKEUP_COMMAND_NAME.to_string(),
@@ -42,7 +41,10 @@ impl CommandProvider for WakeupCommandProvider {
             usage: Some("[agent]".to_string()),
         }]
     }
+}
 
+#[async_trait]
+impl SessionCommandProvider for WakeupCommandProvider {
     async fn execute(&self, _name: &str, args: &str, context: &CommandContext<'_>) -> CommandResult<CommandOutput> {
         let wanted = args.trim().trim_start_matches('@');
         if wanted.is_empty() {
@@ -82,10 +84,10 @@ impl CommandProvider for WakeupCommandProvider {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(WAKEUP_COMMAND_KIND).provides::<dyn CommandProvider>(),
+        ComponentKind::new(WAKEUP_COMMAND_KIND).provides::<dyn SessionCommandProvider>(),
         |_descriptor, _context| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn CommandProvider>(Arc::new(WakeupCommandProvider));
+            facets.insert::<dyn SessionCommandProvider>(Arc::new(WakeupCommandProvider));
             Ok(facets)
         },
     );

@@ -1,6 +1,6 @@
-//! User commands (issue 28): `CommandProvider` components contribute
-//! commands, and a session's `CommandExecutor` finds and runs them on behalf of a
-//! user.
+//! User commands (issue 28): `SessionCommandProvider` components contribute
+//! commands, and a session's `CommandExecutor` finds and runs them on behalf
+//! of a user.
 //!
 //! Commands are for people - agents act through tools. They are run by
 //! `UserActor::execute_command`, on behalf of the user the actor stands
@@ -51,23 +51,28 @@ pub struct CommandReply {
     pub visibility: CommandVisibility,
 }
 
-/// What a command runs with: who issued it, in which channel, and the
-/// session's other commands. Deliberately no `Turn` - a command runs
-/// outside of any agent's turn, often because none is running.
+/// What a command of the session runs with: who issued it, in which
+/// channel, and the session's other commands. Deliberately no `Turn` - such
+/// a command runs outside of any agent's turn, often because none is
+/// running.
 pub struct CommandContext<'a> {
     /// The issuing user's security context.
     pub issuer: &'a SecurityContext,
     pub channel: &'a ChannelLoop,
-    pub executor: &'a CommandExecutor,
+    pub executor: &'a CommandExecutor<dyn SessionCommandProvider>,
 }
 
-/// A component facet contributing user commands, as `ToolProvider`
-/// contributes tools.
-#[async_trait]
-pub trait CommandProvider: Send + Sync + Debug {
+/// What every facet contributing commands says of them, whoever runs them:
+/// the part of a provider the `CommandExecutor` needs to find a command.
+pub trait ProvidesCommands: Send + Sync + Debug {
     /// The commands this component provides.
     fn commands(&self) -> Vec<Command>;
+}
 
+/// A component facet contributing user commands the session runs - `/help`,
+/// `/wakeup` -, as `ToolProvider` contributes tools.
+#[async_trait]
+pub trait SessionCommandProvider: ProvidesCommands {
     /// Runs the command `name` with `args`, the rest of the input line after
     /// the name, which the command parses itself.
     ///
@@ -79,24 +84,27 @@ pub trait CommandProvider: Send + Sync + Debug {
 }
 
 #[derive(Debug)]
-struct CommandEntry {
+struct CommandEntry<P: ?Sized> {
     command: Command,
     component: String,
-    provider: Arc<dyn CommandProvider>,
+    provider: Arc<P>,
 }
 
-/// Finds and runs the commands of one session - the global ones and the
-/// session's own - with the permission checks for seeing and running them,
-/// as `GuardedToolExecutor` does for an agent's tools. Unlike the tool
-/// executor it is not a component: how a command runs is the command's own
-/// business, and there is nothing about running them to try out.
+/// Finds and runs the commands of one set - the session's, from the global
+/// ones and the session's own - with the permission checks for seeing and
+/// running them, as `GuardedToolExecutor` does for an agent's tools. Unlike
+/// the tool executor it is not a component: how a command runs is the
+/// command's own business, and there is nothing about running them to try
+/// out. Generic over the facet that provides the commands, since what a
+/// command is given to run with is the facet's; finding one, refusing two
+/// of one name and asking the policy are the same for every facet.
 #[derive(Debug)]
-pub struct CommandExecutor {
+pub struct CommandExecutor<P: ?Sized> {
     security_manager: Arc<dyn SecurityManager>,
-    entries: Vec<CommandEntry>,
+    entries: Vec<CommandEntry<P>>,
 }
 
-impl CommandExecutor {
+impl<P: ?Sized + ProvidesCommands> CommandExecutor<P> {
     /// An executor for the commands `providers` contribute. Building them is
     /// up to whoever owns their configuration - for a session's commands,
     /// `RuntimeManager::new_command_executor`.
@@ -105,8 +113,8 @@ impl CommandExecutor {
     /// `ComponentError::InvalidConfig` if two of them provide the same name:
     /// that is a mistake in the configuration, and resolving it by order
     /// would silently hide one.
-    pub fn new(security_manager: Arc<dyn SecurityManager>, providers: Vec<ComponentImpl<dyn CommandProvider>>) -> ComponentResult<Self> {
-        let mut entries: Vec<CommandEntry> = Vec::new();
+    pub fn new(security_manager: Arc<dyn SecurityManager>, providers: Vec<ComponentImpl<P>>) -> ComponentResult<Self> {
+        let mut entries: Vec<CommandEntry<P>> = Vec::new();
         for provider in providers {
             for command in provider.commands() {
                 if let Some(existing) = entries.iter().find(|e| e.command.name == command.name) {
@@ -126,18 +134,50 @@ impl CommandExecutor {
         Self { security_manager, entries: Vec::new() }
     }
 
-    /// The commands `issuer` may see (`ShowCommand`), sorted by name - the
-    /// order components are built in follows their dependencies, not the
-    /// configuration, so it is no order to show.
-    pub async fn visible(&self, issuer: &SecurityContext) -> Vec<Command> {
+    /// The commands `issuer` may see - those `show` of them is granted -,
+    /// sorted by name: the order components are built in follows their
+    /// dependencies, not the configuration, so it is no order to show.
+    async fn visible_by(&self, issuer: &SecurityContext, show: impl for<'c> Fn(&'c Command) -> ActionType<'c>) -> Vec<Command> {
         let mut visible = Vec::new();
         for entry in &self.entries {
-            if self.security_manager.check(issuer, ActionType::ShowCommand(&entry.command.name)).await {
+            if self.security_manager.check(issuer, show(&entry.command)).await {
                 visible.push(entry.command.clone());
             }
         }
         visible.sort_by(|l, r| l.name.cmp(&r.name));
         visible
+    }
+
+    /// The command `name`, if `issuer` may run it: `Empty` for an empty
+    /// name; `Unknown` if there is no such command or `show` of it is not
+    /// granted them - one they may not see is unknown to them, not refused;
+    /// `Forbidden` if `execute` of it is not.
+    async fn admit(
+        &self,
+        name: &str,
+        issuer: &SecurityContext,
+        show: impl for<'c> Fn(&'c Command) -> ActionType<'c>,
+        execute: impl for<'c> Fn(&'c Command) -> ActionType<'c>,
+    ) -> CommandResult<&CommandEntry<P>> {
+        if name.is_empty() {
+            return Err(CommandError::Empty);
+        }
+        let entry = self.entries.iter().find(|e| e.command.name == name);
+        let Some(entry) = entry else {
+            return Err(CommandError::Unknown(name.to_string()));
+        };
+        self.security_manager.require(issuer, show(&entry.command), || CommandError::Unknown(name.to_string())).await?;
+        self.security_manager.require(issuer, execute(&entry.command), || CommandError::Forbidden(name.to_string())).await?;
+        Ok(entry)
+    }
+}
+
+/// The session's commands: seen and run by `ShowCommand` and
+/// `ExecuteCommand` of the name.
+impl CommandExecutor<dyn SessionCommandProvider> {
+    /// The commands `issuer` may see (`ShowCommand`), sorted by name.
+    pub async fn visible(&self, issuer: &SecurityContext) -> Vec<Command> {
+        self.visible_by(issuer, |c| ActionType::ShowCommand(&c.name)).await
     }
 
     /// Runs the command `name` for `context.issuer`.
@@ -147,16 +187,7 @@ impl CommandExecutor {
     /// command or the issuer may not see it; `Forbidden` if they may see but
     /// not run it; otherwise whatever the command reports.
     pub async fn execute(&self, name: &str, args: &str, context: &CommandContext<'_>) -> CommandResult<CommandOutput> {
-        if name.is_empty() {
-            return Err(CommandError::Empty);
-        }
-        let entry = self.entries.iter().find(|e| e.command.name == name);
-        let Some(entry) = entry else {
-            return Err(CommandError::Unknown(name.to_string()));
-        };
-        // One the issuer may not see is unknown to them, not refused.
-        self.security_manager.require(context.issuer, ActionType::ShowCommand(name), || CommandError::Unknown(name.to_string())).await?;
-        self.security_manager.require(context.issuer, ActionType::ExecuteCommand(name), || CommandError::Forbidden(name.to_string())).await?;
+        let entry = self.admit(name, context.issuer, |c| ActionType::ShowCommand(&c.name), |c| ActionType::ExecuteCommand(&c.name)).await?;
         entry.provider.execute(name, args, context).await
     }
 }
@@ -176,18 +207,20 @@ mod tests {
     #[derive(Debug)]
     struct Named(&'static str);
 
-    #[async_trait]
-    impl CommandProvider for Named {
+    impl ProvidesCommands for Named {
         fn commands(&self) -> Vec<Command> {
             vec![Command { name: self.0.to_string(), description: String::new(), usage: None }]
         }
+    }
 
+    #[async_trait]
+    impl SessionCommandProvider for Named {
         async fn execute(&self, _name: &str, _args: &str, _context: &CommandContext<'_>) -> CommandResult<CommandOutput> {
             Ok(CommandOutput::private(""))
         }
     }
 
-    fn provider(id: &str, command: &'static str) -> ComponentImpl<dyn CommandProvider> {
+    fn provider(id: &str, command: &'static str) -> ComponentImpl<dyn SessionCommandProvider> {
         ComponentImpl { id: id.to_string(), fail_policy: ComponentFailPolicy::FailOpen, facet: Arc::new(Named(command)) }
     }
 

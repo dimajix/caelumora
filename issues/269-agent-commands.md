@@ -473,3 +473,9 @@ is never retryable; a command carried out is recorded in the history.
   of the agent's own, for external agents too; the agent is always named (`@handle`, `@all`); a
   quiet channel carries commands out; a command turn is never retryable; a command carried out is
   recorded in the history. Plan written against `42a7483`.
+- **2026-10-09** — Step 1 (B) done: `CommandProvider` is `SessionCommandProvider`, with
+  `ProvidesCommands` as what every command facet says of its commands, and `CommandExecutor<P>` is
+  generic with `visible_by` and `admit` shared and the session's `visible` / `execute` on the
+  instantiation. Step 2 (C) is not a step of its own after all: without `CommandRequested` there is
+  nothing for `take_in` to stop at, and a `TakenIn` of two fields is today's tuple under a name; it
+  is built with step 4, where the third field and the loop over `take_in` arrive together.

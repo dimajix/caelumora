@@ -486,8 +486,10 @@ answers is decided in one place.
 
 ### Commands are components
 
-A `CommandProvider` (`caelumora_runtime::command`) contributes commands, as a `ToolProvider`
-contributes tools, registered in the `ComponentRegistry`. They come from two places:
+A `SessionCommandProvider` (`caelumora_runtime::command`) contributes commands the session runs,
+as a `ToolProvider` contributes tools, registered in the `ComponentRegistry`. Its name says whose
+commands they are: the facet for commands an agent carries out itself is issue 269's. What every
+such facet says of its commands is `ProvidesCommands`. They come from two places:
 
 *   `AppConfig::commands`, the global set - by default `/help` and `/wakeup`; an empty list switches
     them off (see [CONFIGURATION.md](CONFIGURATION.md));
@@ -495,9 +497,12 @@ contributes tools, registered in the `ComponentRegistry`. They come from two pla
     into the `Session`, so a running session keeps its set.
 
 `RuntimeManager::new_command_executor` builds both once per session and hands the providers to a
-`CommandExecutor` shared by the session's channels. It is the counterpart of an agent's
-`ToolExecutor`, which likewise receives ready providers rather than a configuration. Two components
-providing the same name are a configuration error that keeps the session from starting.
+`CommandExecutor<dyn SessionCommandProvider>` shared by the session's channels. It is the
+counterpart of an agent's `ToolExecutor`, which likewise receives ready providers rather than a
+configuration. Two components providing the same name are a configuration error that keeps the
+session from starting. The executor is generic over the facet: finding a command, refusing two of
+one name and asking the policy are the same whoever runs the commands, and only what a command is
+given to run with - the session, or an agent's turn - is the facet's.
 
 The two differ in one respect, deliberately (issue 127): the `CommandExecutor` is a runtime type,
 not a component, and checks permissions itself. How a command runs is the command's own business,

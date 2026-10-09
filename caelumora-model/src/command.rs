@@ -3,7 +3,7 @@
 //!
 //! Commands are recognised by the frontends, which send them to the channel
 //! as commands instead of as messages; [`parse_input`] is the rule they
-//! follow. What a command does is up to the `CommandProvider` component that
+//! follow. What a command does is up to the `SessionCommandProvider` component that
 //! contributes it (see `caelumora-runtime`).
 
 use crate::component::{ComponentConfig, ComponentDescriptor};

@@ -1,7 +1,7 @@
 use caelumora_model::approval::ApprovalRule;
 use caelumora_model::value::name::Name;
 use crate::channel::ChannelLoop;
-use crate::command::CommandExecutor;
+use crate::command::{CommandExecutor, SessionCommandProvider};
 use crate::runtime::{ChannelRuntime, RuntimeManager};
 use crate::event::EventBus;
 use anyhow::{anyhow, Result};
@@ -129,7 +129,7 @@ pub struct SessionLoop {
     entities: Arc<dyn EntityStore>,
     events: Arc<EventBus>,
     /// The user commands of every channel of the session.
-    commands: Arc<CommandExecutor>,
+    commands: Arc<CommandExecutor<dyn SessionCommandProvider>>,
     /// The session's channels, and which of them run (issue 116). A channel
     /// deleted while it waits to be started has no entry any more, so `run`
     /// never starts it.
@@ -1327,7 +1327,7 @@ mod tests {
         use caelumora_model::command::HELP_COMMAND_KIND;
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         let runtime = test_runtime();
-        let names = |executor: crate::command::CommandExecutor| async move {
+        let names = |executor: crate::command::CommandExecutor<dyn crate::command::SessionCommandProvider>| async move {
             executor.visible(&SecurityContext::default()).await.into_iter().map(|c| c.name).collect::<Vec<_>>()
         };
 
