@@ -366,3 +366,10 @@ tools, then authoring, then REST, the web UI and the seed, then the documents.
     form is shared, the storage is not. A loaded skill must survive compaction (16).
 - **2026-10-09** — Decision consolidated and plan written against `2c6dcb3`, now that 269 is
   done; branch `issue-22-skills`.
+- **2026-10-09** — Step 1 (B) done: `Skill` (`skill.rs`, `SkillBody` of 32 000 characters), the
+  store methods with the memory and JSON stores and the store suite, `GetSkill` … `UseSkill` -
+  `UseSkill` granted as reading is -, `GlobalEvent::Skill…` delivered by `GetSkill`,
+  `KnowledgeSource::Skill` with `digest::skill`, `SkillSnapshot`, `AgentChannelState::given` and
+  `Turn::give`. Beyond the plan: `given` lets the turn see the message, so a skill loaded by
+  `/skill` raises the turn's label as one loaded by `load_skill` does; `SkillSnapshot::owner`, for
+  the web UI; `KnowledgeRefResponse::skill_id` already, since REST matches every source.

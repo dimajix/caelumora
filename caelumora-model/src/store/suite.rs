@@ -19,6 +19,7 @@ use crate::template::{ChannelTemplate, ParticipantTemplate, SessionTemplate, Ses
 use crate::removal::{Deletable, Removal};
 use crate::user::{User, UserId, UserProfile};
 use crate::workspace::{Workspace, WorkspaceId};
+use crate::skill::{Skill, SkillId};
 use chrono::Utc;
 use uuid::Uuid;
 
@@ -158,6 +159,20 @@ fn workspace(owner: UserId) -> Workspace {
     workspace_named(ScopedName::new("docs", Scope::UserScope { user_id: owner }).unwrap())
 }
 
+fn skill(owner: UserId) -> Skill {
+    skill_named(ScopedName::new("release-notes", Scope::UserScope { user_id: owner }).unwrap())
+}
+
+/// A skill of `name`, owned by the user whose scope it lies in, else by
+/// another.
+fn skill_named(name: ScopedName) -> Skill {
+    let owner = match name.scope {
+        Scope::UserScope { user_id } => user_id,
+        _ => UserId::new(),
+    };
+    Skill::new(name, crate::value::text::Description::new("How we write a release note").unwrap(), crate::value::text::SkillBody::new("Collect, group, write.").unwrap(), Classification::CHANNEL_DEFAULT, crate::actor::ActorId::User(owner))
+}
+
 /// A workspace of `name`, owned by the user whose scope it lies in, else by
 /// another.
 fn workspace_named(name: ScopedName) -> Workspace {
@@ -229,6 +244,8 @@ pub(crate) async fn entity_store_behaves(store: &dyn EntityStore) {
         create_user_profile, get_user_profile, update_user_profile, delete_user_profile, list_user_profiles);
     lifecycle!(store, workspace(UserId::new()), |v: &Workspace| v.id, name.name, "workspace",
         create_workspace, get_workspace, update_workspace, delete_workspace, list_workspaces);
+    lifecycle!(store, skill(UserId::new()), |v: &Skill| v.id, name.name, "skill",
+        create_skill, get_skill, update_skill, delete_skill, list_skills);
 
     let ctx = SecurityContext::default();
     let alice = user("alice");
@@ -261,6 +278,11 @@ pub(crate) async fn entity_store_behaves(store: &dyn EntityStore) {
         create_workspace, delete_workspace, find_workspace_by_name);
     let nobodys = store.create_workspace(&ctx, &Workspace { security_attributes: Default::default(), ..workspace(UserId::new()) }).await;
     assert!(matches!(nobodys, Err(StoreError::Validation(_))), "workspace: one that belongs to no user is not stored, got {nobodys:?}");
+
+    found_by_name!(store, skill_named, "skill",
+        create_skill, delete_skill, find_skill_by_name);
+    let nobodys = store.create_skill(&ctx, &Skill { security_attributes: Default::default(), ..skill(UserId::new()) }).await;
+    assert!(matches!(nobodys, Err(StoreError::Validation(_))), "skill: one that belongs to nobody is not stored, got {nobodys:?}");
 }
 
 /// Of one kind, a name is unique in its name space (issue 250): creating,
@@ -324,6 +346,10 @@ pub(crate) async fn names_are_unique(store: &dyn EntityStore) {
         elsewhere: |name| Workspace { name: in_scope(name, &Scope::UserScope { user_id: bob }), id: WorkspaceId::new(), ..workspace(bob) },
         rename: |value: Workspace, name| Workspace { name: in_scope(name, &value.name.scope), ..value }, "workspace",
         create_workspace, update_workspace, delete_workspace, restore_workspace);
+    unique_by_name!(store, |name| Skill { name: in_scope(name, &global), id: SkillId::new(), ..skill(alice) },
+        elsewhere: |name| Skill { name: in_scope(name, &Scope::UserScope { user_id: bob }), id: SkillId::new(), ..skill(bob) },
+        rename: |value: Skill, name| Skill { name: in_scope(name, &value.name.scope), ..value }, "skill",
+        create_skill, update_skill, delete_skill, restore_skill);
 
     // Moved into a scope where its name is taken.
     let ctx = SecurityContext::default();

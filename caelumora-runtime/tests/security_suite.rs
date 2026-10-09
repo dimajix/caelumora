@@ -113,6 +113,7 @@ fn attributes_of<'a>(action: &ActionType<'a>) -> Option<&'a SecurityAttributes> 
         | GetUserProfile(a) | CreateUserProfile(a) | UpdateUserProfile(a) | DeleteUserProfile(a)
         | CancelChannel(a) | WakeChannel(a) | RetryMessage(a) | AnswerQuestion(a)
         | GetWorkspace(a) | CreateWorkspace(a) | UpdateWorkspace(a) | DeleteWorkspace(a)
+        | GetSkill(a) | CreateSkill(a) | UpdateSkill(a) | DeleteSkill(a) | UseSkill(a)
         | GetComponent(a) | CreateComponent(a) | UpdateComponent(a) | DeleteComponent(a)
         | ReadDeleted(_, a) | Restore(_, a) | Purge(_, a) => Some(a),
         _ => None,

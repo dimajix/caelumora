@@ -937,12 +937,15 @@ pub struct KnowledgeRefResponse {
     /// Whether the channel was deleted (issue 164) - told only to whoever
     /// could read it were it there; for anyone else, it never was.
     pub channel_deleted: bool,
-    /// `"notes"`, `"private_notes"`, `"memory"`, `"history"` or
-    /// `"workspace"`.
+    /// `"notes"`, `"private_notes"`, `"memory"`, `"history"`,
+    /// `"workspace"` or `"skill"`.
     pub source: &'static str,
     /// The workspace whose files were read, for `"workspace"`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<caelumora_model::workspace::WorkspaceId>,
+    /// The skill loaded, for `"skill"` (issue 22).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skill_id: Option<caelumora_model::skill::SkillId>,
     /// Whose notes, for `"notes"` and `"private_notes"`.
     pub agent_id: Option<ActorId>,
     pub agent_name: Option<String>,
@@ -977,10 +980,12 @@ impl KnowledgeRefResponse {
             KnowledgeSource::History { digest, start } => ("history", None, digest, start),
             KnowledgeSource::Memory { agent, digest } => ("memory", Some(ActorId::Agent(agent)), digest, None),
             KnowledgeSource::Workspace { digest, .. } => ("workspace", None, digest, None),
+            KnowledgeSource::Skill { digest, .. } => ("skill", None, Some(digest), None),
         };
-        let workspace_id = match knowledge.source {
-            KnowledgeSource::Workspace { workspace, .. } => Some(workspace),
-            _ => None,
+        let (workspace_id, skill_id) = match knowledge.source {
+            KnowledgeSource::Workspace { workspace, .. } => (Some(workspace), None),
+            KnowledgeSource::Skill { skill, .. } => (None, Some(skill)),
+            _ => (None, None),
         };
         let agent_name = match (agent_id, &channel) {
             (Some(id), Some(channel)) => channel.member(id).await.ok().and_then(|m| m.name().map(str::to_string)),
@@ -993,6 +998,7 @@ impl KnowledgeRefResponse {
             channel_deleted,
             source,
             workspace_id,
+            skill_id,
             agent_id,
             agent_name,
             digest,

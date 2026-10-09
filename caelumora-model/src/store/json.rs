@@ -5,12 +5,13 @@ use crate::removal::{Deletable, Removal, Stored};
 use crate::scope::Scoped;
 use crate::security::SecurityManager;
 use crate::value::name::ScopedName;
-use crate::store::access::{name_free, Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, USERS, USER_PROFILES, WORKSPACES};
+use crate::store::access::{name_free, Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, SKILLS, USERS, USER_PROFILES, WORKSPACES};
 use crate::session::{Session, SessionId};
 use crate::store::{ComponentStore, EntityKind, EntityStore, Journaled, StateStore, StoreError, StoreResult};
 use crate::template::{SessionTemplate, SessionTemplateId};
 use crate::user::{User, UserId, UserProfile};
 use crate::workspace::{Workspace, WorkspaceId};
+use crate::skill::{Skill, SkillId};
 use async_trait::async_trait;
 use tracing::{debug, info, warn};
 use serde::de::DeserializeOwned;
@@ -56,7 +57,7 @@ impl JsonFileStore {
             root,
             security_manager,
             journal_floor: DEFAULT_JOURNAL_FLOOR,
-            name_locks: [EntityKind::Personality, EntityKind::SessionTemplate, EntityKind::Agent, EntityKind::Channel, EntityKind::User, EntityKind::Workspace]
+            name_locks: [EntityKind::Personality, EntityKind::SessionTemplate, EntityKind::Agent, EntityKind::Channel, EntityKind::User, EntityKind::Workspace, EntityKind::Skill]
                 .into_iter().map(|kind| (kind, Mutex::new(()))).collect(),
         };
         store.ensure_layout()?;
@@ -84,6 +85,7 @@ impl JsonFileStore {
             self.users_dir(),
             self.user_profiles_dir(),
             self.workspaces_dir(),
+            self.skills_dir(),
             self.agent_states_dir(),
             self.agent_channel_states_dir(),
             self.channel_states_dir(),
@@ -118,6 +120,10 @@ impl JsonFileStore {
 
     fn workspaces_dir(&self) -> PathBuf {
         self.root.join("runtime").join("workspaces")
+    }
+
+    fn skills_dir(&self) -> PathBuf {
+        self.root.join("runtime").join("skills")
     }
 
     fn sessions_dir(&self) -> PathBuf {
@@ -175,6 +181,10 @@ impl JsonFileStore {
 
     fn workspace_path(&self, id: WorkspaceId) -> PathBuf {
         self.workspaces_dir().join(format!("{id}.json"))
+    }
+
+    fn skill_path(&self, id: SkillId) -> PathBuf {
+        self.skills_dir().join(format!("{id}.json"))
     }
 
     fn agent_channel_state_path(&self, agent_id: AgentId, channel_id: ChannelId) -> PathBuf {
@@ -779,6 +789,38 @@ impl EntityStore for JsonFileStore {
     }
     async fn find_workspace_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Workspace> {
         self.find_dir(ctx, &WORKSPACES, self.workspaces_dir(), name).await
+    }
+
+    // Skills (issue 22)
+    async fn create_skill(&self, ctx: &SecurityContext, value: &Skill) -> StoreResult<()> {
+        self.create_named_file(ctx, &SKILLS, self.skill_path(value.id), value.id.to_string(), value).await
+    }
+    async fn get_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<Skill> {
+        self.get_file(ctx, &SKILLS, self.skill_path(id), id.to_string()).await
+    }
+    async fn update_skill(&self, ctx: &SecurityContext, value: &Skill) -> StoreResult<()> {
+        self.update_named_file(ctx, &SKILLS, self.skill_path(value.id), value.id.to_string(), value).await
+    }
+    async fn delete_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<bool> {
+        self.delete_file::<Skill>(ctx, &SKILLS, self.skill_path(id)).await
+    }
+    async fn list_skills(&self, ctx: &SecurityContext) -> StoreResult<Vec<Skill>> {
+        self.list_dir(ctx, &SKILLS, self.skills_dir()).await
+    }
+    async fn restore_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<()> {
+        self.restore_named_file::<Skill>(ctx, &SKILLS, self.skill_path(id), id.to_string()).await
+    }
+    async fn purge_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<bool> {
+        self.purge_file::<Skill>(ctx, &SKILLS, self.skill_path(id)).await
+    }
+    async fn get_deleted_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<Skill> {
+        self.get_deleted_file(ctx, &SKILLS, self.skill_path(id), id.to_string()).await
+    }
+    async fn list_deleted_skills(&self, ctx: &SecurityContext) -> StoreResult<Vec<Skill>> {
+        self.list_deleted_dir(ctx, &SKILLS, self.skills_dir()).await
+    }
+    async fn find_skill_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Skill> {
+        self.find_dir(ctx, &SKILLS, self.skills_dir(), name).await
     }
 }
 

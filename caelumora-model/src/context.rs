@@ -118,6 +118,9 @@ pub enum KnowledgeSource {
     /// is used in; the digest of a file's content as it was read, `None`
     /// for a listing or a search.
     Workspace { workspace: crate::workspace::WorkspaceId, digest: Option<Digest> },
+    /// A skill (issue 22), loaded into the turn; the digest of its body as
+    /// it was loaded (`digest::skill`).
+    Skill { skill: crate::skill::SkillId, digest: Digest },
 }
 
 /// Which reasoning of the messages in its context a model is given back

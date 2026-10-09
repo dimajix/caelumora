@@ -334,6 +334,13 @@ pub fn content(bytes: &[u8]) -> Digest {
     encoder.finish()
 }
 
+/// The digest of a skill's body as it was loaded (issue 22).
+pub fn skill(body: &str) -> Digest {
+    let mut e = Encoder::new("caelumora.skill.v1");
+    e.str(body);
+    e.finish()
+}
+
 pub fn prompt(prompt: &str) -> Digest {
     let mut e = Encoder::new("caelumora.prompt.v1");
     e.str(prompt);

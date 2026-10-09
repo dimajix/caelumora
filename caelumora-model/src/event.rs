@@ -3,6 +3,7 @@ use crate::channel::{ChannelId, ChannelUpdateEvent};
 use crate::session::{SessionId, SessionUpdateEvent};
 use crate::user::{UserId, UserProfile, UserUpdateEvent};
 use crate::workspace::{WorkspaceId, WorkspaceUpdateEvent};
+use crate::skill::{SkillId, SkillUpdateEvent};
 use crate::security::SecurityAttributes;
 use serde::{Deserialize, Serialize};
 
@@ -59,6 +60,12 @@ pub enum GlobalEvent {
     WorkspaceDeleted(WorkspaceId),
     /// A deleted workspace was restored, with its files (issue 164).
     WorkspaceRestored(WorkspaceId),
+    /// About a skill (issue 22). Published with the skill's attributes: its
+    /// owner and contributors receive them - everybody, for the system's.
+    SkillCreated(SkillId),
+    SkillUpdated(SkillId, SkillUpdateEvent),
+    SkillDeleted(SkillId),
+    SkillRestored(SkillId),
 }
 
 pub trait EventPublisher: Send + Sync + std::fmt::Debug {
