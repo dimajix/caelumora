@@ -631,6 +631,7 @@ agent alike.
 | `write_file` | `terminal_tool` | `path`, `content` | as configured, yes by default | `SHOWN` | Writes a text file of the workspace, its directories made. |
 | `replace_in_file` | `terminal_tool` | `path`, `old_text`, `new_text`, `replace_all` (optional) | as configured, yes by default | `SHOWN` | Replaces text that occurs once - or every occurrence - in a text file of the workspace. |
 | `move_file` | `terminal_tool` | `from`, `to` | as configured, yes by default | `SHOWN` | Moves or renames a file or a directory of the workspace, never over something, its directories made (issue 267). |
+| `publish_file` | `terminal_tool` | `path`, `name`, `description` (optional) | as configured; not under `"unless_read_only"` | `SHOWN` | Offers a file of the workspace for download at its message, as a link to the file as it is now, with its digest (issue 273). |
 | `delete_file` | `terminal_tool` | `path` | as configured, yes by default | `SHOWN` | Deletes a file or an empty directory of the workspace. |
 | `read_history` | `channel_history` | `channel`, `last` (optional, default 20, at most 100), `query` (optional) | no | `SHOWN` | Reads the latest messages of another channel, or those containing a text. |
 
@@ -648,28 +649,35 @@ what it has. Which calls need approval is configured as for `mcp_tool` (`require
 `ApprovalMode`): all - the default -, none, or `"unless_read_only"`, all but those that only read
 files.
 
-**Files.** `list_files`, `read_file` and `grep_files` read; `write_file`, `replace_in_file`,
-`move_file` and `delete_file` change - over the workspace's `Terminal`, whatever its storage, a
-shell not needed. A path is relative to the workspace's top and made a `WorkspacePath` first: one
-that leaves the workspace is the model's to correct, as is a file that is not there or not text. A
-file is read whole, up to 4 MiB, as text (UTF-8); `read_file` gives the lines asked for, at most
-`max_output_bytes` of them, and says where to read on; `grep_files` walks the directory asked for,
-at most 2000 files, skipping what is no text. A replacement must find its text exactly once, unless
-every occurrence is to be replaced; it reads, replaces and writes, so what changed the file in
-between is overwritten. `move_file` moves and renames alike - renaming is moving within a directory,
-so one tool does both (issue 267) -, a directory with what it holds; nothing is moved over, which
-would be a deletion `delete_file` makes on its own, and the workspace's top is neither moved nor
-moved over. What was read is recorded as the turn's knowledge (`KnowledgeSource::Workspace`, see
-[MEMORY.md](MEMORY.md#recording-what-was-read)), a file's content by its digest; a move reads
-nothing. The approver reads a change whole - what is written, what is replaced by what, what is
-renamed or moved where -, and a rule derived from an approved change covers the file, whatever is
-written into it (`ToolProvider::matcher`, the path alone) - for a move, that move: both `from` and
-`to`, since it changes two places. `list_files`, `read_file`, `grep_files`, `write_file`,
-`replace_in_file` and `move_file` are presented as `file_list`, `file_read`, `file_search`,
-`file_write`, `file_edit` and `file_move` (`ToolPresentation`, issues 265, 267): the web UI shows
-the file's path and its text - what was read, what is written, what is replaced by what - wrapped as
-text, a directory's entries as the file browser shows them, a search's matches by file and line, and
-a move as where it lay and where it lies now; `delete_file` as every call.
+**Files.** `list_files`, `read_file`, `grep_files` and `publish_file` read; `write_file`,
+`replace_in_file`, `move_file` and `delete_file` change - over the workspace's `Terminal`, whatever
+its storage, a shell not needed. A path is relative to the workspace's top and made a
+`WorkspacePath` first: one that leaves the workspace is the model's to correct, as is a file that is
+not there or not text. A file is read whole, up to 4 MiB, as text (UTF-8); `read_file` gives the
+lines asked for, at most `max_output_bytes` of them, and says where to read on; `grep_files` walks
+the directory asked for, at most 2000 files, skipping what is no text. A replacement must find its
+text exactly once, unless every occurrence is to be replaced; it reads, replaces and writes, so what
+changed the file in between is overwritten. `move_file` moves and renames alike - renaming is moving
+within a directory, so one tool does both (issue 267) -, a directory with what it holds; nothing is
+moved over, which would be a deletion `delete_file` makes on its own, and the workspace's top is
+neither moved nor moved over. `publish_file` offers a file for download at the message that calls it
+(issue 273): a link to the file as it is now - its path, the name it is offered under, its size,
+when it was changed and the digest of its content, read in parts up to `max_file_bytes` -,
+downloaded through the channel's workspace by whoever may use it there; it changes nothing and hands
+nothing to anyone who could not download the file already, so it reads. Artifacts that keep what was
+offered, beyond the workspace, are issue 271. What was read is recorded as the turn's knowledge
+(`KnowledgeSource::Workspace`, see [MEMORY.md](MEMORY.md#recording-what-was-read)), a file's content
+by its digest; a move reads nothing. The approver reads a change whole - what is written, what is
+replaced by what, what is renamed or moved where -, and a rule derived from an approved change
+covers the file, whatever is written into it (`ToolProvider::matcher`, the path alone) - for a move,
+that move: both `from` and `to`, since it changes two places. `list_files`, `read_file`,
+`grep_files`, `write_file`, `replace_in_file`, `move_file` and `publish_file` are presented as
+`file_list`, `file_read`, `file_search`, `file_write`, `file_edit`, `file_move` and `file_publish`
+(`ToolPresentation`, issues 265, 267, 273): the web UI shows the file's path and its text - what was
+read, what is written, what is replaced by what - wrapped as text, a directory's entries as the file
+browser shows them, a search's matches by file and line, and a move as where it lay and where it
+lies now, and a file offered as a card with its download, saying when the file changed since or is
+gone (`file_publish`); `delete_file` as every call.
 
 **Commands.** A command runs in the workspace's directory, every one anew - a `cd` does not carry
 over - and is seen only from the channel it was started in.

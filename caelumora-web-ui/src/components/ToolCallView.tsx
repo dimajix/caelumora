@@ -4,9 +4,11 @@
 // frame also shows the questions a call asked and how they were answered, where its result keeps
 // their record (`AnswersRecord`, issue 268).
 
-import React from 'react';
-import {CheckCircle2, EyeOff, File, FileDiff, FileInput, FilePen, FileText, Folder, FolderOpen, TextSearch, Terminal, Wrench, XCircle} from 'lucide-react';
+import React, {useEffect, useState} from 'react';
+import {CheckCircle2, Download, EyeOff, File, FileDiff, FileDown, FileInput, FilePen, FileText, Folder, FolderOpen, TextSearch, Terminal, Wrench, XCircle} from 'lucide-react';
 import type {Question, ToolCall, ToolPresentation, ToolResult, ToolResultStatus, ToolVisibility} from '../types';
+import type {WorkspaceFiles} from '../api';
+import {ApiRequestError} from '../errors';
 import {formatArguments, formatSize, formatTimestamp} from '../messages';
 import {AnswersRecord, ChoiceRows, QuestionHeading} from './QuestionView';
 
@@ -56,10 +58,14 @@ function toolResultText(result: ToolResult): string {
   return result.content;
 }
 
-/** What a presentation's handler is given: the call, and its result once it has one. */
+/** What a presentation's handler is given: the call, its result once it has one, and the files of the channel's workspace where it is shown in the chat. */
 export interface ToolCallContentProps {
   call: ToolCall;
   result?: ToolResult;
+  /** The files of the channel's workspace as the user may use them; absent outside the chat. */
+  files?: WorkspaceFiles;
+  /** Changes whenever those files may have changed. */
+  filesVersion?: number;
 }
 
 /** The default presentation: the call's arguments and its result, as they are. */
@@ -551,6 +557,85 @@ const QuestionsToolCallContent: React.FC<ToolCallContentProps> = ({call, result}
   );
 };
 
+/** Where a file offered for download stands now (issue 273), as far as this user can tell. */
+type OfferedState = 'checking' | 'current' | 'changed' | 'gone' | 'unavailable';
+
+/** Whether the file at `path` is as it was offered - its size and when it was changed - or changed, or gone. */
+function useOfferedState(files: WorkspaceFiles | undefined, path: string | null, size: number | null, modified: string | null, version: number | undefined): OfferedState {
+  const [state, setState] = useState<OfferedState>('checking');
+  useEffect(() => {
+    if (!files || path === null) return;
+    let current = true;
+    const cut = path.lastIndexOf('/');
+    const [dir, name] = cut < 0 ? ['', path] : [path.slice(0, cut), path.slice(cut + 1)];
+    files.list(dir)
+      .then(entries => {
+        if (!current) return;
+        const entry = entries.find(e => e.name === name && !e.is_dir);
+        const sameTime = (entry?.modified ? Date.parse(entry.modified) : null) === (modified ? Date.parse(modified) : null);
+        setState(!entry ? 'gone' : entry.size === size && sameTime ? 'current' : 'changed');
+      })
+      // The directory gone is the file gone; no workspace to use here, or any other refusal, is the workspace not being this user's to use.
+      .catch(error => {
+        if (!current) return;
+        const missing = error instanceof ApiRequestError && error.status === 404 && error.code !== 'workspace_not_found';
+        setState(missing ? 'gone' : 'unavailable');
+      });
+    return () => { current = false; };
+  }, [files, path, size, modified, version]);
+  return files ? state : 'unavailable';
+}
+
+/**
+ * A file of the workspace offered for download (issue 273): a card with its name, size and what it
+ * is, and a download of the file as it is now - saying so where it changed since it was offered, or
+ * that it is gone. Whoever cannot use the workspace in the channel sees the card without the download.
+ */
+const FilePublishToolCallContent: React.FC<ToolCallContentProps> = ({call, result, files, filesVersion}) => {
+  const args = argumentsObject(call.arguments);
+  const offered = resultObject(result);
+  const path = textOf(offered, 'path') ?? textOf(args, 'path');
+  const name = textOf(offered, 'name') ?? textOf(args, 'name') ?? (path?.split('/').pop() || null);
+  const size = numberOf(offered, 'size');
+  const state = useOfferedState(offered ? files : undefined, offered ? path : null, size, textOf(offered, 'modified'), filesVersion);
+  if (call.arguments === null) return <span className="text-[11px] italic opacity-60">File not shown</span>;
+  if (!offered) {
+    return result ? <FailedResult result={result} /> : <FilePath icon={<FileDown size={12} />} path={path} detail="being offered" />;
+  }
+  const notes: Record<OfferedState, string | null> = {
+    checking: null,
+    current: null,
+    changed: 'Changed since it was offered: the download is the file as it is now.',
+    gone: 'No longer in the workspace.',
+    unavailable: files ? 'You cannot use the workspace in this channel.' : 'Download it from the chat.',
+  };
+  const downloadable = files && path !== null && (state === 'current' || state === 'changed' || state === 'checking');
+  return (
+    <div className="flex items-start gap-3 rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-950 p-2.5">
+      <FileDown size={20} className="shrink-0 mt-0.5 text-blue-600 dark:text-blue-400" />
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium break-all">{name ?? '?'}</div>
+        <div className="text-[11px] opacity-60">
+          {[size !== null ? formatSize(size) : null, path].filter(Boolean).join(' · ')}
+        </div>
+        {textOf(offered, 'description') && <div className="text-xs mt-1 whitespace-pre-wrap">{textOf(offered, 'description')}</div>}
+        {notes[state] && (
+          <div className={`text-[11px] mt-1 ${state === 'changed' ? 'text-amber-600 dark:text-amber-400' : 'italic opacity-60'}`}>{notes[state]}</div>
+        )}
+      </div>
+      {downloadable && (
+        <a
+          href={files.url(path)}
+          download={name ?? undefined}
+          className="shrink-0 flex items-center gap-1 rounded-md bg-blue-600 hover:bg-blue-700 text-white text-xs px-2.5 py-1.5"
+        >
+          <Download size={12} /> Download
+        </a>
+      )}
+    </div>
+  );
+};
+
 /** The handler of each presentation; one the server knows and this client does not falls back to the default. */
 const PRESENTATIONS: Record<ToolPresentation, React.FC<ToolCallContentProps>> = {
   default: DefaultToolCallContent,
@@ -563,6 +648,7 @@ const PRESENTATIONS: Record<ToolPresentation, React.FC<ToolCallContentProps>> = 
   file_search: FileSearchToolCallContent,
   file_move: FileMoveToolCallContent,
   questions: QuestionsToolCallContent,
+  file_publish: FilePublishToolCallContent,
 };
 
 interface ToolCallViewProps {
@@ -571,9 +657,13 @@ interface ToolCallViewProps {
   result?: ToolResult;
   /** Its caller was removed from the channel before it ended. */
   abandoned?: boolean;
+  /** The files of the channel's workspace, for a call that offers one (issue 273). */
+  files?: WorkspaceFiles;
+  /** Changes whenever those files may have changed. */
+  filesVersion?: number;
 }
 
-export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, abandoned}) => {
+export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, abandoned, files, filesVersion}) => {
   const Content = PRESENTATIONS[call.presentation ?? 'default'] ?? DefaultToolCallContent;
   return (
     <div className="bg-gray-50 dark:bg-gray-800 rounded-sm border border-gray-200 dark:border-gray-600 overflow-hidden">
@@ -618,7 +708,7 @@ export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, abandon
         </div>
       </div>
       <div className="p-2">
-        <Content call={call} result={result} />
+        <Content call={call} result={result} files={files} filesVersion={filesVersion} />
         {result?.answers && (
           // Set apart from what the presentation shows, where it shows anything.
           <div className="not-first:mt-2 not-first:pt-2 not-first:border-t border-gray-200 dark:border-gray-700">

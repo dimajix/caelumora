@@ -192,7 +192,7 @@ published before anyone else can take it.
 | [252](252-openapi-tool.md) | open | A tool server that describes itself by OpenAPI - as most HTTP services and Open WebUI's tool servers do - cannot be reached; only MCP servers can. |
 | [254](254-commands-run-unbounded.md) | open | A command an agent's call hands back as running runs until the model ends it - past its turn, its session and the channel's access to the workspace. |
 | [267](267-move-file.md) | done | Agents cannot move or rename a file of the workspace, although both storages can, except by reading, writing and deleting it or through a shell. |
-| [273](273-publish-file.md) | open | An agent cannot point a user to a file of the workspace to download; it can only say in text where it lies. |
+| [273](273-publish-file.md) | done | An agent cannot point a user to a file of the workspace to download; it can only say in text where it lies. |
 
 ## User interaction
 

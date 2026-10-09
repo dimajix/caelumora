@@ -5,7 +5,9 @@
 //!
 //! - `list_files`, `read_file` and `grep_files` only read; what they read
 //!   is recorded as the turn's knowledge (`KnowledgeSource::Workspace`), a
-//!   file's content by its digest.
+//!   file's content by its digest. `publish_file` reads too: it offers a
+//!   file for download as a link to it as it is now, with its digest
+//!   (issue 273), to those who may use the workspace in the channel.
 //! - `write_file`, `replace_in_file`, `move_file` and `delete_file` change;
 //!   the approver reads the change whole, and a rule derived from an
 //!   approved one covers the file, whatever is written - for a move, that
@@ -36,9 +38,10 @@ pub const WRITE_FILE: &str = "write_file";
 pub const REPLACE_IN_FILE: &str = "replace_in_file";
 pub const MOVE_FILE: &str = "move_file";
 pub const DELETE_FILE: &str = "delete_file";
+pub const PUBLISH_FILE: &str = "publish_file";
 
 /// The file tools, by name.
-pub(super) const TOOLS: [&str; 7] = [LIST_FILES, READ_FILE, GREP_FILES, WRITE_FILE, REPLACE_IN_FILE, MOVE_FILE, DELETE_FILE];
+pub(super) const TOOLS: [&str; 8] = [LIST_FILES, READ_FILE, GREP_FILES, WRITE_FILE, REPLACE_IN_FILE, MOVE_FILE, DELETE_FILE, PUBLISH_FILE];
 
 /// The largest file read or searched.
 const READ_LIMIT: u64 = 4 * 1024 * 1024;
@@ -51,13 +54,15 @@ const DEFAULT_MATCHES: usize = 100;
 const MAX_MATCHES: usize = 1000;
 /// The longest line of a match given, in characters.
 const MATCH_CHARS: usize = 300;
+/// The longest name a file is offered under, in characters.
+const MAX_NAME_CHARS: usize = 255;
 /// The longest pattern, in characters, and how large it may compile.
 const MAX_PATTERN_CHARS: usize = 500;
 const MAX_COMPILED_PATTERN_BYTES: usize = 1 << 20;
 
 /// Whether the file tool `name` only reads.
 fn read_only(name: &str) -> bool {
-    matches!(name, LIST_FILES | READ_FILE | GREP_FILES)
+    matches!(name, LIST_FILES | READ_FILE | GREP_FILES | PUBLISH_FILE)
 }
 
 #[derive(Deserialize)]
@@ -109,6 +114,16 @@ struct Replace {
 struct Move {
     from: String,
     to: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Publish {
+    path: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -209,6 +224,20 @@ pub(super) fn tools(config: &TerminalToolConfig) -> Vec<Tool> {
             asks(DELETE_FILE),
             ToolPresentation::Default,
         ),
+        tool(
+            PUBLISH_FILE,
+            "Offer a file of the session's workspace to the users of the channel for download, at this message: hand over a result this way rather than only naming where it lies. It is a link to the file as it is: changed, moved or deleted later, the download changes or is gone.".to_string(),
+            ToolParameters::object(
+                [
+                    ("path", string("The file, relative to the workspace's top")),
+                    ("name", string("The name to offer it under; its file name unless given")),
+                    ("description", string("What it is, in a sentence, for whoever downloads it")),
+                ],
+                ["path"],
+            ),
+            asks(PUBLISH_FILE),
+            ToolPresentation::FilePublish,
+        ),
     ]
 }
 
@@ -234,6 +263,13 @@ pub(super) fn describe(name: &str, params: &Value) -> ToolResult<String> {
             let Move { from, to } = arguments(params)?;
             let how = if renames(&path(&from)?, &path(&to)?) { "Rename" } else { "Move" };
             format!("{how} '{from}' to '{to}' in the workspace")
+        }
+        PUBLISH_FILE => {
+            let Publish { path, name, .. } = arguments(params)?;
+            match name {
+                Some(name) => format!("Offer '{path}' in the workspace for download as '{name}'"),
+                None => format!("Offer '{path}' in the workspace for download"),
+            }
         }
         _ => format!("Delete '{}' from the workspace", arguments::<Delete>(params)?.path),
     })
@@ -281,6 +317,27 @@ async fn text(terminal: &dyn Terminal, at: &WorkspacePath) -> ToolResult<(String
 async fn write(terminal: &dyn Terminal, workspace: &WorkspaceView, at: &WorkspacePath, content: String) -> ToolResult<u64> {
     let stream: ByteStream = Box::pin(futures::stream::iter([Ok(bytes::Bytes::from(content))]));
     terminal.write(at, stream, workspace.max_file_bytes()).await.map_err(failed)
+}
+
+/// The digest of the file `at`, read in parts, at most `limit` bytes.
+async fn digest(terminal: &dyn Terminal, at: &WorkspacePath, limit: u64) -> ToolResult<(u64, caelumora_model::digest::Digest)> {
+    let (size, mut stream) = terminal.read(at).await.map_err(failed)?;
+    if size > limit {
+        return Err(ToolError::InvalidParameter(format!("'{at}' is {size} bytes, more than the {limit} a file may be offered with")));
+    }
+    let (mut digest, mut read) = (caelumora_model::digest::ContentDigest::new(size), 0u64);
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| ToolError::ExecutionFailed(format!("reading '{at}' broke off: {}", e.kind())))?;
+        read += chunk.len() as u64;
+        if read > size {
+            break;
+        }
+        digest.update(&chunk);
+    }
+    if read != size {
+        return Err(ToolError::ExecutionFailed(format!("'{at}' changed while it was read; offer it again once it is written")));
+    }
+    Ok((size, digest.finish()))
 }
 
 fn entry(entry: &FileEntry) -> Value {
@@ -425,6 +482,28 @@ pub(super) async fn execute(config: &TerminalToolConfig, name: &str, params: &Va
             })?;
             Ok(json!({ "from": from.to_string(), "to": to.to_string(), "renamed": renames(&from, &to) }))
         }
+        PUBLISH_FILE => {
+            let Publish { path: at, name, description } = arguments(params)?;
+            let at = path(&at)?;
+            let found = terminal.stat(&at).await.map_err(failed)?;
+            if found.is_dir {
+                return Err(ToolError::InvalidParameter(format!("'{at}' is a directory; only a file can be offered")));
+            }
+            let name = match name.as_deref().map(str::trim) {
+                Some(name) if !name.is_empty() => name.to_string(),
+                _ => at.file_name().unwrap_or_default().to_string(),
+            };
+            if name.chars().count() > MAX_NAME_CHARS || name.contains(['/', '\\']) || name.chars().any(char::is_control) {
+                return Err(ToolError::InvalidParameter(format!("'{name}' is no name to offer a file under: at most {MAX_NAME_CHARS} characters, no slashes")));
+            }
+            let (size, digest) = digest(terminal, &at, workspace.max_file_bytes()).await?;
+            read(turn, Some(digest));
+            let mut result = json!({ "workspace": workspace.id(), "path": at.to_string(), "name": name, "size": size, "modified": found.modified, "digest": digest.to_string() });
+            if let Some(description) = description.map(|d| d.trim().to_string()).filter(|d| !d.is_empty()) {
+                result["description"] = json!(description);
+            }
+            Ok(result)
+        }
         _ => {
             let at = path(&arguments::<Delete>(params)?.path)?;
             terminal.delete(&at).await.map_err(|e| match e {
@@ -566,6 +645,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_file_is_offered_for_download_as_it_is_with_its_digest() {
+        let world = session_with_workspace().await;
+        let mut state = AgentChannelState::default();
+        let mut turn = world.turn(&mut state);
+        let tool = terminal_tool(json!({}));
+        std::fs::create_dir_all(world.dir().join("out")).unwrap();
+        std::fs::write(world.dir().join("out/report.csv"), "a,b\n1,2\n").unwrap();
+
+        let offered = tool.execute(PUBLISH_FILE, &json!({ "path": "out/report.csv", "name": " Report Q3.csv ", "description": "The figures" }), None, &mut turn).await.unwrap();
+        let value = offered.value;
+        assert_eq!((value["path"].as_str(), value["name"].as_str(), value["size"].as_u64(), value["description"].as_str()), (Some("out/report.csv"), Some("Report Q3.csv"), Some(8), Some("The figures")));
+        let digest = caelumora_model::digest::content(b"a,b\n1,2\n");
+        assert_eq!(value["digest"], digest.to_string());
+        assert_eq!(value["workspace"], json!(world.workspace.id));
+        assert!(value["modified"].is_string(), "{value}");
+        assert_eq!(offered.classification.as_ref(), Some(&world.workspace.classification));
+        let plain = tool.execute(PUBLISH_FILE, &json!({ "path": "out/report.csv" }), None, &mut turn).await.unwrap().value;
+        assert_eq!(plain["name"], "report.csv", "its file name unless given");
+        assert!(plain.get("description").is_none());
+
+        let directory = tool.execute(PUBLISH_FILE, &json!({ "path": "out" }), None, &mut turn).await;
+        assert!(matches!(&directory, Err(ToolError::InvalidParameter(why)) if why.contains("directory")), "{directory:?}");
+        let missing = tool.execute(PUBLISH_FILE, &json!({ "path": "out/gone.csv" }), None, &mut turn).await;
+        assert!(matches!(missing, Err(ToolError::InvalidParameter(_))), "{missing:?}");
+        let slashed = tool.execute(PUBLISH_FILE, &json!({ "path": "out/report.csv", "name": "../x.csv" }), None, &mut turn).await;
+        assert!(matches!(slashed, Err(ToolError::InvalidParameter(_))), "{slashed:?}");
+        assert!(world.dir().join("out/report.csv").is_file(), "nothing changed");
+
+        drop(turn);
+        let read: Vec<_> = knowledge(&state).into_iter().map(|k| k.source).collect();
+        assert!(matches!(&read[..], [KnowledgeSource::Workspace { digest: Some(d), .. }] if *d == digest), "what was read, once: {read:?}");
+    }
+
+    #[tokio::test]
     async fn a_write_beyond_what_the_workspace_takes_is_refused() {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
@@ -592,6 +705,7 @@ mod tests {
         assert_eq!(tool.describe(MOVE_FILE, &json!({ "from": "docs/a.md", "to": "archive/a.md" })).unwrap(), "Move 'docs/a.md' to 'archive/a.md' in the workspace");
         let matcher = tool.matcher(MOVE_FILE, &moving);
         assert_eq!(matcher.arguments, BTreeMap::from([("from".to_string(), regex::escape("docs/a.md")), ("to".to_string(), regex::escape("docs/b.md"))]), "that move, both of its places");
+        assert_eq!(tool.describe(PUBLISH_FILE, &json!({ "path": "out/r.csv", "name": "Report.csv" })).unwrap(), "Offer 'out/r.csv' in the workspace for download as 'Report.csv'");
         let reading = tool.matcher(READ_FILE, &json!({ "path": "a.md", "start_line": 2 }));
         assert_eq!(reading.arguments.len(), 2, "a read is alike when exactly alike");
     }
@@ -605,6 +719,7 @@ mod tests {
         assert_eq!(presented[WRITE_FILE], ToolPresentation::FileWrite);
         assert_eq!(presented[REPLACE_IN_FILE], ToolPresentation::FileEdit);
         assert_eq!(presented[MOVE_FILE], ToolPresentation::FileMove);
+        assert_eq!(presented[PUBLISH_FILE], ToolPresentation::FilePublish);
         assert_eq!(presented[DELETE_FILE], ToolPresentation::Default, "a deletion as every call");
     }
 }

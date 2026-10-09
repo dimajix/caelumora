@@ -148,6 +148,10 @@ pub enum ToolPresentation {
     /// put, and whom they wait for (`ask`); once answered, nothing beyond
     /// the record of the answers every call that asked shows.
     Questions,
+    /// A file of the workspace offered for download (issue 273): its
+    /// `name`, `size`, `description` and `path`, and whether the file is
+    /// still as it was (`size`, `modified`) or gone.
+    FilePublish,
 }
 
 impl ToolPresentation {

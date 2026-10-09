@@ -325,15 +325,36 @@ pub fn ledger_chain<K: crate::ledger::LedgerKind>(previous: Option<&Digest>, cha
     e.finish()
 }
 
-/// The digest of a prompt part: the system prompt, or any other text an
-/// agent's model is given besides the conversation (issue 47).
 /// The digest of the content of a file as it was read (issue 251).
 pub fn content(bytes: &[u8]) -> Digest {
-    let mut encoder = Encoder::new("content");
-    encoder.bytes(bytes);
-    encoder.finish()
+    let mut digest = ContentDigest::new(bytes.len() as u64);
+    digest.update(bytes);
+    digest.finish()
 }
 
+/// The digest of content read in parts, as [`content`] gives it of the
+/// whole, for content too large to hold at once (issue 273). Its length
+/// is known before its first part, as [`content`] hashes it first.
+pub struct ContentDigest(Encoder);
+
+impl ContentDigest {
+    pub fn new(len: u64) -> Self {
+        let mut encoder = Encoder::new("content");
+        encoder.0.update(len.to_le_bytes());
+        Self(encoder)
+    }
+
+    pub fn update(&mut self, part: &[u8]) {
+        self.0.0.update(part);
+    }
+
+    pub fn finish(self) -> Digest {
+        self.0.finish()
+    }
+}
+
+/// The digest of a prompt part: the system prompt, or any other text an
+/// agent's model is given besides the conversation (issue 47).
 pub fn prompt(prompt: &str) -> Digest {
     let mut e = Encoder::new("caelumora.prompt.v1");
     e.str(prompt);
@@ -368,6 +389,17 @@ mod tests {
 
     fn message(content: &str) -> Message {
         Message { id: MessageId::new(), content: Some(content.to_string()), ..Message::new(crate::confidentiality::Classification::CHANNEL_DEFAULT) }
+    }
+
+    #[test]
+    fn content_read_in_parts_has_the_digest_of_the_whole() {
+        let whole = b"first part, second part";
+        let mut parts = ContentDigest::new(whole.len() as u64);
+        for part in whole.chunks(5) {
+            parts.update(part);
+        }
+        assert_eq!(parts.finish(), content(whole));
+        assert_ne!(content(b"ab"), content(b"ba"));
     }
 
     #[test]

@@ -8,8 +8,9 @@
 //!   directory and follows it for a while; one still running then is handed
 //!   back with its id. `command_output` follows it further, `kill_command`
 //!   ends it.
-//! - The files (`files`): `list_files`, `read_file` and `grep_files` read;
-//!   `write_file`, `replace_in_file`, `move_file` and `delete_file` change.
+//! - The files (`files`): `list_files`, `read_file`, `grep_files` and
+//!   `publish_file` read; `write_file`, `replace_in_file`, `move_file` and
+//!   `delete_file` change.
 //!   What was read is recorded as the turn's knowledge
 //!   (`KnowledgeSource::Workspace`).
 //!
@@ -38,7 +39,7 @@ use std::sync::Arc;
 
 pub const TERMINAL_TOOL_KIND: &str = "terminal_tool";
 
-pub use files::{DELETE_FILE, GREP_FILES, LIST_FILES, MOVE_FILE, READ_FILE, REPLACE_IN_FILE, WRITE_FILE};
+pub use files::{DELETE_FILE, GREP_FILES, LIST_FILES, MOVE_FILE, PUBLISH_FILE, READ_FILE, REPLACE_IN_FILE, WRITE_FILE};
 pub use shell::{COMMAND_OUTPUT, KILL_COMMAND, RUN_COMMAND};
 
 fn default_wait_secs() -> u64 {
@@ -217,7 +218,7 @@ mod tests {
             assert!(asks(json!(true), name), "{name}, by default too");
             assert!(!asks(json!(false), name), "{name}");
         }
-        for (name, asked) in [(RUN_COMMAND, true), (WRITE_FILE, true), (REPLACE_IN_FILE, true), (MOVE_FILE, true), (DELETE_FILE, true), (LIST_FILES, false), (READ_FILE, false), (GREP_FILES, false)] {
+        for (name, asked) in [(RUN_COMMAND, true), (WRITE_FILE, true), (REPLACE_IN_FILE, true), (MOVE_FILE, true), (DELETE_FILE, true), (LIST_FILES, false), (READ_FILE, false), (GREP_FILES, false), (PUBLISH_FILE, false)] {
             assert_eq!(asks(json!("unless_read_only"), name), asked, "{name}");
         }
         for name in [COMMAND_OUTPUT, KILL_COMMAND] {
