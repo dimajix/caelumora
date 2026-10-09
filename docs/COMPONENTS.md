@@ -150,7 +150,7 @@ purpose. That module's `mod.rs` holds the facet trait - with what consumes it, s
 | Module | Components |
 |---|---|
 | `tool/` | tool providers and the `ToolExecutor` (`calculator_tool`, `mcp_tool`, `default_tool_executor`, ...) |
-| `command/` | command providers (`help_command`, `wakeup_command`) |
+| `command/` | command providers (`help_command`, `wakeup_command`, `nudge_command`) |
 | `llm/` | language models (`ollama_client`) |
 | `moderator/` | the moderator and its responder policies |
 | `external/` | the ways to reach an external agent (`a2a_agent`, issue 179) - a module per kind: `a2a_agent/` holds the component (`mod.rs`), the protocol's types (`wire.rs`), their translation to and from `crate::external` (`translation.rs`) and the transport (`client.rs`, issue 210) |
@@ -238,6 +238,7 @@ unknown field is refused. In messages the endpoint is shown without credentials,
 | `mentions_only_policy` | `ResponderPolicy` | - | Asks nobody: agents answer only when mentioned. |
 | `help_command` | `ChannelCommandProvider` | - | The user command `/help`. |
 | `wakeup_command` | `ChannelCommandProvider` | - | The user command `/wakeup`. |
+| `nudge_command` | `ChannelCommandProvider` | - | The user command `/nudge`. |
 
 The tools and commands themselves are listed with their parameters in
 [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md#built-in-tools-and-commands).

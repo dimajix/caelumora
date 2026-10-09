@@ -1,6 +1,6 @@
 # 278 — A user cannot ask an agent to respond without writing a message
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -79,16 +79,44 @@ built like `request_retry`, an event of its own that the moderator routes to tha
 `ResponseRequested`, the permission shared with asking again under a name that covers both, and a
 refusal for an agent that is working already.
 
+## Decision
+
+- **An event of its own**, which the moderator turns into the `ResponseRequested` to the agent it
+  names; `ResponseRequested` keeps no addressee, and only the moderator asks for a response.
+- **No permission of its own.** A user who may write in the channel can ask any agent to respond
+  with an `@`-mention already; the nudge does the same without the message. So it asks what a
+  message asks of its sender - being a user of the channel - and no `ActionType` is added or
+  shared with `RetryMessage`. The security suite still covers that the turn acts in the name of
+  the user who nudged, and that someone who is not in the channel cannot nudge.
+- **Anyone can be nudged**, not only an agent: another user, any participant but oneself. A
+  user's actor shows the request to its user, and the web UI tells them who asks them to respond.
+- **Nothing in the history.** A nudge leaves no entry in the channel's history - neither a message
+  nor a `HistoryEntry` of its own; what remains of it is the agent's answer. The command answers the
+  issuer alone.
+
 ## Done when
 
 - `/nudge sassy` makes Sassy respond to the conversation as it stands, in the name of the user who
-  asked, without a message in the history; a sleeping agent is woken for it, and a quiet channel
+  asked, without an entry in the history; a sleeping agent is woken for it, and a quiet channel
   does not swallow it.
 - Nudging an agent that is working is answered with that, not with a second turn.
-- The permission is checked and covered by the security suite; the command is documented in
+- The security suite covers whose authority the turn has; the command is documented in
   [TOOLS-AND-COMMANDS.md](../docs/TOOLS-AND-COMMANDS.md) and enabled by default next to `/wakeup`.
 
 ## History
 
 - 2026-10-09: Opened at the maintainer's request: next to `/wakeup`, a command that only sends a
   `ResponseRequested` to an agent.
+- 2026-10-09: Done. `/nudge <participant>` (`nudge_command`, a default command next to `/wakeup`)
+  calls `UserActor::request_response`, which sends a `NudgeRequested { participant }` in the user's
+  name; the channel admits it from a user for someone else taking part, ends being quiet for it, and
+  the moderator turns it into the `ResponseRequested` to that participant alone. An agent answers
+  it in a turn on the nudging user's word; a user is shown it, in the web UI as a notice "… asks you
+  to respond". An agent in a turn is refused with `ChannelError::AlreadyResponding` (REST `409
+  already_responding`), nudging oneself with `NudgesItself` (`400 nudges_itself`). So that a command
+  can send in its issuer's name, `CommandContext::issuer` is now the issuer's `UserActor` rather
+  than their `SecurityContext` (issue 228: an actor sends only in its own name). `/wakeup` and
+  `/nudge` both find whom they name through `command::named_participant`, on top of the new
+  `ChannelLoop::participants_named` (issue 277's lookup, over every participant); `/wakeup` thus
+  takes anyone, though only an agent sleeps. The security suite covers that nothing is asked and
+  that the turn acts on the nudging user's word.

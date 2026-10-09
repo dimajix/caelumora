@@ -1,6 +1,6 @@
 //! The built-in `/wakeup` command (issue 28).
 
-use crate::command::{CommandContext, CommandError, CommandResult, ProvidesCommands, ChannelCommandProvider};
+use crate::command::{named_participant, names, CommandContext, CommandError, CommandResult, ProvidesCommands, ChannelCommandProvider};
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use async_trait::async_trait;
 use caelumora_model::command::{Command, CommandOutput, WAKEUP_COMMAND_KIND};
@@ -24,14 +24,6 @@ fn channel_error(error: anyhow::Error) -> CommandError {
     CommandError::Failed { command: WAKEUP_COMMAND_NAME.to_string(), reason }
 }
 
-fn names(names: &[String]) -> String {
-    match names {
-        [] => String::new(),
-        [one] => one.clone(),
-        [init @ .., last] => format!("{} and {}", init.join(", "), last),
-    }
-}
-
 impl ProvidesCommands for WakeupCommandProvider {
     fn commands(&self) -> Vec<Command> {
         vec![Command {
@@ -48,7 +40,7 @@ impl ChannelCommandProvider for WakeupCommandProvider {
     async fn execute(&self, _name: &str, args: &str, context: &CommandContext<'_>) -> CommandResult<CommandOutput> {
         let wanted = args.trim();
         if wanted.is_empty() {
-            let mut woken = context.channel.wakeup(context.issuer).await.map_err(channel_error)?;
+            let mut woken = context.channel.wakeup(context.issuer.security_context()).await.map_err(channel_error)?;
             woken.sort();
             let text = if woken.is_empty() {
                 "No agent was asleep.".to_string()
@@ -58,33 +50,13 @@ impl ChannelCommandProvider for WakeupCommandProvider {
             return Ok(CommandOutput::channel(text));
         }
 
-        let invalid = |reason: String| CommandError::InvalidArguments { command: WAKEUP_COMMAND_NAME.to_string(), reason };
-        let agent = match context.channel.agents_named(wanted).as_slice() {
-            [agent] => agent.clone(),
-            [] => {
-                let mut handles: Vec<String> = context.channel.members().into_iter()
-                    .filter(|m| m.id.as_agent_id().is_some())
-                    .filter_map(|m| m.handle)
-                    .map(|h| format!("@{h}"))
-                    .collect();
-                handles.sort();
-                return Err(invalid(if handles.is_empty() {
-                    "there are no agents in this channel".to_string()
-                } else {
-                    format!("no agent '{}' in this channel; the agents are {}", wanted, names(&handles))
-                }));
-            }
-            several => {
-                let several: Vec<String> = several.iter().map(|m| m.name.to_string()).collect();
-                return Err(invalid(format!("'{}' names several agents: {}", wanted, names(&several))));
-            }
-        };
-
-        let was_asleep = context.channel.wakeup_actor(context.issuer, agent.id).await.map_err(channel_error)?;
+        // Anyone taking part, as `/nudge` takes them; only an agent sleeps.
+        let participant = named_participant(WAKEUP_COMMAND_NAME, wanted, context.channel)?;
+        let was_asleep = context.channel.wakeup_actor(context.issuer.security_context(), participant.id).await.map_err(channel_error)?;
         let text = if was_asleep {
-            format!("Woke {}.", agent.name)
+            format!("Woke {}.", participant.name)
         } else {
-            format!("{} was not asleep.", agent.name)
+            format!("{} was not asleep.", participant.name)
         };
         Ok(CommandOutput::channel(text))
     }
@@ -101,14 +73,3 @@ pub fn register(registry: &mut ComponentRegistry) {
     );
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn names_are_joined_as_a_sentence() {
-        assert_eq!(names(&[]), "");
-        assert_eq!(names(&["Sassy".to_string()]), "Sassy");
-        assert_eq!(names(&["A".to_string(), "B".to_string(), "C".to_string()]), "A, B and C");
-    }
-}

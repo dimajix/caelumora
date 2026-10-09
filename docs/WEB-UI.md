@@ -275,7 +275,9 @@ else who may read it - the session's owner, say - is shown its history and no in
     without a result - goes or is shown as abandoned (issue 162).
     When a chain between agents is cut off at its limit (`ChainCutOff`), a notice "Chain cut off"
     says so, naming the agents mentioned that were not asked, and that a message of a user starts a
-    new chain; like the answer of a command, it is gone on reload (issue 200).
+    new chain; like the answer of a command, it is gone on reload (issue 200). A user someone
+    nudges (`/nudge`, issue 278) is sent a `ResponseRequested` - the only way a user is - and shown
+    a notice "… asks you to respond" for them alone, gone on reload as well.
 *   **A plan** (issue 263) is shown by its call: `create_plan` is presented as `plan`, its summary
     and its steps numbered, a plan extended as a call of its own.
 *   **The steps of a plan** (issues 258, 263). While an agent works through a plan, what each step

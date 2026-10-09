@@ -96,6 +96,13 @@ pub enum ChannelError {
     AlreadyParticipant { participant: ActorId, channel: ChannelId },
     #[error("{participant} takes no part in channel {channel}")]
     NotAParticipant { participant: ActorId, channel: ChannelId },
+    /// An agent nudged while it is in a turn (issue 278): asked again, it
+    /// would answer twice.
+    #[error("{participant} is responding in channel {channel} already")]
+    AlreadyResponding { participant: ActorId, channel: ChannelId },
+    /// A user nudging themselves (issue 278): nobody would be asked.
+    #[error("{participant} cannot nudge themselves in channel {channel}")]
+    NudgesItself { participant: ActorId, channel: ChannelId },
     /// A participant of the session whose user or agent was deleted
     /// (issue 120).
     #[error("{participant} of the session of channel {channel} no longer exists")]
@@ -934,7 +941,19 @@ impl ChannelLoop {
     /// is, with or without its `@`, normalised as a mention is (`handle_of`).
     /// Several if it is ambiguous, none if it names no agent; sorted by name.
     pub fn agents_named(&self, text: &str) -> Vec<ChannelMember> {
-        let mut members: Vec<_> = self.members().into_iter().filter(|m| m.id.as_agent_id().is_some()).collect();
+        Self::named(self.members().into_iter().filter(|m| m.id.as_agent_id().is_some()).collect(), text)
+    }
+
+    /// The participants of the channel `text` names - agents, users and
+    /// every other actor -, found as `agents_named` finds agents: for a
+    /// command that takes anyone taking part, such as `/nudge` (issue 278).
+    pub fn participants_named(&self, text: &str) -> Vec<ChannelMember> {
+        Self::named(self.members(), text)
+    }
+
+    /// Those of `members` that `text` names: by name, or else by handle;
+    /// sorted by name.
+    fn named(mut members: Vec<ChannelMember>, text: &str) -> Vec<ChannelMember> {
         members.sort_by(|l, r| l.name.as_str().cmp(r.name.as_str()));
         if let Ok(name) = Name::new(text) {
             let named: Vec<_> = members.iter().filter(|m| m.name == name).cloned().collect();
@@ -1257,9 +1276,11 @@ impl ChannelLoop {
     /// says (`may_reclassify`), never above the channel. A request to
     /// answer again, too:
     /// its sender may ask it (`may_retry_message`), and it names the agent
-    /// that said the message, not taken back, as its author. The gate for
-    /// every actor, whatever it checked itself; anything else is dropped,
-    /// and logged.
+    /// that said the message, not taken back, as its author. A command for
+    /// an agent (issue 269) comes from a user and names an agent taking part;
+    /// a nudge (issue 278) from a user, and names someone else taking part.
+    /// The gate for every actor, whatever it checked
+    /// itself; anything else is dropped, and logged.
     async fn admits_change(&self, event: &Envelope) -> bool {
         let channel = self.security_attributes();
         let admitted = match &event.event {
@@ -1296,6 +1317,12 @@ impl ChannelLoop {
             // their actor and is asked again by the agent.
             ActorEvent::CommandRequested { agent, .. } => {
                 event.context.sender_id.as_user_id().is_some() && agent.as_agent_id().is_some() && self.actor_by_id(*agent).is_some()
+            }
+            // A nudge (issue 278): from a user, to someone else taking part.
+            // It asks nothing of the policy beyond what a message does - an
+            // `@`-mention asks the same.
+            ActorEvent::NudgeRequested { participant } => {
+                event.context.sender_id.as_user_id().is_some() && *participant != event.context.sender_id && self.actor_by_id(*participant).is_some()
             }
             _ => return true,
         };
@@ -1335,6 +1362,12 @@ impl ChannelLoop {
         // sends (issue 90); the channel does not decide by itself.
         if matches!(event.event, ActorEvent::WakeupRequested) {
             self.wake_for_delivery();
+        }
+        // A nudge is deliberate, as `wakeup_actor` is (issue 278): the
+        // channel is quiet no longer, so that the request it becomes is
+        // delivered, and whom it asks is woken with it (`route_event_impl`).
+        if matches!(event.event, ActorEvent::NudgeRequested { .. }) {
+            self.quiet.store(false, Ordering::SeqCst);
         }
 
         self.route_event_impl(running, &event).await;
@@ -2319,7 +2352,10 @@ mod tests {
         // An answer under way only of an agent of the channel.
         channel.process_envelope(from(alice_id, ActorEvent::RetryRequested { target: RetryTarget::Turn(TurnId::new()), author: alice_id }), &actors).await;
         channel.process_envelope(from(alice_id, ActorEvent::RetryRequested { target: RetryTarget::Turn(TurnId::new()), author: ActorId::Agent(caelumora_model::agent::AgentId::new()) }), &actors).await;
-        assert!(routed.try_recv().is_err(), "neither a user's message nor one another said, nor a turn of someone who is no agent here");
+        // A nudge only of someone else in the channel (issue 278).
+        channel.process_envelope(from(alice_id, ActorEvent::NudgeRequested { participant: alice_id }), &actors).await;
+        channel.process_envelope(from(alice_id, ActorEvent::NudgeRequested { participant: ActorId::Agent(caelumora_model::agent::AgentId::new()) }), &actors).await;
+        assert!(routed.try_recv().is_err(), "neither a user's message nor one another said, nor a turn of someone who is no agent here, nor a nudge of oneself or of a stranger");
     }
 
     #[tokio::test]
@@ -4370,6 +4406,128 @@ mod tests {
         running.abort();
     }
 
+    /// Runs `/nudge` with `args` in `channel` as alice.
+    async fn nudge(channel: &ChannelLoop, alice: UserId, args: &str) -> crate::command::CommandResult<caelumora_model::command::CommandOutput> {
+        use crate::command::ChannelCommandProvider;
+        use crate::command::nudge_command::NudgeCommandProvider;
+        let executor = CommandExecutor::empty(Arc::new(DummySecurityManager::new()));
+        let issuer = channel.user_actor(alice).expect("alice takes part");
+        let context = crate::command::CommandContext { issuer: &issuer, channel, executor: &executor };
+        NudgeCommandProvider.execute("nudge", args, &context).await
+    }
+
+    /// The next end of a turn of `agent` on `events`, with its envelope.
+    async fn turn_finished(events: &mut tokio::sync::broadcast::Receiver<Envelope>, agent: caelumora_model::agent::AgentId) -> Envelope {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let envelope = events.recv().await.expect("the channel is running");
+                if envelope.context.sender_id == ActorId::Agent(agent) && matches!(envelope.event, ActorEvent::TurnFinished { .. }) {
+                    break envelope;
+                }
+            }
+        }).await.expect("the agent answers")
+    }
+
+    fn says(text: &str) -> Message {
+        Message {
+            role: caelumora_model::message::MessageRole::Assistant,
+            content: Some(text.to_string()),
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        }
+    }
+
+    #[tokio::test]
+    async fn a_nudged_agent_responds_in_the_name_of_who_nudged_it_and_the_history_keeps_nothing_of_the_nudge() {
+        let model = Scripted(std::sync::Mutex::new([says("Hi."), says("Again.")].into()));
+        let Stuck { channel, context, agent, helper, mut events, running } = with_an_agent(Arc::new(model), Default::default()).await;
+        let alice = alice_of(&context);
+        answered(&mut events, agent).await;
+        settled(&helper, ActorState::Idle).await;
+        let mut following = channel.user_actor(alice).unwrap().watch().events;
+
+        let output = nudge(&channel, alice, "@helper").await.expect("/nudge runs");
+        assert_eq!((output.text.as_str(), output.visibility), ("Asked helper to respond.", caelumora_model::command::CommandVisibility::Private), "told to the issuer alone");
+
+        let finished = turn_finished(&mut events, agent).await;
+        let ActorEvent::TurnFinished { messages, .. } = &finished.event else { unreachable!() };
+        assert_eq!(messages.iter().map(|m| m.content.as_deref()).collect::<Vec<_>>(), [Some("Again.")], "it responds without being told anything new");
+        assert_eq!((finished.security.caller_id, finished.security.initiator_id), (ActorId::Agent(agent), ActorId::User(alice)), "by the agent, on her word");
+        let said: Vec<_> = channel.history().await.iter().filter_map(|m| m.content.clone()).collect();
+        assert_eq!(said, ["hello", "Hi.", "Again."], "the nudge leaves nothing in the history");
+        while let Ok(envelope) = following.try_recv() {
+            assert!(!matches!(envelope.event, ActorEvent::NudgeRequested { .. } | ActorEvent::ResponseRequested), "nor is it shown: {}", envelope.event.kind());
+        }
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn a_nudge_wakes_the_agent_it_names_and_ends_a_quiet_channel() {
+        use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+        use caelumora_model::tool::{ToolCall, ToolVisibility};
+        let stop = ToolCall { id: Some("1".to_string()), function_name: "stop".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
+        let asleep = Message { tool_calls: vec![stop], ..says("Good night.") };
+        let model = Scripted(std::sync::Mutex::new([asleep, says("Awake.")].into()));
+        let components = ComponentConfig { component_nodes: vec![ComponentDescriptor::new("stop", crate::tool::stop_tool::STOP_TOOL_KIND)] };
+        let Stuck { channel, context, agent, helper, mut events, running } = with_an_agent(Arc::new(model), components).await;
+        answered(&mut events, agent).await;
+        settled(&helper, ActorState::Sleeping).await;
+        channel.cancel(&context).await.expect("permitted");
+
+        nudge(&channel, alice_of(&context), "helper").await.expect("/nudge runs");
+
+        let finished = turn_finished(&mut events, agent).await;
+        let ActorEvent::TurnFinished { messages, .. } = &finished.event else { unreachable!() };
+        assert_eq!(messages.iter().map(|m| m.content.as_deref()).collect::<Vec<_>>(), [Some("Awake.")], "woken and asked, though the channel was quiet");
+        assert!(!channel.quiet.load(Ordering::SeqCst), "the channel is quiet no longer");
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn an_agent_in_a_turn_is_not_nudged_into_a_second_one() {
+        let Stuck { channel, context, agent, running, .. } = stuck_in_a_model_call().await;
+        let alice = alice_of(&context);
+
+        let output = nudge(&channel, alice, "@helper").await.expect("answered, not failed");
+        assert_eq!(output.text, "helper is responding already.");
+        let error = channel.user_actor(alice).unwrap().request_response(ActorId::Agent(agent)).await.expect_err("refused");
+        assert!(matches!(error.downcast_ref::<ChannelError>(), Some(ChannelError::AlreadyResponding { .. })), "{error}");
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn only_someone_else_in_the_channel_is_nudged() {
+        let Stuck { channel, context, running, .. } = stuck_in_a_model_call().await;
+        let alice = alice_of(&context);
+
+        for args in ["", "@nobody", "alice"] {
+            let error = nudge(&channel, alice, args).await.expect_err("names nobody else here");
+            assert!(matches!(error, crate::command::CommandError::InvalidArguments { .. }), "{args:?}: {error}");
+        }
+        let actor = channel.user_actor(alice).unwrap();
+        let error = actor.request_response(ActorId::User(alice)).await.expect_err("herself");
+        assert!(matches!(error.downcast_ref::<ChannelError>(), Some(ChannelError::NudgesItself { .. })), "{error}");
+        let error = actor.request_response(ActorId::Agent(caelumora_model::agent::AgentId::new())).await.expect_err("a stranger");
+        assert!(matches!(error.downcast_ref::<ChannelError>(), Some(ChannelError::NotAParticipant { .. })), "{error}");
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn a_nudged_user_is_shown_who_asks_them_to_respond() {
+        let (alice, bob) = (user("alice"), user("bob"));
+        let channel = channel_with(&[&alice, &bob], Arc::new(DummySecurityManager::new())).await;
+        let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
+        let mut his = channel.user_actor(bob.id).unwrap().watch().events;
+
+        let output = nudge(&channel, alice.id, "Bob").await.expect("/nudge runs");
+        assert_eq!(output.text, "Asked bob to respond.");
+
+        let asked = tokio::time::timeout(Duration::from_secs(5), his.recv()).await.expect("he is asked").unwrap();
+        assert!(matches!(asked.event, ActorEvent::ResponseRequested), "{}", asked.event.kind());
+        assert_eq!(asked.context.sender_id, ActorId::User(alice.id), "by her");
+        assert!(channel.history().await.is_empty(), "the history keeps nothing of it");
+        running.abort();
+    }
+
     #[tokio::test]
     async fn help_lists_the_commands_of_the_agents_with_their_handles() {
         use crate::command::ChannelCommandProvider;
@@ -4377,7 +4535,7 @@ mod tests {
         // This channel's session has no commands of its own: `/help` is run
         // as it would be among them.
         let executor = CommandExecutor::empty(Arc::new(DummySecurityManager::new()));
-        let issuer = SecurityContext::new(context.initiator_id, channel.session_id, channel.id);
+        let issuer = channel.user_actor(alice_of(&context)).expect("alice takes part");
         let help = crate::command::CommandContext { issuer: &issuer, channel: &channel, executor: &executor };
 
         let all = HelpCommandProvider.execute("help", "", &help).await.expect("/help runs").text;

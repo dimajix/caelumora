@@ -488,6 +488,9 @@ export interface Message {
   // UI only: a chain between agents was cut off at its limit (issue 200),
   // a notice that is gone on reload; `notAsked` are the agents mentioned.
   chainCutOff?: {maxAgentHops: number; notAsked: ActorId[]};
+  // UI only: `sender_name` asks you to respond (issue 278), a notice that
+  // is gone on reload - a nudge leaves nothing in the history.
+  nudged?: boolean;
   // UI only: the sender would not answer again instead of a message (issue
   // 234), a notice that is gone on reload.
   retryRejected?: RetryRefused;
@@ -518,7 +521,8 @@ export interface PlanStepEvent extends PlanStep {
 
 /**
  * Events without a payload. The server sends them as a bare string
- * (`"WakeupRequested"`), not as an object like the other events.
+ * (`"WakeupRequested"`), not as an object like the other events. A user is
+ * sent `ResponseRequested` only when someone nudges them (issue 278).
  */
 export type UnitActorEvent = 'ResponseRequested' | 'WakeupRequested';
 

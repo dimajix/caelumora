@@ -2,6 +2,7 @@ import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {
   AlertTriangle,
   Ban,
+  BellRing,
   ChevronDown,
   ChevronRight,
   Gauge,
@@ -638,8 +639,20 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
             .then(member => { if (member.usage) setUsage(prev => ({...prev, [answerer]: member.usage!})); })
             .catch(error => reportError('Failed to read what the agent used', error));
         };
-        if (typeof actorEvent === 'string') {
-          // The payload-less events have nothing to show.
+        if (actorEvent === 'ResponseRequested') {
+          // Someone asks you to respond (issue 278): shown, but not part of
+          // the history - an agent is asked so, too, but a user only by a
+          // nudge.
+          const notice: Message = {
+            role: 'System',
+            content: null,
+            sender_name: answererName ?? undefined,
+            nudged: true,
+            timestamp: envelope.timestamp,
+          };
+          setMessages(prev => [...prev, notice]);
+        } else if (typeof actorEvent === 'string') {
+          // The other payload-less events have nothing to show.
         } else if (actorEvent.ResponseStarted) {
           // A new answer begins after those under way, as the turn it names.
           const turnId = actorEvent.ResponseStarted.turn_id;
@@ -1132,6 +1145,17 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
         {commandHeading(msg.commandOutput, msg.sender_name)}
       </div>
       {msg.content && <MarkdownMessage content={msg.content} />}
+      <MessageFooter message={msg} />
+    </div>
+  ) : msg.nudged ? (
+    <div
+      key={key}
+      className="max-w-[80%] p-3 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-900/60 text-gray-800 dark:text-gray-200 text-sm"
+    >
+      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider opacity-70">
+        <BellRing size={14} />
+        <span>{msg.sender_name ?? 'Someone'} asks you to respond · only visible to you</span>
+      </div>
       <MessageFooter message={msg} />
     </div>
   ) : msg.chainCutOff ? (

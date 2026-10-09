@@ -287,6 +287,8 @@ impl ApiError {
             match e {
                 ChannelError::AlreadyParticipant { .. } => return Self::conflict("already_participant", detail),
                 ChannelError::StillLeaving { .. } => return Self::conflict("still_leaving", detail),
+                ChannelError::AlreadyResponding { .. } => return Self::conflict("already_responding", detail),
+                ChannelError::NudgesItself { .. } => return bad_request("nudges_itself"),
                 ChannelError::NotAParticipant { .. } | ChannelError::ParticipantGone { .. } => return Self::not_found("participant_not_found", detail),
                 ChannelError::NotInSession { .. } | ChannelError::OutOfScope { .. } | ChannelError::ApproverStays { .. } => return bad_request("invalid_participant"),
                 ChannelError::ClassificationRefused { .. } => return bad_request("invalid_classification"),

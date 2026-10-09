@@ -461,17 +461,19 @@ such questions `sensitive`. Then:
 
 ## User commands
 
-A line that starts with `/` addresses the system rather than the agents: `/help`, `/wakeup [agent]`
-([28](../issues/28-user-commands.md)). A command is not a message: it never reaches an agent's
-context as something said. Commands of the channel never enter the history; what an agent carried
-out on someone's word does (see [Commands of an agent](#commands-of-an-agent)).
+A line that starts with `/` addresses the system rather than the agents: `/help`, `/wakeup [agent]`,
+`/nudge <participant>` ([28](../issues/28-user-commands.md)). A command is not a message: it never
+reaches an agent's context as something said. Commands of the channel never enter the history; what
+an agent carried out on someone's word does (see [Commands of an agent](#commands-of-an-agent)).
 
 Commands are for people; agents act through tools. A command is always issued on behalf of a
 particular person, so it is issued by that person's actor, `UserActor::execute_command(name,
 args)`, as messages and approvals are. REST reaches it the same way (`user_actor_of`, `403` for
 non-participants). Only `UserActor` issues commands. What a command of the channel does to the
 channel still goes through the channel's own, permission-checked operations (`ChannelLoop::wakeup`,
-`wakeup_actor`); a command of an agent is sent to the agent, which carries it out itself.
+`wakeup_actor`); what it sends in the issuer's name, their actor sends - the command is given the
+actor (`CommandContext::issuer`), and `/nudge` calls `UserActor::request_response`; a command of an
+agent is sent to the agent, which carries it out itself.
 
 ### Recognised by the frontend
 
@@ -489,13 +491,15 @@ answers is decided in one place.
 ### Commands are components
 
 A `ChannelCommandProvider` (`caelumora_runtime::command`) contributes commands run on the channel
-(`CommandContext`: the issuer, the `ChannelLoop`), as a `ToolProvider` contributes tools, registered
-in the `ComponentRegistry`. Its name says what a command is given: the facet for commands an agent
-carries out itself, given the agent's turn, is issue 269's. What every such facet says of its
-commands is `ProvidesCommands`. They come from two places:
+(`CommandContext`: the issuer's `UserActor`, the `ChannelLoop`), as a `ToolProvider` contributes
+tools, registered in the `ComponentRegistry`. The issuer is given as their actor, not only as their
+security context: what a command sends in their name, it sends through their actor, since an actor
+sends only in its own name (issue 228). Its name says what a command is given: the facet for
+commands an agent carries out itself, given the agent's turn, is issue 269's. What every such facet
+says of its commands is `ProvidesCommands`. They come from two places:
 
-*   `AppConfig::commands`, the global set - by default `/help` and `/wakeup`; an empty list switches
-    them off (see [CONFIGURATION.md](CONFIGURATION.md));
+*   `AppConfig::commands`, the global set - by default `/help`, `/wakeup` and `/nudge`; an empty
+    list switches them off (see [CONFIGURATION.md](CONFIGURATION.md));
 *   `SessionTemplate::commands`, for commands that belong to what a session is for. They are copied
     into the `Session`, so a running session keeps its set.
 
@@ -521,11 +525,12 @@ Seeing and running a command are separate permissions:
 
 A command the user may not see is answered exactly like an unknown one, so hidden commands cannot be
 found by trying names. Whatever the command does is checked on its own as well: `/wakeup` asks for
-`WakeChannel`.
+`WakeChannel`. `/nudge` asks nothing more (issue [278](../issues/278-nudge-command.md)): it asks
+someone to respond, as an `@`-mention in a message does, which asks nothing of the policy either.
 
 ### Private or channel-wide answers
 
-A command answers the issuer alone (`/help`) or the whole channel (`/wakeup`).
+A command answers the issuer alone (`/help`, `/nudge`) or the whole channel (`/wakeup`).
 
 *   A channel-wide answer is announced by the issuer's `UserActor` as `ActorEvent::CommandExecuted`.
     Every moderator forwards it to the users only; it is shown but never stored.
@@ -539,13 +544,15 @@ A command of an agent answers later, on the stream (see below): the REST respons
 
 ### Naming an agent
 
-A command that takes an agent - `/wakeup sassy`, `/compact @sassy` - finds it with
-`ChannelLoop::agents_named` (issue [277](../issues/277-command-agent-by-name.md)), so that every
-command names agents alike. The text is taken as a `Name` first: "Sassy", "sassy" and "Zoe" for
-"Zoë" are the agent's name, compared as names are. Only if it is no agent's name is it taken as a
-handle, with or without its `@`, normalised as a mention is (`handle_of`): `@dr-who` for "Dr. Who".
-A handle is coarser than a name, so it can name several agents; a command then refuses with their
-names rather than picking one.
+A command that takes an agent - `/compact @sassy` - finds it with `ChannelLoop::agents_named` (issue
+[277](../issues/277-command-agent-by-name.md)), so that every command names agents alike; the
+commands of the channel that take someone - `/wakeup sassy`, `/nudge Bob` - take any participant,
+found alike by `ChannelLoop::participants_named` through `command::named_participant`, which also
+words the refusal (issue [278](../issues/278-nudge-command.md)). The text is taken as a `Name`
+first: "Sassy", "sassy" and "Zoe" for "Zoë" are the name, compared as names are. Only if it is
+nobody's name is it taken as a handle, with or without its `@`, normalised as a mention is
+(`handle_of`): `@dr-who` for "Dr. Who". A handle is coarser than a name, so it can name several; a
+command then refuses with their names rather than picking one.
 
 ## Commands of an agent
 
@@ -749,7 +756,8 @@ not kept goes with the session, its content too (see [STORAGE.md](STORAGE.md) an
 | Command | Of | Component | Arguments | Answer | What it does |
 |---|---|---|---|---|---|
 | `/help` | the channel | `help_command` | `[command]` | private | Lists the commands the user may use - the channel's and the agents' -, or describes one. |
-| `/wakeup` | the channel | `wakeup_command` | `[agent]` | channel-wide | Wakes the sleeping agents of the channel, or the one named (`@handle` or `handle`). |
+| `/wakeup` | the channel | `wakeup_command` | `[agent]` | channel-wide | Wakes the sleeping agents of the channel, or the one named (by name or handle; anyone may be named, but only an agent sleeps). |
+| `/nudge` | the channel | `nudge_command` | `<participant>` | private | Asks the participant named - an agent, another user - to respond to the conversation as it stands, without a message ([CHANNELS.md](CHANNELS.md#nudging-someone)). |
 | `/skill` | the agent | `skills` | `@agent <name>` | private | Gives the agent a skill: its text goes into the agent's transcript in the issuer's name ([SKILLS.md](SKILLS.md)). |
 | `/skills` | the agent | `skills` | `@agent` | private | Lists the skills the agent may load here. |
 

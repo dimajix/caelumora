@@ -1333,7 +1333,7 @@ mod tests {
 
         let session = make_session("plain");
         let executor = runtime.new_command_executor(&session).await.expect("the global commands build");
-        assert_eq!(names(executor).await, vec!["help", "wakeup"]);
+        assert_eq!(names(executor).await, vec!["help", "nudge", "wakeup"]);
 
         // A second /help from the session's own configuration - with the same
         // component id, which is fine across the two configurations.

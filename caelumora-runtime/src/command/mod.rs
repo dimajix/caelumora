@@ -11,10 +11,12 @@
 //! The built-in command components live here too, one file per command.
 
 pub mod help_command;
+pub mod nudge_command;
 pub mod wakeup_command;
 
+use crate::actor::user::UserActor;
 use crate::agent::turn::Turn;
-use crate::channel::ChannelLoop;
+use crate::channel::{ChannelLoop, ChannelMember};
 use crate::component::{ComponentError, ComponentImpl, ComponentRegistry, ComponentResult};
 use async_trait::async_trait;
 use caelumora_model::command::{Command, CommandOutput, CommandVisibility};
@@ -66,8 +68,10 @@ pub struct CommandReply {
 /// command runs outside of any agent's turn, often because none is
 /// running.
 pub struct CommandContext<'a> {
-    /// The issuing user's security context.
-    pub issuer: &'a SecurityContext,
+    /// The issuing user's actor in the channel: their security context, and
+    /// what a command sends in their name it sends through it - an actor
+    /// sends only in its own name (issue 228).
+    pub issuer: &'a UserActor,
     pub channel: &'a ChannelLoop,
     pub executor: &'a CommandExecutor<dyn ChannelCommandProvider>,
 }
@@ -221,7 +225,7 @@ impl CommandExecutor<dyn ChannelCommandProvider> {
     /// command or the issuer may not see it; `Forbidden` if they may see but
     /// not run it; otherwise whatever the command reports.
     pub async fn execute(&self, name: &str, args: &str, context: &CommandContext<'_>) -> CommandResult<CommandOutput> {
-        let entry = self.admit(name, context.issuer, |c| ActionType::ShowCommand(&c.name), |c| ActionType::ExecuteCommand(&c.name)).await?;
+        let entry = self.admit(name, context.issuer.security_context(), |c| ActionType::ShowCommand(&c.name), |c| ActionType::ExecuteCommand(&c.name)).await?;
         entry.provider.execute(name, args, context).await
     }
 }
@@ -269,9 +273,45 @@ impl CommandExecutor<dyn AgentCommandProvider> {
     }
 }
 
+/// The participant of `channel` - agent, user or any other actor - that the
+/// argument `wanted` of the command `command` names
+/// (`ChannelLoop::participants_named`, issues 277, 278): the one way the
+/// commands of the channel that take someone, `/wakeup` and `/nudge`, find
+/// them and word that they did not.
+///
+/// # Errors
+/// `CommandError::InvalidArguments` naming the handles of the participants,
+/// if `wanted` names none, or those it names, if it names several: nobody
+/// is picked.
+pub(crate) fn named_participant(command: &str, wanted: &str, channel: &ChannelLoop) -> CommandResult<ChannelMember> {
+    let invalid = |reason: String| CommandError::InvalidArguments { command: command.to_string(), reason };
+    match channel.participants_named(wanted).as_slice() {
+        [one] => Ok(one.clone()),
+        [] => {
+            let mut handles: Vec<String> = channel.members().into_iter().filter_map(|m| m.handle).map(|h| format!("@{h}")).collect();
+            handles.sort();
+            Err(invalid(format!("nobody '{}' in this channel; the participants are {}", wanted, names(&handles))))
+        }
+        several => {
+            let several: Vec<String> = several.iter().map(|m| m.name.to_string()).collect();
+            Err(invalid(format!("'{}' names several participants: {}", wanted, names(&several))))
+        }
+    }
+}
+
+/// `names` joined as a sentence: "A, B and C".
+pub(crate) fn names(names: &[String]) -> String {
+    match names {
+        [] => String::new(),
+        [one] => one.clone(),
+        [init @ .., last] => format!("{} and {}", init.join(", "), last),
+    }
+}
+
 /// Registers the command kinds with `registry`.
 pub fn register_all(registry: &mut ComponentRegistry) {
     help_command::register(registry);
+    nudge_command::register(registry);
     wakeup_command::register(registry);
 }
 
@@ -312,5 +352,12 @@ mod tests {
         let executor = CommandExecutor::new(security, vec![provider("wakeup", "wakeup"), provider("help", "help")]).unwrap();
         let names: Vec<String> = executor.visible(&SecurityContext::default()).await.into_iter().map(|c| c.name).collect();
         assert_eq!(names, vec!["help", "wakeup"], "sorted by name");
+    }
+
+    #[test]
+    fn names_are_joined_as_a_sentence() {
+        assert_eq!(names(&[]), "");
+        assert_eq!(names(&["Sassy".to_string()]), "Sassy");
+        assert_eq!(names(&["A".to_string(), "B".to_string(), "C".to_string()]), "A, B and C");
     }
 }

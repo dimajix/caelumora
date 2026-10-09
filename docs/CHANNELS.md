@@ -270,9 +270,9 @@ Waking the channel for a message is the actor's job, too: it sends a `WakeupRequ
 every message, in the message's span. Neither a frontend nor the channel decides that by itself
 (issue 90).
 
-User commands (`/help`, `/wakeup`) are run by the user's actor in the same way; a command an agent
-carries out itself (issue 269) the user's actor sends to that agent as `CommandRequested`, which
-the agent - run here or elsewhere - carries out in a turn of its own and answers with
+User commands (`/help`, `/wakeup`, `/nudge`) are run by the user's actor in the same way; a command
+an agent carries out itself (issue 269) the user's actor sends to that agent as `CommandRequested`,
+which the agent - run here or elsewhere - carries out in a turn of its own and answers with
 `CommandExecuted` or `CommandFailed`. See [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md).
 
 ## Changing what was said
@@ -566,7 +566,35 @@ A single agent is also woken when the moderator asks it to respond: a sleeping a
 `ResponseRequested`, so `route_event_impl` wakes everyone a decision asks before it delivers
 anything of that decision. The policies never choose a sleeping agent (`actor_candidates`), so this
 wakes only agents a message mentions; an agent that is not addressed keeps sleeping. It does not
-end a quiet channel, and in a quiet channel, which asks nobody, it wakes nobody.
+end a quiet channel, and in a quiet channel, which asks nobody, it wakes nobody - unless a user
+nudges the agent, which does (see below).
+
+### Nudging someone
+
+A user asks someone in the channel - an agent, another user, any participant - to respond to the
+conversation as it stands, without saying anything, with `/nudge <participant>` (issue
+[278](../issues/278-nudge-command.md)): what an empty `@sassy?` would do, without a message in the
+history. `UserActor::request_response` sends a `NudgeRequested { participant }` in the user's name;
+the channel admits it from a user, for someone else taking part; and the moderator turns it into
+the `ResponseRequested` to them alone, as if a message of the user had mentioned them - no policy
+is consulted, no chain between agents counted. Only the moderator asks for a response, so the
+request carries no addressee of its own.
+
+*   **What it asks of whom.** An agent answers it in a turn, with the authority of the user who
+    nudged, as after a message of theirs. A user's actor shows it to its user - the only way a user
+    is sent a `ResponseRequested` -, and the web UI shows who asks them to respond. An approver
+    takes no such request in.
+*   **No permission of its own.** Whoever may write in the channel can ask anyone to respond by
+    mentioning them; the nudge asks the same, so it asks nothing of the policy. Nudging oneself is
+    refused (`ChannelError::NudgesItself`): nobody would be asked.
+*   **Deliberate, like a `/wakeup` of an agent.** The channel ends being quiet as it routes the
+    nudge, so the request is delivered, and wakes whom it asks as it wakes anyone a decision asks.
+    No `WakeupRequested` goes ahead of it: that would wake every agent.
+*   **Not into a second turn.** An agent in a turn would take the request in after it and answer
+    twice; `request_response` refuses it with `ChannelError::AlreadyResponding`, and `/nudge`
+    answers that it is responding already.
+*   **Nothing remains of it** but the answer: the history keeps no entry, nobody but the one asked
+    is shown the request, and the command answers the issuer alone.
 
 ### Refusals
 

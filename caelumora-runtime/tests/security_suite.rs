@@ -730,6 +730,43 @@ async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
+/// M4: nudging an agent (issue 278) asks it to respond without a message,
+/// as an `@`-mention in a message would: whoever takes part may - bob as
+/// well as alice -, and nothing is asked in his name; someone who does not
+/// take part has no actor to nudge it through. The agent responds for its
+/// owner, on the word of whoever nudged it.
+#[tokio::test]
+async fn nudging_an_agent_is_for_whoever_takes_part_and_it_responds_on_their_word() {
+    let world = World::with_kinds(|registry| register_once(registry, "silent", caelumora_model::message::Message::new(Classification::PUBLIC))).await;
+    let silent = Personality {
+        components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("model", "silent")] },
+        ..world.personality("silent", None, &[]).await
+    };
+    world.store.update_personality(&World::system(), &silent).await.unwrap();
+    let helper = world.agent("helper", world.alice, &silent).await;
+    let session = world.shared_session(&[helper], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    let bob = main.user_actor(world.bob).unwrap();
+    let mut his = bob.watch();
+
+    let (nudged, asked) = world.asked(bob.request_response(ActorId::Agent(helper))).await;
+    nudged.expect("his to nudge, as a participant");
+    assert!(asked.is_empty(), "nothing beyond taking part: {asked:?}");
+    let finished = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let envelope = his.events.recv().await.expect("the channel runs");
+            if envelope.event.kind() == "TurnFinished" {
+                break envelope;
+            }
+        }
+    }).await.expect("the agent responds");
+    let turn = finished.security;
+    assert_eq!((turn.caller_id, turn.principal_id, turn.initiator_id), (ActorId::Agent(helper), ActorId::User(world.alice), ActorId::User(world.bob)), "for alice, on his word");
+    assert!(main.user_actor(world.carol).is_none(), "carol takes no part, and has no actor to nudge through");
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
 // --- What an agent saw --------------------------------------------------------
 
 /// A1: what an agent saw is its owner's to read alone - not even who reads

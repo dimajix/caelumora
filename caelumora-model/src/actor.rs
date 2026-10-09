@@ -180,6 +180,17 @@ pub enum ActorEvent {
         args: String,
         agent: ActorId,
     },
+    /// A user asks `participant` - an agent, another user, any actor of the
+    /// channel - to respond to the conversation as it stands (issue 278),
+    /// without saying anything: sent by the user's actor, which the
+    /// moderator turns into the `ResponseRequested` to `participant` alone -
+    /// only the moderator asks for a response. The envelope's sender is the
+    /// user, its security context theirs, so an agent's turn acts with their
+    /// authority, as after a message of theirs; a user is shown the request.
+    /// It is deliberate, as a `/wakeup` is: the channel ends being quiet,
+    /// and an agent is woken as anyone the moderator asks is. Never written
+    /// to the history, never shown itself: what remains of it is the answer.
+    NudgeRequested { participant: ActorId },
     /// A command was carried out (issues 28, 269): `command` is its name
     /// without the slash, `args` what it was given, `output` what it
     /// answered. One of the session - `/wakeup` - the envelope's sender is
@@ -370,6 +381,7 @@ impl ActorEvent {
             ActorEvent::PlanStepFinished { .. } => "PlanStepFinished",
             ActorEvent::TurnGivenUp { .. } => "TurnGivenUp",
             ActorEvent::CommandRequested { .. } => "CommandRequested",
+            ActorEvent::NudgeRequested { .. } => "NudgeRequested",
             ActorEvent::CommandExecuted { .. } => "CommandExecuted",
             ActorEvent::CommandFailed { .. } => "CommandFailed",
             ActorEvent::ParticipantRemoved { .. } => "ParticipantRemoved",
@@ -497,6 +509,9 @@ impl Envelope {
             }
             ActorEvent::CommandRequested { command, agent, .. } => {
                 format!("CommandRequested(sender_id={}, sender_name={}, command={}, agent={})", ctx.sender_id, ctx.sender_name, command, agent)
+            }
+            ActorEvent::NudgeRequested { participant } => {
+                format!("NudgeRequested(sender_id={}, sender_name={}, participant={})", ctx.sender_id, ctx.sender_name, participant)
             }
             ActorEvent::CommandExecuted { command, to, .. } => {
                 format!("CommandExecuted(sender_id={}, sender_name={}, command={}, to={})", ctx.sender_id, ctx.sender_name, command, to.map_or("everybody".to_string(), |to| to.to_string()))
