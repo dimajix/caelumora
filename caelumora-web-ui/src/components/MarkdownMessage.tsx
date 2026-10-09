@@ -2,13 +2,8 @@ import React, {useMemo} from 'react';
 import ReactMarkdown, {type Components} from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
-import {type ClassValue, clsx} from 'clsx';
-import {twMerge} from 'tailwind-merge';
+import {cn} from '../classNames';
 import {mentionSpans} from '../mention';
-
-function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
 
 const MENTION_URL_PREFIX = '#mention:';
 

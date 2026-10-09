@@ -3,6 +3,7 @@
 // `max-height` its caller gives it.
 
 import React, {useEffect, useLayoutEffect, useRef} from 'react';
+import {cn} from '../classNames';
 
 type GrowingTextareaProps = Omit<React.ComponentProps<'textarea'>, 'ref' | 'rows'> & {
   value: string;
@@ -47,7 +48,7 @@ export const GrowingTextarea: React.FC<GrowingTextareaProps> = ({ref: given, val
       ref={ref}
       rows={1}
       value={value}
-      className={`resize-none overflow-y-auto ${className ?? ''}`}
+      className={cn('resize-none overflow-y-auto', className)}
       {...props}
     />
   );

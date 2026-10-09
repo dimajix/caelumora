@@ -6,12 +6,7 @@
 import React from 'react';
 import {Circle, CircleDot, MessageCircleQuestion, Square, SquareCheck} from 'lucide-react';
 import type {Answers, Question, QuestionResponse} from '../types';
-import {type ClassValue, clsx} from 'clsx';
-import {twMerge} from 'tailwind-merge';
-
-function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
+import {cn} from '../classNames';
 
 /** A question's header and its text, its line breaks kept; phrasing content, to stand in a legend. */
 export const QuestionHeading: React.FC<{question: Question; compact?: boolean}> = ({question, compact}) => (

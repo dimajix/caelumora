@@ -11,7 +11,7 @@ import React, {useEffect, useState} from 'react';
 import {Copy, ScrollText, X} from 'lucide-react';
 import type {ChannelMember, KnowledgeRef, Message, MessageContextResponse, SeenMessage, SeenPrompt, ToolSet} from '../types';
 import {type Classification, classificationDescription, classificationLabel} from '../confidentiality';
-import {clsx as cn} from 'clsx';
+import {cn} from '../classNames';
 import {api} from '../api';
 import {actorUuid} from '../mention';
 import {ApiRequestError, reportError} from '../errors';

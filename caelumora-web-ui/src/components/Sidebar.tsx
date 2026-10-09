@@ -35,12 +35,7 @@ import {NewSessionDialog} from './NewSessionDialog';
 import {SessionWorkspaceDialog} from './SessionWorkspaceDialog';
 import {scopeLabel} from '../scope';
 import {privacyInfo} from '../privacy';
-import {type ClassValue, clsx} from 'clsx';
-import {twMerge} from 'tailwind-merge';
-
-function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
+import {cn} from '../classNames';
 
 /** How a session is named in the list: by its name, else by its id. */
 function sessionName(session: SessionSnapshot): string {

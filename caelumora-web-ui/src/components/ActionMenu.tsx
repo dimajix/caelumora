@@ -5,7 +5,7 @@
 import React, {useEffect, useId, useState} from 'react';
 import {createPortal} from 'react-dom';
 import {MoreVertical} from 'lucide-react';
-import {clsx as cn} from 'clsx';
+import {cn} from '../classNames';
 import {useFloating} from './floating';
 
 /** One entry of an `ActionMenu`. */

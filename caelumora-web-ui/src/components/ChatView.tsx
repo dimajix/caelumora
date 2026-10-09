@@ -66,8 +66,7 @@ import {languageLabel} from '../language';
 import {approvalRulesChangedChannel, changedChannel, descriptionChangedChannel, languageChangedChannel, membershipChangedChannel, onGlobalEvent, profileApprovalRules, reclassifiedChannel} from '../globalEvents';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
-import {type ClassValue, clsx} from 'clsx';
-import {twMerge} from 'tailwind-merge';
+import {cn} from '../classNames';
 import {MarkdownMessage} from './MarkdownMessage';
 import {GrowingTextarea} from './GrowingTextarea';
 import {MessageFooter, MessageView, Reasoning} from './MessageView';
@@ -110,10 +109,6 @@ function retryRefusedText(reason: RetryRefused): string {
     case 'ended': return 'its answer had already ended';
     default: return 'for a reason this page does not know';
   }
-}
-
-function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
 }
 
 type MentionableMember = ChannelMember & {handle: string};

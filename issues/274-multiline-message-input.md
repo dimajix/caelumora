@@ -87,3 +87,8 @@ component of its own, used by both.
   command no longer swallows a line break after its name. A user's message is rendered with hard
   line breaks (`remark-breaks`, new dependency), an agent's as before. `QuestionCard` keeps its
   single-line field for now.
+- 2026-10-09: Alongside: the components composed their Tailwind classes in two ways - five with a
+  `cn` of their own (`clsx` and `tailwind-merge`), five with plain `clsx` under the same name. They
+  now share one `cn` in `src/classNames.ts`, the merging one, so that a `className` handed in
+  overrides a component's own everywhere; no call combined conflicting classes, so nothing looks
+  different.

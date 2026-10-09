@@ -47,6 +47,7 @@ The UI shows what the server says and repeats no rule of its own:
 | `src/command.ts`, `src/mention.ts` | The lexical rules mirrored from the model |
 | `src/messages.ts` | Helpers for showing messages, shared by the chat and the context panel |
 | `src/panelWidth.ts` | The widths of the panels beside the chat, kept in browser storage |
+| `src/classNames.ts` | `cn`, how every component composes its Tailwind classes |
 | `src/moderator.ts`, `src/confidentiality.ts`, `src/workspace.ts`, `src/scope.ts` | Labels and explanations of responder policies, classifications, storages, and where a workspace or a skill lies |
 | `src/App.tsx` | Login state, keep-alive, the error banner, the layout |
 | `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `ToolCallView`, `QuestionCard`, `QuestionView`, `MarkdownMessage`, `GrowingTextarea`, `ContextPanel`, `HistoryPanel`, `ToolsPanel`, `PrivateNotesPanel`, `ToolSetList`, `DeletedList`, `NotesList`, `TokenGauge`, `HoverCard`, `ActionMenu`, `ResizeHandle`, `UsageStats`, `NewSessionDialog`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ApprovalRulesDialog`, `ErrorBanner`, `WorkspacePage`, `FileBrowser`, `ChannelWorkspacePanel`, `NewWorkspaceDialog`, `ClassificationFields`, `SessionWorkspaceDialog`, `SkillPage`, `NewSkillDialog` |
