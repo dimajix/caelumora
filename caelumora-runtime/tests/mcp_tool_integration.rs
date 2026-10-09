@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use caelumora_model::agent::AgentId;
-use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy, StoredComponent};
+use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy, StoredComponents};
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{DummySecurityManager, SecurityContext};
 use caelumora_model::store::ComponentStore;
@@ -164,14 +164,16 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
     // Preconfigured components live in the ComponentStore rather than in application-level
     // config, so seed it directly.
     store
-        .create_component(
+        .create_components(
             &SecurityContext::default(),
-            &StoredComponent::new(ComponentDescriptor {
-                id: "shared-echo".to_string(),
-                kind: mcp_tool::MCP_TOOL_KIND.to_string(),
-                params: json!({ "endpoint": { "url": url } }),
-                tags: vec![],
-                fail_policy: ComponentFailPolicy::FailOpen,
+            &StoredComponents::new("shared-echo", ComponentConfig {
+                component_nodes: vec![ComponentDescriptor {
+                    id: "shared-echo".to_string(),
+                    kind: mcp_tool::MCP_TOOL_KIND.to_string(),
+                    params: json!({ "endpoint": { "url": url } }),
+                    tags: vec![],
+                    fail_policy: ComponentFailPolicy::FailOpen,
+                }],
             }, Default::default()),
         )
         .await

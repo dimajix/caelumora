@@ -1,6 +1,6 @@
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
 use crate::channel::{Channel, ChannelId, ChannelState};
-use crate::component::StoredComponent;
+use crate::component::StoredComponents;
 use crate::removal::{Deletable, Removal, Stored};
 use crate::scope::Scoped;
 use crate::security::SecurityManager;
@@ -870,19 +870,19 @@ impl EntityStore for JsonFileStore {
 /// Preconfigured components, kept like the entities (issue 164).
 #[async_trait]
 impl ComponentStore for JsonFileStore {
-    async fn create_component(&self, ctx: &SecurityContext, value: &StoredComponent) -> StoreResult<()> {
+    async fn create_components(&self, ctx: &SecurityContext, value: &StoredComponents) -> StoreResult<()> {
         self.create_file(ctx, &COMPONENTS, self.component_path(value.id()), value.id().to_string(), value).await
     }
-    async fn get_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<StoredComponent> {
+    async fn get_components(&self, ctx: &SecurityContext, id: &str) -> StoreResult<StoredComponents> {
         self.get_file(ctx, &COMPONENTS, self.component_path(id), id.to_string()).await
     }
-    async fn update_component(&self, ctx: &SecurityContext, value: &StoredComponent) -> StoreResult<()> {
+    async fn update_components(&self, ctx: &SecurityContext, value: &StoredComponents) -> StoreResult<()> {
         self.update_file(ctx, &COMPONENTS, self.component_path(value.id()), value.id().to_string(), value).await
     }
-    async fn delete_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<bool> {
-        self.remove_file::<StoredComponent>(ctx, &COMPONENTS, self.component_path(id)).await
+    async fn delete_components(&self, ctx: &SecurityContext, id: &str) -> StoreResult<bool> {
+        self.remove_file::<StoredComponents>(ctx, &COMPONENTS, self.component_path(id)).await
     }
-    async fn list_components(&self, ctx: &SecurityContext) -> StoreResult<Vec<StoredComponent>> {
+    async fn list_components(&self, ctx: &SecurityContext) -> StoreResult<Vec<StoredComponents>> {
         self.list_dir(ctx, &COMPONENTS, self.components_dir()).await
     }
 }

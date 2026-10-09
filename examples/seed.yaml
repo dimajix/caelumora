@@ -1,7 +1,7 @@
-# Demo data (issue 105): personalities, session templates and skills that a binary
-# puts into its entity store at startup, when `seed` in its configuration
-# names this file (see config.yaml). Every document is stored under the id it
-# has here, and only if the store has no document with that id yet - so
+# Demo data (issue 105): preconfigured components, personalities, session
+# templates and skills that a binary puts into its stores at startup, when
+# `seed` in its configuration names this file (see config.yaml). Every
+# document is stored under the id it has here, and only if the store has no document with that id yet - so
 # loading it again changes nothing, and a document changed in the store stays
 # as it is. The documents are written as the store keeps them; fields left
 # out take their defaults. Everything here belongs to the system: every user
@@ -14,6 +14,44 @@
 # Skills (issue 22) lie in the global scope: every agent whose personality
 # has the `skills` component finds them, loads them when a task calls for one,
 # and a member gives one to an agent with `/skill @agent <name>`.
+#
+# Preconfigured components (issue 270) are kept in the component store under
+# their id. A personality includes one with `kind: ref` and `params: { id: ... }`,
+# and gets all of its components there, in their order: what every agent should
+# have is written once, and an addition reaches every personality that includes
+# it. A component of an included one must not be written again beside it.
+
+components:
+# Who is in the channel, which language it speaks and what it is about.
+- id: channel-context
+  components:
+  - id: channel-members
+    kind: channel_members_prompt_provider
+    fail_policy: FailClosed
+  - id: channel-language
+    kind: channel_language_prompt_provider
+    fail_policy: FailClosed
+  - id: channel-briefing
+    kind: channel_briefing_prompt_provider
+    fail_policy: FailClosed
+# What every agent run here needs to take part in a channel.
+- id: agent-basics
+  components:
+  - id: stop-tool
+    kind: stop_tool
+    fail_policy: FailClosed
+  - id: ask-user-tool
+    kind: ask_user_tool
+    fail_policy: FailClosed
+  - id: notes
+    kind: notes
+    fail_policy: FailClosed
+  - id: channel-history
+    kind: channel_history
+    fail_policy: FailClosed
+  - id: skills
+    kind: skills
+    fail_policy: FailOpen
 
 personalities:
 - id: 6c109a76-8e67-4e44-ac8d-f97d4be9d3fb
@@ -29,39 +67,23 @@ personalities:
       prompt: You are a self-made millionaire. You always wanted to be a quiz-master. You are polite
         and helpful.
     fail_policy: FailClosed
-  - id: channel-members
-    kind: channel_members_prompt_provider
-    fail_policy: FailClosed
-  - id: channel-language
-    kind: channel_language_prompt_provider
-    fail_policy: FailClosed
-  - id: channel-briefing
-    kind: channel_briefing_prompt_provider
-    fail_policy: FailClosed
+  - id: channel-context
+    kind: ref
+    params:
+      id: channel-context
+  - id: agent-basics
+    kind: ref
+    params:
+      id: agent-basics
   - id: create-plan-tool
     kind: create_plan_tool
     fail_policy: FailClosed
   - id: calculator-tool
     kind: calculator_tool
     fail_policy: FailClosed
-  - id: notes
-    kind: notes
-    fail_policy: FailClosed
   - id: memory
     kind: agent_memory
     fail_policy: FailClosed
-  - id: channel-history
-    kind: channel_history
-    fail_policy: FailClosed
-  - id: stop-tool
-    kind: stop_tool
-    fail_policy: FailClosed
-  - id: ask-user-tool
-    kind: ask_user_tool
-    fail_policy: FailClosed
-  - id: skills
-    kind: skills
-    fail_policy: FailOpen
   - id: workspace
     kind: workspace_prompt_provider
     fail_policy: FailClosed
@@ -82,45 +104,31 @@ personalities:
       title: Who you are
       prompt: You are a witty and slightly sarcastic assistant who loves to play quiz games.
     fail_policy: FailClosed
-  - id: channel-members
-    kind: channel_members_prompt_provider
-    fail_policy: FailClosed
-  - id: channel-language
-    kind: channel_language_prompt_provider
-    fail_policy: FailClosed
-  - id: channel-briefing
-    kind: channel_briefing_prompt_provider
-    fail_policy: FailClosed
+  - id: channel-context
+    kind: ref
+    params:
+      id: channel-context
+  - id: agent-basics
+    kind: ref
+    params:
+      id: agent-basics
   - id: create-plan-tool
     kind: create_plan_tool
     fail_policy: FailClosed
   - id: calculator-tool
     kind: calculator_tool
     fail_policy: FailClosed
-  - id: notes
-    kind: notes
-    fail_policy: FailClosed
   - id: private-notes
     kind: private_notes
     fail_policy: FailClosed
-  - id: channel-history
-    kind: channel_history
-    fail_policy: FailClosed
-  - id: stop-tool
-    kind: stop_tool
-    fail_policy: FailClosed
-  - id: ask-user-tool
-    kind: ask_user_tool
-    fail_policy: FailClosed
-  - id: skills
-    kind: skills
-    fail_policy: FailOpen
 # An agent that runs elsewhere, reached over A2A (issue 179) - for instance
 # a Hermes Agent with its A2A plugin. Set the endpoint's `url` to where it
 # publishes its agent card, and keep its token in the secret HERMES_A2A_TOKEN. It sees
 # only what its roles let it: an external agent that names none sees only
 # what is public. Its remote agent keeps its conversation, so it is told who
-# is in the channel once, and again only when that changes (issue 204).
+# is in the channel once, and again only when that changes (issue 204) - which
+# is why it writes the channel's context out instead of including
+# `channel-context`.
 - id: ff9a5e56-e5ea-43f9-9114-2098a6f417a9
   name: hermes-remote
   kind: external

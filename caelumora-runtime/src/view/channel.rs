@@ -9,6 +9,7 @@ use crate::moderator::ResponderPolicy;
 use caelumora_model::actor::{ActorId, ActorState};
 use caelumora_model::approval::ApprovalRequest;
 use caelumora_model::command::Command;
+use caelumora_model::component::ComponentConfig;
 use caelumora_model::channel::{Channel, ChannelState, Participant};
 use caelumora_model::value::text::{Briefing, Summary};
 use caelumora_model::confidentiality::Classification;
@@ -478,6 +479,15 @@ impl MemberView {
         }
     }
 
+    /// Whether the viewer may see which components the member was built
+    /// from (`ReadAgentComponents`, issue 270) - only ever for agents.
+    pub async fn may_read_components(&self) -> bool {
+        match self.state.attributes() {
+            Some(attributes) => self.views().security().may_read_agent_components(self.views().context(), attributes).await,
+            None => false,
+        }
+    }
+
     /// Whether the viewer may approve the tool calls of the member
     /// (`ApproveToolCall`, issue 14) - only ever for agents taking part.
     /// Who may is asked when it calls a tool needing approval; everybody
@@ -562,6 +572,29 @@ impl MemberView {
         }
         let Some(actor) = self.channel.running().and_then(|channel| channel.actor_by_id(self.id())) else { return Ok(Vec::new()) };
         Ok(actor.tool_sets().await)
+    }
+
+    /// The components the member was built from in this channel, the
+    /// preconfigured ones it includes resolved (issue 270) - read from its
+    /// actor, which recorded them when it was built: what it is, not what
+    /// its personality would make of it now. None if it is no agent run
+    /// here or has left - and also while the channel does not run.
+    ///
+    /// # Errors
+    /// `Forbidden` if the member is an agent whose components the viewer
+    /// may not see (`ReadAgentComponents`).
+    pub async fn components(&self) -> ViewResult<ComponentConfig> {
+        let Some(attributes) = self.state.attributes() else { return Ok(ComponentConfig::default()) };
+        let views = self.views();
+        let forbidden = || ViewError::Forbidden { actor: self.id() };
+        views.security()
+            .require(views.context(), ActionType::ReadAgentComponents(attributes), forbidden).await
+            .map_err(|_| forbidden())?;
+        if self.former {
+            return Ok(ComponentConfig::default());
+        }
+        let Some(actor) = self.channel.running().and_then(|channel| channel.actor_by_id(self.id())) else { return Ok(ComponentConfig::default()) };
+        Ok(actor.components())
     }
 
     /// Whether the viewer may delete the member - an agent that exists,
@@ -710,6 +743,7 @@ impl MemberView {
             handle: self.handle(),
             can_read_context: self.may_read_context().await,
             can_read_tools: self.may_read_tools().await,
+            can_read_components: self.may_read_components().await,
             can_approve: self.may_approve().await,
             can_retry: self.may_retry().await,
             can_cancel: self.may_cancel().await,

@@ -21,7 +21,7 @@ use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId, Persona
 use caelumora_model::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
 use caelumora_model::channel::{moderation_components, Channel, HistoryAccess, Participant};
 use caelumora_model::config::{ArtifactStorageConfig, ArtifactsConfig, StorageConfig, WorkspacesConfig};
-use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+use caelumora_model::component::{ComponentConfig, ComponentDescriptor, StoredComponents};
 use caelumora_model::external_agent::{ConversationId, TaskId};
 use caelumora_model::confidentiality::{Classification, Clearance, Compartments, ConfidentialityRules, Confidentiality, Roles};
 use caelumora_model::value::name::{Name, ScopedName};
@@ -31,13 +31,13 @@ use caelumora_model::scope::Scope;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{ActionType, OwnershipSecurityManager, Reclassified, SecurityAttributes, SecurityContext, SecurityManager};
 use caelumora_model::session::{ChannelId, Session, SessionId};
-use caelumora_model::store::{EntityStore, StateStore, StoreError};
+use caelumora_model::store::{ComponentStore, EntityStore, StateStore, StoreError};
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId, TemplateError, WorkspaceTemplate};
 use caelumora_model::user::{User, UserId, UserProfile};
 use caelumora_model::work::TurnId;
 use caelumora_runtime::channel::ChannelError;
-use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
+use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry, PRECONFIGURED_REF_KIND};
 use caelumora_runtime::external::{ExternalAgent, ExternalAgentResult, ExternalEvent, ExternalStream, OutboundMessage};
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::session::{ChannelSpec, SessionError, SessionLoop, SessionManager};
@@ -107,7 +107,7 @@ fn attributes_of<'a>(action: &ActionType<'a>) -> Option<&'a SecurityAttributes> 
     match *action {
         GetPersonality(a) | CreatePersonality(a) | UpdatePersonality(a) | DeletePersonality(a)
         | GetSessionTemplate(a) | CreateSessionTemplate(a) | UpdateSessionTemplate(a) | DeleteSessionTemplate(a)
-        | CreateAgent(a) | GetAgent(a) | ReadAgentContext(a) | ReadAgentTools { agent: a, .. } | ApproveToolCall { agent: a, .. } | ShowAgentCommand { agent: a, .. } | ExecuteAgentCommand { agent: a, .. } | UpdateAgent(a) | DeleteAgent(a)
+        | CreateAgent(a) | GetAgent(a) | ReadAgentContext(a) | ReadAgentTools { agent: a, .. } | ReadAgentComponents(a) | ApproveToolCall { agent: a, .. } | ShowAgentCommand { agent: a, .. } | ExecuteAgentCommand { agent: a, .. } | UpdateAgent(a) | DeleteAgent(a)
         | CreateSession(a) | GetSession(a) | UpdateSession(a) | DeleteSession(a) | StopSession(a)
         | GetChannel(a) | CreateChannel(a) | UpdateChannel(a) | DeleteChannel(a)
         | GetUser(a) | CreateUser(a) | UpdateUser(a) | DeleteUser(a)
@@ -116,7 +116,7 @@ fn attributes_of<'a>(action: &ActionType<'a>) -> Option<&'a SecurityAttributes> 
         | GetWorkspace(a) | CreateWorkspace(a) | UpdateWorkspace(a) | DeleteWorkspace(a)
         | GetSkill(a) | CreateSkill(a) | UpdateSkill(a) | DeleteSkill(a) | UseSkill(a)
         | GetArtifact(a) | CreateArtifact(a) | UpdateArtifact(a) | DeleteArtifact(a)
-        | GetComponent(a) | CreateComponent(a) | UpdateComponent(a) | DeleteComponent(a)
+        | GetComponents(a) | CreateComponents(a) | UpdateComponents(a) | DeleteComponents(a)
         | ReadDeleted(_, a) | Restore(_, a) | Purge(_, a) => Some(a),
         _ => None,
     }
@@ -455,6 +455,38 @@ async fn an_agents_introduction_reaches_whoever_sees_it_but_not_its_personality(
     let member = members.iter().find(|m| m.id() == ActorId::Agent(helper)).expect("he sees the agent");
     assert_eq!(member.name(), Some("helper"));
     assert_eq!(member.introduction().await.unwrap().as_deref(), Some("I am hers."), "and how it introduces itself");
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// P7: the preconfigured components a personality includes (issue 270) -
+/// shared with the agent's owner by someone else - are read in the agent's
+/// name, as its channel starts, as its personality is; once the share is
+/// withdrawn, the agent is not run, but its session opens without it, as
+/// with a withdrawn personality (P3).
+#[tokio::test]
+async fn the_components_a_personality_includes_are_read_in_its_agents_name() {
+    let world = World::new().await;
+    let tools = StoredComponents::new("bobs-tools", ComponentConfig { component_nodes: vec![ComponentDescriptor::new("calculator", "calculator_tool")] }, attributes(Some(world.bob), &[world.alice]));
+    world.store.create_components(&World::as_user(world.bob), &tools).await.expect("bob keeps his tools");
+    let mut hers = world.personality("hers", Some(world.alice), &[]).await;
+    hers.components = ComponentConfig { component_nodes: vec![ComponentDescriptor { params: serde_json::json!({ "id": "bobs-tools" }), ..ComponentDescriptor::new("tools", PRECONFIGURED_REF_KIND) }] };
+    world.store.update_personality(&World::as_user(world.alice), &hers).await.unwrap();
+    let helper = world.agent("helper", world.alice, &hers).await;
+
+    let (session, asked) = world.asked(world.shared_session(&[helper], &[])).await;
+    let personality = asked.iter().position(|line| line == "alice as helper: GetPersonality(alice's) yes").expect("its personality is read in its name");
+    let components = asked.iter().position(|line| line == "alice as helper: GetComponents(bob's) yes").expect("and so are the components it includes");
+    assert!(personality < components, "first the personality, then what it includes: {asked:?}");
+    assert!(session.channels()[0].actor_ids().contains(&ActorId::Agent(helper)), "it runs");
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+
+    let withdrawn = StoredComponents { security_attributes: attributes(Some(world.bob), &[]), ..tools };
+    world.store.update_components(&World::as_user(world.bob), &withdrawn).await.expect("bob owns them");
+    let (reopened, asked) = world.asked(world.manager.open_session(&World::as_user(world.alice), session.id())).await;
+    let reopened = reopened.expect("the session still opens: bob cannot stop alice's session so");
+    assert!(asked.contains(&"alice as helper: GetComponents(bob's) no".to_string()), "{asked:?}");
+    assert!(!reopened.channels()[0].actor_ids().contains(&ActorId::Agent(helper)), "the agent is not run");
+    assert!(reopened.channels()[0].actor_ids().contains(&ActorId::User(world.alice)), "everyone else is");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
@@ -845,6 +877,47 @@ async fn which_tools_an_agent_has_is_read_by_the_members_of_its_channel() {
     assert_eq!(asked, checks(&["bob: ReadAgentTools(alice's) yes"]));
     let theirs = world.manager.views(Viewer::new(World::as_user(world.carol))).session(session.id()).await;
     assert!(theirs.is_err(), "carol, who is no member, does not even reach the channel");
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// What an agent was built from - its components, the preconfigured ones
+/// it includes resolved (issue 270) - is read by its owner alone: it is
+/// configuration, and what it includes may have been shared with the owner
+/// alone. Not by bob, who takes part in the channel and sees its tools.
+#[tokio::test]
+async fn which_components_an_agent_was_built_from_is_read_by_its_owner_alone() {
+    let world = World::new().await;
+    let tools = StoredComponents::new("bobs-tools", ComponentConfig { component_nodes: vec![ComponentDescriptor::new("calculator", "calculator_tool")] }, attributes(Some(world.bob), &[world.alice]));
+    world.store.create_components(&World::as_user(world.bob), &tools).await.unwrap();
+    let mut hers = world.personality("hers", Some(world.alice), &[]).await;
+    hers.components = ComponentConfig { component_nodes: vec![
+        ComponentDescriptor::new("stop", "stop_tool"),
+        ComponentDescriptor { params: serde_json::json!({ "id": "bobs-tools" }), ..ComponentDescriptor::new("tools", PRECONFIGURED_REF_KIND) },
+    ] };
+    world.store.update_personality(&World::as_user(world.alice), &hers).await.unwrap();
+    let helper = world.agent("helper", world.alice, &hers).await;
+    let session = world.shared_session(&[helper], &[]).await;
+    let channel = session.channels()[0].id();
+    let member = |user| {
+        let world = &world;
+        let session = session.id();
+        async move {
+            let view = world.manager.views(Viewer::new(World::as_user(user))).session(session).await.unwrap().channel(channel).await.unwrap();
+            view.members().await.into_iter().find(|m| m.id() == ActorId::Agent(helper)).expect("the agent is a member")
+        }
+    };
+
+    let hers = member(world.alice).await;
+    assert!(hers.may_read_components().await, "offered to alice, its owner");
+    let (components, asked) = world.asked(hers.components()).await;
+    let ids: Vec<String> = components.expect("read from its running actor").component_nodes.into_iter().map(|node| node.id).collect();
+    assert_eq!(ids, ["stop", "calculator"], "resolved, as it was built");
+    assert_eq!(asked, checks(&["alice: ReadAgentComponents(alice's) yes"]));
+    let his = member(world.bob).await;
+    assert!(!his.may_read_components().await, "not offered to bob");
+    let (components, asked) = world.asked(his.components()).await;
+    assert!(matches!(components, Err(ViewError::Forbidden { .. })), "nor read by him, though he sees its tools");
+    assert_eq!(asked, checks(&["bob: ReadAgentComponents(alice's) no"]));
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

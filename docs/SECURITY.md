@@ -331,9 +331,13 @@ question, in the viewer's name:
 *   `MemberView::may_read_context()` asks `ReadAgentContext`; `may_read_tools()` and `tool_sets()`
     ask `ReadAgentTools` with the agent's and the channel's attributes (issue 194), which the
     ownership policy grants whoever reads the agent and every member of the channel: what an agent
-    can do there is no secret among those it works with; `may_approve()` asks `ApproveToolCall`,
-    which the ownership policy grants the agent's owner and contributors, for an agent of the
-    system the channel's owner (issue 14, see [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md#who-may-approve));
+    can do there is no secret among those it works with; `may_read_components()` and
+    `components()` ask `ReadAgentComponents` with the agent's attributes (issue 270), which the
+    ownership policy grants its owner alone: what an agent was built from is configuration, and
+    the preconfigured components it includes may have been shared with its owner alone;
+    `may_approve()` asks `ApproveToolCall`, which the ownership policy grants the agent's owner and
+    contributors, for an agent of the system the channel's owner (issue 14, see
+    [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md#who-may-approve));
 *   `Views::channel_of(session, channel)` reaches what a memory entry's origin or a `KnowledgeRef`
     names, wherever it is, and answers `None` for what is gone or not the viewer's to read.
 

@@ -42,6 +42,11 @@ pub enum ActionType<'a> {
     /// agent's attributes and those of the channel, where its tools are
     /// built.
     ReadAgentTools { agent: &'a SecurityAttributes, channel: &'a SecurityAttributes },
+    /// Reading which components an agent was built from in a channel, the
+    /// preconfigured ones it includes resolved (issue 270): its
+    /// configuration, with what was shared with its owner. Carries the
+    /// agent's attributes.
+    ReadAgentComponents(&'a SecurityAttributes),
     /// Answering whether a tool call of an agent may run (issue 14): an
     /// answer that counts for the approval it was asked for. Carries the
     /// agent's attributes and those of the channel the call is made in.
@@ -191,11 +196,11 @@ pub enum ActionType<'a> {
     ExecuteAgentCommand { command: &'a Command, agent: &'a SecurityAttributes, channel: &'a SecurityAttributes },
     CallTool(&'a ToolCall),
     ReadSecret(&'a str),
-    GetComponent(&'a SecurityAttributes),
+    GetComponents(&'a SecurityAttributes),
     ListComponents,
-    CreateComponent(&'a SecurityAttributes),
-    UpdateComponent(&'a SecurityAttributes),
-    DeleteComponent(&'a SecurityAttributes),
+    CreateComponents(&'a SecurityAttributes),
+    UpdateComponents(&'a SecurityAttributes),
+    DeleteComponents(&'a SecurityAttributes),
     /// Reading what was deleted of a kind - marked, not purged (issue 164):
     /// one entity, carrying its stored attributes, or for each entity of a
     /// listing. The trash.
@@ -239,6 +244,7 @@ impl ActionType<'_> {
             ActionType::GetAgent(_) => "GetAgent".into(),
             ActionType::ReadAgentContext(_) => "ReadAgentContext".into(),
             ActionType::ReadAgentTools { .. } => "ReadAgentTools".into(),
+            ActionType::ReadAgentComponents(_) => "ReadAgentComponents".into(),
             ActionType::ApproveToolCall { .. } => "ApproveToolCall".into(),
             ActionType::ListAgents => "ListAgents".into(),
             ActionType::UpdateAgent(_) => "UpdateAgent".into(),
@@ -299,11 +305,11 @@ impl ActionType<'_> {
             ActionType::ExecuteAgentCommand { command, .. } => format!("ExecuteAgentCommand(/{})", command.name),
             ActionType::CallTool(call) => format!("CallTool({})", call.function_name),
             ActionType::ReadSecret(key) => format!("ReadSecret({key})"),
-            ActionType::GetComponent(_) => "GetComponent".into(),
+            ActionType::GetComponents(_) => "GetComponents".into(),
             ActionType::ListComponents => "ListComponents".into(),
-            ActionType::CreateComponent(_) => "CreateComponent".into(),
-            ActionType::UpdateComponent(_) => "UpdateComponent".into(),
-            ActionType::DeleteComponent(_) => "DeleteComponent".into(),
+            ActionType::CreateComponents(_) => "CreateComponents".into(),
+            ActionType::UpdateComponents(_) => "UpdateComponents".into(),
+            ActionType::DeleteComponents(_) => "DeleteComponents".into(),
             ActionType::ReadDeleted(kind, _) => format!("ReadDeleted({kind})"),
             ActionType::Restore(kind, _) => format!("Restore({kind})"),
             ActionType::Purge(kind, _) => format!("Purge({kind})"),
@@ -474,6 +480,10 @@ pub trait AccessQuestions {
     /// (`ReadAgentTools`, issue 194).
     async fn may_read_agent_tools(&self, context: &SecurityContext, agent: &SecurityAttributes, channel: &SecurityAttributes) -> bool;
 
+    /// Whether `context` may see which components the agent with `agent`
+    /// attributes was built from (`ReadAgentComponents`, issue 270).
+    async fn may_read_agent_components(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool;
+
     /// Whether `context` may approve the tool calls of the agent with
     /// `agent` attributes in the channel with `channel` attributes
     /// (`ApproveToolCall`, issue 14).
@@ -583,6 +593,10 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
 
     async fn may_read_agent_tools(&self, context: &SecurityContext, agent: &SecurityAttributes, channel: &SecurityAttributes) -> bool {
         self.check(context, ActionType::ReadAgentTools { agent, channel }).await
+    }
+
+    async fn may_read_agent_components(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool {
+        self.check(context, ActionType::ReadAgentComponents(agent)).await
     }
 
     async fn may_approve(&self, context: &SecurityContext, agent: &SecurityAttributes, channel: &SecurityAttributes) -> bool {
@@ -785,7 +799,7 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::GetAgent(a)
             | ActionType::GetSession(a)
             | ActionType::GetChannel(a)
-            | ActionType::GetComponent(a)
+            | ActionType::GetComponents(a)
             | ActionType::GetUser(a)
             | ActionType::GetUserProfile(a)
             | ActionType::GetWorkspace(a)
@@ -833,7 +847,7 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::CreateWorkspace(a)
             | ActionType::CreateSkill(a)
             | ActionType::CreateArtifact(a)
-            | ActionType::CreateComponent(a) => a.owner_id == me && me != ActorId::None,
+            | ActionType::CreateComponents(a) => a.owner_id == me && me != ActorId::None,
             ActionType::UpdatePersonality(a)
             | ActionType::DeletePersonality(a)
             | ActionType::UpdateSessionTemplate(a)
@@ -841,6 +855,7 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::UpdateAgent(a)
             | ActionType::DeleteAgent(a)
             | ActionType::ReadAgentContext(a)
+            | ActionType::ReadAgentComponents(a)
             | ActionType::UpdateSession(a)
             | ActionType::DeleteSession(a)
             | ActionType::StopSession(a)
@@ -856,8 +871,8 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::DeleteSkill(a)
             | ActionType::UpdateArtifact(a)
             | ActionType::DeleteArtifact(a)
-            | ActionType::UpdateComponent(a)
-            | ActionType::DeleteComponent(a)
+            | ActionType::UpdateComponents(a)
+            | ActionType::DeleteComponents(a)
             | ActionType::ReadDeleted(_, a)
             | ActionType::Restore(_, a) => a.owner_id == me && me != ActorId::None,
             // Until there is an administrator (issue 125): the system
@@ -971,6 +986,8 @@ mod tests {
         assert!(allows(bob, ActionType::CancelChannel(&hers)).await, "a contributor acts in it");
         assert!(allows(alice, ActionType::ReadAgentContext(&hers)).await);
         assert!(!allows(bob, ActionType::ReadAgentContext(&hers)).await, "what an agent saw is its owner's alone");
+        assert!(allows(alice, ActionType::ReadAgentComponents(&hers)).await);
+        assert!(!allows(bob, ActionType::ReadAgentComponents(&hers)).await, "and what it was built from, which may have been shared with its owner alone");
         let theirs = SecurityAttributes { owner_id: carol, contributors: vec![] };
         let tools = |agent, channel| ActionType::ReadAgentTools { agent, channel };
         assert!(allows(bob, tools(&hers, &theirs)).await, "who reads the agent sees what it can do");

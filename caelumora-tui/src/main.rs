@@ -452,9 +452,9 @@ async fn main() -> anyhow::Result<()> {
         secret_manager,
         Arc::clone(&security_manager),
         &config,
-        ComponentRegistry::built_in(component_store),
+        ComponentRegistry::built_in(Arc::clone(&component_store)),
     )?);
-    caelumora_runtime::seed::load(entity_store.as_ref(), &config.seed).await?;
+    caelumora_runtime::seed::load(entity_store.as_ref(), component_store.as_ref(), &config.seed).await?;
 
     let owner = UserId::default();
     // The session is this terminal user's own.

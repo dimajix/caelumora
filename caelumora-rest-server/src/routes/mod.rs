@@ -211,6 +211,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         )
         .route("/sessions/{id}/channels/{cid}/actors/{aid}/history", get(channels::agent_history))
         .route("/sessions/{id}/channels/{cid}/actors/{aid}/tools", get(channels::agent_tools))
+        .route("/sessions/{id}/channels/{cid}/actors/{aid}/components", get(channels::agent_components))
         .route(
             "/sessions/{id}/channels/{cid}/commands",
             get(channels::list_commands).post(channels::execute_command),

@@ -1,6 +1,6 @@
 # 270 — Personalities repeat their components
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -52,6 +52,42 @@ nothing about the facets an agent has many of, and nothing a personality could b
   mechanism, if there is one. Decide once.
 - The mechanisms are not exclusive: a base for the deployment and inheritance for the rest.
 
+## Decision
+
+Neither inheritance nor a base in the configuration, and no bundle as an entity of its own: the
+preconfigured components that `kind: ref` already includes become lists. A `StoredComponent` holds
+a `ComponentConfig` instead of one descriptor - a single preconfigured component is a list of one -
+and a `ref` stands, where it is written, for all of its descriptors, in their order.
+
+1.  What the `ComponentStore` already gives is what sharing needs: an owner and contributors, its
+    own actions (`GetComponent` and the others), a read afresh at every build in the name of the
+    agent - so a change reaches an agent when it is built again, and a bundle the agent may not
+    read keeps it from being built -, and no ref within a ref, so no cycle and no depth to bound.
+2.  It serves every `ComponentConfig`, not only personalities: a channel's components and a
+    session's commands can share the same way.
+3.  The ids are decided once: a ref keeps an `id` of its own, as every descriptor does, unique
+    among the entries of its list; the components a list resolves to have unique ids, too. A
+    component of a bundle that the personality writes again is a configuration error that names
+    the ref (as two tools of one name are, issue 37) - not an override. Opting out is not
+    including a bundle; the bundles are cut finely enough for that.
+4.  A personality's `kind`, `roles`, `reasoning_visibility` and `introduction` are not shared; a
+    bundle is components only.
+5.  The example seed gets a section `components` of its own; the built-in personalities include
+    the bundles `channel-context` and `agent-basics` from it.
+
+Considered and not taken: `extends` (a field, but rules for every other field of a personality,
+cycles, a parent that is a selectable personality of its own, and only for personalities);
+`AppConfig::personality_base` (one per `PersonalityKind` at least, since an external agent builds
+every component it is given and needs `changes_only`; nothing to opt out of, the administrator's
+alone, and a second mechanism beside `component_defaults`); a bundle entity of its own (a second
+`ComponentStore`).
+
+## Stored data
+
+A `StoredComponent` is no longer written as a descriptor with its attributes beside its fields, but
+as `{ id, components: [...], security_attributes }`. The stored preconfigured components (the
+`components` directory beside the entity store) have to be deleted.
+
 ## Done when
 
 - A way for a personality to share components with others exists, decided among the options
@@ -67,3 +103,32 @@ nothing about the facets an agent has many of, and nothing a personality could b
   in every personality is this issue's, not a default set for commands.
 - **2026-10-09** — With [280](280-tool-executor-trait.md) the `ToolExecutor` is no facet any
   more; of the facets of which an agent has exactly one, `LLMClient` and `ContextProvider` remain.
+- **2026-10-09** — Decided (see *Decision*): the preconfigured components of `kind: ref` become
+  lists, which personalities include as bundles; work started on the branch
+  `issue-270-component-bundles`.
+- **2026-10-09** — Implemented on the branch: `StoredComponent` holds a `ComponentConfig`;
+  `ComponentRegistry::resolve` gives a `ref`'s whole list, `ComponentContainer::with_defaults`
+  places it where the `ref` is written and refuses a component brought twice, naming the `ref`. The
+  seed has a section `components` (`channel-context`, `agent-basics`), which `jonathan-assistant`
+  and `sassy-assistant` include; `hermes-remote` keeps its context written out for `changes_only`.
+  The security suite records that the included components are read in the agent's name (P7).
+  Still open: what an agent is built from is not visible resolved; and a list its owner may no
+  longer read - a share withdrawn, a list deleted - does not leave the agent out of its channel,
+  as a withdrawn personality does (issue 191), but keeps the whole channel from opening, so that
+  the list's owner can stop someone else's session.
+- **2026-10-09** — Both open points resolved without `Member::of` resolving anything: a list that
+  cannot be read fails as `ComponentError::Unavailable`, which the channel counts as an agent that
+  cannot run, so it is left out and the channel starts (P7). What an agent was built from is
+  recorded by its container (`ComponentContainer::components`), kept by its actor and read through
+  `MemberView::components` and `GET …/actors/{aid}/components`, by its owner alone - the new
+  action `ReadAgentComponents`, since what it includes may have been shared with the owner alone.
+  The web UI has the flag `can_read_components`, but shows nothing of it yet.
+- **2026-10-09** — Named in the plural, without a change in behaviour: `StoredComponent` became
+  `StoredComponents`, the operations of the `ComponentStore` `create_components`, `get_components`,
+  `update_components` and `delete_components`, the actions `GetComponents`, `CreateComponents`,
+  `UpdateComponents` and `DeleteComponents`, and `EntityKind::Component` `Components`. Folding
+  `StoredComponents` into `ComponentConfig` was weighed and not done: a `ComponentConfig` held by
+  a personality, a channel or a template would carry an id and attributes that mean nothing there
+  (issue 177), and could no longer be written as a bare list (issue 201).
+- **2026-10-09** — Done. Showing what an agent was built from in the web UI went to issue
+  [283](283-show-agent-components.md); the runtime and the REST server answer it.

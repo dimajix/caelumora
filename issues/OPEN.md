@@ -87,12 +87,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [272](272-artifacts-in-s3.md) | open | Artifacts can be kept only on the server's own disk, not in S3 or another object storage. |
 | [237](237-erasing-a-message.md) | open | A message written by mistake can be taken back but not erased: it stays in every participant's record and in the contexts built on it. |
 
-## Code structure
-
-| No. | Status | Issue |
-|---|---|---|
-| [270](270-personality-inheritance.md) | open | Every personality writes out its whole list of components, so what every agent should have is repeated in each and a later addition reaches only those touched by hand. |
-
 ## Open architecture questions
 
 | No. | Status | Issue |

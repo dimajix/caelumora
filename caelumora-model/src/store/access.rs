@@ -285,12 +285,12 @@ pub(crate) const ARTIFACTS: Actions = Actions {
 };
 
 pub(crate) const COMPONENTS: Actions = Actions {
-    entity: EntityKind::Component,
-    get: |a| ActionType::GetComponent(a),
+    entity: EntityKind::Components,
+    get: |a| ActionType::GetComponents(a),
     list: ActionType::ListComponents,
-    create: |a| ActionType::CreateComponent(a),
-    update: |a| ActionType::UpdateComponent(a),
-    delete: |a| ActionType::DeleteComponent(a),
+    create: |a| ActionType::CreateComponents(a),
+    update: |a| ActionType::UpdateComponents(a),
+    delete: |a| ActionType::DeleteComponents(a),
 };
 
 #[cfg(test)]

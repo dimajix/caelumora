@@ -14,7 +14,7 @@
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{SecurityContext, SecurityManager};
-use caelumora_model::store::ComponentStore;
+use caelumora_model::store::{ComponentStore, StoreError};
 use futures::future::BoxFuture;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
@@ -37,11 +37,30 @@ pub enum ComponentError {
     Cycle { component: String, facet: &'static str, other: String },
     #[error("invalid configuration: {0}")]
     InvalidConfig(String),
+    /// The preconfigured components `id` a `ref` names cannot be read -
+    /// gone, or not the reader's to read, a share withdrawn (issue 270):
+    /// what keeps an agent from being run, as its personality's would
+    /// (`ComponentError::is_unavailable`).
+    #[error("preconfigured component '{id}' cannot be read: {cause}")]
+    Unavailable { id: String, cause: StoreError },
     /// A component of a graph could not be built. Wraps whatever went wrong
     /// with the component's id and kind, so that the message names the
     /// offending component on its own (issue 02).
     #[error("component '{component}' ({kind}) cannot be built: {cause}")]
     Build { component: String, kind: String, cause: Box<ComponentError> },
+}
+
+impl ComponentError {
+    /// Whether it says that preconfigured components cannot be read
+    /// (`Unavailable`) - itself, or as the cause of a component that could
+    /// not be built.
+    pub fn is_unavailable(&self) -> bool {
+        match self {
+            Self::Unavailable { .. } => true,
+            Self::Build { cause, .. } => cause.is_unavailable(),
+            _ => false,
+        }
+    }
 }
 
 pub type ComponentResult<T> = Result<T, ComponentError>;
@@ -392,39 +411,32 @@ impl ComponentRegistry {
         Some(ComponentDescriptor::new(kind, kind))
     }
 
-    /// `node` itself, or - for `kind: "ref"` - the preconfigured descriptor
-    /// it names, fetched from the ComponentStore fresh on every call, using the
-    /// ComponentContext of whichever component graph is referencing it. This
-    /// ensures things like secret resolution run under the actual caller's
-    /// ComponentContext rather than a synthetic one, at the cost of not
-    /// sharing a single instance across references (e.g. a preconfigured
-    /// `mcp_tool` re-runs discovery for every personality that references it).
-    async fn resolve(&self, node: &ComponentDescriptor, context: &ComponentContext) -> ComponentResult<ComponentDescriptor> {
+    /// `node` itself, or - for `kind: "ref"` - the preconfigured components
+    /// it names, in their order (issue 270), fetched from the ComponentStore
+    /// fresh on every call, using the ComponentContext of whichever component
+    /// graph is referencing it. This ensures things like secret resolution
+    /// run under the actual caller's ComponentContext rather than a synthetic
+    /// one, at the cost of not sharing a single instance across references
+    /// (e.g. a preconfigured `mcp_tool` re-runs discovery for every
+    /// personality that references it).
+    async fn resolve(&self, node: &ComponentDescriptor, context: &ComponentContext) -> ComponentResult<Vec<ComponentDescriptor>> {
         if node.kind != PRECONFIGURED_REF_KIND {
-            return Ok(node.clone());
+            return Ok(vec![node.clone()]);
         }
         let target: PreconfiguredRef = serde_json::from_value(node.params.clone())
             .map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
-        let descriptor = self
-            .component_store
-            .get_component(&context.security_context, &target.id)
-            .await
-            .map_err(|e| ComponentError::InvalidConfig(format!("no preconfigured component '{}': {}", target.id, e)))?
-            .descriptor;
-        if descriptor.kind == PRECONFIGURED_REF_KIND {
+        let components = match self.component_store.get_components(&context.security_context, &target.id).await {
+            Ok(stored) => stored.components,
+            Err(cause @ (StoreError::NotFound { .. } | StoreError::PermissionDenied)) => return Err(ComponentError::Unavailable { id: target.id, cause }),
+            Err(e) => return Err(ComponentError::InvalidConfig(format!("no preconfigured component '{}': {}", target.id, e))),
+        };
+        if let Some(inner) = components.component_nodes.iter().find(|inner| inner.kind == PRECONFIGURED_REF_KIND) {
             return Err(ComponentError::InvalidConfig(format!(
-                "preconfigured component '{}' cannot itself be a ref",
-                descriptor.id
+                "preconfigured component '{}' cannot include a ref ('{}')",
+                target.id, inner.id
             )));
         }
-        Ok(descriptor)
-    }
-
-    /// Builds `node` alone, with `context` - resolving a `ref` first.
-    #[cfg(test)]
-    async fn build(&self, node: &ComponentDescriptor, context: &ComponentContext) -> ComponentResult<ComponentFacets> {
-        let descriptor = self.resolve(node, context).await?;
-        self.dispatch(descriptor, context.clone())?.await
+        Ok(components.component_nodes)
     }
 
     fn dispatch(&self, node: ComponentDescriptor, context: ComponentContext) -> ComponentResult<BoxFuture<'static, ComponentResult<ComponentFacets>>> {
@@ -660,11 +672,15 @@ impl ComponentContainer {
     /// each with `context` - a component asked for by another first, the
     /// rest in the order of the configuration.
     ///
+    /// A `ref` stands for the preconfigured components it names, in their
+    /// order, where it is written (issue 270).
+    ///
     /// # Errors
-    /// `ComponentError::DuplicateId` if two components share an id;
-    /// `ComponentError::InvalidConfig` if two provide a facet of which there
-    /// is one; whatever building a component reports, wrapped with its id and
-    /// kind.
+    /// `ComponentError::DuplicateId` if two entries of `config` share an id,
+    /// or two of the components they stand for do - wrapped with the `ref`
+    /// that brings the second -; `ComponentError::InvalidConfig` if two
+    /// provide a facet of which there is one; whatever resolving a `ref` or
+    /// building a component reports, wrapped with its id and kind.
     pub async fn from_config(
         config: &ComponentConfig,
         registry: &Arc<ComponentRegistry>,
@@ -689,18 +705,27 @@ impl ComponentContainer {
         context: &ComponentContext,
     ) -> ComponentResult<Self> {
         let own_defaults = registry.defaults_of(defaults)?;
-        let mut ids = HashSet::new();
+        let mut entries = HashSet::new();
+        // The entry of `config` each component's id came from.
+        let mut ids: HashMap<String, &ComponentDescriptor> = HashMap::new();
         let mut planned = Vec::with_capacity(config.component_nodes.len());
         for node in &config.component_nodes {
-            if !ids.insert(node.id.as_str()) {
+            if !entries.insert(node.id.as_str()) {
                 return Err(ComponentError::DuplicateId(node.id.clone()));
             }
-            let failed = |cause| ComponentError::Build { component: node.id.clone(), kind: node.kind.clone(), cause: Box::new(cause) };
-            let descriptor = registry.resolve(node, context).await.map_err(failed)?;
-            let provides = registry.provides(&descriptor.kind)
-                .ok_or_else(|| failed(ComponentError::UnsupportedKind(descriptor.kind.clone())))?
-                .to_vec();
-            planned.push(Planned { descriptor, provides });
+            let failed = |entry: &ComponentDescriptor, cause| ComponentError::Build { component: entry.id.clone(), kind: entry.kind.clone(), cause: Box::new(cause) };
+            for descriptor in registry.resolve(node, context).await.map_err(|cause| failed(node, cause))? {
+                if let Some(earlier) = ids.insert(descriptor.id.clone(), node) {
+                    // Two plain entries of one id are caught above: at least
+                    // one of the two is a ref, and it is named.
+                    let entry = if node.kind == PRECONFIGURED_REF_KIND { node } else { earlier };
+                    return Err(failed(entry, ComponentError::DuplicateId(descriptor.id)));
+                }
+                let provides = registry.provides(&descriptor.kind)
+                    .ok_or_else(|| failed(node, ComponentError::UnsupportedKind(descriptor.kind.clone())))?
+                    .to_vec();
+                planned.push(Planned { descriptor, provides });
+            }
         }
         for single in registry.singles.values() {
             let providers: Vec<&str> = planned.iter()
@@ -726,6 +751,15 @@ impl ComponentContainer {
             graph.ensure(index, None).await?;
         }
         Ok(Self { graph: Some(graph) })
+    }
+
+    /// What it was built from: its configuration with every `ref` resolved
+    /// to the preconfigured components it stood for (issue 270), in their
+    /// order. The defaults built for singles it does not configure are not
+    /// among them.
+    pub fn components(&self) -> ComponentConfig {
+        let Some(graph) = &self.graph else { return ComponentConfig::default() };
+        ComponentConfig { component_nodes: graph.planned.iter().map(|planned| planned.descriptor.clone()).collect() }
     }
 
     /// Every component that provides `T` - with `tag`, if one is given - in
@@ -764,7 +798,7 @@ impl ComponentContainer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::component::StoredComponent;
+    use caelumora_model::component::StoredComponents;
     use caelumora_model::security::DummySecurityManager;
     use caelumora_model::session::SessionId;
     use caelumora_model::store::memory::MemoryStore;
@@ -800,6 +834,19 @@ mod tests {
         }
     }
 
+    /// A store holding the preconfigured components `id`, the list `nodes`.
+    async fn store_with(preconfigured: &[(&str, &[(&str, &str)])]) -> Arc<MemoryStore> {
+        let store = Arc::new(MemoryStore::new());
+        for (id, nodes) in preconfigured {
+            store.create_components(&SecurityContext::default(), &StoredComponents::new(id, config(nodes), Default::default())).await.unwrap();
+        }
+        store
+    }
+
+    fn reference(id: &str, target: &str) -> ComponentDescriptor {
+        descriptor(id, PRECONFIGURED_REF_KIND, json!({ "id": target }))
+    }
+
     #[tokio::test]
     async fn ref_kind_builds_fresh_using_the_callers_context_each_time() {
         let build_count = Arc::new(AtomicUsize::new(0));
@@ -807,12 +854,7 @@ mod tests {
         let seen_sessions: Arc<Mutex<Vec<SessionId>>> = Arc::new(Mutex::new(Vec::new()));
         let recorded = Arc::clone(&seen_sessions);
 
-        let store = Arc::new(MemoryStore::new());
-        store
-            .create_component(&SecurityContext::default(), &StoredComponent::new(descriptor("shared-marker", "counter", json!({})), Default::default()))
-            .await
-            .unwrap();
-
+        let store = store_with(&[("shared-marker", &[("marker", "counter")])]).await;
         let mut registry = ComponentRegistry::new(store);
         registry.register(
             ComponentKind::new("counter").provides::<dyn Marker>(),
@@ -824,44 +866,85 @@ mod tests {
                 Ok(facets)
             },
         );
-
-        let ref_a = descriptor("ref-a", PRECONFIGURED_REF_KIND, json!({ "id": "shared-marker" }));
-        let ref_b = descriptor("ref-b", PRECONFIGURED_REF_KIND, json!({ "id": "shared-marker" }));
+        let registry = Arc::new(registry);
+        let config = ComponentConfig { component_nodes: vec![reference("ref", "shared-marker")] };
 
         let session_a = SessionId::new();
         let session_b = SessionId::new();
-        let facets_a = registry.build(&ref_a, &context_with_session(session_a)).await.unwrap();
-        let facets_b = registry.build(&ref_b, &context_with_session(session_b)).await.unwrap();
+        let container_a = ComponentContainer::from_config(&config, &registry, &context_with_session(session_a)).await.unwrap();
+        let container_b = ComponentContainer::from_config(&config, &registry, &context_with_session(session_b)).await.unwrap();
 
         assert_eq!(build_count.load(Ordering::SeqCst), 2, "each ref must build fresh, not reuse a cached instance");
         assert_eq!(*seen_sessions.lock().unwrap(), vec![session_a, session_b], "the factory must see the caller's own context, not a synthetic one");
-        assert!(!Arc::ptr_eq(&facets_a.get::<dyn Marker>().unwrap(), &facets_b.get::<dyn Marker>().unwrap()));
+        assert!(!Arc::ptr_eq(&container_a.get_all::<dyn Marker>(None)[0].facet, &container_b.get_all::<dyn Marker>(None)[0].facet));
+    }
+
+    /// A registry of the kind `named`, whose components are named by their
+    /// id, resolving references in `store`.
+    fn named_registry(store: Arc<MemoryStore>) -> Arc<ComponentRegistry> {
+        let mut registry = ComponentRegistry::new(store);
+        registry.register(ComponentKind::new("named").provides::<dyn Named>(), |node, _| Ok(named(&node.id)));
+        Arc::new(registry)
+    }
+
+    fn names(container: &ComponentContainer) -> Vec<String> {
+        container.get_all::<dyn Named>(None).iter().map(|c| c.name()).collect()
     }
 
     #[tokio::test]
-    async fn ref_kind_errors_on_unknown_id() {
-        let store = Arc::new(MemoryStore::new());
-        let registry = ComponentRegistry::new(store);
-        let node = descriptor("ref-a", PRECONFIGURED_REF_KIND, json!({ "id": "does-not-exist" }));
-        let result = registry.build(&node, &test_context()).await;
-        assert!(matches!(result, Err(ComponentError::InvalidConfig(_))));
+    async fn a_ref_stands_for_its_components_in_their_order_where_it_is_written() {
+        let store = store_with(&[("basics", &[("stop", "named"), ("notes", "named")])]).await;
+        let registry = named_registry(store);
+        let config = ComponentConfig {
+            component_nodes: vec![descriptor("prompt", "named", json!(null)), reference("basics", "basics"), descriptor("memory", "named", json!(null))],
+        };
+
+        let container = ComponentContainer::from_config(&config, &registry, &test_context()).await.unwrap();
+        assert_eq!(names(&container), ["prompt", "stop", "notes", "memory"]);
+        let built_from: Vec<String> = container.components().component_nodes.into_iter().map(|node| node.id).collect();
+        assert_eq!(built_from, ["prompt", "stop", "notes", "memory"], "what it was built from, resolved");
     }
 
     #[tokio::test]
-    async fn ref_kind_rejects_a_preconfigured_descriptor_that_is_itself_a_ref() {
-        let store = Arc::new(MemoryStore::new());
-        store
-            .create_component(
-                &SecurityContext::default(),
-                &StoredComponent::new(descriptor("a", PRECONFIGURED_REF_KIND, json!({ "id": "b" })), Default::default()),
-            )
-            .await
-            .unwrap();
+    async fn a_component_brought_twice_through_a_ref_is_refused_with_the_ref_named() {
+        let store = store_with(&[("basics", &[("stop", "named"), ("notes", "named")]), ("more", &[("notes", "named")])]).await;
+        let registry = named_registry(store);
+        let notes = || descriptor("notes", "named", json!(null));
 
-        let registry = ComponentRegistry::new(store);
-        let node = descriptor("ref-a", PRECONFIGURED_REF_KIND, json!({ "id": "a" }));
-        let result = registry.build(&node, &test_context()).await;
-        assert!(matches!(result, Err(ComponentError::InvalidConfig(_))));
+        for (nodes, named) in [
+            (vec![reference("basics", "basics"), notes()], "basics"),
+            (vec![notes(), reference("basics", "basics")], "basics"),
+            (vec![reference("basics", "basics"), reference("more", "more")], "more"),
+            (vec![reference("basics", "basics"), reference("again", "basics")], "again"),
+        ] {
+            let error = ComponentContainer::from_config(&ComponentConfig { component_nodes: nodes }, &registry, &test_context()).await.unwrap_err();
+            assert!(
+                matches!(&error, ComponentError::Build { component, cause, .. } if component == named && matches!(cause.as_ref(), ComponentError::DuplicateId(_))),
+                "{error}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_ref_to_nothing_stored_is_refused_as_unavailable() {
+        let registry = named_registry(Arc::new(MemoryStore::new()));
+        let config = ComponentConfig { component_nodes: vec![reference("ref-a", "does-not-exist")] };
+        let error = ComponentContainer::from_config(&config, &registry, &test_context()).await.unwrap_err();
+        assert!(matches!(causes(&error)[..], [ComponentError::Build { .. }, ComponentError::Unavailable { .. }]), "{error}");
+        assert!(error.is_unavailable(), "through the component it was building");
+        assert!(error.to_string().contains("'does-not-exist'"), "names what it could not read: {error}");
+    }
+
+    #[tokio::test]
+    async fn preconfigured_components_cannot_include_a_ref() {
+        let store = Arc::new(MemoryStore::new());
+        let nested = ComponentConfig { component_nodes: vec![descriptor("plain", "named", json!(null)), reference("inner", "b")] };
+        store.create_components(&SecurityContext::default(), &StoredComponents::new("a", nested, Default::default())).await.unwrap();
+        let registry = named_registry(store);
+        let config = ComponentConfig { component_nodes: vec![reference("ref-a", "a")] };
+        let error = ComponentContainer::from_config(&config, &registry, &test_context()).await.unwrap_err();
+        assert!(matches!(causes(&error)[..], [ComponentError::Build { .. }, ComponentError::InvalidConfig(_)]), "{error}");
+        assert!(error.to_string().contains("'inner'"), "names the ref within: {error}");
     }
 
     /// A facet that says which component it came from.

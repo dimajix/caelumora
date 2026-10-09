@@ -159,6 +159,9 @@ pub struct MemberSnapshot {
     /// Whether the viewer may see which tools this participant has now
     /// (`ReadAgentTools`, issue 194) - only ever for agents.
     pub can_read_tools: bool,
+    /// Whether the viewer may see which components this participant was
+    /// built from (`ReadAgentComponents`, issue 270) - only ever for agents.
+    pub can_read_components: bool,
     /// Whether the viewer may approve this participant's tool calls
     /// (`ApproveToolCall`, issue 14) - only ever for agents taking part.
     pub can_approve: bool,

@@ -99,6 +99,9 @@ pub struct ExternalAgentActor {
     /// does: what they stage is in its transcript, given to the remote
     /// agent with its next call.
     commands: AgentCommands,
+    /// What it was built from, its preconfigured components resolved
+    /// (issue 270).
+    built_from: ComponentConfig,
     /// Its state in this channel, held by the run loop for as long as it
     /// runs.
     state: Mutex<AgentChannelState>,
@@ -193,6 +196,7 @@ impl ExternalAgentActor {
             agent_state,
             views,
             commands,
+            built_from: components.components(),
             state: Mutex::new(state),
             processing: ProcessingStateHolder::new(ActorState::Idle),
             current: std::sync::Mutex::new(CancellationToken::new()),
@@ -879,6 +883,10 @@ impl Actor for ExternalAgentActor {
 
     fn event_filter(&self) -> fn(&Envelope) -> bool {
         |event| matches!(event.event, ActorEvent::ResponseRequested | ActorEvent::CompleteMessageGenerated(_) | ActorEvent::MessageModified(_) | ActorEvent::MessageRevoked { .. } | ActorEvent::MessageReclassified { .. } | ActorEvent::RetryRequested { .. } | ActorEvent::CommandRequested { .. })
+    }
+
+    fn components(&self) -> ComponentConfig {
+        self.built_from.clone()
     }
 
     async fn commands(&self, issuer: &SecurityContext) -> Vec<Command> {

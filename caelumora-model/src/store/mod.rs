@@ -11,7 +11,7 @@ use std::fmt::Debug;
 
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
 use crate::channel::{Channel, ChannelId, ChannelState};
-use crate::component::StoredComponent;
+use crate::component::StoredComponents;
 use crate::security::SecurityContext;
 use crate::session::{Session, SessionId};
 use crate::template::{SessionTemplate, SessionTemplateId};
@@ -105,7 +105,7 @@ pub enum EntityKind {
     Workspace,
     Skill,
     Artifact,
-    Component,
+    Components,
 }
 
 impl EntityKind {
@@ -122,7 +122,7 @@ impl EntityKind {
             EntityKind::Workspace => "workspace",
             EntityKind::Skill => "skill",
             EntityKind::Artifact => "artifact",
-            EntityKind::Component => "component",
+            EntityKind::Components => "components",
         }
     }
 }
@@ -297,11 +297,11 @@ pub trait EntityStore : Debug + Sync + Send {
 /// (issue 164).
 #[async_trait]
 pub trait ComponentStore : Debug + Sync + Send {
-    async fn create_component(&self, ctx: &SecurityContext, value: &StoredComponent) -> StoreResult<()>;
-    async fn get_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<StoredComponent>;
-    async fn update_component(&self, ctx: &SecurityContext, value: &StoredComponent) -> StoreResult<()>;
-    async fn delete_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<bool>;
-    async fn list_components(&self, ctx: &SecurityContext) -> StoreResult<Vec<StoredComponent>>;
+    async fn create_components(&self, ctx: &SecurityContext, value: &StoredComponents) -> StoreResult<()>;
+    async fn get_components(&self, ctx: &SecurityContext, id: &str) -> StoreResult<StoredComponents>;
+    async fn update_components(&self, ctx: &SecurityContext, value: &StoredComponents) -> StoreResult<()>;
+    async fn delete_components(&self, ctx: &SecurityContext, id: &str) -> StoreResult<bool>;
+    async fn list_components(&self, ctx: &SecurityContext) -> StoreResult<Vec<StoredComponents>>;
 }
 
 /// The runtime state (issue 193): every kind `Journaled`, read whole and

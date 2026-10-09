@@ -62,11 +62,11 @@ async fn main() -> anyhow::Result<()> {
         Arc::clone(&secret_manager),
         Arc::clone(&security_manager),
         &config,
-        ComponentRegistry::built_in(component_store),
+        ComponentRegistry::built_in(Arc::clone(&component_store)),
     )?);
     let session_manager = Arc::new(SessionManager::new(Arc::clone(&runtime_manager)));
 
-    caelumora_runtime::seed::load(entity_store.as_ref(), &config.seed).await?;
+    caelumora_runtime::seed::load(entity_store.as_ref(), component_store.as_ref(), &config.seed).await?;
 
     let state = Arc::new(AppState {
         auth,
