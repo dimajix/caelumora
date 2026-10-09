@@ -244,6 +244,7 @@ published before anyone else can take it.
 | [269](269-agent-commands.md) | done | A user command can act on the channel but not on an agent - its transcript has one writer, the agent's actor - so neither `/compact` nor loading a skill for an agent can be built. |
 | [274](274-multiline-message-input.md) | done | The message field of the web UI is a single line: a long message scrolls sideways instead of wrapping, and no line break can be entered. |
 | [277](277-command-agent-by-name.md) | open | A command such as `/wakeup` finds the agent it names only by its exact handle, so `/wakeup Sassy` or `@Sassy` names no agent. |
+| [278](278-nudge-command.md) | open | A user cannot ask an agent to respond to the conversation as it stands without writing a message, such as an empty `@sassy?`. |
 
 ## Context and knowledge
 
