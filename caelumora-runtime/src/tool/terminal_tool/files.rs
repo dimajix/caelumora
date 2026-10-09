@@ -122,7 +122,7 @@ pub(super) fn tools(config: &TerminalToolConfig) -> Vec<Tool> {
             "List a directory of the session's workspace: each entry's name, whether it is a directory, its size and when it was changed.".to_string(),
             ToolParameters::object([("path", string("The directory, relative to the workspace's top; the top unless given"))], Vec::<&str>::new()),
             asks(LIST_FILES),
-            ToolPresentation::Default,
+            ToolPresentation::FileList,
         ),
         tool(
             READ_FILE,
@@ -150,7 +150,7 @@ pub(super) fn tools(config: &TerminalToolConfig) -> Vec<Tool> {
                 ["pattern"],
             ),
             asks(GREP_FILES),
-            ToolPresentation::Default,
+            ToolPresentation::FileSearch,
         ),
         tool(
             WRITE_FILE,
@@ -515,11 +515,13 @@ mod tests {
     }
 
     #[test]
-    fn reading_writing_and_replacing_are_presented_as_what_they_do_to_a_file() {
+    fn the_file_tools_are_presented_as_what_they_do_to_files() {
         let presented: BTreeMap<String, ToolPresentation> = terminal_tool(json!({})).tools().into_iter().map(|t| (t.name, t.presentation)).collect();
+        assert_eq!(presented[LIST_FILES], ToolPresentation::FileList);
         assert_eq!(presented[READ_FILE], ToolPresentation::FileRead);
+        assert_eq!(presented[GREP_FILES], ToolPresentation::FileSearch);
         assert_eq!(presented[WRITE_FILE], ToolPresentation::FileWrite);
         assert_eq!(presented[REPLACE_IN_FILE], ToolPresentation::FileEdit);
-        assert_eq!(presented[LIST_FILES], ToolPresentation::Default, "the others as every call");
+        assert_eq!(presented[DELETE_FILE], ToolPresentation::Default, "a deletion as every call");
     }
 }

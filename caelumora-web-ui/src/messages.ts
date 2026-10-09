@@ -155,6 +155,20 @@ export function formatTimestamp(timestamp: string | undefined): {short: string; 
   return {short: DATE_TIME.format(date), full: FULL_DATE_TIME.format(date)};
 }
 
+const SIZE = new Intl.NumberFormat(undefined, {maximumFractionDigits: 1});
+
+/** A size in bytes as people read it, e.g. `1.4 MB`. */
+export function formatSize(bytes: number): string {
+  const units = ['B', 'kB', 'MB', 'GB'];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1000 && unit < units.length - 1) {
+    value /= 1000;
+    unit += 1;
+  }
+  return `${SIZE.format(value)} ${units[unit]}`;
+}
+
 const TOKENS = new Intl.NumberFormat();
 const SHORT_TOKENS = new Intl.NumberFormat(undefined, {notation: 'compact', maximumFractionDigits: 1});
 

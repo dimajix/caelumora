@@ -229,6 +229,7 @@ argues against it, and what came out of the last attempt.
 | [243](243-member-state-in-member-list.md) | done | The members panel does not show what an agent is doing - idle, asleep, working, waiting - nor offers to stop one that works. |
 | [244](244-member-profile.md) | done | The web UI shows no participant's introduction, so a user learns of an agent in a channel only its name. |
 | [263](263-plan-steps-not-in-chat.md) | done | The chat shows a plan only as the raw arguments of its call and its steps' messages as one block, without saying which message belongs to which step. |
+| [265](265-file-list-and-search-presentations.md) | done | The web UI shows a listing and a search of the workspace as raw JSON, while reading, writing and replacing in a file are shown as what they do. |
 
 ## Context and knowledge
 

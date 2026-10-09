@@ -132,6 +132,14 @@ pub enum ToolPresentation {
     /// as text, whether it replaces every occurrence (`replace_all`), and
     /// how many `replacements` its result counts.
     FileEdit,
+    /// A directory listed (issue 265): its `path`, and the `entries` of its
+    /// result - each `name`, `is_dir`, `size` and `modified` - and whether
+    /// they are `complete`.
+    FileList,
+    /// Files searched (issue 265): its `pattern` and `path`, and the
+    /// `matches` of its result - each `path`, `line` and `text` - with how
+    /// many files were searched and skipped, and whether it is `complete`.
+    FileSearch,
 }
 
 impl ToolPresentation {
