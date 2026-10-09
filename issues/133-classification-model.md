@@ -326,3 +326,9 @@ channel dialog and message rendering, and the prompt notes of [66](66-channel-le
   `JoinChannel` carries the participant's roles (`RuntimeManager::roles_of`), checked when joining,
   creating, raising a channel and reading it over REST (`may_see_channel`). Roles from directories
   remain [142](142-roles.md).
+- **2026-10-09** — What an agent reads of another channel now depends on membership as well (issue
+  [264](264-agent-reads-channels-its-owner-may-not.md)): of what is a channel's - its history, its
+  notes, what was released from it - only where its owner may read the channel or it takes part in
+  it. `ReadChannel` carries the source channel's attributes for that; what the agent knows itself,
+  its memory and its private notes, stays decided by the channels' classifications alone, as this
+  issue wanted. A release adds no readers.

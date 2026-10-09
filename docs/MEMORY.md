@@ -158,12 +158,15 @@ nothing.
     through its channel (`ChannelLoop::session_loop()`, a weak handle the `SessionLoop` sets on each
     of its channels with `ChannelLoop::attach`, issue 123).
 *   **Who may read what.** Another channel is read as a whole if the agent's channel may read it by
-    their classifications (`AccessQuestions::may_channel_read`, `ActionType::ReadChannel`) - those
-    are what `SessionView::channels` lists; the rest (`all_channels`, `channel_named`) entry by
-    entry - message, note - as each entry's classification may be read. That depends on the channels
-    and the entry, not on who takes part in them, because an agent passes on what it reads to its
-    channel; an entry released below its channel is read where the channel as a whole is not (see
-    [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
+    their classifications (`AccessQuestions::may_channel_read`, `ActionType::ReadChannel`) and the
+    agent's owner may read it or the agent takes part in it (issue
+    [264](../issues/264-agent-reads-channels-its-owner-may-not.md)) - those are what
+    `SessionView::channels` lists; the rest (`all_channels`, `channel_named`) entry by entry -
+    message, note - as each entry's classification may be read, of a channel the agent may read at
+    all. An entry released below its channel is read where the channel as a whole is not (see
+    [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reading-another-channel)). What the agent wrote itself -
+    its private notes there (`ChannelView::may_read_entry` with `own`) - and what it remembered are
+    its own knowledge: read by the classifications alone, whoever takes part in the channel now.
 *   **No probing.** A channel that does not exist and one that may not be read, and of which nothing
     was released, are the same error (`ViewError::NoChannelNamed`), so channels cannot be probed. A
     tool passes it on with `?` (`From<ViewError> for ToolError`).

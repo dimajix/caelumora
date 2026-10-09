@@ -156,3 +156,6 @@ Phases 1 and 2 of the order of work in [19](19-memory-tiers.md), whose principle
   channel messages, and there are no write conflicts, since every entry has one writer. Step 10
   (session memory as a standing prompt part) stays deferred; private notes are
   [51](51-agent-private-notes.md).
+- **2026-10-09** — An agent reads the history and notes of another channel of its session only
+  where its owner may read that channel or it takes part in it, besides the flow rule (issue
+  [264](264-agent-reads-channels-its-owner-may-not.md)).

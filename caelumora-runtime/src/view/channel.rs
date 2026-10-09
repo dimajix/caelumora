@@ -131,11 +131,17 @@ impl ChannelView {
 
     /// Whether the viewer may read an entry of the channel classified
     /// `classification`: every one if it reads the channel as a whole, else
-    /// those released to where it reads from.
-    pub(super) async fn may_read_entry(&self, classification: &Classification) -> bool {
+    /// those released to where it reads from - of what is the channel's, as
+    /// far as the viewer may read the channel at all; of what the viewer's
+    /// agent wrote there itself (`own`, its private notes), by the flow rule
+    /// alone (issue 264).
+    pub(super) async fn may_read_entry(&self, classification: &Classification, own: bool) -> bool {
         match self.readable {
             Readable::Whole => true,
-            Readable::Released => self.views().may_read_from(&self.place(classification)).await,
+            Readable::Released => {
+                let channel = (!own).then_some(&self.channel.security_attributes);
+                self.views().may_read_from(&self.place(classification), channel).await
+            }
         }
     }
 
@@ -231,7 +237,7 @@ impl ChannelView {
             let mut released = Vec::with_capacity(history.items.len());
             for item in history.items {
                 if let HistoryEntry::Said { message, .. } = &item {
-                    if self.may_read_entry(&message.classification).await {
+                    if self.may_read_entry(&message.classification, false).await {
                         released.push(item);
                     }
                 }
@@ -541,7 +547,7 @@ impl MemberView {
     /// Of the notes the agent published, as its `state` holds them, those
     /// the viewer may read.
     async fn notes_in(&self, state: &AgentChannelState) -> Vec<Note> {
-        self.channel.released(state.notes.current()).await
+        self.channel.released(state.notes.current(), false).await
     }
 
     /// The approvals the member's turn waits for (issue 172), as stored;
@@ -567,7 +573,8 @@ impl MemberView {
     pub async fn private_notes(&self) -> ViewResult<(Vec<Note>, Option<Digest>)> {
         let agent = self.readable_agent().await?;
         let (notes, digest) = agent.private_notes().await?;
-        Ok((self.channel.released(notes).await, digest))
+        // The agent's own: what it wrote, whoever may read the channel.
+        Ok((self.channel.released(notes, true).await, digest))
     }
 
     /// What the member saw in the channel (issue 41): its transcript, its
@@ -682,14 +689,15 @@ impl MemberView {
 }
 
 impl ChannelView {
-    /// Of `notes`, those the viewer may read (`may_read_entry`).
-    async fn released(&self, notes: Vec<Note>) -> Vec<Note> {
+    /// Of `notes`, those the viewer may read (`may_read_entry`) - `own`
+    /// for those its agent wrote itself.
+    async fn released(&self, notes: Vec<Note>, own: bool) -> Vec<Note> {
         if self.readable == Readable::Whole {
             return notes;
         }
         let mut released = Vec::with_capacity(notes.len());
         for note in notes {
-            if self.may_read_entry(&note.classification).await {
+            if self.may_read_entry(&note.classification, own).await {
                 released.push(note);
             }
         }

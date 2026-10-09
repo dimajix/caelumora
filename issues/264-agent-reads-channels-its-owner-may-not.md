@@ -200,3 +200,21 @@ reads of another channel -, the documents on the subject, then the close.
   the reading channel, which would forbid what 255 accepts. A plan is written (*Plan*). Found on
   the way: the agent's private notes of other channels are read through the channels' views and
   need a way of their own, `Readable::Own`, so as not to depend on membership.
+- **2026-10-09** — Step 1 done: `ActionType::ReadChannel` carries `channel`, the attributes of the
+  source channel or `None`; `may_channel_read` and `Views::may_read_from` pass it on, the ownership
+  policy asks the flow rule and, given attributes, whether the principal or the caller may read
+  them. The views pass the channel's attributes for its history, its notes and the whole channel,
+  none for the agent's private notes (`ChannelView::may_read_entry` with `own`); the memory passes
+  none. New tests: in the model
+  `what_is_a_channels_is_read_by_an_agent_whose_owner_may_read_it_or_that_takes_part`; in the
+  views `an_agent_reads_of_a_channel_its_owner_may_not_read_only_what_it_wrote_there_itself`,
+  which fails with the old rule; in the suite
+  `an_agent_does_not_read_a_channel_its_owner_may_not_read` and
+  `an_agent_reads_a_channel_it_takes_part_in_whose_owner_may_not`, beside the reading test of 255,
+  all three sharing `with_a_reader_of`; the memory's test policy admits only what the agent knows
+  itself. CONFIDENTIALITY.md, MEMORY.md and SECURITY.md say it; 133 and 17 have an entry.
+  Deviating from the plan (C5): no `Readable::Own`. A channel the agent may not read at all is
+  reached entry by entry as before - `Readable::Released` - and nothing of what is the channel's
+  is released then, so it answers as absent; the agent's private notes there are read as its own
+  (`own`), whoever may read the channel. `SessionView::readable` and `private_notes_of` are
+  unchanged, and `all_channels` has no other caller. No stored data changes.

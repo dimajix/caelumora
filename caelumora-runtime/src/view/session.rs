@@ -150,13 +150,14 @@ impl SessionView {
     /// How the viewer may read `channel`: as a whole, entry by entry, or
     /// not at all (`None`). A user reads a channel as a whole or not at
     /// all; an agent reads what its channel may read by their
-    /// classifications, and the rest entry by entry.
+    /// classifications - of a channel its owner may read or it takes part
+    /// in (issue 264) -, and the rest entry by entry.
     async fn readable(&self, channel: &Channel) -> Option<Readable> {
         let security = self.views.security();
         let context = self.views.context();
         if self.views.viewer().place().is_some() {
             let source = Place { channel: channel.id, classification: channel.classification.clone(), session: self.privacy() };
-            let whole = self.views.may_read_from(&source).await;
+            let whole = self.views.may_read_from(&source, Some(&channel.security_attributes)).await;
             return Some(if whole { Readable::Whole } else { Readable::Released });
         }
         let readable = security.may_read_channel(context, &channel.security_attributes).await

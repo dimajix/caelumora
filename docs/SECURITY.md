@@ -111,7 +111,8 @@ The confidentiality actions (`ReadChannel`, `Classify`, `Reclassify`, `Publish`,
 decided by classifications, not by ownership: the ownership policy applies the
 `ConfidentialityRules` of the configured compartments and roles to them, and adds only what is about
 ownership - the actor putting a message into a channel is the one acting, a channel is reclassified
-by its owner. Another policy may apply other rules (issue
+by its owner, what is a channel's is read from another only by an agent whose owner may read that
+channel or that takes part in it (issue 264). Another policy may apply other rules (issue
 [138](../issues/138-confidentiality-policy-in-ownership.md)); see
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md#who-applies-the-rules).
 
@@ -171,10 +172,13 @@ something - they check the request, and carry it out with their own rights. In t
     agent reads - other channels, its notes and memory, the session's workspace through its channel
     -, the tools it calls (`CallTool`), the credentials they reach with (`ReadSecret`: an MCP
     server's token in `mcp_tool`, an external agent's through its endpoint) and the clearance it is
-    judged by are its owner's, whoever asked. An agent must not see more than the person
-    responsible for it (issue [142](../issues/142-roles.md)), and it passes on whatever it read to
-    whoever it answers next (issue [131](../issues/131-agent-memory-bypasses-policy.md)) - so what
-    it may read is fixed by its owner, not by who happens to ask.
+    judged by are its owner's, whoever asked - within its session too: of another channel, it reads
+    what its owner may read and what it takes part in itself, and what it knows itself (issue
+    [264](../issues/264-agent-reads-channels-its-owner-may-not.md)). An agent must not see more than
+    the person responsible for it (issue [142](../issues/142-roles.md)), and it passes on whatever
+    it read to whoever it answers next (issue
+    [131](../issues/131-agent-memory-bypasses-policy.md)) - so what it may read is fixed by its
+    owner, not by who happens to ask.
 2.  **The owner checks the request**, where a call is admitted (`GuardedToolExecutor::admit`): the
     policy, the owner's rules for the place - evaluated in their name, as their own answer (issue
     13) - and the approval of the owner or their contributors, for an agent of the system the

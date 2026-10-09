@@ -1361,15 +1361,12 @@ async fn an_agent_asked_by_an_agent_acts_for_its_own_owner() {
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
-/// An agent reads another channel with its owner's rights, whoever asked
-/// it (issue 255): bob asks alice's `reader` to read her channel "side",
-/// which he may not read himself - the agent reads it as alice, asked by
-/// bob, and as far as the flow rule lets it into the channel he asked in
-/// (`ReadChannel`, decided by the channels' classifications, not by who
-/// takes part in them - issue 133). What the decision accepts: her agent,
-/// asked without approval, lets every member read through it what it may.
-#[tokio::test]
-async fn an_agent_reads_another_channel_with_its_owners_rights_whoever_asked() {
+/// The agent `reader` of `owner`, which reads the channel "side" with
+/// `read_history` once it is asked, in a session alice shares with bob and
+/// he opened: "side" is alice's, and `reader` takes part in it if
+/// `in_side`; alice said something there, classified as the main channel
+/// is. With the main channel.
+async fn with_a_reader_of(owner: fn(&World) -> UserId, in_side: bool) -> (World, Arc<SessionLoop>, Arc<caelumora_runtime::channel::ChannelLoop>) {
     use caelumora_model::message::{Message, MessageRole};
     use caelumora_model::tool::{ToolCall, ToolVisibility};
 
@@ -1388,21 +1385,67 @@ async fn an_agent_reads_another_channel_with_its_owners_rights_whoever_asked() {
         ..world.personality("reading", None, &[]).await
     };
     world.store.update_personality(&World::system(), &reading).await.unwrap();
-    let reader = world.agent("reader", world.alice, &reading).await;
+    let reader = world.agent("reader", owner(&world), &reading).await;
     let session = world.shared_session(&[reader], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
-    let side = session.create_channel(&World::as_user(world.alice), ChannelSpec { name: "side".to_string(), components: quiet(), participants: vec![], classification: None, language: None, uses_workspace: None }).await.expect("hers alone");
+    let participants = if in_side { vec![ActorId::Agent(reader)] } else { vec![] };
+    let side = session.create_channel(&World::as_user(world.alice), ChannelSpec { name: "side".to_string(), components: quiet(), participants, classification: None, language: None, uses_workspace: None }).await.expect("hers");
+    side.user_actor(world.alice).expect("she takes part").send_message("only for side".to_string(), None).await.expect("said");
     world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let his = world.manager.views(Viewer::new(World::as_user(world.bob))).session(session.id()).await.unwrap();
     assert!(his.channel(side.id()).await.is_err(), "not his to read");
+    (world, session, main)
+}
 
+/// What the policy is asked when bob asks `reader` in `main` to read
+/// "side", once it was asked `line` and a little after: what side holds is
+/// asked of entry by entry after the channel as a whole.
+async fn asked_to_read_side(world: &World, main: &caelumora_runtime::channel::ChannelLoop, line: &str) -> Vec<String> {
     let (_, asked) = world.asked(async {
         main.user_actor(world.bob).expect("he takes part").send_message("@reader what is on side?".to_string(), None).await.expect("sent");
-        asked_for(&world, "alice as reader, asked by bob: ReadChannel yes").await;
+        asked_for(world, line).await;
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }).await;
+    asked
+}
+
+/// An agent reads another channel with its owner's rights, whoever asked
+/// it (issue 255): bob asks alice's `reader` to read her channel "side",
+/// which he may not read himself - the agent reads it as alice, asked by
+/// bob, and as far as the flow rule lets it into the channel he asked in
+/// (`ReadChannel`). What the decision accepts: her agent, asked without
+/// approval, lets every member read through it what she may.
+#[tokio::test]
+async fn an_agent_reads_another_channel_with_its_owners_rights_whoever_asked() {
+    let (world, session, main) = with_a_reader_of(|world| world.alice, false).await;
+    let asked = asked_to_read_side(&world, &main, "alice as reader, asked by bob: ReadChannel yes").await;
     let readers: Vec<&String> = asked.iter().filter(|line| line.contains("as reader")).collect();
     assert!(readers.iter().all(|line| line.starts_with("alice as reader, asked by bob:")), "with her rights, asked by him: {asked:?}");
-    assert!(readers.iter().any(|line| line.contains("ReadChannel")), "as the flow rule lets it into his channel: {asked:?}");
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// An agent does not read a channel of its session that its owner may not
+/// read and it takes no part in (issue 264): bob's `reader` reads nothing
+/// of alice's "side" - not as a whole, though the flow rule would let it,
+/// and none of what was said there entry by entry: a release adds no
+/// readers.
+#[tokio::test]
+async fn an_agent_does_not_read_a_channel_its_owner_may_not_read() {
+    let (world, session, main) = with_a_reader_of(|world| world.bob, false).await;
+    let asked = asked_to_read_side(&world, &main, "bob as reader: ReadChannel no").await;
+    let reading: Vec<&String> = asked.iter().filter(|line| line.contains("ReadChannel")).collect();
+    assert!(reading.len() >= 2 && reading.iter().all(|line| *line == "bob as reader: ReadChannel no"), "nothing of side, as a whole nor entry by entry: {asked:?}");
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// An agent reads a channel it takes part in from another, though its
+/// owner may not read it (issue 264): bob's `reader`, added to alice's
+/// "side" by her, reads it from the main channel when bob asks.
+#[tokio::test]
+async fn an_agent_reads_a_channel_it_takes_part_in_whose_owner_may_not() {
+    let (world, session, main) = with_a_reader_of(|world| world.bob, true).await;
+    let asked = asked_to_read_side(&world, &main, "bob as reader: ReadChannel yes").await;
+    assert!(asked.iter().filter(|line| line.contains("ReadChannel")).all(|line| line.ends_with(" yes")), "{asked:?}");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

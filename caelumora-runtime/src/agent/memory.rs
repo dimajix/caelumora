@@ -86,9 +86,9 @@ impl AgentMemory {
         // Where it was written, with its session as privacy sees it then or now.
         let source = |session: SessionPrivacy| Place { channel: origin.channel, classification: entry.classification.clone(), session };
         if origin.session.id == here.session.id {
-            return security.may_channel_read(context, here, &source(here.session.clone())).await;
+            return security.may_channel_read(context, here, &source(here.session.clone()), None).await;
         }
-        if !security.may_channel_read(context, here, &source(origin.session.clone())).await {
+        if !security.may_channel_read(context, here, &source(origin.session.clone()), None).await {
             return false;
         }
         let id = origin.session.id;
@@ -106,7 +106,7 @@ impl AgentMemory {
             },
         };
         match current {
-            Some(current) => security.may_channel_read(context, here, &source(current)).await,
+            Some(current) => security.may_channel_read(context, here, &source(current), None).await,
             None => true,
         }
     }

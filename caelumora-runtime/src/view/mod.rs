@@ -44,7 +44,7 @@ use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::removal::Removal;
-use caelumora_model::security::{AccessQuestions, Place, SecurityContext, SecurityManager};
+use caelumora_model::security::{AccessQuestions, Place, SecurityAttributes, SecurityContext, SecurityManager};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::snapshot::{AgentSnapshot, DeletedSnapshot};
 use caelumora_model::workspace::WorkspaceId;
@@ -422,11 +422,13 @@ impl Views {
     }
 
     /// Whether the viewer, reading from its place, may read what `source`
-    /// holds (`AccessQuestions::may_channel_read`, issue 133). A viewer
-    /// without a place reads by other questions and is not asked this one.
-    pub(crate) async fn may_read_from(&self, source: &Place) -> bool {
+    /// holds (`AccessQuestions::may_channel_read`, issue 133): of the
+    /// channel with `channel` attributes, or - `None` - what the viewer's
+    /// agent knows itself of it (issue 264). A viewer without a place reads
+    /// by other questions and is not asked this one.
+    pub(crate) async fn may_read_from(&self, source: &Place, channel: Option<&SecurityAttributes>) -> bool {
         let Some(from) = &self.viewer.from else { return true };
-        self.security.may_channel_read(self.viewer.context(), from, source).await
+        self.security.may_channel_read(self.viewer.context(), from, source, channel).await
     }
 
     /// The name of `actor`; `None` for a user or agent that no longer
@@ -926,6 +928,66 @@ mod tests {
         let none = for_alice.member(ActorId::User(bob.id)).await.unwrap().context().await.expect_err("a user saw nothing");
         assert!(matches!(none, ViewError::NoContext { .. }), "{none}");
         assert!(matches!(for_alice.member(ActorId::System).await, Err(ViewError::MemberNotFound { .. })));
+    }
+
+    /// An agent reads another channel of its session only where its owner
+    /// may read it or it takes part in it itself (issue 264): bob's agent,
+    /// which left alice's channel "hers", reads nothing of it from "team" -
+    /// not even what is classified as "team" is, which a release would not
+    /// change - but still what it wrote there itself, its private notes.
+    #[tokio::test]
+    async fn an_agent_reads_of_a_channel_its_owner_may_not_read_only_what_it_wrote_there_itself() {
+        use caelumora_model::channel::{ChannelState, FormerParticipant};
+        use caelumora_model::ledger::Change;
+        use caelumora_model::message::{Message, MessageId};
+        use caelumora_model::note::{NoteId, NoteOrigin};
+        use caelumora_model::privacy::SessionPrivacy;
+        use caelumora_model::removal::Removal;
+        use caelumora_model::store::StateStore;
+
+        let (store, manager) = owned_runtime();
+        let (alice, bob) = (user("alice"), user("bob"));
+        let helper = an_agent_of(&store, ActorId::User(bob.id)).await;
+        let mut session = make_session("shared", ActorId::User(alice.id), vec![ActorId::User(bob.id), ActorId::Agent(helper.id)]);
+        session.participants = record_users(&store, &[&alice, &bob]).await;
+        session.participants.push(Participant::Agent(helper.id));
+        let template = main_channel(&session);
+        let team = Channel { id: ChannelId::new(), name: Name::new("team").unwrap(), ..template.clone() };
+        let hers = Channel {
+            id: ChannelId::new(),
+            name: Name::new("hers").unwrap(),
+            participants: vec![Participant::User(alice.id)],
+            security_attributes: SecurityAttributes::owned_by(ActorId::User(alice.id)),
+            former: vec![FormerParticipant { participant: Participant::Agent(helper.id), left: Removal::now(ActorId::User(alice.id)) }],
+            ..template.clone()
+        };
+        session.channels = vec![team.id, hers.id];
+        let system = SecurityContext::system();
+        store.create_session(&system, &session).await.unwrap();
+        for channel in [&team, &hers] {
+            store.create_channel(&system, channel).await.unwrap();
+        }
+        // Classified as team is: the flow rule alone would let team read it all.
+        let mut state = ChannelState::new(hers.id);
+        state.history.extend(vec![Message { id: MessageId::new(), content: Some("hers alone".to_string()), ..Message::new(hers.classification.clone()) }]);
+        store.put_channel_state(hers.id, &mut state).await.unwrap();
+        let mut agent_state = caelumora_model::agent::AgentChannelState::default();
+        let note = |text: &str| Change::Add { id: NoteId(1), text: text.to_string(), classification: hers.classification.clone() };
+        agent_state.notes.push(note("noted for all"), NoteOrigin::default(), MessageId::default());
+        agent_state.private_notes.push(note("noted for itself"), NoteOrigin::default(), MessageId::default());
+        store.put_agent_channel_state(helper.id, hers.id, &mut agent_state).await.unwrap();
+
+        let context = SecurityContext::new(ActorId::User(bob.id), session.id, team.id).next(ActorId::Agent(helper.id), ActorId::User(bob.id));
+        let from = Place { channel: team.id, classification: team.classification.clone(), session: SessionPrivacy::of(&session) };
+        let from_team = manager.views(Viewer::from_place(context, from)).session(session.id).await.unwrap();
+        let names: Vec<String> = from_team.channels().await.iter().map(|c| c.name().to_string()).collect();
+        assert_eq!(names, ["team"], "not hers as a whole");
+        let reached = from_team.channel_named("hers").await.expect("reached entry by entry, as any channel");
+        assert!(matches!(reached.history().await, Err(ViewError::NoChannelNamed(_))), "nothing of its history: it answers as absent");
+        assert!(matches!(reached.notes().await, Err(ViewError::NoChannelNamed(_))), "nor of its notes");
+        let own = from_team.private_notes_of(helper.id).await.expect("its own to read");
+        let own: Vec<_> = own.iter().map(|(channel, notes, _)| (channel.name().as_str(), notes[0].text.as_str())).collect();
+        assert_eq!(own, [("hers", "noted for itself")], "what it wrote there itself, by the flow rule alone");
     }
 
     #[tokio::test]

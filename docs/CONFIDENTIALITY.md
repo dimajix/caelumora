@@ -114,9 +114,13 @@ code path can leave a message classified by accident.
 The classification of a channel or a message can be changed afterwards (`ActionType::Reclassify {
 target, current, new, channel, attributes }`, issue 133). Lowering it - a lower level, a compartment
 added to the audience, or none left - *releases* what it holds to a wider circle; raising it
-retracts nothing already read. The ownership policy allows a channel's owner to reclassify the
-channel and every message in it, and a message's author to reclassify their own message - a message
-never above its channel, and only with configured compartments.
+retracts nothing already read. The circle is one of classification: a release adds no readers to the
+channel it is in - an agent reads a released entry of another channel only where it may read that
+channel (see [Reading another channel](#reading-another-channel), issue
+[264](../issues/264-agent-reads-channels-its-owner-may-not.md)). The ownership policy allows a
+channel's owner to reclassify the channel and every message in it, and a message's author to
+reclassify their own message - a message never above its channel, and only with configured
+compartments.
 
 *   **A channel** (`ChannelLoop::reclassify`, REST `PUT …/channels/{cid}/classification`) is stored
     (`UpdateChannel`) and announced as `GlobalEvent::ChannelUpdated` with
@@ -300,15 +304,22 @@ entry. It is `ActionType::ReadChannel { reader, source }`, each side a `Place`: 
 how the entry - or the reading channel - is classified, and the channel's session as privacy sees it
 (`SessionPrivacy` - its id, policy, owner and people, issue 134), asked with
 `AccessQuestions::may_channel_read`. It is asked in the name of the agent that reads - the security
-context it acts in, its owner's - because the agent passes on what it reads (issue 131). A channel
-may always read itself. Otherwise the ownership policy allows it if
+context it acts in, its owner's - because the agent passes on what it reads (issue 131). With it go
+the attributes of the source channel when what is read is the channel's - its history, its notes,
+what was released from it -, none for what the agent knows itself of it: what it remembered there,
+its private notes. A channel may always read itself. Otherwise the ownership policy allows it if
 
-*   the entry's classification flows into the reader's, and
+*   the entry's classification flows into the reader's,
 *   both channels belong to the same session, or the source's session lets the reader's read it
-    (`SessionPrivacy::permits`).
+    (`SessionPrivacy::permits`), and
+*   for what is the channel's, the agent's owner may read the channel or the agent takes part in it
+    now (issue [264](../issues/264-agent-reads-channels-its-owner-may-not.md)): an agent reads what
+    its owner may, and besides what it takes part in itself. What it knows itself is not the
+    channel's, and stays readable whoever joins or leaves - it heard or wrote it.
 
 So a channel reads the entries of another that were released to it, even where it may not read that
-channel as a whole. Whether it may, is the question asked with the source channel's own
+channel as a whole - but only where its agent may read that channel at all: a release adds no
+readers. Whether it may, is the question asked with the source channel's own
 classification: a channel is listed among the readable ones (`SessionView::channels`) only then, and
 one that may not be read as a whole and of which nothing was released reads as absent, so that
 channels cannot be probed.
