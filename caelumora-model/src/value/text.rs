@@ -61,6 +61,12 @@ impl<R: TextRule> Text<R> {
         Ok(Self { text: text.to_string(), rule: PhantomData })
     }
 
+    /// `text`, unchecked: for a text the code itself fixes, which a test
+    /// checks instead (see `Name::fixed`).
+    pub(super) fn fixed(text: &'static str) -> Self {
+        Self { text: text.to_string(), rule: PhantomData }
+    }
+
     pub fn as_str(&self) -> &str {
         &self.text
     }

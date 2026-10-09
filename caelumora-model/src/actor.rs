@@ -8,6 +8,7 @@ use crate::security::SecurityContext;
 use crate::session::SessionId;
 use crate::user::UserId;
 use crate::turn::GivenUpReason;
+use crate::value::name::Name;
 use crate::work::TurnId;
 use chrono::{DateTime, Utc};
 use derive_more::Display;
@@ -31,6 +32,12 @@ pub enum ActorId {
 impl ActorId {
     /// The name every approver is shown with.
     pub const APPROVER_NAME: &'static str = "Approver";
+
+    /// The name every approver is shown with, as a name: what an approver's
+    /// actor is called in its channel.
+    pub fn approver_name() -> Name {
+        Name::fixed(Self::APPROVER_NAME)
+    }
 
     /// The name of an actor that is no entity and so has no name of its own:
     /// an approver, the runtime itself, nobody. `None` for users and agents,
@@ -396,12 +403,12 @@ pub struct EventContext {
 }
 
 impl EventContext {
-    pub fn new(session_id: SessionId, channel_id: ChannelId, sender_id:ActorId, sender_name:String) -> Self {
+    pub fn new(session_id: SessionId, channel_id: ChannelId, sender_id:ActorId, sender_name: impl Into<String>) -> Self {
         Self {
             session_id,
             channel_id,
             sender_id,
-            sender_name,
+            sender_name: sender_name.into(),
             event_id: Uuid::new_v4(),
             correlation_id: Uuid::default(),
             span_id: Uuid::new_v4(),
@@ -410,12 +417,12 @@ impl EventContext {
         }
     }
 
-    pub fn next(&self, sender_id:ActorId, sender_name:String) -> Self {
+    pub fn next(&self, sender_id:ActorId, sender_name: impl Into<String>) -> Self {
         Self {
             session_id: self.session_id,
             channel_id: self.channel_id,
             sender_id,
-            sender_name,
+            sender_name: sender_name.into(),
             event_id: Uuid::new_v4(),
             correlation_id: self.event_id,
             span_id: self.span_id,
@@ -624,6 +631,12 @@ impl ProcessingStateHolder {
 mod tests {
     use super::*;
     use crate::actor::ActorState;
+
+    #[test]
+    fn the_approvers_name_is_a_name() {
+        assert_eq!(Name::new(ActorId::APPROVER_NAME).map(|name| name.as_str().to_string()), Ok(ActorId::approver_name().as_str().to_string()));
+        assert_eq!(ActorId::approver_name(), "approver");
+    }
 
     #[test]
     fn every_state_is_kept_as_its_own_byte() {

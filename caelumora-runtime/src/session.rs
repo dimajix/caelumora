@@ -1507,7 +1507,7 @@ mod tests {
         let renamed = async {
             loop {
                 runtime.event_bus().publish(GlobalEvent::UserUpdated(owner, UserUpdateEvent::NameChanged("renamed".to_string())), Default::default());
-                let names: Vec<String> = [&first, &second].iter().map(|c| c.user_actor(owner).expect("takes part").name()).collect();
+                let names: Vec<String> = [&first, &second].iter().map(|c| c.user_actor(owner).expect("takes part").name().to_string()).collect();
                 if names.iter().all(|n| n == "renamed") {
                     break;
                 }

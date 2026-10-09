@@ -32,6 +32,7 @@ use caelumora_model::turn::GivenUpReason;
 use caelumora_model::plan::PlanProgress;
 use caelumora_model::security::{AccessQuestions, SecurityContext};
 use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState, ToolCallStatus, ToolResultStatus, ToolSet};
+use caelumora_model::value::name::Name;
 use tracing::{debug, info, warn, Instrument};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -860,8 +861,8 @@ impl Actor for AgentActor {
     fn kind(&self) -> String {
         "agent".to_string()
     }
-    fn name(&self) -> String {
-        self.agent_controller.name()
+    fn name(&self) -> Name {
+        self.agent_controller.load().name.name.clone()
     }
 
     fn event_filter(&self) -> fn(&Envelope) -> bool {

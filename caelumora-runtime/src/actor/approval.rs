@@ -10,6 +10,7 @@ use caelumora_model::channel::Participant;
 use crate::controller::{ChannelController, ControllerManager};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityAttributes, SecurityContext, SecurityManager};
+use caelumora_model::value::name::Name;
 use chrono::{DateTime, Duration, Utc};
 use tracing::{info, warn};
 use std::collections::HashMap;
@@ -345,8 +346,8 @@ impl Actor for ApproverActor {
         "approver".to_string()
     }
 
-    fn name(&self) -> String {
-        ActorId::APPROVER_NAME.to_string()
+    fn name(&self) -> Name {
+        ActorId::approver_name()
     }
 
     fn state(&self) -> ActorState {

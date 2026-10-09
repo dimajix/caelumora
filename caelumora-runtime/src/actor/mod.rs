@@ -24,13 +24,14 @@ use caelumora_model::command::Command;
 use caelumora_model::message::Message;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::tool::ToolSet;
+use caelumora_model::value::name::Name;
 use caelumora_model::work::TurnId;
 
 #[async_trait]
 pub(crate) trait Actor: Any + Debug + Send + Sync {
     fn id(&self) -> ActorId;
     fn kind(&self) -> String;
-    fn name(&self) -> String;
+    fn name(&self) -> Name;
 
     /// Returns the predicate that declares which events this actor wants to receive.
     /// The ChannelLoop wraps the actor's input sender in a `FilteringEventSender` using
@@ -139,14 +140,14 @@ impl Answering {
     /// The contexts of `request`, continued in the name of the actor `id`,
     /// called `name`, with the rights of `principal` - an agent's owner's
     /// (issue 255). Whoever sent the request stays its initiator.
-    pub(crate) fn to(request: &Envelope, id: ActorId, name: String, principal: ActorId) -> Self {
+    pub(crate) fn to(request: &Envelope, id: ActorId, name: impl Into<String>, principal: ActorId) -> Self {
         Self { event_context: request.context.next(id, name), security_context: request.security.next(id, principal) }
     }
 
     /// The contexts of the actor `id`, called `name`, speaking of itself
     /// rather than answering - nobody asked: those of its channel, in its
     /// own `security` context.
-    pub(crate) fn own(id: ActorId, name: String, security: &SecurityContext) -> Self {
+    pub(crate) fn own(id: ActorId, name: impl Into<String>, security: &SecurityContext) -> Self {
         Self { event_context: EventContext::new(security.session_id, security.channel_id, id, name), security_context: security.clone() }
     }
 

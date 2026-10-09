@@ -47,7 +47,7 @@ use tokio_util::task::TaskTracker;
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChannelMember {
     pub id: ActorId,
-    pub name: String,
+    pub name: Name,
     /// The handle the participant is mentioned by (see `caelumora_model::mention`),
     /// or `None` if it cannot be mentioned - approvers, and names that yield
     /// no handle.
@@ -830,7 +830,7 @@ impl ChannelLoop {
         let asleep = self.actors.load().values()
             .map(|a| &a.actor)
             .filter(|a| a.state() == ActorState::Sleeping)
-            .map(|a| a.name())
+            .map(|a| a.name().to_string())
             .collect();
         self.wake_for_delivery();
         Ok(asleep)
@@ -921,11 +921,29 @@ impl ChannelLoop {
         self.actors.load().values()
             .map(|ChannelActor { actor: a, .. }| {
                 let name = a.name();
-                let handle = Some(handle_of(&name))
+                let handle = Some(name.handle())
                     .filter(|h| Self::is_mentionable(a.id()) && !h.is_empty());
                 ChannelMember { id: a.id(), name, handle, kind: a.kind() }
             })
             .collect()
+    }
+
+    /// The agents of the channel `text` names, as a user names one in a
+    /// command (issue 277): those whose name it is - as a `Name`, regardless
+    /// of case and spelling - or, if there are none, those whose handle it
+    /// is, with or without its `@`, normalised as a mention is (`handle_of`).
+    /// Several if it is ambiguous, none if it names no agent; sorted by name.
+    pub fn agents_named(&self, text: &str) -> Vec<ChannelMember> {
+        let mut members: Vec<_> = self.members().into_iter().filter(|m| m.id.as_agent_id().is_some()).collect();
+        members.sort_by(|l, r| l.name.as_str().cmp(r.name.as_str()));
+        if let Ok(name) = Name::new(text) {
+            let named: Vec<_> = members.iter().filter(|m| m.name == name).cloned().collect();
+            if !named.is_empty() {
+                return named;
+            }
+        }
+        let handle = handle_of(text);
+        members.into_iter().filter(|m| !handle.is_empty() && m.handle.as_deref() == Some(handle.as_str())).collect()
     }
 
     /// The agents of the channel that carry out commands themselves (issue
@@ -962,7 +980,7 @@ impl ChannelLoop {
     }
 
     fn mention_directory(actors: &Actors) -> MentionDirectory {
-        let names: Vec<(ActorId, String)> = actors.values()
+        let names: Vec<(ActorId, Name)> = actors.values()
             .map(|a| &a.actor)
             .filter(|a| Self::is_mentionable(a.id()))
             .map(|a| (a.id(), a.name()))
@@ -1979,7 +1997,7 @@ mod tests {
     impl Actor for SaysOnce {
         fn id(&self) -> ActorId { self.0 }
         fn kind(&self) -> String { "says_once".to_string() }
-        fn name(&self) -> String { "talker".to_string() }
+        fn name(&self) -> Name { Name::new("talker").expect("a name") }
         fn event_filter(&self) -> fn(&Envelope) -> bool { |_| true }
         async fn run(&self, mut rx: Box<dyn crate::transport::EventReceiver>, tx: Box<dyn EventSender>) -> Result<()> {
             use caelumora_model::actor::EventContext;
@@ -2028,7 +2046,7 @@ mod tests {
     impl Actor for Says {
         fn id(&self) -> ActorId { self.0 }
         fn kind(&self) -> String { "says".to_string() }
-        fn name(&self) -> String { "talker".to_string() }
+        fn name(&self) -> Name { Name::new("talker").expect("a name") }
         fn event_filter(&self) -> fn(&Envelope) -> bool { |_| true }
         async fn run(&self, mut rx: Box<dyn crate::transport::EventReceiver>, tx: Box<dyn EventSender>) -> Result<()> {
             let said = std::mem::take(&mut *self.1.lock().unwrap());
@@ -2083,6 +2101,7 @@ mod tests {
     #[derive(Debug)]
     struct Sleeper {
         id: ActorId,
+        name: &'static str,
         woken: AtomicBool,
         cancelled: AtomicBool,
     }
@@ -2091,7 +2110,7 @@ mod tests {
     impl Actor for Sleeper {
         fn id(&self) -> ActorId { self.id }
         fn kind(&self) -> String { "sleeper".to_string() }
-        fn name(&self) -> String { "sleeper".to_string() }
+        fn name(&self) -> Name { Name::new(self.name).expect("a name") }
         fn event_filter(&self) -> fn(&Envelope) -> bool { |_| true }
         async fn run(&self, _rx: Box<dyn crate::transport::EventReceiver>, _tx: Box<dyn EventSender>) -> Result<()> { Ok(()) }
         fn state(&self) -> ActorState {
@@ -2103,7 +2122,57 @@ mod tests {
     }
 
     fn sleeper() -> Arc<Sleeper> {
-        Arc::new(Sleeper { id: ActorId::Agent(caelumora_model::agent::AgentId::new()), woken: AtomicBool::new(false), cancelled: AtomicBool::new(false) })
+        sleeper_named("sleeper")
+    }
+
+    fn sleeper_named(name: &'static str) -> Arc<Sleeper> {
+        Arc::new(Sleeper { id: ActorId::Agent(caelumora_model::agent::AgentId::new()), name, woken: AtomicBool::new(false), cancelled: AtomicBool::new(false) })
+    }
+
+    /// A channel of alice's with the sleeping agents `names`, as approvers -
+    /// who they are does not matter to finding them.
+    async fn channel_with_sleepers(names: &[&'static str]) -> (Arc<ChannelLoop>, UserId, Vec<Arc<Sleeper>>) {
+        use caelumora_model::approval::{ApprovalStrategy, ApproverId};
+        let alice = user("alice");
+        let channel = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
+        let sleepers: Vec<_> = names.iter().map(|name| sleeper_named(name)).collect();
+        for sleeper in &sleepers {
+            channel.adopt(Arc::<Sleeper>::clone(sleeper), Member::Approver(Approver { id: ApproverId::new(), strategy: ApprovalStrategy::Any })).await;
+        }
+        (channel, alice.id, sleepers)
+    }
+
+    #[tokio::test]
+    async fn an_agent_is_found_by_its_name_or_its_handle_however_it_is_written() {
+        let (channel, _, _) = channel_with_sleepers(&["Sassy", "Dr. Who", "Dr-Who", "Zoë"]).await;
+        let named = |text: &str| channel.agents_named(text).into_iter().map(|m| m.name.to_string()).collect::<Vec<_>>();
+
+        for text in ["Sassy", "sassy", "SASSY", "@Sassy", "@sassy"] {
+            assert_eq!(named(text), ["Sassy"], "{text}");
+        }
+        assert_eq!(named("Zoe"), ["Zoë"], "by its ASCII form, as a name");
+        assert_eq!(named("@zoë"), ["Zoë"], "and as a mention");
+        assert_eq!(named("dr. who"), ["Dr. Who"], "a name before a handle: no ambiguity");
+        assert_eq!(named("dr-who"), ["Dr-Who"], "the other's name");
+        assert_eq!(named("@dr-who"), ["Dr-Who", "Dr. Who"], "the handle of both: ambiguous");
+        assert!(named("alice").is_empty(), "a user is no agent");
+        assert!(named("nobody").is_empty() && named("@").is_empty() && named("").is_empty(), "nobody");
+    }
+
+    #[tokio::test]
+    async fn wakeup_wakes_the_agent_named_and_refuses_an_ambiguous_name() {
+        let (channel, alice, sleepers) = channel_with_sleepers(&["Sassy", "Dr. Who", "Dr-Who"]).await;
+        let actor = channel.user_actor(alice).unwrap();
+
+        let reply = actor.execute_command("wakeup", "@Sassy").await.expect("found regardless of case");
+        assert_eq!(reply.output.as_deref(), Some("Woke Sassy."));
+        assert!(sleepers[0].woken.load(Ordering::SeqCst) && !sleepers[1].woken.load(Ordering::SeqCst), "it alone");
+        let reply = actor.execute_command("wakeup", "Dr. Who").await.expect("by its name, spaces and all");
+        assert_eq!(reply.output.as_deref(), Some("Woke Dr. Who."));
+
+        let error = actor.execute_command("wakeup", "@dr-who").await.expect_err("ambiguous");
+        assert!(matches!(command_error(&error), crate::command::CommandError::InvalidArguments { reason, .. } if reason.contains("Dr-Who and Dr. Who")), "{error}");
+        assert!(!sleepers[2].woken.load(Ordering::SeqCst), "nobody is picked");
     }
 
     #[tokio::test]
@@ -4275,6 +4344,8 @@ mod tests {
 
         let unnamed = error(actor.execute_command("mark", "twice").await);
         assert!(matches!(command_error(&unnamed), crate::command::CommandError::InvalidArguments { reason, .. } if reason.contains("@helper") && reason.contains("@all")), "{unnamed}");
+        let named = actor.execute_command("mark", "@Helper twice").await.expect("named regardless of case (issue 277)");
+        assert!(named.span_id.is_some(), "it is asked: {named:?}");
         let nobody = error(actor.execute_command("mark", "@nobody twice").await);
         assert!(matches!(command_error(&nobody), crate::command::CommandError::InvalidArguments { reason, .. } if reason.contains("@helper")), "{nobody}");
         let unknown = error(actor.execute_command("nonsense", "@helper").await);

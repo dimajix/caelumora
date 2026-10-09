@@ -1,6 +1,6 @@
 # 277 — A command finds the agent it names only by its exact handle, not by its name
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -60,3 +60,11 @@ comparison would need no conversion on the member's side; whether that is worth 
 
 - 2026-10-09: Opened at the maintainer's request: `/wakeup` compares the agent it is given as a
   string with the handle, so it depends on case; it should be taken as a `Name` and looked up by it.
+- 2026-10-09: Done. `ChannelLoop::agents_named` finds the agents a text names - as a `Name` first,
+  then as a handle (`handle_of`) - and both `/wakeup` and `UserActor::request_command` use it; an
+  ambiguous text is refused with the names it matches. `Actor::name()` and `ChannelMember::name`
+  are now a `Name`; the agent's and the user's actor read it from their entity, the approver's is
+  `ActorId::approver_name()`, a name the code fixes (`Name::fixed`, checked by a test).
+  `EventContext::new`/`next` and `Answering::own`/`to` take the sender's name as
+  `impl Into<String>`, so that an actor hands its `Name` over as it is. `AgentController::name()`
+  and `UserController::username()` still answer a `String`.

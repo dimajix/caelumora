@@ -14,6 +14,7 @@ use caelumora_model::question::{QuestionError, QuestionId, QuestionRequest, Resp
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Reclassified, SecurityAttributes, SecurityContext, SecurityManager};
 use caelumora_model::session::SessionId;
+use caelumora_model::value::name::Name;
 use crate::controller::{ChannelController, ControllerManager, UserController};
 use chrono::Utc;
 use tracing::{debug, info, warn};
@@ -191,7 +192,7 @@ impl UserActor {
             content: Some(message),
             id: MessageId(Uuid::new_v4()),
             sender_id: self.id(),
-            sender_name: self.name(),
+            sender_name: self.name().to_string(),
             timestamp: Utc::now(),
             ..Message::new(classification)
         };
@@ -528,7 +529,14 @@ impl UserActor {
         let (whom, rest) = args.split_once(char::is_whitespace).unwrap_or((args, ""));
         let targets: Vec<_> = match whom.strip_prefix('@') {
             Some("all") => understanding,
-            Some(handle) => understanding.into_iter().filter(|(m, _)| m.handle.as_deref() == Some(handle)).collect(),
+            Some(agent) => {
+                let named = channel.agents_named(agent);
+                if named.len() > 1 {
+                    let names: Vec<&str> = named.iter().map(|m| m.name.as_str()).collect();
+                    return Err(invalid(format!("{whom} names several agents: {}", names.join(", "))).into());
+                }
+                understanding.into_iter().filter(|(m, _)| named.iter().any(|n| n.id == m.id)).collect()
+            }
             None => return Err(invalid(format!("name the agent: {}, or @all", handles.join(", "))).into()),
         };
         if targets.is_empty() {
@@ -545,7 +553,7 @@ impl UserActor {
                     asked += 1;
                 }
                 Err(e) if single => return Err(e.into()),
-                Err(_) => refused.push(member.handle.map(|h| format!("@{h}")).unwrap_or(member.name)),
+                Err(_) => refused.push(member.handle.map(|h| format!("@{h}")).unwrap_or_else(|| member.name.to_string())),
             }
         }
         if asked == 0 {
@@ -646,8 +654,8 @@ impl Actor for UserActor {
         "user".to_string()
     }
 
-    fn name(&self) -> String {
-        self.user.username()
+    fn name(&self) -> Name {
+        self.user.load().username.clone()
     }
 
     fn state(&self) -> ActorState {
