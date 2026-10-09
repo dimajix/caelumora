@@ -68,10 +68,11 @@ unknown (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md#what-leaves-through-tools))
 
 ### Tool visibility
 
-Every tool declares a `ToolVisibility` (issues 54, 133): whether the call itself is published to the
-channel, and whether its content - arguments and result - is, or only the agent's owner sees it.
+Every tool declares a `ToolVisibility` (issues 54, 133, 281): whether the call itself is published
+to the channel, and whether its arguments and its result are, or only the agent's owner sees them.
 
 *   `SHOWN`, the default: others see the call in full.
+*   `WITHOUT_RESULT`: others see that the tool was called and with what, but not what it returned.
 *   `CALL_ONLY`: others see that the tool was called, but not with what.
 *   `HIDDEN`: the whole call stays with the agent.
 
@@ -434,7 +435,7 @@ lost.
 Once the call has finished - run, declined, or abandoned - its result keeps the record of the
 questions and their answers (`ToolCallResult::answers`, issue 165): who answered or declined, and
 what, whatever the tool put into `content`. The record goes with the result into the transcript
-and the history, and is published as `content` is - left out where the content is the owner's. It
+and the history, and is published as `content` is - left out where the result is the owner's. It
 is never given to a model: a backend gives the result without it
 (`ToolCallResult::for_the_model`).
 
@@ -651,9 +652,9 @@ agent alike.
 | `publish_artifact` | `artifact_tool` | `path`, `name`, `description` (optional) | as configured, yes by default | `SHOWN` | Publishes a file of the workspace as a version of an artifact: a fixed copy, kept beyond the workspace (issue 271, see [Artifacts](#artifacts)). |
 | `delete_file` | `terminal_tool` | `path` | as configured, yes by default | `SHOWN` | Deletes a file or an empty directory of the workspace. |
 | `list_skills` | `skills` | - | no | `SHOWN` | Lists the skills the agent may load here, each with what it is for ([SKILLS.md](SKILLS.md)). |
-| `load_skill` | `skills` | `name` | no | `CALL_ONLY` | Gives the skill's text as plain text, classified as the skill; recorded as knowledge. |
-| `create_skill` | `skills` | `name`, `description`, `body`, `scope` (`session` or `user`) | as configured, yes by default | `SHOWN` | Writes a skill of the agent's owner, classified as the turn's label. |
-| `update_skill` | `skills` | `name`, `description` (optional), `body` (optional) | as configured, yes by default | `SHOWN` | Changes a skill of the owner's, raised first to what the turn has seen. |
+| `load_skill` | `skills` | `name` | no | `WITHOUT_RESULT` | Gives the skill's text as plain text, classified as the skill; recorded as knowledge. |
+| `create_skill` | `skills` | `name`, `description`, `body`, `scope` (`session` or `user`) | as configured, yes by default | `SHOWN` | Writes a skill of the agent's owner, classified as the turn's label; answers with its `skill_id`. |
+| `update_skill` | `skills` | `name`, `description` (optional), `body` (optional) | as configured, yes by default | `SHOWN` | Changes a skill of the owner's, raised first to what the turn has seen; answers with its `skill_id`. |
 | `read_history` | `channel_history` | `channel`, `last` (optional, default 20, at most 100), `query` (optional) | no | `SHOWN` | Reads the latest messages of another channel, or those containing a text. |
 
 `stop`, `bye` and `silence` end the turn with the current tool step (`Turn::request_state`). Notes,

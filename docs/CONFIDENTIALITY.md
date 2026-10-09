@@ -359,15 +359,17 @@ owner in the context panel.
 
 ### Tool calls
 
-A `Tool` declares its `ToolVisibility` (issues 54, 133): two flags for its calls - `call`, whether
-the call itself - that the tool was called - is published, and `content`, whether its arguments and
-its result are.
+A `Tool` declares its `ToolVisibility` (issues 54, 133, 281): three flags for its calls - `call`,
+whether the call itself - that the tool was called - is published, `arguments`, whether what it was
+called with is, and `result`, whether what it returned is. Neither the arguments nor the result are
+seen by more than the call.
 
-| Constant | `call` | `content` | Meaning |
-|---|---|---|---|
-| `SHOWN` | channel | channel | the default |
-| `CALL_ONLY` | channel | owner | others see that the tool was called, but not with what |
-| `HIDDEN` | owner | owner | the whole call stays with the agent |
+| Constant | `call` | `arguments` | `result` | Meaning |
+|---|---|---|---|---|
+| `SHOWN` | channel | channel | channel | the default |
+| `WITHOUT_RESULT` | channel | channel | owner | others see that the tool was called and with what, but not what it returned |
+| `CALL_ONLY` | channel | owner | owner | others see that the tool was called, but not with what |
+| `HIDDEN` | owner | owner | owner | the whole call stays with the agent |
 
 The agent stamps every call with the flags its tool declares at that moment, and the result takes
 them over from the call. Both are stored with what applied then. Which built-in tools use which
@@ -416,9 +418,10 @@ keeps the tools it began with; a channel raised during it re-judges them at the 
 *   the personality's `reasoning_visibility` is `owner` (default `channel`),
 *   the turn has seen the agent's private knowledge - its private notes or its agent memory
     (`Turn::saw_private_knowledge`), or
-*   a call the reasoning leads to has `owner` content: of the message's own calls once it is
+*   a call the reasoning leads to has `owner` arguments: of the message's own calls once it is
     complete, and, while it streams, of every tool the agent could still call - because reasoning
-    comes before the call.
+    comes before the call and may hold what goes into it. A result that is the owner's does not
+    count: the reasoning cannot hold what comes back after it (issue 281).
 
 Otherwise the reasoning is published and carries the channel's classification, as everything the
 agent derives does. Knowledge read from other channels adds nothing: a channel reads only what may
@@ -436,8 +439,9 @@ The agent keeps the full calls in its context. What it publishes is redacted in 
 `Turn::send_event` (`Message::published`):
 
 *   a call whose `call` is the owner's is left out;
-*   a call whose `content` is the owner's has its arguments set to `null` and its result emptied,
-    the record of the answers to its questions included (issue 165);
+*   a call whose `arguments` are the owner's has them set to `null`;
+*   a result that is the owner's (`result`) is emptied, the record of the answers to its questions
+    included (issue 165);
 *   reasoning that is the owner's is dropped;
 *   a message with nothing left is not sent.
 
@@ -452,7 +456,7 @@ decide.
 
 Since the answer text is always published, the model is told what it must not quote (issue 66):
 
-*   A successful result whose content is the owner's reaches the model wrapped as `{"result": ...,
+*   A successful result that is the owner's reaches the model wrapped as `{"result": ...,
     "note": "Only you see this result ..."}` (`tool::successful_result`).
 *   The private notes' prompt part and tool descriptions say not to reveal them.
 

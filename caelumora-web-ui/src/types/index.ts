@@ -197,24 +197,25 @@ export interface ChannelResponse {
 export type Visibility = 'channel' | 'owner';
 
 /**
- * Who sees a tool call (issues 54, 133): the call itself, and its arguments
- * and result. Absent means both `channel`.
+ * Who sees a tool call (issues 54, 133, 281): the call itself, its arguments
+ * and its result. Absent means all `channel`.
  */
 export interface ToolVisibility {
   call: Visibility;
-  content: Visibility;
+  arguments: Visibility;
+  result: Visibility;
 }
 
 /**
  * How a tool's calls and their results are shown (issue 165), declared by the tool and stamped on
  * each call; absent means `default`. Display only.
  */
-export type ToolPresentation = 'default' | 'shell' | 'plan' | 'file_read' | 'file_write' | 'file_edit' | 'file_list' | 'file_search' | 'file_move' | 'questions' | 'file_publish' | 'artifact_publish';
+export type ToolPresentation = 'default' | 'shell' | 'plan' | 'file_read' | 'file_write' | 'file_edit' | 'file_list' | 'file_search' | 'file_move' | 'questions' | 'file_publish' | 'artifact_publish' | 'skill';
 
 export interface ToolCall {
   id?: string;
   function_name: string;
-  /** `null` where the call was published without its content. */
+  /** `null` where the call was published without its arguments. */
   arguments: unknown;
   visibility?: ToolVisibility;
   presentation?: ToolPresentation;
@@ -230,7 +231,7 @@ export interface ToolResult {
   /** The tool's result, or for any other status a JSON object with `status` and `message`. */
   content: string;
   status?: ToolResultStatus;
-  /** Empty `content` where the call was published without its content. */
+  /** Empty `content` where the call was published without its result. */
   visibility?: ToolVisibility;
   /** How sensitive `content` is and for whom (issue 133). */
   classification: Classification;

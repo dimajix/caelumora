@@ -6,13 +6,14 @@
 
 import type {Tool, ToolSet} from '../types';
 import {classificationLabel} from '../confidentiality';
+import {ownerOnly} from '../messages';
 
 /** What the runtime acts on of `tool`, as marks after its name. */
 function marksOf(tool: Tool): string[] {
   const marks: string[] = [];
   if (tool.requires_approval) marks.push('needs approval');
-  if (tool.visibility?.call === 'owner') marks.push('call owner only');
-  else if (tool.visibility?.content === 'owner') marks.push('content owner only');
+  const owners = ownerOnly(tool.visibility);
+  if (owners) marks.push(`${owners} owner only`);
   if (tool.classification) marks.push(classificationLabel(tool.classification));
   return marks;
 }

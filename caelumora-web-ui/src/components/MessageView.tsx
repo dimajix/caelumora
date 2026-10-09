@@ -143,9 +143,11 @@ interface MessageViewProps {
   filesVersion?: number;
   /** The artifacts of the channel, where its calls published one (issue 271). */
   artifacts?: ChannelArtifacts;
+  /** Opens a skill's page, where its calls name one (issue 281). */
+  onSelectSkill?: (skillId: string) => void;
 }
 
-export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, badges, actions, className, files, filesVersion, artifacts}) => (
+export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, badges, actions, className, files, filesVersion, artifacts, onSelectSkill}) => (
   <div
     className={cn(
       "max-w-[80%] p-3 rounded-lg shadow-xs",
@@ -176,7 +178,7 @@ export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, 
     {msg.tool_calls && msg.tool_calls.length > 0 && (
       <div className="mt-2 space-y-2">
         {msg.tool_calls.map((call, cidx) => (
-          <ToolCallView key={cidx} call={call} result={msg.tool_results?.find(r => r.id === call.id)} abandoned={msg.abandoned} files={files} filesVersion={filesVersion} artifacts={artifacts} />
+          <ToolCallView key={cidx} call={call} result={msg.tool_results?.find(r => r.id === call.id)} abandoned={msg.abandoned} files={files} filesVersion={filesVersion} artifacts={artifacts} onSelectSkill={onSelectSkill} />
         ))}
       </div>
     )}

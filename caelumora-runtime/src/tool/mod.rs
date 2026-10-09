@@ -154,7 +154,7 @@ fn unsuccessful_result(status: ToolResultStatus, message: &str) -> String {
 
 /// What the model is given as the result of a call that succeeded: the
 /// tool's `value` - marked as the agent's alone if the channel does not see
-/// it (issue 66), i.e. if the call's content is its owner's
+/// it (issue 66), i.e. if the call's result is its owner's
 /// (`Visibility::Owner`). The answer text is always published, so a result
 /// the channel does not see is worthless redacted if the model quotes it.
 /// A value that is text - a skill loaded, the text of a remote tool - is
@@ -162,7 +162,7 @@ fn unsuccessful_result(status: ToolResultStatus, message: &str) -> String {
 /// JSON.
 pub fn successful_result(value: Value, visibility: ToolVisibility) -> String {
     const OWNERS: &str = "Only you see this result - the channel does not. Do not quote or reveal it in your answers.";
-    match (value, visibility.content.is_channel()) {
+    match (value, visibility.result.is_channel()) {
         (Value::String(text), true) => text,
         (Value::String(text), false) => format!("{text}\n\n[{OWNERS}]"),
         (value, true) => value.to_string(),
@@ -1075,6 +1075,8 @@ mod tests {
         let hidden = parse(&successful_result(value.clone(), ToolVisibility::CALL_ONLY));
         assert_eq!(hidden["result"], value);
         assert!(hidden["note"].as_str().unwrap().contains("Do not quote or reveal it"));
+        let without_result = parse(&successful_result(value.clone(), ToolVisibility::WITHOUT_RESULT));
+        assert_eq!(without_result, hidden, "the result is what counts, not the arguments");
     }
 
     #[test]

@@ -781,10 +781,11 @@ fn stamp(message: &mut Message, turn: &Turn, reasoning_visibility: Visibility, c
 ///
 /// The reasoning is the owner's (`Visibility::Owner`) if the personality
 /// says so (`reasoning_visibility`), once the turn saw the agent's private
-/// knowledge, or if the content of a call it leads to is - those of the
-/// message once it is `complete`, and while it streams those of every
+/// knowledge, or if the arguments of a call it leads to are - those of
+/// the message once it is `complete`, and while it streams those of every
 /// tool the agent could still call, since reasoning comes before the
-/// call it leads to. The message carries the turn's label, as
+/// call it leads to and may hold what goes into it, but never what comes
+/// back (issue 281). The message carries the turn's label, as
 /// everything the agent derives does (issues 133, 168): the join of what
 /// the turn has seen, knowledge read from other channels included, at
 /// most the channel's classification. The tools are those the turn began
@@ -802,9 +803,9 @@ fn label(message: &mut Message, turn: &Turn, reasoning_visibility: Visibility, c
     message.classification = turn.label();
 
     let owners_call = if complete {
-        message.tool_calls.iter().any(|c| !c.visibility.content.is_channel())
+        message.tool_calls.iter().any(|c| !c.visibility.arguments.is_channel())
     } else {
-        tools.iter().any(|t| !t.visibility.content.is_channel())
+        tools.iter().any(|t| !t.visibility.arguments.is_channel())
     };
     let owners = !reasoning_visibility.is_channel() || turn.saw_private_knowledge() || owners_call;
     message.reasoning_visibility = if owners { Visibility::Owner } else { Visibility::Channel };
@@ -1143,7 +1144,7 @@ mod tests {
     #[test]
     fn the_reasoning_is_the_owner_s_where_the_personality_what_the_turn_saw_or_the_call_it_leads_to_says_so() {
         let agent = AgentId::new();
-        let both = || vec![tool("shown", ToolVisibility::SHOWN), tool("call_only", ToolVisibility::CALL_ONLY)];
+        let both = || vec![tool("shown", ToolVisibility::SHOWN), tool("call_only", ToolVisibility::CALL_ONLY), tool("without_result", ToolVisibility::WITHOUT_RESULT)];
         let reasoning = |tools: Vec<Tool>, personality: Visibility, private_knowledge: bool, calls: &[&str], complete: bool| {
             let mut agent_channel_state = AgentChannelState::default();
             agent_channel_state.begin_turn(Default::default(), Default::default(), Classification::CHANNEL_DEFAULT, vec![ToolSet::new("tools", "some tools", tools)], Default::default());
@@ -1159,10 +1160,12 @@ mod tests {
         assert_eq!(reasoning(both(), Visibility::Channel, false, &["shown"], true), Visibility::Channel, "nothing says otherwise");
         assert_eq!(reasoning(both(), Visibility::Owner, false, &["shown"], true), Visibility::Owner, "the personality says so");
         assert_eq!(reasoning(both(), Visibility::Channel, true, &["shown"], true), Visibility::Owner, "the turn saw private notes");
-        assert_eq!(reasoning(both(), Visibility::Channel, false, &["call_only"], true), Visibility::Owner, "it leads to a call whose content is the owner's");
+        assert_eq!(reasoning(both(), Visibility::Channel, false, &["call_only"], true), Visibility::Owner, "it leads to a call whose arguments are the owner's");
+        assert_eq!(reasoning(both(), Visibility::Channel, false, &["without_result"], true), Visibility::Channel,
+            "a result the owner's alone comes after the reasoning");
         assert_eq!(reasoning(both(), Visibility::Channel, false, &["shown"], false), Visibility::Owner,
-            "while it streams, the agent could still call a tool whose content is the owner's");
-        assert_eq!(reasoning(vec![tool("shown", ToolVisibility::SHOWN)], Visibility::Channel, false, &[], false), Visibility::Channel,
+            "while it streams, the agent could still call a tool whose arguments are the owner's");
+        assert_eq!(reasoning(vec![tool("shown", ToolVisibility::SHOWN), tool("without_result", ToolVisibility::WITHOUT_RESULT)], Visibility::Channel, false, &[], false), Visibility::Channel,
             "but not if it has no such tool");
     }
 

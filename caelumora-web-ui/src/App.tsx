@@ -143,6 +143,7 @@ function Layout({ user, onLogout }: LayoutProps) {
             sessionId={selectedSessionId}
             channelId={selectedChannelId}
             user={user}
+            onSelectSkill={handleSelectSkill}
           />
         ) : (
           <div className="flex-1 flex items-center justify-center text-gray-500 dark:text-gray-400 p-4 text-center">

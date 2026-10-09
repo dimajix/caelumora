@@ -1,10 +1,22 @@
 // Helpers for showing messages, shared by the chat and the context panel.
 
-import type {ActorId, GivenUpReason, HistoryItem, Message, PlanStep, TokenUsage} from './types';
+import type {ActorId, GivenUpReason, HistoryItem, Message, PlanStep, TokenUsage, ToolVisibility} from './types';
 import {classificationLabel} from './confidentiality';
 
 export function formatArguments(args: unknown): string {
   return typeof args === 'string' ? args : JSON.stringify(args);
+}
+
+/**
+ * What of a tool's calls only the agent's owner sees (issues 54, 133, 281) - `call`, `arguments and
+ * result`, `arguments` or `result` - or `null` if the channel sees all of it.
+ */
+export function ownerOnly(visibility: ToolVisibility | undefined): string | null {
+  if (!visibility) return null;
+  if (visibility.call === 'owner') return 'call';
+  const parts = [visibility.arguments === 'owner' ? 'arguments' : null, visibility.result === 'owner' ? 'result' : null];
+  const owners = parts.filter(part => part !== null);
+  return owners.length > 0 ? owners.join(' and ') : null;
 }
 
 /**
