@@ -52,6 +52,34 @@ ends any more; this one is about a person who wants to end one now.
 - **Who it reaches.** Only commands of a workspace's shell; the terminal client and other shells
   could follow.
 
+## Decisions
+
+Taken with the maintainer on 2026-10-10.
+
+- **Permission: `WriteWorkspace`, through the channel's workspace.** A command is reached only
+  through the workspace as the channel offers it (`ChannelView::workspace()`: a member, the
+  channel uses it, `GetWorkspace`, flow both ways); `CancelChannel` would have to go around that
+  way, or be asked besides. Who may end a command is who could have started it there - the check
+  `kill_command` makes for the agent already. A user who may only read the workspace cannot end
+  one; they can still cancel the turn or ask the agent.
+- **One place: `WorkspaceView::kill_command`.** For a workspace reached through a channel alone
+  (`NotInChannel` otherwise, as `publish_artifact`): the terminal reached for writing, the command
+  looked for under the channel's scope. The tool `kill_command` goes through it as well, so that
+  the rule that a command is its channel's and the check for writing are kept once.
+  `run_command` and `command_output` still make the scope themselves; moving them too is a step of
+  its own, not part of this issue. REST:
+  `POST /sessions/{id}/channels/{cid}/commands/{command_id}/kill`, answering the command's state;
+  an unknown command is `404 unknown_command`, a workspace not usable here `404`, one only
+  readable `403`.
+- **The web UI offers it at the result.** A stop button at a result "Still running as …", for a
+  user who may change the workspace's files (`can_write`), and gone once a later result in the
+  channel shows the same command ended. A list of a scope's running commands (`Shell::commands`)
+  for the workspace panel is not part of this issue; it belongs with
+  [254](254-commands-run-unbounded.md), whose `kill_all(scope)` needs to know them as well.
+- **The agent is told nothing besides.** It sees `killed` the next time it follows the command;
+  one it no longer follows it does not need to know about. Who killed it (kept by both providers)
+  or a notice in the channel would be a concept of its own.
+
 ## Done when
 
 - A user who may do so can end a command of their channel that was handed back as running.
@@ -63,3 +91,4 @@ ends any more; this one is about a person who wants to end one now.
 - 2026-10-10: Opened while looking at [276](276-interrupt-one-tool-call.md) with the maintainer:
   276 reaches a hanging command only while `run_command` waits for it, 254 only at the boundaries of
   access; a user who wants to end a command running in the background can do neither.
+- 2026-10-10: Looked at with the maintainer: the decisions above recorded.
