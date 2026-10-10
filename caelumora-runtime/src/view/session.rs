@@ -17,7 +17,7 @@ use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::security::{AccessQuestions, Place, SecurityContext};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::snapshot::{DeletedSnapshot, Detail, ParticipantSnapshot, SessionSnapshot};
-use caelumora_model::store::{EntityKind, StoreError};
+use caelumora_model::store::EntityKind;
 use std::sync::Arc;
 use tracing::warn;
 
@@ -196,7 +196,7 @@ impl SessionView {
             Some(session_loop) => Ok(session_loop.channel_by_id(id).map(|channel_loop| (Arc::clone(&channel_loop.channel()), Some(channel_loop)))),
             None if self.session.channels.contains(&id) => {
                 let channel = self.views.entities().get_channel(&SecurityContext::system(), id).await
-                    .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context(format!("reading channel {id}"))))?;
+                    .map_err(|e| ViewError::failed(e, format!("reading channel {id}")))?;
                 Ok(Some((Arc::new(channel), None)))
             }
             None => Ok(None),
@@ -305,7 +305,7 @@ impl SessionView {
     pub async fn deleted_channels(&self) -> ViewResult<Vec<DeletedSnapshot<ChannelId>>> {
         let views = self.views();
         let context = views.context();
-        let failed = |e: StoreError| ViewError::Failed(anyhow::Error::new(e).context(format!("listing the deleted channels of session {}", self.id())));
+        let failed = |e| ViewError::failed(e, format!("listing the deleted channels of session {}", self.id()));
         let of_this = Query::filtered(Filter::eq(ChannelField::Session, &self.id()).map_err(failed)?);
         let channels = views.entities().list_deleted_channels(context, &of_this).await.map_err(failed)?.items;
         let may_change = self.may_change().await;

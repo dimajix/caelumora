@@ -75,7 +75,7 @@ impl ChannelView {
     /// `Failed` if reading the workspace failed.
     pub async fn workspace(&self) -> ViewResult<Option<WorkspaceView>> {
         let usable = self.views().workspace_manager().usable_in(self.views().context(), self.session.as_session(), &self.channel).await
-            .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context("reading the session's workspace")))?;
+            .map_err(|e| ViewError::failed(e, "reading the session's workspace"))?;
         Ok(usable.map(|workspace| WorkspaceView::in_channel(self.views().clone(), workspace, self.session.id(), self.channel.id)))
     }
 
@@ -90,7 +90,7 @@ impl ChannelView {
         if self.readable != Readable::Whole {
             return Ok(Vec::new());
         }
-        let failed = |e: StoreError| ViewError::Failed(anyhow::Error::new(e).context("listing the artifacts"));
+        let failed = |e| ViewError::failed(e, "listing the artifacts");
         let (session, channel) = (self.session.id(), self.channel.id);
         // Those with a version published here, which the store is asked for
         // alone (issue 293).
@@ -254,7 +254,7 @@ impl ChannelView {
                     Err(StoreError::NotFound { .. }) => ChannelState::new(self.channel.id),
                     Err(e) => {
                         warn!("Cannot read the history of channel {}: {}", self.channel.id, e);
-                        return Err(ViewError::Failed(anyhow::Error::new(e).context(format!("reading the history of channel {}", self.channel.id))));
+                        return Err(ViewError::failed(e, format!("reading the history of channel {}", self.channel.id)));
                     }
                 };
                 let start = self.channel.history_limits.iter().find(|l| l.participant == actor).map(|l| l.start);
