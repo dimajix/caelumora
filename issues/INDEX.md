@@ -79,6 +79,7 @@ published before anyone else can take it.
 | [193](193-external-state-rewritten-whole.md) | done | Every state the `StateStore` keeps is rewritten whole for everything that happens in it - an agent's for every message heard and every step of a turn - so the writes grow with the square of a channel's length. |
 | [215](215-json-store-concurrent-puts-of-one-state.md) | done | Concurrent puts of one state in the JSON store can leave a journal beside the new snapshot and lose a change appended in between, and the test that puts one state concurrently fails now and then. |
 | [250](250-unique-names-per-name-space.md) | done | No kind keeps its names unique in its name space as a whole: channels check it by hand when created, not when renamed; agents, personalities, templates and users not at all. |
+| [292](292-store-lists-read-everything.md) | open | A list of what a user may read is made by reading every entity of the kind and asking the policy of each - for artifacts, of which there may be hundreds of thousands, per version too. |
 
 ## Sessions and channels
 
