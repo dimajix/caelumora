@@ -417,8 +417,8 @@ impl AgentCommandProvider for SkillsComponent {
                     ..Message::new(skill.classification().clone())
                 };
                 // Nothing can fail from here on: what is given is written at once.
-                turn.record_knowledge(knowledge(&skill, turn.channel_id(), turn.session_id()));
-                turn.give(given);
+                let knowledge = knowledge(&skill, turn.channel_id(), turn.session_id());
+                turn.give(given, knowledge);
                 Ok(CommandOutput::private(format!("{} has the skill '{}' now.", turn.agent_name(), skill.name())))
             }
             _ => Err(CommandError::Unknown(name.to_string())),

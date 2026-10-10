@@ -210,12 +210,13 @@ impl<'a> Turn<'a> {
     }
 
     /// Gives the agent `message` to read in this turn (issue 22) - a skill a
-    /// user loaded for it -: into its transcript and history at once, as
-    /// what it was given, not what it said (`AgentChannelState::given`).
-    /// Not published. Written at once, as what a turn says is (issue 260),
-    /// so a component gives only once nothing can fail any more.
-    pub fn give(&mut self, message: Message) {
-        self.agent_channel_state.given(message);
+    /// user loaded for it - as the knowledge `knowledge`: into its
+    /// transcript and history at once, as what it was given, not what it
+    /// said, and the knowledge recorded (`AgentChannelState::given`). Not
+    /// published. Written at once, as what a turn says is (issue 260), so a
+    /// component gives only once nothing can fail any more.
+    pub fn give(&mut self, message: Message, knowledge: KnowledgeRef) {
+        self.agent_channel_state.given(message, knowledge);
     }
 
     /// Records `message` as said by the turn: into the agent's transcript

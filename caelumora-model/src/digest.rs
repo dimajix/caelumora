@@ -232,13 +232,14 @@ pub fn message_reclassified(previous: Option<&Digest>, message: MessageId, class
 /// The digest of a transcript (issue 50) ending in `entry`, whose
 /// predecessor chain has the digest `previous`: a message as
 /// `message_chain`, so that every digest recorded before issue 197 names
-/// what it named; a turn's end (issue 258) by what it says - the turn and,
+/// what it named - one given to read (issue 16) alike, since the model is
+/// given the same; a turn's end (issue 258) by what it says - the turn and,
 /// given up, the reason, not the time - in schemes of their own; a message
 /// modified, taken back or reclassified as `message_modified`,
 /// `message_revoked` and `message_reclassified`.
 pub fn transcript_chain(previous: Option<&Digest>, entry: &TranscriptEntry) -> Digest {
     match entry {
-        TranscriptEntry::Message(message) => message_chain(previous, message),
+        TranscriptEntry::Message(message) | TranscriptEntry::Given { message, .. } => message_chain(previous, message),
         TranscriptEntry::Modified { message } => message_modified(previous, message),
         TranscriptEntry::Revoked { message, .. } => message_revoked(previous, *message),
         TranscriptEntry::Reclassified { message, classification } => message_reclassified(previous, *message, classification),

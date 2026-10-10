@@ -220,9 +220,12 @@ the turn over after a cancel - and the users are told with `TurnGivenUp` (issue 
 
 **A message given** to the agent to read in a turn - a skill a member loaded for it with `/skill`
 (issue [22](../issues/22-skill-management.md)) - is recorded by `Turn::give`
-(`AgentChannelState::given`): into the transcript and the agent's history without a context, since
-the agent did not produce it, and the turn's context moved on past it. It is not published, and the
-turn has seen it.
+(`AgentChannelState::given`) with the knowledge it is: into the transcript as a `Given` entry, which
+keeps what it is (`KnowledgeSource`), so that what the agent knows can be told from its transcript
+(issue [16](../issues/16-context-compression.md)); into the agent's history without a context,
+since the agent did not produce it; the knowledge recorded with the turn, and the turn's context
+moved on past it. It is not published, and the turn has seen it. Its digest is the message's, as if
+it were a `Message` entry: the model is given the same, and what it is stays outside the digest.
 
 **A command turn** (issue [269](../issues/269-agent-commands.md)) carries out a command a user
 asked the agent for, rather than answering: `AgentChannelState::begin_command_turn` begins it with
@@ -304,7 +307,8 @@ on its chain ([197](../issues/197-one-chain-one-model-of-change.md)); what stand
 the entries:
 
 *   `Transcript` is `Chain<TranscriptEntry>`: a `Message` the model was given or produced, a
-    message `Modified`, `Revoked` or `Reclassified`, or the end of a turn, `TurnFinished` or
+    message `Given` to the agent to read with what it is (`KnowledgeSource`, issue 16), a message
+    `Modified`, `Revoked` or `Reclassified`, or the end of a turn, `TurnFinished` or
     `TurnGivenUp` (issue 258). `messages` is the messages of the active path as they stand, what
     the model is given.
 *   `MessageHistory` is `Chain<HistoryEntry>`: a message `Said`, with what it was produced from

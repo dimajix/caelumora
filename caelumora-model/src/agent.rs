@@ -4,7 +4,7 @@ use crate::digest::Digest;
 use crate::external_agent::RemoteState;
 use crate::confidentiality::Classification;
 use crate::approval::ApprovalRequest;
-use crate::context::{ContextRef, ModelProfile, PromptRef};
+use crate::context::{ContextRef, KnowledgeRef, ModelProfile, PromptRef};
 use crate::chain::Stored;
 use crate::kept::Kept;
 use crate::ledger::LedgerEntry;
@@ -292,18 +292,22 @@ impl AgentChannelState {
     }
 
     /// Records `message`, given to the agent to read in the turn under way
-    /// (issue 22) - a skill a user loaded for it -: the turn's from now on
-    /// (`Message::turn_id`), into the transcript and the history without a
-    /// context - the agent did not produce it -, and the turn's context
-    /// moved on past it, so that what the turn says next is produced from it.
-    /// Not published: it is what the agent read, not what it said. Between
-    /// turns it is recorded as heard would be.
-    pub fn given(&mut self, mut message: Message) {
+    /// (issue 22) - a skill a user loaded for it - as the knowledge
+    /// `knowledge`: the turn's from now on (`Message::turn_id`), into the
+    /// transcript as what it was given (`TranscriptEntry::Given`, issue 16)
+    /// and into the history without a context - the agent did not produce
+    /// it -, the knowledge recorded with the turn, and the turn's context
+    /// moved on past it, so that what the turn says next is produced from
+    /// it. Not published: it is what the agent read, not what it said.
+    /// Between turns it is recorded as heard would be, still as given.
+    pub fn given(&mut self, mut message: Message, knowledge: KnowledgeRef) {
+        let source = knowledge.source;
         if let Some(turn) = self.turn.as_mut() {
             message.turn_id = Some(turn.work.turn_id);
             turn.work.see_message(&message);
+            turn.work.record_knowledge(knowledge);
         }
-        self.transcript.push(message.clone());
+        self.transcript.give(message.clone(), source);
         self.history.push(message, None);
         if let Some(turn) = self.turn.as_mut() {
             turn.work.context.transcript = self.transcript.digest();
@@ -344,7 +348,7 @@ impl AgentChannelState {
                     }
                     taken_back.push(step.id);
                 }
-                (TranscriptEntry::Message(_) | TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. }, _) => return Err(RetryRefused::NotLast),
+                (TranscriptEntry::Message(_) | TranscriptEntry::Given { .. } | TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. }, _) => return Err(RetryRefused::NotLast),
             }
         }
         Ok(taken_back)
@@ -653,6 +657,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::actor::ActorState;
     use crate::confidentiality::Confidentiality;
+    use crate::context::KnowledgeSource;
     use crate::tool::{ToolParameters, ToolVisibility};
 
     #[test]
@@ -776,13 +781,19 @@ pub(crate) mod tests {
 
     #[test]
     fn a_message_given_in_a_turn_is_read_not_said() {
-        let mut state = a_state_that_heard("hello", Classification::CHANNEL_DEFAULT);
+        let mut state = a_state_that_heard("hello", Classification::PUBLIC);
         begin(&mut state, Vec::new());
         let turn_id = state.turn.as_ref().unwrap().work.turn_id;
-        let skill = Message { role: MessageRole::User, ..said("Collect, group, write.", Classification::CHANNEL_DEFAULT) };
+        let skill = Message { role: MessageRole::User, ..said("Collect, group, write.", Classification::PUBLIC) };
+        let source = KnowledgeSource::Skill { skill: crate::skill::SkillId::new(), digest: crate::digest::skill("Collect, group, write.") };
+        let knowledge = KnowledgeRef { channel: Default::default(), session: Default::default(), source, classification: Some(Classification::CHANNEL_DEFAULT) };
 
-        state.given(skill.clone());
+        state.given(skill.clone(), knowledge.clone());
         assert_eq!(state.transcript.messages().last().map(|m| (m.id, m.turn_id)), Some((skill.id, Some(turn_id))), "into the transcript, the turn's");
+        assert!(matches!(state.transcript.last().map(|n| &n.entry), Some(TranscriptEntry::Given { source: s, .. }) if *s == source), "as what it was given (issue 16)");
+        let work = &state.turn.as_ref().unwrap().work;
+        assert_eq!(work.context.knowledge, [knowledge], "the knowledge recorded with the turn");
+        assert_eq!(work.label(), Classification::CHANNEL_DEFAULT, "which has seen it");
         assert_eq!(state.turn.as_ref().unwrap().work.context.transcript, state.transcript.digest(), "what the turn says next is produced from it");
         assert_eq!(state.recorded_context_of(skill.id), None, "the agent did not produce it");
         assert_eq!(state.history.messages().last().map(|m| m.id), Some(skill.id), "and its history keeps it, as what it was given");
