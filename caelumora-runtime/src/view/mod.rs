@@ -377,7 +377,7 @@ impl Views {
     }
 
     /// The viewer's own workspaces (issue 253), in the order the store lists
-    /// them: a workspace has no contributors, so these are the ones they
+    /// them: a workspace grants nobody anything of its own, so these are the ones they
     /// own (issue 251, decision 12).
     ///
     /// # Errors
@@ -402,7 +402,7 @@ impl Views {
     }
 
     /// The viewer's own artifacts (issue 271), in the order the store lists
-    /// them, each with every version: an artifact has no contributors, so
+    /// them, each with every version: an artifact grants nobody anything of its own, so
     /// these are the ones they own.
     ///
     /// # Errors
@@ -565,8 +565,8 @@ impl Views {
     /// The roles of the viewer's user, which decide what they are cleared
     /// for (issue 133). Without them, only what is public: a failed lookup
     /// shows less.
-    async fn roles(&self) -> Vec<String> {
-        caelumora_model::confidentiality::user_roles(self.entities.as_ref(), self.viewer.context().principal_id).await.unwrap_or_default()
+    async fn roles(&self) -> Vec<caelumora_model::role::RoleId> {
+        caelumora_model::role::user_roles(self.entities.as_ref(), self.viewer.context().principal_id).await.unwrap_or_default()
     }
 
     /// Whether the viewer is cleared for `classification` (issue 133), by
@@ -762,10 +762,10 @@ mod tests {
     use crate::runtime::RuntimeManager;
     use caelumora_model::agent::{Agent, Personality, PersonalityId};
     use caelumora_model::channel::{Channel, Participant};
-    use caelumora_model::confidentiality::{Classification, Visibility};
+    use caelumora_model::confidentiality::{Classification, ConfidentialityRules, Visibility};
     use caelumora_model::scope::Scope;
     use caelumora_model::secret::SecretManager;
-    use caelumora_model::security::{OwnershipSecurityManager, SecurityAttributes, SecurityManager};
+    use caelumora_model::security::{Grant, Membership, SecurityAttributes, Subject};
     use caelumora_model::session::Session;
     use caelumora_model::store::EntityStore;
     use caelumora_model::store::memory::MemoryStore;
@@ -773,11 +773,13 @@ mod tests {
 
     /// A runtime under the ownership policy, and a manager on it.
     fn owned_runtime() -> (Arc<MemoryStore>, Arc<SessionManager>) {
-        owned_runtime_under(Arc::new(OwnershipSecurityManager::new()))
+        owned_runtime_under(ConfidentialityRules::default())
     }
 
-    fn owned_runtime_under(policy: Arc<dyn SecurityManager>) -> (Arc<MemoryStore>, Arc<SessionManager>) {
-        let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
+    /// The runtime under the ownership policy with `rules`, which learns who
+    /// takes part where from its store (issue 23).
+    fn owned_runtime_under(rules: ConfidentialityRules) -> (Arc<MemoryStore>, Arc<SessionManager>) {
+        let (policy, store) = crate::session::testing::owned_store(rules);
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
         let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         (store, Arc::new(SessionManager::new(runtime)))
@@ -800,20 +802,23 @@ mod tests {
         participants
     }
 
-    fn make_session(name: &str, owner: ActorId, contributors: Vec<ActorId>) -> Session {
+    /// A session of `owner`, read by its members as one the runtime builds
+    /// (issue 23); its participants are the test's to set.
+    fn make_session(name: &str, owner: ActorId) -> Session {
+        let id = SessionId::new();
         Session {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
             workspace: None,
             commands: Default::default(),
             privacy: Default::default(),
-            id: SessionId::new(),
+            id,
             name: Name::new(name).unwrap(),
             participants: Vec::new(),
             channels: vec![ChannelId::new()],
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
-            security_attributes: SecurityAttributes { owner_id: owner, contributors },
+            security_attributes: SecurityAttributes::owned_by(owner).granting(Subject::MemberOf(Membership::Session(id)), Grant::Read),
             deleted: None,
         }
     }
@@ -831,10 +836,18 @@ mod tests {
             language: None,
             history_limits: Vec::new(),
             participants: session.participants.clone(),
-            security_attributes: session.security_attributes.clone(),
+            security_attributes: SecurityAttributes::owned_by(session.security_attributes.owner_id).granting(Subject::MemberOf(Membership::Channel(session.channels[0])), Grant::Read),
             deleted: None,
             former: Vec::new(),
         }
+    }
+
+    /// Another channel like `template`, named `name`: an id of its own,
+    /// read by its own members.
+    fn like(template: &Channel, name: &str) -> Channel {
+        let id = ChannelId::new();
+        let security_attributes = SecurityAttributes::owned_by(template.security_attributes.owner_id).granting(Subject::MemberOf(Membership::Channel(id)), Grant::Read);
+        Channel { id, name: Name::new(name).unwrap(), security_attributes, ..template.clone() }
     }
 
     async fn an_agent_of(store: &MemoryStore, owner: ActorId) -> Agent {
@@ -870,7 +883,7 @@ mod tests {
         let (store, manager) = owned_runtime();
         let alice = user("alice");
         let remote = an_agent_of_kind(&store, ActorId::User(alice.id), PersonalityKind::External).await;
-        let mut session = make_session("hers", ActorId::User(alice.id), vec![ActorId::Agent(remote.id)]);
+        let mut session = make_session("hers", ActorId::User(alice.id));
         session.participants = record_users(&store, &[&alice]).await;
         session.participants.push(Participant::Agent(remote.id));
         let channel = main_channel(&session);
@@ -917,7 +930,7 @@ mod tests {
         let (alice, bob, carol) = (user("alice"), user("bob"), user("carol"));
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
 
-        let mut session = make_session("hers", ActorId::User(alice.id), vec![ActorId::User(bob.id), ActorId::Agent(helper.id)]);
+        let mut session = make_session("hers", ActorId::User(alice.id));
         session.participants = record_users(&store, &[&alice, &bob]).await;
         session.participants.push(Participant::Agent(helper.id));
         let main = main_channel(&session);
@@ -979,7 +992,7 @@ mod tests {
         let alice = User { id: UserId::new(), username: Name::new("Alice Example").unwrap(), email: String::new(), roles: Vec::new(), deleted: None };
         let gone = UserId::new();
         let approver = Approver { id: ApproverId(uuid::Uuid::new_v4()), strategy: ApprovalStrategy::Any };
-        let mut session = make_session("s", ActorId::User(alice.id), vec![]);
+        let mut session = make_session("s", ActorId::User(alice.id));
         session.participants = record_users(&store, &[&alice]).await;
         let mut channel = main_channel(&session);
         channel.participants.extend([Participant::User(gone), Participant::Approver(approver)]);
@@ -998,7 +1011,7 @@ mod tests {
     async fn what_a_place_is_for_is_shown_its_briefing_only_where_asked_for() {
         let (store, manager) = owned_runtime();
         let alice = user("alice");
-        let mut session = make_session("hers", ActorId::User(alice.id), vec![]);
+        let mut session = make_session("hers", ActorId::User(alice.id));
         session.participants = record_users(&store, &[&alice]).await;
         (session.summary, session.briefing) = (Some(Summary::new("Release 2.0").unwrap()), Some(Briefing::new("Dates are in UTC.").unwrap()));
         let mut channel = main_channel(&session);
@@ -1031,7 +1044,7 @@ mod tests {
         store.update_personality(&system, &personality).await.unwrap();
         let approver = Approver { id: ApproverId(uuid::Uuid::new_v4()), strategy: ApprovalStrategy::Any };
 
-        let mut session = make_session("hers", ActorId::User(alice.id), vec![ActorId::User(bob.id), ActorId::Agent(remote.id)]);
+        let mut session = make_session("hers", ActorId::User(alice.id));
         session.participants = record_users(&store, &[&alice, &bob]).await;
         session.participants.push(Participant::Agent(remote.id));
         let mut channel = main_channel(&session);
@@ -1069,7 +1082,7 @@ mod tests {
         let (store, manager) = owned_runtime();
         let (alice, bob) = (user("alice"), user("bob"));
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
-        let mut session = make_session("hers", ActorId::User(alice.id), vec![ActorId::User(bob.id), ActorId::Agent(helper.id)]);
+        let mut session = make_session("hers", ActorId::User(alice.id));
         session.participants = record_users(&store, &[&alice, &bob]).await;
         session.participants.push(Participant::Agent(helper.id));
         let mut channel = main_channel(&session);
@@ -1137,11 +1150,11 @@ mod tests {
         let (store, manager) = owned_runtime();
         let (alice, bob) = (user("alice"), user("bob"));
         let helper = an_agent_of(&store, ActorId::User(bob.id)).await;
-        let mut session = make_session("shared", ActorId::User(alice.id), vec![ActorId::User(bob.id), ActorId::Agent(helper.id)]);
+        let mut session = make_session("shared", ActorId::User(alice.id));
         session.participants = record_users(&store, &[&alice, &bob]).await;
         session.participants.push(Participant::Agent(helper.id));
         let template = main_channel(&session);
-        let team = Channel { id: ChannelId::new(), name: Name::new("team").unwrap(), ..template.clone() };
+        let team = like(&template, "team");
         let hers = Channel {
             id: ChannelId::new(),
             name: Name::new("hers").unwrap(),
@@ -1200,7 +1213,7 @@ mod tests {
             skill("deploy", Scope::UserScope { user_id: bob }, ActorId::User(bob), Classification::CHANNEL_DEFAULT),
             skill("secret", Scope::UserScope { user_id: bob }, ActorId::User(bob), secret),
             skill("hers", Scope::GlobalScope, ActorId::User(alice), Classification::CHANNEL_DEFAULT),
-            Skill { security_attributes: SecurityAttributes { owner_id: ActorId::User(alice), contributors: vec![ActorId::User(bob)] }, ..skill("review", Scope::GlobalScope, ActorId::User(alice), Classification::CHANNEL_DEFAULT) },
+            Skill { security_attributes: SecurityAttributes::owned_by(ActorId::User(alice)).granting(caelumora_model::security::Subject::Actor(ActorId::User(bob)), caelumora_model::security::Grant::Read), ..skill("review", Scope::GlobalScope, ActorId::User(alice), Classification::CHANNEL_DEFAULT) },
             skill("elsewhere", Scope::SessionScope { session_id: SessionId::new() }, ActorId::User(bob), Classification::CHANNEL_DEFAULT),
         ] {
             store.create_skill(&system, &made).await.unwrap();
@@ -1232,13 +1245,13 @@ mod tests {
         let (store, manager) = owned_runtime();
         let (alice, bob) = (user("alice"), user("bob"));
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
-        let mut session = make_session("hers", ActorId::User(alice.id), vec![ActorId::User(bob.id), ActorId::Agent(helper.id)]);
+        let mut session = make_session("hers", ActorId::User(alice.id));
         session.participants = record_users(&store, &[&alice, &bob]).await;
         session.participants.push(Participant::Agent(helper.id));
         let template = main_channel(&session);
         session.channels.clear();
         let mut channel_of = |name: &str| {
-            let channel = Channel { id: ChannelId::new(), name: Name::new(name).unwrap(), ..template.clone() };
+            let channel = like(&template, name);
             session.channels.push(channel.id);
             channel
         };
@@ -1275,7 +1288,7 @@ mod tests {
         let (store, manager) = owned_runtime();
         let alice = user("alice");
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
-        let mut session = make_session("hers", ActorId::User(alice.id), vec![ActorId::Agent(helper.id)]);
+        let mut session = make_session("hers", ActorId::User(alice.id));
         session.participants = record_users(&store, &[&alice]).await;
         session.participants.push(Participant::Agent(helper.id));
         let channel = main_channel(&session);
@@ -1311,7 +1324,7 @@ use caelumora_model::turn::TurnState;
         let (store, manager) = owned_runtime();
         let alice = user("alice");
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
-        let mut session = make_session("hers", ActorId::User(alice.id), vec![ActorId::Agent(helper.id)]);
+        let mut session = make_session("hers", ActorId::User(alice.id));
         session.participants = record_users(&store, &[&alice]).await;
         session.participants.push(Participant::Agent(helper.id));
         let channel = main_channel(&session);
@@ -1350,7 +1363,7 @@ use caelumora_model::turn::TurnState;
         let (store, manager) = owned_runtime();
         let alice = user("alice");
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
-        let mut session = make_session("hers", ActorId::User(alice.id), vec![ActorId::Agent(helper.id)]);
+        let mut session = make_session("hers", ActorId::User(alice.id));
         session.participants = record_users(&store, &[&alice]).await;
         session.participants.push(Participant::Agent(helper.id));
         let channel = main_channel(&session);
@@ -1404,10 +1417,10 @@ use caelumora_model::turn::TurnState;
         use caelumora_model::store::StateStore;
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
-        let (store, manager) = owned_runtime_under(Arc::new(OwnershipSecurityManager::with_rules(ConfidentialityRules::new(compartments))));
+        let (store, manager) = owned_runtime_under(ConfidentialityRules::new(compartments));
         let alice = user("alice");
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
-        let mut session = make_session("hers", ActorId::User(alice.id), vec![ActorId::Agent(helper.id)]);
+        let mut session = make_session("hers", ActorId::User(alice.id));
         session.participants = record_users(&store, &[&alice]).await;
         session.participants.push(Participant::Agent(helper.id));
         let template = main_channel(&session);
@@ -1415,7 +1428,7 @@ use caelumora_model::turn::TurnState;
         let system = SecurityContext::system();
         let classified = |level, compartments: &[&str]| Classification::new(level, compartments.iter().map(|c| Compartment::new(*c))).unwrap();
         let mut channel_of = |name: &str, classification: Classification| {
-            let channel = Channel { id: ChannelId::new(), name: Name::new(name).unwrap(), classification, ..template.clone() };
+            let channel = Channel { classification, ..like(&template, name) };
             session.channels.push(channel.id);
             channel
         };
@@ -1488,7 +1501,7 @@ use caelumora_model::turn::TurnState;
         let (store, manager) = owned_runtime();
         let alice = user("alice");
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
-        let mut session = make_session("hers", ActorId::User(alice.id), vec![ActorId::Agent(helper.id)]);
+        let mut session = make_session("hers", ActorId::User(alice.id));
         session.participants = record_users(&store, &[&alice]).await;
         // The agent took part, said something, and was removed.
         let channel = main_channel(&session);
@@ -1535,11 +1548,10 @@ use caelumora_model::turn::TurnState;
     async fn the_trash_shows_what_its_owner_deleted_with_what_they_may_do_about_it() {
         let (store, manager) = owned_runtime();
         let (alice, bob) = (user("alice"), user("bob"));
-        let session = make_session("hers", ActorId::User(alice.id), vec![ActorId::User(bob.id)]);
+        let mut session = make_session("hers", ActorId::User(alice.id));
+        session.participants = record_users(&store, &[&alice, &bob]).await;
         let channel = main_channel(&session);
-        let mut side = channel.clone();
-        side.id = ChannelId::new();
-        side.name = caelumora_model::value::name::Name::new("side").unwrap();
+        let side = like(&channel, "side");
         let system = SecurityContext::system();
         store.create_session(&system, &session).await.unwrap();
         store.create_channel(&system, &channel).await.unwrap();
@@ -1570,7 +1582,7 @@ use caelumora_model::turn::TurnState;
         let (store, manager) = owned_runtime();
         let (alice, bob) = (user("alice"), user("bob"));
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
-        let mut session = make_session("hers", ActorId::User(alice.id), vec![]);
+        let mut session = make_session("hers", ActorId::User(alice.id));
         session.participants = record_users(&store, &[&alice, &bob]).await;
         session.participants.push(Participant::Agent(helper.id));
         // Both took part and were removed by alice, neither said anything.

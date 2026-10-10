@@ -10,7 +10,7 @@ use caelumora_model::agent::Personality;
 use caelumora_model::component::StoredComponents;
 use caelumora_model::skill::Skill;
 use caelumora_model::config::parse_yaml;
-use caelumora_model::security::{SecurityAttributes, SecurityContext};
+use caelumora_model::security::{SecurityAttributes, SecurityContext, SecurityManager};
 use caelumora_model::store::{ComponentStore, EntityStore, StoreResultExt};
 use caelumora_model::template::SessionTemplate;
 use serde::Deserialize;
@@ -24,11 +24,37 @@ pub struct Seed {
     /// Preconfigured components (issue 270), which the personalities
     /// include by `kind: ref` - a bundle every agent of a kind shares.
     pub components: Vec<StoredComponents>,
-    pub personalities: Vec<Personality>,
+    pub personalities: Vec<SeedPersonality>,
     pub session_templates: Vec<SessionTemplate>,
     /// Skills of the system (issue 22), in the global scope, found by every
     /// agent with the `skills` component.
     pub skills: Vec<Skill>,
+}
+
+/// A personality as a seed writes it: as the store keeps it, but with the
+/// roles its agents are limited to named by their names - written by hand
+/// (issue 23) -, resolved to their ids when it is applied.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SeedPersonality {
+    #[serde(default)]
+    roles: Option<Vec<String>>,
+    #[serde(flatten)]
+    pub personality: Personality,
+}
+
+impl SeedPersonality {
+    /// The personality, its roles resolved by `security`.
+    ///
+    /// # Errors
+    /// If a role it names is not configured.
+    fn resolved(&self, security: &dyn SecurityManager) -> anyhow::Result<Personality> {
+        let roles = self.roles.as_ref()
+            .map(|names| names.iter()
+                .map(|name| security.role_id(name).with_context(|| format!("personality {} names the role '{name}', which is not configured", self.personality.name)))
+                .collect::<anyhow::Result<Vec<_>>>())
+            .transpose()?;
+        Ok(Personality { roles, ..self.personality.clone() })
+    }
 }
 
 impl Seed {
@@ -47,11 +73,13 @@ impl Seed {
     /// `components` - that it does not have yet, by id - so that seeding
     /// again changes nothing, and a document changed in the store stays as
     /// it is. Stored as the system: the seed belongs to it, every user may
-    /// use it and only the system may change it.
+    /// use it and only the system may change it. The roles it names are
+    /// resolved by `security` (issue 23).
     ///
     /// # Errors
-    /// Whatever the stores report; what was stored before stays.
-    pub async fn apply(&self, store: &dyn EntityStore, components: &dyn ComponentStore) -> anyhow::Result<()> {
+    /// A role that is not configured; whatever the stores report. What was
+    /// stored before stays.
+    pub async fn apply(&self, store: &dyn EntityStore, components: &dyn ComponentStore, security: &dyn SecurityManager) -> anyhow::Result<()> {
         let system = SecurityContext::system();
         for component in &self.components {
             if components.get_components(&system, component.id()).await.optional()?.is_none() {
@@ -59,9 +87,10 @@ impl Seed {
                 info!("Seeded preconfigured component {}", component.id());
             }
         }
-        for personality in &self.personalities {
+        for seeded in &self.personalities {
+            let personality = seeded.resolved(security)?;
             if store.get_personality(&system, personality.id).await.optional()?.is_none() {
-                store.create_personality(&system, personality).await?;
+                store.create_personality(&system, &personality).await?;
                 info!("Seeded personality {} ({})", personality.name, personality.id);
             }
         }
@@ -85,13 +114,13 @@ impl Seed {
 }
 
 /// Reads and applies the seed files `paths`, in order, to `store` and
-/// `components`.
+/// `components`, the roles they name resolved by `security`.
 ///
 /// # Errors
 /// As `Seed::read` and `Seed::apply`.
-pub async fn load(store: &dyn EntityStore, components: &dyn ComponentStore, paths: &[PathBuf]) -> anyhow::Result<()> {
+pub async fn load(store: &dyn EntityStore, components: &dyn ComponentStore, security: &dyn SecurityManager, paths: &[PathBuf]) -> anyhow::Result<()> {
     for path in paths {
-        Seed::read(path)?.apply(store, components).await
+        Seed::read(path)?.apply(store, components, security).await
             .with_context(|| format!("Cannot seed the stores from {}", path.display()))?;
     }
     Ok(())
@@ -111,6 +140,13 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/seed.yaml")
     }
 
+    /// The policy of the example configuration, which knows the roles the
+    /// example seed names.
+    fn policy() -> std::sync::Arc<dyn SecurityManager> {
+        let config = caelumora_model::config::AppConfig::load(Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/config.yaml")).unwrap();
+        config.create_security_manager(std::sync::Arc::new(caelumora_model::security::NoMemberships))
+    }
+
     #[tokio::test]
     async fn the_example_seed_is_complete_and_seeding_twice_changes_nothing() {
         let seed = Seed::read(&example()).expect("examples/seed.yaml is a seed");
@@ -118,7 +154,8 @@ mod tests {
         let store = MemoryStore::new();
         let system = SecurityContext::system();
 
-        load(&store, &store, &[example()]).await.unwrap();
+        let policy = policy();
+        load(&store, &store, policy.as_ref(), &[example()]).await.unwrap();
         // Every personality a template names is part of the seed.
         for template in &seed.session_templates {
             for participant in &template.participants {
@@ -130,10 +167,10 @@ mod tests {
         }
 
         // A document changed in the store stays as it is.
-        let mut changed = seed.personalities[0].clone();
+        let mut changed = seed.personalities[0].personality.clone();
         changed.description = Some(caelumora_model::value::text::Description::new("changed").unwrap());
         store.update_personality(&system, &changed).await.unwrap();
-        load(&store, &store, &[example()]).await.expect("seeding again is no conflict");
+        load(&store, &store, policy.as_ref(), &[example()]).await.expect("seeding again is no conflict");
         assert_eq!(store.list_personalities(&system).await.unwrap().len(), seed.personalities.len(), "nothing twice");
         assert_eq!(store.list_session_templates(&system).await.unwrap().len(), seed.session_templates.len());
         assert_eq!(store.get_personality(&system, changed.id).await.unwrap().description, changed.description);
@@ -151,14 +188,26 @@ mod tests {
     async fn every_personality_of_the_example_seed_can_be_built() {
         let seed = Seed::read(&example()).expect("examples/seed.yaml is a seed");
         let store = Arc::new(MemoryStore::new());
-        load(store.as_ref(), store.as_ref(), &[example()]).await.unwrap();
+        load(store.as_ref(), store.as_ref(), policy().as_ref(), &[example()]).await.unwrap();
         let registry = Arc::new(ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store)));
         let security = Arc::new(DummySecurityManager::new());
         let context = ComponentContext::new(SecurityContext::system(), Arc::<DummySecurityManager>::clone(&security), Arc::new(SecretManager::new(vec![], security)));
-        for personality in &seed.personalities {
+        for personality in seed.personalities.iter().map(|seeded| &seeded.personality) {
             ComponentContainer::from_config(&personality.components, &registry, &context).await
                 .unwrap_or_else(|e| panic!("personality {} cannot be built: {e}", personality.name));
         }
+    }
+
+    #[tokio::test]
+    async fn a_seed_names_roles_which_are_stored_by_their_ids() {
+        let seed: Seed = parse_yaml("personalities:\n- id: ff9a5e56-e5ea-43f9-9114-2098a6f417a9\n  name: limited\n  roles: [staff]\n").unwrap();
+        let (store, policy) = (MemoryStore::new(), policy());
+        seed.apply(&store, &store, policy.as_ref()).await.unwrap();
+        let stored = store.list_personalities(&SecurityContext::system()).await.unwrap();
+        assert_eq!(stored[0].roles, Some(vec![policy.role_id("staff").unwrap()]), "by the id the configuration gives it");
+        let unknown: Seed = parse_yaml("personalities:\n- id: 1f9a5e56-e5ea-43f9-9114-2098a6f417a9\n  name: typo\n  roles: [staf]\n").unwrap();
+        let error = unknown.apply(&store, &store, policy.as_ref()).await.expect_err("a role not configured");
+        assert!(error.to_string().contains("staf"), "{error}");
     }
 
     #[test]

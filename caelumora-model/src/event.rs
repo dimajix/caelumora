@@ -55,14 +55,15 @@ pub enum GlobalEvent {
     UserProfileUpdated(UserId, UserProfile),
     /// About a workspace (issue 253), which belongs to a user, not to a
     /// session it is attached to. Published with the workspace's attributes:
-    /// its owner and contributors receive them.
+    /// its owner and whom its access list grants reading receive them.
     WorkspaceCreated(WorkspaceId),
     WorkspaceUpdated(WorkspaceId, WorkspaceUpdateEvent),
     WorkspaceDeleted(WorkspaceId),
     /// A deleted workspace was restored, with its files (issue 164).
     WorkspaceRestored(WorkspaceId),
     /// About a skill (issue 22). Published with the skill's attributes: its
-    /// owner and contributors receive them - everybody, for the system's.
+    /// owner and whom its access list grants reading receive them -
+    /// everybody, for the system's.
     SkillCreated(SkillId),
     SkillUpdated(SkillId, SkillUpdateEvent),
     SkillDeleted(SkillId),

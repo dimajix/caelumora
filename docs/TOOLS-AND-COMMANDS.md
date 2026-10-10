@@ -324,8 +324,8 @@ people who clicked: under `Any` an `allow` wins whoever answered first, under `A
 Who may approve a call is the `SecurityManager`'s to decide, and the approver enforces it (issue
 14): the action `ApproveToolCall` carries the attributes of the agent - loaded, never taken from the
 request, which the agent makes itself - and of the channel. The ownership policy grants it the
-agent's owner and contributors, who are responsible for it also in someone else's channel; for an
-agent of the system, the channel's owner.
+agent's owner and whom the agent's access list lets read it, who are responsible for it also in
+someone else's channel; for an agent of the system, the channel's owner.
 
 *   An answer counts only if its sender may approve: the approver asks with the context the answer
     came with (`Enforcement::require`) and leaves out any other, logged and without telling the

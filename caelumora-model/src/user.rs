@@ -3,6 +3,7 @@ use crate::approval::{ApprovalRule, ApprovalRuleId, RuleError, MAX_PERSONAL_RULE
 use chrono::{DateTime, Utc};
 use crate::value::language::Language;
 use crate::scope::{Scope, Scoped};
+use crate::role::RoleId;
 use crate::security::{SecurityAttributes, Secured};
 use crate::value::name::{Name, ScopedName};
 use crate::value::text::Introduction;
@@ -18,7 +19,9 @@ pub struct User {
     /// differ only in case or accents are one.
     pub username: Name,
     pub email: String,
-    pub roles: Vec<String>,
+    /// What the user is (issue 142), by the roles' ids (issue 23): given by
+    /// the user provider, never by the user.
+    pub roles: Vec<RoleId>,
     /// Set when it was deleted (issue 164): it stays stored, hidden from
     /// every read but those for what was deleted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -31,7 +34,7 @@ pub struct User {
 /// the user providers and the initial setup, creates, changes or deletes
 /// it. Owning it themselves would let users grant themselves `roles`.
 /// Derived rather than stored, so that no record can say otherwise.
-static SYSTEM_OWNED: SecurityAttributes = SecurityAttributes { owner_id: ActorId::System, contributors: Vec::new() };
+static SYSTEM_OWNED: SecurityAttributes = SecurityAttributes { owner_id: ActorId::System, acl: Vec::new() };
 
 crate::impl_deletable!(User, UserProfile);
 
@@ -92,7 +95,7 @@ impl UserProfile {
     /// The profile of user `user_id`, owned by them, introducing them as
     /// `introduction` says.
     pub fn new(user_id: UserId, introduction: Option<Introduction>) -> Self {
-        let security_attributes = SecurityAttributes { owner_id: ActorId::User(user_id), contributors: Vec::new() };
+        let security_attributes = SecurityAttributes::owned_by(ActorId::User(user_id));
         Self { user_id, introduction, preferred_language: None, approval_rules: Vec::new(), deleted: None, security_attributes }
     }
 

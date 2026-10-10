@@ -213,12 +213,12 @@ Details: [STORAGE.md](STORAGE.md).
 Two questions are kept apart:
 
 *   **Who may do what** is decided by one `SecurityManager` per process, asked with an `ActionType`
-    and the `SecurityAttributes` (owner and contributors) of the entity concerned. The default
-    policy is ownership: owners do everything, contributors read and use. What a client may see, it
-    reads through the runtime's **views** (see [Reading what is there](#reading-what-is-there)),
-    which ask the policy at every step for that viewer; frontends never ask the policy themselves.
-    Users come from a chain of user providers, and the REST server authenticates them with a
-    short-lived signed token.
+    and the `SecurityAttributes` (owner and access list) of the entity concerned. The default policy
+    is ownership: owners do everything, whom the access list grants it read and use. What a client
+    may see, it reads through the runtime's **views** (see
+    [Reading what is there](#reading-what-is-there)), which ask the policy at every step for that
+    viewer; frontends never ask the policy themselves. Users come from a chain of user providers,
+    and the REST server authenticates them with a short-lived signed token.
 *   **What may flow where** is decided by classifications, not by who takes part. Every channel has
     a classification - a level from `public` to `strictly_confidential` and an audience of
     compartments, which the administrator configures - and one flow rule decides whether a channel

@@ -1,6 +1,6 @@
 # 23 — Access lists: the thing decides, not where one stands
 
-**Status:** open
+**Status:** in progress
 **Area:** Identity and access management
 
 *Rewritten on 2026-10-10 against what [142](142-roles.md), [253](253-workspace.md),
@@ -199,7 +199,7 @@ stop at its creation.
 | Artifact | `MemberOf(channel it was published in): Read` | the owner |
 | Skill | its readers as `Actor: Read` (seed, `create_skill`) | the owner |
 | Session, channel | `MemberOf(self): Read` | - |
-| Agent | `Actor(itself): Read` | - |
+| Agent | empty: it reads its own definition as its owner (issue 255) | the owner |
 | Session's `admission` | the template's | the owner narrows |
 
 ### 8. What this does not change
@@ -287,3 +287,25 @@ Issues to open with it: a group of our own as a subject; a cache for `Membership
   and a personality's limiting roles narrow an agent wherever a role is matched, the one way it
   does less than its owner; a right without an object - creating, administering - is a capability
   of a role in the configuration, not built yet. Branch `issue-23-acls`.
+- **2026-10-10** — Step 1 done, without a change in who may do what - the security suite passes
+  as it was, and gains a test of its own. Built:
+  - `caelumora_model::role`: `RoleId`, `Roles` (moved out of `confidentiality`, each role an `id`,
+    a `name`, its clearances), `user_roles`. `User::roles`, `Personality::roles` and
+    `JoinChannel` hold ids; `accept_any`'s configuration and a seed's personalities name roles,
+    resolved when they are loaded (`AppConfig::role_ids`, `SeedPersonality`); the
+    `SecurityManager` translates (`role_id`, `role_name`), the policy that allows everything too.
+  - `SecurityAttributes { owner_id, acl }` with `AclEntry`, `Subject`, `Membership`, `Grant`;
+    `contributors` and `participant_attributes` are gone. A session and a channel carry
+    `MemberOf` themselves; an agent carries nothing - the table of decision 7 said
+    `Actor(itself)`, which decision 3 forbids and which 255 made needless. The stores refuse an
+    entry naming anyone but a user (`SecurityAttributes::validate`).
+  - The ownership policy evaluates the list (`granted`), learning memberships and roles from a
+    `Memberships` it is made with; `StoreMemberships` reads the one place, user or agent asked
+    about, a deleted session or channel too, holds the store weakly and is bound by the binaries
+    once the store exists. The policy's `match` stays the one exhaustive mapping of decision 2;
+    no action asks for `Write` yet.
+  - A participant removed from a channel is no member when its removal is announced, so the
+    announcement is delivered with an entry for them besides, never stored.
+  - The terminal user no longer holds the role "user", which was configured nowhere.
+  Stored data to delete: every entity store - users, personalities, sessions, channels, agents,
+  skills, workspaces, artifacts. A configuration's `roles` need an `id` each.

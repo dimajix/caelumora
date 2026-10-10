@@ -216,10 +216,11 @@ them; so a clearance is not judged by the flow rule, but by its own (`Clearances
     them - the same, or one it may read.
 
 A clearance follows from roles ([142](../issues/142-roles.md)). The `roles` section of the
-configuration names the roles and the clearances each grants (`Roles`); the user provider gives
-users their roles - for now by its own configuration. A user's clearances are all their roles'; an
-agent's are its owner's, since it must not see more than the person responsible for it. A user whose
-roles grant nothing sees only what is public. Without a `roles` section, clearances are not checked.
+configuration names the roles - each with an id, which is what is stored - and the clearances each
+grants (`Roles`, `caelumora_model::role`); the user provider gives users their roles - for now by
+its own configuration. A user's clearances are all their roles'; an agent's are its owner's, since
+it must not see more than the person responsible for it. A user whose roles grant nothing sees only
+what is public. Without a `roles` section, clearances are not checked.
 
 ### Personalities limit their agents
 

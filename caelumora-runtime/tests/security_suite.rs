@@ -23,13 +23,15 @@ use caelumora_model::channel::{moderation_components, Channel, HistoryAccess, Pa
 use caelumora_model::config::{ArtifactStorageConfig, ArtifactsConfig, StorageConfig, WorkspacesConfig};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, StoredComponents};
 use caelumora_model::external_agent::{ConversationId, TaskId};
-use caelumora_model::confidentiality::{Classification, Clearance, Compartments, ConfidentialityRules, Confidentiality, Roles};
+use caelumora_model::confidentiality::{Classification, Clearance, Compartments, ConfidentialityRules, Confidentiality};
+use caelumora_model::role::{RoleId, Roles};
+use caelumora_model::store::memberships::StoreMemberships;
 use caelumora_model::value::name::{Name, ScopedName};
 use caelumora_model::value::text::{Description, Introduction};
 use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::scope::Scope;
 use caelumora_model::secret::SecretManager;
-use caelumora_model::security::{ActionType, OwnershipSecurityManager, Reclassified, SecurityAttributes, SecurityContext, SecurityManager};
+use caelumora_model::security::{ActionType, Grant, Membership, OwnershipSecurityManager, Reclassified, SecurityAttributes, SecurityContext, SecurityManager, Subject};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::store::{ComponentStore, EntityStore, StateStore, StoreError};
 use caelumora_model::store::memory::MemoryStore;
@@ -99,6 +101,14 @@ impl SecurityManager for Recorder {
         self.asked.lock().unwrap().push(format!("{who}: {} {answer}", self.label(&action)));
         allowed
     }
+
+    fn role_id(&self, name: &str) -> Option<RoleId> {
+        self.policy.role_id(name)
+    }
+
+    fn role_name(&self, id: RoleId) -> Option<String> {
+        self.policy.role_name(id)
+    }
 }
 
 /// The attributes of the entity `action` is about, if it is about one.
@@ -122,6 +132,9 @@ fn attributes_of<'a>(action: &ActionType<'a>) -> Option<&'a SecurityAttributes> 
     }
 }
 
+/// The role every user of the world holds.
+static STAFF: std::sync::LazyLock<RoleId> = std::sync::LazyLock::new(RoleId::new);
+
 /// The runtime with the ownership policy, and three users: alice and bob
 /// on the staff, carol a stranger to everything of theirs.
 struct World {
@@ -144,11 +157,16 @@ impl World {
     /// The world, with the component kinds `register` adds besides the
     /// built-in ones.
     async fn with_kinds(register: impl FnOnce(&mut ComponentRegistry)) -> Self {
-        let roles = Roles::new([("staff".to_string(), vec![Clearance { level: Confidentiality::Internal, compartment: None }])]).unwrap();
+        let roles = Roles::new([(*STAFF, "staff".to_string(), vec![Clearance { level: Confidentiality::Internal, compartment: None }])]).unwrap();
         let rules = ConfidentialityRules::new(Compartments::new([]).unwrap()).with_roles(roles);
-        let recorder = Arc::new(Recorder { policy: OwnershipSecurityManager::with_rules(rules), asked: Mutex::new(Vec::new()), names: Mutex::new(HashMap::new()) });
+        // The policy learns who takes part where from the store it guards
+        // (issue 23), bound once the store is made.
+        let memberships = Arc::new(StoreMemberships::new());
+        let recorder = Arc::new(Recorder { policy: OwnershipSecurityManager::with_rules(rules, Arc::<StoreMemberships>::clone(&memberships)), asked: Mutex::new(Vec::new()), names: Mutex::new(HashMap::new()) });
         let policy: Arc<dyn SecurityManager> = Arc::<Recorder>::clone(&recorder);
         let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
+        let entities: Arc<dyn EntityStore> = Arc::<MemoryStore>::clone(&store);
+        memberships.bind(&entities);
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
         let mut registry = ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
         register(&mut registry);
@@ -175,7 +193,7 @@ impl World {
     }
 
     async fn user(&self, name: &str) -> UserId {
-        let user = User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: vec!["staff".to_string()], deleted: None };
+        let user = User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: vec![*STAFF], deleted: None };
         self.store.create_user(&Self::system(), &user).await.unwrap();
         self.policy.names.lock().unwrap().insert(ActorId::User(user.id), name.to_string());
         user.id
@@ -289,11 +307,11 @@ impl World {
             channels: vec![channel.id],
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
-            security_attributes: caelumora_model::channel::participant_attributes(alice, &in_session),
+            security_attributes: SecurityAttributes::owned_by(alice).granting(Subject::MemberOf(Membership::Session(channel.session_id)), Grant::Read),
             deleted: None,
         };
         self.store.create_session(&Self::system(), &session).await.unwrap();
-        self.store.create_channel(&Self::system(), &Channel { security_attributes: caelumora_model::channel::participant_attributes(alice, &channel.participants), ..channel }).await.unwrap();
+        self.store.create_channel(&Self::system(), &channel).await.unwrap();
         self.manager.open_session(&Self::as_user(self.alice), session.id).await.expect("alice opens her session")
     }
 
@@ -304,12 +322,10 @@ impl World {
     }
 }
 
-/// Owned by `owner` - the system if `None` - with `contributors`.
-fn attributes(owner: Option<UserId>, contributors: &[UserId]) -> SecurityAttributes {
-    SecurityAttributes {
-        owner_id: owner.map(ActorId::User).unwrap_or(ActorId::System),
-        contributors: contributors.iter().map(|c| ActorId::User(*c)).collect(),
-    }
+/// Owned by `owner` - the system if `None` - read by `readers`.
+fn attributes(owner: Option<UserId>, readers: &[UserId]) -> SecurityAttributes {
+    let owned = SecurityAttributes::owned_by(owner.map(ActorId::User).unwrap_or(ActorId::System));
+    readers.iter().fold(owned, |attributes, reader| attributes.granting(Subject::Actor(ActorId::User(*reader)), Grant::Read))
 }
 
 /// A channel in which nobody is asked to respond unless mentioned: no agent
@@ -528,6 +544,31 @@ async fn a_stranger_finds_nothing_of_a_session() {
     assert!(matches!(views.session(session.id()).await, Err(ViewError::SessionNotFound(_))));
     assert!(views.sessions().await.unwrap().is_empty(), "nor listed");
     assert!(world.manager.views(Viewer::new(World::as_user(world.alice))).sessions().await.unwrap().len() == 1, "while it is there");
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// Issue 23: a channel is read by who takes part in it now - wherever they
+/// act -, not by a list copied when it was made: a participant removed is
+/// told of it, and reads it no more.
+#[tokio::test]
+async fn a_channel_is_read_by_its_members_wherever_they_act_and_no_more_once_removed() {
+    let world = World::new().await;
+    let session = world.session_of(&[world.bob, world.carol], &[], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let elsewhere = SecurityContext::new(ActorId::User(world.carol), SessionId::new(), ChannelId::new());
+    assert!(session.channel_for(&elsewhere, main.id()).await.is_ok(), "a member, though she acts elsewhere");
+
+    let mut events = world.runtime.event_bus().subscribe_as(World::as_user(world.carol));
+    main.remove_participant(&World::as_user(world.alice), ActorId::User(world.carol)).await.expect("alice's to remove her");
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while let Some(event) = events.recv().await {
+            if matches!(event, caelumora_model::event::GlobalEvent::UserChannelLeft(_, channel, user) if channel == main.id() && user == world.carol) {
+                return;
+            }
+        }
+    }).await.expect("she is told she was removed");
+    assert!(session.channel_for(&World::as_user(world.carol), main.id()).await.is_err(), "and reads it no more");
+    assert!(session.channel_for(&World::as_user(world.bob), main.id()).await.is_ok(), "while the others still do");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
@@ -1840,7 +1881,7 @@ async fn a_profile_is_written_by_its_user_alone_and_read_by_who_shares_a_session
     assert!(world.store.create_user_profile(&bob, &carols).await.is_err(), "nor anyone else's");
 
     let mut promoted = world.store.get_user(&alice, world.alice).await.expect("everyone reads a user");
-    promoted.roles.push("admin".to_string());
+    promoted.roles.push(RoleId::new());
     assert!(world.store.update_user(&alice, &promoted).await.is_err(), "nobody grants themselves roles");
 
     let session = world.shared_session(&[], &[]).await;
@@ -2919,7 +2960,7 @@ async fn with_a_writing_agent(function: &str, arguments: serde_json::Value) -> (
     let review = world.runtime.skill_manager()
         .create(&World::as_user(world.bob), "review", Scope::GlobalScope, "How we review", "Read it twice.", Classification::general(Confidentiality::Internal)).await
         .expect("his to make");
-    let shared = caelumora_model::skill::Skill { security_attributes: SecurityAttributes { owner_id: ActorId::User(world.bob), contributors: vec![ActorId::User(world.alice)] }, ..review };
+    let shared = caelumora_model::skill::Skill { security_attributes: SecurityAttributes::owned_by(ActorId::User(world.bob)).granting(caelumora_model::security::Subject::Actor(ActorId::User(world.alice)), caelumora_model::security::Grant::Read), ..review };
     world.store.update_skill(&World::as_user(world.bob), &shared).await.expect("shared with alice");
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);

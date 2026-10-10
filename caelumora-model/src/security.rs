@@ -4,17 +4,19 @@ use crate::channel::ChannelId;
 use crate::command::Command;
 use crate::confidentiality::{Classification, ConfidentialityRules};
 use crate::privacy::SessionPrivacy;
+use crate::role::{RoleId, Roles};
 use crate::store::EntityKind;
 use crate::tool::ToolCall;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
+use std::sync::Arc;
 
 /// Everything the `SecurityManager` is asked about.
 ///
 /// An action on a stored entity carries that entity's `SecurityAttributes`,
-/// so that a policy can decide by owner and contributors (issue 11) without
-/// being handed the entity itself: `Get`, `Update` and `Delete` carry the
+/// so that a policy can decide by its owner and its access list (issues 11,
+/// 23) without being handed the entity itself: `Get`, `Update` and `Delete` carry the
 /// attributes as stored - never those of a new value, which the caller
 /// controls - and `Create` those of the entity to be created. `Find` and
 /// `List` ask whether the caller may search at all; the result is then
@@ -78,7 +80,7 @@ pub enum ActionType<'a> {
     /// policy maps them to clearances. Besides `UpdateChannel`, which
     /// decides who may add participants, and `GetChannel`, which decides who
     /// may read the channel at all.
-    JoinChannel { participant: ActorId, roles: &'a [String], channel: &'a Classification },
+    JoinChannel { participant: ActorId, roles: &'a [RoleId], channel: &'a Classification },
     /// Reading a user, e.g. receiving the events about them. A stored user
     /// belongs to the system (issue 94): see `User`'s `Secured`.
     GetUser(&'a SecurityAttributes),
@@ -100,8 +102,8 @@ pub enum ActionType<'a> {
     GetWorkspace(&'a SecurityAttributes),
     ListWorkspaces,
     CreateWorkspace(&'a SecurityAttributes),
-    /// Changing a workspace - its name, description, classification,
-    /// contributors - with its attributes as stored.
+    /// Changing a workspace - its name, description, classification - with
+    /// its attributes as stored.
     UpdateWorkspace(&'a SecurityAttributes),
     DeleteWorkspace(&'a SecurityAttributes),
     /// Reading a skill (issue 22): its name, description and body - in the
@@ -333,26 +335,131 @@ pub enum Reclassified<'a> {
     Memory { author: ActorId },
 }
 
-/// Who an entity belongs to - what a policy decides by (issue 11).
+/// Who an entity belongs to and who else may reach it - what a policy
+/// decides by (issues 11, 23).
 ///
-/// The owner may do everything with it; contributors may read and use it -
-/// the participants of a session, say - but not change or delete it. An
-/// entity without an owner (`ActorId::None`, as in the demo data of a seed
-/// file) belongs to the system. Richer access lists are
-/// issue 23.
+/// The owner may do everything with it, implicitly and unrevocably; the
+/// access list only adds - allow-only, the union of its entries, without
+/// precedence. An entity without an owner (`ActorId::None`, as in the demo
+/// data of a seed file) belongs to the system.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct SecurityAttributes {
     pub owner_id: ActorId,
     /// May be left out where the attributes are written by hand - a seed
     /// file (issue 108).
-    #[serde(default)]
-    pub contributors: Vec<ActorId>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub acl: Vec<AclEntry>,
 }
 
 impl SecurityAttributes {
-    /// Attributes of an entity owned by `owner`, without contributors.
+    /// Attributes of an entity owned by `owner`, with an empty access list.
     pub fn owned_by(owner: ActorId) -> Self {
-        Self { owner_id: owner, contributors: Vec::new() }
+        Self { owner_id: owner, acl: Vec::new() }
+    }
+
+    /// These attributes, granting `subject` what `grant` covers besides.
+    pub fn granting(mut self, subject: Subject, grant: Grant) -> Self {
+        self.acl.push(AclEntry { subject, grant });
+        self
+    }
+
+    /// Nothing if the attributes may be stored as they are: an entry names
+    /// a person, never an agent - an agent acts with its owner's rights
+    /// (issue 255), and an entry for it would let it reach what the person
+    /// responsible for it may not - nor the system or nobody.
+    pub fn validate(&self) -> Result<(), String> {
+        for entry in &self.acl {
+            if let Subject::Actor(actor) = entry.subject {
+                if !matches!(actor, ActorId::User(_)) {
+                    return Err(format!("an access list names users, roles and members, not {actor}"));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// One entry of an access list (issue 23): whom it grants what.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AclEntry {
+    pub subject: Subject,
+    pub grant: Grant,
+}
+
+/// Whom an entry of an access list grants something (issue 23). Matched
+/// against the context's principal - an agent's owner -, and for what is
+/// read also against its caller, an agent for what it takes part in itself
+/// (issue 264).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Subject {
+    /// A user.
+    Actor(ActorId),
+    /// Whoever holds the role - an agent its owner's roles, narrowed by its
+    /// personality's limiting roles.
+    Role(RoleId),
+    /// The current participants of a session or a channel, as the policy
+    /// learns from its `Memberships`.
+    MemberOf(Membership),
+}
+
+/// A session or a channel, as something one is a member of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Membership {
+    Session(SessionId),
+    Channel(ChannelId),
+}
+
+/// What an entry of an access list grants (issue 23). What is neither -
+/// changing the attributes, deleting, reclassifying - is the owner's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Grant {
+    /// Getting, listing, downloading, using.
+    Read,
+    /// Changing the content, besides reading it. No action asks for it
+    /// yet; the workspace's files and an artifact's versions will.
+    Write,
+}
+
+impl Grant {
+    /// Whether this grant covers what `needed` asks for.
+    pub fn covers(self, needed: Grant) -> bool {
+        self == Grant::Write || needed == Grant::Read
+    }
+}
+
+/// What a policy needs to know of actors that the attributes it is handed
+/// do not say (issue 23): whether someone is a participant of a session or
+/// channel an access list names, and which roles count for them. A fact,
+/// not a decision - the decision stays the policy's. Implemented by the
+/// runtime over the stores, read in the system's name.
+#[async_trait]
+pub trait Memberships: Debug + Send + Sync {
+    /// Whether `actor` is a current participant of `place`, a user or an
+    /// agent - not an approver.
+    async fn is_member_of(&self, actor: ActorId, place: Membership) -> bool;
+
+    /// The roles that count for `actor`: a user's own; an agent's owner's,
+    /// narrowed by its personality's limiting roles (issue 179).
+    async fn roles_of(&self, actor: ActorId) -> Vec<RoleId>;
+}
+
+/// Knows of no membership and no roles: for a policy without access lists
+/// naming them - tests, and what is built before a store is.
+#[derive(Debug, Default)]
+pub struct NoMemberships;
+
+#[async_trait]
+impl Memberships for NoMemberships {
+    async fn is_member_of(&self, _actor: ActorId, _place: Membership) -> bool {
+        false
+    }
+
+    async fn roles_of(&self, _actor: ActorId) -> Vec<RoleId> {
+        Vec::new()
     }
 }
 
@@ -420,6 +527,18 @@ impl SecurityContext {
 #[async_trait]
 pub trait SecurityManager : Debug + Sync + Send {
     async fn check(&self, context: &SecurityContext, action: ActionType<'_>) -> bool;
+
+    /// The id of the role named `name` (issue 23), for what is written by
+    /// hand; `None` if no such role is configured.
+    fn role_id(&self, _name: &str) -> Option<RoleId> {
+        None
+    }
+
+    /// The name of the role `id`, for what is shown to a person; `None` if
+    /// no such role is configured.
+    fn role_name(&self, _id: RoleId) -> Option<String> {
+        None
+    }
 }
 
 /// The pure questions "may they?" that are asked from outside an entity -
@@ -534,7 +653,7 @@ pub trait AccessQuestions {
     /// Whether the user `context` acts for, with `roles`, is cleared for
     /// `channel` (`JoinChannel`, issue 133) - what decides, besides
     /// `GetChannel`, which channels they are shown.
-    async fn may_see_channel(&self, context: &SecurityContext, roles: &[String], channel: &Classification) -> bool;
+    async fn may_see_channel(&self, context: &SecurityContext, roles: &[RoleId], channel: &Classification) -> bool;
 
     /// Whether `context` may take back the deletion of an entity of `kind`
     /// with `attributes` (`Restore`, issue 164).
@@ -635,7 +754,7 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
         self.check(context, ActionType::CancelChannel(channel)).await
     }
 
-    async fn may_see_channel(&self, context: &SecurityContext, roles: &[String], channel: &Classification) -> bool {
+    async fn may_see_channel(&self, context: &SecurityContext, roles: &[RoleId], channel: &Classification) -> bool {
         self.check(context, ActionType::JoinChannel { participant: context.principal_id, roles, channel }).await
     }
 
@@ -691,11 +810,20 @@ impl<T: SecurityManager + ?Sized> Enforcement for T {
 
 #[derive(Debug, Default)]
 pub struct DummySecurityManager {
+    /// The configured roles, translated for what is written by hand and
+    /// shown, though they decide nothing here.
+    roles: Option<Roles>,
 }
 
 impl DummySecurityManager {
     pub fn new() -> Self {
-        Self {}
+        Self::default()
+    }
+
+    /// The policy that allows everything, translating the configured
+    /// `roles`.
+    pub fn with_roles(roles: Option<Roles>) -> Self {
+        Self { roles }
     }
 }
 
@@ -704,21 +832,29 @@ impl SecurityManager for DummySecurityManager {
     async fn check(&self, _context: &SecurityContext, _action: ActionType<'_>) -> bool {
         true
     }
+
+    fn role_id(&self, name: &str) -> Option<RoleId> {
+        self.roles.as_ref()?.id_of(name).ok()
+    }
+
+    fn role_name(&self, id: RoleId) -> Option<String> {
+        self.roles.as_ref()?.name_of(id).map(str::to_string)
+    }
 }
 
-/// The ownership policy (issue 11): what is yours you may do everything
-/// with, what you contribute to you may read and use, what belongs to the
-/// system everybody may read and use - and nobody acts in someone else's
-/// name.
+/// The ownership policy (issues 11, 23): what is yours you may do
+/// everything with, what an access list grants you you may read and use,
+/// what belongs to the system everybody may read and use - and nobody acts
+/// in someone else's name.
 ///
 /// - The system (`ActorId::System`) may do everything.
 /// - Reading - which also covers using, e.g. starting a session from a
 ///   template, or working on a workspace outside a session - is allowed to
-///   the owner, to contributors, and to everybody
-///   for entities owned by the system or by no one. An agent reads what
-///   its owner may read, and what it takes part in itself - a contributor
-///   as the caller (issue 264); everything else it does, it does as its
-///   owner.
+///   the owner, to whom an entry of the access list grants it, and to
+///   everybody for entities owned by the system or by no one. An agent
+///   reads what its owner may read, and what it takes part in itself - a
+///   member as the caller (issue 264); everything else it does, it does as
+///   its owner.
 /// - Creating is allowed only with oneself as owner.
 /// - Changing, deleting and stopping are the owner's alone, and so is reading what an
 ///   agent saw: its context holds more than the conversation - its system
@@ -735,9 +871,9 @@ impl SecurityManager for DummySecurityManager {
 ///   owner or its author, a note or memory entry by its author - always to
 ///   a classification the rules let be given, and what is in a channel
 ///   never above it.
-/// - A tool call of an agent is approved by the agent's owner and its
-///   contributors, of an agent of the system by the channel's owner
-///   (issue 14).
+/// - A tool call of an agent is approved by the agent's owner and whom its
+///   access list lets read it, of an agent of the system by the channel's
+///   owner (issue 14).
 /// - Searching and listing are allowed; their results are filtered by what
 ///   the caller may read. Tool calls, secrets and commands are governed
 ///   elsewhere for now (issues 12 and 23).
@@ -746,32 +882,43 @@ impl SecurityManager for DummySecurityManager {
 /// caller exercises - a user themselves, an agent its owner, whoever asked
 /// it (issue 255). An agent is its owner's delegate: the owner checks the
 /// request where a call is admitted, and the asker lends it nothing.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct OwnershipSecurityManager {
     rules: ConfidentialityRules,
+    memberships: Arc<dyn Memberships>,
+}
+
+impl Default for OwnershipSecurityManager {
+    fn default() -> Self {
+        Self { rules: ConfidentialityRules::default(), memberships: Arc::new(NoMemberships) }
+    }
 }
 
 impl OwnershipSecurityManager {
-    /// The policy without compartments and without checking clearances.
+    /// The policy without compartments, without checking clearances and
+    /// knowing of no memberships.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// The policy, applying the confidentiality `rules` as configured.
-    pub fn with_rules(rules: ConfidentialityRules) -> Self {
-        Self { rules }
+    /// The policy, applying the confidentiality `rules` as configured and
+    /// learning memberships and roles from `memberships`.
+    pub fn with_rules(rules: ConfidentialityRules, memberships: Arc<dyn Memberships>) -> Self {
+        Self { rules, memberships }
     }
 
-    /// Whether `me` answers for the agent with `agent` attributes in the
-    /// channel with `channel` attributes - approves its calls, runs the
+    /// Whether the context answers for the agent with `agent` attributes in
+    /// the channel with `channel` attributes - approves its calls, runs the
     /// commands that are its owners' (issues 14, 269): who is responsible
-    /// for the agent, also in someone else's channel; for an agent of the
-    /// system, whose channel it is.
-    fn answers_for(agent: &SecurityAttributes, channel: &SecurityAttributes, me: ActorId) -> bool {
+    /// for the agent - its owner, or whom its access list lets read it -,
+    /// also in someone else's channel; for an agent of the system, whose
+    /// channel it is.
+    async fn answers_for(&self, agent: &SecurityAttributes, channel: &SecurityAttributes, context: &SecurityContext) -> bool {
+        let me = context.principal_id;
         if Self::system_owned(agent) {
             channel.owner_id == me && me != ActorId::None
         } else {
-            agent.owner_id == me || agent.contributors.contains(&me)
+            self.granted(agent, Grant::Read, context, false).await
         }
     }
 
@@ -779,8 +926,50 @@ impl OwnershipSecurityManager {
         matches!(attributes.owner_id, ActorId::None | ActorId::System)
     }
 
-    fn may_read(attributes: &SecurityAttributes, me: ActorId) -> bool {
-        Self::system_owned(attributes) || attributes.owner_id == me || attributes.contributors.contains(&me)
+    /// Whether the context may do with an entity with `attributes` what
+    /// `needed` asks for: it is the system's, the principal owns it, or an
+    /// entry of its access list grants it - to the principal, or, where
+    /// `as_caller` says so, to the caller itself (issue 264). The entries
+    /// are matched in their order, and memberships and roles are asked for
+    /// only where an entry names them.
+    async fn granted(&self, attributes: &SecurityAttributes, needed: Grant, context: &SecurityContext, as_caller: bool) -> bool {
+        let actors: &[ActorId] = if as_caller && context.caller_id != context.principal_id {
+            &[context.principal_id, context.caller_id]
+        } else {
+            std::slice::from_ref(&context.principal_id)
+        };
+        if Self::system_owned(attributes) || actors.contains(&attributes.owner_id) {
+            return true;
+        }
+        let mut roles: Option<Vec<RoleId>> = None;
+        for entry in attributes.acl.iter().filter(|entry| entry.grant.covers(needed)) {
+            let matches = match entry.subject {
+                Subject::Actor(actor) => actors.contains(&actor),
+                Subject::MemberOf(place) => {
+                    let mut member = false;
+                    for actor in actors {
+                        if self.memberships.is_member_of(*actor, place).await {
+                            member = true;
+                            break;
+                        }
+                    }
+                    member
+                }
+                Subject::Role(role) => {
+                    if roles.is_none() {
+                        // The caller's: an agent its owner's, narrowed by
+                        // its personality - a user their own.
+                        let whose = if context.caller_id == ActorId::None { context.principal_id } else { context.caller_id };
+                        roles = Some(self.memberships.roles_of(whose).await);
+                    }
+                    roles.as_ref().is_some_and(|roles| roles.contains(&role))
+                }
+            };
+            if matches {
+                return true;
+            }
+        }
+        false
     }
 }
 
@@ -804,23 +993,25 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::GetUserProfile(a)
             | ActionType::GetWorkspace(a)
             | ActionType::GetArtifact(a)
-            | ActionType::GetSkill(a) => Self::may_read(a, me) || Self::may_read(a, context.caller_id),
+            | ActionType::GetSkill(a) => self.granted(a, Grant::Read, context, true).await,
             // Using a skill is granted as reading it is: what the owner may
             // read the agent may follow (issue 22).
-            ActionType::UseSkill(a) => Self::may_read(a, me) || Self::may_read(a, context.caller_id),
+            ActionType::UseSkill(a) => self.granted(a, Grant::Read, context, true).await,
             ActionType::CancelChannel(a)
             | ActionType::WakeChannel(a)
             | ActionType::RetryMessage(a)
-            | ActionType::AnswerQuestion(a) => Self::may_read(a, me),
+            | ActionType::AnswerQuestion(a) => self.granted(a, Grant::Read, context, false).await,
             // What an agent can do is read by whoever reads the agent, and by
             // every member of the channel it works in with them.
-            ActionType::ReadAgentTools { agent, channel } => Self::may_read(agent, me) || Self::may_read(channel, me),
-            ActionType::ApproveToolCall { agent, channel } => Self::answers_for(agent, channel, me),
+            ActionType::ReadAgentTools { agent, channel } => {
+                self.granted(agent, Grant::Read, context, false).await || self.granted(channel, Grant::Read, context, false).await
+            }
+            ActionType::ApproveToolCall { agent, channel } => self.answers_for(agent, channel, context).await,
             // A command of an agent is run by whoever may write in the
-            // channel - its contributors -, unless the command is for the
-            // agent's owners alone, as approving its calls is (issue 269).
+            // channel - its members -, unless the command is for the agent's
+            // owners alone, as approving its calls is (issue 269).
             ActionType::ShowAgentCommand { command, agent, channel } | ActionType::ExecuteAgentCommand { command, agent, channel } => {
-                if command.owners_only { Self::answers_for(agent, channel, me) } else { Self::may_read(channel, me) }
+                if command.owners_only { self.answers_for(agent, channel, context).await } else { self.granted(channel, Grant::Read, context, false).await }
             }
             ActionType::CopyInformation { from, into } => self.rules.may_copy(from, into),
             ActionType::Classify(classification) => self.rules.may_classify(classification),
@@ -895,6 +1086,14 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::ReadSecret(_) => true,
         }
     }
+
+    fn role_id(&self, name: &str) -> Option<RoleId> {
+        self.rules.roles()?.id_of(name).ok()
+    }
+
+    fn role_name(&self, id: RoleId) -> Option<String> {
+        self.rules.roles()?.name_of(id).map(str::to_string)
+    }
 }
 
 #[cfg(test)]
@@ -916,10 +1115,37 @@ mod tests {
         OwnershipSecurityManager::new().check(&context(actor), action).await
     }
 
+    /// Owned by `owner`, read by `readers` (issue 23).
+    fn shared(owner: ActorId, readers: &[ActorId]) -> SecurityAttributes {
+        readers.iter().fold(SecurityAttributes::owned_by(owner), |attributes, reader| attributes.granting(Subject::Actor(*reader), Grant::Read))
+    }
+
+    /// Memberships and roles as a test sets them.
+    #[derive(Debug, Default)]
+    struct Known {
+        members: Vec<(ActorId, Membership)>,
+        roles: Vec<(ActorId, RoleId)>,
+    }
+
+    #[async_trait]
+    impl Memberships for Known {
+        async fn is_member_of(&self, actor: ActorId, place: Membership) -> bool {
+            self.members.contains(&(actor, place))
+        }
+
+        async fn roles_of(&self, actor: ActorId) -> Vec<RoleId> {
+            self.roles.iter().filter(|(a, _)| *a == actor).map(|(_, role)| *role).collect()
+        }
+    }
+
+    fn knowing(known: Known) -> OwnershipSecurityManager {
+        OwnershipSecurityManager::with_rules(ConfidentialityRules::default(), Arc::new(known))
+    }
+
     #[tokio::test]
     async fn a_message_is_its_authors_to_modify_and_take_back() {
         let (alice, bob) = (user(), user());
-        let bobs = SecurityAttributes { owner_id: bob, contributors: vec![alice] };
+        let bobs = shared(bob, &[alice]);
         for (author, who, allowed) in [(alice, alice, true), (alice, bob, false)] {
             assert_eq!(allows(who, ActionType::ModifyMessage { author, channel: &bobs }).await, allowed, "modified by {who}: the author's, not the channel owner's");
             assert_eq!(allows(who, ActionType::RevokeMessage { author, channel: &bobs }).await, allowed, "taken back by {who}");
@@ -947,7 +1173,7 @@ mod tests {
     #[tokio::test]
     async fn access_questions_ask_the_policy_and_a_channel_always_reads_itself() {
         let (alice, bob) = (user(), user());
-        let hers = SecurityAttributes { owner_id: alice, contributors: vec![bob] };
+        let hers = shared(alice, &[bob]);
         let policy = OwnershipSecurityManager::new();
         assert!(policy.may_read_channel(&context(bob), &hers).await, "a participant reads the channel");
         assert!(policy.may_change_channel(&context(alice), &hers).await, "the owner changes it");
@@ -974,49 +1200,49 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn owners_do_everything_contributors_read_strangers_nothing() {
+    async fn owners_do_everything_whom_the_list_grants_read_strangers_nothing() {
         let (alice, bob, carol) = (user(), user(), user());
-        let hers = SecurityAttributes { owner_id: alice, contributors: vec![bob] };
+        let hers = shared(alice, &[bob]);
 
         for action in [ActionType::GetSession(&hers), ActionType::UpdateSession(&hers), ActionType::DeleteSession(&hers)] {
             assert!(allows(alice, action).await, "{action:?}");
             assert!(!allows(carol, action).await, "{action:?}");
         }
         assert!(allows(bob, ActionType::GetSession(&hers)).await);
-        assert!(allows(bob, ActionType::CancelChannel(&hers)).await, "a contributor acts in it");
+        assert!(allows(bob, ActionType::CancelChannel(&hers)).await, "a reader acts in it");
         assert!(allows(alice, ActionType::ReadAgentContext(&hers)).await);
         assert!(!allows(bob, ActionType::ReadAgentContext(&hers)).await, "what an agent saw is its owner's alone");
         assert!(allows(alice, ActionType::ReadAgentComponents(&hers)).await);
         assert!(!allows(bob, ActionType::ReadAgentComponents(&hers)).await, "and what it was built from, which may have been shared with its owner alone");
-        let theirs = SecurityAttributes { owner_id: carol, contributors: vec![] };
+        let theirs = SecurityAttributes::owned_by(carol);
         let tools = |agent, channel| ActionType::ReadAgentTools { agent, channel };
         assert!(allows(bob, tools(&hers, &theirs)).await, "who reads the agent sees what it can do");
         assert!(allows(carol, tools(&hers, &theirs)).await, "and every member of the channel");
         assert!(!allows(carol, tools(&hers, &hers)).await, "but nobody else");
         let approve = |agent, channel| ActionType::ApproveToolCall { agent, channel };
         assert!(allows(alice, approve(&hers, &theirs)).await, "the agent's owner approves its calls, in any channel");
-        assert!(allows(bob, approve(&hers, &theirs)).await, "and so do its contributors");
+        assert!(allows(bob, approve(&hers, &theirs)).await, "and so do its readers");
         assert!(!allows(carol, approve(&hers, &theirs)).await, "not whose channel it is");
         let systems = SecurityAttributes::owned_by(ActorId::System);
         assert!(allows(carol, approve(&systems, &theirs)).await, "an agent of the system: whose channel it is");
         assert!(!allows(alice, approve(&systems, &theirs)).await, "nobody else");
-        assert!(!allows(bob, approve(&SecurityAttributes::default(), &hers)).await, "not even a contributor of the channel");
+        assert!(!allows(bob, approve(&SecurityAttributes::default(), &hers)).await, "not even a reader of the channel");
         let command = |owners_only| Command { name: "x".to_string(), description: String::new(), usage: None, owners_only };
         let (members, owners) = (command(false), command(true));
         let run = |command, agent, channel| ActionType::ExecuteAgentCommand { command, agent, channel };
         let show = |command, agent, channel| ActionType::ShowAgentCommand { command, agent, channel };
         assert!(allows(carol, run(&members, &hers, &theirs)).await, "a command for the members: whoever may write in the channel");
         assert!(allows(carol, show(&members, &hers, &theirs)).await);
-        assert!(!allows(bob, run(&members, &hers, &theirs)).await, "not the agent's contributor outside the channel");
+        assert!(!allows(bob, run(&members, &hers, &theirs)).await, "not the agent's reader outside the channel");
         assert!(allows(alice, run(&owners, &hers, &theirs)).await, "a command for the owners: the agent's owner");
-        assert!(allows(bob, run(&owners, &hers, &theirs)).await, "and its contributors");
+        assert!(allows(bob, run(&owners, &hers, &theirs)).await, "and its readers");
         assert!(!allows(carol, run(&owners, &hers, &theirs)).await, "not whose channel it is");
         assert!(!allows(carol, show(&owners, &hers, &theirs)).await, "who may not run it does not see it");
         assert!(allows(carol, run(&owners, &systems, &theirs)).await, "an agent of the system: whose channel it is");
         assert!(!allows(bob, ActionType::UpdateSession(&hers)).await);
         assert!(!allows(bob, ActionType::DeleteSession(&hers)).await);
         // A skill (issue 22) is used as it is read; changed by its owner.
-        assert!(allows(bob, ActionType::UseSkill(&hers)).await, "a contributor uses it");
+        assert!(allows(bob, ActionType::UseSkill(&hers)).await, "a reader uses it");
         assert!(!allows(carol, ActionType::UseSkill(&hers)).await, "nobody else");
         assert!(allows(carol, ActionType::UseSkill(&systems)).await, "the system's, everybody");
         assert!(allows(bob, ActionType::GetSkill(&hers)).await && !allows(bob, ActionType::UpdateSkill(&hers)).await, "read, not changed");
@@ -1048,7 +1274,7 @@ mod tests {
             (Compartment::new("hr"), vec![Compartment::new("finance")]),
             (Compartment::new("finance"), vec![]),
         ]);
-        OwnershipSecurityManager::with_rules(ConfidentialityRules::new(compartments.unwrap()))
+        OwnershipSecurityManager::with_rules(ConfidentialityRules::new(compartments.unwrap()), Arc::new(NoMemberships))
     }
 
     #[tokio::test]
@@ -1065,8 +1291,9 @@ mod tests {
     async fn an_agent_reads_what_its_owner_may_read_or_it_takes_part_in_and_changes_as_its_owner() {
         let (alice, bob) = (user(), user());
         let (hers, his, member) = (ActorId::Agent(crate::agent::AgentId::new()), ActorId::Agent(crate::agent::AgentId::new()), ActorId::Agent(crate::agent::AgentId::new()));
-        let alices = SecurityAttributes { owner_id: alice, contributors: vec![member] };
-        let policy = OwnershipSecurityManager::new();
+        let place = Membership::Channel(ChannelId::new());
+        let alices = SecurityAttributes::owned_by(alice).granting(Subject::MemberOf(place), Grant::Read);
+        let policy = knowing(Known { members: vec![(member, place)], ..Known::default() });
         assert!(policy.check(&context(bob).next(hers, alice), ActionType::GetChannel(&alices)).await, "her agent, whoever asked");
         assert!(!policy.check(&context(bob).next(his, bob), ActionType::GetChannel(&alices)).await, "not his: he may not read it");
         assert!(policy.check(&context(bob).next(member, bob), ActionType::GetChannel(&alices)).await, "but an agent taking part in it");
@@ -1147,7 +1374,7 @@ mod tests {
         let policy = hr_reads_finance();
         let (owner, author, stranger) = (user(), user(), user());
         // Leaked, so that the targets can be built outside the closure.
-        let attributes: &'static SecurityAttributes = Box::leak(Box::new(SecurityAttributes { owner_id: owner, contributors: vec![author, stranger] }));
+        let attributes: &'static SecurityAttributes = Box::leak(Box::new(shared(owner, &[author, stranger])));
         let channel_itself = Reclassified::Channel { attributes };
         let hr = channel(SessionId::new(), Confidentiality::Confidential, &["hr"]);
         let classified = |level, c: &[&str]| Classification::new(level, c.iter().map(|c| Compartment::new(*c))).unwrap();
@@ -1204,6 +1431,75 @@ mod tests {
         assert!(!allows(bob, ActionType::CreateSession(&SecurityAttributes::owned_by(alice))).await);
         assert!(!allows(ActorId::None, ActionType::CreateSession(&SecurityAttributes::default())).await, "an empty context has no rights");
         assert!(!allows(ActorId::None, ActionType::UpdateSession(&SecurityAttributes::default())).await);
+    }
+
+    #[tokio::test]
+    async fn members_of_a_place_read_while_they_are_members_wherever_they_stand() {
+        let (alice, bob, carol) = (user(), user(), user());
+        let place = Membership::Session(SessionId::new());
+        let hers = SecurityAttributes::owned_by(alice).granting(Subject::MemberOf(place), Grant::Read);
+        let policy = knowing(Known { members: vec![(bob, place)], ..Known::default() });
+        let elsewhere = SecurityContext::new(bob, SessionId::new(), ChannelId::new());
+        assert!(policy.check(&elsewhere, ActionType::GetSession(&hers)).await, "a member, though he acts somewhere else");
+        assert!(!policy.check(&context(carol), ActionType::GetSession(&hers)).await, "not who is no member");
+        assert!(!policy.check(&context(bob), ActionType::UpdateSession(&hers)).await, "reading, not changing");
+        let other = SecurityAttributes::owned_by(alice).granting(Subject::MemberOf(Membership::Session(SessionId::new())), Grant::Read);
+        assert!(!policy.check(&context(bob), ActionType::GetSession(&other)).await, "a member of the place named, not of any");
+    }
+
+    #[tokio::test]
+    async fn a_role_grants_to_whoever_holds_it_an_agent_narrowed_by_its_personality() {
+        let (alice, bob) = (user(), user());
+        let (hr, staff) = (RoleId::new(), RoleId::new());
+        let agent = ActorId::Agent(crate::agent::AgentId::new());
+        let hers = SecurityAttributes::owned_by(alice).granting(Subject::Role(hr), Grant::Read);
+        // Bob holds hr; his agent is limited to staff, so its roles are
+        // what remains of his - which the memberships answer for it.
+        let policy = knowing(Known { roles: vec![(bob, hr), (bob, staff), (agent, staff)], ..Known::default() });
+        assert!(policy.check(&context(bob), ActionType::GetSkill(&hers)).await, "who holds the role");
+        assert!(!policy.check(&context(bob).next(agent, bob), ActionType::GetSkill(&hers)).await, "not his agent, limited below it");
+        let his = SecurityAttributes::owned_by(alice).granting(Subject::Actor(bob), Grant::Read);
+        assert!(policy.check(&context(bob).next(agent, bob), ActionType::GetSkill(&his)).await, "what he is granted as a person, his agent is too");
+    }
+
+    #[tokio::test]
+    async fn a_grant_to_read_is_not_one_to_write_and_the_owner_needs_none() {
+        let (alice, bob) = (user(), user());
+        assert!(Grant::Write.covers(Grant::Read) && Grant::Write.covers(Grant::Write));
+        assert!(Grant::Read.covers(Grant::Read) && !Grant::Read.covers(Grant::Write));
+        let policy = OwnershipSecurityManager::new();
+        let hers = shared(alice, &[]);
+        assert!(policy.granted(&hers, Grant::Write, &context(alice), false).await, "the owner, without an entry");
+        let readable = shared(alice, &[bob]);
+        assert!(policy.granted(&readable, Grant::Read, &context(bob), false).await);
+        assert!(!policy.granted(&readable, Grant::Write, &context(bob), false).await, "read, not write");
+        let writable = SecurityAttributes::owned_by(alice).granting(Subject::Actor(bob), Grant::Write);
+        assert!(policy.granted(&writable, Grant::Read, &context(bob), false).await, "who may write may read");
+    }
+
+    #[test]
+    fn an_access_list_names_people_roles_and_members_never_an_agent() {
+        let alice = user();
+        let agent = ActorId::Agent(crate::agent::AgentId::new());
+        assert_eq!(shared(alice, &[user()]).validate(), Ok(()));
+        let place = Subject::MemberOf(Membership::Channel(ChannelId::new()));
+        assert_eq!(SecurityAttributes::owned_by(alice).granting(Subject::Role(RoleId::new()), Grant::Read).granting(place, Grant::Write).validate(), Ok(()));
+        for nobody in [agent, ActorId::System, ActorId::None] {
+            assert!(SecurityAttributes::owned_by(alice).granting(Subject::Actor(nobody), Grant::Read).validate().is_err(), "not {nobody}");
+        }
+        let written: SecurityAttributes = serde_json::from_value(serde_json::json!({"owner_id": alice})).unwrap();
+        assert!(written.acl.is_empty(), "the list may be left out where it is written by hand");
+    }
+
+    #[test]
+    fn the_policy_translates_role_ids_and_names() {
+        let staff = RoleId::new();
+        let roles = Roles::new([(staff, "staff".to_string(), vec![])]).unwrap();
+        let policy = OwnershipSecurityManager::with_rules(ConfidentialityRules::default().with_roles(roles.clone()), Arc::new(NoMemberships));
+        assert_eq!((policy.role_id("staff"), policy.role_name(staff)), (Some(staff), Some("staff".to_string())));
+        assert_eq!((policy.role_id("hr"), OwnershipSecurityManager::new().role_id("staff")), (None, None), "only what is configured");
+        let dummy = DummySecurityManager::with_roles(Some(roles));
+        assert_eq!(dummy.role_id("staff"), Some(staff), "the policy that allows everything translates too");
     }
 
     #[test]

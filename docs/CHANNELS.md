@@ -107,7 +107,8 @@ A **channel** is one conversation within a session, such as a chat room. Its `Ch
 
 Every channel is built by `Channel::build`, either from a template (`ChannelTemplate::instantiate`)
 or on request. It adds an approver if the channel has none - a template may name its own, with its
-strategy - and makes every user and agent in the channel a contributor.
+strategy - and lets its members read it: an entry `MemberOf` the channel itself in its access list,
+matched against whoever takes part in it at the time (issue 23).
 
 The participants of a requested channel come from the session's participants, the creator always
 among them. Its moderator defaults to the `policy_moderator` with the `round_robin_policy` and its

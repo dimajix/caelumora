@@ -11,7 +11,7 @@ use crate::scope::{Scope, Scoped};
 use crate::value::name::{Name, ScopedName};
 use crate::value::text::{Briefing, Summary};
 use crate::value::ValueError;
-use crate::security::{Secured, SecurityAttributes};
+use crate::security::{Grant, Membership, Secured, SecurityAttributes, Subject};
 use crate::session::SessionId;
 use crate::store::Journaled;
 use crate::user::UserId;
@@ -156,9 +156,9 @@ impl Secured for Channel {
 impl Channel {
     /// A new channel of `participants`, owned by `owner`, as every channel is
     /// built - from a template or on request (issue 09): with an approver
-    /// added if there is none, and with every user and agent in it as a
-    /// contributor (see `participant_attributes`). Held in `language`, if
-    /// any - by default the language its creator prefers.
+    /// added if there is none, and read by its members (issue 23): every
+    /// user and agent in it, whoever they are at the time. Held in
+    /// `language`, if any - by default the language its creator prefers.
     pub fn build(session_id: SessionId, owner: ActorId, name: Name, components: ComponentConfig, classification: Classification, language: Option<Language>, mut participants: Vec<Participant>) -> Self {
         if !participants.iter().any(|p| matches!(p, Participant::Approver(_))) {
             participants.push(Participant::Approver(Approver {
@@ -166,9 +166,10 @@ impl Channel {
                 strategy: ApprovalStrategy::Any,
             }));
         }
-        let security_attributes = participant_attributes(owner, &participants);
+        let id = ChannelId::new();
+        let security_attributes = SecurityAttributes::owned_by(owner).granting(Subject::MemberOf(Membership::Channel(id)), Grant::Read);
         Self {
-            id: ChannelId::new(),
+            id,
             session_id,
             name,
             summary: None,
@@ -270,20 +271,6 @@ impl Participant {
     }
 }
 
-/// The attributes of a session or channel owned by `owner` with these
-/// participants: its users and agents contribute - they read it and act in
-/// it - while only the owner may change or delete it (issue 11). Approvers
-/// act on behalf of users and need no access of their own.
-pub fn participant_attributes(owner: ActorId, participants: &[Participant]) -> SecurityAttributes {
-    let mut contributors: Vec<ActorId> = Vec::new();
-    for participant in participants {
-        let id = participant.actor_id();
-        if matches!(participant, Participant::User(_) | Participant::Agent(_)) && id != owner && !contributors.contains(&id) {
-            contributors.push(id);
-        }
-    }
-    SecurityAttributes { owner_id: owner, contributors }
-}
 
 
 #[cfg(test)]

@@ -53,7 +53,7 @@ pub struct Workspace {
     /// How everything in it is classified (issue 169): one container, whose
     /// files carry no label of their own.
     pub classification: Classification,
-    /// Owned by the user it was made for, without contributors: outside a
+    /// Owned by the user it was made for, with an empty access list: outside a
     /// session only its owner works on it; in a session it is shared
     /// through the channels that may use it (issue 251, decisions 10, 12).
     pub security_attributes: SecurityAttributes,
@@ -100,7 +100,7 @@ impl crate::removal::Stored for Workspace {
     }
 
     /// A workspace is a user's - the system's everybody could use - shared
-    /// through channels, not with contributors, and lies in a session's
+    /// through channels, not by an access list, and lies in a session's
     /// scope, its owner's or the global one: not in a channel's, since a
     /// session's channels share one.
     fn validate(&self) -> Result<(), String> {
@@ -166,12 +166,12 @@ mod tests {
     }
 
     #[test]
-    fn a_workspace_belongs_to_a_user_and_has_no_contributors() {
+    fn a_workspace_belongs_to_a_user_and_grants_nobody_anything_of_its_own() {
         let alice = UserId::new();
         let workspace = Workspace::new(named(Scope::GlobalScope), "main", Classification::CHANNEL_DEFAULT, alice);
         assert_eq!(workspace.owner(), Some(alice));
-        let shared = Workspace { security_attributes: SecurityAttributes { contributors: vec![ActorId::User(UserId::new())], ..workspace.security_attributes.clone() }, ..workspace.clone() };
-        assert!(shared.validate().is_err(), "not one with contributors");
+        let shared = Workspace { security_attributes: workspace.security_attributes.clone().granting(crate::security::Subject::Actor(ActorId::User(UserId::new())), crate::security::Grant::Read), ..workspace.clone() };
+        assert!(shared.validate().is_err(), "not one with an access list");
         let systems = Workspace { security_attributes: SecurityAttributes::owned_by(ActorId::System), ..workspace };
         assert!(systems.validate().is_err(), "nor nobody's");
     }

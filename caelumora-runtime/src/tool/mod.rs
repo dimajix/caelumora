@@ -981,7 +981,7 @@ mod tests {
 
     fn with_hr() -> Arc<dyn SecurityManager> {
         let compartments = caelumora_model::confidentiality::Compartments::new([(caelumora_model::confidentiality::Compartment::new("hr"), vec![])]).unwrap();
-        Arc::new(caelumora_model::security::OwnershipSecurityManager::with_rules(caelumora_model::confidentiality::ConfidentialityRules::new(compartments)))
+        Arc::new(caelumora_model::security::OwnershipSecurityManager::with_rules(caelumora_model::confidentiality::ConfidentialityRules::new(compartments), Arc::new(caelumora_model::security::NoMemberships)))
     }
 
     #[tokio::test]

@@ -177,8 +177,11 @@ fn unmarked<T: Stored>(value: &T, kind: &Actions) -> StoreResult<()> {
     }
 }
 
-/// Refuses `value` if it may not be stored as it is (`Stored::validate`).
+/// Refuses `value` if it may not be stored as it is: its access list
+/// (`SecurityAttributes::validate`, issue 23), and what its kind says
+/// (`Stored::validate`).
 fn valid<T: Stored>(value: &T) -> StoreResult<()> {
+    value.security_attributes().validate().map_err(StoreError::Validation)?;
     value.validate().map_err(StoreError::Validation)
 }
 
@@ -304,7 +307,8 @@ mod tests {
     use crate::value::name::Name;
     use std::sync::Arc;
 
-    /// Owners do everything, contributors read, nobody acts for another.
+    /// Owners do everything, whom the list names read, nobody acts for
+    /// another.
     #[derive(Debug)]
     struct OwnersAndContributors;
 
@@ -313,7 +317,7 @@ mod tests {
         async fn check(&self, ctx: &SecurityContext, action: ActionType<'_>) -> bool {
             let me = ctx.principal_id;
             match action {
-                ActionType::GetSession(a) => a.owner_id == me || a.contributors.contains(&me),
+                ActionType::GetSession(a) => a.owner_id == me || a.acl.iter().any(|e| e.subject == crate::security::Subject::Actor(me)),
                 ActionType::CreateSession(a) | ActionType::UpdateSession(a) | ActionType::DeleteSession(a) => a.owner_id == me,
                 _ => true,
             }
@@ -338,7 +342,7 @@ mod tests {
             privacy: Default::default(),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
-            security_attributes: SecurityAttributes { owner_id: owner, contributors },
+            security_attributes: contributors.into_iter().fold(SecurityAttributes::owned_by(owner), |a, c| a.granting(crate::security::Subject::Actor(c), crate::security::Grant::Read)),
             deleted: None,
         }
     }
@@ -425,7 +429,7 @@ mod tests {
         let alice_id = UserId::new();
         let alice_ctx = SecurityContext::new(ActorId::User(alice_id), Default::default(), Default::default());
         let (_, bob_ctx) = user();
-        let record = User { id: alice_id, username: Name::new("alice").unwrap(), email: String::new(), roles: vec!["user".to_string()], deleted: None };
+        let record = User { id: alice_id, username: Name::new("alice").unwrap(), email: String::new(), roles: vec![crate::role::RoleId::new()], deleted: None };
 
         let own = store.create_user(&alice_ctx, &record).await;
         assert!(matches!(own, Err(StoreError::PermissionDenied)), "nobody records themselves, got {own:?}");
@@ -435,7 +439,7 @@ mod tests {
         assert_eq!(store.find_user_by_name(&bob_ctx, "alice").await.expect("and finds her by name").id, alice_id);
         assert_eq!(store.list_users(&bob_ctx).await.expect("and lists her").len(), 1);
 
-        let promoted = User { roles: vec!["admin".to_string()], ..record.clone() };
+        let promoted = User { roles: vec![crate::role::RoleId::new()], ..record.clone() };
         for ctx in [&alice_ctx, &bob_ctx] {
             let update = store.update_user(ctx, &promoted).await;
             assert!(matches!(update, Err(StoreError::PermissionDenied)), "not even she changes her roles, got {update:?}");

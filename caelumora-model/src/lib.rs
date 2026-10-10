@@ -9,6 +9,7 @@ pub mod channel;
 pub mod command;
 pub mod config;
 pub mod confidentiality;
+pub mod role;
 pub mod chain;
 pub mod kept;
 pub mod context;

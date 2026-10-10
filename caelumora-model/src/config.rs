@@ -1,13 +1,14 @@
 use crate::approval::ApprovalRule;
 use crate::command::default_commands;
-use crate::confidentiality::{Classification, Compartments, ConfidentialityRules, Roles};
+use crate::confidentiality::{Classification, Compartments, ConfidentialityRules};
+use crate::role::{RoleError, RoleId, Roles};
 use std::collections::BTreeMap;
 use crate::component::ComponentConfig;
 use crate::remote::RemoteEndpoint;
 use crate::secret::SecretManager;
 use crate::secret::env::EnvSecretProvider;
 use crate::secret::file::FileSecretProvider;
-use crate::security::{DummySecurityManager, OwnershipSecurityManager, SecurityManager};
+use crate::security::{DummySecurityManager, Memberships, OwnershipSecurityManager, SecurityManager};
 use crate::store::{ComponentStore, EntityStore, StateStore, StoreError};
 use crate::store::json::JsonFileStore;
 use crate::store::memory::MemoryStore;
@@ -111,8 +112,8 @@ impl Default for SecretsConfig {
 #[derive(Debug, Deserialize, Clone, Copy, Default, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SecurityConfig {
-    /// Owners do everything with their entities, contributors read and use
-    /// them, what belongs to the system everybody uses
+    /// Owners do everything with their entities, whom an access list grants
+    /// it read and use them, what belongs to the system everybody uses
     /// (`OwnershipSecurityManager`). The default: nothing is open unless a
     /// deployment says so.
     #[default]
@@ -128,7 +129,8 @@ pub enum UserProviderConfig {
     /// Development only: accepts any username and password (see
     /// `AcceptAnyUserProvider`). Never part of the default chain. Gives the
     /// users named in `roles` their roles, and everybody else
-    /// `default_roles` (issue 142).
+    /// `default_roles` (issue 142) - by their names, resolved to their ids
+    /// when the provider is made (issue 23).
     AcceptAny {
         #[serde(default)]
         roles: BTreeMap<String, Vec<String>>,
@@ -512,9 +514,8 @@ impl AppConfig {
     /// configured compartments, and the user providers give only
     /// configured roles - and none without a `roles` section.
     fn check(&self) -> ConfigResult<()> {
-        let invalid = |e: crate::confidentiality::RoleError| ConfigError::Invalid(e.to_string());
         if let Some(roles) = &self.roles {
-            roles.check(&self.compartments).map_err(invalid)?;
+            roles.check(&self.compartments).map_err(|e| ConfigError::Invalid(e.to_string()))?;
         }
         for (name, storage) in &self.workspaces.storage {
             storage.check().map_err(|why| ConfigError::Invalid(format!("the storage '{name}' of workspaces: {why}")))?;
@@ -525,31 +526,45 @@ impl AppConfig {
         }
         for provider in &self.users.providers {
             let UserProviderConfig::AcceptAny { roles: assigned, default_roles } = provider;
-            for role in assigned.values().flatten().chain(default_roles) {
-                match &self.roles {
-                    Some(roles) => roles.check_role(role).map_err(invalid)?,
-                    None => return Err(ConfigError::Invalid(format!("role '{role}' is given to users, but no roles are configured"))),
-                }
+            for names in assigned.values().chain([default_roles]) {
+                self.role_ids(names)?;
             }
         }
         Ok(())
     }
 
+    /// The ids of the configured roles `names` names (issue 23).
+    ///
+    /// # Errors
+    /// `ConfigError::Invalid` for a role that is not configured - any, if
+    /// there is no `roles` section.
+    fn role_ids(&self, names: &[String]) -> ConfigResult<Vec<RoleId>> {
+        match &self.roles {
+            Some(roles) => roles.ids_of(names).map_err(|e: RoleError| ConfigError::Invalid(e.to_string())),
+            None => match names.first() {
+                Some(role) => Err(ConfigError::Invalid(format!("role '{role}' is given to users, but no roles are configured"))),
+                None => Ok(Vec::new()),
+            },
+        }
+    }
+
     /// The one `SecurityManager` of the process, as configured, with the
     /// confidentiality rules of the configured compartments and roles where
-    /// the policy applies them.
-    pub fn create_security_manager(&self) -> Arc<dyn SecurityManager> {
+    /// the policy applies them, learning memberships and roles from
+    /// `memberships` (issue 23).
+    pub fn create_security_manager(&self, memberships: Arc<dyn Memberships>) -> Arc<dyn SecurityManager> {
         match self.security {
             SecurityConfig::Ownership => {
                 let rules = ConfidentialityRules::new(self.compartments.clone());
-                Arc::new(OwnershipSecurityManager::with_rules(match &self.roles {
+                let rules = match &self.roles {
                     Some(roles) => rules.with_roles(roles.clone()),
                     None => rules,
-                }))
+                };
+                Arc::new(OwnershipSecurityManager::with_rules(rules, memberships))
             }
             SecurityConfig::AllowAll => {
                 tracing::warn!("Security policy 'allow_all' is configured: every user may do everything. Development only.");
-                Arc::new(DummySecurityManager::new())
+                Arc::new(DummySecurityManager::with_roles(self.roles.clone()))
             }
         }
     }
@@ -599,10 +614,14 @@ impl AppConfig {
                 UserProviderConfig::AcceptAny { roles, default_roles } => {
                     tracing::warn!("User provider 'accept_any' is enabled: ANY username and password will be accepted. \
                         Development only - never expose this server to a network.");
-                    Arc::new(AcceptAnyUserProvider::with_roles(Arc::clone(&entity_store), roles.clone(), default_roles.clone())) as Arc<dyn UserProvider>
+                    let roles = roles.iter()
+                        .map(|(user, names)| Ok((user.clone(), self.role_ids(names)?)))
+                        .collect::<ConfigResult<BTreeMap<_, _>>>()?;
+                    let default_roles = self.role_ids(default_roles)?;
+                    Ok(Arc::new(AcceptAnyUserProvider::with_roles(Arc::clone(&entity_store), roles, default_roles)) as Arc<dyn UserProvider>)
                 }
             })
-            .collect();
+            .collect::<ConfigResult<Vec<_>>>()?;
 
         Ok(Arc::new(UserManager::new(providers)))
     }
@@ -874,17 +893,20 @@ users:
     #[test]
     fn roles_are_checked_against_the_compartments_and_the_providers() {
         let compartments = "compartments:\n  - name: hr\n";
-        let roles = "roles:\n  - name: hr\n    clearances:\n      - { level: confidential, compartment: hr }\n";
+        let hr = RoleId::new();
+        let roles = format!("roles:\n  - id: {hr}\n    name: hr\n    clearances:\n      - {{ level: confidential, compartment: hr }}\n");
         let config = AppConfig::from_yaml(&format!("{compartments}{roles}users:\n  providers:\n    - type: accept_any\n      roles: {{ alice: [hr] }}\n")).unwrap();
-        assert!(config.roles.is_some());
+        assert_eq!(config.roles.as_ref().map(|r| r.id_of("hr")), Some(Ok(hr)), "named, kept by its id");
+        assert_eq!(config.role_ids(&["hr".to_string()]).unwrap(), vec![hr], "what the providers name resolves to it");
         assert!(AppConfig::default().roles.is_none(), "none unless configured: clearances are not checked");
 
-        let typo = "roles:\n  - name: hr\n    clearances:\n      - { level: confidential, compartment: hrr }\n";
+        let typo = format!("roles:\n  - id: {hr}\n    name: hr\n    clearances:\n      - {{ level: confidential, compartment: hrr }}\n");
         assert!(matches!(AppConfig::from_yaml(&format!("{compartments}{typo}")), Err(ConfigError::Invalid(_))), "a compartment not configured");
         let unknown = format!("{compartments}{roles}users:\n  providers:\n    - type: accept_any\n      default_roles: [staff]\n");
         assert!(matches!(AppConfig::from_yaml(&unknown), Err(ConfigError::Invalid(_))), "a role not configured");
         let without = "users:\n  providers:\n    - type: accept_any\n      default_roles: [staff]\n";
         assert!(matches!(AppConfig::from_yaml(without), Err(ConfigError::Invalid(_))), "roles given, but none configured");
+        assert!(AppConfig::from_yaml(&format!("{compartments}roles:\n  - name: hr\n")).is_err(), "a role without an id");
     }
 
     #[test]

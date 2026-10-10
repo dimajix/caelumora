@@ -334,7 +334,7 @@ mod tests {
             privacy: privacy.policy,
             created_at: now,
             updated_at: now,
-            security_attributes: SecurityAttributes { owner_id: privacy.owner, contributors: Vec::new() },
+            security_attributes: SecurityAttributes::owned_by(privacy.owner),
             deleted: None,
         }
     }
@@ -522,7 +522,7 @@ mod tests {
         let agent = AgentId::new();
         let handle = handle(agent).await;
         let compartments = Compartments::new([(Compartment::new("hr"), vec![]), (Compartment::new("finance"), vec![])]).unwrap();
-        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_rules(ConfidentialityRules::new(compartments)));
+        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_rules(ConfidentialityRules::new(compartments), Arc::new(caelumora_model::security::NoMemberships)));
         let memory = component(Arc::clone(&policy), ActorId::User(UserId::new()));
         let session = SessionId::new();
         let mut sessions = Sessions::under(policy).await;

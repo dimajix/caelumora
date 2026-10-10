@@ -43,8 +43,8 @@ pub struct Artifact {
     /// Its versions, oldest first, numbered from 1 without gaps; never
     /// empty, and none removed but with the artifact.
     pub versions: Vec<ArtifactVersion>,
-    /// Owned by the user the publishing agent acts for, without
-    /// contributors: it is shared through the channels it is published in.
+    /// Owned by the user the publishing agent acts for, with an empty access
+    /// list: it is shared through the channels it is published in.
     pub security_attributes: SecurityAttributes,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

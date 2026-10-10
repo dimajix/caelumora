@@ -98,14 +98,14 @@ pub trait Scoped {
 
 /// Whether `attributes` and `scope` are those of a user's own thing - a
 /// workspace (issue 253), an artifact (issue 271), named `kind` in what it
-/// says: it belongs to a user, has no contributors - it is shared through
-/// channels -, and lies in a session's scope, its owner's or the global
+/// says: it belongs to a user, has an empty access list - it is shared
+/// through channels -, and lies in a session's scope, its owner's or the global
 /// one, never a channel's, since a session's channels share it. Checked
 /// when it is stored (`Stored::validate`).
 pub(crate) fn validate_users_own(kind: &str, attributes: &SecurityAttributes, scope: &Scope) -> Result<(), String> {
     let ActorId::User(owner) = attributes.owner_id else { return Err(format!("a {kind} belongs to a user")) };
-    if !attributes.contributors.is_empty() {
-        return Err(format!("a {kind} has no contributors: it is shared through channels"));
+    if !attributes.acl.is_empty() {
+        return Err(format!("a {kind} grants nobody anything of its own: it is shared through channels"));
     }
     match scope {
         Scope::SessionScope { .. } | Scope::GlobalScope => Ok(()),

@@ -31,7 +31,7 @@ pub struct Command {
     /// The parameters, e.g. `[agent]`, or `None` if it takes none.
     pub usage: Option<String>,
     /// Of a command an agent carries out itself (issue 269): whether it is
-    /// for the agent's owner and contributors alone - as approving its calls
+    /// for whoever answers for the agent alone - as approving its calls
     /// is - rather than for everyone who may write in the channel. `false`
     /// unless named; meaningless for a command the session runs.
     #[serde(default)]

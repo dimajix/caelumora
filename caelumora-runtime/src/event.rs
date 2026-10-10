@@ -359,7 +359,7 @@ mod tests {
         let mut bobs = bus.subscribe_as(as_user(bob));
         let mut carols = bus.subscribe_as(as_user(carol));
 
-        let hers = SecurityAttributes { owner_id: ActorId::User(alice), contributors: vec![ActorId::User(bob)] };
+        let hers = SecurityAttributes::owned_by(ActorId::User(alice)).granting(caelumora_model::security::Subject::Actor(ActorId::User(bob)), caelumora_model::security::Grant::Read);
         let (session, deleted) = (SessionId::new(), SessionId::new());
         bus.publish(GlobalEvent::SessionCreated(session), hers.clone());
         bus.publish(GlobalEvent::ChannelCreated(session, ChannelId::new()), hers.clone());
@@ -397,7 +397,7 @@ mod tests {
         let mut everything = bus.subscribe_all();
 
         let mut workspace = caelumora_model::workspace::Workspace::new(caelumora_model::value::name::ScopedName::new("docs", caelumora_model::scope::Scope::UserScope { user_id: alice }).unwrap(), "main", Default::default(), alice);
-        workspace.security_attributes.contributors.push(ActorId::User(bob));
+        workspace.security_attributes.acl.push(caelumora_model::security::AclEntry { subject: caelumora_model::security::Subject::Actor(ActorId::User(bob)), grant: caelumora_model::security::Grant::Read });
         let attributes = workspace.security_attributes.clone();
         bus.publish(GlobalEvent::WorkspaceCreated(workspace.id), attributes.clone());
         bus.publish(GlobalEvent::WorkspaceDeleted(workspace.id), attributes);
