@@ -217,12 +217,9 @@ impl ExternalAgentActor {
         let reading = AgentWork::new(self.agent_id, work, state, &self.agent_state, Some(&self.views));
         let (parts, knowledge) = self.context_provider.current_context(&reading).await
             .map_err(|e| e.context(format!("component '{}' could not assemble the context", self.context_provider.id)))?;
-        for reference in knowledge {
-            work.record_knowledge(reference);
-        }
+        work.take_in_context(&parts, knowledge);
         let mut pending = self.pending_prompts();
         for (index, part) in parts.into_iter().enumerate() {
-            work.see_classified(part.classification.as_ref());
             let key = part_key(&part, index);
             let due = !state.remote.has_given(&key, &caelumora_model::digest::prompt(&part.text));
             match pending.iter().position(|(k, _)| *k == key) {

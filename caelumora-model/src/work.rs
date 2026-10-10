@@ -6,7 +6,7 @@
 
 use crate::actor::EventContext;
 use crate::confidentiality::Classification;
-use crate::context::{ContextRef, KnowledgeRef};
+use crate::context::{ContextRef, KnowledgeRef, PromptPart};
 use crate::message::Message;
 use crate::security::SecurityContext;
 use serde::{Deserialize, Serialize};
@@ -100,12 +100,45 @@ impl Work {
             self.context.knowledge.push(reference);
         }
     }
+
+    /// Takes in what its `ContextProvider` assembled (issues 214, 285): the
+    /// `knowledge` the prompt parts hold, recorded, and every one of the
+    /// `parts` seen. The same for a turn, which places the parts itself, and
+    /// for an external agent's work, whose remote agent is given only those
+    /// it was not given before - and knows the others.
+    pub fn take_in_context(&mut self, parts: &[PromptPart], knowledge: Vec<KnowledgeRef>) {
+        for reference in knowledge {
+            self.record_knowledge(reference);
+        }
+        for part in parts {
+            self.see_classified(part.classification.as_ref());
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::confidentiality::{Compartment, Confidentiality};
+
+    #[test]
+    fn work_takes_in_the_knowledge_and_every_part_of_its_context() {
+        let (internal, confidential) = (Classification::general(Confidentiality::Internal), Classification::general(Confidentiality::Confidential));
+        let mut work = Work::new(EventContext::default(), SecurityContext::default(), confidential.clone());
+        let part = |classification: Option<Classification>| PromptPart { role: crate::message::MessageRole::System, text: "Be brief.".to_string(), after: None, classification, source: None };
+        let read = KnowledgeRef {
+            channel: Default::default(),
+            session: Default::default(),
+            source: crate::context::KnowledgeSource::History { digest: None, start: None },
+            classification: Some(internal.clone()),
+        };
+
+        work.take_in_context(&[part(Some(Classification::PUBLIC))], vec![read.clone()]);
+        assert_eq!(work.context.knowledge, [read], "the knowledge recorded");
+        assert_eq!(work.label(), internal, "and seen");
+        work.take_in_context(&[part(None)], Vec::new());
+        assert_eq!(work.label(), confidential, "a part that does not say counts as the channel");
+    }
 
     #[test]
     fn work_writes_as_what_it_has_seen_never_above_its_channel() {

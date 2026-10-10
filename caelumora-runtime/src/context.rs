@@ -151,8 +151,9 @@ pub trait PromptProvider: Send + Sync + std::fmt::Debug {
 /// Assembles what the model of an agent is given besides the conversation,
 /// once, at the start of its work (issue 214): the prompt parts, where they
 /// go, and the knowledge from other places they hold. It only answers; the
-/// caller sets what it answered - a turn with `Turn::set_context` and
-/// `Turn::record_knowledge`. An agent has exactly one
+/// caller takes in what it answered, both at once - a turn with
+/// `Turn::set_context`, an external agent's work with
+/// `Work::take_in_context` (issue 285). An agent has exactly one
 /// (`ComponentRegistry::single`, issue 98): the component of its
 /// personality that provides it, or the default - `turn_context_provider`,
 /// unless the configuration names another (`AppConfig::component_defaults`).

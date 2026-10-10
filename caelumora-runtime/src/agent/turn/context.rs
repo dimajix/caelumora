@@ -7,7 +7,7 @@ use super::Turn;
 use anyhow::{Context, Result};
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::context::{ContextItem, ContextRef, ContextResolver, PromptPart, PromptRef};
+use caelumora_model::context::{ContextItem, ContextRef, ContextResolver, KnowledgeRef, PromptPart, PromptRef};
 use caelumora_model::digest::Digest;
 use caelumora_model::message::{Message, MessageRole};
 use caelumora_model::tool::Tool;
@@ -65,14 +65,16 @@ impl Turn<'_> {
             .collect()
     }
 
-    /// Sets the prompt parts the model of the turn is given besides the
-    /// transcript, where the `ContextProvider` placed them - once, at the
-    /// start of the turn; what was placed before is replaced. Every part's
-    /// text is kept once by digest, so that what the agent saw can be told
-    /// later (issues 06, 47).
-    pub fn set_context(&mut self, parts: Vec<PromptPart>) {
+    /// Sets what the `ContextProvider` assembled for the turn - once, at its
+    /// start (issue 285): the `knowledge` its prompt parts hold, recorded,
+    /// and the `parts` the model is given besides the transcript, where the
+    /// provider placed them, all of them seen (`Work::take_in_context`);
+    /// what was placed before is replaced. Every part's text is kept once by
+    /// digest, so that what the agent saw can be told later (issues 06, 47).
+    pub fn set_context(&mut self, parts: Vec<PromptPart>, knowledge: Vec<KnowledgeRef>) {
+        self.current_mut().work.take_in_context(&parts, knowledge);
         let prompts = parts.into_iter()
-            .map(|PromptPart { role, text, after, classification, .. }| self.keep_prompt(role, text, after, classification))
+            .map(|PromptPart { role, text, after, classification, .. }| self.agent_channel_state.keep_prompt(role, text, after, classification))
             .collect();
         self.current_mut().work.context.prompts = prompts;
     }
@@ -139,7 +141,7 @@ mod tests {
         {
             state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::default(), Vec::new(), profile(ReasoningHistory::CurrentTurn));
             let mut turn = Turn::of(agent, "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached()).expect("a turn was begun");
-            turn.set_context(Vec::new());
+            turn.set_context(Vec::new(), Vec::new());
             turn.push_message(first.clone());
             assert_eq!(reasoning_of(&turn.full_context().unwrap().0), [false, false, true], "only the turn's own reasoning");
             turn.push_message(second.clone());
@@ -161,7 +163,7 @@ mod tests {
         let third = thought(ActorId::Agent(agent), "third");
         state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::default(), Vec::new(), profile(ReasoningHistory::Always));
         let mut turn = Turn::of(agent, "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached()).expect("a turn was begun");
-        turn.set_context(Vec::new());
+        turn.set_context(Vec::new(), Vec::new());
         turn.push_message(third);
         assert_eq!(reasoning_of(&turn.full_context().unwrap().0), [true, false, true, true, true]);
     }
@@ -182,7 +184,7 @@ mod tests {
         }).collect::<Vec<_>>();
         {
             let mut turn = Turn::begun(agent, "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached());
-            turn.set_context(vec![system()]);
+            turn.set_context(vec![system()], Vec::new());
             let (given, _) = turn.full_context().unwrap();
             assert_eq!(given.len(), 2, "the prompt is given to the model as a message");
             assert_eq!(given[0].role, MessageRole::System);
@@ -220,7 +222,7 @@ mod tests {
         // The same prompt in another turn is kept once.
         {
             let mut turn = Turn::begun(agent, "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached());
-            turn.set_context(vec![system()]);
+            turn.set_context(vec![system()], Vec::new());
         }
         assert_eq!(state.prompts.len(), 1);
     }

@@ -168,7 +168,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         state.transcript.push(Message { role: MessageRole::User, content: Some("do it".to_string()), ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) });
         let mut turn = Turn::begun(AgentId::default(), String::new(), &mut state, crate::agent::state::AgentStateHandle::detached());
-        turn.set_context(Vec::new());
+        turn.set_context(Vec::new(), Vec::new());
         turn.set_plan(plan_of(&["first", "second"]));
 
         let started = turn.advance_plan(1);
@@ -213,7 +213,7 @@ mod tests {
         {
             state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::default(), Vec::new(), keeps_system);
             let mut turn = Turn::of(agent, "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached()).expect("a turn was begun");
-            turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification: None, source: None }]);
+            turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification: None, source: None }], Vec::new());
             turn.set_plan(plan_of(&["only"]));
             turn.advance_plan(0);
             let mut internal = step.clone();
@@ -238,7 +238,7 @@ mod tests {
 
         state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::default(), Vec::new(), keeps_system);
         let mut turn = Turn::of(agent, "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached()).expect("a turn was begun");
-        turn.set_context(Vec::new());
+        turn.set_context(Vec::new(), Vec::new());
         assert_eq!(given(&turn).len(), 3, "a later turn is not given them");
     }
 

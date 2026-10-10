@@ -217,10 +217,7 @@ impl AgentActor {
         // providers', each by its own policy.
         let (parts, knowledge) = self.context_provider.current_context(&turn.work()).await
             .map_err(|e| e.context(format!("component '{}' could not assemble the context", self.context_provider.id)))?;
-        for reference in knowledge {
-            turn.record_knowledge(reference);
-        }
-        turn.set_context(parts);
+        turn.set_context(parts, knowledge);
         Ok(())
     }
 

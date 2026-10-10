@@ -1,6 +1,6 @@
 # 285 — The context and the knowledge it read are set apart
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -35,3 +35,10 @@ the context panel does not show what was read.
 ## History
 
 - **2026-10-10** — Issue created, noted by the maintainer while working on 16.
+- **2026-10-10** — Done, as proposed: `Work::take_in_context(parts, knowledge)` is the one rule of
+  what work has seen of its context - the knowledge recorded, every part's classification seen -,
+  for a turn and an external agent's work alike. `Turn::set_context(parts, knowledge)` follows it
+  and then places the parts; the `AgentActor` and the test of `turn_context_provider` make one
+  call where they made two, and `ExternalAgentActor::prompts_to_give` takes in the context before
+  it picks the parts that are due. `Turn::record_knowledge` stays for what tools read during a
+  turn. No change in behaviour, nothing stored changes.

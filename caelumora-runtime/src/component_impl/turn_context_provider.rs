@@ -127,10 +127,7 @@ mod tests {
     /// sets it.
     async fn assemble(provider: &TurnContextProvider, turn: &mut Turn<'_>) -> anyhow::Result<()> {
         let (parts, knowledge) = provider.current_context(&turn.work()).await?;
-        for reference in knowledge {
-            turn.record_knowledge(reference);
-        }
-        turn.set_context(parts);
+        turn.set_context(parts, knowledge);
         Ok(())
     }
 

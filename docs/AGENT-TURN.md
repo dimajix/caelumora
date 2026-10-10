@@ -615,9 +615,12 @@ personality with two is refused.
 
 A `ContextProvider` only answers (issue 214): given the turn to read as an `AgentWork`
 (`current_context`), it returns the prompt parts, each where it goes, and the knowledge they hold.
-The `AgentActor` sets them - `Turn::record_knowledge` for the knowledge, `Turn::set_context` for
-the parts, nothing else; that a provider does nothing else to the turn the type ensures, since an
-`AgentWork` only reads.
+The `AgentActor` sets both at once with `Turn::set_context(parts, knowledge)` (issue
+[285](../issues/285-set-context-with-knowledge.md)), nothing else; that a provider does nothing else
+to the turn the type ensures, since an `AgentWork` only reads. What the turn has seen of it - the
+knowledge recorded, every part's classification - is one rule of the work,
+`Work::take_in_context`, which an external agent's work follows as well for the parts it gives its
+remote agent and those it gave before.
 
 The `ContextProvider` runs once, at the start of a turn, so a part stays in place across the tool
 loop. When it fails, the turn fails, whatever its fail policy: without a context there is nothing to
@@ -816,8 +819,8 @@ What the model is given is not stored; it is resolved from what is (issues 49, 1
     `perceive` moves the turn's context on as well, so that the context names the head either
     way.
 *   **Placing the parts.** The `ContextProvider` places every part as a `PromptPart` - its text,
-    its role and the transcript entry it follows - and the `AgentActor` sets them with
-    `Turn::set_context`. An instruction within the
+    its role and the transcript entry it follows - and the `AgentActor` sets them, with the
+    knowledge they hold, with `Turn::set_context`. An instruction within the
     turn is placed after its last message (`Turn::place_turn_prompt`). Either way the text is kept
     in `AgentChannelState::prompts`, once per digest, and the reference goes into the turn's
     context, where it counts for the messages produced from then on - like knowledge read.
