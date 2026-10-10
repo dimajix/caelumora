@@ -45,12 +45,13 @@ use crate::transport::EventSender;
 use crate::view::{SessionView, ViewsFactory};
 use crate::agent::work::AgentWork;
 use anyhow::Result;
-use caelumora_model::actor::{ActorEvent, ActorState};
+use caelumora_model::actor::{ActorEvent, ActorId, ActorState};
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::turn::TurnState;
 use caelumora_model::work::TurnId;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::KnowledgeRef;
+use caelumora_model::digest::Digest;
 use caelumora_model::memory::{MemoryChange, MemoryOrigin};
 use caelumora_model::message::Message;
 use caelumora_model::note::NoteChange;
@@ -210,12 +211,24 @@ impl<'a> Turn<'a> {
     }
 
     /// Gives the agent `message` to read in this turn (issue 22) - a skill a
-    /// user loaded for it -: into its transcript and history at once, as
-    /// what it was given, not what it said (`AgentChannelState::given`).
-    /// Not published. Written at once, as what a turn says is (issue 260),
-    /// so a component gives only once nothing can fail any more.
-    pub fn give(&mut self, message: Message) {
-        self.agent_channel_state.given(message);
+    /// user loaded for it - as the knowledge `knowledge`: into its
+    /// transcript and history at once, as what it was given, not what it
+    /// said, and the knowledge recorded (`AgentChannelState::given`). Not
+    /// published. Written at once, as what a turn says is (issue 260), so a
+    /// component gives only once nothing can fail any more.
+    pub fn give(&mut self, message: Message, knowledge: KnowledgeRef) {
+        self.agent_channel_state.given(message, knowledge);
+    }
+
+    /// Replaces the agent's context in this turn (issue 16): its transcript
+    /// begins anew with `replacement` - a summary, the skills given again,
+    /// each with the knowledge it is, if it is one - and the entries from
+    /// `keep_from` on as they stand; the old branch stays
+    /// (`AgentChannelState::compact`). Written at once, so a component
+    /// compacts only once nothing can fail any more. Returns the heads of
+    /// the transcript before and after, `None` if nothing was compacted.
+    pub fn compact(&mut self, replacement: Vec<(Message, Option<KnowledgeRef>)>, keep_from: Option<Digest>) -> Option<(Digest, Digest)> {
+        self.agent_channel_state.compact(ActorId::Agent(self.agent_id), replacement, keep_from)
     }
 
     /// Records `message` as said by the turn: into the agent's transcript
@@ -347,7 +360,6 @@ fn event_for(message: Message, partial: bool) -> ActorEvent {
 mod tests {
     use super::*;
     use caelumora_model::actor::{Envelope, EventContext};
-    use caelumora_model::actor::ActorId;
     use caelumora_model::confidentiality::Confidentiality;
     use caelumora_model::context::{ContextItem, ContextResolver, PromptPart};
     use caelumora_model::message::MessageId;

@@ -4,11 +4,12 @@
 // late or was asleep heard what it heard. What its perceive processors did
 // not pass on to its transcript is marked; what each of its own messages was
 // produced from opens as that message's context. A turn it gave up is shown
-// where it ended, after what it said, with why (issues 146, 258), and a
-// command it carried out where it did, with on whose word (issue 269).
+// where it ended, after what it said, with why (issues 146, 258), a command
+// it carried out where it did, with on whose word (issue 269), and where it
+// compacted its context (issue 16).
 
 import React, {useEffect, useState} from 'react';
-import {ChevronRight, History, ScrollText, Undo2, X} from 'lucide-react';
+import {ChevronRight, FoldVertical, History, ScrollText, Undo2, X} from 'lucide-react';
 import type {ActorId, ChannelMember, GivenUpReason, HistoryItem, HistoryMessage, Message} from '../types';
 import {classificationLabel} from '../confidentiality';
 import {cn} from '../classNames';
@@ -34,17 +35,21 @@ interface HistoryPanelProps {
   onClose: () => void;
 }
 
-/** A row of the panel: a message of the history, merged with its tool results, or a turn given up. */
+/**
+ * A row of the panel: a message of the history, merged with its tool results,
+ * a turn given up, a command carried out, or the context compacted.
+ */
 type Row =
   | {kind: 'message'; message: Message}
   | {kind: 'givenUp'; turnId: string; reason: GivenUpReason; at: string}
-  | {kind: 'command'; turnId: string; command: string; args: string; issuer: ActorId; at: string};
+  | {kind: 'command'; turnId: string; command: string; args: string; issuer: ActorId; at: string}
+  | {kind: 'compacted'; turnId: string; at: string};
 
 /**
  * The rows of `items`, in the order they happened: the messages, each run of
  * them with its tool results merged in, every turn given up where it ended,
- * and every command carried out where it was. A turn that finished shows
- * nothing of its own.
+ * every command carried out where it was, and every compaction where it was
+ * made. A turn that finished shows nothing of its own.
  */
 function rowsOf(items: HistoryItem<HistoryMessage>[]): Row[] {
   const rows: Row[] = [];
@@ -64,6 +69,10 @@ function rowsOf(items: HistoryItem<HistoryMessage>[]): Row[] {
       flush();
       const {turn_id, command, args, issuer, at} = item.command_executed;
       rows.push({kind: 'command', turnId: turn_id, command, args, issuer, at});
+    } else if ('compacted' in item) {
+      flush();
+      const {turn_id, at} = item.compacted;
+      rows.push({kind: 'compacted', turnId: turn_id, at});
     }
   }
   flush();
@@ -154,6 +163,30 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({sessionId, channelId,
     );
   };
 
+  // A compaction (issue 16): what follows replaced the older messages.
+  const compactedView = (at: string, key: React.Key) => {
+    const time = formatTimestamp(at);
+    return (
+      <div key={key} className="flex items-start gap-2 p-2 rounded-lg border border-dashed border-sky-300 dark:border-sky-700 bg-sky-50/60 dark:bg-sky-900/20 text-xs text-sky-900 dark:text-sky-200">
+        <FoldVertical size={14} className="mt-0.5 shrink-0" />
+        <span className="flex-1">
+          <span className="font-semibold">Context compacted</span>
+          {time && <span className="opacity-70" title={time.full}> · {time.short}</span>}
+          <span className="block">From here on the agent was given what follows in place of what came before; what it saw before stays recorded.</span>
+        </span>
+      </div>
+    );
+  };
+
+  const rowView = (row: Row, idx: number) => {
+    switch (row.kind) {
+      case 'givenUp': return givenUpView(row.reason, row.at, `given-up-${row.turnId}`);
+      case 'command': return commandView(row, `command-${row.turnId}`);
+      case 'compacted': return compactedView(row.at, `compacted-${row.turnId}-${idx}`);
+      case 'message': return messageView(row.message, row.message.id ?? `message-${idx}`);
+    }
+  };
+
   return (
     <div className="w-full border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 flex flex-col min-h-0">
       <div className="p-4 border-b border-gray-200 dark:border-gray-700 space-y-2">
@@ -185,11 +218,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({sessionId, channelId,
                 </button>
               </div>
             )}
-            {rows.slice(firstShown).map((row, idx) => row.kind === 'givenUp'
-              ? givenUpView(row.reason, row.at, `given-up-${row.turnId}`)
-              : row.kind === 'command'
-                ? commandView(row, `command-${row.turnId}`)
-                : messageView(row.message, row.message.id ?? `message-${idx}`))}
+            {rows.slice(firstShown).map(rowView)}
             {rows.length === 0 && (
               <div className="text-sm text-gray-500 dark:text-gray-400">The agent has heard nothing here yet.</div>
             )}

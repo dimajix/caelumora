@@ -73,8 +73,9 @@ its text to members who may not read the skill.
 *   **`/skill @agent <name>`** - a member gives one to an agent, a command the agent carries out
     itself (issue [269](../issues/269-agent-commands.md)). In its command turn the skill's text goes
     into its transcript as a message in the member's name and role (`Turn::give`, which records a
-    message the agent is given to read, not one it said - into the transcript and its history,
-    unpublished). The channel's history records the command, not the text.
+    message the agent is given to read, not one it said - into the transcript as a `Given` entry
+    that names the skill, and into its history, unpublished). The channel's history records the
+    command, not the text.
 *   **`list_skills`** gives the catalogue as a tool, for a model whose prompt was built before a
     skill appeared; **`/skills @agent`** lists, privately, what the agent may load here - for its
     owner, as it answers for its owner (issue 255), so the issuer learns the names and descriptions
@@ -82,6 +83,12 @@ its text to members who may not read the skill.
 
 Every load is recorded as knowledge (`KnowledgeSource::Skill { skill, digest }`), and the turn has
 seen the skill: what it writes afterwards is classified at least so (issue 168).
+
+A compaction ([16](../issues/16-context-compression.md), `/compact`) gives again every skill loaded
+in the part of the transcript it summarises - given (`Given` entries) or loaded by the model (the
+knowledge recorded with what the agent said afterwards) - as it is now and only if the agent may
+still load it, unless the part kept still holds it. A skill changed since is given as it reads now,
+as a load would give it.
 
 ## Agents write skills
 
@@ -130,5 +137,3 @@ agents alike; an external agent gives a skill given to it to its remote agent wi
 
 *   A personality that loads a skill in every turn (preloading), and importing `SKILL.md` files.
 *   Resources beside a skill - files, examples -, which would be the workspace's.
-*   Compaction ([16](../issues/16-context-compression.md)) has to keep a loaded skill, or load it
-    again.

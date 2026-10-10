@@ -40,12 +40,10 @@ use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::command::{Command, CommandOutput};
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::message::{Message, MessageId, MessageRole};
 use caelumora_model::question::Answers;
 use caelumora_model::scope::Scope;
 use caelumora_model::store::StoreError;
-use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
 use serde::Deserialize;
 use serde_json::Value;
@@ -97,22 +95,6 @@ fn catalogue(skills: &[SkillView]) -> String {
         text.push_str(&format!("- {}: {}\n", skill.name(), skill.description()));
     }
     titled(CATALOGUE_TITLE, &text)
-}
-
-/// The text of `skill` as the model is given it, the one rendering of both
-/// ways in.
-fn loaded(skill: &SkillView) -> String {
-    titled(&format!("Skill: {}", skill.name()), skill.body().as_str())
-}
-
-/// That `skill` was loaded in `channel` of `session`: knowledge of the turn.
-fn knowledge(skill: &SkillView, channel: ChannelId, session: SessionId) -> KnowledgeRef {
-    KnowledgeRef {
-        channel,
-        session,
-        source: KnowledgeSource::Skill { skill: skill.id(), digest: caelumora_model::digest::skill(skill.body().as_str()) },
-        classification: Some(skill.classification().clone()),
-    }
 }
 
 /// The session `turn` reads from; a turn outside of one - in tests - has
@@ -302,8 +284,8 @@ impl ToolProvider for SkillsComponent {
                 struct Load { name: String }
                 let Load { name } = arguments(params)?;
                 let skill = session_of(turn)?.views().usable_skill_named(name.trim()).await?;
-                turn.record_knowledge(knowledge(&skill, turn.channel_id(), turn.session_id()));
-                Ok(ToolOutput { value: Value::String(loaded(&skill)), classification: Some(skill.classification().clone()) })
+                turn.record_knowledge(skill.knowledge(turn.channel_id(), turn.session_id()));
+                Ok(ToolOutput { value: Value::String(skill.as_given()), classification: Some(skill.classification().clone()) })
             }
             CREATE_SKILL_TOOL_NAME => {
                 let Create { name, description, body, scope } = arguments(params)?;
@@ -412,13 +394,13 @@ impl AgentCommandProvider for SkillsComponent {
                     sender_id: issuer,
                     sender_name: issuer_name.unwrap_or_else(|| "a user".to_string()),
                     role: MessageRole::User,
-                    content: Some(loaded(&skill)),
+                    content: Some(skill.as_given()),
                     timestamp: chrono::Utc::now(),
                     ..Message::new(skill.classification().clone())
                 };
                 // Nothing can fail from here on: what is given is written at once.
-                turn.record_knowledge(knowledge(&skill, turn.channel_id(), turn.session_id()));
-                turn.give(given);
+                let knowledge = skill.knowledge(turn.channel_id(), turn.session_id());
+                turn.give(given, knowledge);
                 Ok(CommandOutput::private(format!("{} has the skill '{}' now.", turn.agent_name(), skill.name())))
             }
             _ => Err(CommandError::Unknown(name.to_string())),
@@ -448,6 +430,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
     use crate::workspace::testing::session_with_workspace;
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::confidentiality::Confidentiality;

@@ -59,6 +59,16 @@ pub enum HistoryEntry {
     /// or failed did nothing and leaves no entry; a command the session
     /// runs is never recorded.
     CommandExecuted { turn_id: TurnId, actor: ActorId, issuer: ActorId, command: String, args: String, at: DateTime<Utc> },
+    /// `actor`, an agent, replaced its context in its turn `turn_id` at
+    /// `at` (issue 16): `from`, the transcript as it stood, by `to`, the
+    /// head of a branch of its own that begins anew - what replaces the
+    /// older messages, then those kept. Every reference recorded before
+    /// names the old branch, which stays; what is said afterwards is
+    /// produced from the new one. What replaced the older messages follows
+    /// it, as messages given to the agent. Kept in the agent's history
+    /// alone: the transcript's digests do not record where a branch came
+    /// from.
+    Compacted { turn_id: TurnId, actor: ActorId, from: Digest, to: Digest, at: DateTime<Utc> },
 }
 
 /// The conversation as it happened - a chain like a `Transcript`. What it
@@ -89,7 +99,7 @@ impl Chain<HistoryEntry> {
             .filter_map(|node| match &node.entry {
                 HistoryEntry::Said { context, .. } => folded.remove(&node.digest)
                     .map(|message| HistoryEntry::Said { message, context: context.clone() }),
-                turn @ (HistoryEntry::PlanStepStarted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::CommandExecuted { .. }) => Some(turn.clone()),
+                turn @ (HistoryEntry::PlanStepStarted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. }) => Some(turn.clone()),
                 HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. } => None,
             })
             .collect()
@@ -148,7 +158,7 @@ impl Chain<HistoryEntry> {
                         message.classification = message.classification.fitted_into(channel);
                     }
                 }
-                HistoryEntry::PlanStepStarted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::CommandExecuted { .. } => {}
+                HistoryEntry::PlanStepStarted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. } => {}
             }
         }
         messages
@@ -260,6 +270,13 @@ impl Chain<HistoryEntry> {
         self.record(executed);
     }
 
+    /// Records that the agent replaced its context (issue 16):
+    /// `Compacted`, before what replaced its older messages.
+    pub fn record_compaction(&mut self, compacted: HistoryEntry) {
+        debug_assert!(matches!(compacted, HistoryEntry::Compacted { .. }), "only a compaction");
+        self.record(compacted);
+    }
+
     fn record(&mut self, entry: HistoryEntry) {
         self.push_with(entry, crate::digest::history_chain);
     }
@@ -271,7 +288,8 @@ impl HistoryEntry {
         match self {
             HistoryEntry::Said { message, .. } => Some(message),
             HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. }
-            | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. } => None,
+            | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. }
+            | HistoryEntry::Compacted { .. } => None,
         }
     }
 

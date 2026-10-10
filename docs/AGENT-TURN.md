@@ -220,9 +220,12 @@ the turn over after a cancel - and the users are told with `TurnGivenUp` (issue 
 
 **A message given** to the agent to read in a turn - a skill a member loaded for it with `/skill`
 (issue [22](../issues/22-skill-management.md)) - is recorded by `Turn::give`
-(`AgentChannelState::given`): into the transcript and the agent's history without a context, since
-the agent did not produce it, and the turn's context moved on past it. It is not published, and the
-turn has seen it.
+(`AgentChannelState::given`) with the knowledge it is: into the transcript as a `Given` entry, which
+keeps what it is (`KnowledgeSource`), so that what the agent knows can be told from its transcript
+(issue [16](../issues/16-context-compression.md)); into the agent's history without a context,
+since the agent did not produce it; the knowledge recorded with the turn, and the turn's context
+moved on past it. It is not published, and the turn has seen it. Its digest is the message's, as if
+it were a `Message` entry: the model is given the same, and what it is stays outside the digest.
 
 **A command turn** (issue [269](../issues/269-agent-commands.md)) carries out a command a user
 asked the agent for, rather than answering: `AgentChannelState::begin_command_turn` begins it with
@@ -304,18 +307,21 @@ on its chain ([197](../issues/197-one-chain-one-model-of-change.md)); what stand
 the entries:
 
 *   `Transcript` is `Chain<TranscriptEntry>`: a `Message` the model was given or produced, a
-    message `Modified`, `Revoked` or `Reclassified`, or the end of a turn, `TurnFinished` or
+    message `Given` to the agent to read with what it is (`KnowledgeSource`, issue 16), a message
+    `Modified`, `Revoked` or `Reclassified`, or the end of a turn, `TurnFinished` or
     `TurnGivenUp` (issue 258). `messages` is the messages of the active path as they stand, what
     the model is given.
 *   `MessageHistory` is `Chain<HistoryEntry>`: a message `Said`, with what it was produced from
     for the agent's own, a message `Reclassified`, `Modified` or `Revoked`, the channel's
     classification `Fitted`, the start of a step of a turn's plan, `PlanStepStarted` (issue 263,
-    recorded by the channel only), the end of a turn, `TurnFinished` or `TurnGivenUp`. `messages`
-    and `message(id)` fold every branch in the order things happened into the messages as they
-    stand, so a reclassification, a modification or a revocation applies to a message on any
-    branch, as it did in the channel. `items` reads the active path as one list: each message said
-    as it stands, where the steps of plans began and how the turns ended - what a reader of the
-    history is shown (issue 258).
+    recorded by the channel only), the end of a turn, `TurnFinished` or `TurnGivenUp`, a command
+    an agent carried out, `CommandExecuted` (issue 269), and a compaction of its context,
+    `Compacted` (issue 16, the agent's history only). `messages` and `message(id)` fold every
+    branch in the order things happened into the messages as they stand, so a reclassification, a
+    modification or a revocation applies to a message on any branch, as it did in the channel.
+    `items` reads the active path as one list: each message said as it stands, where the steps of
+    plans began, how the turns ended, the commands carried out and the compactions - what a reader
+    of the history is shown (issue 258).
 *   Notes and memory are `Chain<LedgerEntry<K>>`, a ledger of changes to numbered items (see
     [MEMORY.md](MEMORY.md)).
 
@@ -544,17 +550,46 @@ its entry and never recomputed. Were the scheme to change, recomputing would sil
 digest the history refers to; stored, old entries keep their digests and only new ones get the new
 scheme's.
 
-### The context only grows
+### Compaction
 
-This relies on the context only ever growing, so that an earlier digest names a prefix of it. A turn
-under way does not change it either: its messages are appended only when it is taken over (see [The
-turn's context and the resolver](#the-turns-context-and-the-resolver)).
+This relies on nothing ever being removed from the transcript, so that an earlier digest names a
+prefix of one of its branches. A turn under way changes nothing before its head either: what it
+says is appended as it says it (issue 260, see [The turn's context and the
+resolver](#the-turns-context-and-the-resolver)).
 
-Compressing the context ([16](../issues/16-context-compression.md)) produces a new context that came
-from the old one but does not continue it. Entries written before keep referring to the old context,
-which therefore has to remain resolvable; only new entries refer to the new one. The link from the
-new context to the one it came from is a relation of its own, not the predecessor link of the chain,
-and - since it is not sent to the model - not part of the digest.
+A compaction ([16](../issues/16-context-compression.md)) produces a new context that came from the
+old one but does not continue it, and is built from what the chain already is - a tree
+(`AgentChannelState::compact`, used through `Turn::compact`):
+
+*   **A branch of its own.** The transcript begins anew from the root (`start_anew`, as an external
+    agent's does before every call), with what replaces the older messages - a summary, the skills
+    given again as `Given` entries with the knowledge they are - and then the entries kept, copied
+    from the active path as they stand: a change of a message is in its copy, a message taken back
+    is left out, a turn's end is copied as it is. Every copy gets a digest of its own, since what
+    precedes it is another: the new context is another context.
+*   **The old branch stays.** Every `ContextRef` recorded before names it and resolves through
+    `prefix` to what it did; the `ContextResolver` does not know there was a compaction. Only
+    what the turn says afterwards is produced from - and recorded with - the new branch: the turn's
+    context moves to its head. Prompt parts the turn placed after an entry name the old branch and
+    are dropped; who placed them places them again.
+*   **Where it came from** is recorded in the agent's history, `HistoryEntry::Compacted { from, to
+    }` - the heads of the transcript before and after -, followed by what replaced the older
+    messages, as messages given to the agent. It is a relation of its own, not the predecessor link
+    of the chain, and - since the model is not given it - in no digest of the transcript: two
+    identical contexts get the same digest however they came about.
+*   **Counted once.** A message kept is in the transcript twice, once on each branch; the tokens
+    used (`AgentChannelState::usage`) count it where it was first recorded.
+
+What replaces the older messages, where the cut is made and when a compaction happens is not the
+state's: the mechanism takes the replacement and the first entry kept, and a component decides. The
+one there is, `compaction`, carries out `/compact` (see
+[TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md#built-in-tools-and-commands)): it keeps at least the
+newest `keep_last` messages, from the start of the turn the oldest of them belongs to, so that no
+turn is cut apart; has the agent's own model summarise the rest, given as every call is
+(`Turn::context_until`); and gives the skills loaded in that rest again. The summary is a message
+of the agent in the role `user`, titled "Summary of the conversation so far", classified as the
+turn's label, and carries the tokens of its call. Compacting on the agent's own is
+[284](../issues/284-automatic-context-compaction.md).
 
 ## Prompt parts
 

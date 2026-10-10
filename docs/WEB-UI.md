@@ -536,4 +536,7 @@ failed, stopped, the channel lowered, asked for again - and when, as the history
 messages stand among the others, each with its context where it is recorded. A turn given up
 because the agent was removed from the channel is shown in its history panel, offered among the
 former members (issue 164). A command the agent carried out (issue 269) is marked where it was:
-which, with its arguments, on whose word, and when.
+which, with its arguments, on whose word, and when. A compaction of its context (issue 16) is
+marked where it was made, "Context compacted" and when; what replaced the older messages - the
+summary, the skills given again - follows it as messages without a context of their own, and the
+messages before it keep theirs.

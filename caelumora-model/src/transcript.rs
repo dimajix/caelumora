@@ -4,6 +4,7 @@
 
 use crate::chain::{Chain, Node};
 use crate::confidentiality::Classification;
+use crate::context::KnowledgeSource;
 use crate::digest::Digest;
 use crate::message::{Message, MessageId};
 use crate::turn::GivenUpReason;
@@ -22,6 +23,13 @@ use std::collections::HashMap;
 pub enum TranscriptEntry {
     /// A message the model was given, or produced.
     Message(Message),
+    /// A message the agent was given to read in a turn (issue 16) - not
+    /// said by it, not heard from another -, and what it is: a skill loaded
+    /// for it (issue 22). Given to the model as the message is; `source`
+    /// says what it was given, so that what the agent knows can be told
+    /// from the transcript - a compaction gives a skill again. `source` is
+    /// not covered by the digest: the model is given the message alone.
+    Given { message: Message, source: KnowledgeSource },
     /// The message `message.id`, before it on the path, is given as
     /// `message` from here on (issue 234, `Message::modify`).
     Modified { message: Message },
@@ -131,6 +139,18 @@ impl Chain<TranscriptEntry> {
         self.push_with(TranscriptEntry::Message(msg), crate::digest::transcript_chain)
     }
 
+    /// Appends `entry` as it is - a copy of one on another branch, kept
+    /// through a compaction (issue 16).
+    pub(crate) fn push_entry(&mut self, entry: TranscriptEntry) {
+        self.push_with(entry, crate::digest::transcript_chain);
+    }
+
+    /// Appends `msg`, given to read as `source` (issue 16), and returns the
+    /// digest of the transcript before it.
+    pub fn give(&mut self, msg: Message, source: KnowledgeSource) -> Option<Digest> {
+        self.push_with(TranscriptEntry::Given { message: msg, source }, crate::digest::transcript_chain)
+    }
+
     /// Records that the message `modified.id` of the active path is given
     /// as `modified` from now on (issue 234). `false`, and nothing is
     /// recorded, if the message is not on the active path as it stands -
@@ -204,7 +224,7 @@ impl TranscriptEntry {
     /// The message, if this is one.
     pub fn message(&self) -> Option<&Message> {
         match self {
-            TranscriptEntry::Message(message) => Some(message),
+            TranscriptEntry::Message(message) | TranscriptEntry::Given { message, .. } => Some(message),
             TranscriptEntry::Modified { .. } | TranscriptEntry::Revoked { .. } | TranscriptEntry::Reclassified { .. }
             | TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. } => None,
         }
@@ -214,7 +234,7 @@ impl TranscriptEntry {
     pub fn ended_turn(&self) -> Option<TurnId> {
         match self {
             TranscriptEntry::TurnFinished { turn_id, .. } | TranscriptEntry::TurnGivenUp { turn_id, .. } => Some(*turn_id),
-            TranscriptEntry::Message(_) | TranscriptEntry::Modified { .. } | TranscriptEntry::Revoked { .. } | TranscriptEntry::Reclassified { .. } => None,
+            TranscriptEntry::Message(_) | TranscriptEntry::Given { .. } | TranscriptEntry::Modified { .. } | TranscriptEntry::Revoked { .. } | TranscriptEntry::Reclassified { .. } => None,
         }
     }
 
@@ -223,7 +243,7 @@ impl TranscriptEntry {
     /// given every entry has seen all of them (issue 236): they only add.
     pub fn classification(&self) -> Option<&Classification> {
         match self {
-            TranscriptEntry::Message(message) | TranscriptEntry::Modified { message } => Some(&message.classification),
+            TranscriptEntry::Message(message) | TranscriptEntry::Given { message, .. } | TranscriptEntry::Modified { message } => Some(&message.classification),
             TranscriptEntry::Reclassified { classification, .. } => Some(classification),
             TranscriptEntry::Revoked { .. } | TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. } => None,
         }
@@ -234,7 +254,7 @@ impl TranscriptEntry {
         match self {
             TranscriptEntry::Modified { message } => Some(message.id),
             TranscriptEntry::Revoked { message, .. } | TranscriptEntry::Reclassified { message, .. } => Some(*message),
-            TranscriptEntry::Message(_) | TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. } => None,
+            TranscriptEntry::Message(_) | TranscriptEntry::Given { .. } | TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. } => None,
         }
     }
 
@@ -250,7 +270,7 @@ impl TranscriptEntry {
             TranscriptEntry::Reclassified { classification, .. } => {
                 message.reclassify(classification);
             }
-            TranscriptEntry::Message(_) | TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. } => {}
+            TranscriptEntry::Message(_) | TranscriptEntry::Given { .. } | TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. } => {}
         }
     }
 }
@@ -274,6 +294,22 @@ mod tests {
         assert_eq!(ids(transcript.prefix(&first).unwrap()), vec![id(1), id(2)]);
         assert_eq!(ids(transcript.prefix(&second).unwrap()), vec![id(3)], "only what came after the first");
         assert_eq!(ids(transcript.all_entries().collect()), vec![id(1), id(2), id(3)], "all it ever held, in order");
+    }
+
+    #[test]
+    fn a_message_given_is_read_as_its_message_and_hashed_as_one() {
+        let source = KnowledgeSource::Skill { skill: crate::skill::SkillId::new(), digest: crate::digest::skill("steps") };
+        let (mut given, mut said) = (Transcript::default(), Transcript::default());
+        given.push(make_message(id(1)));
+        said.push(make_message(id(1)));
+        given.give(make_message(id(2)), source);
+        said.push(make_message(id(2)));
+        assert_eq!(given.digest(), said.digest(), "the model is given the same");
+        assert_eq!(given.messages().iter().map(|m| m.id).collect::<Vec<_>>(), [id(1), id(2)]);
+        assert_eq!(given.message(id(2)).map(|m| m.id), Some(id(2)));
+        let entry = &given.last().unwrap().entry;
+        assert!(matches!(entry, TranscriptEntry::Given { source: s, .. } if *s == source), "and keeps what it is");
+        assert_eq!(entry.classification(), Some(&make_message(id(2)).classification));
     }
 
     #[test]
