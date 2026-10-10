@@ -325,7 +325,7 @@ impl AgentActor {
         let mut taken = take_in(state, received, rx, &self.perceive_in_processors, &self.security_context, |_, _| {}).await;
         // A command where it came (issue 269), then the rest of the batch.
         while let Some(command) = taken.command.take() {
-            self.commands.carry_out(state, &command, output).await;
+            self.carry_out(state, &command, output).await;
             let Some(next) = rx.try_recv() else { break };
             taken = taken.then(take_in(state, next, rx, &self.perceive_in_processors, &self.security_context, |_, _| {}).await);
         }
@@ -358,6 +358,22 @@ impl AgentActor {
         }
         rx.commit().await?;
         Ok(Some(if started { ActorState::Planning } else { self.control.state() }))
+    }
+
+    /// Carries out the command in `request` (issue 269). An awake agent is
+    /// shown carrying it out meanwhile, and is idle again after; a sleeping
+    /// one carries it out asleep (issue 299): moved, it would be neither
+    /// woken by `/wakeup` nor left out by the moderator.
+    async fn carry_out(&self, state: &mut AgentChannelState, request: &Envelope, output: &dyn EventSender) {
+        let awake = self.control.state() == ActorState::Idle;
+        if awake {
+            self.control.go_to(ActorState::CarryingOutCommand);
+            self.announce_state(output).await;
+        }
+        self.commands.carry_out(state, request, output).await;
+        if awake {
+            self.control.go_to(ActorState::Idle);
+        }
     }
 
     /// Begins a turn in answer to `request` (`request_response`), and
@@ -840,15 +856,15 @@ fn label(message: &mut Message, turn: &Turn, reasoning_visibility: Visibility, c
 /// A state in the middle of a turn without the turn's working state
 /// cannot be resumed; it starts idle.
 fn prepare_resume(state: &mut AgentChannelState) -> usize {
-    if state.processing_state.in_turn() && state.turn.is_none() {
-        state.processing_state = ActorState::Idle;
-    }
     // A command turn is carried out between two stores and never stored
     // under way (issue 269); one found is dropped as its request would have
-    // been, unanswered.
+    // been, unanswered - and so is carrying it out (issue 299).
     if state.turn.as_ref().is_some_and(|turn| turn.command.is_some()) {
         warn!("A command turn was stored under way; it is dropped");
         state.turn = None;
+    }
+    if (state.processing_state.in_turn() && state.turn.is_none()) || state.processing_state == ActorState::CarryingOutCommand {
+        state.processing_state = ActorState::Idle;
     }
     let Some(turn) = state.turn.as_mut().filter(|_| state.processing_state == ActorState::ExecutingTools) else {
         return 0;
@@ -971,7 +987,9 @@ impl Actor for AgentActor {
             // Between turns the actor works on its state; a step of a turn
             // on the turn under way.
             let result = async { Ok::<_, anyhow::Error>(match current_state {
-                ActorState::Idle | ActorState::Sleeping => self.handle_waiting(&mut state, &mut rx, &mut given_up_for, &*output).await?,
+                // Carrying out a command is a part of waiting, and ends
+                // within it; found here, it was cut short.
+                ActorState::Idle | ActorState::Sleeping | ActorState::CarryingOutCommand => self.handle_waiting(&mut state, &mut rx, &mut given_up_for, &*output).await?,
                 ActorState::WaitingForUser => {
                     self.handle_waiting_for_user(&mut self.turn_under_way(&mut state)?, &mut rx, &*output).await?
                 }

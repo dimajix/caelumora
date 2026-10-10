@@ -273,7 +273,11 @@ impl ExternalAgentActor {
     async fn hear(&self, state: &mut AgentChannelState, received: Envelope, rx: &mut Box<dyn EventReceiver>, output: &dyn EventSender) -> Option<Envelope> {
         let mut taken = take_in(state, received, rx, &self.perceive_in_processors, &self.security_context, tell).await;
         while let Some(command) = taken.command.take() {
+            // Shown carrying it out meanwhile, as an agent run here is
+            // (issue 299).
+            self.go_to(ActorState::CarryingOutCommand, output).await;
             self.commands.carry_out(state, &command, output).await;
+            self.go_to(ActorState::Idle, output).await;
             let Some(next) = rx.try_recv() else { break };
             taken = taken.then(take_in(state, next, rx, &self.perceive_in_processors, &self.security_context, tell).await);
         }

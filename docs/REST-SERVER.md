@@ -266,7 +266,8 @@ state they start from (issue 34):
     during an answer shows it as under way, as if it had seen its `ResponseStarted`. An external
     agent has no turn here and carries none. An agent member carries where it stands (`state`,
     issue 243) - `Idle`, `Sleeping`, `Planning`, `ExecutingTools`, `WaitingForUser`,
-    `Reflecting` or `Cancelling` - read from the running channel alike and kept up by
+    `Reflecting`, `Cancelling` or `CarryingOutCommand` (issue 299) - read from the running channel
+    alike and kept up by
     `{"StateChanged": …}` on the stream; absent in a channel that does not run. `can_cancel` says
     whether the viewer may end its answer (`POST …/participants/{aid}/cancel`), which ends one in
     `Planning`, `ExecutingTools` or `WaitingForUser`;

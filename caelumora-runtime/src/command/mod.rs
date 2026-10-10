@@ -240,36 +240,44 @@ impl CommandExecutor<dyn AgentCommandProvider> {
         self.visible_by(issuer, |command| ActionType::ShowAgentCommand { command, agent, channel }).await
     }
 
-    /// The command `name`, if `issuer` may ask the agent with `agent`
-    /// attributes for it in the channel with `channel` attributes.
-    ///
-    /// # Errors
-    /// As `execute`, before anything is carried out.
-    pub async fn admitted(&self, name: &str, issuer: &SecurityContext, agent: &SecurityAttributes, channel: &SecurityAttributes) -> CommandResult<Command> {
-        Ok(self.admit_for(name, issuer, agent, channel).await?.command.clone())
-    }
-
-    /// Carries out the command `name` with `args` in `turn`, if `issuer` -
-    /// who asked, in the context the request came with - may ask the agent
-    /// with `agent` attributes for it in the channel with `channel`
-    /// attributes.
+    /// The command `name`, if `issuer` - who asked, in the context the
+    /// request came with - may ask the agent with `agent` attributes for it
+    /// in the channel with `channel` attributes: ready to be carried out,
+    /// and only so.
     ///
     /// # Errors
     /// `CommandError::Empty` for an empty name; `Unknown` if the agent has
     /// no such command or the issuer may not see it; `Forbidden` if they
-    /// may see but not ask for it; otherwise whatever the command reports.
-    pub async fn execute(&self, name: &str, args: &str, issuer: &SecurityContext, agent: &SecurityAttributes, channel: &SecurityAttributes, turn: &mut Turn<'_>) -> CommandResult<CommandOutput> {
-        let entry = self.admit_for(name, issuer, agent, channel).await?;
-        entry.provider.execute(name, args, turn).await
-    }
-
-    async fn admit_for<'c>(&'c self, name: &str, issuer: &SecurityContext, agent: &'c SecurityAttributes, channel: &'c SecurityAttributes) -> CommandResult<&'c CommandEntry<dyn AgentCommandProvider>> {
-        self.admit(
+    /// may see but not ask for it.
+    pub async fn admitted<'c>(&'c self, name: &str, issuer: &SecurityContext, agent: &'c SecurityAttributes, channel: &'c SecurityAttributes) -> CommandResult<AdmittedCommand<'c>> {
+        let entry = self.admit(
             name,
             issuer,
             |command| ActionType::ShowAgentCommand { command, agent, channel },
             |command| ActionType::ExecuteAgentCommand { command, agent, channel },
-        ).await
+        ).await?;
+        Ok(AdmittedCommand(entry))
+    }
+}
+
+/// A command of an agent its issuer may ask for (`CommandExecutor::admitted`):
+/// what it is, and carrying it out - which can only be done once it was
+/// admitted, so that the agent can tell the issuer it began in between
+/// (issue 299).
+#[derive(Debug)]
+pub struct AdmittedCommand<'c>(&'c CommandEntry<dyn AgentCommandProvider>);
+
+impl AdmittedCommand<'_> {
+    pub fn command(&self) -> &Command {
+        &self.0.command
+    }
+
+    /// Carries the command out with `args` in `turn`.
+    ///
+    /// # Errors
+    /// Whatever the command reports.
+    pub async fn execute(self, args: &str, turn: &mut Turn<'_>) -> CommandResult<CommandOutput> {
+        self.0.provider.execute(&self.0.command.name, args, turn).await
     }
 }
 

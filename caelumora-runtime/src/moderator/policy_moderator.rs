@@ -139,8 +139,9 @@ impl Moderator for PolicyModerator {
             ActorEvent::TurnGivenUp { .. } | ActorEvent::CommandExecuted { to: None, .. } | ActorEvent::ParticipantRemoved { .. } => {
                 self.actors().route_to_users(event)
             }
-            // A command for an agent goes to it alone; what it answers to
-            // the issuer alone, unless the answer is everybody's (issue 269).
+            // A command for an agent goes to it alone; that it began to the
+            // issuer alone (issue 299), and what it answers too, unless the
+            // answer is everybody's (issue 269).
             ActorEvent::CommandRequested { agent, .. } => {
                 self.actors().route_to_agent(*agent, event)
             }
@@ -150,7 +151,7 @@ impl Moderator for PolicyModerator {
             ActorEvent::NudgeRequested { participant } => {
                 self.actors().route_to_participant(*participant, &event.forward(ActorEvent::ResponseRequested))
             }
-            ActorEvent::CommandExecuted { to: Some(user), .. } | ActorEvent::CommandFailed { to: user, .. } => {
+            ActorEvent::CommandStarted { to: user, .. } | ActorEvent::CommandExecuted { to: Some(user), .. } | ActorEvent::CommandFailed { to: user, .. } => {
                 self.actors().route_to_user(*user, event)
             }
             // A change to what was said reaches everyone who may hold the
@@ -800,6 +801,21 @@ mod tests {
             // Commands address the system: the agents must not see them.
             assert!(decision.iter().all(|(to, _)| !agents.contains(to)), "{:?} must not route a command to agents", moderator);
             assert!(decision.iter().any(|(to, _)| *to == other), "{:?} must tell the other users", moderator);
+        }
+    }
+
+    #[tokio::test]
+    async fn every_moderator_tells_the_start_of_a_command_to_its_issuer_alone() {
+        for moderator in moderators() {
+            let agents = add_agents(&moderator);
+            let (issuer, other) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
+            moderator.add_actor(Arc::new(TestActor { id: issuer, state: ActorState::Idle }));
+            moderator.add_actor(Arc::new(TestActor { id: other, state: ActorState::Idle }));
+            let started = ActorEvent::CommandStarted { command: "compact".to_string(), args: String::new(), to: issuer, turn_id: caelumora_model::work::TurnId::new() };
+
+            let decision = moderator.route(&envelope(agents[0], started)).await;
+
+            assert_eq!(decision.iter().map(|(to, _)| *to).collect::<Vec<_>>(), [issuer], "{:?} must tell the issuer alone", moderator);
         }
     }
 

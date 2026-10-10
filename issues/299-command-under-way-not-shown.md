@@ -1,6 +1,6 @@
 # 299 — A command an agent carries out is shown only once it is done
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -81,3 +81,37 @@ This was left open on purpose: 269 decided that a command turn is no answer - it
 - **2026-10-10** — Issue created on the maintainer's report from trying `/compact @jonathan`: the
   channel learned of it only at its end, and Jonathan was shown idle meanwhile. Proposal above;
   how a sleeping agent is shown and to whom the start is told are still to decide.
+- **2026-10-10** — Decided with the maintainer:
+  - A sleeping agent stays `Sleeping` while it carries a command out; only an awake one moves to
+    `CarryingOutCommand`.
+  - The start is told to the issuer alone. The answer keeps its visibility on `CommandOutput`, as
+    the command chooses it - for `/compact` everybody's: the issuer sees it begin, everybody sees
+    it done. Declaring the visibility on `Command` instead, so that start and end follow one rule,
+    was considered and not chosen.
+  - The dot of an agent carrying out a command pulses orange, in colour and size as a working one
+    does in green.
+  - Beside it, in the web UI: the pulsing dots of an answer under way - "generating…" (blue) and
+    "Thinking" (grey) - pulse as the members panel's dot of a working agent does, in green.
+- **2026-10-10** — Implemented as decided; not yet seen in the browser.
+  `ActorState::CarryingOutCommand` is neither `in_turn` nor `interruptible`: it is entered and left while the actor waits, so a
+  `/nudge` is not refused as "already responding" and nothing resumes it as a turn
+  (`prepare_resume` starts such a state idle). The `AgentActor` moves an awake agent there around
+  `AgentCommands::carry_out` and back to `Idle`, the `ExternalAgentActor` with its `go_to`. A
+  shared intake of both actors, as 269's history suggested, was looked at and is not worth it: what
+  is the same - taking a batch in, ending it at a command - is `take_in` already; what is around it
+  differs for a reason - the agent run here judges requests to answer again, sleeps and is woken,
+  and lets its run loop announce its state, the external one tells its remote agent of changes
+  (`tell`), rejects every request to answer again and announces at once. Shared, the five lines of
+  the loop would take the actor's carrying out as an async closure over the state.
+  `ActorEvent::CommandStarted { command, args, to, turn_id }`, routed to `to` alone;
+  `CommandFailed` got `turn_id: Option<TurnId>`, set if the start was told. To tell the start
+  between admission and carrying out without asking the policy twice, `CommandExecutor::admitted`
+  for agents returns an `AdmittedCommand`, the only way to carry a command out; its `execute`
+  replaced the executor's. Web UI: the command's notice appears under way with an orange pulsing
+  dot and is replaced by the answer or the failure; the member's dot pulses orange
+  (`animate-command`); the dots of "generating…", "Thinking" and the step of a plan under way pulse
+  green (`animate-working`). The TUI prints the start. Tests: an agent run here tells the issuer
+  it began, is shown `CarryingOutCommand` and `Idle` after; a failed command ends what began; a
+  sleeping one tells the start and no state; an external agent alike; the moderator routes the
+  start to the issuer alone. AGENT-TURN.md, TOOLS-AND-COMMANDS.md, CHANNELS.md, REST-SERVER.md,
+  WEB-UI.md. Nothing stored changes.

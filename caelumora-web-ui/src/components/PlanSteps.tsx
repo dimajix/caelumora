@@ -43,7 +43,7 @@ export const PlanSteps: React.FC<PlanStepsProps> = ({name, step, count, underWay
           {name} {underWay ? 'works' : 'worked'} on {which}
           {step && <span className="font-medium"> · {step.description}</span>}
           {underWay
-            ? <span className="inline-block ml-1.5 w-1.5 h-1.5 bg-current rounded-full animate-pulse align-middle" />
+            ? <span className="inline-block ml-1.5 w-1.5 h-1.5 bg-green-500 rounded-full animate-working align-middle" />
             : <span className="opacity-70"> · {count} {count === 1 ? 'message' : 'messages'}</span>}
         </span>
       </button>

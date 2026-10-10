@@ -123,6 +123,7 @@ const WORKING: Partial<Record<ActorState, string>> = {
   ExecutingTools: 'Working: running tools',
   Reflecting: 'Working: finishing its answer',
   Cancelling: 'Working: stopping',
+  CarryingOutCommand: 'Working: carrying out a command',
 };
 
 /** The states in which a cancel still ends an agent's answer (`ActorState::interruptible`). */
@@ -135,7 +136,8 @@ const INTERRUPTIBLE: ActorState[] = ['Planning', 'ExecutingTools', 'WaitingForUs
 function stateDot(member: ChannelMember): {className: string; title: string} | null {
   if (member.kind !== 'agent') return null;
   const working = member.state && WORKING[member.state];
-  if (working) return {className: 'bg-green-500 animate-working', title: working};
+  // A command pulses in orange (issue 299), an answer in green.
+  if (working) return {className: member.state === 'CarryingOutCommand' ? 'bg-orange-500 animate-command' : 'bg-green-500 animate-working', title: working};
   switch (member.state) {
     case 'Idle': return {className: 'bg-green-500', title: 'Idle'};
     case 'WaitingForUser': return {className: 'bg-amber-500', title: 'Waiting for a person'};
@@ -824,18 +826,27 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
             };
             setMessages(prev => [...prev, notice]);
           }
+        } else if (actorEvent.CommandStarted) {
+          // An agent began a command of yours (issue 299): its notice shows
+          // it under way until the answer, kept by the same turn, replaces it.
+          const {command, args, turn_id} = actorEvent.CommandStarted;
+          const begun = commandNotice(turn_id, command, args, envelope.context.sender_id, envelope.context.sender_name, undefined, envelope.timestamp);
+          const notice = {...begun, commandOutput: {...begun.commandOutput!, underWay: true}};
+          setMessages(prev => prev.some(m => m.id === notice.id) ? prev : [...prev, notice]);
         } else if (actorEvent.CommandFailed) {
           // An agent did not carry out a command (issue 269): for the issuer
-          // alone, and gone on reload - nothing happened.
-          const {command, reason} = actorEvent.CommandFailed;
+          // alone, and gone on reload - nothing happened. In the place of its
+          // start, if it began.
+          const {command, reason, turn_id} = actorEvent.CommandFailed;
           const notice: Message = {
+            id: turn_id ? `command:${turn_id}` : undefined,
             role: 'System',
             content: reason,
             sender_name: envelope.context.sender_name,
             commandOutput: {command, private: true, agent: envelope.context.sender_name, failed: true},
             timestamp: envelope.timestamp,
           };
-          setMessages(prev => [...prev, notice]);
+          setMessages(prev => notice.id && prev.some(m => m.id === notice.id) ? prev.map(m => m.id === notice.id ? notice : m) : [...prev, notice]);
         } else if (actorEvent.ParticipantRemoved) {
           // Nothing of the removed participant follows (issue 162): what it
           // had under way has ended - its answer, its calls of tools.
@@ -1199,6 +1210,14 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     const name = <span className="font-mono normal-case">/{output.command}{output.args ? ` ${output.args}` : ''}</span>;
     const yours = output.private ? ' · only visible to you' : '';
     if (output.failed) return <span>{output.agent} did not carry out {name}{yours}</span>;
+    if (output.underWay) {
+      return (
+        <span className="inline-flex items-center gap-1.5">
+          {output.agent} is carrying out {name}
+          <span className="w-1.5 h-1.5 bg-orange-500 rounded-full animate-command" />
+        </span>
+      );
+    }
     if (output.agent) return <span>{output.agent} carried out {name}{output.issuer ? ` for ${output.issuer}` : ''}{yours}</span>;
     return output.private
       ? <span>{name} · only visible to you</span>
@@ -1390,7 +1409,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
       <div className="text-xs font-semibold mb-1 opacity-70 uppercase tracking-wider flex items-center gap-2">
         <span>{answer.name || 'Assistant'}</span>
         <span className="inline-flex items-center gap-1.5 normal-case font-normal text-blue-500 dark:text-blue-400">
-          <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
+          <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-working" />
           generating…
         </span>
         <span className="ml-auto inline-flex items-center gap-1">
