@@ -165,6 +165,9 @@ pub enum ToolPresentation {
     /// where the arguments hold them its `description` and its `body`, as
     /// Markdown; its result's `skill_id`, where it has one, to link to.
     Skill,
+    /// The skills an agent may load, listed (issue 301): the `skills` of its
+    /// result - each `name`, `description` and `skill_id`, to link to.
+    SkillList,
 }
 
 impl ToolPresentation {
