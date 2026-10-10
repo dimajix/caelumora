@@ -261,7 +261,7 @@ published before anyone else can take it.
 | [298](298-pick-users-and-roles-to-share-with.md) | open | The web UI shares a workspace or an artifact only with the members of a session or channel, not with a user or a role by name, since the REST API lists neither. |
 | [299](299-command-under-way-not-shown.md) | done | A command an agent carries out, such as `/compact`, is shown only once it is done: nothing tells that the agent began, and it is shown idle meanwhile. |
 | [301](301-skill-list-presentation.md) | done | The skills an agent lists with `list_skills` are shown in the web UI as raw JSON, while loading, writing and changing a skill are shown as what they do. |
-| [303](303-note-and-memory-presentations.md) | open | The web UI shows writing, changing, revoking and reading notes, private notes and memory entries as raw JSON, so a call that names an entry by number does not say which one. |
+| [303](303-note-and-memory-presentations.md) | done | The web UI shows writing, changing, revoking and reading notes, private notes and memory entries as raw JSON, so a call that names an entry by number does not say which one. |
 
 ## Context and knowledge
 

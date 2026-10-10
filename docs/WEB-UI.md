@@ -289,7 +289,11 @@ else who may read it - the session's owner, say - is shown its history and no in
     where the result names the skill (`skill_id`), the name opens its page in the chat
     (`onSelectPage`, which `Layout` hands through `ChatView` and `MessageView`). The `skill_list`
     handler (issue 301) shows how many skills an agent listed - "No skills to load here" for none -
-    and each by its name, which opens its page as `skill`'s does, and what it is for. Where a result
+    and each by its name, which opens its page as `skill`'s does, and what it is for. The `note`
+    handler (issue 303) shows a note, a private note or a memory entry acted on by its number and
+    what was done to it, its new text where it was written or updated, and its new classification
+    where it was reclassified; the `note_list` handler shows the notes `read_notes` read, by channel
+    and by who wrote them, as `NotesList` groups them - "Nothing noted" for none. Where a result
     keeps the record of the questions its call asked (`answers`, issue 165), the frame shows it
     (`AnswersRecord`, issue 268): who answered or declined, and each question with every choice that
     was offered, one below the other, the chosen ones marked and the others muted, "Other" with its

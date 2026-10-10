@@ -26,7 +26,7 @@ use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::note::{Note, NoteId};
 use caelumora_model::security::SecurityManager;
-use caelumora_model::tool::{Tool, ToolVisibility, ToolParameters};
+use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -70,7 +70,7 @@ impl ToolProvider for NotesComponent {
                 requires_approval: false,
                 visibility: ToolVisibility::SHOWN,
                 classification: None,
-                presentation: Default::default(),
+                presentation: ToolPresentation::Note,
             },
             Tool {
                 name: UPDATE_NOTE_TOOL_NAME.to_string(),
@@ -84,7 +84,7 @@ impl ToolProvider for NotesComponent {
                 requires_approval: false,
                 visibility: ToolVisibility::SHOWN,
                 classification: None,
-                presentation: Default::default(),
+                presentation: ToolPresentation::Note,
             },
             Tool {
                 name: REVOKE_NOTE_TOOL_NAME.to_string(),
@@ -98,7 +98,7 @@ impl ToolProvider for NotesComponent {
                 requires_approval: false,
                 visibility: ToolVisibility::SHOWN,
                 classification: None,
-                presentation: Default::default(),
+                presentation: ToolPresentation::Note,
             },
             Tool {
                 name: RECLASSIFY_NOTE_TOOL_NAME.to_string(),
@@ -109,7 +109,7 @@ impl ToolProvider for NotesComponent {
                 requires_approval: true,
                 visibility: ToolVisibility::SHOWN,
                 classification: None,
-                presentation: Default::default(),
+                presentation: ToolPresentation::Note,
             },
             Tool {
                 name: READ_NOTES_TOOL_NAME.to_string(),
@@ -126,7 +126,7 @@ impl ToolProvider for NotesComponent {
                 requires_approval: false,
                 visibility: ToolVisibility::SHOWN,
                 classification: None,
-                presentation: Default::default(),
+                presentation: ToolPresentation::NoteList,
             },
         ]
     }
@@ -437,5 +437,14 @@ mod tests {
         let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached());
         let noted = tools.execute(WRITE_NOTE_TOOL_NAME, &serde_json::json!({ "text": "final" }), None, &mut turn).await.unwrap();
         assert_eq!(noted.value["id"], 2);
+    }
+
+    #[test]
+    fn a_note_acted_on_is_shown_as_a_note_and_the_notes_read_as_a_list() {
+        let tools = NotesComponent { security_manager: Arc::new(caelumora_model::security::OwnershipSecurityManager::new()) }.tools();
+        let notes: Vec<_> = tools.iter().filter(|t| t.presentation == ToolPresentation::Note).map(|t| t.name.as_str()).collect();
+        assert_eq!(notes, [WRITE_NOTE_TOOL_NAME, UPDATE_NOTE_TOOL_NAME, REVOKE_NOTE_TOOL_NAME, RECLASSIFY_NOTE_TOOL_NAME]);
+        let read = tools.iter().find(|t| t.name == READ_NOTES_TOOL_NAME).unwrap();
+        assert_eq!(read.presentation, ToolPresentation::NoteList);
     }
 }

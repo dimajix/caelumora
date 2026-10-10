@@ -683,6 +683,13 @@ agent alike.
 `stop`, `bye` and `silence` end the turn with the current tool step (`Turn::request_state`). Notes,
 private notes and agent memory are described in [MEMORY.md](MEMORY.md).
 
+The tools that write, update, revoke, forget or reclassify a note, a private note or a memory entry
+are presented as `note` (`ToolPresentation::Note`, issue 303): the web UI shows the entry's number
+and what was done to it, its new text where it was written or updated, and its new classification
+where it was reclassified. What was revoked, forgotten or reclassified is named by its number
+alone; the results carry no text. `read_notes` is presented as `note_list`
+(`ToolPresentation::NoteList`): the notes read, by channel and by who wrote them.
+
 `load_skill`, `create_skill` and `update_skill` are presented as `skill` (`ToolPresentation::Skill`,
 issue 281): the web UI shows the skill a call acts on by its name, linked to its page where the
 result holds its `skill_id`, and what it is for and its text where the arguments hold them.
