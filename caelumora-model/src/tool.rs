@@ -168,6 +168,16 @@ pub enum ToolPresentation {
     /// The skills an agent may load, listed (issue 301): the `skills` of its
     /// result - each `name`, `description` and `skill_id`, to link to.
     SkillList,
+    /// One of an agent's notes, private notes or memory entries acted on
+    /// (issue 303): its `id` and what was done to it (`status`), its new
+    /// `text` where the arguments hold one - written or updated -, and for a
+    /// reclassification its new `classification`. What was revoked,
+    /// forgotten or reclassified is named by its number alone.
+    Note,
+    /// The notes of channels read (issue 303): the `channels` of its result,
+    /// each with its `channel` name and its `notes` - each `by` whom, its
+    /// `text` and, in the reader's own channel, its `id`.
+    NoteList,
 }
 
 impl ToolPresentation {

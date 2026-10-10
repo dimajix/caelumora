@@ -35,7 +35,7 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::note::{Note, NoteId};
 use caelumora_model::security::SecurityManager;
-use caelumora_model::tool::{Tool, ToolVisibility, ToolParameters};
+use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -77,7 +77,7 @@ impl ToolProvider for PrivateNotesComponent {
                 requires_approval: false,
                 visibility: ToolVisibility::HIDDEN,
                 classification: None,
-                presentation: Default::default(),
+                presentation: ToolPresentation::Note,
             },
             Tool {
                 name: UPDATE_PRIVATE_NOTE_TOOL_NAME.to_string(),
@@ -91,7 +91,7 @@ impl ToolProvider for PrivateNotesComponent {
                 requires_approval: false,
                 visibility: ToolVisibility::HIDDEN,
                 classification: None,
-                presentation: Default::default(),
+                presentation: ToolPresentation::Note,
             },
             Tool {
                 name: REVOKE_PRIVATE_NOTE_TOOL_NAME.to_string(),
@@ -104,7 +104,7 @@ impl ToolProvider for PrivateNotesComponent {
                 requires_approval: false,
                 visibility: ToolVisibility::HIDDEN,
                 classification: None,
-                presentation: Default::default(),
+                presentation: ToolPresentation::Note,
             },
             Tool {
                 name: RECLASSIFY_PRIVATE_NOTE_TOOL_NAME.to_string(),
@@ -116,7 +116,7 @@ impl ToolProvider for PrivateNotesComponent {
                 requires_approval: true,
                 visibility: ToolVisibility::HIDDEN,
                 classification: None,
-                presentation: Default::default(),
+                presentation: ToolPresentation::Note,
             },
         ]
     }
@@ -292,5 +292,11 @@ mod tests {
         tools.execute(REVOKE_PRIVATE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn).await.unwrap();
         turn.commit(false, &Discard).await;
         assert!(state.private_notes.current().is_empty());
+    }
+
+    #[test]
+    fn every_private_note_acted_on_is_shown_as_a_note_to_the_owner_alone() {
+        let tools = PrivateNotesComponent { security_manager: Arc::new(caelumora_model::security::OwnershipSecurityManager::new()) }.tools();
+        assert!(tools.iter().all(|t| (t.presentation, t.visibility) == (ToolPresentation::Note, ToolVisibility::HIDDEN)));
     }
 }

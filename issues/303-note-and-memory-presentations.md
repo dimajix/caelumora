@@ -1,6 +1,6 @@
 # 303 — Notes and memory are shown as raw JSON
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -71,3 +71,14 @@ grouped; `TOOLS-AND-COMMANDS.md`, `WEB-UI.md` and `MEMORY.md` say so.
 - **2026-10-10** — Issue created at the maintainer's request: none of the notes, private-note and
   memory tools has a presentation of its own. Proposal above; how many variants, and whether the
   results carry the text of the entry they name, are still to decide.
+- **2026-10-10** — Decided: two variants, `ToolPresentation::Note` (`note`) for an entry acted on
+  and `ToolPresentation::NoteList` (`note_list`) for `read_notes`; the text shown is the new one
+  alone, as the arguments of a note written or updated hold it - a note revoked, an entry forgotten
+  or reclassified is named by its number, and no result carries a text. No field names the kind:
+  the frame shows the tool's name already. Done: the notes, private-note and memory tools are
+  presented as `note`, `read_notes` as `note_list`; the web UI's `NoteToolCallContent` shows the
+  entry's number, what was done to it (the result's `status`), its new text and, for a
+  reclassification, its new classification; `NoteListToolCallContent` shows the notes read, by
+  channel and by author, numbered in the reader's channel - "Nothing noted" for none, "Notes not
+  shown" where the result is the owner's. Tests: each component's tools declare their
+  presentation. TOOLS-AND-COMMANDS.md, WEB-UI.md, MEMORY.md. Nothing stored changes.

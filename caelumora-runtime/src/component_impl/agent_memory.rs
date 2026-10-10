@@ -32,7 +32,7 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::memory::{Memory, MemoryId};
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::security::SecurityManager;
-use caelumora_model::tool::{Tool, ToolVisibility, ToolParameters};
+use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -79,7 +79,7 @@ impl ToolProvider for AgentMemoryComponent {
                 requires_approval: false,
                 visibility: ToolVisibility::HIDDEN,
                 classification: None,
-                presentation: Default::default(),
+                presentation: ToolPresentation::Note,
             },
             Tool {
                 name: UPDATE_MEMORY_TOOL_NAME.to_string(),
@@ -93,7 +93,7 @@ impl ToolProvider for AgentMemoryComponent {
                 requires_approval: false,
                 visibility: ToolVisibility::HIDDEN,
                 classification: None,
-                presentation: Default::default(),
+                presentation: ToolPresentation::Note,
             },
             Tool {
                 name: FORGET_TOOL_NAME.to_string(),
@@ -105,7 +105,7 @@ impl ToolProvider for AgentMemoryComponent {
                 requires_approval: false,
                 visibility: ToolVisibility::HIDDEN,
                 classification: None,
-                presentation: Default::default(),
+                presentation: ToolPresentation::Note,
             },
             Tool {
                 name: RECLASSIFY_MEMORY_TOOL_NAME.to_string(),
@@ -117,7 +117,7 @@ impl ToolProvider for AgentMemoryComponent {
                 requires_approval: true,
                 visibility: ToolVisibility::HIDDEN,
                 classification: None,
-                presentation: Default::default(),
+                presentation: ToolPresentation::Note,
             },
         ]
     }
@@ -653,5 +653,11 @@ mod tests {
         sessions.set(hers, Some(session_of(PrivacyConfig::SameOwner, alice))).await;
         let recalled = recall(&memory, &sessions, &handle, agent, channel(other, Confidentiality::Internal)).await;
         assert!(recalled.text.contains("Kaya likes tea.") && !recalled.text.contains("Kaya is moving."), "{}", recalled.text);
+    }
+
+    #[test]
+    fn every_entry_acted_on_is_shown_as_a_note_to_the_owner_alone() {
+        let tools = AgentMemoryComponent { security_manager: Arc::new(OwnershipSecurityManager::new()) }.tools();
+        assert!(tools.iter().all(|t| (t.presentation, t.visibility) == (ToolPresentation::Note, ToolVisibility::HIDDEN)));
     }
 }

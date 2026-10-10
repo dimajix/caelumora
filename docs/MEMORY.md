@@ -29,6 +29,9 @@ All three kinds of memory work alike:
 *   **Written without approval.** What an entry says may rest on a claim the model did not verify -
     a participant's message posing as another's (issue 150) - and stands in the agent's name from
     then on; see [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md#what-needs-approval).
+*   **Shown alike.** Every tool that acts on one entry is presented as `note`, `read_notes` as
+    `note_list` (issue 303): the web UI shows the entry's number, what was done to it and its new
+    text where there is one - not the text of an entry revoked, forgotten or reclassified.
 
 ## Notes
 

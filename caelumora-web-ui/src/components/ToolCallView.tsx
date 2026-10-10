@@ -5,7 +5,7 @@
 // their record (`AnswersRecord`, issue 268).
 
 import React, {useEffect, useState} from 'react';
-import {BookOpen, CheckCircle2, Download, EyeOff, Package, PackageCheck, File, Square, FileDiff, FileDown, FileInput, FilePen, FileText, Folder, FolderOpen, TextSearch, Terminal, Wrench, XCircle} from 'lucide-react';
+import {BookOpen, CheckCircle2, Download, EyeOff, Package, PackageCheck, File, Square, StickyNote, FileDiff, FileDown, FileInput, FilePen, FileText, Folder, FolderOpen, TextSearch, Terminal, Wrench, XCircle} from 'lucide-react';
 import type {ArtifactResponse, Question, ToolCall, ToolPresentation, ToolResult, ToolResultStatus, ToolVisibility} from '../types';
 import {api, type ChannelArtifacts, type WorkspaceFiles} from '../api';
 import type {Page} from '../page';
@@ -824,6 +824,100 @@ const SkillListToolCallContent: React.FC<ToolCallContentProps> = ({result, onSel
   );
 };
 
+/** The line a note call begins with: an icon, and after it what is known of the note. */
+const NoteHeading: React.FC<{children: React.ReactNode}> = ({children}) => (
+  <div className="flex items-start gap-1.5 text-[11px]">
+    <StickyNote size={12} className="mt-0.5 opacity-60 shrink-0" />
+    <span className="min-w-0">{children}</span>
+  </div>
+);
+
+/** A note's text as the notes panel shows it: prose, its lines kept. */
+const NoteText: React.FC<{text: string}> = ({text}) => (
+  <div className={`mt-1 text-xs whitespace-pre-wrap wrap-break-word max-h-80 overflow-y-auto p-1.5 rounded-sm border ${TEXT_TONES.plain}`}>{text}</div>
+);
+
+/**
+ * One of an agent's notes, private notes or memory entries acted on (issue 303): its number and
+ * what was done to it, its new text where it was written or updated, and its new classification
+ * where it was reclassified. What was revoked, forgotten or reclassified is named by its number
+ * alone - the tool calls hold no more of it.
+ */
+const NoteToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) => {
+  if (call.arguments === null) return <span className="text-[11px] italic opacity-60">Note not shown</span>;
+  const args = argumentsObject(call.arguments);
+  const answered = resultObject(result);
+  const id = numberOf(answered, 'id') ?? numberOf(args, 'id');
+  const status = textOf(answered, 'status');
+  const classification = textOf(answered, 'classification') ?? textOf(args, 'level');
+  const text = textOf(args, 'text');
+  const detail = [status, classification !== null ? `as ${classification}` : null].filter(Boolean).join(' · ');
+  return (
+    <>
+      {(id !== null || detail) && (
+        <NoteHeading>
+          {id !== null && <span className="font-mono">#{id}</span>}
+          {detail && <span className="opacity-60">{id !== null && ' · '}{detail}</span>}
+        </NoteHeading>
+      )}
+      {text !== null && <NoteText text={text} />}
+      <FailedResult result={result} />
+    </>
+  );
+};
+
+/**
+ * The notes of channels read (issue 303): of which channel, or of all, and the notes of each
+ * channel by who wrote them, as the notes panel groups them - numbered in the reader's channel.
+ */
+const NoteListToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) => {
+  const channel = textOf(argumentsObject(call.arguments), 'channel');
+  const channels = objectsOf(resultObject(result)?.channels);
+  return (
+    <>
+      <NoteHeading>{channel ? <>Notes of <span className="font-medium">{channel}</span></> : 'Notes of every channel'}</NoteHeading>
+      {resultHidden(result) ? (
+        <div className="mt-2 text-[11px] italic opacity-60">Notes not shown</div>
+      ) : channels !== null ? (
+        <ResultBox>
+          {channels.every(c => (objectsOf(c.notes) ?? []).length === 0) ? <span className="italic opacity-60">Nothing noted</span> : (
+            <div className="space-y-2">
+              {channels.map((read, i) => {
+                const notes = objectsOf(read.notes) ?? [];
+                if (notes.length === 0) return null;
+                const authors = [...new Set(notes.map(n => textOf(n, 'by') ?? '?'))];
+                return (
+                  <div key={i} className="space-y-1">
+                    {!channel && <div className="font-semibold">{textOf(read, 'channel') ?? '?'}</div>}
+                    {authors.map(author => (
+                      <div key={author}>
+                        <div className="uppercase tracking-wider opacity-60">{author}</div>
+                        <ul className="space-y-0.5">
+                          {notes.filter(n => (textOf(n, 'by') ?? '?') === author).map((note, j) => {
+                            const id = numberOf(note, 'id');
+                            return (
+                              <li key={j} className="whitespace-pre-wrap wrap-break-word">
+                                {id !== null && <span className="font-mono opacity-60">#{id} </span>}
+                                {textOf(note, 'text') ?? '?'}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </ResultBox>
+      ) : (
+        <FailedResult result={result} />
+      )}
+    </>
+  );
+};
+
 /** The handler of each presentation; one the server knows and this client does not falls back to the default. */
 const PRESENTATIONS: Record<ToolPresentation, React.FC<ToolCallContentProps>> = {
   default: DefaultToolCallContent,
@@ -840,6 +934,8 @@ const PRESENTATIONS: Record<ToolPresentation, React.FC<ToolCallContentProps>> = 
   artifact_publish: ArtifactPublishToolCallContent,
   skill: SkillToolCallContent,
   skill_list: SkillListToolCallContent,
+  note: NoteToolCallContent,
+  note_list: NoteListToolCallContent,
 };
 
 interface ToolCallViewProps {
