@@ -106,6 +106,9 @@ personality the adder may not read.
   security suite covers it.
 - Optionally, an agent is created from a personality and added the same way.
 - CHANNELS.md, SECURITY.md, REST-SERVER.md and WEB-UI.md describe it.
+- Whoever is taken in later matches the session's admission rule (issue 23, decision 5), besides
+  the clearance at the door: the rule comes from the session's template, empty takes nobody in,
+  and the session's owner may narrow it, never widen it.
 
 ## History
 
@@ -117,3 +120,12 @@ personality the adder may not read.
   agents only among those its creator may read. Once agents can be added, adding one should ask the
   same, so that nobody brings in an agent whose tools - and the credentials behind them - they have
   no right to use.
+- **2026-10-10** — Takes over the session's admission rule decided in issue
+  [23](23-acls-in-security-attributes.md) (decision 5): a session carries `admission`, the
+  subjects it may take in after it was built - users, roles, members of a place - from its
+  template (`SessionTemplate::admission`, written by whoever may change the template); the
+  template's own participants are taken in without being asked; everyone added later must match
+  it and pass the clearance at the door; empty means nobody; its owner may narrow it
+  (`UpdateSession` admits a new rule only if every subject was in the old one), never widen it.
+  Built here, since nobody is taken into a session after it was built before this issue: 23's
+  step 4 would have had nothing to check. Added to *Done when*.

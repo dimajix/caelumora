@@ -1,6 +1,6 @@
 # 23 — Access lists: the thing decides, not where one stands
 
-**Status:** in progress
+**Status:** done
 **Area:** Identity and access management
 
 *Rewritten on 2026-10-10 against what [142](142-roles.md), [253](253-workspace.md),
@@ -362,3 +362,19 @@ Issues to open with it: a group of our own as a subject; a cache for `Membership
   - Names of whom a list names are resolved in one place for workspaces and artifacts
     (`Views::access_snapshots`).
   Stored data to delete: artifacts, whose versions now carry a list and a description.
+- **2026-10-10** — Step 4 moved to issue [221](221-adding-session-participants.md), with the
+  maintainer: nobody is taken into a session after it was built today - a channel takes in only
+  the session's participants, which its template fixes -, so an admission rule would have had
+  nothing to check. Decision 5 stands and is built with 221, whose *Done when* it now carries.
+  Step 5 was done along the way: the documents were brought up to date with each step
+  (SECURITY.md's *Access lists*, CHANNELS.md, CONFIDENTIALITY.md, REST-SERVER.md, WEB-UI.md,
+  TOOLS-AND-COMMANDS.md, CONFIGURATION.md, SKILLS.md, ARCHITECTURE.md). Closed: the attributes
+  hold an access list of users, roles by id and members of a place, allow-only, the owner
+  implied; a workspace's files and an artifact's versions are reached by their lists, never
+  through a channel; the policy answers membership through `Memberships`, reading the one place
+  named; the security suite covers members, strangers, readers and writers, drafts kept to their
+  channel and an entry naming an agent refused. Left: the admission rule (221), groups of our own
+  (286), a cache of memberships (287), comparing access when attaching (289), tools offered by the
+  turn (290), sharing artifacts in the web UI (291), the capabilities of a role (decision 4, with
+  125 or 221). Stored data to delete over all steps: every entity store; a configuration's roles
+  need an id each.
