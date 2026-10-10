@@ -5,7 +5,7 @@ use super::intake::{catch_up, take_in};
 use super::{failure_message, reject_retries, retry_target};
 use crate::message::apply_stage_processors;
 use crate::actor::{Actor, Answering};
-use run_control::{Interrupt, RunControl};
+use run_control::{interruption, Interrupt, RunControl};
 use crate::agent::turn::{CommittedTurn, Turn, MAX_MODEL_CALLS};
 use crate::view::ViewsFactory;
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
@@ -681,14 +681,22 @@ impl AgentActor {
         // A cancel or stop interrupts the call under way, and no further call
         // is started (issue 161); those left without a result are abandoned
         // as the turn ends. What happens to the turn is the run loop's: it
-        // takes the interrupt after this step.
+        // takes the interrupt after this step. A user may interrupt one call
+        // alone, running or still to run, and the step goes on (issue 276).
         let cancelled = self.control.token();
-        for (id, call, answers) in turn.tool_calls().to_run() {
+        let to_run = turn.tool_calls().to_run();
+        let mut by_user = self.control.begin_calls(to_run.iter().filter_map(|(_, call, _)| call.id.clone()));
+        for (index, call, answers) in to_run {
             if cancelled.is_cancelled() {
                 return Ok(ActorState::ExecutingTools);
             }
-            let result = self.tool_executor.execute(&call, answers.as_ref(), turn, &cancelled).await;
-            turn.tool_calls().record(id, result);
+            let mut interrupt = call.id.as_ref().and_then(|id| by_user.remove(id));
+            if let Some(by) = interrupt.as_mut().and_then(|interrupt| interrupt.try_recv().ok()) {
+                turn.tool_calls().skip(index, &by);
+                continue;
+            }
+            let result = self.tool_executor.execute(&call, answers.as_ref(), turn, interruption(cancelled.clone(), interrupt)).await;
+            turn.tool_calls().record(index, result);
         }
         // Once every call has its result, the turn keeps the tool message for
         // the model (issue 83). A tool result is only ever "final" (shown as
@@ -1063,6 +1071,15 @@ impl Actor for AgentActor {
         match hit {
             true => info!("Agent {} {} gives its turn {} up: its answer is asked for again", self.id(), self.agent_controller.name(), turn),
             false => debug!("Agent {} {}: turn {} is not under way, nothing to answer again", self.id(), self.agent_controller.name(), turn),
+        }
+        hit
+    }
+
+    fn interrupt_tool_call(&self, turn: TurnId, call: &str, by: String) -> bool {
+        let hit = self.control.interrupt_call(turn, call, by);
+        match hit {
+            true => info!("Agent {} {}: tool call {} of turn {} is interrupted on its own", self.id(), self.agent_controller.name(), call, turn),
+            false => debug!("Agent {} {}: tool call {} of turn {} does not run, nothing to interrupt", self.id(), self.agent_controller.name(), call, turn),
         }
         hit
     }

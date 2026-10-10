@@ -990,10 +990,11 @@ pub struct MessageRequest {
     pub classification: Option<Classification>,
 }
 
-/// Which answer under way of a participant is asked for again (issue
-/// 235): its turn, as `ResponseStarted` and its messages name it.
+/// The turn of a participant a request is about, as `ResponseStarted` and
+/// its messages name it: the answer under way that is asked for again
+/// (issue 235), the turn whose tool call is interrupted (issue 276).
 #[derive(Debug, Deserialize)]
-pub struct RetryTurnRequest {
+pub struct TurnRequest {
     pub turn_id: TurnId,
 }
 

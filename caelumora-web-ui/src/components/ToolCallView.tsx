@@ -5,7 +5,7 @@
 // their record (`AnswersRecord`, issue 268).
 
 import React, {useEffect, useState} from 'react';
-import {BookOpen, CheckCircle2, Download, EyeOff, Package, PackageCheck, File, FileDiff, FileDown, FileInput, FilePen, FileText, Folder, FolderOpen, TextSearch, Terminal, Wrench, XCircle} from 'lucide-react';
+import {BookOpen, CheckCircle2, Download, EyeOff, Package, PackageCheck, File, Square, FileDiff, FileDown, FileInput, FilePen, FileText, Folder, FolderOpen, TextSearch, Terminal, Wrench, XCircle} from 'lucide-react';
 import type {ArtifactResponse, Question, ToolCall, ToolPresentation, ToolResult, ToolResultStatus, ToolVisibility} from '../types';
 import {api, type ChannelArtifacts, type WorkspaceFiles} from '../api';
 import {ApiRequestError, reportError} from '../errors';
@@ -795,9 +795,11 @@ interface ToolCallViewProps {
   artifacts?: ChannelArtifacts;
   /** Opens a skill's page, for a call that names one (issue 281). */
   onSelectSkill?: (skillId: string) => void;
+  /** Interrupts the call alone while it runs, for who may (issue 276); the turn goes on. */
+  onInterrupt?: () => void;
 }
 
-export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, abandoned, files, filesVersion, artifacts, onSelectSkill}) => {
+export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, abandoned, files, filesVersion, artifacts, onSelectSkill, onInterrupt}) => {
   const Content = PRESENTATIONS[call.presentation ?? 'default'] ?? DefaultToolCallContent;
   return (
     <div className="bg-gray-50 dark:bg-gray-800 rounded-sm border border-gray-200 dark:border-gray-600 overflow-hidden">
@@ -837,6 +839,17 @@ export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, abandon
           <div className="flex items-center gap-1">
             <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
             <span className="text-[11px] text-blue-500 uppercase">Executing</span>
+            {onInterrupt && (
+              <button
+                type="button"
+                onClick={onInterrupt}
+                className="ml-1 p-0.5 rounded-sm text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
+                title="Interrupt this call; the agent goes on"
+                aria-label="Interrupt this call"
+              >
+                <Square size={10} fill="currentColor" />
+              </button>
+            )}
           </div>
         )}
         </div>

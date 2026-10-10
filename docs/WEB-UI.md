@@ -356,7 +356,10 @@ else who may read it - the session's owner, say - is shown its history and no in
     the global stream (`UserProfileUpdated`).
 *   **Stop.** The stop button ends the current turn of every agent (`POST …/cancel`). The stop
     icon on an answer under way ends that agent's turn alone (`POST …/participants/{aid}/cancel`,
-    issue 235); the other answers go on.
+    issue 235); the other answers go on. A tool call shown as "Executing" has a stop icon of its
+    own while its agent runs tools and the member's `can_cancel` allows it: it interrupts that
+    call alone, and the agent goes on (`POST …/participants/{aid}/tool-calls/{call_id}/cancel`
+    with the turn, issue 276).
 *   **Input.** A line starting with `/` is sent as a command, `//` as a literal slash
     (`command.ts`). Typing `@` completes the members' handles, `/` the commands the user may see -
     the channel's, and the agents' with each handle that carries one out and `@all` (issue 269). An

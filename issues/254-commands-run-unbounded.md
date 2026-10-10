@@ -57,3 +57,7 @@ the workspace's files - a `remove_dir_all` of a purge races a command still writ
   handed back as running and never followed again ends then. Nothing changes for the `local` shell
   and `open_terminal_shared`.
 
+- **2026-10-10** — A user who wants to end a command running in the background is a concern of its
+  own, user control rather than a boundary of access: issue [294](294-user-ends-a-command.md).
+  Interrupting a running call (issue [276](276-interrupt-one-tool-call.md)) reaches a command only
+  while `run_command` waits for it.

@@ -1,10 +1,14 @@
 //! The run control of an `AgentActor`: what its run loop shares with
-//! `cancel`, `retry`, `stop` and `wakeup` (see `RunControl`).
+//! `cancel`, `retry`, `stop`, `wakeup` and `interrupt_call` (see
+//! `RunControl`).
 
+use crate::tool::Interruption;
 use caelumora_model::actor::{ActorState, ProcessingStateHolder};
 use caelumora_model::work::TurnId;
+use std::collections::HashMap;
+use std::future::pending;
 use std::sync::atomic::{AtomicU8, Ordering};
-use tokio::sync::Notify;
+use tokio::sync::{oneshot, Notify};
 use tokio_util::sync::CancellationToken;
 
 /// What `cancel`, `retry` or `stop` asked of the run loop, which takes it
@@ -50,6 +54,12 @@ pub(crate) struct RunControl {
     /// What `cancel` or `stop` asked of the run loop (an `Interrupt`, or
     /// `NO_INTERRUPT`), taken after every step.
     interrupt: AtomicU8,
+    /// The calls of the last tool step that can be interrupted on their own
+    /// (issue 276), by their ids, each with where the name of whoever
+    /// interrupts it goes. The run loop holds the other end while the call
+    /// runs or waits to run, and drops it after: a call that ran can no
+    /// longer be interrupted.
+    calls: std::sync::Mutex<HashMap<String, oneshot::Sender<String>>>,
 }
 
 impl RunControl {
@@ -62,6 +72,7 @@ impl RunControl {
             woken: Notify::new(),
             turn: std::sync::Mutex::new((turn, CancellationToken::new())),
             interrupt: AtomicU8::new(NO_INTERRUPT),
+            calls: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -170,6 +181,38 @@ impl RunControl {
         self.token().cancel();
     }
 
+    /// The calls `ids` of a tool step of the turn under way begin (issue
+    /// 276): from now on each can be interrupted on its own. Returns, by
+    /// id, what tells the run loop who interrupted a call - for
+    /// `interruption`, or asked before the call runs.
+    pub(crate) fn begin_calls(&self, ids: impl IntoIterator<Item = String>) -> HashMap<String, oneshot::Receiver<String>> {
+        let (senders, receivers) = ids.into_iter()
+            .map(|id| {
+                let (sender, receiver) = oneshot::channel();
+                ((id.clone(), sender), (id, receiver))
+            })
+            .unzip();
+        *self.lock_calls() = senders;
+        receivers
+    }
+
+    /// Interrupts the call `call` of the turn `turn` alone (issue 276), on
+    /// behalf of `by`, and returns whether it ran or waited to run in the
+    /// turn under way - decided under the turn's lock, as `retry` decides,
+    /// so that no turn begins in between. The turn goes on.
+    pub(crate) fn interrupt_call(&self, turn: TurnId, call: &str, by: String) -> bool {
+        let under_way = self.lock_turn();
+        if under_way.0 != Some(turn) || !self.interruptible() {
+            return false;
+        }
+        let Some(interrupt) = self.lock_calls().remove(call) else { return false };
+        interrupt.send(by).is_ok()
+    }
+
+    fn lock_calls(&self) -> std::sync::MutexGuard<'_, HashMap<String, oneshot::Sender<String>>> {
+        self.calls.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     /// What was asked of the run loop since it last looked, if anything.
     pub(crate) fn take_interrupt(&self) -> Option<Interrupt> {
         match self.interrupt.swap(NO_INTERRUPT, Ordering::SeqCst) {
@@ -178,6 +221,28 @@ impl RunControl {
             v if v == Interrupt::Retry as u8 => Some(Interrupt::Retry),
             _ => None,
         }
+    }
+}
+
+/// What interrupts a call of the turn whose token is `turn`: the turn
+/// ending, or - through `by_user`, for a call that can be interrupted on its
+/// own (`RunControl::begin_calls`) - a user interrupting this call alone
+/// (issue 276). The turn's end wins.
+pub(crate) async fn interruption(turn: CancellationToken, by_user: Option<oneshot::Receiver<String>>) -> Interruption {
+    let by_user = async {
+        match by_user {
+            Some(by_user) => match by_user.await {
+                Ok(by) => by,
+                // Nobody can interrupt it any more: the turn's end can.
+                Err(_) => pending().await,
+            },
+            None => pending().await,
+        }
+    };
+    tokio::select! {
+        biased;
+        () = turn.cancelled() => Interruption::TurnEnded,
+        by = by_user => Interruption::ByUser(by),
     }
 }
 
@@ -284,6 +349,40 @@ mod tests {
         assert!(control.retry(turn));
         control.begin_turn(TurnId::new());
         assert_eq!(control.take_interrupt(), None);
+    }
+
+    #[tokio::test]
+    async fn a_call_is_interrupted_alone_only_in_the_turn_it_runs_in_and_only_once() {
+        let (turn, other) = (TurnId::new(), TurnId::new());
+        let control = RunControl::new(ActorState::ExecutingTools, Some(turn));
+        let mut calls = control.begin_calls(["a".to_string(), "b".to_string()]);
+        assert!(!control.interrupt_call(other, "a", "alice".to_string()), "not of another turn");
+        assert!(!control.interrupt_call(turn, "c", "alice".to_string()), "not a call of the step");
+
+        assert!(control.interrupt_call(turn, "a", "alice".to_string()));
+        assert!(!control.interrupt_call(turn, "a", "bob".to_string()), "once");
+        let interrupted = interruption(control.token(), calls.remove("a")).await;
+        assert_eq!(interrupted, Interruption::ByUser("alice".to_string()));
+        assert!(!control.token().is_cancelled() && control.take_interrupt().is_none(), "the turn goes on");
+
+        // A call that ran can no longer be interrupted.
+        drop(calls.remove("b"));
+        assert!(!control.interrupt_call(turn, "b", "alice".to_string()));
+    }
+
+    #[tokio::test]
+    async fn the_turn_s_end_interrupts_every_call_and_wins() {
+        let turn = TurnId::new();
+        let control = RunControl::new(ActorState::ExecutingTools, Some(turn));
+        let mut calls = control.begin_calls(["a".to_string()]);
+        assert!(control.interrupt_call(turn, "a", "alice".to_string()));
+        control.cancel();
+        assert_eq!(interruption(control.token(), calls.remove("a")).await, Interruption::TurnEnded);
+        assert_eq!(interruption(control.token(), None).await, Interruption::TurnEnded, "also a call without an id");
+
+        let control = RunControl::new(ActorState::Cancelling, Some(turn));
+        let _calls = control.begin_calls(["a".to_string()]);
+        assert!(!control.interrupt_call(turn, "a", "alice".to_string()), "not in a turn that is ending");
     }
 
     #[test]

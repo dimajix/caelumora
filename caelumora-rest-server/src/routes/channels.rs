@@ -1,5 +1,5 @@
 use crate::auth::AuthenticatedUser;
-use crate::models::{AddParticipantRequest, DescriptionRequest, AgentToolsResponse, AgentComponentsResponse, DeletedResponse, ListOptions, ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CreateChannelRequest, KnowledgeRefResponse, CommandReplyResponse, ExecuteCommandRequest, HistoryItemResponse, HistoryMessageResponse, LabelCauses, MessageContextResponse, SeenItemResponse, PublishedNotesResponse, MessageRequest, RetryTurnRequest, SendApprovalRequest, StreamOptions, AnswerQuestionsRequest};
+use crate::models::{AddParticipantRequest, DescriptionRequest, AgentToolsResponse, AgentComponentsResponse, DeletedResponse, ListOptions, ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CreateChannelRequest, KnowledgeRefResponse, CommandReplyResponse, ExecuteCommandRequest, HistoryItemResponse, HistoryMessageResponse, LabelCauses, MessageContextResponse, SeenItemResponse, PublishedNotesResponse, MessageRequest, TurnRequest, SendApprovalRequest, StreamOptions, AnswerQuestionsRequest};
 use crate::state::AppState;
 use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response, Sse};
@@ -313,7 +313,7 @@ pub async fn retry_turn(
     State(state): State<Arc<AppState>>,
     Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
     user: AuthenticatedUser,
-    Json(payload): Json<RetryTurnRequest>,
+    Json(payload): Json<TurnRequest>,
 ) -> Result<StatusCode, ApiError> {
     let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let user_actor = user_actor_of(&channel, &user)?;
@@ -401,6 +401,24 @@ pub async fn cancel_participant(
     Ok(StatusCode::OK)
 }
 
+/// Interrupts the tool call `call_id` of participant `aid`, an agent, in the
+/// turn the body names, alone (issue 276): the call is answered as
+/// interrupted and the agent's turn goes on. Under the same permission as
+/// cancelling the channel (`CancelChannel`, checked by the channel). A call
+/// that does not run, or no longer, is `409 tool_call_not_running`.
+pub async fn interrupt_tool_call(
+    State(state): State<Arc<AppState>>,
+    Path((id, cid, aid, call_id)): Path<(Uuid, Uuid, Uuid, String)>,
+    user: AuthenticatedUser,
+    Json(payload): Json<TurnRequest>,
+) -> Result<StatusCode, ApiError> {
+    let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let participant = actor_in(&channel, aid)
+        .ok_or_else(|| ApiError::not_found("participant_not_found", format!("{} takes no part in channel {}", aid, cid)))?;
+    channel.interrupt_tool_call(&user.security_context(), participant, payload.turn_id, &call_id).await
+        .map_err(|e| ApiError::from_runtime(e, Subject::Cancel, &format!("interrupting a tool call in channel {cid}")))?;
+    Ok(StatusCode::OK)
+}
 
 /// Reclassifies the channel (issue 133): only its owner. Lowering it
 /// releases what is in it. Answers with the channel as the user sees it now.

@@ -3,7 +3,7 @@
 
 import React, {useState} from 'react';
 import {Brain, Check, ChevronDown, ChevronRight, Copy, EyeOff, Info} from 'lucide-react';
-import type {ChannelMember, Message} from '../types';
+import type {ChannelMember, Message, ToolCall} from '../types';
 import type {ChannelArtifacts, WorkspaceFiles} from '../api';
 import {cn} from '../classNames';
 import {MarkdownMessage} from './MarkdownMessage';
@@ -145,9 +145,11 @@ interface MessageViewProps {
   artifacts?: ChannelArtifacts;
   /** Opens a skill's page, where its calls name one (issue 281). */
   onSelectSkill?: (skillId: string) => void;
+  /** Interrupts one of its calls alone while it runs (issue 276); offered where given. */
+  onInterruptCall?: (call: ToolCall) => void;
 }
 
-export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, badges, actions, className, files, filesVersion, artifacts, onSelectSkill}) => (
+export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, badges, actions, className, files, filesVersion, artifacts, onSelectSkill, onInterruptCall}) => (
   <div
     className={cn(
       "max-w-[80%] p-3 rounded-lg shadow-xs",
@@ -178,7 +180,8 @@ export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, 
     {msg.tool_calls && msg.tool_calls.length > 0 && (
       <div className="mt-2 space-y-2">
         {msg.tool_calls.map((call, cidx) => (
-          <ToolCallView key={cidx} call={call} result={msg.tool_results?.find(r => r.id === call.id)} abandoned={msg.abandoned} files={files} filesVersion={filesVersion} artifacts={artifacts} onSelectSkill={onSelectSkill} />
+          <ToolCallView key={cidx} call={call} result={msg.tool_results?.find(r => r.id === call.id)} abandoned={msg.abandoned} files={files} filesVersion={filesVersion} artifacts={artifacts} onSelectSkill={onSelectSkill}
+            onInterrupt={onInterruptCall && call.id ? () => onInterruptCall(call) : undefined} />
         ))}
       </div>
     )}

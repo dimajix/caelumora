@@ -149,6 +149,18 @@ impl<'t> ToolCalls<'t> {
         }
     }
 
+    /// Answers the call at `index` of the step, which a user, `by`,
+    /// interrupted before it ran (issue 276), as not executed, without
+    /// running it: the turn goes on.
+    pub(crate) fn skip(&mut self, index: usize, by: &str) {
+        // A fixed text of the runtime's: as the turn (issue 168).
+        let label = self.turn.work.label();
+        if let Some(call) = self.turn.tool_calls.get_mut(index) {
+            let result = ToolCallResult::of(&call.tool_call, ToolResultStatus::NotExecuted, crate::tool::skipped_result(by), label);
+            finish(call, result);
+        }
+    }
+
     /// Ends the step as its turn ends (issue 148): answers every call not
     /// yet finished as not executed, `because` - why the turn ended - and
     /// makes the tool message as `collect` does, so that no call is left
