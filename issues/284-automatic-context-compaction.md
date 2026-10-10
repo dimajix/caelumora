@@ -36,20 +36,21 @@ the one that cannot ask for it.
   counted. An agent whose model reports no context size cannot be compacted automatically - the
   rule has nothing to measure - and says so once.
 - **The mechanism is 16's.** `AgentChannelState::compact` takes a cut and the entries that replace
-  what is before it; the strategy - the cut, the summary, the skills loaded again - is the
-  component's, the same for a compaction asked for and one made on its own. Within a turn the
-  turn's own messages so far are kept verbatim (`Message::turn_id`), so that `Transcript::of_turn`
-  finds them when the turn is taken over; the turn's context moves to the new head, as it does
-  for `/compact`. The prompt parts the turn placed (`PromptRef::after`) name entries of the old
-  branch and have to be placed again on the new one - the `ContextProvider` is asked again, as at
-  the turn's start.
-- **Where it lives.** A second facet of 16's `compaction` component, so that one component holds
-  everything about compaction, as `skills` holds everything about skills: something like
-  `ContextCompactor { fn needs_compaction(&AgentWork) -> bool; async fn compact(&self, &mut Turn)
-  }`, of which an agent has at most one. The actor asks it; it does not know what a summary is.
-  Considered and not chosen: the agent sending itself a `/compact`. It would reuse everything, but
-  couples the trigger to a command's name and an issuer that does not exist, cannot run within a
-  turn, and would record a command nobody gave.
+  what is before it; the strategy - the cut, the summary, the skills loaded again - is the agent's
+  `CompactionStrategy`'s, the same for a compaction asked for and one made on its own. Within a turn
+  the turn's own messages so far are kept verbatim (`Message::turn_id`), so that
+  `Transcript::of_turn` finds them when the turn is taken over; the turn's context moves to the new
+  head, as it does for `/compact`. The prompt parts the turn placed (`PromptRef::after`) name
+  entries of the old branch and have to be placed again on the new one - the `ContextProvider` is
+  asked again, as at the turn's start.
+- **Where it lives.** The strategy is already a facet of its own, `CompactionStrategy`
+  (`crate::compaction`), of which an agent has exactly one - by default `summary_compaction` - and
+  which `/compact` asks too. The actor asks it as well; it does not know what a summary is. Whether
+  *when* to compact - `needs_compaction`, the threshold - becomes a method of the strategy (a
+  strategy that drops old tool results frees otherwise than one that summarises) or stays the
+  trigger's is to decide here. Considered and not chosen: the agent sending itself a `/compact`. It
+  would reuse everything, but couples the trigger to a command's name and an issuer that does not
+  exist, cannot run within a turn, and would record a command nobody gave.
 - **The channel is told.** `/compact` answers channel-wide; a compaction made on its own has no
   answer. An event of the agent - `ContextCompacted { turn_id, .. }` - that the channel records in
   its history as it records a turn's end, so that the chat shows it in its place after a reload
@@ -62,7 +63,7 @@ the one that cannot ask for it.
 - **Old tool results first?** 16 noted that tool results are the bulk of a context and the least
   useful to keep verbatim. A cheaper level before summarising - an old tool result replaced by a
   line that says what it was and that it was dropped - would compact without a model call. Whether
-  that is a strategy of the same component (`strategy: drop_tool_results | summarize`) or comes
+  that is a strategy of its own - a second component providing `CompactionStrategy` - or comes
   first and the summary second is to decide here, with measurements.
 - **External agents** keep their context on the remote side; nothing here measures or compacts
   it.
@@ -71,7 +72,7 @@ the one that cannot ask for it.
 
 - A turn's model calls run past the model's context window: the agent compacts before a call that
   would not fit, within a turn and between turns alike, without anybody asking.
-- When it compacts is configured per agent, on the component of 16.
+- When it compacts is configured per agent, on its `CompactionStrategy`.
 - The channel is told of a compaction and shows it where it happened.
 
 ## History
@@ -79,3 +80,7 @@ the one that cannot ask for it.
 - **2026-10-10** — Issue created: split from [16](16-context-compression.md), whose mechanism and
   `/compact` come first. 16 keeps the command and the branch; the trigger, the threshold and
   telling the channel are here.
+- **2026-10-10** — Preparation, without a change of behaviour: how a context is compacted is taken
+  out of `/compact` into the facet `CompactionStrategy` (`crate::compaction`), of which an agent has
+  exactly one; the default, `summary_compaction`, holds 16's summary and `keep_last`. The command
+  component `compaction` only asks it and tells the channel. The trigger here asks the same facet.

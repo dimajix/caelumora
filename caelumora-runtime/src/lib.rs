@@ -14,6 +14,7 @@ pub mod actor;
 pub mod agent;
 pub mod channel;
 pub mod command;
+pub mod compaction;
 pub mod controller;
 pub mod message;
 pub mod component;
