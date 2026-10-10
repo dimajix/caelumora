@@ -92,12 +92,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [237](237-erasing-a-message.md) | open | A message written by mistake can be taken back but not erased: it stays in every participant's record and in the contexts built on it. |
 | [284](284-automatic-context-compaction.md) | open | An agent's context is compacted only when somebody asks for it; nothing compacts it before a model call that would not fit, least of all within the turn that makes it. |
 
-## Integrations
-
-| No. | Status | Issue |
-|---|---|---|
-| [288](288-compaction-of-external-agents.md) | open | A personality of an external agent that lists `compaction` is given a default model and compacts what its remote agent is to be given next; nothing refuses it. |
-
 ## Open architecture questions
 
 | No. | Status | Issue |

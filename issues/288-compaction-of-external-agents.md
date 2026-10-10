@@ -1,6 +1,6 @@
 # 288 — An external agent can be given a compaction it cannot have
 
-**Status:** open
+**Status:** rejected
 **Area:** Integrations
 
 ## The problem
@@ -51,3 +51,10 @@ Nothing refuses it. The example seed is not affected - its external personality 
   `summary_compaction`, and `compaction` takes the strategy. The problem stays; one more way to
   solve it is open: the external agent's container (`with_defaults`) gives no default
   `CompactionStrategy`, so `compaction` fails to build there, while the `LLMClient` stays as it is.
+- **2026-10-10** — Rejected. Only a personality that lists `compaction` is affected, and an external
+  personality has no reason to: its remote agent keeps its own context, and there is no model here
+  to compact it with. It would come in only by mistake, most likely by including a bundle meant for
+  agents run here (such as the seed's `agent-basics`); the seed's own external personality,
+  `hermes-remote`, includes none. Guarding against this one component is not worth a mechanism of
+  its own. If components that mean nothing to an external agent are to be refused at all, it is
+  done for all of them at once (the second consideration above), in an issue of its own.
