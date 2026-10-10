@@ -84,3 +84,9 @@ the one that cannot ask for it.
   out of `/compact` into the facet `CompactionStrategy` (`crate::compaction`), of which an agent has
   exactly one; the default, `summary_compaction`, holds 16's summary and `keep_last`. The command
   component `compaction` only asks it and tells the channel. The trigger here asks the same facet.
+- **2026-10-10** — From [300](300-compaction-keeps-long-turns-whole.md): `summary_compaction` cuts a
+  finished turn apart now, keeping only a tool's result with its call, but still keeps the turn under
+  way whole (`kept_whole`). The plan here - the turn under way's messages kept verbatim - frees
+  nothing where it is most needed: a long plan is one turn, and the turn that does not fit. Cutting
+  the turn under way apart has to settle what taking it over then collects of it
+  (`Transcript::of_turn`); that is to decide here.
