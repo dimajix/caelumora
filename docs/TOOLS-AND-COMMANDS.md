@@ -744,12 +744,13 @@ workspace after the turn that started it.
 
 A command handed back as running is ended by the model, with `kill_command`, or by a user who may
 change the workspace's files in the channel (issue [294](../issues/294-user-ends-a-command.md),
-`POST …/channels/{cid}/commands/{command_id}/kill`). Both go through `WorkspaceView::kill_command`:
-it reaches the workspace as the channel offers it, for writing, and looks for the command under the
-channel - so that who may end a command is who could have started it there, and a command is seen
-only in its channel, both kept in one place. A workspace reached directly ends none
-(`WorkspaceError::NotInChannel`). The agent is told nothing besides; it sees `killed` the next time
-it follows the command. Nothing bounds how long a command runs yet (issue
+`POST …/channels/{cid}/commands/{command_id}/kill`, `WorkspaceManager::kill_command`). Both reach
+the shell through `WorkspaceManager::shell_in` (issue
+[296](../issues/296-workspace-operations-on-the-view.md)): for writing, as the channel offers the
+workspace, the shell bound to the channel - so that who may end a command is who could have started
+it there, and a command is seen only in its channel, both kept in one place; `run_command` and
+`command_output` reach it the same way. The agent is told nothing besides; it sees `killed` the
+next time it follows the command. Nothing bounds how long a command runs yet (issue
 [254](../issues/254-commands-run-unbounded.md)).
 
 ### Artifacts
@@ -760,8 +761,10 @@ is, kept in an artifact storage beyond the workspace, downloaded at the message 
 Beside it, `publish_file` offers a file as a link to it as it is now; a model is told the difference
 in their descriptions - a link for a look now, an artifact for a result to be kept.
 
-It is reached as the file tools are, through the turn's views and the workspace of the channel
-(`tool::channel_workspace`), and publishes in the name of whoever the agent acts for: its owner, who
+The workspace is reached as the file tools reach it, through the `WorkspaceManager` in the turn's
+channel (`terminal_in`, for reading); the file read is handed to the `ArtifactManager`, which keeps
+it as it is given (issue [296](../issues/296-workspace-operations-on-the-view.md)). It publishes in
+the name of whoever the agent acts for: its owner, who
 makes the artifact (`CreateArtifact`), or adds a version where the artifact's list lets them
 (`WriteArtifact`, issue 23 - its owner always), asked before anything is kept. The version is read
 by the members of the channel it is published in (an entry `MemberOf` the channel in its own list),

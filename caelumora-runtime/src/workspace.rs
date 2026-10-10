@@ -24,7 +24,7 @@
 
 use crate::component::{ComponentError, ComponentResult};
 use crate::event::EventBus;
-use crate::terminal::{DockerProvider, LocalProvider, SharedProvider, Terminal, TerminalError, TerminalProvider};
+use crate::terminal::{CommandState, DockerProvider, LocalProvider, Shell, SharedProvider, Terminal, TerminalError, TerminalProvider};
 use caelumora_model::actor::ActorId;
 use caelumora_model::config::{StorageConfig, WorkspacesConfig};
 use caelumora_model::confidentiality::Classification;
@@ -32,8 +32,9 @@ use caelumora_model::role::user_roles;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::scope::Scope;
 use caelumora_model::secret::SecretManager;
-use caelumora_model::security::{AccessQuestions, AclEntry, ActionType, Enforcement, Grant, SecurityContext, SecurityManager, Subject};
-use caelumora_model::session::{Channel, Session};
+use caelumora_model::privacy::SessionPrivacy;
+use caelumora_model::security::{AccessQuestions, AclEntry, ActionType, ChannelReader, Enforcement, Grant, Place, SecurityContext, SecurityManager, Subject};
+use caelumora_model::session::{Channel, ChannelId, Session, SessionId};
 use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResultExt};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
@@ -64,10 +65,12 @@ pub enum WorkspaceError {
     /// files (issue 23).
     #[error("you may read the workspace {0}, not change its files")]
     ReadOnly(WorkspaceId),
-    /// Done to a workspace reached directly what is done only in a channel
-    /// that uses it - ending a command started there (issue 294).
-    #[error("this is done only in a channel that uses the workspace")]
-    NotInChannel,
+    /// No workspace the caller may use in the channel they act in: none is
+    /// attached, the channel does not use it, they may not read the channel
+    /// or the workspace, or the two do not flow both ways - one case, so
+    /// that nothing can be probed (issue 296).
+    #[error("there is no workspace you can use in this channel")]
+    NotUsableInChannel,
     /// Its storage may not hold what is so classified (issue 251): a place
     /// with a shell or a remote side is cleared for so much.
     #[error("the storage '{0}' may not hold a workspace so classified")]
@@ -373,7 +376,7 @@ impl WorkspaceManager {
     /// what an actor puts into a channel (`Publish`). `None` otherwise, also
     /// when the workspace is gone, without saying which of them failed.
     /// Whether its files may be changed there is asked as they are
-    /// (`WorkspaceView::terminal`).
+    /// (`terminal_in`).
     ///
     /// # Errors
     /// Whatever reading the workspace reports, other than its absence.
@@ -423,13 +426,103 @@ impl WorkspaceManager {
         self.provider(workspace).is_ok_and(|provider| provider.has_shell())
     }
 
-    /// The terminal of `workspace`, which one of the two ways of using it
-    /// let the caller reach.
+    /// Workspace `id` and its terminal, used directly by whoever `ctx` acts
+    /// for, for what `need` asks - reading its files, or changing them too
+    /// (issue 23) -, wherever they act: as `reached` reaches it.
+    ///
+    /// # Errors
+    /// What `reached` reports, `UnknownStorage`, or a `TerminalError` of
+    /// reaching its place.
+    pub async fn terminal(&self, ctx: &SecurityContext, id: WorkspaceId, need: Grant) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
+        let workspace = self.reached(ctx, id, need).await?;
+        let terminal = self.place(&workspace).await?;
+        Ok((workspace, terminal))
+    }
+
+    /// The workspace of session `session_id` and its terminal, for what
+    /// `need` asks, if whoever `ctx` acts for may use it in its channel
+    /// `channel_id` (issue 296): if they may read the session (`GetSession`)
+    /// and the channel (`AccessQuestions::channel_reading` - an agent from
+    /// the channel it acts in, a user by their roles), it is usable there
+    /// (`usable_in`), and - to change its files - its list lets them
+    /// (`WriteWorkspace`, issue 23). Session and channel are read as they
+    /// are stored now, in the runtime's name, and asked of afresh: an
+    /// operation in a channel relies on nothing its caller reached before.
+    ///
+    /// # Errors
+    /// `NotUsableInChannel` if they may not use one there, `ReadOnly` if
+    /// they may not change its files where `need` asks to, `UnknownStorage`,
+    /// a `TerminalError` of reaching its place, or what the store reports.
+    pub async fn terminal_in(&self, ctx: &SecurityContext, session_id: SessionId, channel_id: ChannelId, need: Grant) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
+        let workspace = self.usable_in_channel(ctx, session_id, channel_id).await?;
+        if need == Grant::Write {
+            self.security.require(ctx, ActionType::WriteWorkspace(&workspace.security_attributes), || WorkspaceError::ReadOnly(workspace.id)).await?;
+        }
+        let terminal = self.place(&workspace).await?;
+        Ok((workspace, terminal))
+    }
+
+    /// The workspace of session `session_id` and its shell as channel
+    /// `channel_id` sees it - the commands started in that channel alone
+    /// (issues 251, 296) -, if whoever `ctx` acts for may change its files
+    /// there, as `terminal_in` asks; no shell where its storage gives none.
+    /// The one place that makes a channel the scope of a shell.
+    ///
+    /// # Errors
+    /// What `terminal_in` reports.
+    pub async fn shell_in(&self, ctx: &SecurityContext, session_id: SessionId, channel_id: ChannelId) -> WorkspaceResult<(Workspace, Option<Arc<dyn Shell>>)> {
+        let (workspace, terminal) = self.terminal_in(ctx, session_id, channel_id, Grant::Write).await?;
+        let shell = terminal.shell(&channel_id.to_string());
+        Ok((workspace, shell))
+    }
+
+    /// Ends the command `id` of the workspace's shell that was started in
+    /// channel `channel_id` of session `session_id`, with everything it
+    /// started (issue 294), in the name of whoever `ctx` acts for: who may
+    /// change the files there - who could have started it - may end it, as
+    /// `shell_in` asks. Answers what it printed since `offset`, and how it
+    /// stands.
+    ///
+    /// # Errors
+    /// What `shell_in` reports, or `Terminal(UnknownCommand)` if no command
+    /// `id` is known in the channel - as where its storage gives no shell.
+    pub async fn kill_command(&self, ctx: &SecurityContext, session_id: SessionId, channel_id: ChannelId, id: &str, offset: u64) -> WorkspaceResult<CommandState> {
+        let (_, shell) = self.shell_in(ctx, session_id, channel_id).await?;
+        let shell = shell.ok_or_else(|| TerminalError::UnknownCommand(id.to_string()))?;
+        Ok(shell.kill(id, offset).await?)
+    }
+
+    /// The workspace of session `session_id`, if whoever `ctx` acts for may
+    /// use it in its channel `channel_id`, as `terminal_in` asks.
+    async fn usable_in_channel(&self, ctx: &SecurityContext, session_id: SessionId, channel_id: ChannelId) -> WorkspaceResult<Workspace> {
+        let system = SecurityContext::system();
+        let Some(session) = self.entities.get_session(&system, session_id).await.optional()? else { return Err(WorkspaceError::NotUsableInChannel) };
+        let Some(channel) = self.entities.get_channel(&system, channel_id).await.optional()? else { return Err(WorkspaceError::NotUsableInChannel) };
+        if !self.security.may_read_session(ctx, &session.security_attributes).await {
+            return Err(WorkspaceError::NotUsableInChannel);
+        }
+        let at = Place { channel: channel.id, classification: channel.classification.clone(), session: SessionPrivacy::of(&session) };
+        let roles;
+        let reader = match ctx.caller_id {
+            ActorId::Agent(_) => ChannelReader::From(&at),
+            _ => {
+                roles = user_roles(self.entities.as_ref(), ctx.principal_id).await?;
+                ChannelReader::Cleared(&roles)
+            }
+        };
+        if self.security.channel_reading(ctx, &channel.security_attributes, &at, reader).await.is_none() {
+            return Err(WorkspaceError::NotUsableInChannel);
+        }
+        self.usable_in(ctx, &session, &channel).await?.ok_or(WorkspaceError::NotUsableInChannel)
+    }
+
+    /// The terminal of `workspace`, which one of the ways of using it let
+    /// the caller reach.
     ///
     /// # Errors
     /// `UnknownStorage` if its storage is no longer configured, or a
     /// `TerminalError` of reaching its place.
-    pub(crate) async fn terminal(&self, workspace: &Workspace) -> WorkspaceResult<Arc<dyn Terminal>> {
+    async fn place(&self, workspace: &Workspace) -> WorkspaceResult<Arc<dyn Terminal>> {
         Ok(self.provider(workspace)?.terminal_for(workspace.id).await?)
     }
 }

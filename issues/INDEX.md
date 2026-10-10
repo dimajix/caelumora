@@ -370,7 +370,7 @@ published before anyone else can take it.
 | [270](270-personality-inheritance.md) | done | Every personality writes out its whole list of components, so what every agent should have is repeated in each and a later addition reaches only those touched by hand. |
 | [280](280-tool-executor-trait.md) | done | `ToolExecutor` is a replaceable facet whose only implementation is `DefaultToolExecutor`, and its shape cannot serve the variations it was made replaceable for. |
 | [285](285-set-context-with-knowledge.md) | done | A turn's prompt parts and the knowledge read for them are set in two calls, so every caller of the `ContextProvider` records the knowledge itself. |
-| [296](296-workspace-operations-on-the-view.md) | open | The view of a workspace, which is for reading, hands out its terminal for writing and publishes and ends commands with it, while the scope of a command is made by every caller of its shell. |
+| [296](296-workspace-operations-on-the-view.md) | done | The view of a workspace, which is for reading, hands out its terminal for writing and publishes and ends commands with it, while the scope of a command is made by every caller of its shell. |
 
 ## Integrations
 

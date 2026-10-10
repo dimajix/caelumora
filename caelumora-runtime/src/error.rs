@@ -67,7 +67,6 @@ pub fn user_message(error: &anyhow::Error) -> Option<String> {
             // As for workspaces: what it names is safe, never a place.
             match e {
                 crate::artifact::ArtifactError::Store(e) => store_message(e),
-                crate::artifact::ArtifactError::Workspace(WorkspaceError::Store(e)) => store_message(e),
                 _ => Some(e.to_string()),
             }
         } else if let Some(e) = e.downcast_ref::<TerminalError>() {

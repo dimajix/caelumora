@@ -1,21 +1,17 @@
 //! The shell tools of `terminal_tool`: commands in the workspace, through
-//! its terminal's `Shell`. A command is seen only from the channel it was
-//! started in.
+//! the `Shell` the `WorkspaceManager` hands out for the turn's channel
+//! (`shell_in`), which sees the commands started in that channel alone.
 //!
 //! A call dropped while it waits for its command - the turn cancelled or
 //! stopped (issue 161) - kills the command: the one thing a tool does after
 //! its future is gone, in a task of its own bounded by `KILL_WITHIN`, which
 //! the drop does not await. A command left running would go on writing into
 //! the workspace after the turn that started it. One handed back as running
-//! is the model's to end, or a user's (issue 294): `kill_command` ends it as
-//! `WorkspaceView::kill_command` does for them.
+//! is the model's to end, or a user's (issue 294): `kill_command` ends it
+//! through the same shell as `WorkspaceManager::kill_command` does for them.
 
-use super::{failed, tool, unusable, TerminalToolConfig};
-use crate::agent::turn::Turn;
+use super::{failed, tool, TerminalToolConfig};
 use crate::terminal::{CommandState, CommandStatus, Shell};
-use crate::view::WorkspaceView;
-use crate::workspace::WorkspaceError;
-use caelumora_model::security::Grant;
 use crate::tool::{arguments, ToolError, ToolResult};
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation};
 use serde::Deserialize;
@@ -175,21 +171,9 @@ pub(super) fn describe(name: &str, params: &Value) -> ToolResult<String> {
     }
 }
 
-/// Runs the shell tool `name` with `params` in `workspace`, in the turn's
-/// channel. The shell may change anything its place reaches: its terminal
-/// is reached for writing (issue 23). A command is ended as a user ends it,
-/// by the workspace (issue 294).
-pub(super) async fn execute(config: &TerminalToolConfig, name: &str, params: &Value, workspace: &WorkspaceView, turn: &Turn<'_>) -> ToolResult<Value> {
-    if name == KILL_COMMAND {
-        let Follow { id, offset, .. } = arguments(params)?;
-        let state = workspace.kill_command(&id, offset.unwrap_or(0)).await.map_err(|e| match e {
-            WorkspaceError::Terminal(e) => failed(e),
-            e => unusable(e),
-        })?;
-        return Ok(result(config, state));
-    }
-    let terminal = workspace.terminal(Grant::Write).await.map_err(unusable)?;
-    let shell = terminal.shell(&turn.channel_id().to_string()).ok_or_else(|| ToolError::ExecutionFailed("the workspace's storage gives it no shell".to_string()))?;
+/// Runs the shell tool `name` with `params` on `shell`, the workspace's as
+/// the turn's channel sees it.
+pub(super) async fn execute(config: &TerminalToolConfig, name: &str, params: &Value, shell: Arc<dyn Shell>) -> ToolResult<Value> {
     let state = match name {
         RUN_COMMAND => {
             let Run { command, wait_secs } = arguments(params)?;
@@ -202,9 +186,13 @@ pub(super) async fn execute(config: &TerminalToolConfig, name: &str, params: &Va
             guard.disarm();
             state
         }
-        _ => {
+        COMMAND_OUTPUT => {
             let Follow { id, offset, wait_secs } = arguments(params)?;
             shell.output(&id, offset.unwrap_or(0), wait(config, wait_secs)).await
+        }
+        _ => {
+            let Follow { id, offset, .. } = arguments(params)?;
+            shell.kill(&id, offset.unwrap_or(0)).await
         }
     }.map_err(failed)?;
     Ok(result(config, state))
@@ -215,11 +203,11 @@ mod tests {
     use super::*;
     use crate::tool::ToolProvider;
     use crate::tool::terminal_tool::tests::tool as terminal_tool;
-    use crate::workspace::testing::session_with_workspace;
+    use crate::workspace::testing::{session_with_workspace, WithWorkspace};
     use caelumora_model::agent::AgentChannelState;
 
-    fn the_tool() -> super::super::TerminalTool {
-        terminal_tool(json!({ "max_wait_secs": 10 }))
+    fn the_tool(world: &WithWorkspace) -> super::super::TerminalTool {
+        terminal_tool(world, json!({ "max_wait_secs": 10 }))
     }
 
     #[tokio::test]
@@ -227,7 +215,7 @@ mod tests {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
         let mut turn = world.turn(&mut state);
-        let ran = the_tool().execute(RUN_COMMAND, &json!({ "command": "echo draft > notes.md; cat notes.md; ls" }), None, &mut turn).await.unwrap();
+        let ran = the_tool(&world).execute(RUN_COMMAND, &json!({ "command": "echo draft > notes.md; cat notes.md; ls" }), None, &mut turn).await.unwrap();
         assert_eq!(ran.value["status"], "completed");
         assert_eq!(ran.value["exit_code"], 0);
         assert_eq!(ran.value["output"], "draft\nnotes.md\n");
@@ -240,7 +228,7 @@ mod tests {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
         let mut turn = world.turn(&mut state);
-        let tool = the_tool();
+        let tool = the_tool(&world);
         let running = tool.execute(RUN_COMMAND, &json!({ "command": "echo begun; sleep 30", "wait_secs": 0.3 }), None, &mut turn).await.unwrap();
         assert_eq!(running.value["status"], "running");
         assert!(running.value["next"].as_str().unwrap().contains(COMMAND_OUTPUT));
@@ -259,7 +247,7 @@ mod tests {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
         let mut turn = world.turn(&mut state);
-        let tool = the_tool();
+        let tool = the_tool(&world);
         let marker = world.dir().join("still-running");
         let command = format!("sleep 1.5 && touch {}", marker.display());
         let interrupted = tokio::time::timeout(Duration::from_millis(300), tool.execute(RUN_COMMAND, &json!({ "command": command }), None, &mut turn)).await;
@@ -268,9 +256,10 @@ mod tests {
         assert!(!marker.exists(), "the command was killed with the call");
     }
 
-    #[test]
-    fn the_approver_reads_the_command_whole() {
-        let tool = the_tool();
+    #[tokio::test]
+    async fn the_approver_reads_the_command_whole() {
+        let world = session_with_workspace().await;
+        let tool = the_tool(&world);
         assert_eq!(tool.describe(RUN_COMMAND, &json!({ "command": "rm -rf build && make" })).unwrap(), "Run in the workspace:\nrm -rf build && make");
         assert!(tool.tools().iter().filter(|t| TOOLS.contains(&t.name.as_str())).all(|t| t.presentation == ToolPresentation::Shell));
     }

@@ -22,7 +22,7 @@ mod local;
 
 use crate::component::{ComponentError, ComponentResult};
 use crate::event::EventBus;
-use crate::terminal::{ByteStream, TerminalError};
+use crate::terminal::ByteStream;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::artifact::{Artifact, ArtifactId, ArtifactVersion};
@@ -68,20 +68,11 @@ pub enum ArtifactError {
     TooLarge { limit: u64 },
     #[error("the file changed while it was published; publish it again once it is written")]
     Changed,
-    /// Published from a workspace not reached through a channel.
-    #[error("an artifact is published in a channel")]
-    NotInChannel,
-    /// The workspace to publish from may no longer be used.
-    #[error(transparent)]
-    Workspace(#[from] crate::workspace::WorkspaceError),
     /// Kept in a scope an artifact cannot lie in.
     #[error("an artifact is kept in its owner's scope or the global one")]
     InvalidScope,
     #[error(transparent)]
     Invalid(#[from] ValueError),
-    /// Reading the file to publish failed.
-    #[error(transparent)]
-    Terminal(#[from] TerminalError),
     /// The storage failed: what happened, never where.
     #[error("the storage of artifacts failed: {0}")]
     Unavailable(String),
@@ -169,6 +160,9 @@ impl ArtifactManager {
     /// its storage may hold what is so classified. Where the content comes
     /// from is the caller's (issue 296): read before the artifact's own
     /// permission is asked, it gives nothing away to one who could read it.
+    /// The caller vouches for `classification`: it is that of the workspace
+    /// the content was read from (`artifact_tool` reads it through
+    /// `WorkspaceManager::terminal_in`), never one a client names.
     /// The content is kept first, its digest taken as it is; a document that
     /// cannot be stored leaves no content. Answers the artifact as it is
     /// now, and the number of the new version.
@@ -179,7 +173,7 @@ impl ArtifactManager {
     /// `Changed`, `Unavailable`, or whatever the store reports -
     /// `PermissionDenied` and `NameTaken` among it.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn publish(&self, ctx: &SecurityContext, (size, content): (u64, ByteStream), classification: &Classification, name: &str, description: Option<&str>, session: SessionId, channel: ChannelId) -> ArtifactResult<(Artifact, u32)> {
+    pub async fn publish(&self, ctx: &SecurityContext, (size, content): (u64, ByteStream), classification: &Classification, name: &str, description: Option<&str>, session: SessionId, channel: ChannelId) -> ArtifactResult<(Artifact, u32)> {
         let ActorId::User(owner) = ctx.principal_id else { return Err(ArtifactError::OwnerNotAUser) };
         let name = ScopedName::new(name, Scope::SessionScope { session_id: session })?;
         let description = Description::optional(description)?;

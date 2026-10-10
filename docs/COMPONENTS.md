@@ -172,7 +172,9 @@ that holds the default kind (`component_impl`, `llm`, `external`, `moderator`, `
     [296](../issues/296-workspace-operations-on-the-view.md)), by their type, of which a component
     is given those its kind declares it uses (`ComponentKind::uses`): the `SecurityManager`, for the
     questions a component asks (`AccessQuestions`; the memory asks what it may recall, issue 131),
-    and the `SecretManager`. The runtime makes them once (`RuntimeManager::component_services`);
+    the `SecretManager`, and the `WorkspaceManager` and the `ArtifactManager`, through which
+    `terminal_tool`, `artifact_tool` and `workspace_prompt_provider` work on the workspace of
+    their turn's channel. The runtime makes them once (`RuntimeManager::component_services`);
     they are not fields of the context, so that a new one needs no new field and no component is
     given one it does not declare,
 *   nothing of the session: what a component reads of it - the other channels, their notes and

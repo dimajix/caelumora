@@ -329,7 +329,9 @@ impl RuntimeManager {
 
         let component_services = ComponentServices::empty()
             .with(Arc::clone(&security_manager))
-            .with(Arc::clone(&secret_manager));
+            .with(Arc::clone(&secret_manager))
+            .with(Arc::clone(&workspaces))
+            .with(Arc::clone(&artifacts));
         Ok(Self {
             security_manager,
             state_store,

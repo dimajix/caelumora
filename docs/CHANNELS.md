@@ -193,7 +193,7 @@ session added, or one that grants less widened), or by its list afterwards
 (`WorkspaceManager::set_access`). Taking it away leaves the list as it is: it is the workspace's.
 
 A person reaches the workspace's files by the workspace, wherever they act - never through a
-channel: as its list lets them, and cleared for its classification (`WorkspaceView::terminal`,
+channel: as its list lets them, and cleared for its classification (`WorkspaceManager::terminal`,
 `GetWorkspace` to read, `WriteWorkspace` to change). An agent uses it through a channel, by its
 current members - acting there with its owner's rights, for whoever asked it -, as the list lets
 the agent - its owner, or the agent itself as a member - and only where the channel uses it. A
@@ -210,8 +210,15 @@ channel uses it where
 So a session for a request can have a channel with the person who asked, classified below the
 workspace or with the switch off, and channels with helpers that work on its files. A view of a
 channel offers the workspace to an agent only where it may use it there (`ChannelView::workspace`),
-and says nothing of it otherwise; using it asks again, of the session and the channel as they are
-then, and whether the files may be changed (`ReadOnly` where the list grants reading). A channel's
+and says nothing of it otherwise - a view to read, which does nothing with it. Using it is the
+`WorkspaceManager`'s (issue [296](../issues/296-workspace-operations-on-the-view.md)): its terminal
+in a channel (`terminal_in`), its shell as the channel sees it (`shell_in`) and ending a command
+there (`kill_command`) read the session and the channel as they are stored then and ask as the
+views ask - `GetSession`, whether the caller may read the channel
+(`AccessQuestions::channel_reading`: an agent from the channel it acts in, a user by their roles),
+whether the workspace is usable there - and, for changing its files, `WriteWorkspace` (`ReadOnly`
+where the list grants reading). Where there is none to use, the answer is one case
+(`NotUsableInChannel`). A channel's
 snapshot names the workspace by its id (`workspace_id`) where the channel uses it and the viewer may
 read it, for the person to reach it by the workspace.
 

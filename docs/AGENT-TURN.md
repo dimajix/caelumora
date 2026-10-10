@@ -739,8 +739,9 @@ told once and then only when something changed, the whole of it again, taking ba
 An agent is told of the workspace it may use in its channel (issue 251) by the component
 `workspace_prompt_provider`, which a personality wires in next to its `terminal_tool`: its name,
 classification and description, whether it has a shell - or that there is none here. The part reads
-the workspace through the turn's views (`ChannelView::workspace`) at the start of every turn, is
-classified as the workspace, and goes into the system prompt by default (`position`).
+the workspace through the turn's views (`ChannelView::workspace`) at the start of every turn - its
+files through the `WorkspaceManager` (`terminal_in`, issue 296) -, is classified as the workspace,
+and goes into the system prompt by default (`position`).
 
 It names the files at the workspace's root that say how to work on its files (issue 279): those
 of the parameter `instruction_files` - by default `AGENTS.md` and `CLAUDE.md`, the convention of

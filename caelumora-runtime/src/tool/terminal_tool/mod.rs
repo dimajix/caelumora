@@ -14,11 +14,12 @@
 //!   What was read is recorded as the turn's knowledge
 //!   (`KnowledgeSource::Workspace`).
 //!
-//! The workspace is reached through the turn's views on every call, before
-//! anything is sent: as a member of the channel, where the channel uses it,
-//! its access list lets the agent read it - change it, for the shell and
-//! the tools that write (issue 23) - and it and the channel flow both ways. A result is classified as the
-//! workspace. Which calls need approval is configured as for `mcp_tool`
+//! The workspace is reached through the `WorkspaceManager` on every call,
+//! before anything is sent, in the turn's channel and its context (issue
+//! 296): as a member of the channel, where the channel uses it, its access
+//! list lets the agent read it - change it, for the shell and the tools that
+//! write (issue 23) - and it and the channel flow both ways. A result is
+//! classified as the workspace. Which calls need approval is configured as for `mcp_tool`
 //! (`requires_approval`, an `ApprovalMode`): all, none, or all but those
 //! that only read; `command_output`, `kill_command` and `publish_file`
 //! never ask.
@@ -29,7 +30,7 @@ mod shell;
 use crate::agent::turn::Turn;
 use crate::component::{config_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::terminal::TerminalError;
-use crate::workspace::WorkspaceError;
+use crate::workspace::{WorkspaceError, WorkspaceManager};
 use crate::tool::{ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::approval::ToolMatcher;
@@ -81,6 +82,7 @@ struct TerminalToolConfig {
 #[derive(Debug)]
 pub struct TerminalTool {
     config: TerminalToolConfig,
+    workspaces: Arc<WorkspaceManager>,
 }
 
 /// A tool of this component, as the model is offered it.
@@ -145,27 +147,33 @@ impl ToolProvider for TerminalTool {
         if !is_shell && !files::TOOLS.contains(&name) {
             return Err(ToolError::UnknownTool(name.to_string()));
         }
-        let workspace = crate::tool::channel_workspace(turn).await?;
-        let value = match is_shell {
-            true => shell::execute(&self.config, name, params, &workspace, turn).await?,
+        let (ctx, session, channel) = (turn.security_context().clone(), turn.session_id(), turn.channel_id());
+        let (workspace, value) = match is_shell {
+            true => {
+                let (workspace, shell) = self.workspaces.shell_in(&ctx, session, channel).await.map_err(unusable)?;
+                let shell = shell.ok_or_else(|| ToolError::ExecutionFailed("the workspace's storage gives it no shell".to_string()))?;
+                (workspace, shell::execute(&self.config, name, params, shell).await?)
+            }
             false => {
                 // What only reads needs only reading (issue 23).
                 let need = if files::read_only(name) { Grant::Read } else { Grant::Write };
-                let terminal = workspace.terminal(need).await.map_err(unusable)?;
-                files::execute(&self.config, name, params, terminal.as_ref(), &workspace, turn).await?
+                let (workspace, terminal) = self.workspaces.terminal_in(&ctx, session, channel, need).await.map_err(unusable)?;
+                let value = files::execute(&self.config, name, params, terminal.as_ref(), &workspace, self.workspaces.max_file_bytes(), turn).await?;
+                (workspace, value)
             }
         };
-        Ok(ToolOutput::classified(value, workspace.classification().clone()))
+        Ok(ToolOutput::classified(value, workspace.classification))
     }
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(TERMINAL_TOOL_KIND).provides::<dyn ToolProvider>(),
-        |descriptor, _context| {
+        ComponentKind::new(TERMINAL_TOOL_KIND).provides::<dyn ToolProvider>().uses::<WorkspaceManager>(),
+        |descriptor, context| {
             let config: TerminalToolConfig = config_of_params(&descriptor.params)?;
+            let workspaces = Arc::clone(context.service::<WorkspaceManager>()?);
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(TerminalTool { config }));
+            facets.insert::<dyn ToolProvider>(Arc::new(TerminalTool { config, workspaces }));
             Ok(facets)
         },
     );
@@ -174,16 +182,16 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::component::{ComponentContainer, ComponentContext, ComponentServices};
-    use crate::workspace::testing::session_with_workspace;
+    use crate::component::{ComponentContainer, ComponentContext};
+    use crate::workspace::testing::{session_with_workspace, WithWorkspace};
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::security::SecurityContext;
     use caelumora_model::store::memory::MemoryStore;
     use serde_json::json;
 
-    pub(super) fn tool(params: Value) -> TerminalTool {
-        TerminalTool { config: serde_json::from_value(params).unwrap() }
+    pub(super) fn tool(world: &WithWorkspace, params: Value) -> TerminalTool {
+        TerminalTool { config: serde_json::from_value(params).unwrap(), workspaces: Arc::clone(world.runtime.workspace_manager()) }
     }
 
     #[tokio::test]
@@ -192,7 +200,7 @@ mod tests {
         world.session.channels()[0].update_uses_workspace(&SecurityContext::system(), false).await.unwrap();
         let mut state = AgentChannelState::default();
         let mut turn = world.turn(&mut state);
-        let tool = tool(json!({}));
+        let tool = tool(&world, json!({}));
         for (name, params) in [(RUN_COMMAND, json!({ "command": "touch here" })), (WRITE_FILE, json!({ "path": "here", "content": "x" }))] {
             let refused = tool.execute(name, &params, None, &mut turn).await;
             assert!(matches!(&refused, Err(ToolError::ExecutionFailed(why)) if why.contains("no workspace")), "{name}: {refused:?}");
@@ -207,14 +215,16 @@ mod tests {
         let mut registry = ComponentRegistry::new(Arc::new(MemoryStore::new()));
         register(&mut registry);
         let config = ComponentConfig { component_nodes: vec![ComponentDescriptor::new("terminal", TERMINAL_TOOL_KIND)] };
-        let context = ComponentContext::new(SecurityContext::default(), ComponentServices::empty());
+        let world = session_with_workspace().await;
+        let context = ComponentContext::new(SecurityContext::default(), world.runtime.component_services().clone());
         let container = ComponentContainer::from_config(&config, &Arc::new(registry), &context).await;
         assert!(container.is_ok(), "{:?}", container.err());
     }
 
-    #[test]
-    fn which_calls_ask_is_configured_for_all_none_or_all_but_what_only_reads() {
-        let asking = |mode: Value| -> Vec<(String, bool)> { tool(json!({ "requires_approval": mode })).tools().into_iter().map(|t| (t.name, t.requires_approval)).collect() };
+    #[tokio::test]
+    async fn which_calls_ask_is_configured_for_all_none_or_all_but_what_only_reads() {
+        let world = session_with_workspace().await;
+        let asking = |mode: Value| -> Vec<(String, bool)> { tool(&world, json!({ "requires_approval": mode })).tools().into_iter().map(|t| (t.name, t.requires_approval)).collect() };
         let asks = |mode: Value, name: &str| asking(mode).into_iter().find(|(n, _)| n == name).map(|(_, asks)| asks).unwrap();
         for name in [RUN_COMMAND, WRITE_FILE, REPLACE_IN_FILE, MOVE_FILE, DELETE_FILE, READ_FILE] {
             assert!(asks(json!(true), name), "{name}, by default too");
@@ -227,7 +237,7 @@ mod tests {
             assert!(!asks(json!(true), name), "{name} concerns a command approved already");
         }
         assert!(!asks(json!(true), PUBLISH_FILE), "publishing gives nothing away");
-        let defaults = TerminalTool { config: serde_json::from_value(json!({})).unwrap() };
+        let defaults = tool(&world, json!({}));
         assert!(defaults.tools().iter().all(|t| t.requires_approval || [COMMAND_OUTPUT, KILL_COMMAND, PUBLISH_FILE].contains(&t.name.as_str())), "all that may, unless configured");
     }
 }

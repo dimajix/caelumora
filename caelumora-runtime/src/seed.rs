@@ -130,7 +130,7 @@ pub async fn load(store: &dyn EntityStore, components: &dyn ComponentStore, secu
 mod tests {
     use super::*;
     use caelumora_model::store::query::Query;
-    use crate::component::{ComponentContainer, ComponentContext, ComponentRegistry, ComponentServices};
+    use crate::component::{ComponentContainer, ComponentContext, ComponentRegistry};
     use caelumora_model::secret::SecretManager;
     use caelumora_model::security::DummySecurityManager;
     use caelumora_model::store::memory::MemoryStore;
@@ -190,12 +190,13 @@ mod tests {
         let seed = Seed::read(&example()).expect("examples/seed.yaml is a seed");
         let store = Arc::new(MemoryStore::new());
         load(store.as_ref(), store.as_ref(), policy().as_ref(), &[example()]).await.unwrap();
-        let registry = Arc::new(ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store)));
         let security = Arc::new(DummySecurityManager::new());
-        let services = ComponentServices::empty().with(Arc::<DummySecurityManager>::clone(&security) as Arc<dyn SecurityManager>).with(Arc::new(SecretManager::new(vec![], security)));
-        let context = ComponentContext::new(SecurityContext::system(), services);
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&security)));
+        // The services a runtime gives them (issue 296).
+        let runtime = crate::runtime::RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, security, &Default::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap();
+        let context = ComponentContext::new(SecurityContext::system(), runtime.component_services().clone());
         for personality in seed.personalities.iter().map(|seeded| &seeded.personality) {
-            ComponentContainer::from_config(&personality.components, &registry, &context).await
+            ComponentContainer::from_config(&personality.components, runtime.component_registry(), &context).await
                 .unwrap_or_else(|e| panic!("personality {} cannot be built: {e}", personality.name));
         }
     }

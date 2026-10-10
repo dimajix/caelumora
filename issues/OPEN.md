@@ -92,12 +92,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [237](237-erasing-a-message.md) | open | A message written by mistake can be taken back but not erased: it stays in every participant's record and in the contexts built on it. |
 | [284](284-automatic-context-compaction.md) | open | An agent's context is compacted only when somebody asks for it; nothing compacts it before a model call that would not fit, least of all within the turn that makes it. |
 
-## Code structure
-
-| No. | Status | Issue |
-|---|---|---|
-| [296](296-workspace-operations-on-the-view.md) | open | The view of a workspace, which is for reading, hands out its terminal for writing and publishes and ends commands with it, while the scope of a command is made by every caller of its shell. |
-
 ## Open architecture questions
 
 | No. | Status | Issue |

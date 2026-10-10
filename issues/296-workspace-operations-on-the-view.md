@@ -1,6 +1,6 @@
 # 296 — The view of a workspace, which is for reading, carries out what is done with it
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -109,3 +109,20 @@ Taken with the maintainer on 2026-10-10, when the issue was opened.
   `kill_command` was the third operation added to `WorkspaceView`, and the scope of a command was
   made by two callers.
 - 2026-10-10: The way a tool reaches the managers decided with the maintainer (above).
+- 2026-10-10: Done, in four steps. (1) Components are given the runtime's services by type
+  (`ComponentServices`, `ComponentKind::uses`, `ComponentContext::service`); the `SecurityManager`
+  and the `SecretManager` are services, the `WorkspaceManager` and the `ArtifactManager` too.
+  (2) A shell is bound to its scope (`Terminal::shell(scope)`); the Open Terminal shell is a type of
+  its own. (3) `ArtifactManager::publish` takes the content and its classification - `pub`, since
+  the security suite publishes as `artifact_tool` does, the caller vouching for the
+  classification. (4) What is done with a workspace is the `WorkspaceManager`'s: `terminal`
+  directly, `terminal_in`, `shell_in` and `kill_command` in a channel, by ids. Different from what
+  was laid out: the manager does not take the session and the channel from the caller - a frontend
+  has no documents -, but reads them itself and asks as the views ask; the question how a channel
+  is read moved from `SessionView::readable` to `AccessQuestions::channel_reading`, which both ask.
+  The suite asks the same questions, once each: the kill of 294 records the same sequence. The
+  views are read alone: `WorkspaceView` lost `terminal`, `publish_artifact` and `kill_command`, and
+  how it was reached; `tool::channel_workspace`, `ArtifactError::NotInChannel`, `Workspace` and
+  `Terminal` are gone, and `WorkspaceError::NotInChannel` became `NotUsableInChannel` (REST
+  `404 workspace_not_found`). All three shell tools reach their shell through `shell_in`;
+  `WorkspaceManager::kill_command` is REST's.

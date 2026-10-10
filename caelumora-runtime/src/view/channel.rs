@@ -65,7 +65,7 @@ impl ChannelView {
     pub async fn workspace(&self) -> ViewResult<Option<WorkspaceView>> {
         let usable = self.views().workspace_manager().usable_in(self.views().context(), self.session.as_session(), &self.channel).await
             .map_err(|e| ViewError::failed(e, "reading the session's workspace"))?;
-        Ok(usable.map(|workspace| WorkspaceView::in_channel(self.views().clone(), workspace, self.session.id(), self.channel.id)))
+        Ok(usable.map(|workspace| WorkspaceView::of(self.views().clone(), workspace)))
     }
 
     /// The artifacts with a version published in this channel, each with
