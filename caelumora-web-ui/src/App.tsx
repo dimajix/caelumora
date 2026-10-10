@@ -9,6 +9,7 @@ import {api} from './api';
 import {reportError, setErrorReporter, type ReportedError} from './errors';
 import {useSessionKeepAlive} from './session';
 import type {UserResponse} from './types';
+import {isPageOf, type Page, type PageKind} from './page';
 
 function App() {
   // undefined while the session is being checked, null when logged out.
@@ -68,40 +69,27 @@ interface LayoutProps {
   onLogout: () => void;
 }
 
-/** The sidebar, and beside it a channel, one of the user's workspaces or a skill. */
+/** The sidebar, and beside it a channel or a page in its place - a workspace or a skill. */
 function Layout({ user, onLogout }: LayoutProps) {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
-  // One of the user's workspaces (issue 253), shown in the place of a channel.
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
-  // A skill (issue 22), likewise.
-  const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
+  // What is shown in the place of a channel: one of the user's workspaces
+  // (issue 253) or a skill (issue 22).
+  const [page, setPage] = useState<Page | null>(null);
 
   const handleSelectChannel = (sessionId: string, channelId: string) => {
-    setSelectedWorkspaceId(null);
-    setSelectedSkillId(null);
+    setPage(null);
     setSelectedSessionId(sessionId);
     setSelectedChannelId(channelId);
   };
 
-  const handleSelectWorkspace = (workspaceId: string) => {
+  const handleSelectPage = (selected: Page) => {
     setSelectedChannelId(null);
-    setSelectedSkillId(null);
-    setSelectedWorkspaceId(workspaceId);
+    setPage(selected);
   };
 
-  const handleSelectSkill = (skillId: string) => {
-    setSelectedChannelId(null);
-    setSelectedWorkspaceId(null);
-    setSelectedSkillId(skillId);
-  };
-
-  const handleWorkspaceDeleted = useCallback((workspaceId: string) => {
-    setSelectedWorkspaceId(current => (current === workspaceId ? null : current));
-  }, []);
-
-  const handleSkillDeleted = useCallback((skillId: string) => {
-    setSelectedSkillId(current => (current === skillId ? null : current));
+  const handlePageGone = useCallback((kind: PageKind, id: string) => {
+    setPage(current => (isPageOf(current, kind, id) ? null : current));
   }, []);
 
   const handleChannelDeleted = useCallback((channelId: string) => {
@@ -125,25 +113,22 @@ function Layout({ user, onLogout }: LayoutProps) {
         onSelectChannel={handleSelectChannel}
         onSessionDeleted={handleSessionDeleted}
         onChannelDeleted={handleChannelDeleted}
-        selectedWorkspaceId={selectedWorkspaceId}
-        onSelectWorkspace={handleSelectWorkspace}
-        onWorkspaceDeleted={handleWorkspaceDeleted}
-        selectedSkillId={selectedSkillId}
-        onSelectSkill={handleSelectSkill}
-        onSkillDeleted={handleSkillDeleted}
+        page={page}
+        onSelectPage={handleSelectPage}
+        onPageGone={handlePageGone}
       />
       
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        {selectedWorkspaceId ? (
-          <WorkspacePage key={selectedWorkspaceId} workspaceId={selectedWorkspaceId} onDeleted={handleWorkspaceDeleted} />
-        ) : selectedSkillId ? (
-          <SkillPage key={selectedSkillId} skillId={selectedSkillId} onDeleted={handleSkillDeleted} />
+        {page?.kind === 'workspace' ? (
+          <WorkspacePage key={page.id} workspaceId={page.id} onDeleted={(id) => handlePageGone('workspace', id)} />
+        ) : page?.kind === 'skill' ? (
+          <SkillPage key={page.id} skillId={page.id} onDeleted={(id) => handlePageGone('skill', id)} />
         ) : selectedSessionId && selectedChannelId ? (
           <ChatView
             sessionId={selectedSessionId}
             channelId={selectedChannelId}
             user={user}
-            onSelectSkill={handleSelectSkill}
+            onSelectPage={handleSelectPage}
           />
         ) : (
           <div className="flex-1 flex items-center justify-center text-gray-500 dark:text-gray-400 p-4 text-center">

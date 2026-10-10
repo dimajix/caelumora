@@ -5,6 +5,7 @@ import React, {useState} from 'react';
 import {Brain, Check, ChevronDown, ChevronRight, Copy, EyeOff, Info} from 'lucide-react';
 import type {ChannelMember, Message, ToolCall} from '../types';
 import type {ChannelArtifacts, WorkspaceFiles} from '../api';
+import type {Page} from '../page';
 import {cn} from '../classNames';
 import {MarkdownMessage} from './MarkdownMessage';
 import {mentionedHandles} from '../mention';
@@ -143,8 +144,8 @@ interface MessageViewProps {
   filesVersion?: number;
   /** The artifacts of the channel, where its calls published one (issue 271). */
   artifacts?: ChannelArtifacts;
-  /** Opens a skill's page, where its calls name one (issue 281). */
-  onSelectSkill?: (skillId: string) => void;
+  /** Opens a page in the place of the channel - a skill's, where its calls name one (issue 281). */
+  onSelectPage?: (page: Page) => void;
   /** Interrupts one of its calls alone while it runs (issue 276); offered where given. */
   onInterruptCall?: (call: ToolCall) => void;
   /** Ends a command one of its calls handed back as running (issue 294); offered where given. */
@@ -153,7 +154,7 @@ interface MessageViewProps {
   endedCommands?: ReadonlySet<string>;
 }
 
-export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, badges, actions, className, files, filesVersion, artifacts, onSelectSkill, onInterruptCall, onKillCommand, endedCommands}) => (
+export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, badges, actions, className, files, filesVersion, artifacts, onSelectPage, onInterruptCall, onKillCommand, endedCommands}) => (
   <div
     className={cn(
       "max-w-[80%] p-3 rounded-lg shadow-xs",
@@ -184,7 +185,7 @@ export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, 
     {msg.tool_calls && msg.tool_calls.length > 0 && (
       <div className="mt-2 space-y-2">
         {msg.tool_calls.map((call, cidx) => (
-          <ToolCallView key={cidx} call={call} result={msg.tool_results?.find(r => r.id === call.id)} abandoned={msg.abandoned} files={files} filesVersion={filesVersion} artifacts={artifacts} onSelectSkill={onSelectSkill}
+          <ToolCallView key={cidx} call={call} result={msg.tool_results?.find(r => r.id === call.id)} abandoned={msg.abandoned} files={files} filesVersion={filesVersion} artifacts={artifacts} onSelectPage={onSelectPage}
             onInterrupt={onInterruptCall && call.id ? () => onInterruptCall(call) : undefined} onKillCommand={onKillCommand} endedCommands={endedCommands} />
         ))}
       </div>

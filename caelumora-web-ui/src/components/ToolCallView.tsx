@@ -8,6 +8,7 @@ import React, {useEffect, useState} from 'react';
 import {BookOpen, CheckCircle2, Download, EyeOff, Package, PackageCheck, File, Square, FileDiff, FileDown, FileInput, FilePen, FileText, Folder, FolderOpen, TextSearch, Terminal, Wrench, XCircle} from 'lucide-react';
 import type {ArtifactResponse, Question, ToolCall, ToolPresentation, ToolResult, ToolResultStatus, ToolVisibility} from '../types';
 import {api, type ChannelArtifacts, type WorkspaceFiles} from '../api';
+import type {Page} from '../page';
 import {ApiRequestError, reportError} from '../errors';
 import {commandResult, formatArguments, formatSize, formatTimestamp, ownerOnly, type CommandResult} from '../messages';
 import {AnswersRecord, ChoiceRows, QuestionHeading} from './QuestionView';
@@ -69,8 +70,8 @@ export interface ToolCallContentProps {
   filesVersion?: number;
   /** The artifacts of the channel as the user reaches them; absent outside the chat. */
   artifacts?: ChannelArtifacts;
-  /** Opens a skill's page in the place of the channel; absent outside the chat. */
-  onSelectSkill?: (skillId: string) => void;
+  /** Opens a page in the place of the channel - a skill's; absent outside the chat. */
+  onSelectPage?: (page: Page) => void;
   /** Ends a command a call handed back as running (issue 294); absent where the user may not change the workspace's files. */
   onKillCommand?: (commandId: string) => void;
   /** The commands a result in the channel, or the user, ended: none is offered to be ended again. */
@@ -724,7 +725,7 @@ const ArtifactPublishToolCallContent: React.FC<ToolCallContentProps> = ({call, r
  * where the arguments hold them. A loaded skill's text, the result, is never shown: it is the
  * agent's to follow.
  */
-const SkillToolCallContent: React.FC<ToolCallContentProps> = ({call, result, onSelectSkill}) => {
+const SkillToolCallContent: React.FC<ToolCallContentProps> = ({call, result, onSelectPage}) => {
   if (call.arguments === null) return <span className="text-[11px] italic opacity-60">Skill not shown</span>;
   const args = argumentsObject(call.arguments);
   const answered = resultObject(result);
@@ -738,8 +739,8 @@ const SkillToolCallContent: React.FC<ToolCallContentProps> = ({call, result, onS
       <div className="flex items-start gap-1.5 text-[11px]">
         <BookOpen size={12} className="mt-0.5 opacity-60 shrink-0" />
         <span className="min-w-0">
-          {skillId !== null && onSelectSkill ? (
-            <button type="button" onClick={() => onSelectSkill(skillId)} title="Open the skill" className="font-medium text-blue-600 dark:text-blue-400 hover:underline break-all">
+          {skillId !== null && onSelectPage ? (
+            <button type="button" onClick={() => onSelectPage({kind: 'skill', id: skillId})} title="Open the skill" className="font-medium text-blue-600 dark:text-blue-400 hover:underline break-all">
               {name ?? '?'}
             </button>
           ) : (
@@ -788,8 +789,8 @@ interface ToolCallViewProps {
   filesVersion?: number;
   /** The artifacts of the channel, for a call that published one (issue 271). */
   artifacts?: ChannelArtifacts;
-  /** Opens a skill's page, for a call that names one (issue 281). */
-  onSelectSkill?: (skillId: string) => void;
+  /** Opens a page in the place of the channel - a skill's, for a call that names one (issue 281). */
+  onSelectPage?: (page: Page) => void;
   /** Interrupts the call alone while it runs, for who may (issue 276); the turn goes on. */
   onInterrupt?: () => void;
   /** Ends a command the call handed back as running, for who may (issue 294). */
@@ -798,7 +799,7 @@ interface ToolCallViewProps {
   endedCommands?: ReadonlySet<string>;
 }
 
-export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, abandoned, files, filesVersion, artifacts, onSelectSkill, onInterrupt, onKillCommand, endedCommands}) => {
+export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, abandoned, files, filesVersion, artifacts, onSelectPage, onInterrupt, onKillCommand, endedCommands}) => {
   const Content = PRESENTATIONS[call.presentation ?? 'default'] ?? DefaultToolCallContent;
   return (
     <div className="bg-gray-50 dark:bg-gray-800 rounded-sm border border-gray-200 dark:border-gray-600 overflow-hidden">
@@ -854,7 +855,7 @@ export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, abandon
         </div>
       </div>
       <div className="p-2">
-        <Content call={call} result={result} files={files} filesVersion={filesVersion} artifacts={artifacts} onSelectSkill={onSelectSkill} onKillCommand={onKillCommand} endedCommands={endedCommands} />
+        <Content call={call} result={result} files={files} filesVersion={filesVersion} artifacts={artifacts} onSelectPage={onSelectPage} onKillCommand={onKillCommand} endedCommands={endedCommands} />
         {result?.answers && (
           // Set apart from what the presentation shows, where it shows anything.
           <div className="not-first:mt-2 not-first:pt-2 not-first:border-t border-gray-200 dark:border-gray-700">

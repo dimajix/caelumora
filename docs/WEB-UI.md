@@ -49,8 +49,9 @@ The UI shows what the server says and repeats no rule of its own:
 | `src/panelWidth.ts` | The widths of the panels beside the chat, kept in browser storage |
 | `src/classNames.ts` | `cn`, how every component composes its Tailwind classes |
 | `src/moderator.ts`, `src/confidentiality.ts`, `src/workspace.ts`, `src/scope.ts` | Labels and explanations of responder policies, classifications, storages, and where a workspace or a skill lies |
+| `src/page.ts`, `src/pageList.ts` | What is shown in the place of a channel (`Page`), and the entries of a list in the sidebar it is opened from (`usePageList`) |
 | `src/App.tsx` | Login state, keep-alive, the error banner, the layout |
-| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `ToolCallView`, `QuestionCard`, `QuestionView`, `MarkdownMessage`, `GrowingTextarea`, `ContextPanel`, `HistoryPanel`, `ToolsPanel`, `PrivateNotesPanel`, `ToolSetList`, `DeletedList`, `NotesList`, `TokenGauge`, `HoverCard`, `ActionMenu`, `ResizeHandle`, `UsageStats`, `NewSessionDialog`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ApprovalRulesDialog`, `ErrorBanner`, `WorkspacePage`, `FileBrowser`, `ChannelWorkspacePanel`, `NewWorkspaceDialog`, `ClassificationFields`, `SessionWorkspaceDialog`, `SkillPage`, `NewSkillDialog` |
+| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `ToolCallView`, `QuestionCard`, `QuestionView`, `MarkdownMessage`, `GrowingTextarea`, `ContextPanel`, `HistoryPanel`, `ToolsPanel`, `PrivateNotesPanel`, `ToolSetList`, `DeletedList`, `NotesList`, `TokenGauge`, `HoverCard`, `ActionMenu`, `ResizeHandle`, `UsageStats`, `NewSessionDialog`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ApprovalRulesDialog`, `ErrorBanner`, `PageList`, `AccessList`, `WorkspacePage`, `FileBrowser`, `ChannelWorkspacePanel`, `NewWorkspaceDialog`, `ClassificationFields`, `SessionWorkspaceDialog`, `SkillPage`, `NewSkillDialog` |
 
 ## Talking to the server
 
@@ -250,7 +251,7 @@ else who may read it - the session's owner, say - is shown its history and no in
     steps, numbered (issue 263). The `skill` handler (issue 281) shows the skill a call loads,
     writes or changes by its name, and what it is for and its text, as Markdown, where the arguments
     hold them - never the text a skill loaded gave the agent; where the result names the skill
-    (`skill_id`), the name opens its page in the chat (`onSelectSkill`, which `Layout` hands through
+    (`skill_id`), the name opens its page in the chat (`onSelectPage`, which `Layout` hands through
     `ChatView` and `MessageView`). Where a result keeps the record of the questions its call asked
     (`answers`, issue 165), the frame shows it (`AnswersRecord`, issue 268): who answered or
     declined, and each question with every choice that was offered, one below the other, the chosen

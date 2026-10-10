@@ -5,10 +5,11 @@
 
 import React, {useEffect, useMemo, useState} from 'react';
 import {Edit2, FileText, HardDrive, Shield, Trash2} from 'lucide-react';
-import type {AccessEntry, Compartment, Grant, WorkspaceResponse} from '../types';
+import type {AccessEntry, Compartment, WorkspaceResponse} from '../types';
 import {api} from '../api';
 import {reportError} from '../errors';
 import {CONFIDENTIALITY_LEVELS, classificationDescription, classificationLabel} from '../confidentiality';
+import {AccessList} from './AccessList';
 import {ActionMenu} from './ActionMenu';
 import {ClassificationDialog} from './ClassificationDialog';
 import {FileBrowser} from './FileBrowser';
@@ -127,7 +128,11 @@ export const WorkspacePage: React.FC<WorkspacePageProps> = ({workspaceId, onDele
         </div>
 
         {workspace.can_change && (
-          <AccessList access={workspace.access ?? []} onChange={(access) => void share(access)} />
+          <AccessList
+            access={workspace.access ?? []}
+            onChange={(access) => void share(access)}
+            nobody="Nobody but you. Attaching it to a session can share it with the session's members."
+          />
         )}
         {!workspace.can_write && <div className="text-xs italic text-gray-500">You may read its files, not change them.</div>}
         <FileBrowser files={files} canWrite={workspace.can_write} />
@@ -147,59 +152,3 @@ export const WorkspacePage: React.FC<WorkspacePageProps> = ({workspaceId, onDele
     </div>
   );
 };
-
-/** What `kind` of whom an entry names is called, for a reader. */
-const KIND_LABELS: Record<AccessEntry['kind'], string> = {
-  user: 'User',
-  role: 'Role',
-  session: 'Members of the session',
-  channel: 'Members of the channel',
-};
-
-interface AccessListProps {
-  access: AccessEntry[];
-  onChange: (access: AccessEntry[]) => void;
-}
-
-/**
- * Whom the workspace is shared with (issue 23), for its owner: each entry
- * with what it grants, which can be changed, or taken away. Entries are
- * added where the workspace is attached to a session.
- */
-const AccessList: React.FC<AccessListProps> = ({access, onChange}) => (
-  <div className="space-y-1">
-    <h3 className="text-sm font-medium text-gray-800 dark:text-gray-100">Shared with</h3>
-    {access.length === 0 ? (
-      <div className="text-xs italic text-gray-500">Nobody but you. Attaching it to a session can share it with the session's members.</div>
-    ) : (
-      <ul className="space-y-1 text-sm">
-        {access.map((entry, index) => (
-          <li key={`${entry.kind}-${entry.id}`} className="flex items-center gap-2">
-            <span className="flex-1 min-w-0 truncate">
-              <span className="text-xs text-gray-500">{KIND_LABELS[entry.kind]}: </span>
-              {entry.name ?? <span className="italic text-gray-500">gone</span>}
-            </span>
-            <select
-              value={entry.grant}
-              onChange={(e) => onChange(access.map((other, i) => i === index ? {...other, grant: e.target.value as Grant} : other))}
-              className="rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-1 py-0.5 text-xs"
-              aria-label={`What ${entry.name ?? 'it'} may do`}
-            >
-              <option value="read">reads</option>
-              <option value="write">reads and changes</option>
-            </select>
-            <button
-              type="button"
-              onClick={() => onChange(access.filter((_, i) => i !== index))}
-              className="p-1 rounded-md text-gray-500 hover:text-red-500 hover:bg-gray-100 dark:hover:bg-gray-800"
-              title="No longer share with them"
-              aria-label={`No longer share with ${entry.name ?? 'them'}`}
-            >
-              <Trash2 size={12} />
-            </button>
-          </li>
-        ))}
-      </ul>
-    )}
-  </div>
-);
