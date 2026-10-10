@@ -174,12 +174,11 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::component::{ComponentContainer, ComponentContext};
+    use crate::component::{ComponentContainer, ComponentContext, ComponentServices};
     use crate::workspace::testing::session_with_workspace;
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-    use caelumora_model::secret::SecretManager;
-    use caelumora_model::security::{DummySecurityManager, SecurityContext};
+    use caelumora_model::security::SecurityContext;
     use caelumora_model::store::memory::MemoryStore;
     use serde_json::json;
 
@@ -208,8 +207,7 @@ mod tests {
         let mut registry = ComponentRegistry::new(Arc::new(MemoryStore::new()));
         register(&mut registry);
         let config = ComponentConfig { component_nodes: vec![ComponentDescriptor::new("terminal", TERMINAL_TOOL_KIND)] };
-        let security_manager = Arc::new(DummySecurityManager::new());
-        let context = ComponentContext::new(SecurityContext::default(), Arc::clone(&security_manager) as _, Arc::new(SecretManager::new(vec![], security_manager)));
+        let context = ComponentContext::new(SecurityContext::default(), ComponentServices::empty());
         let container = ComponentContainer::from_config(&config, &Arc::new(registry), &context).await;
         assert!(container.is_ok(), "{:?}", container.err());
     }

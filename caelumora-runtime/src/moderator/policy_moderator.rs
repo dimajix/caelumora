@@ -540,14 +540,11 @@ mod tests {
     /// The moderator built from the channel components `config`, as a
     /// channel builds it (issue 174).
     async fn built(config: &[(&str, &str)]) -> Arc<dyn Moderator> {
-        use crate::component::{ComponentContainer, ComponentContext};
+        use crate::component::{ComponentContainer, ComponentContext, ComponentServices};
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-        use caelumora_model::security::DummySecurityManager;
         let store = Arc::new(caelumora_model::store::memory::MemoryStore::new());
         let registry = Arc::new(ComponentRegistry::built_in(store));
-        let security = Arc::new(DummySecurityManager::new());
-        let secrets = Arc::new(caelumora_model::secret::SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&security)));
-        let context = ComponentContext::new(SecurityContext::default(), security, secrets);
+        let context = ComponentContext::new(SecurityContext::default(), ComponentServices::empty());
         let config = ComponentConfig { component_nodes: config.iter().map(|(id, kind)| ComponentDescriptor::new(id, kind)).collect() };
         let container = ComponentContainer::from_config(&config, &registry, &context).await.unwrap();
         container.one::<dyn Moderator>().await.unwrap().facet
@@ -704,14 +701,11 @@ mod tests {
 
     #[tokio::test]
     async fn the_limit_of_hops_is_a_parameter_of_the_moderator() {
-        use crate::component::{ComponentContainer, ComponentContext};
+        use crate::component::{ComponentContainer, ComponentContext, ComponentServices};
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-        use caelumora_model::security::DummySecurityManager;
         let store = Arc::new(caelumora_model::store::memory::MemoryStore::new());
         let registry = Arc::new(ComponentRegistry::built_in(store));
-        let security = Arc::new(DummySecurityManager::new());
-        let secrets = Arc::new(caelumora_model::secret::SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&security)));
-        let context = ComponentContext::new(SecurityContext::default(), security, secrets);
+        let context = ComponentContext::new(SecurityContext::default(), ComponentServices::empty());
         let configured = |max_agent_hops: serde_json::Value| ComponentConfig { component_nodes: vec![ComponentDescriptor {
             params: serde_json::json!({ "max_agent_hops": max_agent_hops }),
             ..ComponentDescriptor::new("moderator", POLICY_MODERATOR_KIND)

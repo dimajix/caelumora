@@ -1,6 +1,6 @@
 use crate::channel::ChannelLoop;
 use crate::command::{CommandExecutor, ChannelCommandProvider};
-use crate::component::{ComponentContainer, ComponentContext, ComponentRegistry, ComponentResult};
+use crate::component::{ComponentContainer, ComponentContext, ComponentRegistry, ComponentResult, ComponentServices};
 use crate::controller::{ControllerManager, SessionController};
 use crate::event::EventBus;
 use crate::recorder::Recorder;
@@ -45,6 +45,9 @@ pub struct RuntimeManager {
     skills: Arc<crate::skill::SkillManager>,
     /// The one owner of artifacts and their content (issue 271).
     artifacts: Arc<crate::artifact::ArtifactManager>,
+    /// The services components may use (issue 296), each given to the
+    /// kinds that declare it (`ComponentKind::uses`).
+    component_services: ComponentServices,
 }
 
 /// What a channel runs with: the process-wide services of the
@@ -103,6 +106,8 @@ impl ChannelRuntime {
 
     pub fn secret_manager(&self) -> &Arc<SecretManager> { self.runtime_manager.secret_manager() }
 
+    pub fn component_services(&self) -> &ComponentServices { self.runtime_manager.component_services() }
+
     pub fn component_registry(&self) -> &Arc<ComponentRegistry> { self.runtime_manager.component_registry() }
 
     pub fn state_store(&self) -> &Arc<dyn StateStore> { self.runtime_manager.state_store() }
@@ -147,6 +152,8 @@ impl ActorRuntime {
     pub fn security_manager(&self) -> &Arc<dyn SecurityManager> { self.runtime.runtime_manager.security_manager() }
 
     pub fn secret_manager(&self) -> &Arc<SecretManager> { self.runtime.runtime_manager.secret_manager() }
+
+    pub fn component_services(&self) -> &ComponentServices { self.runtime.runtime_manager.component_services() }
 
     pub fn component_registry(&self) -> &Arc<ComponentRegistry> {
         self.runtime.runtime_manager.component_registry()
@@ -320,6 +327,9 @@ impl RuntimeManager {
         let skills = Arc::new(crate::skill::SkillManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus), Arc::clone(&security_manager)));
         let artifacts = Arc::new(crate::artifact::ArtifactManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus), Arc::clone(&security_manager), &config.artifacts)?);
 
+        let component_services = ComponentServices::empty()
+            .with(Arc::clone(&security_manager))
+            .with(Arc::clone(&secret_manager));
         Ok(Self {
             security_manager,
             state_store,
@@ -334,6 +344,7 @@ impl RuntimeManager {
             workspaces,
             skills,
             artifacts,
+            component_services,
         })
     }
 
@@ -347,7 +358,7 @@ impl RuntimeManager {
     pub async fn new_command_executor(&self, session: &Session) -> ComponentResult<CommandExecutor<dyn ChannelCommandProvider>> {
         let owner: ActorId = session.security_attributes.owner_id;
         let security = SecurityContext::new(owner, session.id, Default::default());
-        let context = ComponentContext::new(security, Arc::clone(self.security_manager()), Arc::clone(self.secret_manager()));
+        let context = ComponentContext::new(security, self.component_services().clone());
         let mut providers = Vec::new();
         // Each configuration on its own, so that component ids only need to
         // be unique within one of them.
@@ -369,6 +380,8 @@ impl RuntimeManager {
     pub fn entity_store(&self) -> &Arc<dyn EntityStore> { &self.entity_store }
 
     pub fn secret_manager(&self) -> &Arc<SecretManager> { &self.secret_manager }
+
+    pub fn component_services(&self) -> &ComponentServices { &self.component_services }
 
     pub fn component_registry(&self) -> &Arc<ComponentRegistry> {
         &self.component_registry

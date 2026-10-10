@@ -393,7 +393,7 @@ impl ChannelLoop {
         let components = ComponentContainer::from_config(
             &channel.components,
             runtime.component_registry(),
-            &ComponentContext::new(security_context, Arc::clone(runtime.security_manager()), Arc::clone(runtime.secret_manager())),
+            &ComponentContext::new(security_context, runtime.component_services().clone()),
         )
         .await
         .map_err(SessionError::InvalidModerator)?;

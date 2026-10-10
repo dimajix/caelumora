@@ -130,7 +130,7 @@ pub async fn load(store: &dyn EntityStore, components: &dyn ComponentStore, secu
 mod tests {
     use super::*;
     use caelumora_model::store::query::Query;
-    use crate::component::{ComponentContainer, ComponentContext, ComponentRegistry};
+    use crate::component::{ComponentContainer, ComponentContext, ComponentRegistry, ComponentServices};
     use caelumora_model::secret::SecretManager;
     use caelumora_model::security::DummySecurityManager;
     use caelumora_model::store::memory::MemoryStore;
@@ -192,7 +192,8 @@ mod tests {
         load(store.as_ref(), store.as_ref(), policy().as_ref(), &[example()]).await.unwrap();
         let registry = Arc::new(ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store)));
         let security = Arc::new(DummySecurityManager::new());
-        let context = ComponentContext::new(SecurityContext::system(), Arc::<DummySecurityManager>::clone(&security), Arc::new(SecretManager::new(vec![], security)));
+        let services = ComponentServices::empty().with(Arc::<DummySecurityManager>::clone(&security) as Arc<dyn SecurityManager>).with(Arc::new(SecretManager::new(vec![], security)));
+        let context = ComponentContext::new(SecurityContext::system(), services);
         for personality in seed.personalities.iter().map(|seeded| &seeded.personality) {
             ComponentContainer::from_config(&personality.components, &registry, &context).await
                 .unwrap_or_else(|e| panic!("personality {} cannot be built: {e}", personality.name));

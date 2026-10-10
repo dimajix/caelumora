@@ -1700,9 +1700,9 @@ async fn with_remote_at_work(calls: &Arc<Mutex<Vec<&'static str>>>, declared: Op
 /// there is one.
 async fn with_remote(calls: &Arc<Mutex<Vec<&'static str>>>, declared: Option<Classification>, gate: Option<Arc<tokio::sync::Semaphore>>) -> World {
     let calls = Arc::clone(calls);
-    World::with_kinds(|registry| registry.register(ComponentKind::new("remote_at_work").provides::<dyn ExternalAgent>(), move |_, context| {
+    World::with_kinds(|registry| registry.register(ComponentKind::new("remote_at_work").provides::<dyn ExternalAgent>().uses::<SecretManager>(), move |_, context| {
         let mut facets = ComponentFacets::empty();
-        facets.insert::<dyn ExternalAgent>(Arc::new(RemoteAtWork { secrets: Arc::clone(&context.secret_manager), calls: Arc::clone(&calls), declared: declared.clone(), gate: gate.clone() }));
+        facets.insert::<dyn ExternalAgent>(Arc::new(RemoteAtWork { secrets: Arc::clone(context.service::<SecretManager>()?), calls: Arc::clone(&calls), declared: declared.clone(), gate: gate.clone() }));
         Ok(facets)
     })).await
 }

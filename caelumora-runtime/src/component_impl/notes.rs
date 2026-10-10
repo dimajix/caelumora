@@ -256,10 +256,10 @@ fn render<'a>(own: &[Note], others: impl Iterator<Item = (&'a str, &'a [Note])>)
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(NOTES_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>(),
+        ComponentKind::new(NOTES_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>().uses::<dyn SecurityManager>(),
         |_descriptor, context| {
             let component = Arc::new(NotesComponent {
-                security_manager: Arc::clone(&context.security_manager),
+                security_manager: Arc::clone(context.service::<dyn SecurityManager>()?),
             });
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::<NotesComponent>::clone(&component));

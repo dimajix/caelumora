@@ -10,9 +10,10 @@ each operation checking itself ([SECURITY.md](../docs/SECURITY.md#views): "The m
 what changes an artifact"). `WorkspaceView` does not keep to that:
 
 *   `terminal(need)` hands out the workspace's terminal, for changing its files too (issues
-    [253](253-workspace.md), [23](23-acls-in-security-attributes.md)). Everything done with a workspace's files goes
-    through it: the file and shell tools of `terminal_tool`, `workspace_prompt_provider`, and the
-    REST handlers of `/workspaces/{id}/files`, uploading and deleting among them.
+    [253](253-workspace.md), [23](23-acls-in-security-attributes.md)). Everything done with a
+    workspace's files goes through it: the file and shell tools of `terminal_tool`,
+    `workspace_prompt_provider`, and the REST handlers of `/workspaces/{id}/files`, uploading and
+    deleting among them.
 *   `publish_artifact` (issue [271](271-publishing-artifacts.md)) reaches the terminal and has
     `ArtifactManager::publish` publish from it.
 *   `kill_command` (issue [294](294-user-ends-a-command.md)) reaches the terminal for writing and
@@ -82,6 +83,18 @@ Taken with the maintainer on 2026-10-10, when the issue was opened.
   a workspace in a channel is handed out.
 - **`publish` takes the content** and the classification.
 - A restructuring without a change of behaviour, a step of its own; it comes before 254.
+- **A tool reaches the managers through its `ComponentContext`**, decided on the same day once
+  it turned out that a tool's only way to the runtime's services is the views of its turn - the
+  reason the operations were put on the view. The context holds the services of the runtime by
+  their type, not as fields of its own: `context.service::<WorkspaceManager>()`. A kind declares
+  what it uses (`ComponentKind::uses::<T>()`, beside `provides`), and its factory is given those
+  alone. The `SecurityManager` and the `SecretManager`, fields of the context so far, become
+  services as well. Keyed by type rather than by name: the caller needs the type to use the
+  service anyway, and a name would be a second key that has to match it.
+- **Issue [128](128-actor-runtime-in-components.md) is loosened by it**: a component given the
+  `WorkspaceManager` could act with it as its agent outside of a turn. It could do so with the
+  views of a turn it keeps already; what a kind may use is now at least written down where it is
+  registered.
 
 ## Done when
 
@@ -95,3 +108,4 @@ Taken with the maintainer on 2026-10-10, when the issue was opened.
 - 2026-10-10: Opened while looking at [294](294-user-ends-a-command.md) with the maintainer:
   `kill_command` was the third operation added to `WorkspaceView`, and the scope of a command was
   made by two callers.
+- 2026-10-10: The way a tool reaches the managers decided with the maintainer (above).
