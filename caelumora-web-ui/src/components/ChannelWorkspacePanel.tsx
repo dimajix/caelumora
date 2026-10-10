@@ -3,42 +3,23 @@
 // lets the user (issue 23) - or that there is none here, without why: the
 // channel does not use it, the user may not read it, or none is attached.
 
-import React, {useEffect, useMemo, useState} from 'react';
+import React from 'react';
 import {HardDrive, Shield} from 'lucide-react';
 import type {WorkspaceResponse} from '../types';
-import {api} from '../api';
-import {reportError} from '../errors';
+import type {WorkspaceFiles} from '../api';
 import {classificationDescription, classificationLabel} from '../confidentiality';
 import {FileBrowser} from './FileBrowser';
 
 interface ChannelWorkspacePanelProps {
-  /** The session's workspace as the channel names it, if the user may read it. */
-  workspaceId?: string;
+  /** The session's workspace as the channel names it: `undefined` while it is fetched, `null` where there is none to use. */
+  workspace: WorkspaceResponse | null | undefined;
+  /** Its files as the user may use them. */
+  files: WorkspaceFiles | null;
   /** Changes whenever the workspace or its files may have changed - a tool call ended, the channel's switch. */
   version: number;
 }
 
-export const ChannelWorkspacePanel: React.FC<ChannelWorkspacePanelProps> = ({workspaceId, version}) => {
-  // What was fetched, and for which workspace: `null` where it could not be.
-  const [fetched, setFetched] = useState<{id: string; workspace: WorkspaceResponse | null} | null>(null);
-  const files = useMemo(() => workspaceId ? api.workspaceFiles(workspaceId) : null, [workspaceId]);
-
-  useEffect(() => {
-    if (!workspaceId) return;
-    let current = true;
-    api.getWorkspace(workspaceId)
-      .then(found => { if (current) setFetched({id: workspaceId, workspace: found}); })
-      .catch(error => {
-        if (!current) return;
-        reportError('Failed to fetch the workspace of the channel', error);
-        setFetched({id: workspaceId, workspace: null});
-      });
-    return () => { current = false; };
-  }, [workspaceId, version]);
-
-  // `undefined` while it is fetched, `null` where there is none to use.
-  const workspace = !workspaceId ? null : fetched?.id === workspaceId ? fetched.workspace : undefined;
-
+export const ChannelWorkspacePanel: React.FC<ChannelWorkspacePanelProps> = ({workspace, files, version}) => {
   if (workspace === undefined) return null;
   if (workspace === null || !files) {
     return <div className="text-xs italic text-gray-500">No workspace is used in this channel.</div>;

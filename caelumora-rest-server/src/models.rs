@@ -742,6 +742,25 @@ impl From<caelumora_runtime::terminal::FileEntry> for FileResponse {
     }
 }
 
+/// How a command of a workspace's shell stands (issue 294): as a result of
+/// `run_command` shows it, without what the model is told to do next.
+#[derive(Debug, Serialize)]
+pub struct CommandResponse {
+    pub id: String,
+    pub status: caelumora_runtime::terminal::CommandStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    pub output: String,
+    pub next_offset: u64,
+    pub truncated: bool,
+}
+
+impl From<caelumora_runtime::terminal::CommandState> for CommandResponse {
+    fn from(state: caelumora_runtime::terminal::CommandState) -> Self {
+        Self { id: state.id, status: state.status, exit_code: state.exit_code, output: state.output, next_offset: state.next_offset, truncated: state.truncated }
+    }
+}
+
 /// What a session or channel is for (issue 245), replacing what it said:
 /// `null` or empty removes one.
 #[derive(Debug, Deserialize)]

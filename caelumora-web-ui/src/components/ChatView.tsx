@@ -48,6 +48,7 @@ import type {
   TokenUsage,
   ToolCall,
   UserResponse,
+  WorkspaceResponse,
 } from '../types';
 import {NotesList} from './NotesList';
 import {answersOnlyWhenMentioned, responderPolicyInfo} from '../moderator';
@@ -72,7 +73,7 @@ import {cn} from '../classNames';
 import {MarkdownMessage} from './MarkdownMessage';
 import {GrowingTextarea} from './GrowingTextarea';
 import {MessageFooter, MessageView, Reasoning} from './MessageView';
-import {chatMessages, chatRows, commandNotice, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, mergeToolResults, planStepMark} from '../messages';
+import {chatMessages, chatRows, commandNotice, endedCommands, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, mergeToolResults, planStepMark} from '../messages';
 import {PlanSteps} from './PlanSteps';
 import {TokenGauge} from './TokenGauge';
 import {HoverCard} from './HoverCard';
@@ -232,6 +233,12 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   // The workspace's files as this user may read them (issue 23): what a call offers is downloaded from them (issue 273).
   const workspaceId = channel?.workspace_id;
   const workspaceFiles = useMemo(() => workspaceId ? api.workspaceFiles(workspaceId) : null, [workspaceId]);
+  // The workspace itself, and for which: `null` where it could not be fetched.
+  const [fetchedWorkspace, setFetchedWorkspace] = useState<{id: string; workspace: WorkspaceResponse | null} | null>(null);
+  // `undefined` while it is fetched, `null` where there is none to use.
+  const workspace = !workspaceId ? null : fetchedWorkspace?.id === workspaceId ? fetchedWorkspace.workspace : undefined;
+  // The commands the user ended here (issue 294), until a result shows them ended.
+  const [killedCommands, setKilledCommands] = useState<{channelId: string; ids: ReadonlySet<string>} | null>(null);
   // The channel's artifacts as this user reaches them: what a call published is downloaded from them (issue 271).
   const channelArtifacts = useMemo(() => api.channelArtifacts(sessionId, channelId), [sessionId, channelId]);
   // The widths of the channel panel and of the panel showing an agent's
@@ -370,6 +377,19 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
       .then(setCompartments)
       .catch(error => reportError('Failed to load the compartments', error));
   }, []);
+
+  useEffect(() => {
+    if (!workspaceId) return;
+    let current = true;
+    api.getWorkspace(workspaceId)
+      .then(found => { if (current) setFetchedWorkspace({id: workspaceId, workspace: found}); })
+      .catch(error => {
+        if (!current) return;
+        reportError('Failed to fetch the workspace of the channel', error);
+        setFetchedWorkspace({id: workspaceId, workspace: null});
+      });
+    return () => { current = false; };
+  }, [workspaceId, workspaceVersion]);
 
   useEffect(() => {
     api.getCommands(sessionId, channelId)
@@ -1071,6 +1091,31 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     }
   };
 
+  // The commands ended in the channel: by a result that shows them so, or by the user (issue 294).
+  const ended = useMemo(() => {
+    const ids = endedCommands(messages);
+    if (killedCommands?.channelId === channelId) killedCommands.ids.forEach(id => ids.add(id));
+    return ids;
+  }, [messages, killedCommands, channelId]);
+
+  /**
+   * Ends the command `commandId` a call handed back as running, with what it
+   * started (issue 294): offered to who may change the workspace's files.
+   * The agent learns it the next time it follows the command. One the
+   * workspace no longer knows is not offered again either.
+   */
+  const killCommand = async (commandId: string) => {
+    const done = () => setKilledCommands(prev => ({channelId, ids: new Set([...(prev?.channelId === channelId ? prev.ids : []), commandId])}));
+    try {
+      await api.killCommand(sessionId, channelId, commandId);
+      done();
+      setWorkspaceVersion(v => v + 1);
+    } catch (error) {
+      if (error instanceof ApiRequestError && error.code === 'command_not_found') done();
+      reportError('Failed to end the command', error);
+    }
+  };
+
   /**
    * Asks for another answer instead of `answer`, still under way (issue
    * 235): offered once its turn is known and where its answerer's
@@ -1266,6 +1311,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
       artifacts={channelArtifacts}
       onSelectSkill={onSelectSkill}
       onInterruptCall={mayInterruptCallsOf(msg) ? (call) => void interruptCall(msg, call) : undefined}
+      onKillCommand={workspace?.can_write ? (commandId) => void killCommand(commandId) : undefined}
+      endedCommands={ended}
       badges={channel && msg.classification && !sameClassification(msg.classification, channel.classification)
         ? [`released: ${classificationLabel(msg.classification)}`]
         : undefined}
@@ -1761,7 +1808,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
             </button>
           </div>
           {sideTab === 'notes' ? <NotesList notes={notes} /> : sideTab === 'workspace' ? (
-            <ChannelWorkspacePanel workspaceId={workspaceId} version={workspaceVersion} />
+            <ChannelWorkspacePanel workspace={workspace} files={workspaceFiles} version={workspaceVersion} />
           ) : (<>
           {channel && (
             <ChannelDescription channel={channel} onEdit={() => setIsDescribing(true)} />

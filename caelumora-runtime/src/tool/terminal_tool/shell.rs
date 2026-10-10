@@ -7,11 +7,15 @@
 //! its future is gone, in a task of its own bounded by `KILL_WITHIN`, which
 //! the drop does not await. A command left running would go on writing into
 //! the workspace after the turn that started it. One handed back as running
-//! is the model's to end.
+//! is the model's to end, or a user's (issue 294): `kill_command` ends it as
+//! `WorkspaceView::kill_command` does for them.
 
-use super::{failed, tool, TerminalToolConfig};
+use super::{failed, tool, unusable, TerminalToolConfig};
 use crate::agent::turn::Turn;
-use crate::terminal::{CommandState, CommandStatus, Shell, Terminal};
+use crate::terminal::{CommandState, CommandStatus, Shell};
+use crate::view::WorkspaceView;
+use crate::workspace::WorkspaceError;
+use caelumora_model::security::Grant;
 use crate::tool::{arguments, ToolError, ToolResult};
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation};
 use serde::Deserialize;
@@ -172,9 +176,20 @@ pub(super) fn describe(name: &str, params: &Value) -> ToolResult<String> {
     }
 }
 
-/// Runs the shell tool `name` with `params` on `terminal`, in the turn's
-/// channel.
-pub(super) async fn execute(config: &TerminalToolConfig, name: &str, params: &Value, terminal: &dyn Terminal, turn: &Turn<'_>) -> ToolResult<Value> {
+/// Runs the shell tool `name` with `params` in `workspace`, in the turn's
+/// channel. The shell may change anything its place reaches: its terminal
+/// is reached for writing (issue 23). A command is ended as a user ends it,
+/// by the workspace (issue 294).
+pub(super) async fn execute(config: &TerminalToolConfig, name: &str, params: &Value, workspace: &WorkspaceView, turn: &Turn<'_>) -> ToolResult<Value> {
+    if name == KILL_COMMAND {
+        let Follow { id, offset, .. } = arguments(params)?;
+        let state = workspace.kill_command(&id, offset.unwrap_or(0)).await.map_err(|e| match e {
+            WorkspaceError::Terminal(e) => failed(e),
+            e => unusable(e),
+        })?;
+        return Ok(result(config, state));
+    }
+    let terminal = workspace.terminal(Grant::Write).await.map_err(unusable)?;
     let shell = terminal.shell().ok_or_else(|| ToolError::ExecutionFailed("the workspace's storage gives it no shell".to_string()))?;
     let scope = turn.channel_id().to_string();
     let state = match name {
@@ -189,13 +204,9 @@ pub(super) async fn execute(config: &TerminalToolConfig, name: &str, params: &Va
             guard.disarm();
             state
         }
-        COMMAND_OUTPUT => {
+        _ => {
             let Follow { id, offset, wait_secs } = arguments(params)?;
             shell.output(&scope, &id, offset.unwrap_or(0), wait(config, wait_secs)).await
-        }
-        _ => {
-            let Follow { id, offset, .. } = arguments(params)?;
-            shell.kill(&scope, &id, offset.unwrap_or(0)).await
         }
     }.map_err(failed)?;
     Ok(result(config, state))

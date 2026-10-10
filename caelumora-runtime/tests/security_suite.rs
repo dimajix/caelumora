@@ -44,7 +44,7 @@ use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegi
 use caelumora_runtime::external::{ExternalAgent, ExternalAgentResult, ExternalEvent, ExternalStream, OutboundMessage};
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::session::{ChannelSpec, SessionError, SessionLoop, SessionManager};
-use caelumora_runtime::terminal::{ByteStream, Terminal, WorkspacePath};
+use caelumora_runtime::terminal::{ByteStream, CommandStatus, Terminal, TerminalError, WorkspacePath};
 use caelumora_runtime::view::{ViewError, Viewer};
 use caelumora_runtime::workspace::WorkspaceError;
 use caelumora_runtime::artifact::ArtifactError;
@@ -2437,6 +2437,49 @@ async fn a_workspace_is_used_in_a_channel_by_its_members_as_its_list_lets_them_w
 
     workspaces.reclassify(&alice, docs.id, Classification::PUBLIC).await.unwrap();
     assert!(in_main(&bob).await.workspace().await.unwrap().is_none(), "not where what is seen may not flow into it");
+    world.manager.stop_session(&alice, session.id()).await.unwrap();
+}
+
+/// Issue 294: a command an agent's call handed back as running is ended by a
+/// user through the workspace as the channel offers it - by whoever may
+/// change its files there, who could have started the command; not by who
+/// only reads them. A command is seen only in the channel it was started
+/// in, and a workspace reached directly ends none.
+#[tokio::test]
+async fn a_command_is_ended_in_its_channel_by_who_may_change_the_workspace_there() {
+    let world = World::new().await;
+    let workspaces = world.runtime.workspace_manager();
+    let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
+    let docs = workspaces.create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "shell", None, Classification::general(Confidentiality::Internal)).await.unwrap();
+    let session = world.shared_session(&[], &[]).await;
+    session.set_workspace(&alice, Some(docs.id), Some(Grant::Read)).await.unwrap();
+    let (session_id, main) = (session.id(), session.channels()[0].id());
+    let in_main = |ctx: &SecurityContext| {
+        let views = world.manager.views(Viewer::new(ctx.clone()));
+        async move { views.session(session_id).await.unwrap().channel(main).await.unwrap().workspace().await.unwrap().expect("used in main") }
+    };
+    // As `run_command` starts them: under the channel's scope.
+    let shell = in_main(&alice).await.terminal(Grant::Write).await.unwrap().shell().expect("a shell");
+    let started = shell.start(&main.to_string(), "sleep 30").await.unwrap();
+    let other = ChannelId::new().to_string();
+    let elsewhere = shell.start(&other, "sleep 30").await.unwrap();
+
+    let bobs = in_main(&bob).await;
+    let (refused, asked) = world.asked(bobs.kill_command(&started, 0)).await;
+    assert!(matches!(refused, Err(WorkspaceError::ReadOnly(_))), "not by who only reads its files: {refused:?}");
+    // Asked again as it is now: the channel, the workspace as the channel
+    // offers it, then whether he may change its files.
+    let reached = ["bob: GetSession(alice's) yes", "bob: GetChannel(alice's) yes", "bob: JoinChannel(bob) yes", "bob: GetWorkspace(alice's) yes", "bob: Publish yes", "bob: Publish yes"];
+    assert_eq!(asked, checks(&[&reached[..], &["bob: WriteWorkspace(alice's) no"]].concat()));
+    workspaces.share(&alice, docs.id, Subject::MemberOf(Membership::Session(session_id)), Grant::Write).await.unwrap();
+    let (killed, asked) = world.asked(bobs.kill_command(&started, 0)).await;
+    assert_eq!(killed.expect("by who may change them").status, CommandStatus::Killed);
+    assert_eq!(asked, checks(&[&reached[..], &["bob: WriteWorkspace(alice's) yes"]].concat()));
+    let unknown = bobs.kill_command(&elsewhere, 0).await;
+    assert!(matches!(unknown, Err(WorkspaceError::Terminal(TerminalError::UnknownCommand(_)))), "not one of another channel: {unknown:?}");
+    let direct = world.manager.views(Viewer::new(alice.clone())).workspace(docs.id).await.unwrap().kill_command(&elsewhere, 0).await;
+    assert!(matches!(direct, Err(WorkspaceError::NotInChannel)), "nor by the workspace reached directly: {direct:?}");
+    shell.kill(&other, &elsewhere, 0).await.unwrap();
     world.manager.stop_session(&alice, session.id()).await.unwrap();
 }
 

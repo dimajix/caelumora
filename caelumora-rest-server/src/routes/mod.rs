@@ -186,6 +186,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/sessions/{id}/channels/{cid}/restore", post(channels::restore_channel))
         .route("/sessions/{id}/channels/{cid}/uses-workspace", axum::routing::put(workspaces::set_uses_workspace))
         .route("/sessions/{id}/channels/{cid}/artifacts", get(artifacts::channel_artifacts))
+        .route("/sessions/{id}/channels/{cid}/commands/{command_id}/kill", post(workspaces::kill_command))
         .route(
             "/sessions/{id}/channels/{cid}/messages/{mid}",
             axum::routing::put(channels::modify_message).delete(channels::revoke_message),

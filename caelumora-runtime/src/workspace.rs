@@ -64,6 +64,10 @@ pub enum WorkspaceError {
     /// files (issue 23).
     #[error("you may read the workspace {0}, not change its files")]
     ReadOnly(WorkspaceId),
+    /// Done to a workspace reached directly what is done only in a channel
+    /// that uses it - ending a command started there (issue 294).
+    #[error("this is done only in a channel that uses the workspace")]
+    NotInChannel,
     /// Its storage may not hold what is so classified (issue 251): a place
     /// with a shell or a remote side is cleared for so much.
     #[error("the storage '{0}' may not hold a workspace so classified")]

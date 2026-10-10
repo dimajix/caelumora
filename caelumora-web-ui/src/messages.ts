@@ -1,6 +1,6 @@
 // Helpers for showing messages, shared by the chat and the context panel.
 
-import type {ActorId, GivenUpReason, HistoryItem, Message, PlanStep, TokenUsage, ToolVisibility} from './types';
+import type {ActorId, GivenUpReason, HistoryItem, Message, PlanStep, TokenUsage, ToolResult, ToolVisibility} from './types';
 import {classificationLabel} from './confidentiality';
 
 export function formatArguments(args: unknown): string {
@@ -34,6 +34,39 @@ export function mergeToolResults(messages: Message[]): Message[] {
     }
     return [...acc, msg];
   }, []);
+}
+
+/** What a shell tool answers of a command (issue 251). */
+export interface CommandResult {
+  id: string;
+  status: 'running' | 'completed' | 'killed' | 'failed';
+  output: string;
+  truncated: boolean;
+  exit_code?: number;
+}
+
+/** The result of a successful call of a shell tool, or `null` for any other. */
+export function commandResult(result: ToolResult): CommandResult | null {
+  if (result.status && result.status !== 'ok') return null;
+  try {
+    const parsed = JSON.parse(result.content);
+    return typeof parsed?.id === 'string' && typeof parsed?.status === 'string' && typeof parsed?.output === 'string' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The commands that results among `messages` show ended (issue 294): those of a shell tool's result not `running`. */
+export function endedCommands(messages: Message[]): Set<string> {
+  const ended = new Set<string>();
+  for (const msg of messages) {
+    for (const call of msg.tool_calls ?? []) {
+      const result = call.presentation === 'shell' ? msg.tool_results?.find(r => r.id === call.id) : undefined;
+      const command = result && commandResult(result);
+      if (command && command.status !== 'running') ended.add(command.id);
+    }
+  }
+  return ended;
 }
 
 /** Why a turn was given up (issues 145, 258), in this page's words. */

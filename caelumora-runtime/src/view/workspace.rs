@@ -6,7 +6,7 @@
 
 use super::{ViewError, Views};
 use crate::artifact::{ArtifactError, ArtifactResult};
-use crate::terminal::{Terminal, WorkspacePath};
+use crate::terminal::{CommandState, Terminal, TerminalError, WorkspacePath};
 use crate::workspace::{WorkspaceError, WorkspaceResult};
 use caelumora_model::artifact::Artifact;
 use caelumora_model::confidentiality::Classification;
@@ -138,6 +138,24 @@ impl WorkspaceView {
         let Way::InChannel { session, channel } = self.way else { return Err(ArtifactError::NotInChannel) };
         let terminal = self.terminal(Grant::Read).await?;
         self.views.artifact_manager().publish(self.views.context(), terminal.as_ref(), &self.workspace, at, name, description, session, channel).await
+    }
+
+    /// Ends the command `id` of its shell, started in the channel it was
+    /// reached through, with everything the command started (issue 294), in
+    /// the viewer's name: a command is seen only in its channel, and who may
+    /// change the files there - who could have started it - may end it. Its
+    /// terminal is reached as `terminal` reaches it for writing, asked
+    /// again. Answers what it printed since `offset`, and how it stands.
+    ///
+    /// # Errors
+    /// `NotInChannel` for a workspace reached directly, what `terminal`
+    /// reports, or `Terminal(UnknownCommand)` if no command `id` is known
+    /// in the channel - as where its storage gives it no shell.
+    pub async fn kill_command(&self, id: &str, offset: u64) -> WorkspaceResult<CommandState> {
+        let Way::InChannel { channel, .. } = self.way else { return Err(WorkspaceError::NotInChannel) };
+        let terminal = self.terminal(Grant::Write).await?;
+        let shell = terminal.shell().ok_or_else(|| TerminalError::UnknownCommand(id.to_string()))?;
+        Ok(shell.kill(&channel.to_string(), id, offset).await?)
     }
 
     pub async fn snapshot(&self) -> WorkspaceSnapshot {
