@@ -1,0 +1,53 @@
+# 297 — Caelumora ends without an orderly shutdown
+
+**Status:** open
+**Area:** Observability and operations
+
+## The problem
+
+The REST server ends with `axum::serve(listener, app).await?`: no signal is caught, nothing is
+stopped. SIGINT or SIGTERM end the process where it stands; so does leaving the TUI, which builds
+the runtime itself (`caelumora-tui/src/main.rs`). Then
+
+*   the agents' turns end mid-step, and no actor is given the time to store its state on its way
+    out, as `stop_session` gives it (`stop_actors`, issue 187);
+*   a stream of server-sent events breaks off instead of being closed;
+*   a command of the `local` shell is left running, its process group known to nothing after a
+    restart (issue [254](254-commands-run-unbounded.md)) - an Open Terminal instance keeps its
+    commands, which end at the storage's `max_run_secs`.
+
+## Why it matters
+
+A deploy or a restart is an ordinary event, not a failure, and should leave what was running as it
+would be left by stopping its session: state stored, commands ended, clients told. Today only a
+session stopped by hand ends that way.
+
+## Considerations
+
+- **What it takes.** A signal handler (`tokio::signal`, SIGINT and SIGTERM) and
+  `serve(...).with_graceful_shutdown(...)`; a way to end the streams, since a graceful shutdown
+  waits for every connection and the global stream never ends by itself (`routes/events.rs` ends on
+  `std::future::pending()`) - e.g. a `CancellationToken` in `AppState`; then a
+  `SessionManager::shutdown()` that stops every running session as `stop_session` does - which also
+  ends their commands (254) - and ends what a storage still lists. The same for the TUI.
+- **A bound.** Everything within the time a supervisor leaves between SIGTERM and SIGKILL (Docker
+  10 s, systemd 90 s): commands ended in parallel, actors given a bounded time, the rest dropped. A
+  shutdown that hangs is worse than none.
+- **Open Terminal's commands run on.** After a restart the instance still knows a command, and the
+  model can follow it by its id; ending it at shutdown would take that away, and its bound ends it
+  anyway. Only the `local` shell's commands are ended.
+- **What it does not close.** SIGKILL, the OOM killer, a crash or a power loss pass any shutdown:
+  orphans of the `local` shell stay possible. Closing that would take remembering its process
+  groups beyond the process (a file under the storage's root) and killing them at start - with the
+  risk of a process id used again. `local` is for development; whether that is worth it is open.
+
+## Done when
+
+- SIGINT, SIGTERM and leaving the TUI stop the running sessions as `stop_session` does, close the
+  streams and end the `local` shell's commands, within a bound.
+
+## History
+
+- **2026-10-10** — Opened while deciding the open points of [254](254-commands-run-unbounded.md)
+  with the maintainer: a `local` command left running when Caelumora ends belongs to an orderly
+  shutdown, which is worth having for the actors and the streams in the first place.
