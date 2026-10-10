@@ -161,7 +161,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/artifacts/{id}/description", axum::routing::put(artifacts::describe_artifact))
         .route("/artifacts/{id}/restore", post(artifacts::restore_artifact))
         .route("/artifacts/{id}/purge", post(artifacts::purge_artifact))
-        .route("/artifacts/{id}/versions/{n}/content", get(artifacts::download_owned_version))
+        .route("/artifacts/{id}/access", axum::routing::put(artifacts::set_access))
+        .route("/artifacts/{id}/versions/{n}/content", get(artifacts::download_version))
         .route("/sessions", get(sessions::list_sessions).post(sessions::create_session))
         .route(
             "/sessions/{id}",
@@ -185,7 +186,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/sessions/{id}/channels/{cid}/restore", post(channels::restore_channel))
         .route("/sessions/{id}/channels/{cid}/uses-workspace", axum::routing::put(workspaces::set_uses_workspace))
         .route("/sessions/{id}/channels/{cid}/artifacts", get(artifacts::channel_artifacts))
-        .route("/sessions/{id}/channels/{cid}/artifacts/{aid}/versions/{n}/content", get(artifacts::download_channel_version))
         .route(
             "/sessions/{id}/channels/{cid}/messages/{mid}",
             axum::routing::put(channels::modify_message).delete(channels::revoke_message),

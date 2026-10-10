@@ -125,10 +125,14 @@ pub enum ActionType<'a> {
     /// read but not used, or the other way round; whether its classification
     /// may flow into the channel is asked besides (`Publish`).
     UseSkill(&'a SecurityAttributes),
-    /// Reading an artifact (issue 271) with its versions' content, as its
-    /// owner, outside the channels it was published in - where whoever
-    /// may read the channel reads the versions published there.
+    /// Reading an artifact (issue 271), carrying its attributes - or a
+    /// version's content, carrying what reads that version: the artifact's
+    /// attributes with the version's own list (issue 23,
+    /// `Artifact::version_attributes`).
     GetArtifact(&'a SecurityAttributes),
+    /// Adding a version to an artifact (issue 23): what its list grants
+    /// `Write`.
+    WriteArtifact(&'a SecurityAttributes),
     ListArtifacts,
     CreateArtifact(&'a SecurityAttributes),
     /// Changing an artifact - a version added, its description, the scope
@@ -290,6 +294,7 @@ impl ActionType<'_> {
             ActionType::DeleteSkill(_) => "DeleteSkill".into(),
             ActionType::UseSkill(_) => "UseSkill".into(),
             ActionType::GetArtifact(_) => "GetArtifact".into(),
+            ActionType::WriteArtifact(_) => "WriteArtifact".into(),
             ActionType::ListArtifacts => "ListArtifacts".into(),
             ActionType::CreateArtifact(_) => "CreateArtifact".into(),
             ActionType::UpdateArtifact(_) => "UpdateArtifact".into(),
@@ -588,9 +593,17 @@ pub trait AccessQuestions {
     async fn may_write_workspace(&self, context: &SecurityContext, workspace: &SecurityAttributes) -> bool;
 
     /// Whether `context` may change an artifact with these attributes -
-    /// keep it in another scope, describe it, delete it (`UpdateArtifact`,
-    /// issue 271).
+    /// keep it in another scope, describe it, share it, delete it
+    /// (`UpdateArtifact`, issue 271).
     async fn may_change_artifact(&self, context: &SecurityContext, artifact: &SecurityAttributes) -> bool;
+
+    /// Whether `context` may read what has these attributes - an artifact,
+    /// or one of its versions (`GetArtifact`, issue 23).
+    async fn may_read_artifact(&self, context: &SecurityContext, artifact: &SecurityAttributes) -> bool;
+
+    /// Whether `context` may add a version to an artifact with these
+    /// attributes (`WriteArtifact`, issue 23).
+    async fn may_write_artifact(&self, context: &SecurityContext, artifact: &SecurityAttributes) -> bool;
 
     /// Whether what comes from `from` - a message, a note, or what an agent
     /// remembered there - may be copied into the channel of `into`
@@ -710,6 +723,14 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
 
     async fn may_change_artifact(&self, context: &SecurityContext, artifact: &SecurityAttributes) -> bool {
         self.check(context, ActionType::UpdateArtifact(artifact)).await
+    }
+
+    async fn may_read_artifact(&self, context: &SecurityContext, artifact: &SecurityAttributes) -> bool {
+        self.check(context, ActionType::GetArtifact(artifact)).await
+    }
+
+    async fn may_write_artifact(&self, context: &SecurityContext, artifact: &SecurityAttributes) -> bool {
+        self.check(context, ActionType::WriteArtifact(artifact)).await
     }
 
     async fn may_copy_information(&self, context: &SecurityContext, from: &Place, into: &Place) -> bool {
@@ -1013,6 +1034,8 @@ impl SecurityManager for OwnershipSecurityManager {
             // Changing a workspace's files: what its list grants writing
             // (issue 23) - to the principal, or an agent taking part itself.
             ActionType::WriteWorkspace(a) => self.granted(a, Grant::Write, context, true).await,
+            // Adding a version to an artifact, likewise (issue 23).
+            ActionType::WriteArtifact(a) => self.granted(a, Grant::Write, context, true).await,
             ActionType::CancelChannel(a)
             | ActionType::WakeChannel(a)
             | ActionType::RetryMessage(a)

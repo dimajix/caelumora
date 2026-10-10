@@ -334,3 +334,31 @@ Issues to open with it: a group of our own as a subject; a cache for `Membership
     by the turn is a change of `ToolProvider` of its own.
   - An artifact keeps an empty list until step 3 (`Artifact::validate`).
   Stored data to delete: workspaces, whose attributes now carry the list.
+- **2026-10-10** — Step 3 done, decided with the maintainer before it was built. A list on the
+  artifact alone (decision 7's `MemberOf(channel it was published in)`) would have let the members
+  of every channel a version was published in read all versions - drafts published where few are
+  among them. Instead, beside the artifact's own list, **every version carries a list of its own**
+  (`ArtifactVersion::acl`), which publishing gives the members of its channel; a version is read by
+  whom either grants it (`Artifact::version_attributes`, asked as `GetArtifact`), so a draft kept
+  to a private channel reaches nobody who reads the version published to the team. One meaning
+  for an entry everywhere: it grants what it hangs on.
+  - The description a publication gives goes to its version; the artifact's own is its owner's,
+    set by `describe`. Whoever reads a version sees the artifact's name and its owner's
+    description, and of the versions only those they may read - their numbers show that others
+    exist, accepted.
+  - Adding a version is `WriteArtifact`, what the artifact's list grants `Write` - its owner
+    always; a version's list grants reading alone (`Artifact::validate`). The artifact is changed
+    in the runtime's name then, its owner unchanged. Keeping, describing, sharing
+    (`ArtifactManager::set_access`, `PUT /artifacts/{id}/access`) and deleting stay its owner's.
+  - Reading goes through the manager (`readable`, `reached`, `all_readable`, `published_in` with
+    the viewer's context), which reads in the runtime's name and asks per version - the store's
+    own check knows the artifact's list alone. `content` asks the clearance besides. Events about
+    a version go to its readers, those about the artifact to all who read any version
+    (`reader_attributes`).
+  - The channel's download route is gone; `GET …/channels/{cid}/artifacts` stays, listing what
+    was published there that the viewer may read. Showing and changing whom an artifact is shared
+    with in the web UI is issue [291](291-share-artifacts-in-the-web-ui.md); changing a version's
+    own list after publishing is not offered yet.
+  - Names of whom a list names are resolved in one place for workspaces and artifacts
+    (`Views::access_snapshots`).
+  Stored data to delete: artifacts, whose versions now carry a list and a description.

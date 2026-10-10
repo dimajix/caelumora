@@ -64,12 +64,16 @@ artifact, preconfigured component - carries `SecurityAttributes`: an `owner_id` 
     reading read and use it. Using it - loading it into a turn - is `UseSkill`, granted as reading:
     what the owner may read, the agent may follow. A user is shown one only if cleared for its
     classification; see [SKILLS.md](SKILLS.md#who-may-do-what).
-*   An artifact is owned by the user the agent that published it acts for, always a user, and
-    grants nobody anything of its own (issue [271](../issues/271-publishing-artifacts.md)): its
-    owner reads every version (`GetArtifact`), wherever it lies, and alone keeps, describes and
-    deletes it (`UpdateArtifact`, `DeleteArtifact`). A version is read by whoever reads the channel
-    it was published in as a whole, through the channel's view - no `GetArtifact` is asked of them,
-    and none of the versions published elsewhere is shown.
+*   An artifact is owned by the user the agent that published it acts for, always a user (issue
+    [271](../issues/271-publishing-artifacts.md)); only its owner keeps, describes, shares and
+    deletes it (`UpdateArtifact`, `DeleteArtifact`). Its own list grants the whole of it; each
+    version has a list of its own besides, which publishing gives the members of the channel it is
+    published in (issue 23). A version is read (`GetArtifact` with `Artifact::version_attributes`)
+    by whom either grants it, by the artifact, wherever they act and cleared for its
+    classification - so drafts published in a channel of few reach nobody who reads only the
+    version published to many. A version is added by whom the artifact's list grants `Write`
+    (`WriteArtifact`); a version's list grants reading alone. Whoever reads a version sees the
+    artifact's name and its owner's description, and of the versions only those they may read.
 *   Initial data belongs to the system.
 *   A `User` record belongs to the system, too (issue 94): only the user providers and the setup
     write it, so that nobody can grant themselves roles. What a user writes about themselves lives

@@ -395,12 +395,17 @@ export interface ArtifactResponse {
   /** `session`: published in it, and gone with it unless kept. */
   scope: ScopeKind;
   session_id?: string;
+  /** What it is as a whole, as its owner describes it. */
   description?: string;
   classification: Classification;
-  /** Oldest first. */
+  /** Oldest first; those you may read alone (issue 23). */
   versions: ArtifactVersion[];
-  /** Whether you may keep, describe or delete it: its owner. */
+  /** Whether you may keep, describe, share or delete it: its owner. */
   can_change: boolean;
+  /** Whether you may add a version (issue 23). */
+  can_write: boolean;
+  /** Whom it is shared with as a whole - only for its owner. */
+  access?: AccessEntry[];
 }
 
 /** A version of an artifact: what was published, where and by whom. */
@@ -409,10 +414,14 @@ export interface ArtifactVersion {
   size: number;
   digest: string;
   media_type?: string;
+  /** What it is, as it was described when it was published (issue 23). */
+  description?: string;
   session_id: string;
   channel_id: string;
   published_by: ActorId;
   published_at: string;
+  /** Who reads it besides whom the artifact is shared with - only for its owner. */
+  access?: AccessEntry[];
 }
 
 export interface CreateWorkspaceRequest {

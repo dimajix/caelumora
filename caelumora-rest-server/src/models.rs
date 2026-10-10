@@ -636,11 +636,16 @@ pub struct ArtifactResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<Description>,
     pub classification: Classification,
-    /// Oldest first.
+    /// Oldest first; those you may read alone (issue 23).
     pub versions: Vec<ArtifactVersionResponse>,
-    /// Whether you may change it - keep it, describe it, delete it: its
-    /// owner.
+    /// Whether you may change it - keep it, describe it, share it, delete
+    /// it: its owner.
     pub can_change: bool,
+    /// Whether you may add a version to it (issue 23).
+    pub can_write: bool,
+    /// Whom it is shared with as a whole (issue 23) - only for its owner.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub access: Vec<AccessEntry>,
 }
 
 /// A version of an artifact: what was published, where and by whom.
@@ -651,21 +656,34 @@ pub struct ArtifactVersionResponse {
     pub digest: caelumora_model::digest::Digest,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub media_type: Option<String>,
+    /// What it is, as it was described when it was published (issue 23).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<Description>,
     pub session_id: SessionId,
     pub channel_id: ChannelId,
     pub published_by: ActorId,
     pub published_at: DateTime<Utc>,
+    /// Who reads it besides whom the artifact is shared with - the members
+    /// of the channel it was published in - only for its owner.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub access: Vec<AccessEntry>,
 }
 
 impl From<snapshot::ArtifactSnapshot> for ArtifactResponse {
     fn from(view: snapshot::ArtifactSnapshot) -> Self {
         let artifact = view.artifact;
         let (scope, session_id) = ScopeKind::of(&artifact.name.scope);
+        let mut version_access = view.version_access;
         let versions = artifact.versions.into_iter().map(|v| ArtifactVersionResponse {
-            number: v.number, size: v.size, digest: v.digest, media_type: v.media_type,
+            access: version_access.remove(&v.number).unwrap_or_default().into_iter().filter_map(AccessEntry::of).collect(),
+            number: v.number, size: v.size, digest: v.digest, media_type: v.media_type, description: v.description,
             session_id: v.session_id, channel_id: v.channel_id, published_by: v.published_by, published_at: v.published_at,
         }).collect();
-        Self { id: artifact.id, name: artifact.name.name.to_string(), scope, session_id, description: artifact.description, classification: artifact.classification, versions, can_change: view.can_change }
+        let access = view.access.into_iter().filter_map(AccessEntry::of).collect();
+        Self {
+            id: artifact.id, name: artifact.name.name.to_string(), scope, session_id, description: artifact.description, classification: artifact.classification, versions,
+            can_change: view.can_change, can_write: view.can_write, access,
+        }
     }
 }
 

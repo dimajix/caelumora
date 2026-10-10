@@ -255,6 +255,7 @@ impl ApiError {
             match e {
                 ArtifactError::NotFound(_) | ArtifactError::Store(StoreError::NotFound { .. }) => return Self::not_found("artifact_not_found", detail),
                 ArtifactError::VersionNotFound { .. } => return Self::not_found("version_not_found", detail),
+                ArtifactError::NotCleared => return Self::forbidden("not_cleared", detail),
                 ArtifactError::NotConfigured => return bad_request("artifacts_not_configured"),
                 ArtifactError::UnknownStorage(_) => return bad_request("unknown_storage"),
                 ArtifactError::StorageNotCleared(_) => return bad_request("storage_not_cleared"),

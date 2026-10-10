@@ -10,11 +10,9 @@ use crate::terminal::{Terminal, WorkspacePath};
 use crate::workspace::{WorkspaceError, WorkspaceResult};
 use caelumora_model::artifact::Artifact;
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::actor::ActorId;
-use caelumora_model::security::{AccessQuestions, Grant, Membership, SecurityContext, Subject};
+use caelumora_model::security::{AccessQuestions, Grant};
 use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::snapshot::{AccessSnapshot, WorkspaceSnapshot};
-use caelumora_model::store::StoreResultExt;
+use caelumora_model::snapshot::WorkspaceSnapshot;
 use caelumora_model::value::text::Description;
 use caelumora_model::workspace::{Workspace, WorkspaceId};
 use std::sync::Arc;
@@ -145,7 +143,7 @@ impl WorkspaceView {
     pub async fn snapshot(&self) -> WorkspaceSnapshot {
         let can_change = self.may_change().await;
         let access = match can_change {
-            true => self.access().await,
+            true => self.views.access_snapshots(&self.workspace.security_attributes.acl).await,
             false => Vec::new(),
         };
         WorkspaceSnapshot {
@@ -162,23 +160,4 @@ impl WorkspaceView {
         }
     }
 
-    /// Its access list with whom each entry names called by name, read in
-    /// the runtime's name: its owner, who alone is shown it, may name a
-    /// session or user they cannot read themselves no more.
-    async fn access(&self) -> Vec<AccessSnapshot> {
-        let entities = self.views.entities();
-        let system = SecurityContext::system();
-        let mut access = Vec::with_capacity(self.workspace.security_attributes.acl.len());
-        for entry in &self.workspace.security_attributes.acl {
-            let name = match entry.subject {
-                Subject::Actor(ActorId::User(user)) => entities.get_user(&system, user).await.optional().ok().flatten().map(|u| u.username.to_string()),
-                Subject::Actor(_) => None,
-                Subject::Role(role) => self.views.security().role_name(role),
-                Subject::MemberOf(Membership::Session(session)) => entities.get_session(&system, session).await.optional().ok().flatten().map(|s| s.name.to_string()),
-                Subject::MemberOf(Membership::Channel(channel)) => entities.get_channel(&system, channel).await.optional().ok().flatten().map(|c| c.name.to_string()),
-            };
-            access.push(AccessSnapshot { subject: entry.subject, grant: entry.grant, name });
-        }
-        access
-    }
 }

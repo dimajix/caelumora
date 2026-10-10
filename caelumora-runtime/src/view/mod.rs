@@ -409,18 +409,21 @@ impl Views {
         }
     }
 
-    /// The viewer's own artifacts (issue 271), in the order the store lists
-    /// them, each with every version: an artifact grants nobody anything of its own, so
-    /// these are the ones they own.
+    /// The artifacts the viewer may read anything of (issues 271, 23) -
+    /// their own and those shared with them, by the artifact's list or a
+    /// version's - and is cleared for, each with the versions they may
+    /// read.
     ///
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn artifacts(&self) -> ViewResult<Vec<ArtifactSnapshot>> {
-        let artifacts = self.entities.list_artifacts(self.viewer.context()).await
+        let artifacts = self.artifact_manager().all_readable(self.viewer.context()).await
             .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context("listing the artifacts")))?;
         let mut snapshots = Vec::with_capacity(artifacts.len());
         for artifact in artifacts {
-            snapshots.push(self.artifact_snapshot(artifact).await);
+            if self.cleared_for(&artifact.classification).await {
+                snapshots.push(self.artifact_snapshot(artifact).await);
+            }
         }
         Ok(snapshots)
     }
@@ -430,17 +433,48 @@ impl Views {
     /// # Errors
     /// `ArtifactNotFound` if there is none they may read.
     pub async fn artifact(&self, id: caelumora_model::artifact::ArtifactId) -> ViewResult<ArtifactSnapshot> {
-        match self.entities.get_artifact(self.viewer.context(), id).await.optional() {
-            Ok(Some(artifact)) => Ok(self.artifact_snapshot(artifact).await),
-            Ok(None) => Err(ViewError::ArtifactNotFound(id)),
+        match self.artifact_manager().reached(self.viewer.context(), id).await {
+            Ok(artifact) if self.cleared_for(&artifact.classification).await => Ok(self.artifact_snapshot(artifact).await),
+            Ok(_) | Err(crate::artifact::ArtifactError::NotFound(_)) => Err(ViewError::ArtifactNotFound(id)),
             Err(e) => Err(ViewError::Failed(anyhow::Error::new(e).context("reading an artifact"))),
         }
     }
 
-    /// `artifact` as the viewer sees it: whether they may change it.
+    /// `artifact` as the viewer sees it - with the versions they may read,
+    /// as it is handed here -: whether they may change it or add to it, and
+    /// for its owner whom it and its versions are shared with.
     pub(crate) async fn artifact_snapshot(&self, artifact: caelumora_model::artifact::Artifact) -> ArtifactSnapshot {
-        let can_change = self.security.may_change_artifact(self.viewer.context(), &artifact.security_attributes).await;
-        ArtifactSnapshot { artifact, can_change }
+        let context = self.viewer.context();
+        let can_change = self.security.may_change_artifact(context, &artifact.security_attributes).await;
+        let can_write = self.security.may_write_artifact(context, &artifact.security_attributes).await;
+        let (mut access, mut version_access) = (Vec::new(), std::collections::BTreeMap::new());
+        if can_change {
+            access = self.access_snapshots(&artifact.security_attributes.acl).await;
+            for version in &artifact.versions {
+                version_access.insert(version.number, self.access_snapshots(&version.acl).await);
+            }
+        }
+        ArtifactSnapshot { artifact, can_change, can_write, access, version_access }
+    }
+
+    /// The entries `acl` with whom each names called by name (issue 23),
+    /// read in the runtime's name: shown to the owner of what they are of,
+    /// who may name a session or user they cannot read themselves.
+    pub(crate) async fn access_snapshots(&self, acl: &[caelumora_model::security::AclEntry]) -> Vec<caelumora_model::snapshot::AccessSnapshot> {
+        use caelumora_model::security::{Membership, Subject};
+        let system = SecurityContext::system();
+        let mut access = Vec::with_capacity(acl.len());
+        for entry in acl {
+            let name = match entry.subject {
+                Subject::Actor(ActorId::User(user)) => self.entities.get_user(&system, user).await.optional().ok().flatten().map(|u| u.username.to_string()),
+                Subject::Actor(_) => None,
+                Subject::Role(role) => self.security.role_name(role),
+                Subject::MemberOf(Membership::Session(session)) => self.entities.get_session(&system, session).await.optional().ok().flatten().map(|s| s.name.to_string()),
+                Subject::MemberOf(Membership::Channel(channel)) => self.entities.get_channel(&system, channel).await.optional().ok().flatten().map(|c| c.name.to_string()),
+            };
+            access.push(caelumora_model::snapshot::AccessSnapshot { subject: entry.subject, grant: entry.grant, name });
+        }
+        access
     }
 
     /// The artifacts the viewer deleted and may read as such (issue 271):

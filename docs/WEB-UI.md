@@ -239,10 +239,10 @@ else who may read it - the session's owner, say - is shown its history and no in
     `file_move` handler (issue 267) shows where a file or directory lay and where it lies now, and
     whether it was renamed or moved. The `artifact_publish` handler (issue 271) shows a published
     version as a card like `file_publish`'s (`DownloadCard`) - the artifact's name, version, size
-    and description, a download of that version through the channel (`artifacts`, handed as `files`
-    is), and "Keep" for its owner while it lies in the session's scope, which it learns by asking
-    for the artifact as theirs. The `file_publish` handler (issue 273) shows a file offered for
-    download as a card - its name, size and what it is - with a download from the session's
+    and description, a download of that version by the artifact (`artifacts`, handed as `files` is;
+    issue 23), and "Keep" for its owner while it lies in the session's scope, which it learns by
+    asking for the artifact as theirs. The `file_publish` handler (issue 273) shows a file offered
+    for download as a card - its name, size and what it is - with a download from the session's
     workspace, by its id as the channel names it (`files`, which `ChatView` hands through
     `MessageView`), and says when the file changed since it was offered - its size or when it was
     changed differ - or is gone; whoever cannot use the workspace there, and every view outside the

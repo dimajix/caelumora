@@ -312,10 +312,18 @@ pub struct AccessSnapshot {
 /// versions published there alone.
 #[derive(Debug, Clone)]
 pub struct ArtifactSnapshot {
+    /// With the versions the viewer may read alone (issue 23).
     pub artifact: crate::artifact::Artifact,
-    /// Whether the viewer may change it - keep it, describe it, delete it
-    /// (`UpdateArtifact`): its owner.
+    /// Whether the viewer may change it - keep it, describe it, share it,
+    /// delete it (`UpdateArtifact`): its owner.
     pub can_change: bool,
+    /// Whether the viewer may add a version (`WriteArtifact`, issue 23).
+    pub can_write: bool,
+    /// Its own access list, for whoever may change it - empty for
+    /// everybody else.
+    pub access: Vec<AccessSnapshot>,
+    /// The lists of its versions, by number, for whoever may change it.
+    pub version_access: std::collections::BTreeMap<u32, Vec<AccessSnapshot>>,
 }
 
 /// An agent as the viewer sees it in the list of agents (issue 164).

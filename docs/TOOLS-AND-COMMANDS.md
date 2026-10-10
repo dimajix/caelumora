@@ -739,19 +739,22 @@ in their descriptions - a link for a look now, an artifact for a result to be ke
 
 It is reached as the file tools are, through the turn's views and the workspace of the channel
 (`tool::channel_workspace`), and publishes in the name of whoever the agent acts for: its owner, who
-makes the artifact (`CreateArtifact`) or adds to theirs (`UpdateArtifact`), asked before anything is
-kept. An artifact is published into the session's scope, under its name - the file's unless given,
-at most 100 characters -, made with its first version and given one more by every later publication
-under that name. It is classified as the workspace, fixed with its first version; a later version
-from a workspace classified otherwise is refused - publish it under another name. A storage takes
-nothing above its `destination`. The content is read up to `artifacts.max_bytes` and kept as it
-streams, its digest taken as it passes. Its result is `{artifact, version, name, size, digest, path,
-description?}`, classified as the artifact, and is presented as `artifact_publish`. It changes what
-is kept, so it is approved where changes are; the approver reads which file is published as which
-artifact.
+makes the artifact (`CreateArtifact`), or adds a version where the artifact's list lets them
+(`WriteArtifact`, issue 23 - its owner always), asked before anything is kept. The version is read
+by the members of the channel it is published in (an entry `MemberOf` the channel in its own list),
+and carries the description it was published with. An artifact is published into the session's
+scope, under its name - the file's unless given, at most 100 characters -, made with its first
+version and given one more by every later publication under that name. It is classified as the
+workspace, fixed with its first version; a later version from a workspace classified otherwise is
+refused - publish it under another name. A storage takes nothing above its `destination`. The
+content is read up to `artifacts.max_bytes` and kept as it streams, its digest taken as it passes.
+Its result is `{artifact, version, name, size, digest, path, description?}`, classified as the
+artifact, and is presented as `artifact_publish`. It changes what is kept, so it is approved where
+changes are; the approver reads which file is published as which artifact.
 
-Whoever reads the channel as a whole downloads the versions published there; the artifact's owner
-reads every version and keeps it beyond the session, in their scope or the global one; one that is
+The members of the channel download the version published there, by the artifact, wherever they
+act; whom the artifact's own list grants it read every version; its owner reads every version,
+shares it and keeps it beyond the session, in their scope or the global one; one that is
 not kept goes with the session, its content too (see [STORAGE.md](STORAGE.md) and
 [SECURITY.md](SECURITY.md#ownership)).
 

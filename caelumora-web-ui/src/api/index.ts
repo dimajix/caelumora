@@ -63,7 +63,7 @@ export interface WorkspaceFiles {
   remove(path: string): Promise<void>;
 }
 
-/** The artifacts of a channel as a reader of it reaches them (issue 271): those published there, and where their versions are downloaded. */
+/** The artifacts of a channel (issue 271): those published there that the user may read, and where their versions are downloaded - by the artifact (issue 23). */
 export interface ChannelArtifacts {
   list(): Promise<ArtifactResponse[]>;
   /** Where version `version` of artifact `artifact` is downloaded - a plain link; the cookie goes with it. */
@@ -755,7 +755,7 @@ export const api = {
         await ensureOk(res, 'Failed to list the artifacts');
         return res.json();
       },
-      url: (artifact, version) => `${API_BASE}${base}/${artifact}/versions/${version}/content`,
+      url: (artifact, version) => `${API_BASE}/artifacts/${artifact}/versions/${version}/content`,
     };
   },
 

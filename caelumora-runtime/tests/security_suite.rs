@@ -125,7 +125,7 @@ fn attributes_of<'a>(action: &ActionType<'a>) -> Option<&'a SecurityAttributes> 
         | CancelChannel(a) | WakeChannel(a) | RetryMessage(a) | AnswerQuestion(a)
         | GetWorkspace(a) | WriteWorkspace(a) | CreateWorkspace(a) | UpdateWorkspace(a) | DeleteWorkspace(a)
         | GetSkill(a) | CreateSkill(a) | UpdateSkill(a) | DeleteSkill(a) | UseSkill(a)
-        | GetArtifact(a) | CreateArtifact(a) | UpdateArtifact(a) | DeleteArtifact(a)
+        | GetArtifact(a) | WriteArtifact(a) | CreateArtifact(a) | UpdateArtifact(a) | DeleteArtifact(a)
         | GetComponents(a) | CreateComponents(a) | UpdateComponents(a) | DeleteComponents(a)
         | ReadDeleted(_, a) | Restore(_, a) | Purge(_, a) => Some(a),
         _ => None,
@@ -2481,11 +2481,12 @@ async fn kept(content: caelumora_runtime::terminal::ByteStream) -> String {
 
 /// An artifact (issue 271) is published from the workspace of a channel,
 /// in the name of whoever publishes - its owner, who makes it
-/// (`CreateArtifact`) or adds a version (`UpdateArtifact`) -, into the
-/// session's scope. Its owner reads every version; whoever reads the
-/// channel reads the versions published there, and nothing as an owner;
-/// only its owner keeps it beyond the session, and what is not kept goes
-/// with the session, its content too.
+/// (`CreateArtifact`), or whom its list lets add a version
+/// (`WriteArtifact`, issue 23) -, into the session's scope. Its owner reads
+/// every version; a version is read by the members of the channel it was
+/// published in, by the artifact, wherever they act; only its owner shares
+/// and keeps it beyond the session, and what is not kept goes with the
+/// session, its content too.
 #[tokio::test]
 async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who_reads_the_channel() {
     let world = World::new().await;
@@ -2511,18 +2512,25 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
     terminal.write(&at, file("a,b\n1,2"), 100).await.unwrap();
     let (published, asked) = world.asked(workspace.publish_artifact(&at, "report.csv", None)).await;
     assert_eq!(published.expect("a second version").1, 2);
-    assert!(asked.contains(&"alice: UpdateArtifact(alice's) yes".to_string()), "added to as hers: {asked:?}");
+    assert!(asked.contains(&"alice: WriteArtifact(alice's) yes".to_string()), "added to as hers: {asked:?}");
 
     let (_, _, content) = artifacts.content(&alice, artifact.id, 1).await.expect("its owner reads every version");
     assert_eq!(kept(content).await, "a,b", "as it was then");
-    let (_, size, content) = in_main(&bob).await.artifact_content(artifact.id, 2).await.expect("a reader of the channel reads what was published there");
+    let elsewhere = SecurityContext::new(ActorId::User(world.bob), SessionId::new(), ChannelId::new());
+    let (_, size, content) = artifacts.content(&elsewhere, artifact.id, 2).await.expect("a member of the channel reads what was published there, wherever he acts");
     assert_eq!((size, kept(content).await.as_str()), (7, "a,b\n1,2"));
-    assert!(matches!(artifacts.content(&bob, artifact.id, 1).await, Err(ArtifactError::NotFound(_))), "not as its owner");
-    assert!(matches!(in_main(&bob).await.artifact_content(artifact.id, 3).await, Err(ArtifactError::VersionNotFound { .. })));
+    assert!(matches!(artifacts.content(&bob, artifact.id, 3).await, Err(ArtifactError::VersionNotFound { .. })));
+    assert!(matches!(artifacts.content(&World::as_user(world.carol), artifact.id, 1).await, Err(ArtifactError::NotFound(_))), "nobody else, who learns nothing");
 
     let bobs = in_main(&bob).await.workspace().await.unwrap().expect("bob uses it too");
-    assert!(bobs.publish_artifact(&at, "report.csv", None).await.is_err(), "nor adds to alice's artifact of that name");
-    assert!(matches!(artifacts.keep(&bob, artifact.id, Scope::UserScope { user_id: world.bob }).await, Err(ArtifactError::NotFound(_))), "nor keeps it");
+    let refused = bobs.publish_artifact(&at, "report.csv", None).await;
+    assert!(matches!(refused, Err(ArtifactError::Store(StoreError::PermissionDenied))), "nor adds to alice's artifact of that name: {refused:?}");
+    let writers = SecurityAttributes::owned_by(ActorId::User(world.alice)).granting(Subject::Actor(ActorId::User(world.bob)), Grant::Write).acl;
+    assert!(matches!(artifacts.set_access(&bob, artifact.id, writers.clone()).await, Err(ArtifactError::NotFound(_))), "nor shares it");
+    artifacts.set_access(&alice, artifact.id, writers).await.expect("its owner shares it");
+    let (added, third) = bobs.publish_artifact(&at, "report.csv", None).await.expect("whom it is shared with to write adds a version");
+    assert_eq!((third, added.owner()), (3, Some(world.alice)), "hers still");
+    assert!(matches!(artifacts.keep(&bob, artifact.id, Scope::UserScope { user_id: world.bob }).await, Err(ArtifactError::Store(StoreError::PermissionDenied))), "nor keeps it");
     let kept_one = artifacts.keep(&alice, artifact.id, Scope::UserScope { user_id: world.alice }).await.expect("its owner keeps it");
     assert_eq!(kept_one.name.scope, Scope::UserScope { user_id: world.alice });
     let (left, _) = workspace.publish_artifact(&at, "draft.csv", None).await.unwrap();
@@ -2534,6 +2542,47 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
     assert!(world.files.path().join("artifacts").join(artifact.id.to_string()).is_dir(), "with its content");
     assert!(world.store.get_deleted_artifact(&World::system(), left.id).await.is_err(), "what was not kept went with the session");
     assert!(!world.files.path().join("artifacts").join(left.id.to_string()).exists(), "its content too");
+}
+
+/// Issue 23: a version is read by the members of the channel it was
+/// published in, besides whom the artifact is shared with - so drafts
+/// published where alice works alone reach nobody who reads the version
+/// she published to the team, nor does what she said of them.
+#[tokio::test]
+async fn drafts_of_an_artifact_stay_with_the_channel_they_were_published_in() {
+    let world = World::new().await;
+    let artifacts = world.runtime.artifact_manager();
+    let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
+    let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
+    let session = world.shared_session(&[], &[]).await;
+    session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
+    let drafts = session.create_channel(&alice, ChannelSpec { name: "drafts".to_string(), components: quiet(), participants: vec![], classification: None, language: None, uses_workspace: None }).await.expect("hers alone").id();
+    let (session_id, main) = (session.id(), session.channels()[0].id());
+    let workspace_in = |channel| {
+        let views = world.manager.views(Viewer::new(alice.clone()));
+        async move { views.session(session_id).await.unwrap().channel(channel).await.unwrap().workspace().await.unwrap().expect("hers to use") }
+    };
+    let at = WorkspacePath::parse("report.md").unwrap();
+    let (in_drafts, in_main) = (workspace_in(drafts).await, workspace_in(main).await);
+    in_drafts.terminal(Grant::Write).await.unwrap().write(&at, file("rough"), 100).await.unwrap();
+    let (artifact, _) = in_drafts.publish_artifact(&at, "report.md", Some("Still wrong about Q3")).await.expect("a draft");
+    in_main.terminal(Grant::Write).await.unwrap().write(&at, file("final"), 100).await.unwrap();
+    let (_, final_one) = in_main.publish_artifact(&at, "report.md", Some("The report")).await.expect("the final one");
+    assert_eq!(final_one, 2);
+
+    let his = world.manager.views(Viewer::new(bob.clone())).artifact(artifact.id).await.expect("bob reads what reached the team");
+    assert_eq!(his.artifact.versions.iter().map(|v| v.number).collect::<Vec<_>>(), [2], "the final one alone");
+    assert_eq!(his.artifact.versions[0].description.as_ref().map(|d| d.to_string()), Some("The report".to_string()));
+    assert!(his.artifact.description.is_none() && his.access.is_empty() && his.version_access.is_empty(), "nothing said of the draft, nor whom it reaches");
+    assert!(matches!(artifacts.content(&bob, artifact.id, 1).await, Err(ArtifactError::VersionNotFound { .. })), "not the draft");
+    let (_, _, final_content) = artifacts.content(&bob, artifact.id, 2).await.expect("the final one");
+    assert_eq!(kept(final_content).await, "final");
+
+    let hers = world.manager.views(Viewer::new(alice.clone())).artifact(artifact.id).await.unwrap();
+    assert_eq!(hers.artifact.versions.len(), 2, "its owner reads both");
+    let names: Vec<Option<String>> = hers.version_access.values().map(|access| access[0].name.clone()).collect();
+    assert_eq!(names, [Some("drafts".to_string()), Some("main".to_string())], "and sees where each reaches");
+    world.manager.stop_session(&alice, session_id).await.unwrap();
 }
 
 /// What is asked when the agent of `owner`, asked by bob, makes `call` in the
