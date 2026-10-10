@@ -1,8 +1,8 @@
 //! The built-in components that belong to no facet's own directory, one
-//! file per component kind (issue 52). Tools, commands, language models and
-//! moderators have directories of their own (`tool`, `command`,
-//! `llm`, `moderator`); a component that offers several facets -
-//! tools and a prompt part, say - stays here. The facet traits live next to
+//! file per component kind (issue 52). Tools, commands, language models,
+//! moderators and compaction have directories of their own (`tool`,
+//! `command`, `llm`, `moderator`, `compaction`); a component that offers
+//! several facets - tools and a prompt part, say - stays here. The facet traits live next to
 //! the code that uses them (`crate::tool`, `crate::command`,
 //! `crate::context`, `crate::message`).
 
@@ -10,7 +10,6 @@ use crate::component::ComponentRegistry;
 
 pub mod agent_memory;
 pub mod channel_history;
-pub mod compaction;
 pub mod channel_briefing_prompt_provider;
 pub mod channel_language_prompt_provider;
 pub mod channel_members_prompt_provider;
@@ -32,7 +31,6 @@ pub fn register_all(registry: &mut ComponentRegistry) {
 
     agent_memory::register(registry);
     channel_history::register(registry);
-    compaction::register(registry);
     channel_briefing_prompt_provider::register(registry);
     channel_language_prompt_provider::register(registry);
     channel_members_prompt_provider::register(registry);

@@ -46,3 +46,8 @@ Nothing refuses it. The example seed is not affected - its external personality 
 
 - **2026-10-10** — Issue created from [16](16-context-compression.md), where it was noticed while
   building `/compact`.
+- **2026-10-10** — How a context is compacted moved into the facet `CompactionStrategy` (see
+  [284](284-automatic-context-compaction.md)): the model is now taken by its default,
+  `summary_compaction`, and `compaction` takes the strategy. The problem stays; one more way to
+  solve it is open: the external agent's container (`with_defaults`) gives no default
+  `CompactionStrategy`, so `compaction` fails to build there, while the `LLMClient` stays as it is.

@@ -1,27 +1,18 @@
-//! The `compaction` component (issue 16): an agent's context replaced by a
-//! shorter one when it grows too long for its model.
+//! The `summary_compaction` component: the older part of an agent's
+//! transcript summarised by its own model and replaced by the summary. The
+//! default compaction strategy of an agent.
 //!
-//! - **`/compact @agent`**, a command the agent carries out itself (issue
-//!   269), for its owners alone: the older part of its transcript is
-//!   summarised by its own model and replaced by the summary; the newest
-//!   messages - at least `keep_last`, from the start of the turn the oldest
-//!   of them belongs to - are kept as they stand; the skills loaded in the
-//!   part summarised are given again, as they are now.
-//!
-//! The context is replaced, not rewritten: the transcript begins anew on a
-//! branch of its own, and what the agent saw before stays recorded and
-//! resolvable (`AgentChannelState::compact`). Where the cut is made and what
-//! replaces the older messages is this component's; the mechanism is the
-//! state's. Compacting on the agent's own is issue 284.
+//! The newest messages - at least `keep_last`, from the start of the turn
+//! the oldest of them belongs to - are kept as they stand; the skills loaded
+//! in the part summarised are given again, as they are now.
 
 use crate::agent::turn::Turn;
-use crate::command::{AgentCommandProvider, CommandError, CommandResult, ProvidesCommands};
+use crate::compaction::{Compaction, CompactionError, CompactionStrategy};
 use crate::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::context::titled;
 use crate::llm::LLMClient;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
-use caelumora_model::command::{Command, CommandOutput};
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::digest::Digest;
 use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole};
@@ -33,8 +24,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-pub const COMPACTION_KIND: &str = "compaction";
-pub const COMPACT_COMMAND_NAME: &str = "compact";
+pub const SUMMARY_COMPACTION_KIND: &str = "summary_compaction";
 
 /// How many messages a compaction keeps as they stand, unless configured.
 const DEFAULT_KEEP_LAST: usize = 10;
@@ -49,7 +39,7 @@ const SUMMARY_INSTRUCTION: &str = "Summarise the conversation above for yourself
     they are given to you again. Answer with the summary only.";
 
 #[derive(Debug)]
-pub struct CompactionComponent {
+pub struct SummaryCompaction {
     /// The agent's own model, which writes the summary.
     llm_client: Arc<dyn LLMClient>,
     /// How many of the newest messages are kept as they stand.
@@ -58,7 +48,7 @@ pub struct CompactionComponent {
 
 /// What the component is configured with.
 #[derive(Debug, Deserialize)]
-struct CompactionConfig {
+struct SummaryCompactionConfig {
     #[serde(default = "default_keep_last")]
     keep_last: usize,
 }
@@ -125,15 +115,14 @@ fn skills_read(history: &MessageHistory) -> HashMap<MessageId, Vec<SkillId>> {
         .collect()
 }
 
-impl CompactionComponent {
+impl SummaryCompaction {
     /// The summary of the transcript up to and including `last`, written by
     /// the agent's model: its text, and the message its model answered with,
     /// for the tokens of the call.
-    async fn summarise(&self, turn: &mut Turn<'_>, last: Digest) -> CommandResult<(String, Message)> {
-        let failed = |reason: &str| CommandError::Failed { command: COMPACT_COMMAND_NAME.to_string(), reason: reason.to_string() };
+    async fn summarise(&self, turn: &mut Turn<'_>, last: Digest) -> Result<(String, Message), CompactionError> {
         let mut input = turn.context_until(last).map_err(|e| {
-            tracing::warn!("Agent {}: /{} cannot read its transcript: {:#}", turn.agent_id(), COMPACT_COMMAND_NAME, e);
-            failed("the transcript could not be read")
+            tracing::warn!("Agent {}: a compaction cannot read its transcript: {:#}", turn.agent_id(), e);
+            CompactionError::TranscriptUnreadable
         })?;
         input.push(Message {
             role: MessageRole::User,
@@ -143,7 +132,7 @@ impl CompactionComponent {
             ..Message::new(turn.classification())
         });
         if !turn.count_model_call() {
-            return Err(failed("the agent made all the calls of its model it may in one turn"));
+            return Err(CompactionError::CallLimitReached);
         }
         let mut stream = self.llm_client.chat_completion(&input, &[]).await;
         let mut answered: Vec<Message> = Vec::new();
@@ -152,42 +141,22 @@ impl CompactionComponent {
                 Ok(MessageEvent::Complete(message)) => answered.push(message),
                 Ok(MessageEvent::Partial(_) | MessageEvent::EndOfTurn(_)) => {}
                 Err(e) => {
-                    tracing::warn!("Agent {}: /{} could not ask its model: {}", turn.agent_id(), COMPACT_COMMAND_NAME, e);
-                    return Err(failed("its model could not be asked"));
+                    tracing::warn!("Agent {}: a compaction could not ask its model: {}", turn.agent_id(), e);
+                    return Err(CompactionError::ModelUnreachable);
                 }
             }
         }
         let text = answered.iter().filter_map(|m| m.content.as_deref()).map(str::trim).filter(|t| !t.is_empty()).collect::<Vec<_>>().join("\n\n");
         match answered.pop() {
             Some(last) if !text.is_empty() => Ok((text, last)),
-            _ => Err(failed("its model wrote no summary")),
+            _ => Err(CompactionError::NoSummary),
         }
-    }
-}
-
-impl ProvidesCommands for CompactionComponent {
-    fn commands(&self) -> Vec<Command> {
-        vec![Command {
-            name: COMPACT_COMMAND_NAME.to_string(),
-            description: "Compacts the agent's context: the older part of its conversation is replaced by a summary, the newest is kept. What it saw before stays recorded.".to_string(),
-            usage: None,
-            // Like approving its calls (issue 269): its owners'.
-            owners_only: true,
-        }]
     }
 }
 
 #[async_trait]
-impl AgentCommandProvider for CompactionComponent {
-    async fn execute(&self, name: &str, args: &str, turn: &mut Turn<'_>) -> CommandResult<CommandOutput> {
-        if name != COMPACT_COMMAND_NAME {
-            return Err(CommandError::Unknown(name.to_string()));
-        }
-        let invalid = |reason: &str| CommandError::InvalidArguments { command: name.to_string(), reason: reason.to_string() };
-        let failed = |reason: &str| CommandError::Failed { command: name.to_string(), reason: reason.to_string() };
-        if !args.trim().is_empty() {
-            return Err(invalid("it takes no arguments"));
-        }
+impl CompactionStrategy for SummaryCompaction {
+    async fn compact(&self, turn: &mut Turn<'_>) -> Result<Option<Compaction>, CompactionError> {
         let agent = ActorId::Agent(turn.agent_id());
         let path: Vec<Entry> = as_they_stand(turn.agent_channel_state().transcript.entries())
             .map(|(node, message)| {
@@ -198,12 +167,15 @@ impl AgentCommandProvider for CompactionComponent {
                 (node.digest, given, message)
             })
             .collect();
-        let cut = cut_at(&path, self.keep_last)
-            .ok_or_else(|| invalid(&format!("there is nothing to compact: {} keeps its last {} messages as they are", turn.agent_name(), self.keep_last)))?;
+        let Some(cut) = cut_at(&path, self.keep_last) else {
+            return Ok(None);
+        };
         let (summarised, kept) = path.split_at(cut);
+        let Some((last_summarised, _, _)) = summarised.last() else {
+            return Ok(None);
+        };
         let count = |entries: &[Entry]| entries.iter().filter(|(_, _, m)| m.is_some()).count();
         let keep_from = kept.first().map(|(digest, _, _)| *digest);
-        let last_summarised = summarised.last().map(|(digest, _, _)| *digest).ok_or_else(|| failed("nothing was found to summarise"))?;
 
         // Skills still there as they were loaded are not given twice.
         let read = skills_read(&turn.agent_channel_state().history);
@@ -212,14 +184,14 @@ impl AgentCommandProvider for CompactionComponent {
         let usable = match (wanted.is_empty(), turn.session()) {
             (true, _) => Vec::new(),
             (false, Some(session)) => session.views().usable_skills().await.map_err(|e| {
-                tracing::warn!("Agent {}: /{} could not read the skills: {:#}", turn.agent_id(), name, e);
-                failed("the skills could not be read")
+                tracing::warn!("Agent {}: a compaction could not read the skills: {:#}", turn.agent_id(), e);
+                CompactionError::SkillsUnreadable
             })?,
-            (false, None) => return Err(failed("the agent is in no session")),
+            (false, None) => return Err(CompactionError::NoSession),
         };
         let skills: Vec<_> = wanted.iter().filter_map(|id| usable.iter().find(|s| s.id() == *id)).collect();
 
-        let (text, answer) = self.summarise(turn, last_summarised).await?;
+        let (text, answer) = self.summarise(turn, *last_summarised).await?;
         let summary = Message {
             id: MessageId::new(),
             sender_id: agent,
@@ -247,28 +219,26 @@ impl AgentCommandProvider for CompactionComponent {
             replacement.push((given, Some(skill.knowledge(turn.channel_id(), turn.session_id()))));
         }
         // Nothing can fail from here on: the transcript changes at once.
-        turn.compact(replacement, keep_from).ok_or_else(|| failed("the context could not be replaced"))?;
+        turn.compact(replacement, keep_from).ok_or(CompactionError::NotReplaced)?;
 
-        let mut answer = format!("{} compacted its context: {} messages summarised, {} kept as they were.", turn.agent_name(), count(summarised), count(kept));
-        if !skills.is_empty() {
-            answer.push_str(&format!(" Skills given again: {}.", skills.iter().map(|s| s.name()).collect::<Vec<_>>().join(", ")));
-        }
-        if skills.len() < wanted.len() {
-            answer.push_str(&format!(" {} skill(s) it had loaded can no longer be loaded here and were not given again.", wanted.len() - skills.len()));
-        }
-        Ok(CommandOutput::channel(answer))
+        Ok(Some(Compaction {
+            replaced: count(summarised),
+            kept: count(kept),
+            skills_given: skills.iter().map(|s| s.name().to_string()).collect(),
+            skills_lost: wanted.len() - skills.len(),
+        }))
     }
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
-        ComponentKind::new(COMPACTION_KIND).provides::<dyn AgentCommandProvider>(),
+        ComponentKind::new(SUMMARY_COMPACTION_KIND).provides::<dyn CompactionStrategy>(),
         |descriptor, context| async move {
-            let CompactionConfig { keep_last } = crate::component::config_of_params(&descriptor.params)?;
+            let SummaryCompactionConfig { keep_last } = crate::component::config_of_params(&descriptor.params)?;
             // The agent's own model writes the summary.
             let llm_client = context.one::<dyn LLMClient>().await?.facet;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn AgentCommandProvider>(Arc::new(CompactionComponent { llm_client, keep_last }));
+            facets.insert::<dyn CompactionStrategy>(Arc::new(SummaryCompaction { llm_client, keep_last }));
             Ok(facets)
         },
     );
@@ -277,6 +247,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::command::AgentCommandProvider;
     use crate::component_impl::skills::{SkillsComponent, SKILL_COMMAND_NAME};
     use crate::context::PromptPosition;
     use crate::tool::ApprovalMode;
@@ -353,20 +324,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn compact_replaces_the_older_messages_by_a_summary_and_gives_the_skills_again() {
+    async fn the_older_messages_are_replaced_by_a_summary_and_the_skills_given_again() {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
         let skill = an_agent_with_a_skill_given(&world, &mut state).await;
         let before = state.transcript.digest().unwrap();
         let model = Arc::new(Summariser::default());
-        let component = CompactionComponent { llm_client: Arc::<Summariser>::clone(&model), keep_last: 1 };
+        let strategy = SummaryCompaction { llm_client: Arc::<Summariser>::clone(&model), keep_last: 1 };
 
         let mut turn = world.turn(&mut state);
-        let answer = AgentCommandProvider::execute(&component, COMPACT_COMMAND_NAME, "", &mut turn).await.expect("compacted");
+        let compaction = strategy.compact(&mut turn).await.expect("compacted");
         drop(turn);
 
-        assert_eq!(answer.text, "Jonathan compacted its context: 3 messages summarised, 1 kept as they were. Skills given again: release-notes.");
-        assert_eq!(answer.visibility, caelumora_model::command::CommandVisibility::Channel, "everyone should know");
+        assert_eq!(compaction, Some(Compaction { replaced: 3, kept: 1, skills_given: vec!["release-notes".to_string()], skills_lost: 0 }));
         let given = model.0.lock().unwrap().pop().expect("its model was asked");
         let texts: Vec<_> = given.iter().filter_map(|m| m.content.clone()).collect();
         assert!(texts.iter().any(|t| t == "u1") && texts.iter().any(|t| t == "a1") && !texts.iter().any(|t| t == "u2"), "the older messages, not those kept: {texts:?}");
@@ -383,20 +353,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn compact_refuses_what_it_cannot_shorten_and_changes_nothing() {
+    async fn what_cannot_be_shortened_is_left_as_it_is() {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
         an_agent_with_a_skill_given(&world, &mut state).await;
         let before = state.transcript.digest();
         let model = Arc::new(Summariser::default());
-        let component = CompactionComponent { llm_client: Arc::<Summariser>::clone(&model), keep_last: 10 };
+        let strategy = SummaryCompaction { llm_client: Arc::<Summariser>::clone(&model), keep_last: 10 };
 
         let mut turn = world.turn(&mut state);
-        let refused = AgentCommandProvider::execute(&component, COMPACT_COMMAND_NAME, "", &mut turn).await;
-        assert!(matches!(refused, Err(CommandError::InvalidArguments { ref reason, .. }) if reason.contains("nothing to compact")), "{refused:?}");
-        let refused = AgentCommandProvider::execute(&component, COMPACT_COMMAND_NAME, "hard", &mut turn).await;
-        assert!(matches!(refused, Err(CommandError::InvalidArguments { .. })), "no arguments");
+        let compaction = strategy.compact(&mut turn).await.expect("nothing to do is no failure");
         drop(turn);
+
+        assert_eq!(compaction, None);
         assert!(model.0.lock().unwrap().is_empty(), "its model was not asked");
         assert_eq!(state.transcript.digest(), before);
     }

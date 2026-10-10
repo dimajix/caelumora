@@ -88,6 +88,7 @@ A component offers one or more *facets*: traits it implements to take part in th
 | `EmitOutProcessor` | filtering of the messages an agent emits | `crate::message` |
 | `Moderator` | how a channel routes its events and who is asked to respond | `crate::moderator` |
 | `ResponderPolicy` | whom the `policy_moderator` asks when nobody was mentioned | `crate::moderator` |
+| `CompactionStrategy` | how an agent's context is compacted (issue 16) | `crate::compaction` |
 
 `PerceiveInProcessor` and `EmitOutProcessor` have no built-in implementation; they are kept as
 extension points (issues 99, 196). A processor is given the messages and the actor's
@@ -121,11 +122,11 @@ Components are wired the way Spring Boot wires beans (issue 99).
 
 ### Facets of which there is exactly one
 
-Of some facets an agent has exactly one: the `ContextProvider` (issue 98) and the `LLMClient` (issue
-130), an external agent exactly one `ExternalAgent` (issue 179); a channel has exactly one
-`Moderator` and one `ResponderPolicy` (issue 174). They are registered with
-`ComponentRegistry::single::<T>(default_kind)` in the `register_all` of the module that holds the
-default kind (`component_impl`, `llm`, `external`, `moderator`).
+Of some facets an agent has exactly one: the `ContextProvider` (issue 98), the `LLMClient` (issue
+130) and the `CompactionStrategy` (issue 16), an external agent exactly one `ExternalAgent` (issue
+179); a channel has exactly one `Moderator` and one `ResponderPolicy` (issue 174). They are
+registered with `ComponentRegistry::single::<T>(default_kind)` in the `register_all` of the module
+that holds the default kind (`component_impl`, `llm`, `external`, `moderator`, `compaction`).
 
 *   Two components of one container that provide such a facet are refused before anything is built.
 *   If none does, a default is built the first time the facet is asked for
@@ -191,6 +192,7 @@ purpose. That module's `mod.rs` holds the facet trait - with what consumes it, s
 | `command/` | command providers (`help_command`, `wakeup_command`, `nudge_command`) |
 | `llm/` | language models (`ollama_client`) |
 | `moderator/` | the moderator and its responder policies |
+| `compaction/` | `/compact` (`compaction`, in `command.rs`, since a module cannot hold a file of its own name) and the compaction strategies (`summary_compaction`) |
 | `external/` | the ways to reach an external agent (`a2a_agent`, issue 179) - a module per kind: `a2a_agent/` holds the component (`mod.rs`), the protocol's types (`wire.rs`), their translation to and from `crate::external` (`translation.rs`) and the transport (`client.rs`, issue 210) |
 | `component_impl/` | everything else, and every component that offers several facets |
 
@@ -255,7 +257,6 @@ unknown field is refused. In messages the endpoint is shown without credentials,
 | `private_notes` | `ToolProvider`, `PromptProvider` | - | The agent's private notes: `note_private`, `revoke_private_note` and a prompt part ([MEMORY.md](MEMORY.md)). |
 | `agent_memory` | `ToolProvider`, `PromptProvider` | - | What the agent remembers across channels and sessions: `remember`, `forget` and a prompt part ([MEMORY.md](MEMORY.md)). |
 | `skills` | `PromptProvider`, `ToolProvider`, `AgentCommandProvider` | `position` (`start` or `before_turn_input`, default `start`), `requires_approval` (`true`, the default, or `false`, for writing) | Skills (issue 22): the catalogue of those the agent may load, `list_skills`, `load_skill`, `create_skill`, `update_skill`, and the commands `/skill` and `/skills` ([SKILLS.md](SKILLS.md)). |
-| `compaction` | `AgentCommandProvider` | `keep_last` (default 10, the messages kept as they stand) | The command `/compact`, for the agent's owners: its own model summarises the older part of its transcript, which a branch of its own replaces, the skills loaded there given again (issue 16, [AGENT-TURN.md](AGENT-TURN.md#compaction)). For agents run here: it takes the agent's `LLMClient`. |
 | `channel_history` | `ToolProvider` | - | The tool `read_history` for other channels of the session ([MEMORY.md](MEMORY.md)). |
 | `terminal_tool` | `ToolProvider` | `max_wait_secs` (60, at most 300), `max_output_bytes` (64 KiB, of a command's output or of a file), `requires_approval` (`true`; `false`, or `"unless_read_only"` for all but `list_files`, `read_file` and `grep_files`; `command_output`, `kill_command` and `publish_file` never ask), `description` (a text is built in) | The session's workspace, where the agent's channel may use it: its files - `list_files`, `read_file`, `grep_files`, `write_file`, `replace_in_file`, `move_file`, `delete_file`, `publish_file` - and a shell in it - `run_command`, `command_output`, `kill_command` (issue 251, [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md#the-workspace)). Generic over the storage: what it can do is what the workspace's terminal can. |
 | `artifact_tool` | `ToolProvider` | `requires_approval` (`true`; `false` - `"unless_read_only"` asks too, since publishing changes what is kept), `description` (a text is built in) | Artifacts (issue 271, [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md#artifacts)): `publish_artifact`, a file of the session's workspace published as a version of an artifact, kept beyond the workspace. A personality includes it where artifacts are wanted; without an artifact storage configured, its calls fail and say so. |
@@ -274,6 +275,8 @@ unknown field is refused. In messages the endpoint is shown without credentials,
 | `round_robin_policy` | `ResponderPolicy` | - | The default policy: the agents take turns. |
 | `random_policy` | `ResponderPolicy` | - | Asks one agent, chosen at random. |
 | `mentions_only_policy` | `ResponderPolicy` | - | Asks nobody: agents answer only when mentioned. |
+| `compaction` | `AgentCommandProvider` | - | The command `/compact`, for the agent's owners: asks the agent's `CompactionStrategy` to compact its context and tells the channel what it did (issue 16, [AGENT-TURN.md](AGENT-TURN.md#compaction)). |
+| `summary_compaction` | `CompactionStrategy` | `keep_last` (default 10, the messages kept as they stand) | The default strategy: the agent's own model summarises the older part of its transcript, which a branch of its own replaces, the skills loaded there given again ([AGENT-TURN.md](AGENT-TURN.md#compaction)). For agents run here: it takes the agent's `LLMClient`. |
 | `help_command` | `ChannelCommandProvider` | - | The user command `/help`. |
 | `wakeup_command` | `ChannelCommandProvider` | - | The user command `/wakeup`. |
 | `nudge_command` | `ChannelCommandProvider` | - | The user command `/nudge`. |

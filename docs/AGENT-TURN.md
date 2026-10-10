@@ -581,15 +581,20 @@ old one but does not continue it, and is built from what the chain already is - 
     used (`AgentChannelState::usage`) count it where it was first recorded.
 
 What replaces the older messages, where the cut is made and when a compaction happens is not the
-state's: the mechanism takes the replacement and the first entry kept, and a component decides. The
-one there is, `compaction`, carries out `/compact` (see
-[TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md#built-in-tools-and-commands)): it keeps at least the
-newest `keep_last` messages, from the start of the turn the oldest of them belongs to, so that no
-turn is cut apart; has the agent's own model summarise the rest, given as every call is
-(`Turn::context_until`); and gives the skills loaded in that rest again. The summary is a message
-of the agent in the role `user`, titled "Summary of the conversation so far", classified as the
-turn's label, and carries the tokens of its call. Compacting on the agent's own is
-[284](../issues/284-automatic-context-compaction.md).
+state's: the mechanism takes the replacement and the first entry kept, and components decide. When
+is the `compaction` component's, which carries out `/compact` (see
+[TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md#built-in-tools-and-commands)); how is the agent's
+`CompactionStrategy`'s, of which it has exactly one (`crate::compaction`). The strategy compacts
+through `Turn::compact` and says what it did (`Compaction`), or that there is nothing to compact,
+or why it failed (`CompactionError`); the command tells the channel.
+
+The default strategy, `summary_compaction`, keeps at least the newest `keep_last` messages, from the
+start of the turn the oldest of them belongs to, so that no turn is cut apart; has the agent's own
+model summarise the rest, given as every call is (`Turn::context_until`); and gives the skills
+loaded in that rest again. The summary is a message of the agent in the role `user`, titled
+"Summary of the conversation so far", classified as the turn's label, and carries the tokens of its
+call. Compacting on the agent's own is [284](../issues/284-automatic-context-compaction.md); it asks
+the same strategy.
 
 ## Prompt parts
 

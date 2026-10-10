@@ -84,11 +84,11 @@ its text to members who may not read the skill.
 Every load is recorded as knowledge (`KnowledgeSource::Skill { skill, digest }`), and the turn has
 seen the skill: what it writes afterwards is classified at least so (issue 168).
 
-A compaction ([16](../issues/16-context-compression.md), `/compact`) gives again every skill loaded
-in the part of the transcript it summarises - given (`Given` entries) or loaded by the model (the
-knowledge recorded with what the agent said afterwards) - as it is now and only if the agent may
-still load it, unless the part kept still holds it. A skill changed since is given as it reads now,
-as a load would give it.
+A compaction by summary ([16](../issues/16-context-compression.md), `/compact`, the strategy
+`summary_compaction`) gives again every skill loaded in the part of the transcript it summarises -
+given (`Given` entries) or loaded by the model (the knowledge recorded with what the agent said
+afterwards) - as it is now and only if the agent may still load it, unless the part kept still holds
+it. A skill changed since is given as it reads now, as a load would give it.
 
 ## Agents write skills
 

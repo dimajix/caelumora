@@ -2797,7 +2797,7 @@ async fn only_an_agents_owner_compacts_its_context() {
     let compacting = Personality {
         components: ComponentConfig { component_nodes: vec![
             ComponentDescriptor::new("model", "silent"),
-            ComponentDescriptor::new("compaction", caelumora_runtime::component_impl::compaction::COMPACTION_KIND),
+            ComponentDescriptor::new("compaction", caelumora_runtime::compaction::command::COMPACTION_KIND),
         ] },
         ..world.personality("compacting", None, &[]).await
     };
