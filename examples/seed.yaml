@@ -52,6 +52,9 @@ components:
   - id: skills
     kind: skills
     fail_policy: FailOpen
+  - id: compaction
+    kind: compaction
+    fail_policy: FailClosed
 
 personalities:
 - id: 6c109a76-8e67-4e44-ac8d-f97d4be9d3fb

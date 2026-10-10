@@ -426,3 +426,6 @@ tools, then authoring, then REST, the web UI and the seed, then the documents.
   the agent reaches skills through `PromptProvider`, `ToolProvider` and the `AgentCommandProvider`
   of 269, without a stage of its own. Left for later: preloading by a personality, importing
   `SKILL.md`, resources beside a skill, and keeping a loaded skill through a compaction (16).
+- **2026-10-10** — A loaded skill through a compaction ([16](16-context-compression.md)): given
+  again after the summary, as it is now, if the agent may still load it - for one given with
+  `/skill` and one the model loaded alike.

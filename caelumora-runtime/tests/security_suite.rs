@@ -2785,6 +2785,40 @@ async fn an_agents_command_runs_for_its_owner_on_the_word_of_whoever_asked() {
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
+// --- Compaction (issue 16) --------------------------------------------------------
+
+/// Compacting a shared agent's context is its owners' (issue 16, `owners_only`
+/// as for approving its calls): bob, who may write in the channel, neither
+/// sees nor asks for `/compact` of alice's `helper`; alice does, and the
+/// agent carries it out for her - here refusing, since it heard nothing yet.
+#[tokio::test]
+async fn only_an_agents_owner_compacts_its_context() {
+    let world = World::with_kinds(|registry| register_once(registry, "silent", caelumora_model::message::Message::new(Classification::PUBLIC))).await;
+    let compacting = Personality {
+        components: ComponentConfig { component_nodes: vec![
+            ComponentDescriptor::new("model", "silent"),
+            ComponentDescriptor::new("compaction", caelumora_runtime::component_impl::compaction::COMPACTION_KIND),
+        ] },
+        ..world.personality("compacting", None, &[]).await
+    };
+    world.store.update_personality(&World::system(), &compacting).await.unwrap();
+    let helper = world.agent("helper", world.alice, &compacting).await;
+    let session = world.shared_session(&[helper], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+
+    let (refused, asked) = world.asked(main.user_actor(world.bob).unwrap().execute_command("compact", "@helper")).await;
+    let refused = refused.expect_err("not his");
+    assert!(matches!(refused.downcast_ref::<caelumora_runtime::command::CommandError>(), Some(caelumora_runtime::command::CommandError::Unknown(name)) if name == "compact"), "unknown to him: {refused}");
+    assert!(about_agent_commands(&asked).iter().all(|line| line.ends_with(" no")), "never granted to him: {asked:?}");
+
+    let mut hers = main.user_actor(world.alice).unwrap().watch();
+    main.user_actor(world.alice).unwrap().execute_command("compact", "@helper").await.expect("hers, as its owner");
+    assert!(matches!(shown(&mut hers, "CommandFailed").await, caelumora_model::actor::ActorEvent::CommandFailed { ref reason, .. } if reason.contains("nothing to compact")),
+        "carried out for her by the agent, which has nothing to compact yet");
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
 // --- Skills (issue 22) --------------------------------------------------------
 
 /// A session of alice and bob with alice's `helper`, which has the `skills`

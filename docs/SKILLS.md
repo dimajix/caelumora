@@ -84,6 +84,12 @@ its text to members who may not read the skill.
 Every load is recorded as knowledge (`KnowledgeSource::Skill { skill, digest }`), and the turn has
 seen the skill: what it writes afterwards is classified at least so (issue 168).
 
+A compaction ([16](../issues/16-context-compression.md), `/compact`) gives again every skill loaded
+in the part of the transcript it summarises - given (`Given` entries) or loaded by the model (the
+knowledge recorded with what the agent said afterwards) - as it is now and only if the agent may
+still load it, unless the part kept still holds it. A skill changed since is given as it reads now,
+as a load would give it.
+
 ## Agents write skills
 
 An agent may write down what it has learnt to do (issue 22, decision 6):
@@ -131,5 +137,3 @@ agents alike; an external agent gives a skill given to it to its remote agent wi
 
 *   A personality that loads a skill in every turn (preloading), and importing `SKILL.md` files.
 *   Resources beside a skill - files, examples -, which would be the workspace's.
-*   Compaction ([16](../issues/16-context-compression.md)) has to keep a loaded skill, or load it
-    again.

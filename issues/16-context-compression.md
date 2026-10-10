@@ -1,6 +1,6 @@
 # 16 — Context compression
 
-**Status:** in progress
+**Status:** done
 **Area:** Context & knowledge
 
 ## The problem
@@ -331,3 +331,17 @@ In the model, with the REST and web UI parts that show the record.
   resolves; who placed them places them again (284). `usage` counts a message kept once. REST
   gives the history item as `{"compacted": {…}}`, the web UI's history panel marks it. Beside it:
   REST-SERVER.md did not list `command_executed` among the history items; it does now.
+- **2026-10-10** — Step 3 done (plan D), and the issue with it: the component `compaction` carries
+  out `/compact @agent` for the agent's owners (`owners_only`). It keeps at least `keep_last`
+  messages (default 10) from the start of the oldest one's turn, has the agent's own model
+  summarise the rest - resolved as every call is, through `Turn::context_until` - and gives the
+  skills loaded there again, as they are now, unless the part kept holds them still. The summary
+  is a `user` message of the agent, classified as the turn's label, with the tokens of its call;
+  the answer is channel-wide. `SkillView::as_given` and `SkillView::knowledge` are the one
+  rendering of a skill for a model, used by `skills` and `compaction` alike. In the example seed's
+  `agent-basics`; tested in the security suite (`only_an_agents_owner_compacts_its_context`).
+  Of *Done when*: pluggable per agent and `/compact` are done; running past the context window
+  without anybody asking is [284](284-automatic-context-compaction.md). Open beside it: an
+  external agent whose personality lists `compaction` would be given the default model and
+  compact what its remote agent is to be given next - nothing refuses it yet; the seed's external
+  personality does not list it.

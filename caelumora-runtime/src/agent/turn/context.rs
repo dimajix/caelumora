@@ -7,7 +7,8 @@ use super::Turn;
 use anyhow::{Context, Result};
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::context::{ContextItem, ContextResolver, PromptPart, PromptRef};
+use caelumora_model::context::{ContextItem, ContextRef, ContextResolver, PromptPart, PromptRef};
+use caelumora_model::digest::Digest;
 use caelumora_model::message::{Message, MessageRole};
 use caelumora_model::tool::Tool;
 
@@ -24,7 +25,33 @@ impl Turn<'_> {
         let resolved = ContextResolver::of(self.agent_channel_state)
             .resolve(&self.current().work.context, self.turn_id(), ActorId::Agent(self.agent_id))
             .context("the context of the turn names what the agent's state does not hold")?;
-        let messages = resolved.items.into_iter()
+        let messages = self.as_messages(resolved.items);
+        // The backends are given the tools natively, which knows no sets.
+        Ok((messages, resolved.tool_sets.into_iter().flat_map(|set| set.tools).collect()))
+    }
+
+    /// The transcript up to and including the entry `last`, on whichever
+    /// branch, as the model of the turn would be given it - each message as
+    /// its profile gives it, a turn given up told where it ended, one that
+    /// no longer flows into the channel reduced to the tools it called -,
+    /// without prompt parts or tools (issue 16): what a component hands a
+    /// model to work on the conversation itself, a summary say. Resolved as
+    /// the turn's own context is (`ContextResolver`), so the same rules hold.
+    ///
+    /// # Errors
+    /// If the transcript holds no entry `last`.
+    pub fn context_until(&self, last: Digest) -> Result<Vec<Message>> {
+        let reference = ContextRef { transcript: Some(last), profile: self.current().work.context.profile, ..ContextRef::default() };
+        let resolved = ContextResolver::of(self.agent_channel_state)
+            .resolve(&reference, self.turn_id(), ActorId::Agent(self.agent_id))
+            .context("the transcript holds no such entry")?;
+        Ok(self.as_messages(resolved.items))
+    }
+
+    /// The model's messages for `items`: a message as it is, a prompt part
+    /// as a message of the agent in its role.
+    fn as_messages(&self, items: Vec<ContextItem>) -> Vec<Message> {
+        items.into_iter()
             .map(|item| match item {
                 ContextItem::Conversation { message } => message,
                 ContextItem::Prompt { role, text, .. } => Message {
@@ -35,9 +62,7 @@ impl Turn<'_> {
                     ..Message::new(self.current().work.classification.clone())
                 },
             })
-            .collect();
-        // The backends are given the tools natively, which knows no sets.
-        Ok((messages, resolved.tool_sets.into_iter().flat_map(|set| set.tools).collect()))
+            .collect()
     }
 
     /// Sets the prompt parts the model of the turn is given besides the

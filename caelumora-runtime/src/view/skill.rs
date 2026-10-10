@@ -3,7 +3,10 @@
 //! nothing: whoever changes or loads it asks again.
 
 use super::Views;
+use crate::context::titled;
 use caelumora_model::confidentiality::Classification;
+use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
+use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::scope::{Scope, Scoped};
 use caelumora_model::security::AccessQuestions;
 use caelumora_model::skill::{Skill, SkillId};
@@ -46,6 +49,24 @@ impl SkillView {
 
     pub fn classification(&self) -> &Classification {
         &self.skill.classification
+    }
+
+    /// Its text as the model is given it, titled with its name: the one
+    /// rendering of every way it reaches a model - loaded by the model, given
+    /// with `/skill`, given again after a compaction (issues 16, 22).
+    pub fn as_given(&self) -> String {
+        titled(&format!("Skill: {}", self.name()), self.skill.body.as_str())
+    }
+
+    /// That it was loaded in `channel` of `session`, as it is now: knowledge
+    /// of the turn it was loaded into (`KnowledgeSource::Skill`).
+    pub fn knowledge(&self, channel: ChannelId, session: SessionId) -> KnowledgeRef {
+        KnowledgeRef {
+            channel,
+            session,
+            source: KnowledgeSource::Skill { skill: self.skill.id, digest: caelumora_model::digest::skill(self.skill.body.as_str()) },
+            classification: Some(self.skill.classification.clone()),
+        }
     }
 
     /// Whether the viewer may change it and delete it (`UpdateSkill`): its

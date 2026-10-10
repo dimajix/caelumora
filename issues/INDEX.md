@@ -253,7 +253,7 @@ published before anyone else can take it.
 
 | No. | Status | Issue |
 |---|---|---|
-| [16](16-context-compression.md) | in progress | History and context grow without bound; nothing decides what to drop before the model's context window is exceeded. |
+| [16](16-context-compression.md) | done | History and context grow without bound; nothing decides what to drop before the model's context window is exceeded. |
 | [17](17-information-sharing-within-session.md) | done | Agents in one session share nothing but routed messages — there is no scratchpad one can write to and another read. |
 | [18](18-knowledge-sharing.md) | open | Sessions are sealed: nothing an agent learns outlives the session, and cross-agent sharing is a harder question again. |
 | [19](19-memory-tiers.md) | open | The four memory tiers from `TODO.md` are named but undefined — scope, lifetime, readers and invalidation are all open. |
