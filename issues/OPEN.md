@@ -19,6 +19,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [05](05-postgres-event-recorder.md) | open | The `Recorder` hook is wired into every channel, but `BlackholeRecorder` is the only implementation, so nothing is recorded. |
 | [182](182-entity-reads-not-cached.md) | open | Personalities, agents and users are read from the store again for every use - for every member of a channel, on every turn - though they change rarely. |
 | [293](293-store-queries.md) | in progress | A store list takes no condition and no limit: every narrowing is done by its caller after everything was read, and no database could take it over. |
+| [295](295-access-as-a-query-condition.md) | open | A list asks the policy entity by entity, so a database store cannot push access into its query and a full page may be followed by an empty one. |
 
 ## Sessions and channels
 
