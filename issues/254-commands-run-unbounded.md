@@ -43,6 +43,55 @@ the workspace's files - a `remove_dir_all` of a purge races a command still writ
   dropped, and a restart finds no orphans; Open Terminal's containers are 251's step 7.
 - The three are not exclusive; the second is the one that keeps the boundary.
 
+## Decisions
+
+Taken with the maintainer on 2026-10-10. It comes after
+[296](296-workspace-operations-on-the-view.md), on its shell bound to its scope.
+
+- **A command is its channel's, not its starter's** - as [294](294-user-ends-a-command.md) decided
+  for ending one. It runs on as long as some current member of the channel could have started it
+  there: the workspace usable in the channel for them (`WorkspaceManager::usable_in`) and its files
+  writable. An agent removed from the channel leaves its command to the members who remain, who see
+  it and may end it. So the rule is kept once, in `usable_in`, and all a shell must know of a
+  command is its workspace, its scope and its id.
+- **The shell keeps the register, not the runtime.** Not a register in the `WorkspaceManager`
+  beside the shells' own: what starts a command enters it, so that nothing starts one past it, and
+  296's shell bound to its scope can be handed out as decided there. `LocalCommands` becomes a
+  generic type of the `terminal` module - the commands of a storage's workspaces by workspace, scope
+  and id, with when each was started - in which the `local` shell keeps its processes and the Open
+  Terminal shell its ids. A provider lists them (`TerminalProvider::commands()`) and ends one
+  without asking anything; a list per provider, not per workspace's shell, so that looking does not
+  start a stopped container.
+- **Open Terminal's own list does not do it.** Checked against 0.14.0: `GET /execute` lists only
+  the processes whose `X-User-Id` and `X-Session-Id` are those of the request - the scopes must be
+  known to list their commands -, and a process has neither its `cwd` nor a start time, so in an
+  `open_terminal_shared` instance a command cannot be told to be in which workspace. The table lives
+  in the instance's memory.
+- **The runtime ends what may no longer run.** A task of the `WorkspaceManager`, woken by the events
+  that can change the answer (`SessionUpdated`, `ChannelUpdated`, the `Workspace…` events, a member
+  leaving) and besides at an interval, asks the rule above of every command the providers list - the
+  channel found by the scope, which `get_channel` needs no session for - and ends those nobody may
+  run there any longer. That a scope is a channel stays the runtime's, at the one place 296 gives
+  it.
+- **A bound per storage, `max_run_secs`**, with a default: the host's resources are the storage's;
+  the tool's `max_wait_secs` is how long a call waits. The `local` shell kills a command's process
+  group when its time is over. An Open Terminal shell starts not the command but
+  `exec timeout -s KILL <max_run_secs> bash -c "$CAELUMORA_COMMAND"`, the command in the
+  environment, so that the instance ends it by itself - also without Caelumora, and after a
+  restart. GNU `timeout` (in the image: coreutils 9.7) signals its whole process group; a command
+  that leaves the group (`setsid`) escapes the bound - it holds against forgetting, not against
+  intent.
+- **What a restart leaves is named, not closed.** The register lives in memory.
+  `open_terminal_docker` stops at start what an earlier run left running. A command of an earlier
+  run in an `open_terminal_shared` instance is found by nothing and ends only at `max_run_secs`; one
+  of the `local` shell is not bounded at all - `local` is for development and tests. Both are said
+  in [STORAGE.md](../docs/STORAGE.md).
+- **Not decided:** whether stopping a session or a channel ends its commands - not a matter of
+  access, a stopped session can be started again, but nothing of it runs any more; whether the
+  server gets an orderly shutdown in which the `local` provider kills its process groups (dropped,
+  `kill_on_drop` kills only `bash`, not its group); whether `LocalProvider::remove` ends the
+  workspace's commands before it removes their directory.
+
 ## Done when
 
 - No command runs on after the channel it was started from may no longer use the workspace, and
@@ -61,3 +110,6 @@ the workspace's files - a `remove_dir_all` of a purge races a command still writ
   own, user control rather than a boundary of access: issue [294](294-user-ends-a-command.md).
   Interrupting a running call (issue [276](276-interrupt-one-tool-call.md)) reaches a command only
   while `run_command` waits for it.
+- **2026-10-10** — Looked at with the maintainer: the decisions above recorded, after Open
+  Terminal's `GET /execute` was checked against 0.14.0. They replace a register of commands in the
+  `WorkspaceManager`, fed by a `run_command` moved there, which was weighed first.
