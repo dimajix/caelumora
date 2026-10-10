@@ -1,0 +1,65 @@
+# 294 — A command running in the background can be ended only by the model, not by a user
+
+**Status:** open
+**Area:** Tools and approvals
+
+## The problem
+
+`run_command` of `terminal_tool` (issue [251](251-open-terminal.md)) follows a command for at most
+`max_wait_secs` and hands one still running back with its id; from then on the command is no call
+any more, but a command in the workspace's shell. Only the model ends it, with `kill_command`.
+
+A user who sees such a command hang - waiting for input, a lock, a network peer - has no way to end
+it:
+
+*   Interrupting a running tool call, as issue [276](276-interrupt-one-tool-call.md) asks for,
+    reaches a command only while `run_command` still waits for it: the dropped call kills it
+    (`KillOnDrop`, 251 part C4). A `command_output` call that follows it is interrupted as a call -
+    the wait ends, the command runs on.
+*   Cancelling the agent's turn or the channel does not reach it at all: a command outlives its turn
+    (issue [254](254-commands-run-unbounded.md)).
+*   What remains is to tell the agent in a message to kill it - a turn of the model for something
+    the user already decided, and only while the agent is there and willing.
+
+## Why it matters
+
+A command is started in a user's channel, in a workspace the channel uses, on a call that was
+perhaps approved by that very user. That they can stop the call but not what it started is a gap in
+the control they have over what an agent does in their name. Issue 254 bounds the commands nobody
+ends any more; this one is about a person who wants to end one now.
+
+## Considerations
+
+- **Not 254.** 254 is about the runtime ending commands at the boundaries of access - a bound per
+  command, the end of a scope's access, shutdown. Ending a command because a person decides to is
+  user control, with its own action and permission. The two meet in the shell's `kill` and may
+  share what lists a scope's commands.
+- **Not 276.** 276 interrupts a call and lets the turn go on; a command handed back has no call.
+- **Addressing.** A command is seen only under its scope, the channel it was started in, by its
+  id (`Shell::kill(scope, id, offset)`). The `run_command` result that handed it back carries the
+  id, so the web UI could offer "kill" there, as long as the command runs. A list of a scope's
+  running commands - the `Shell` has none today - would show those whose result is long scrolled
+  away, e.g. in the channel's workspace panel.
+- **Permission.** Candidates: `CancelChannel` - who may end the agents' turns in the channel may
+  end what they started there, the same argument as for 276; or `WriteWorkspace` - killing a
+  process is a change to the workspace. The command is the channel's (its scope), which argues
+  for the first; the workspace is the resource, which argues for the second. To be decided, and a
+  new action in someone's name, so with its test in the security suite.
+- **What the agent learns.** A command killed by a user is `Killed` the next time the model follows
+  it (`command_output`). Whether the agent should be told otherwise - e.g. by a message in the
+  channel - is open; ending it without telling would leave a model that does not follow it any more
+  in the belief that it still runs.
+- **Who it reaches.** Only commands of a workspace's shell; the terminal client and other shells
+  could follow.
+
+## Done when
+
+- A user who may do so can end a command of their channel that was handed back as running.
+- The web UI offers it at the command.
+- The security suite covers the new action.
+
+## History
+
+- 2026-10-10: Opened while looking at [276](276-interrupt-one-tool-call.md) with the maintainer:
+  276 reaches a hanging command only while `run_command` waits for it, 254 only at the boundaries of
+  access; a user who wants to end a command running in the background can do neither.
