@@ -68,14 +68,14 @@ Decisions that cost an hour and close an issue are listed under [D](#d-questiona
 | [282](282-message-attachments.md) | A user attaches images to a message; the model that can see is given them, the one that cannot is told. | Decided in part: what is stored refers, the copies the model is given carry the content, fetched by the turn through a cache. Open: whether an attachment is part of its message or a file of the user's, as an artifact - which artifacts' lists, and those of their versions, would then decide who reads it. |
 | [289](289-attach-compares-access.md) | Attaching a workspace compares its access list with the session's: no entry for the session where the list reaches its members already. | Spares lists of single sessions; needs the session's admission rule (221) for a comparison by subjects. |
 | [291](291-share-artifacts-in-the-web-ui.md) | A page of an artifact in the web UI: its versions, and for its owner whom it and its versions are shared with. | Sharing is REST alone until then; the workspace page's `AccessList` is the pattern. |
-| [293](293-store-queries.md) | Store lists take a declarative condition, an order, a limit and a cursor; the policy's access becomes part of the query in a second phase. | The artifacts' lists read every artifact today. At least its first phase before 291 lists artifacts in the web UI. |
+| [293](293-store-queries.md) | The policy's access as part of a list's query (phase 2): the subjects of a principal - roles, the places they are a member of -, the rule as a filter beside `check`, and a test that both agree. | Lists take queries; a store still reads every entity of a kind, and the policy is asked of each match. Limit and cursor over REST come with 218 and 291. |
 | - | A diff presentation for write calls (a `ToolPresentation` of its own). | No issue yet; worth one. |
 
 **Deliberately not in the first release:** converting formats (PDF, office documents) to text,
 images for models that see.
 
 Order: decide **169** and the small part of **20** → **247** → **256** → **282** → **208**; **254**
-alongside; **293** (phase 1), then **291**; **289** after 221; **272** when wanted.
+and **291** alongside; **293** (phase 2) when lists grow; **289** after 221; **272** when wanted.
 
 ### B2. Sessions that last: context and memory
 

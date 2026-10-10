@@ -33,6 +33,7 @@
 
 use crate::removal::Stored;
 use crate::scope::Scoped;
+use crate::store::query::{self, Cursor, Field, Page, Query};
 use crate::security::{ActionType, Enforcement, SecurityAttributes, SecurityContext, SecurityManager};
 use crate::store::{EntityKind, StoreError, StoreResult};
 
@@ -68,15 +69,43 @@ impl<'a> Access<'a> {
         Ok(value)
     }
 
-    /// The entities of `values` the caller may read.
-    pub(crate) async fn filter<T: Stored>(&self, values: Vec<T>, kind: &Actions) -> Vec<T> {
-        let mut readable = Vec::with_capacity(values.len());
-        for value in values.into_iter().filter(present) {
-            if self.manager.check(self.ctx, (kind.get)(value.security_attributes())).await {
-                readable.push(value);
+    /// The page of `candidates` that `query` asks for (issue 293): in the
+    /// order of their keys, after its cursor, those that meet its filter -
+    /// judged on what `document` makes of one, where the store does not
+    /// hold it serialized and judged it before -, and of those the ones the
+    /// caller may read - among what was deleted, if `deleted` -, until its
+    /// limit.
+    pub(crate) async fn page<T, F, D>(&self, candidates: Vec<(String, T)>, query: &Query<F>, kind: &Actions, deleted: bool, document: D) -> StoreResult<Page<T>>
+    where T: Stored, F: Field, D: Fn(&T) -> StoreResult<Option<serde_json::Value>> {
+        let mut items = Vec::new();
+        let mut remaining = query::ordered_after(candidates, query).peekable();
+        while let Some((key, candidate)) = remaining.next() {
+            if let Some(filter) = &query.filter {
+                match document(&candidate)? {
+                    Some(serialized) if filter.matches(&serialized) => {}
+                    _ => continue,
+                }
+            }
+            let readable = match deleted {
+                true => self.readable_deleted(&candidate, kind).await,
+                false => self.readable(&candidate, kind).await,
+            };
+            if !readable {
+                continue;
+            }
+            items.push(candidate);
+            if query.limit.is_some_and(|limit| items.len() >= limit) {
+                let next = remaining.peek().map(|_| Cursor::after(key));
+                return Ok(Page { items, next });
             }
         }
-        readable
+        Ok(Page { items, next: None })
+    }
+
+    /// Whether the caller may read `value` among a list: it is present
+    /// and they may read it (`kind.get`).
+    pub(crate) async fn readable<T: Stored>(&self, value: &T, kind: &Actions) -> bool {
+        present(value) && self.manager.check(self.ctx, (kind.get)(value.security_attributes())).await
     }
 
     /// Whether the caller may create `value`.
@@ -116,16 +145,11 @@ impl<'a> Access<'a> {
         Ok(value)
     }
 
-    /// The entities of `values` that are marked deleted and the caller may
-    /// read as such.
-    pub(crate) async fn filter_deleted<T: Stored>(&self, values: Vec<T>, kind: &Actions) -> Vec<T> {
-        let mut readable = Vec::new();
-        for value in values.into_iter().filter(|v| !present(v)) {
-            if self.manager.check(self.ctx, ActionType::ReadDeleted(kind.entity, value.security_attributes())).await {
-                readable.push(value);
-            }
-        }
-        readable
+    /// Whether the caller may read `value` among a list of what was
+    /// deleted: it is marked deleted and they may read it as such
+    /// (`ReadDeleted`).
+    pub(crate) async fn readable_deleted<T: Stored>(&self, value: &T, kind: &Actions) -> bool {
+        !present(value) && self.manager.check(self.ctx, ActionType::ReadDeleted(kind.entity, value.security_attributes())).await
     }
 
     /// Whether the caller may take the mark of `stored` away: not found if
@@ -302,6 +326,7 @@ mod tests {
     use crate::security::{ActionType, SecurityAttributes, SecurityContext, SecurityManager};
     use crate::session::{Session, SessionId};
     use crate::store::{EntityStore, StoreError};
+    use crate::store::query::Query;
     use crate::store::memory::MemoryStore;
     use crate::user::UserId;
     use crate::value::name::Name;
@@ -358,8 +383,8 @@ mod tests {
 
         assert!(store.get_session(&bob_ctx, hers.id).await.is_ok(), "a contributor reads it");
         assert!(matches!(store.get_session(&carol_ctx, hers.id).await, Err(StoreError::NotFound { .. })), "not refused: absent");
-        assert_eq!(store.list_sessions(&carol_ctx).await.unwrap().len(), 0, "lists are filtered");
-        assert_eq!(store.list_sessions(&bob_ctx).await.unwrap().len(), 1);
+        assert_eq!(store.list_sessions(&carol_ctx, &Query::all()).await.map(|page| page.items).unwrap().len(), 0, "lists are filtered");
+        assert_eq!(store.list_sessions(&bob_ctx, &Query::all()).await.map(|page| page.items).unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -398,14 +423,14 @@ mod tests {
 
         let seen = store.get_deleted_session(&bob_ctx, hers.id).await;
         assert!(matches!(seen, Err(StoreError::NotFound { .. })), "a contributor does not see the trash: {seen:?}");
-        assert!(store.list_deleted_sessions(&bob_ctx).await.unwrap().is_empty());
+        assert!(store.list_deleted_sessions(&bob_ctx, &Query::all()).await.map(|page| page.items).unwrap().is_empty());
         let restored = store.restore_session(&bob_ctx, hers.id).await;
         assert!(matches!(restored, Err(StoreError::NotFound { .. })), "nor restores from it: {restored:?}");
         assert!(!store.purge_session(&bob_ctx, hers.id).await.unwrap(), "nothing bob could see to purge");
 
         let purged = store.purge_session(&alice_ctx, hers.id).await;
         assert!(matches!(purged, Err(StoreError::PermissionDenied)), "the owner does not purge: {purged:?}");
-        assert_eq!(store.list_deleted_sessions(&alice_ctx).await.unwrap().len(), 1, "the owner sees her trash");
+        assert_eq!(store.list_deleted_sessions(&alice_ctx, &Query::all()).await.map(|page| page.items).unwrap().len(), 1, "the owner sees her trash");
         store.restore_session(&alice_ctx, hers.id).await.expect("and restores from it");
         assert!(store.delete_session(&alice_ctx, hers.id).await.unwrap());
         assert!(store.purge_session(&SecurityContext::system(), hers.id).await.unwrap(), "the system purges");
@@ -437,7 +462,7 @@ mod tests {
 
         assert_eq!(store.get_user(&bob_ctx, alice_id).await.expect("another user reads her").username, "alice");
         assert_eq!(store.find_user_by_name(&bob_ctx, "alice").await.expect("and finds her by name").id, alice_id);
-        assert_eq!(store.list_users(&bob_ctx).await.expect("and lists her").len(), 1);
+        assert_eq!(store.list_users(&bob_ctx, &Query::all()).await.map(|page| page.items).expect("and lists her").len(), 1);
 
         let promoted = User { roles: vec![crate::role::RoleId::new()], ..record.clone() };
         for ctx in [&alice_ctx, &bob_ctx] {

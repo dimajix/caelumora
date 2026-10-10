@@ -1,3 +1,4 @@
+use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::approval::ApprovalRule;
 use caelumora_model::value::name::Name;
 use crate::channel::ChannelLoop;
@@ -7,7 +8,7 @@ use crate::event::EventBus;
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId};
-use caelumora_model::channel::Channel;
+use caelumora_model::channel::{Channel, ChannelField, Participant};
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::value::language::Language;
@@ -18,7 +19,7 @@ use caelumora_model::privacy::{PrivacyConfig, SessionPrivacy};
 use caelumora_model::store::{EntityStore, StoreError, StoreResult, StoreResultExt};
 use tracing::{info, warn};
 use caelumora_model::scope::Scope;
-use caelumora_model::session::{ChannelId, Session, SessionId};
+use caelumora_model::session::{ChannelId, Session, SessionField, SessionId};
 use caelumora_model::template::{ScopeTemplate, SessionTemplateId, WorkspaceTemplate};
 use caelumora_model::workspace::{WorkspaceChoice, WorkspaceId};
 use crate::scoped::{delete_scoped_in, purge_scoped_in, restore_scoped_in};
@@ -992,7 +993,8 @@ impl SessionManager {
             return Err(StoreError::NotFound { entity: "session", id: id.to_string() }.into());
         }
         let mut channels = session.channels.clone();
-        channels.extend(store.list_deleted_channels(&SecurityContext::system()).await?.into_iter().filter(|c| c.session_id == id).map(|c| c.id));
+        let of_it = Query::filtered(Filter::eq(ChannelField::Session, &id)?);
+        channels.extend(store.list_deleted_channels(&SecurityContext::system(), &of_it).await?.items.into_iter().map(|c| c.id));
         // The state lives in the `StateStore`, which may be another store
         // than the session's.
         let state_store = self.runtime_manager.state_store();
@@ -1030,10 +1032,9 @@ impl SessionManager {
             .require(context, ActionType::DeleteAgent(&agent.security_attributes), || StoreError::PermissionDenied).await?;
         let actor = ActorId::Agent(id);
         let system = SecurityContext::system();
-        for session in store.list_sessions(&system).await? {
-            if !session.participants.iter().any(|p| p.actor_id() == actor) {
-                continue;
-            }
+        // The sessions it takes part in, which the store is asked for alone.
+        let taking_part = Query::filtered(Filter::any(SessionField::Participants, Filter::eq(SessionField::Participant, &Participant::Agent(id))?));
+        for session in store.list_sessions(&system, &taking_part).await?.items {
             // Held so that the session does not start while its channels'
             // documents are changed here.
             let start = self.start_lock(session.id);

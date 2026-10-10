@@ -1,5 +1,6 @@
 //! A channel as its viewer reached it, and its members.
 
+use caelumora_model::store::query::Query;
 use super::member::{member_state, AgentMember, MemberState};
 use super::{AgentContextView, SessionView, ViewError, ViewResult, Views, WorkspaceView};
 use crate::channel::{visible_part, ChannelLoop, VisibleHistory};
@@ -88,11 +89,17 @@ impl ChannelView {
         if self.readable != Readable::Whole {
             return Ok(Vec::new());
         }
-        // Every artifact is read - issue 293 is to ask the store for those
-        // published here alone.
-        let all = self.views().entities().list_artifacts(&SecurityContext::system()).await
-            .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context("listing the artifacts")))?;
+        use caelumora_model::artifact::ArtifactField;
+        use caelumora_model::store::query::Filter;
+        let failed = |e: caelumora_model::store::StoreError| ViewError::Failed(anyhow::Error::new(e).context("listing the artifacts"));
         let (session, channel) = (self.session.id(), self.channel.id);
+        // Those with a version published here, which the store is asked for
+        // alone (issue 293).
+        let here = Filter::And(vec![
+            Filter::eq(ArtifactField::VersionSession, &session).map_err(failed)?,
+            Filter::eq(ArtifactField::VersionChannel, &channel).map_err(failed)?,
+        ]);
+        let all = self.views().entities().list_artifacts(&SecurityContext::system(), &Query::filtered(Filter::any(ArtifactField::Versions, here))).await.map_err(failed)?.items;
         let mut published = Vec::new();
         for mut artifact in all {
             artifact.versions.retain(|version| version.session_id == session && version.channel_id == channel);

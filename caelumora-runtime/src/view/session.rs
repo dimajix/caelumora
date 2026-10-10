@@ -1,6 +1,7 @@
 //! A session as its viewer reached it: its document, and its loop if it
 //! runs.
 
+use caelumora_model::store::query::Query;
 use super::channel::Readable;
 use super::{ChannelView, ViewError, ViewResult, Views};
 use crate::channel::ChannelLoop;
@@ -304,11 +305,12 @@ impl SessionView {
     pub async fn deleted_channels(&self) -> ViewResult<Vec<DeletedSnapshot<ChannelId>>> {
         let views = self.views();
         let context = views.context();
-        let channels = views.entities().list_deleted_channels(context).await
-            .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context(format!("listing the deleted channels of session {}", self.id()))))?;
+        let failed = |e: caelumora_model::store::StoreError| ViewError::Failed(anyhow::Error::new(e).context(format!("listing the deleted channels of session {}", self.id())));
+        let of_this = Query::filtered(caelumora_model::store::query::Filter::eq(caelumora_model::channel::ChannelField::Session, &self.id()).map_err(failed)?);
+        let channels = views.entities().list_deleted_channels(context, &of_this).await.map_err(failed)?.items;
         let may_change = self.may_change().await;
         let mut deleted = Vec::new();
-        for channel in channels.into_iter().filter(|c| c.session_id == self.id()) {
+        for channel in channels {
             let Some(removal) = channel.deleted.clone() else { continue };
             deleted.push(DeletedSnapshot {
                 id: channel.id,

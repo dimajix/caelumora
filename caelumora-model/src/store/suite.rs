@@ -3,6 +3,7 @@
 //! drift apart again. What is specific to one store - files on disk,
 //! concurrent writers - stays in that store's own tests.
 
+use crate::store::query::{Filter, Query};
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
 use crate::turn::TurnState;
 use crate::channel::{Channel, ChannelId, ChannelState};
@@ -20,7 +21,7 @@ use crate::removal::{Deletable, Removal};
 use crate::user::{User, UserId, UserProfile};
 use crate::workspace::{Workspace, WorkspaceId};
 use crate::skill::{Skill, SkillId};
-use crate::artifact::{Artifact, ArtifactId};
+use crate::artifact::{Artifact, ArtifactField, ArtifactId};
 use chrono::Utc;
 use uuid::Uuid;
 
@@ -50,7 +51,7 @@ macro_rules! lifecycle {
         let found = store.$get(&ctx, ($key)(&value)).await.expect(concat!($entity, ": get"));
         assert_eq!(found.$($field).+, value.$($field).+, concat!($entity, ": get sees the update"));
 
-        let listed = store.$list(&ctx).await.expect(concat!($entity, ": list"));
+        let listed = store.$list(&ctx, &Query::all()).await.map(|page| page.items).expect(concat!($entity, ": list"));
         assert_eq!(listed.len(), 1, concat!($entity, ": list holds exactly what was created"));
         assert!(($key)(&listed[0]) == ($key)(&value), concat!($entity, ": list holds the entity"));
 
@@ -61,7 +62,7 @@ macro_rules! lifecycle {
         assert!(matches!(gone, Err(StoreError::NotFound { entity: $entity, .. })), concat!($entity, ": get after delete is NotFound, got {:?}"), gone);
         let gone = store.$update(&ctx, &value).await;
         assert!(matches!(gone, Err(StoreError::NotFound { entity: $entity, .. })), concat!($entity, ": update after delete is NotFound, got {:?}"), gone);
-        assert!(store.$list(&ctx).await.expect(concat!($entity, ": list")).is_empty(), concat!($entity, ": list is empty after delete"));
+        assert!(store.$list(&ctx, &Query::all()).await.map(|page| page.items).expect(concat!($entity, ": list")).is_empty(), concat!($entity, ": list is empty after delete"));
     }};
 }
 
@@ -200,6 +201,107 @@ fn artifact_named(name: ScopedName) -> Artifact {
 
 fn component() -> StoredComponents {
     StoredComponents::new("search", ComponentConfig { component_nodes: vec![ComponentDescriptor::new("search", "web_search")] }, Default::default())
+}
+
+/// A store answers a query of a list (issue 293): those that meet its
+/// filter - fields of the entity, of an element of a collection in it, of
+/// an element of a collection in that -, in the order of their ids, in pages
+/// of its limit, each going on after the cursor the one before handed out.
+pub(crate) async fn queries_behave(store: &dyn EntityStore) {
+    use crate::security::{AclEntry, Grant, Subject};
+    let ctx = SecurityContext::system();
+    let (alice, bob) = (UserId::new(), UserId::new());
+    let (session, channel) = (SessionId::new(), ChannelId::new());
+    let bobs = Subject::Actor(crate::actor::ActorId::User(bob));
+    let mut made = Vec::new();
+    for (index, owner) in [alice, alice, bob, alice, bob].into_iter().enumerate() {
+        let mut artifact = artifact_named(ScopedName::new(format!("a{index}.csv"), Scope::UserScope { user_id: owner }).unwrap());
+        match index {
+            // Published in the channel asked about.
+            1 => (artifact.versions[0].session_id, artifact.versions[0].channel_id) = (session, channel),
+            // Shared with bob as a whole.
+            3 => artifact.security_attributes.acl.push(AclEntry { subject: bobs, grant: Grant::Read }),
+            // A version of it shared with bob, published elsewhere in the session.
+            4 => {
+                artifact.versions[0].session_id = session;
+                artifact.versions[0].acl.push(AclEntry { subject: bobs, grant: Grant::Read });
+            }
+            _ => {}
+        }
+        store.create_artifact(&ctx, &artifact).await.expect("an artifact");
+        made.push(artifact.id);
+    }
+    let ids = |page: &[Artifact]| page.iter().map(|a| a.id).collect::<Vec<_>>();
+    let mut sorted = made.clone();
+    sorted.sort_by_key(|id| id.to_string());
+    let listed = store.list_artifacts(&ctx, &Query::all()).await.expect("all of them");
+    assert_eq!(ids(&listed.items), sorted, "in the order of their ids");
+    assert!(listed.next.is_none());
+
+    let owned = Filter::eq(ArtifactField::Owner, &crate::actor::ActorId::User(bob)).unwrap();
+    let found = store.list_artifacts(&ctx, &Query::filtered(owned)).await.unwrap();
+    let mut bobs_own = vec![made[2], made[4]];
+    bobs_own.sort_by_key(|id| id.to_string());
+    assert_eq!(ids(&found.items), bobs_own, "a field of the entity");
+
+    let place = Filter::And(vec![Filter::eq(ArtifactField::VersionSession, &session).unwrap(), Filter::eq(ArtifactField::VersionChannel, &channel).unwrap()]);
+    let published = store.list_artifacts(&ctx, &Query::filtered(Filter::any(ArtifactField::Versions, place))).await.unwrap();
+    assert_eq!(ids(&published.items), [made[1]], "a version published in the channel, not one elsewhere in the session");
+
+    let named = Filter::eq(ArtifactField::Subject, &bobs).unwrap();
+    let shared = Filter::Or(vec![
+        Filter::any(ArtifactField::Acl, named.clone()),
+        Filter::any(ArtifactField::Versions, Filter::any(ArtifactField::VersionAcl, named)),
+    ]);
+    let mut with_bob = vec![made[3], made[4]];
+    with_bob.sort_by_key(|id| id.to_string());
+    assert_eq!(ids(&store.list_artifacts(&ctx, &Query::filtered(shared)).await.unwrap().items), with_bob, "an entry of its list or of a version's");
+
+    let mut paged = Vec::new();
+    let mut query = Query::all().limited(2);
+    loop {
+        let page = store.list_artifacts(&ctx, &query).await.unwrap();
+        assert!(page.items.len() <= 2, "at most its limit");
+        paged.extend(ids(&page.items));
+        match page.next {
+            Some(cursor) => query = Query::all().limited(2).after(cursor),
+            None => break,
+        }
+    }
+    assert_eq!(paged, sorted, "the pages, one after the other, are the whole list");
+
+    // By scope, by the session of a channel, by a participant.
+    use crate::channel::{ChannelField, Participant};
+    use crate::scope::ScopeField;
+    use crate::session::SessionField;
+    let session_id = SessionId(Uuid::new_v4());
+    let in_session = Personality { name: ScopedName::new("in-session", Scope::SessionScope { session_id }).unwrap(), ..personality() };
+    let in_channel = Personality { name: ScopedName::new("in-channel", Scope::ChannelScope { session_id, channel_id: ChannelId(Uuid::new_v4()) }).unwrap(), ..personality() };
+    let elsewhere = Personality { name: scoped("elsewhere"), ..personality() };
+    for personality in [&in_session, &in_channel, &elsewhere] {
+        store.create_personality(&ctx, personality).await.unwrap();
+    }
+    let holder = Scope::SessionScope { session_id };
+    let lying = store.list_personalities(&ctx, &Query { filter: holder.within::<ScopeField>().unwrap(), ..Query::all() }).await.unwrap();
+    let mut expected = vec![in_session.id, in_channel.id];
+    expected.sort_by_key(|id| id.to_string());
+    assert_eq!(lying.items.iter().map(|p| p.id).collect::<Vec<_>>(), expected, "what lies in the session or a channel of it");
+
+    let agent = AgentId(Uuid::new_v4());
+    let mut with_agent = self::session();
+    with_agent.participants.push(Participant::Agent(agent));
+    let without = self::session();
+    store.create_session(&ctx, &with_agent).await.unwrap();
+    store.create_session(&ctx, &without).await.unwrap();
+    let taking_part = Filter::any(SessionField::Participants, Filter::eq(SessionField::Participant, &Participant::Agent(agent)).unwrap());
+    let found = store.list_sessions(&ctx, &Query::filtered(taking_part)).await.unwrap();
+    assert_eq!(found.items.iter().map(|s| s.id).collect::<Vec<_>>(), [with_agent.id], "a participant, the whole element");
+
+    let of_it = Channel { session_id: with_agent.id, ..self::channel() };
+    store.create_channel(&ctx, &of_it).await.unwrap();
+    store.create_channel(&ctx, &Channel { session_id: without.id, ..self::channel() }).await.unwrap();
+    let found = store.list_channels(&ctx, &Query::filtered(Filter::eq(ChannelField::Session, &with_agent.id).unwrap())).await.unwrap();
+    assert_eq!(found.items.iter().map(|c| c.id).collect::<Vec<_>>(), [of_it.id], "the channels of a session");
 }
 
 /// Preconfigured components go through the same life as the entities.
@@ -480,7 +582,7 @@ pub(crate) async fn deleting_marks(store: &dyn EntityStore) {
 
     let read = store.get_session(&system, gone.id).await;
     assert!(matches!(read, Err(StoreError::NotFound { entity: "session", .. })), "not read, not even by the system: {read:?}");
-    let listed = store.list_sessions(&system).await.expect("list");
+    let listed = store.list_sessions(&system, &Query::all()).await.map(|page| page.items).expect("list");
     assert_eq!(listed.iter().map(|s| s.id).collect::<Vec<_>>(), [kept.id], "not listed");
     let changed = store.update_session(&system, &gone).await;
     assert!(matches!(changed, Err(StoreError::NotFound { .. })), "not changed: {changed:?}");
@@ -497,7 +599,7 @@ pub(crate) async fn deleting_marks(store: &dyn EntityStore) {
     let deleted = store.get_deleted_session(&system, gone.id).await.expect("read as deleted");
     let mark = deleted.deleted.expect("marked");
     assert_eq!(mark.by, system.caller_id, "by whom");
-    let trash = store.list_deleted_sessions(&system).await.expect("list deleted");
+    let trash = store.list_deleted_sessions(&system, &Query::all()).await.map(|page| page.items).expect("list deleted");
     assert_eq!(trash.iter().map(|s| s.id).collect::<Vec<_>>(), [gone.id], "only what was deleted");
     let not_deleted = store.get_deleted_session(&system, kept.id).await;
     assert!(matches!(not_deleted, Err(StoreError::NotFound { .. })), "what is there is not in the trash: {not_deleted:?}");
@@ -514,7 +616,7 @@ pub(crate) async fn deleting_marks(store: &dyn EntityStore) {
     assert!(store.delete_session(&system, gone.id).await.expect("delete"));
     assert!(store.purge_session(&system, gone.id).await.expect("purge marked"));
     assert!(!store.purge_session(&system, gone.id).await.expect("purge again"), "nothing left");
-    assert!(store.list_deleted_sessions(&system).await.expect("list deleted").is_empty());
+    assert!(store.list_deleted_sessions(&system, &Query::all()).await.map(|page| page.items).expect("list deleted").is_empty());
     store.create_session(&system, &gone).await.expect("its id is free again");
 
     let carol = user("carol");

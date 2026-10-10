@@ -87,6 +87,25 @@ impl Session {
     }
 }
 
+/// What a query of sessions may name (issue 293). `Participant` is an
+/// element of `Participants`, the whole of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionField {
+    /// Its participants.
+    Participants,
+    /// A participant, within `Participants`.
+    Participant,
+}
+
+impl crate::store::query::Field for SessionField {
+    fn path(self) -> &'static [&'static str] {
+        match self {
+            SessionField::Participants => &["participants"],
+            SessionField::Participant => &[],
+        }
+    }
+}
+
 impl Secured for Session {
     fn security_attributes(&self) -> &SecurityAttributes {
         &self.security_attributes

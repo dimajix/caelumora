@@ -22,6 +22,52 @@ use serde::{Deserialize, Serialize};
 
 define_id!(ArtifactId);
 
+/// What a query of artifacts may name (issue 293), each where it lies in
+/// an artifact as it is stored. Those of a version lie within an element of
+/// `Versions`, those of an entry within an element of `Acl` or `VersionAcl`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArtifactField {
+    /// Where it lies: a `Scope`.
+    Scope,
+    /// The session of the channel whose scope it lies in, if it lies in one.
+    ChannelScopeSession,
+    /// Who owns it: an `ActorId`.
+    Owner,
+    /// Its own access list: entries.
+    Acl,
+    /// Its versions.
+    Versions,
+    /// Of a version: the session it was published in.
+    VersionSession,
+    /// Of a version: the channel it was published in.
+    VersionChannel,
+    /// Of a version: its own access list - entries.
+    VersionAcl,
+    /// Of an entry of an access list: whom it names, a `Subject`.
+    Subject,
+}
+
+impl crate::scope::ScopedField for ArtifactField {
+    const SCOPE: Self = ArtifactField::Scope;
+    const CHANNEL_SCOPE_SESSION: Self = ArtifactField::ChannelScopeSession;
+}
+
+impl crate::store::query::Field for ArtifactField {
+    fn path(self) -> &'static [&'static str] {
+        match self {
+            ArtifactField::Scope => &["scope"],
+            ArtifactField::ChannelScopeSession => &["scope", "ChannelScope", "session_id"],
+            ArtifactField::Owner => &["security_attributes", "owner_id"],
+            ArtifactField::Acl => &["security_attributes", "acl"],
+            ArtifactField::Versions => &["versions"],
+            ArtifactField::VersionSession => &["session_id"],
+            ArtifactField::VersionChannel => &["channel_id"],
+            ArtifactField::VersionAcl => &["acl"],
+            ArtifactField::Subject => &["subject"],
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Artifact {
     pub id: ArtifactId,

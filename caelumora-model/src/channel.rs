@@ -147,6 +147,21 @@ impl Scoped for Channel {
     }
 }
 
+/// What a query of channels may name (issue 293).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelField {
+    /// The session it belongs to.
+    Session,
+}
+
+impl crate::store::query::Field for ChannelField {
+    fn path(self) -> &'static [&'static str] {
+        match self {
+            ChannelField::Session => &["session_id"],
+        }
+    }
+}
+
 impl Secured for Channel {
     fn security_attributes(&self) -> &SecurityAttributes {
         &self.security_attributes

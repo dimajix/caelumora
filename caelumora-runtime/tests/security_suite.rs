@@ -10,6 +10,7 @@
 //! permissions the action needs. Each test names the scenario or action of
 //! issue 198 it checks; the issue says what is expected and why.
 
+use caelumora_model::store::query::Query;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -208,7 +209,7 @@ impl World {
         let result = action.await;
         let asked = std::mem::take(&mut *self.policy.asked.lock().unwrap());
         // Agents made by the action are recorded by their names, too.
-        for agent in self.store.list_agents(&Self::system()).await.unwrap() {
+        for agent in self.store.list_agents(&Self::system(), &Query::all()).await.map(|page| page.items).unwrap() {
             self.policy.names.lock().unwrap().insert(ActorId::Agent(agent.id), agent.name.name.to_string());
         }
         let names = self.policy.names.lock().unwrap().clone();
@@ -357,7 +358,7 @@ async fn a_session_cannot_be_made_with_a_personality_the_user_may_not_read() {
     let refused = world.manager.create_from_template(&World::as_user(world.alice), template, None, None).await.expect_err("not hers to use");
     assert!(not_found(&refused), "answered as not there, so that it cannot be probed: {refused:#}");
     assert!(world.manager.views(Viewer::new(World::as_user(world.alice))).sessions().await.unwrap().is_empty(), "no session was stored");
-    assert!(world.store.list_agents(&World::system()).await.unwrap().is_empty(), "nor an agent");
+    assert!(world.store.list_agents(&World::system(), &Query::all()).await.map(|page| page.items).unwrap().is_empty(), "nor an agent");
 }
 
 /// P2: a personality shared with the user, or the system's, makes an agent
@@ -370,7 +371,7 @@ async fn a_shared_personality_makes_an_agent_of_whoever_uses_it() {
     for personality in [&shared, &global] {
         let template = world.template(Some(world.alice), &[], personality.name.name.as_str(), personality.id).await;
         let session = world.manager.create_from_template(&World::as_user(world.alice), template, None, None).await.expect("hers to use");
-        let agents = world.store.list_agents(&World::as_user(world.alice)).await.unwrap();
+        let agents = world.store.list_agents(&World::as_user(world.alice), &Query::all()).await.map(|page| page.items).unwrap();
         let agent = agents.iter().find(|a| a.personality_id == personality.id).expect("an agent of hers");
         assert_eq!(agent.security_attributes.owner_id, ActorId::User(world.alice), "owned by who made it");
         let gone = world.store.get_agent(&World::as_user(world.bob), agent.id).await.expect_err("not bob's to read");
@@ -450,7 +451,7 @@ async fn a_personality_is_changed_by_its_owner_and_read_by_who_it_is_shared_with
     assert!(world.store.update_personality(&alice, &changed).await.is_err(), "but not hers to change");
     assert!(world.store.delete_personality(&alice, shared.id).await.is_err(), "nor to delete");
     assert!(matches!(world.store.get_personality(&carol, shared.id).await, Err(StoreError::NotFound { .. })), "not there for a stranger");
-    assert!(world.store.list_personalities(&carol).await.unwrap().iter().all(|p| p.id != shared.id), "nor listed");
+    assert!(world.store.list_personalities(&carol, &Query::all()).await.map(|page| page.items).unwrap().iter().all(|p| p.id != shared.id), "nor listed");
     world.store.update_personality(&bob, &changed).await.expect("its owner changes it");
 }
 
@@ -2571,9 +2572,18 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
     let bobs = in_main(&bob).await.workspace().await.unwrap().expect("bob uses it too");
     let refused = bobs.publish_artifact(&at, "report.csv", None).await;
     assert!(matches!(refused, Err(ArtifactError::Store(StoreError::PermissionDenied))), "nor adds to alice's artifact of that name: {refused:?}");
+    let listed = |ctx: &SecurityContext| {
+        let views = world.manager.views(Viewer::new(ctx.clone()));
+        async move { views.artifacts().await.unwrap().iter().map(|a| a.artifact().id).collect::<Vec<_>>() }
+    };
+    let in_channel = in_main(&bob).await.artifacts().await.unwrap().iter().map(|a| a.artifact().id).collect::<Vec<_>>();
+    assert_eq!(in_channel, [artifact.id], "a member finds what was published in the channel there");
+    assert!(listed(&bob).await.is_empty(), "not among his own (issue 293): it was shared with the channel, not with him");
+    assert_eq!(listed(&alice).await, [artifact.id], "among its owner's");
     let writers = SecurityAttributes::owned_by(ActorId::User(world.alice)).granting(Subject::Actor(ActorId::User(world.bob)), Grant::Write).acl;
     assert!(matches!(artifacts.set_access(&bob, artifact.id, writers.clone()).await, Err(ArtifactError::NotFound(_))), "nor shares it");
     artifacts.set_access(&alice, artifact.id, writers).await.expect("its owner shares it");
+    assert_eq!(listed(&bob).await, [artifact.id], "shared with him by name, it is among his");
     let (added, third) = bobs.publish_artifact(&at, "report.csv", None).await.expect("whom it is shared with to write adds a version");
     assert_eq!((third, added.owner()), (3, Some(world.alice)), "hers still");
     assert!(matches!(artifacts.keep(&bob, artifact.id, Scope::UserScope { user_id: world.bob }).await, Err(ArtifactError::Store(StoreError::PermissionDenied))), "nor keeps it");
@@ -3136,7 +3146,7 @@ async fn an_agents_skill_belongs_to_its_owner_and_lies_in_the_session() {
         asked_for(&world, "alice as helper, asked by bob: CreateSkill(alice's) yes").await;
     }).await;
     assert!(asked.iter().any(|line| line == "alice as helper, asked by bob: CreateSkill(alice's) yes"), "{asked:?}");
-    let skills = world.store.list_skills(&World::system()).await.unwrap();
+    let skills = world.store.list_skills(&World::system(), &Query::all()).await.map(|page| page.items).unwrap();
     let deploy = skills.iter().find(|s| s.name.name.as_str() == "deploy").expect("written");
     assert_eq!(deploy.security_attributes.owner_id, ActorId::User(world.alice), "the agent's owner's");
     assert_eq!(deploy.name.scope, Scope::SessionScope { session_id: session.id() }, "in the session's scope");

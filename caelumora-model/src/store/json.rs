@@ -25,6 +25,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex, MutexGuard};
+use crate::store::query::{Field, NoField, Page, Query};
+use crate::artifact::ArtifactField;
+use crate::channel::ChannelField;
+use crate::scope::ScopeField;
+use crate::session::SessionField;
 
 /// A journal is folded into its snapshot once it is at least as large as
 /// the snapshot, and at least this large (issue 193): small states are not
@@ -260,9 +265,10 @@ fn require_entity<T>(value: Option<T>, entity: &'static str, id: String) -> Stor
     value.ok_or(StoreError::NotFound { entity, id })
 }
 
-/// Every `*.json` file in `dir`; temporary files of writes in progress, or
-/// left behind by a crash, are not among them.
-async fn read_all_from_dir<T: DeserializeOwned>(dir: &Path) -> StoreResult<Vec<T>> {
+/// Every `*.json` file in `dir`, each with its key - the file's name
+/// without `.json`; temporary files of writes in progress, or left behind by
+/// a crash, are not among them.
+async fn read_all_from_dir<T: DeserializeOwned>(dir: &Path) -> StoreResult<Vec<(String, T)>> {
     let mut values = Vec::new();
     let mut entries = tokio::fs::read_dir(dir).await.map_err(to_backend_error)?;
     loop {
@@ -279,8 +285,9 @@ async fn read_all_from_dir<T: DeserializeOwned>(dir: &Path) -> StoreResult<Vec<T
             continue;
         }
 
+        let key = path.file_stem().and_then(|stem| stem.to_str()).unwrap_or_default().to_string();
         match read_json_opt(&path).await {
-            Ok(Some(value)) => values.push(value),
+            Ok(Some(value)) => values.push((key, value)),
             Ok(None) => {}
             Err(err) => {
                 warn!("Failed to read JSON file {:?}: {}", path, err);
@@ -288,6 +295,24 @@ async fn read_all_from_dir<T: DeserializeOwned>(dir: &Path) -> StoreResult<Vec<T
         }
     }
     Ok(values)
+}
+
+/// The documents in `dir` that meet the filter of `query`, each read as
+/// JSON and judged so before it is read as a `T`, with its key - the name of
+/// its file -, and the query with its filter taken: what remains for
+/// `query::page` to apply.
+async fn matching_in_dir<T: DeserializeOwned, F: Field>(dir: &Path, query: &Query<F>) -> StoreResult<(Vec<(String, T)>, Query<F>)> {
+    let mut matching = Vec::new();
+    for (key, document) in read_all_from_dir::<serde_json::Value>(dir).await? {
+        if query.filter.as_ref().is_some_and(|filter| !filter.matches(&document)) {
+            continue;
+        }
+        match serde_json::from_value::<T>(document) {
+            Ok(value) => matching.push((key, value)),
+            Err(err) => warn!("Failed to read the document {} in {:?}: {}", key, dir, err),
+        }
+    }
+    Ok((matching, Query { filter: None, ..query.clone() }))
 }
 
 async fn delete_if_exists(path: &Path) -> StoreResult<bool> {
@@ -392,7 +417,8 @@ fn dir_of(path: &Path) -> StoreResult<PathBuf> {
 
 /// Refuses `value` if another document in `dir` has its name (issue 250).
 async fn name_free_in<T: Stored + Scoped + DeserializeOwned>(dir: &Path, value: &T, kind: &Actions) -> StoreResult<()> {
-    name_free(value, &read_all_from_dir::<T>(dir).await?, kind)
+    let others: Vec<T> = read_all_from_dir::<T>(dir).await?.into_iter().map(|(_, other)| other).collect();
+    name_free(value, &others, kind)
 }
 
 /// The operations of every kind (issues 93, 164), each document a file at
@@ -527,23 +553,23 @@ impl JsonFileStore {
         self.access(ctx).read_deleted(found, kind, id).await
     }
 
-    async fn list_deleted_dir<T: Deletable + DeserializeOwned + Send>(&self, ctx: &SecurityContext, kind: &Actions, dir: PathBuf) -> StoreResult<Vec<T>> {
+    async fn list_deleted_dir<T: Deletable + DeserializeOwned + Send, F: Field>(&self, ctx: &SecurityContext, kind: &Actions, dir: PathBuf, query: &Query<F>) -> StoreResult<Page<T>> {
         let access = self.access(ctx);
         access.allow(kind.list).await?;
-        let all = read_all_from_dir::<T>(&dir).await?;
-        Ok(access.filter_deleted(all, kind).await)
+        let (candidates, unfiltered) = matching_in_dir::<T, F>(&dir, query).await?;
+        access.page(candidates, &unfiltered, kind, true, |_: &T| Ok(None)).await
     }
 
-    async fn list_dir<T: Stored + DeserializeOwned + Send>(&self, ctx: &SecurityContext, kind: &Actions, dir: PathBuf) -> StoreResult<Vec<T>> {
+    async fn list_dir<T: Stored + DeserializeOwned + Send, F: Field>(&self, ctx: &SecurityContext, kind: &Actions, dir: PathBuf, query: &Query<F>) -> StoreResult<Page<T>> {
         let access = self.access(ctx);
         access.allow(kind.list).await?;
-        let all = read_all_from_dir::<T>(&dir).await?;
-        Ok(access.filter(all, kind).await)
+        let (candidates, unfiltered) = matching_in_dir::<T, F>(&dir, query).await?;
+        access.page(candidates, &unfiltered, kind, false, |_: &T| Ok(None)).await
     }
 
     /// The one of `name`, in exactly its scope, among those listed.
     async fn find_dir<T: Stored + Scoped + DeserializeOwned + Send>(&self, ctx: &SecurityContext, kind: &Actions, dir: PathBuf, name: &ScopedName) -> StoreResult<T> {
-        let all: Vec<T> = self.list_dir(ctx, kind, dir).await?;
+        let all: Vec<T> = self.list_dir(ctx, kind, dir, &Query::<NoField>::all()).await?.items;
         require_entity(all.into_iter().find(|d| d.scoped_name() == *name), kind.entity.name(), name.to_string())
     }
 }
@@ -563,8 +589,8 @@ impl EntityStore for JsonFileStore {
     async fn delete_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool> {
         self.delete_file::<Personality>(ctx, &PERSONALITIES, self.personality_path(id)).await
     }
-    async fn list_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>> {
-        self.list_dir(ctx, &PERSONALITIES, self.personality_dir()).await
+    async fn list_personalities(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Personality>> {
+        self.list_dir(ctx, &PERSONALITIES, self.personality_dir(), query).await
     }
     async fn restore_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<()> {
         self.restore_named_file::<Personality>(ctx, &PERSONALITIES, self.personality_path(id), id.to_string()).await
@@ -575,8 +601,8 @@ impl EntityStore for JsonFileStore {
     async fn get_deleted_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
         self.get_deleted_file(ctx, &PERSONALITIES, self.personality_path(id), id.to_string()).await
     }
-    async fn list_deleted_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>> {
-        self.list_deleted_dir(ctx, &PERSONALITIES, self.personality_dir()).await
+    async fn list_deleted_personalities(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Personality>> {
+        self.list_deleted_dir(ctx, &PERSONALITIES, self.personality_dir(), query).await
     }
     async fn find_personality_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Personality> {
         self.find_dir(ctx, &PERSONALITIES, self.personality_dir(), name).await
@@ -595,8 +621,8 @@ impl EntityStore for JsonFileStore {
     async fn delete_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool> {
         self.delete_file::<SessionTemplate>(ctx, &SESSION_TEMPLATES, self.session_template_path(id)).await
     }
-    async fn list_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>> {
-        self.list_dir(ctx, &SESSION_TEMPLATES, self.session_templates_dir()).await
+    async fn list_session_templates(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<SessionTemplate>> {
+        self.list_dir(ctx, &SESSION_TEMPLATES, self.session_templates_dir(), query).await
     }
     async fn restore_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<()> {
         self.restore_named_file::<SessionTemplate>(ctx, &SESSION_TEMPLATES, self.session_template_path(id), id.to_string()).await
@@ -607,8 +633,8 @@ impl EntityStore for JsonFileStore {
     async fn get_deleted_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<SessionTemplate> {
         self.get_deleted_file(ctx, &SESSION_TEMPLATES, self.session_template_path(id), id.to_string()).await
     }
-    async fn list_deleted_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>> {
-        self.list_deleted_dir(ctx, &SESSION_TEMPLATES, self.session_templates_dir()).await
+    async fn list_deleted_session_templates(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<SessionTemplate>> {
+        self.list_deleted_dir(ctx, &SESSION_TEMPLATES, self.session_templates_dir(), query).await
     }
     async fn find_session_template_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<SessionTemplate> {
         self.find_dir(ctx, &SESSION_TEMPLATES, self.session_templates_dir(), name).await
@@ -627,8 +653,8 @@ impl EntityStore for JsonFileStore {
     async fn delete_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<bool> {
         self.delete_file::<Agent>(ctx, &AGENTS, self.agent_path(id)).await
     }
-    async fn list_agents(&self, ctx: &SecurityContext) -> StoreResult<Vec<Agent>> {
-        self.list_dir(ctx, &AGENTS, self.agents_dir()).await
+    async fn list_agents(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Agent>> {
+        self.list_dir(ctx, &AGENTS, self.agents_dir(), query).await
     }
     async fn restore_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<()> {
         self.restore_named_file::<Agent>(ctx, &AGENTS, self.agent_path(id), id.to_string()).await
@@ -639,8 +665,8 @@ impl EntityStore for JsonFileStore {
     async fn get_deleted_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
         self.get_deleted_file(ctx, &AGENTS, self.agent_path(id), id.to_string()).await
     }
-    async fn list_deleted_agents(&self, ctx: &SecurityContext) -> StoreResult<Vec<Agent>> {
-        self.list_deleted_dir(ctx, &AGENTS, self.agents_dir()).await
+    async fn list_deleted_agents(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Agent>> {
+        self.list_deleted_dir(ctx, &AGENTS, self.agents_dir(), query).await
     }
     async fn find_agent_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Agent> {
         self.find_dir(ctx, &AGENTS, self.agents_dir(), name).await
@@ -660,8 +686,8 @@ impl EntityStore for JsonFileStore {
     async fn delete_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool> {
         self.delete_file::<Session>(ctx, &SESSIONS, self.session_path(id)).await
     }
-    async fn list_sessions(&self, ctx: &SecurityContext) -> StoreResult<Vec<Session>> {
-        self.list_dir(ctx, &SESSIONS, self.sessions_dir()).await
+    async fn list_sessions(&self, ctx: &SecurityContext, query: &Query<SessionField>) -> StoreResult<Page<Session>> {
+        self.list_dir(ctx, &SESSIONS, self.sessions_dir(), query).await
     }
     async fn restore_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<()> {
         self.restore_file::<Session>(ctx, &SESSIONS, self.session_path(id), id.to_string()).await
@@ -672,8 +698,8 @@ impl EntityStore for JsonFileStore {
     async fn get_deleted_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session> {
         self.get_deleted_file(ctx, &SESSIONS, self.session_path(id), id.to_string()).await
     }
-    async fn list_deleted_sessions(&self, ctx: &SecurityContext) -> StoreResult<Vec<Session>> {
-        self.list_deleted_dir(ctx, &SESSIONS, self.sessions_dir()).await
+    async fn list_deleted_sessions(&self, ctx: &SecurityContext, query: &Query<SessionField>) -> StoreResult<Page<Session>> {
+        self.list_deleted_dir(ctx, &SESSIONS, self.sessions_dir(), query).await
     }
 
     // Channels (issue 70) - their state likewise.
@@ -689,8 +715,8 @@ impl EntityStore for JsonFileStore {
     async fn delete_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool> {
         self.delete_file::<Channel>(ctx, &CHANNELS, self.channel_path(id)).await
     }
-    async fn list_channels(&self, ctx: &SecurityContext) -> StoreResult<Vec<Channel>> {
-        self.list_dir(ctx, &CHANNELS, self.channels_dir()).await
+    async fn list_channels(&self, ctx: &SecurityContext, query: &Query<ChannelField>) -> StoreResult<Page<Channel>> {
+        self.list_dir(ctx, &CHANNELS, self.channels_dir(), query).await
     }
     async fn restore_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<()> {
         self.restore_named_file::<Channel>(ctx, &CHANNELS, self.channel_path(id), id.to_string()).await
@@ -701,8 +727,8 @@ impl EntityStore for JsonFileStore {
     async fn get_deleted_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel> {
         self.get_deleted_file(ctx, &CHANNELS, self.channel_path(id), id.to_string()).await
     }
-    async fn list_deleted_channels(&self, ctx: &SecurityContext) -> StoreResult<Vec<Channel>> {
-        self.list_deleted_dir(ctx, &CHANNELS, self.channels_dir()).await
+    async fn list_deleted_channels(&self, ctx: &SecurityContext, query: &Query<ChannelField>) -> StoreResult<Page<Channel>> {
+        self.list_deleted_dir(ctx, &CHANNELS, self.channels_dir(), query).await
     }
 
     // Users - found by name as well, since a username is an identity
@@ -719,8 +745,8 @@ impl EntityStore for JsonFileStore {
     async fn delete_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
         self.delete_file::<User>(ctx, &USERS, self.user_path(id)).await
     }
-    async fn list_users(&self, ctx: &SecurityContext) -> StoreResult<Vec<User>> {
-        self.list_dir(ctx, &USERS, self.users_dir()).await
+    async fn list_users(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<User>> {
+        self.list_dir(ctx, &USERS, self.users_dir(), query).await
     }
     async fn restore_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<()> {
         self.restore_named_file::<User>(ctx, &USERS, self.user_path(id), id.to_string()).await
@@ -731,11 +757,11 @@ impl EntityStore for JsonFileStore {
     async fn get_deleted_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
         self.get_deleted_file(ctx, &USERS, self.user_path(id), id.to_string()).await
     }
-    async fn list_deleted_users(&self, ctx: &SecurityContext) -> StoreResult<Vec<User>> {
-        self.list_deleted_dir(ctx, &USERS, self.users_dir()).await
+    async fn list_deleted_users(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<User>> {
+        self.list_deleted_dir(ctx, &USERS, self.users_dir(), query).await
     }
     async fn find_user_by_name(&self, ctx: &SecurityContext, name: &str) -> StoreResult<User> {
-        let users: Vec<User> = self.list_dir(ctx, &USERS, self.users_dir()).await?;
+        let users: Vec<User> = self.list_dir(ctx, &USERS, self.users_dir(), &Query::<NoField>::all()).await?.items;
         require_entity(users.into_iter().find(|u| u.username == name), "user", name.to_string())
     }
 
@@ -752,8 +778,8 @@ impl EntityStore for JsonFileStore {
     async fn delete_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
         self.delete_file::<UserProfile>(ctx, &USER_PROFILES, self.user_profile_path(id)).await
     }
-    async fn list_user_profiles(&self, ctx: &SecurityContext) -> StoreResult<Vec<UserProfile>> {
-        self.list_dir(ctx, &USER_PROFILES, self.user_profiles_dir()).await
+    async fn list_user_profiles(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<UserProfile>> {
+        self.list_dir(ctx, &USER_PROFILES, self.user_profiles_dir(), query).await
     }
     async fn restore_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<()> {
         self.restore_file::<UserProfile>(ctx, &USER_PROFILES, self.user_profile_path(id), id.to_string()).await
@@ -764,8 +790,8 @@ impl EntityStore for JsonFileStore {
     async fn get_deleted_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<UserProfile> {
         self.get_deleted_file(ctx, &USER_PROFILES, self.user_profile_path(id), id.to_string()).await
     }
-    async fn list_deleted_user_profiles(&self, ctx: &SecurityContext) -> StoreResult<Vec<UserProfile>> {
-        self.list_deleted_dir(ctx, &USER_PROFILES, self.user_profiles_dir()).await
+    async fn list_deleted_user_profiles(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<UserProfile>> {
+        self.list_deleted_dir(ctx, &USER_PROFILES, self.user_profiles_dir(), query).await
     }
 
     // Workspaces (issue 253) - the documents; their files lie in their
@@ -782,8 +808,8 @@ impl EntityStore for JsonFileStore {
     async fn delete_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<bool> {
         self.delete_file::<Workspace>(ctx, &WORKSPACES, self.workspace_path(id)).await
     }
-    async fn list_workspaces(&self, ctx: &SecurityContext) -> StoreResult<Vec<Workspace>> {
-        self.list_dir(ctx, &WORKSPACES, self.workspaces_dir()).await
+    async fn list_workspaces(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Workspace>> {
+        self.list_dir(ctx, &WORKSPACES, self.workspaces_dir(), query).await
     }
     async fn restore_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<()> {
         self.restore_named_file::<Workspace>(ctx, &WORKSPACES, self.workspace_path(id), id.to_string()).await
@@ -794,8 +820,8 @@ impl EntityStore for JsonFileStore {
     async fn get_deleted_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace> {
         self.get_deleted_file(ctx, &WORKSPACES, self.workspace_path(id), id.to_string()).await
     }
-    async fn list_deleted_workspaces(&self, ctx: &SecurityContext) -> StoreResult<Vec<Workspace>> {
-        self.list_deleted_dir(ctx, &WORKSPACES, self.workspaces_dir()).await
+    async fn list_deleted_workspaces(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Workspace>> {
+        self.list_deleted_dir(ctx, &WORKSPACES, self.workspaces_dir(), query).await
     }
     async fn find_workspace_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Workspace> {
         self.find_dir(ctx, &WORKSPACES, self.workspaces_dir(), name).await
@@ -814,8 +840,8 @@ impl EntityStore for JsonFileStore {
     async fn delete_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<bool> {
         self.delete_file::<Skill>(ctx, &SKILLS, self.skill_path(id)).await
     }
-    async fn list_skills(&self, ctx: &SecurityContext) -> StoreResult<Vec<Skill>> {
-        self.list_dir(ctx, &SKILLS, self.skills_dir()).await
+    async fn list_skills(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Skill>> {
+        self.list_dir(ctx, &SKILLS, self.skills_dir(), query).await
     }
     async fn restore_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<()> {
         self.restore_named_file::<Skill>(ctx, &SKILLS, self.skill_path(id), id.to_string()).await
@@ -826,8 +852,8 @@ impl EntityStore for JsonFileStore {
     async fn get_deleted_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<Skill> {
         self.get_deleted_file(ctx, &SKILLS, self.skill_path(id), id.to_string()).await
     }
-    async fn list_deleted_skills(&self, ctx: &SecurityContext) -> StoreResult<Vec<Skill>> {
-        self.list_deleted_dir(ctx, &SKILLS, self.skills_dir()).await
+    async fn list_deleted_skills(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Skill>> {
+        self.list_deleted_dir(ctx, &SKILLS, self.skills_dir(), query).await
     }
     async fn find_skill_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Skill> {
         self.find_dir(ctx, &SKILLS, self.skills_dir(), name).await
@@ -847,8 +873,8 @@ impl EntityStore for JsonFileStore {
     async fn delete_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<bool> {
         self.delete_file::<Artifact>(ctx, &ARTIFACTS, self.artifact_path(id)).await
     }
-    async fn list_artifacts(&self, ctx: &SecurityContext) -> StoreResult<Vec<Artifact>> {
-        self.list_dir(ctx, &ARTIFACTS, self.artifacts_dir()).await
+    async fn list_artifacts(&self, ctx: &SecurityContext, query: &Query<ArtifactField>) -> StoreResult<Page<Artifact>> {
+        self.list_dir(ctx, &ARTIFACTS, self.artifacts_dir(), query).await
     }
     async fn restore_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<()> {
         self.restore_named_file::<Artifact>(ctx, &ARTIFACTS, self.artifact_path(id), id.to_string()).await
@@ -859,8 +885,8 @@ impl EntityStore for JsonFileStore {
     async fn get_deleted_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<Artifact> {
         self.get_deleted_file(ctx, &ARTIFACTS, self.artifact_path(id), id.to_string()).await
     }
-    async fn list_deleted_artifacts(&self, ctx: &SecurityContext) -> StoreResult<Vec<Artifact>> {
-        self.list_deleted_dir(ctx, &ARTIFACTS, self.artifacts_dir()).await
+    async fn list_deleted_artifacts(&self, ctx: &SecurityContext, query: &Query<ArtifactField>) -> StoreResult<Page<Artifact>> {
+        self.list_deleted_dir(ctx, &ARTIFACTS, self.artifacts_dir(), query).await
     }
     async fn find_artifact_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Artifact> {
         self.find_dir(ctx, &ARTIFACTS, self.artifacts_dir(), name).await
@@ -882,8 +908,8 @@ impl ComponentStore for JsonFileStore {
     async fn delete_components(&self, ctx: &SecurityContext, id: &str) -> StoreResult<bool> {
         self.remove_file::<StoredComponents>(ctx, &COMPONENTS, self.component_path(id)).await
     }
-    async fn list_components(&self, ctx: &SecurityContext) -> StoreResult<Vec<StoredComponents>> {
-        self.list_dir(ctx, &COMPONENTS, self.components_dir()).await
+    async fn list_components(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<StoredComponents>> {
+        self.list_dir(ctx, &COMPONENTS, self.components_dir(), query).await
     }
 }
 
@@ -998,6 +1024,12 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn answers_queries() {
+        let dir = tempdir().unwrap();
+        suite::queries_behave(&store(dir.path())).await;
+    }
+
+    #[tokio::test]
     async fn behaves_as_a_state_store() {
         let dir = tempdir().unwrap();
         suite::state_store_behaves(&store(dir.path())).await;
@@ -1108,7 +1140,7 @@ mod tests {
             }
         }
         assert_eq!(made, 1);
-        assert_eq!(store.list_agents(&system).await.unwrap().len(), 1);
+        assert_eq!(store.list_agents(&system, &Query::all()).await.map(|page| page.items).unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -1213,7 +1245,7 @@ mod tests {
         fs::write(corrupted_path, "invalid json").unwrap();
 
         // This should NOT fail, it should return s1 and log a warning
-        let sessions = store.list_sessions(&ctx).await.unwrap();
+        let sessions = store.list_sessions(&ctx, &Query::all()).await.map(|page| page.items).unwrap();
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].id, s1.id);
     }

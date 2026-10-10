@@ -30,7 +30,7 @@ use caelumora_model::config::{StorageConfig, WorkspacesConfig};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::role::user_roles;
 use caelumora_model::event::GlobalEvent;
-use caelumora_model::scope::{Scope, Scoped};
+use caelumora_model::scope::Scope;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{AccessQuestions, AclEntry, ActionType, Enforcement, Grant, SecurityContext, SecurityManager, Subject};
 use caelumora_model::session::{Channel, Session};
@@ -405,11 +405,9 @@ impl WorkspaceManager {
     pub(crate) async fn purge_lying_in(&self, holder: &Scope) -> WorkspaceResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for workspace in self.entities.list_deleted_workspaces(&system).await? {
-            if holder.contains(&workspace.scoped_name().scope) {
-                self.provider(&workspace)?.remove(workspace.id).await?;
-                self.entities.purge_workspace(&system, workspace.id).await?;
-            }
+        for workspace in self.entities.list_deleted_workspaces(&system, &crate::scoped::within(holder)?).await?.items {
+            self.provider(&workspace)?.remove(workspace.id).await?;
+            self.entities.purge_workspace(&system, workspace.id).await?;
         }
         Ok(())
     }

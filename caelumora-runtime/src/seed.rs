@@ -129,6 +129,7 @@ pub async fn load(store: &dyn EntityStore, components: &dyn ComponentStore, secu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::store::query::Query;
     use crate::component::{ComponentContainer, ComponentContext, ComponentRegistry};
     use caelumora_model::secret::SecretManager;
     use caelumora_model::security::DummySecurityManager;
@@ -171,13 +172,13 @@ mod tests {
         changed.description = Some(caelumora_model::value::text::Description::new("changed").unwrap());
         store.update_personality(&system, &changed).await.unwrap();
         load(&store, &store, policy.as_ref(), &[example()]).await.expect("seeding again is no conflict");
-        assert_eq!(store.list_personalities(&system).await.unwrap().len(), seed.personalities.len(), "nothing twice");
-        assert_eq!(store.list_session_templates(&system).await.unwrap().len(), seed.session_templates.len());
+        assert_eq!(store.list_personalities(&system, &Query::all()).await.map(|page| page.items).unwrap().len(), seed.personalities.len(), "nothing twice");
+        assert_eq!(store.list_session_templates(&system, &Query::all()).await.map(|page| page.items).unwrap().len(), seed.session_templates.len());
         assert_eq!(store.get_personality(&system, changed.id).await.unwrap().description, changed.description);
-        let skills = store.list_skills(&system).await.unwrap();
+        let skills = store.list_skills(&system, &Query::all()).await.map(|page| page.items).unwrap();
         assert!(!skills.is_empty() && skills.len() == seed.skills.len(), "the skills, once (issue 22)");
         assert!(skills.iter().all(|s| s.security_attributes.owner_id == ActorId::System), "the system's");
-        let components = store.list_components(&system).await.unwrap();
+        let components = store.list_components(&system, &Query::all()).await.map(|page| page.items).unwrap();
         assert!(!components.is_empty() && components.len() == seed.components.len(), "the preconfigured components, once (issue 270)");
     }
 
@@ -203,7 +204,7 @@ mod tests {
         let seed: Seed = parse_yaml("personalities:\n- id: ff9a5e56-e5ea-43f9-9114-2098a6f417a9\n  name: limited\n  roles: [staff]\n").unwrap();
         let (store, policy) = (MemoryStore::new(), policy());
         seed.apply(&store, &store, policy.as_ref()).await.unwrap();
-        let stored = store.list_personalities(&SecurityContext::system()).await.unwrap();
+        let stored = store.list_personalities(&SecurityContext::system(), &Query::all()).await.map(|page| page.items).unwrap();
         assert_eq!(stored[0].roles, Some(vec![policy.role_id("staff").unwrap()]), "by the id the configuration gives it");
         let unknown: Seed = parse_yaml("personalities:\n- id: 1f9a5e56-e5ea-43f9-9114-2098a6f417a9\n  name: typo\n  roles: [staf]\n").unwrap();
         let error = unknown.apply(&store, &store, policy.as_ref()).await.expect_err("a role not configured");
