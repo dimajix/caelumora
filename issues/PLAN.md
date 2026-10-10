@@ -1,6 +1,6 @@
 # Plan: towards a first rounded release
 
-Written from the open issues of [OPEN.md](OPEN.md), as they stand on 2026-10-09. This is a
+Written from the open issues of [OPEN.md](OPEN.md), as they stand on 2026-10-10. This is a
 direction, not a schedule: it sorts the open issues by effort and value, names what is missing
 altogether, and proposes an order. It decides nothing an issue file has to decide; where it
 recommends closing, merging or rewriting an issue, that is a proposal for the maintainer.
@@ -49,6 +49,7 @@ Worth doing soon, in any order, alongside the blocks of section B.
 | [223](223-full-inbox-drops-events.md) | M | Catch up what was said from the history; never drop a request, an approval or a question. | Silent loss - and exactly the agents with long turns are hit, which working on files produces. A dropped change to a message is lost for good: catching up finds missing messages, not missed changes. |
 | [07](07-session-deletion-audit.md) | S | `retention.purge_deleted_after` and the purge task. | Policy decided, and nothing blocks it: soft deletion and `ActionType::Purge` exist. |
 | [283](283-show-agent-components.md) | S | The web UI shows what an agent was built from, every included list resolved. | The runtime records what an agent was built from; only the web UI is missing. |
+| [297](297-orderly-shutdown.md) | M | Catch SIGINT and SIGTERM, close the streams, stop the running sessions as `stop_session` does - their actors storing their state, their commands ended - within a bound; the same when the TUI ends. | A restart is an ordinary event for a server whose sessions run for days; today it ends turns mid-step and leaves the `local` shell's commands running. |
 
 Decisions that cost an hour and close an issue are listed under [D](#d-questionable-issues).
 
@@ -62,20 +63,18 @@ Decisions that cost an hour and close an issue are listed under [D](#d-questiona
 | [20](20-transactional-effects.md) (part) | Tools declare whether they have an effect or only read; at-least-once made visible, nothing more. | The rest of 20 waits (see C). |
 | [247](247-tool-own-matcher.md) | A matcher that understands a shell command, so that "and from now on" does not allow chained commands. | Next: `run_command` exists, and without this a rule on it is unsafe. |
 | [256](256-workspace-versions.md) | Versions of a workspace: each file keeps its versions with who wrote them from which turn (169), and a version can be restored. | A workspace does not branch with the conversation, so asking for an answer again cannot take back an agent's bad edit. Commands change files past the file tools, so a snapshot is needed around every command (git in the directory, say), not only around a write. Without this, write tools are not safe to hand out. |
-| [254](254-commands-run-unbounded.md) | Bound a command handed back as running to its turn, its session and the channel's access to the workspace. | In part for `open_terminal_docker`. A call that hangs *while* it runs is 276 (B3). |
 | [208](208-generated-artifacts.md) | Take in what A2A agents and MCP tools produce besides text - files, images - as artifacts, in the existing `ArtifactStorage`. | |
 | [272](272-artifacts-in-s3.md) | An `s3` provider of `ArtifactStorage`. | Nothing blocks it; when a deployment asks. |
 | [282](282-message-attachments.md) | A user attaches images to a message; the model that can see is given them, the one that cannot is told. | Decided in part: what is stored refers, the copies the model is given carry the content, fetched by the turn through a cache. Open: whether an attachment is part of its message or a file of the user's, as an artifact - which artifacts' lists, and those of their versions, would then decide who reads it. |
 | [289](289-attach-compares-access.md) | Attaching a workspace compares its access list with the session's: no entry for the session where the list reaches its members already. | Spares lists of single sessions; needs the session's admission rule (221) for a comparison by subjects. |
 | [291](291-share-artifacts-in-the-web-ui.md) | A page of an artifact in the web UI: its versions, and for its owner whom it and its versions are shared with. | Sharing is REST alone until then; the workspace page's `AccessList` is the pattern. |
-| [293](293-store-queries.md) | The policy's access as part of a list's query (phase 2): the subjects of a principal - roles, the places they are a member of -, the rule as a filter beside `check`, and a test that both agree. | Lists take queries; a store still reads every entity of a kind, and the policy is asked of each match. Limit and cursor over REST come with 218 and 291. |
 | - | A diff presentation for write calls (a `ToolPresentation` of its own). | No issue yet; worth one. |
 
 **Deliberately not in the first release:** converting formats (PDF, office documents) to text,
 images for models that see.
 
-Order: decide **169** and the small part of **20** → **247** → **256** → **282** → **208**; **254**
-and **291** alongside; **293** (phase 2) when lists grow; **289** after 221; **272** when wanted.
+Order: decide **169** and the small part of **20** → **247** → **256** → **282** → **208**; **291**
+alongside; **289** after 221; **272** when wanted.
 
 ### B2. Sessions that last: context and memory
 
@@ -95,11 +94,10 @@ Order: 284 → 58 → (65) → 166 → 55. Only 284 and 58 belong to the first r
 | No. | Size | Note |
 |---|---|---|
 | [226](226-concurrent-tool-calls.md) | M + M | Two steps. The first - tools read the turn and *return* their effects instead of holding `&mut Turn` - changes `ToolProvider::execute` for every provider, the file tools, `terminal_tool` and the skills' tools among them; every new tool makes it dearer. It also gives 20 its "declares an effect". Running concurrently is the second step, in the agent's loop, and can wait. |
-| [276](276-interrupt-one-tool-call.md) | M | Interrupt one hanging call - a `run_command` waiting for input - and let the turn go on with the result, instead of ending the turn. A token per call, a child of the turn's; a new action, so with its test in the security suite, and a stop button at the call in the web UI. Belongs to the first release: working with a shell produces exactly these calls. |
 | [290](290-tools-offered-by-the-turn.md) | M | Offer a model only the tools it may call where it is - a workspace's tools where there is one, those that change where its list grants writing. A `ToolProvider` that knows the turn, asked where the turn's tool sets are built; the call keeps its own check. |
 | [126](126-mcp-tools-discovered-once.md) | M | Refresh in the provider; an MCP server's set already says when it is unavailable. What remains is following a server that changes or comes back - the same question for 252 once it exists. |
 
-247 and 254 are tools too, but belong to the workspace: see B1.
+247 is a tool too, but belongs to the workspace: see B1.
 
 ### B4. Sessions that change, and a team that can use them
 
@@ -123,6 +121,7 @@ Sound issues whose time has not come. None of them changes what a user can do wi
 | [286](286-groups-as-subjects.md) | Groups of our own as subjects of access lists: sharing with a team rather than with people one by one. Wanted once several workspaces are shared with the same people. |
 | [287](287-memberships-cache.md) | A cache of memberships and roles for the policy. Pays where many events and subscribers meet; correctness came first. |
 | [182](182-entity-reads-not-cached.md) | Caching pays with Postgres or large channels. |
+| [295](295-access-as-a-query-condition.md) | Access as a condition of a list's query, stated by the policy. It pays once a store can execute a condition itself - with 03; the memory and JSON stores read every document anyway. Until then a full page may be followed by an empty one, which paging (218) has to tolerate. |
 | [139](139-mcp-result-classification.md) | Small, but no MCP server classifies its results yet. Do it when one does. |
 | [252](252-openapi-tool.md) | A generic OpenAPI tool is worth having, but has no concrete service waiting for it: Open Terminal has a component of its own. Do it when a second OpenAPI service is to be reached - that service decides the open questions (the default of the filter, API keys in a header). |
 | [124](124-observer-participants.md) | Nice for watching agents work among themselves; a participant who stays silent does the job meanwhile. |
@@ -155,18 +154,17 @@ a decision recorded in the issue file.
 Each milestone leaves the system usable; decisions come before the code that depends on them.
 
 1.  **Clear the table.** The decisions of section D (19, 18, 21, 05, 57, 59, 173 - no code), and
-    the small ones: 218, 223.
+    the small ones: 218, 223, 297.
 2.  **A team can log in, and a session can change.** 25 with the remainders of 10 and 142; 07, the
     administrator's capabilities of 125; 221 with the admission rule; 227.
 3.  **Working on files, safely.** Decide 169 and the small part of 20; refactor
-    `ToolProvider::execute` (226, first step); then 247, 256, 276, 282, 208, 290, 293, 291; 254
-    alongside; 289 after 221.
+    `ToolProvider::execute` (226, first step); then 247, 256, 282, 208, 290, 291; 289 after 221.
 4.  **Sessions that last.** 284, 58; 126. If reading files hits the context window earlier, 284
     moves into milestone 3.
 
 **This is the first release.** After it, roughly in this order: 140 · 237 (with 05 decided) · 65 →
 166 → 55 · 226 (concurrency) · 238 · 272 and 252 when a deployment asks · 124, 42 · and section C
-when a deployment asks.
+when a deployment asks - 295 with 03.
 
 Not covered by any issue and worth one each:
 
@@ -187,10 +185,10 @@ The plan stands on assumptions the maintainer should confirm or correct:
 
 | Section | Issues |
 |---|---|
-| A - small | 07, 218, 223, 283 |
-| B1 - workspace | 20 (part), 169, 208, 247, 254, 256, 272, 282, 289, 291, 293 |
+| A - small | 07, 218, 223, 283, 297 |
+| B1 - workspace | 20 (part), 169, 208, 247, 256, 272, 282, 289, 291 |
 | B2 - context and memory | 55, 58, 65, 166, 169, 284 |
-| B3 - tools | 126, 226, 276, 290 |
+| B3 - tools | 126, 226, 290 |
 | B4 - sessions and team | 07, 10, 25, 140, 142, 221, 227, 125 (part) |
-| C - not now | 03, 04, 20, 26, 27, 42, 122, 124, 125, 139, 143, 181, 182, 237, 238, 252, 286, 287 |
+| C - not now | 03, 04, 20, 26, 27, 42, 122, 124, 125, 139, 143, 181, 182, 237, 238, 252, 286, 287, 295 |
 | D - questionable | 05, 18, 19, 21, 24, 57, 59, 173 |
