@@ -1,15 +1,16 @@
 //! Queries of a store's lists (issue 293): a declarative condition, a
 //! limit and a cursor, which a store evaluates in memory and a database could
 //! push into a `WHERE` clause. A condition names fields of a kind - each a
-//! path into the document as it is serialized - and compares them with JSON
-//! values, so that it reads the same in memory, in a JSON file and in a
-//! `jsonb` column. Who may read what is still asked afterwards, entity by
-//! entity; a limit is met by reading on.
+//! path into the document as it is serialized - and compares them with
+//! values of the forms serde writes (`FieldValue`), so that it reads the same
+//! in memory, in a JSON file and in a `jsonb` column. Who may read what is
+//! still asked afterwards, entity by entity; a limit is met by reading on.
 
 use crate::store::{StoreError, StoreResult};
 use serde::Serialize;
 use serde_json::Value;
 use std::fmt::Debug;
+use uuid::Uuid;
 
 /// A field of a kind that a query may name: where it lies in the document
 /// as it is serialized. A field used inside `Filter::Any` lies within an
@@ -29,13 +30,58 @@ impl Field for NoField {
     }
 }
 
+/// What a filter compares a field with, in the forms serde writes - made
+/// without serde, so that making a filter cannot fail. Generic: every id is
+/// a `Uuid`, and a type whose serialized form is an enum's converts by
+/// `From`, written after serde's tags.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FieldValue {
+    /// An id, as serde writes it: a string holding the UUID.
+    Uuid(Uuid),
+    /// A string - a unit variant as serde writes it, `"GlobalScope"`.
+    Text(String),
+    /// A variant as serde writes it, `{"User": "…"}`: an object that has
+    /// the key, with a value meeting the inner one. It need not have only
+    /// that key - containment, as `@>` in Postgres -, so that a value names
+    /// only what identifies it: a channel's scope its channel alone.
+    Tagged(&'static str, Box<FieldValue>),
+}
+
+impl FieldValue {
+    /// The variant `tag` holding `value`.
+    pub fn tagged(tag: &'static str, value: impl Into<FieldValue>) -> Self {
+        FieldValue::Tagged(tag, Box::new(value.into()))
+    }
+
+    /// Whether `found`, what lies at a field of a document, meets this value.
+    pub fn matches(&self, found: &Value) -> bool {
+        match self {
+            FieldValue::Uuid(id) => found.as_str().and_then(|text| Uuid::parse_str(text).ok()) == Some(*id),
+            FieldValue::Text(text) => found.as_str() == Some(text.as_str()),
+            FieldValue::Tagged(tag, value) => found.get(tag).is_some_and(|inner| value.matches(inner)),
+        }
+    }
+}
+
+impl From<Uuid> for FieldValue {
+    fn from(id: Uuid) -> Self {
+        FieldValue::Uuid(id)
+    }
+}
+
+impl From<&str> for FieldValue {
+    fn from(text: &str) -> Self {
+        FieldValue::Text(text.to_string())
+    }
+}
+
 /// A condition on the documents of a kind. Purely declarative: equality,
 /// membership, absence, the boolean operators, and whether any element of
 /// a collection meets a condition of its own.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Filter<F: Field> {
-    Eq(F, Value),
-    In(F, Vec<Value>),
+    Eq(F, FieldValue),
+    In(F, Vec<FieldValue>),
     /// The field is absent or `null`.
     IsNull(F),
     And(Vec<Filter<F>>),
@@ -47,20 +93,14 @@ pub enum Filter<F: Field> {
 }
 
 impl<F: Field> Filter<F> {
-    /// `field` equals `value` as it is serialized.
-    ///
-    /// # Errors
-    /// `StoreError::Validation` if `value` cannot be serialized.
-    pub fn eq<T: Serialize + ?Sized>(field: F, value: &T) -> StoreResult<Self> {
-        Ok(Filter::Eq(field, json(value)?))
+    /// `field` meets `value`.
+    pub fn eq(field: F, value: impl Into<FieldValue>) -> Self {
+        Filter::Eq(field, value.into())
     }
 
-    /// `field` equals one of `values` as they are serialized.
-    ///
-    /// # Errors
-    /// `StoreError::Validation` if one of `values` cannot be serialized.
-    pub fn is_in<T: Serialize>(field: F, values: &[T]) -> StoreResult<Self> {
-        Ok(Filter::In(field, values.iter().map(json).collect::<StoreResult<_>>()?))
+    /// `field` meets one of `values`.
+    pub fn is_in<V: Into<FieldValue>>(field: F, values: impl IntoIterator<Item = V>) -> Self {
+        Filter::In(field, values.into_iter().map(Into::into).collect())
     }
 
     /// Some element of `collection` meets `condition`.
@@ -72,8 +112,8 @@ impl<F: Field> Filter<F> {
     /// a collection in it - meets the condition.
     pub fn matches(&self, document: &Value) -> bool {
         match self {
-            Filter::Eq(field, value) => lookup(document, *field) == Some(value),
-            Filter::In(field, values) => lookup(document, *field).is_some_and(|found| values.contains(found)),
+            Filter::Eq(field, value) => lookup(document, *field).is_some_and(|found| value.matches(found)),
+            Filter::In(field, values) => lookup(document, *field).is_some_and(|found| values.iter().any(|value| value.matches(found))),
             Filter::IsNull(field) => lookup(document, *field).is_none_or(Value::is_null),
             Filter::And(conditions) => conditions.iter().all(|c| c.matches(document)),
             Filter::Or(conditions) => conditions.iter().any(|c| c.matches(document)),
@@ -86,9 +126,24 @@ impl<F: Field> Filter<F> {
     }
 }
 
-/// `value` as a query compares it.
+/// For the tests of a type that converts into a `FieldValue`: each of
+/// `samples`, converted, meets exactly the serialized samples equal to it -
+/// which holds the conversion, written by hand, to serde's tags.
+#[cfg(test)]
+pub(crate) fn meets_exactly_its_equals<T>(samples: &[T])
+where T: Clone + PartialEq + Debug + Serialize + Into<FieldValue> {
+    for value in samples {
+        let converted: FieldValue = value.clone().into();
+        for other in samples {
+            let serialized = serde_json::to_value(other).expect("a sample serializes");
+            assert_eq!(converted.matches(&serialized), value == other, "{value:?} against {other:?}");
+        }
+    }
+}
+
+/// `value` serialized, for a filter to be judged on.
 fn json<T: Serialize + ?Sized>(value: &T) -> StoreResult<Value> {
-    serde_json::to_value(value).map_err(|e| StoreError::Validation(format!("a value of a query cannot be serialized: {e}")))
+    serde_json::to_value(value).map_err(|e| StoreError::Validation(format!("an entity cannot be serialized for a query: {e}")))
 }
 
 /// What lies at `field` in `document`, if anything.
@@ -212,18 +267,38 @@ mod tests {
     }
 
     #[test]
-    fn a_filter_reads_a_document_by_paths_and_json_values() {
+    fn a_filter_reads_a_document_by_paths() {
         let document = json!({ "owner": { "id": "alice" }, "tags": [{ "name": "a" }, { "name": "b" }] });
-        assert!(Filter::eq(Doc::Owner, "alice").unwrap().matches(&document));
-        assert!(!Filter::eq(Doc::Owner, "bob").unwrap().matches(&document));
-        assert!(Filter::is_in(Doc::Owner, &["bob", "alice"]).unwrap().matches(&document));
+        assert!(Filter::eq(Doc::Owner, "alice").matches(&document));
+        assert!(!Filter::eq(Doc::Owner, "bob").matches(&document));
+        assert!(Filter::is_in(Doc::Owner, ["bob", "alice"]).matches(&document));
         assert!(Filter::IsNull(Doc::Missing).matches(&document) && !Filter::IsNull(Doc::Owner).matches(&document));
-        assert!(Filter::any(Doc::Tags, Filter::eq(Doc::Tag, "b").unwrap()).matches(&document), "an element of the collection");
-        assert!(!Filter::any(Doc::Tags, Filter::eq(Doc::Tag, "c").unwrap()).matches(&document));
-        assert!(!Filter::any(Doc::Owner, Filter::eq(Doc::Tag, "a").unwrap()).matches(&document), "what is no collection has no element");
-        let both = Filter::And(vec![Filter::eq(Doc::Owner, "alice").unwrap(), Filter::Not(Box::new(Filter::IsNull(Doc::Tags)))]);
+        assert!(Filter::any(Doc::Tags, Filter::eq(Doc::Tag, "b")).matches(&document), "an element of the collection");
+        assert!(!Filter::any(Doc::Tags, Filter::eq(Doc::Tag, "c")).matches(&document));
+        assert!(!Filter::any(Doc::Owner, Filter::eq(Doc::Tag, "a")).matches(&document), "what is no collection has no element");
+        let both = Filter::And(vec![Filter::eq(Doc::Owner, "alice"), Filter::Not(Box::new(Filter::IsNull(Doc::Tags)))]);
         assert!(both.matches(&document));
-        assert!(Filter::Or(vec![Filter::eq(Doc::Owner, "bob").unwrap(), Filter::IsNull(Doc::Missing)]).matches(&document));
+        assert!(Filter::Or(vec![Filter::eq(Doc::Owner, "bob"), Filter::IsNull(Doc::Missing)]).matches(&document));
+    }
+
+    /// A value meets what serde writes: an id the string of its UUID, a
+    /// variant an object holding its key - among others, if it has them.
+    #[test]
+    fn a_value_meets_the_forms_serde_writes() {
+        let id = Uuid::new_v4();
+        assert!(FieldValue::from(id).matches(&json!(id.to_string())));
+        assert!(FieldValue::from(id).matches(&json!(id.to_string().to_uppercase())), "a UUID, not its spelling");
+        assert!(!FieldValue::from(id).matches(&json!(Uuid::new_v4().to_string())));
+        assert!(!FieldValue::from(id).matches(&json!({ "User": id.to_string() })));
+        assert!(FieldValue::from("GlobalScope").matches(&json!("GlobalScope")));
+        assert!(!FieldValue::from("GlobalScope").matches(&json!({ "GlobalScope": null })));
+        let user = FieldValue::tagged("User", id);
+        assert!(user.matches(&json!({ "User": id.to_string() })));
+        assert!(!user.matches(&json!({ "Agent": id.to_string() })), "another variant");
+        assert!(!user.matches(&json!(id.to_string())));
+        let channel = FieldValue::tagged("ChannelScope", FieldValue::tagged("channel_id", id));
+        assert!(channel.matches(&json!({ "ChannelScope": { "session_id": Uuid::new_v4().to_string(), "channel_id": id.to_string() } })), "containment");
+        assert!(!channel.matches(&json!({ "SessionScope": { "session_id": id.to_string() } })));
     }
 
     #[test]

@@ -8,7 +8,7 @@ use crate::event::EventBus;
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId};
-use caelumora_model::channel::{Channel, ChannelField, Participant};
+use caelumora_model::channel::{Channel, ChannelField};
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::value::language::Language;
@@ -993,7 +993,7 @@ impl SessionManager {
             return Err(StoreError::NotFound { entity: "session", id: id.to_string() }.into());
         }
         let mut channels = session.channels.clone();
-        let of_it = Query::filtered(Filter::eq(ChannelField::Session, &id)?);
+        let of_it = Query::filtered(Filter::eq(ChannelField::Session, id));
         channels.extend(store.list_deleted_channels(&SecurityContext::system(), &of_it).await?.items.into_iter().map(|c| c.id));
         // The state lives in the `StateStore`, which may be another store
         // than the session's.
@@ -1033,7 +1033,7 @@ impl SessionManager {
         let actor = ActorId::Agent(id);
         let system = SecurityContext::system();
         // The sessions it takes part in, which the store is asked for alone.
-        let taking_part = Query::filtered(Filter::any(SessionField::Participants, Filter::eq(SessionField::Participant, &Participant::Agent(id))?));
+        let taking_part = Query::filtered(Filter::any(SessionField::Participants, Filter::eq(SessionField::Participant, ActorId::Agent(id))));
         for session in store.list_sessions(&system, &taking_part).await?.items {
             // Held so that the session does not start while its channels'
             // documents are changed here.

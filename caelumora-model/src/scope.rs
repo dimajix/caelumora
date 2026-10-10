@@ -18,8 +18,7 @@ use crate::value::name::{Name, ScopedName};
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use uuid::Uuid;
-use crate::store::query::{Field, Filter};
-use crate::store::StoreResult;
+use crate::store::query::{Field, FieldValue, Filter};
 
 /// Where a personality, a session template or an agent lies: the name
 /// space it is found in by name (issue 177). A channel's name space is its
@@ -91,25 +90,23 @@ impl Scope {
 
     /// A condition for a list (issue 293): what lies in this scope or
     /// within it, as `contains` says - `None` for the global scope, which
-    /// holds everything.
-    ///
-    /// # Errors
-    /// `StoreError::Validation` if a scope cannot be serialized.
-    pub fn within<F: ScopedField>(&self) -> StoreResult<Option<Filter<F>>> {
-        Ok(match self {
+    /// holds everything. Within a session's scope lie the scopes of its
+    /// channels, which hold their session as well.
+    pub fn within<F: ScopedField>(&self) -> Option<Filter<F>> {
+        match self {
             Scope::GlobalScope => None,
-            Scope::SessionScope { session_id } => Some(Filter::Or(vec![Filter::eq(F::SCOPE, self)?, Filter::eq(F::CHANNEL_SCOPE_SESSION, session_id)?])),
-            other => Some(Filter::eq(F::SCOPE, other)?),
-        })
+            Scope::SessionScope { session_id } => Some(Filter::is_in(F::SCOPE, [
+                FieldValue::from(self),
+                FieldValue::tagged("ChannelScope", FieldValue::tagged("session_id", *session_id)),
+            ])),
+            other => Some(Filter::eq(F::SCOPE, other)),
+        }
     }
 
     /// A condition for a list (issue 293): what is seen from `place` by
     /// `user`, as `visible_from` says - what lies in a scope that holds
     /// `place`, and in the user's own.
-    ///
-    /// # Errors
-    /// `StoreError::Validation` if a scope cannot be serialized.
-    pub fn seen_from<F: ScopedField>(place: &Scope, user: Option<UserId>) -> StoreResult<Filter<F>> {
+    pub fn seen_from<F: ScopedField>(place: &Scope, user: Option<UserId>) -> Filter<F> {
         let mut seen: Vec<Scope> = place.holders().into_iter().filter(|scope| !matches!(scope, Scope::GroupScope { .. })).collect();
         if let Some(user_id) = user {
             let own = Scope::UserScope { user_id };
@@ -131,12 +128,10 @@ impl Scope {
     }
 }
 
-/// The fields of a kind that lies in a scope, as a query names them (issue
-/// 293): its scope, and - for one in a channel's scope - that channel's
-/// session.
+/// The field of a kind that lies in a scope, as a query names it (issue
+/// 293): its scope.
 pub trait ScopedField: Field {
     const SCOPE: Self;
-    const CHANNEL_SCOPE_SESSION: Self;
 }
 
 /// The fields of a kind that a list asks by its scope alone: personalities,
@@ -144,21 +139,38 @@ pub trait ScopedField: Field {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScopeField {
     Scope,
-    ChannelScopeSession,
 }
 
 impl Field for ScopeField {
     fn path(self) -> &'static [&'static str] {
         match self {
             ScopeField::Scope => &["scope"],
-            ScopeField::ChannelScopeSession => &["scope", "ChannelScope", "session_id"],
         }
     }
 }
 
 impl ScopedField for ScopeField {
     const SCOPE: Self = ScopeField::Scope;
-    const CHANNEL_SCOPE_SESSION: Self = ScopeField::ChannelScopeSession;
+}
+
+/// A scope as a query compares it, after serde's tags: by what identifies
+/// it - a channel's scope by its channel alone, whose id is unique.
+impl From<&Scope> for FieldValue {
+    fn from(scope: &Scope) -> Self {
+        match scope {
+            Scope::ChannelScope { channel_id, .. } => FieldValue::tagged("ChannelScope", FieldValue::tagged("channel_id", *channel_id)),
+            Scope::SessionScope { session_id } => FieldValue::tagged("SessionScope", FieldValue::tagged("session_id", *session_id)),
+            Scope::UserScope { user_id } => FieldValue::tagged("UserScope", FieldValue::tagged("user_id", *user_id)),
+            Scope::GroupScope { group_id } => FieldValue::tagged("GroupScope", FieldValue::tagged("group_id", *group_id)),
+            Scope::GlobalScope => FieldValue::from("GlobalScope"),
+        }
+    }
+}
+
+impl From<Scope> for FieldValue {
+    fn from(scope: Scope) -> Self {
+        FieldValue::from(&scope)
+    }
 }
 
 /// What lies in a scope and is found there by its name, which is unique of
@@ -384,7 +396,8 @@ mod tests {
     }
 
     /// The conditions a list is asked with (issue 293) meet exactly what
-    /// `contains` and `visible_from` say, over every pair of scopes.
+    /// `contains` and `visible_from` say, over every pair of scopes - no
+    /// two of which share a channel, whose id is unique.
     #[test]
     fn the_conditions_of_a_list_say_what_contains_and_visible_from_say() {
         let (alice, bob) = (UserId(Uuid::new_v4()), UserId(Uuid::new_v4()));
@@ -394,11 +407,11 @@ mod tests {
             Scope::GlobalScope, Scope::UserScope { user_id: alice }, Scope::UserScope { user_id: bob },
             Scope::SessionScope { session_id: s1 }, Scope::SessionScope { session_id: s2 },
             Scope::ChannelScope { session_id: s1, channel_id: c1 }, Scope::ChannelScope { session_id: s1, channel_id: c2 },
-            Scope::ChannelScope { session_id: s2, channel_id: c1 }, Scope::GroupScope { group_id: Uuid::new_v4() },
+            Scope::ChannelScope { session_id: s2, channel_id: ChannelId(Uuid::new_v4()) }, Scope::GroupScope { group_id: Uuid::new_v4() },
         ];
         let document = |scope: &Scope| serde_json::json!({ "scope": scope });
         for holder in &scopes {
-            let within = holder.within::<ScopeField>().unwrap();
+            let within = holder.within::<ScopeField>();
             for scope in &scopes {
                 let found = within.as_ref().is_none_or(|filter| filter.matches(&document(scope)));
                 assert_eq!(found, holder.contains(scope), "{scope:?} within {holder:?}");
@@ -406,12 +419,26 @@ mod tests {
         }
         for place in &scopes {
             for user in [None, Some(alice)] {
-                let seen = Scope::seen_from::<ScopeField>(place, user).unwrap();
+                let seen = Scope::seen_from::<ScopeField>(place, user);
                 for scope in &scopes {
                     assert_eq!(seen.matches(&document(scope)), scope.visible_from(place, user), "{scope:?} seen from {place:?} by {user:?}");
                 }
             }
         }
+    }
+
+
+    /// A scope as a query compares it (issue 293) - a channel's by its
+    /// channel alone, whose id is unique, so that no two samples share one.
+    #[test]
+    fn a_scope_meets_exactly_the_scopes_equal_to_it() {
+        let id = Uuid::new_v4();
+        crate::store::query::meets_exactly_its_equals(&[
+            Scope::GlobalScope, Scope::UserScope { user_id: UserId(id) }, Scope::GroupScope { group_id: id },
+            Scope::SessionScope { session_id: SessionId(id) }, Scope::SessionScope { session_id: SessionId::new() },
+            Scope::ChannelScope { session_id: SessionId(id), channel_id: ChannelId(id) },
+            Scope::ChannelScope { session_id: SessionId(id), channel_id: ChannelId::new() },
+        ]);
     }
 
 }

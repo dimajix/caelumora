@@ -34,25 +34,25 @@ use tracing::warn;
 /// Whatever the store reports; what was deleted before stays deleted.
 pub(crate) async fn delete_scoped_in(store: &dyn EntityStore, events: &EventBus, holder: &Scope) -> StoreResult<()> {
     let system = SecurityContext::system();
-    for personality in store.list_personalities(&system, &within(holder)?).await?.items {
+    for personality in store.list_personalities(&system, &within(holder)).await?.items {
         store.delete_personality(&system, personality.id).await?;
     }
-    for template in store.list_session_templates(&system, &within(holder)?).await?.items {
+    for template in store.list_session_templates(&system, &within(holder)).await?.items {
         store.delete_session_template(&system, template.id).await?;
     }
-    for agent in store.list_agents(&system, &within(holder)?).await?.items {
+    for agent in store.list_agents(&system, &within(holder)).await?.items {
         store.delete_agent(&system, agent.id).await?;
         events.publish(GlobalEvent::AgentDeleted(agent.id), agent.security_attributes.clone());
     }
-    for workspace in store.list_workspaces(&system, &within(holder)?).await?.items {
+    for workspace in store.list_workspaces(&system, &within(holder)).await?.items {
         store.delete_workspace(&system, workspace.id).await?;
         events.publish(GlobalEvent::WorkspaceDeleted(workspace.id), workspace.security_attributes.clone());
     }
-    for skill in store.list_skills(&system, &within(holder)?).await?.items {
+    for skill in store.list_skills(&system, &within(holder)).await?.items {
         store.delete_skill(&system, skill.id).await?;
         events.publish(GlobalEvent::SkillDeleted(skill.id), skill.security_attributes.clone());
     }
-    for artifact in store.list_artifacts(&system, &within(holder)?).await?.items {
+    for artifact in store.list_artifacts(&system, &within(holder)).await?.items {
         store.delete_artifact(&system, artifact.id).await?;
         events.publish(GlobalEvent::ArtifactDeleted(artifact.id), artifact.security_attributes.clone());
     }
@@ -70,28 +70,28 @@ pub(crate) async fn delete_scoped_in(store: &dyn EntityStore, events: &EventBus,
 /// restored.
 pub(crate) async fn restore_scoped_in(store: &dyn EntityStore, events: &EventBus, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()> {
     let system = SecurityContext::system();
-    for personality in deleted_since(store.list_deleted_personalities(&system, &within(holder)?).await?.items, since) {
+    for personality in deleted_since(store.list_deleted_personalities(&system, &within(holder)).await?.items, since) {
         unless_taken(store.restore_personality(&system, personality.id).await, "personality", &personality.name)?;
     }
-    for template in deleted_since(store.list_deleted_session_templates(&system, &within(holder)?).await?.items, since) {
+    for template in deleted_since(store.list_deleted_session_templates(&system, &within(holder)).await?.items, since) {
         unless_taken(store.restore_session_template(&system, template.id).await, "session template", &template.name)?;
     }
-    for agent in deleted_since(store.list_deleted_agents(&system, &within(holder)?).await?.items, since) {
+    for agent in deleted_since(store.list_deleted_agents(&system, &within(holder)).await?.items, since) {
         if unless_taken(store.restore_agent(&system, agent.id).await, "agent", &agent.name)? {
             events.publish(GlobalEvent::AgentRestored(agent.id), agent.security_attributes.clone());
         }
     }
-    for workspace in deleted_since(store.list_deleted_workspaces(&system, &within(holder)?).await?.items, since) {
+    for workspace in deleted_since(store.list_deleted_workspaces(&system, &within(holder)).await?.items, since) {
         if unless_taken(store.restore_workspace(&system, workspace.id).await, "workspace", &workspace.name)? {
             events.publish(GlobalEvent::WorkspaceRestored(workspace.id), workspace.security_attributes.clone());
         }
     }
-    for skill in deleted_since(store.list_deleted_skills(&system, &within(holder)?).await?.items, since) {
+    for skill in deleted_since(store.list_deleted_skills(&system, &within(holder)).await?.items, since) {
         if unless_taken(store.restore_skill(&system, skill.id).await, "skill", &skill.name)? {
             events.publish(GlobalEvent::SkillRestored(skill.id), skill.security_attributes.clone());
         }
     }
-    for artifact in deleted_since(store.list_deleted_artifacts(&system, &within(holder)?).await?.items, since) {
+    for artifact in deleted_since(store.list_deleted_artifacts(&system, &within(holder)).await?.items, since) {
         if unless_taken(store.restore_artifact(&system, artifact.id).await, "artifact", &artifact.name)? {
             events.publish(GlobalEvent::ArtifactRestored(artifact.id), artifact.security_attributes.clone());
         }
@@ -121,17 +121,17 @@ fn unless_taken(restored: StoreResult<()>, kind: &str, name: &ScopedName) -> Sto
 /// report.
 pub(crate) async fn purge_scoped_in(store: &dyn EntityStore, states: &dyn StateStore, workspaces: &WorkspaceManager, artifacts: &ArtifactManager, holder: &Scope) -> anyhow::Result<()> {
     let system = SecurityContext::system();
-    for personality in store.list_deleted_personalities(&system, &within(holder)?).await?.items {
+    for personality in store.list_deleted_personalities(&system, &within(holder)).await?.items {
         store.purge_personality(&system, personality.id).await?;
     }
-    for template in store.list_deleted_session_templates(&system, &within(holder)?).await?.items {
+    for template in store.list_deleted_session_templates(&system, &within(holder)).await?.items {
         store.purge_session_template(&system, template.id).await?;
     }
-    for agent in store.list_deleted_agents(&system, &within(holder)?).await?.items {
+    for agent in store.list_deleted_agents(&system, &within(holder)).await?.items {
         store.purge_agent(&system, agent.id).await?;
         states.delete_agent_state(agent.id).await?;
     }
-    for skill in store.list_deleted_skills(&system, &within(holder)?).await?.items {
+    for skill in store.list_deleted_skills(&system, &within(holder)).await?.items {
         store.purge_skill(&system, skill.id).await?;
     }
     workspaces.purge_lying_in(holder).await?;
@@ -141,11 +141,8 @@ pub(crate) async fn purge_scoped_in(store: &dyn EntityStore, states: &dyn StateS
 
 /// The query of what lies in `holder` or within it (issue 293), which the
 /// store answers by the scope.
-///
-/// # Errors
-/// `StoreError::Validation` if the scope cannot be serialized.
-pub(crate) fn within<F: ScopedField>(holder: &Scope) -> StoreResult<Query<F>> {
-    Ok(Query { filter: holder.within()?, ..Query::all() })
+pub(crate) fn within<F: ScopedField>(holder: &Scope) -> Query<F> {
+    Query { filter: holder.within(), ..Query::all() }
 }
 
 /// Those of `deleted` that were deleted at `since` or later - a comparison

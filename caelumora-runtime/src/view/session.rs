@@ -306,7 +306,7 @@ impl SessionView {
         let views = self.views();
         let context = views.context();
         let failed = |e| ViewError::failed(e, format!("listing the deleted channels of session {}", self.id()));
-        let of_this = Query::filtered(Filter::eq(ChannelField::Session, &self.id()).map_err(failed)?);
+        let of_this = Query::filtered(Filter::eq(ChannelField::Session, self.id()));
         let channels = views.entities().list_deleted_channels(context, &of_this).await.map_err(failed)?.items;
         let may_change = self.may_change().await;
         let mut deleted = Vec::new();

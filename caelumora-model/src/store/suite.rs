@@ -239,17 +239,17 @@ pub(crate) async fn queries_behave(store: &dyn EntityStore) {
     assert_eq!(ids(&listed.items), sorted, "in the order of their ids");
     assert!(listed.next.is_none());
 
-    let owned = Filter::eq(ArtifactField::Owner, &ActorId::User(bob)).unwrap();
+    let owned = Filter::eq(ArtifactField::Owner, ActorId::User(bob));
     let found = store.list_artifacts(&ctx, &Query::filtered(owned)).await.unwrap();
     let mut bobs_own = vec![made[2], made[4]];
     bobs_own.sort_by_key(|id| id.to_string());
     assert_eq!(ids(&found.items), bobs_own, "a field of the entity");
 
-    let place = Filter::And(vec![Filter::eq(ArtifactField::VersionSession, &session).unwrap(), Filter::eq(ArtifactField::VersionChannel, &channel).unwrap()]);
+    let place = Filter::And(vec![Filter::eq(ArtifactField::VersionSession, session), Filter::eq(ArtifactField::VersionChannel, channel)]);
     let published = store.list_artifacts(&ctx, &Query::filtered(Filter::any(ArtifactField::Versions, place))).await.unwrap();
     assert_eq!(ids(&published.items), [made[1]], "a version published in the channel, not one elsewhere in the session");
 
-    let named = Filter::eq(ArtifactField::Subject, &bobs).unwrap();
+    let named = Filter::eq(ArtifactField::Subject, bobs);
     let shared = Filter::Or(vec![
         Filter::any(ArtifactField::Acl, named.clone()),
         Filter::any(ArtifactField::Versions, Filter::any(ArtifactField::VersionAcl, named)),
@@ -283,7 +283,7 @@ pub(crate) async fn queries_behave(store: &dyn EntityStore) {
         store.create_personality(&ctx, personality).await.unwrap();
     }
     let holder = Scope::SessionScope { session_id };
-    let lying = store.list_personalities(&ctx, &Query { filter: holder.within::<ScopeField>().unwrap(), ..Query::all() }).await.unwrap();
+    let lying = store.list_personalities(&ctx, &Query { filter: holder.within::<ScopeField>(), ..Query::all() }).await.unwrap();
     let mut expected = vec![in_session.id, in_channel.id];
     expected.sort_by_key(|id| id.to_string());
     assert_eq!(lying.items.iter().map(|p| p.id).collect::<Vec<_>>(), expected, "what lies in the session or a channel of it");
@@ -294,14 +294,14 @@ pub(crate) async fn queries_behave(store: &dyn EntityStore) {
     let without = self::session();
     store.create_session(&ctx, &with_agent).await.unwrap();
     store.create_session(&ctx, &without).await.unwrap();
-    let taking_part = Filter::any(SessionField::Participants, Filter::eq(SessionField::Participant, &Participant::Agent(agent)).unwrap());
+    let taking_part = Filter::any(SessionField::Participants, Filter::eq(SessionField::Participant, ActorId::Agent(agent)));
     let found = store.list_sessions(&ctx, &Query::filtered(taking_part)).await.unwrap();
     assert_eq!(found.items.iter().map(|s| s.id).collect::<Vec<_>>(), [with_agent.id], "a participant, the whole element");
 
     let of_it = Channel { session_id: with_agent.id, ..self::channel() };
     store.create_channel(&ctx, &of_it).await.unwrap();
     store.create_channel(&ctx, &Channel { session_id: without.id, ..self::channel() }).await.unwrap();
-    let found = store.list_channels(&ctx, &Query::filtered(Filter::eq(ChannelField::Session, &with_agent.id).unwrap())).await.unwrap();
+    let found = store.list_channels(&ctx, &Query::filtered(Filter::eq(ChannelField::Session, with_agent.id))).await.unwrap();
     assert_eq!(found.items.iter().map(|c| c.id).collect::<Vec<_>>(), [of_it.id], "the channels of a session");
 }
 

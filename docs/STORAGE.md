@@ -182,15 +182,23 @@ Every list of the entity store takes a query (`caelumora_model::store::query`, i
 *   **A filter** - purely declarative, so that a database could push it into a `WHERE` clause:
     equality, membership in a set of values, absence, `And`, `Or`, `Not`, and whether any element
     of a collection meets a condition of its own (`Any`). It names fields of the kind (an
-    `ArtifactField`, say), each a path into the document as it is serialized, and compares them
-    with JSON values; a field used within `Any` lies within the element. What a kind may be asked:
-    *   personalities, session templates, agents, workspaces and skills share the fields of what
-        lies in a scope (`ScopeField`): its scope, and the session of a channel's scope;
+    `ArtifactField`, say), each a path into the document as it is serialized; a field used within
+    `Any` lies within the element. What a kind may be asked:
+    *   personalities, session templates, agents, workspaces and skills share the field of what
+        lies in a scope (`ScopeField`): its scope;
     *   artifacts have those and more (`ArtifactField`): the owner, the access list, the versions
         with the place each was published in and their own lists;
     *   channels have their session (`ChannelField`), sessions their participants
         (`SessionField`);
     *   users, profiles and components have none yet (`NoField`).
+*   **Values** (`FieldValue`) take the forms serde writes, but are made without it, so that making
+    a filter cannot fail: a `Uuid` for every id, a `Text` for a unit variant (`"GlobalScope"`), and
+    `Tagged` for a variant (`{"User": "…"}`). `Tagged` meets an object that *has* its key with a
+    matching value - containment, as `@>` in Postgres -, so that a value names only what
+    identifies it: a channel's scope its channel alone, whose id is unique. `ActorId`, `Subject`,
+    `Membership` and `Scope` convert by `From`, written after serde's tags; a test per type holds
+    each to meeting exactly the serialized values equal to it. A participant is asked by the
+    `ActorId` of the same form.
 *   **Scope conditions** are made by the scope, so that the rule lives with `Scope`:
     `Scope::within` is what lies in a scope or within it, as `contains` says - what goes with a
     session when it is deleted, restored or purged -, and `Scope::seen_from` what is found from a

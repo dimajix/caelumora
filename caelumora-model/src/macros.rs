@@ -25,5 +25,11 @@ macro_rules! define_id {
                 id.0
             }
         }
+
+        impl From<$name> for $crate::store::query::FieldValue {
+            fn from(id: $name) -> Self {
+                $crate::store::query::FieldValue::Uuid(id.0)
+            }
+        }
     };
 }

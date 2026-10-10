@@ -405,7 +405,7 @@ impl WorkspaceManager {
     pub(crate) async fn purge_lying_in(&self, holder: &Scope) -> WorkspaceResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for workspace in self.entities.list_deleted_workspaces(&system, &crate::scoped::within(holder)?).await?.items {
+        for workspace in self.entities.list_deleted_workspaces(&system, &crate::scoped::within(holder)).await?.items {
             self.provider(&workspace)?.remove(workspace.id).await?;
             self.entities.purge_workspace(&system, workspace.id).await?;
         }

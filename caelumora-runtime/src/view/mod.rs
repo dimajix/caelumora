@@ -439,9 +439,9 @@ impl Views {
         let principal = self.viewer.context().principal_id;
         let roles = user_roles(self.entities.as_ref(), principal).await.map_err(failed)?;
         let subjects: Vec<Subject> = std::iter::once(Subject::Actor(principal)).chain(roles.into_iter().map(Subject::Role)).collect();
-        let named = Filter::is_in(ArtifactField::Subject, &subjects).map_err(failed)?;
+        let named = Filter::is_in(ArtifactField::Subject, subjects);
         let theirs = Filter::Or(vec![
-            Filter::eq(ArtifactField::Owner, &principal).map_err(failed)?,
+            Filter::eq(ArtifactField::Owner, principal),
             Filter::any(ArtifactField::Acl, named.clone()),
             Filter::any(ArtifactField::Versions, Filter::any(ArtifactField::VersionAcl, named)),
         ]);
@@ -726,7 +726,7 @@ impl Views {
         let here = Scope::ChannelScope { session_id: place.session.id, channel_id: place.channel };
         let owner = context.principal_id.as_user_id();
         // Those seen from here, which the store is asked for alone (issue 293).
-        let seen = Query::filtered(Scope::seen_from(&here, owner).map_err(failed)?);
+        let seen = Query::filtered(Scope::seen_from(&here, owner));
         let skills = self.entities.list_skills(context, &seen).await.map_err(failed)?.items;
         let mut usable = Vec::with_capacity(skills.len());
         for skill in skills {

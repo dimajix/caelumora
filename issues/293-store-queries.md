@@ -136,3 +136,30 @@ instead of a method per question.
   files, without reading one - and a function that reads one entity, judged against the filter,
   only when it is its turn; what follows the limit is not read. A test shows a page loading what
   it passes over and nothing after its limit.
+- **2026-10-10** — Decided with the maintainer: the values of a filter are no longer JSON made by
+  serde, so that building a filter cannot fail - every condition returned a `StoreResult` and
+  every caller carried a `?` for an error that never occurs. A value is a `FieldValue`, generic,
+  not a closed list of domain types:
+  - `Uuid` - every id (`define_id!` converts), compared with the UUID in the document;
+  - `Text` - a unit variant as serde writes it (`"GlobalScope"`, `"System"`);
+  - `Tagged(tag, value)` - an enum variant as serde writes it, `{"User": "…"}`. It meets an
+    object that *has* the key `tag` with a value meeting `value` - containment, as `@>` in
+    Postgres -, so a value names only what identifies it: a channel's scope its channel alone
+    (`{"ChannelScope": {"channel_id": …}}`), since a channel's id is unique, and what lies in a
+    session or a channel of it is two values on the one field `scope` (`ChannelScopeSession` is
+    gone).
+  - `ActorId`, `Subject`, `Membership` and `Scope` convert into a `FieldValue` (`From`), written
+    by hand after serde's tags; a test per type holds each to meeting exactly the serialized
+    values equal to it. A `Participant` is asked by the `ActorId` of the same form.
+  Weighed and not taken: values serialized only in the store (`Arc<dyn …>`), a closed enum of
+  domain types (a fallible conversion in the store), fields per variant (`OwnerUser`,
+  `OwnerAgent` - a query would have to know whether the owner is a user or an agent), a wildcard
+  step in paths (loosens "exactly this actor"), `Filter::At` with relative fields per kind (the
+  problem lies in the value, not the field), and a new serde form of `ActorId` (it is the form
+  the REST API and the web UI read in some twenty places).
+- **2026-10-10** — Built as decided, on the same branch: `FieldValue` with `Uuid`, `Text` and
+  `Tagged`; `Filter::eq` and `Filter::is_in` take anything that converts and return the filter;
+  `Scope::within`, `Scope::seen_from` and the runtime's `scoped::within` cannot fail, and the
+  callers lost their `?`. `ScopeField` holds the scope alone. The test of the scope conditions
+  had one channel id in two sessions, which the uniqueness of channel ids rules out; it was made
+  to keep to it.

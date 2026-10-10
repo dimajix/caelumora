@@ -398,7 +398,7 @@ impl ArtifactManager {
     pub(crate) async fn purge_lying_in(&self, holder: &Scope) -> ArtifactResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for artifact in self.entities.list_deleted_artifacts(&system, &crate::scoped::within(holder)?).await?.items {
+        for artifact in self.entities.list_deleted_artifacts(&system, &crate::scoped::within(holder)).await?.items {
             self.storage(&artifact.storage)?.remove(artifact.id).await?;
             self.entities.purge_artifact(&system, artifact.id).await?;
         }

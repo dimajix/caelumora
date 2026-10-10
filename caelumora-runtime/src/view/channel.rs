@@ -95,8 +95,8 @@ impl ChannelView {
         // Those with a version published here, which the store is asked for
         // alone (issue 293).
         let here = Filter::And(vec![
-            Filter::eq(ArtifactField::VersionSession, &session).map_err(failed)?,
-            Filter::eq(ArtifactField::VersionChannel, &channel).map_err(failed)?,
+            Filter::eq(ArtifactField::VersionSession, session),
+            Filter::eq(ArtifactField::VersionChannel, channel),
         ]);
         let all = self.views().entities().list_artifacts(&SecurityContext::system(), &Query::filtered(Filter::any(ArtifactField::Versions, here))).await.map_err(failed)?.items;
         let mut published = Vec::new();

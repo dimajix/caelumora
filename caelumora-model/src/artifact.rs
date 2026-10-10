@@ -30,8 +30,6 @@ define_id!(ArtifactId);
 pub enum ArtifactField {
     /// Where it lies: a `Scope`.
     Scope,
-    /// The session of the channel whose scope it lies in, if it lies in one.
-    ChannelScopeSession,
     /// Who owns it: an `ActorId`.
     Owner,
     /// Its own access list: entries.
@@ -50,14 +48,12 @@ pub enum ArtifactField {
 
 impl ScopedField for ArtifactField {
     const SCOPE: Self = ArtifactField::Scope;
-    const CHANNEL_SCOPE_SESSION: Self = ArtifactField::ChannelScopeSession;
 }
 
 impl Field for ArtifactField {
     fn path(self) -> &'static [&'static str] {
         match self {
             ArtifactField::Scope => &["scope"],
-            ArtifactField::ChannelScopeSession => &["scope", "ChannelScope", "session_id"],
             ArtifactField::Owner => &["security_attributes", "owner_id"],
             ArtifactField::Acl => &["security_attributes", "acl"],
             ArtifactField::Versions => &["versions"],
