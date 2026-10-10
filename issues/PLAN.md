@@ -49,7 +49,7 @@ Worth doing soon, in any order, alongside the blocks of section B.
 | [218](218-paged-histories.md) | S | Page both histories alike, cut in the views. | Fully specified; long channels are already slow to open. |
 | [223](223-full-inbox-drops-events.md) | M | Catch up what was said from the history; never drop a request, an approval or a question. | Silent loss - and exactly the agents with long turns are hit, which working on files produces. A dropped change to a message is lost for good: catching up finds missing messages, not missed changes. |
 | [07](07-session-deletion-audit.md) | S | `retention.purge_deleted_after` and the purge task. | Policy decided, and nothing blocks it: soft deletion and `ActionType::Purge` exist. |
-| [283](283-show-agent-components.md) | S | The web UI shows what an agent was built from, every included list resolved. | After 270: it reads what 270's runtime records. |
+| [283](283-show-agent-components.md) | S | The web UI shows what an agent was built from, every included list resolved. | The runtime records what an agent was built from; only the web UI is missing. |
 
 Decisions that cost an hour and close an issue are listed under [D](#d-questionable-issues).
 
@@ -80,7 +80,6 @@ Order: decide **169** and the small part of **20** → **23** (steps 1 to 3) →
 
 | No. | Size | Note |
 |---|---|---|
-| [270](270-personality-inheritance.md) | M | Every component every agent should have - and every command, `/compact` among them - is written into each personality by hand. An architecture decision among inheritance, a configured base and component bundles. Decide it before 16 brings `/compact`, so that the command reaches every agent. |
 | [284](284-automatic-context-compaction.md) | M | The hard limit on every session. The mechanism and `/compact` exist; what is missing is compacting on the agent's own, before a model call that would not fit - within a turn above all. Decide there whether dropping old tool results comes before summarising. |
 | [58](58-notes-in-every-prompt.md) | M | A budget for the prompt part and eliding committed note calls. Needs `KnowledgeRef` to name what was shown - the same refinement 166 and 59 need; build it once. |
 | [169](169-changing-classified-content.md) | M | Shared with B1; 166 waits for it. |
@@ -88,7 +87,7 @@ Order: decide **169** and the small part of **20** → **23** (steps 1 to 3) →
 | [166](166-memory-as-topic-documents.md) | L | Index in the prompt, document by tool - in the form skills have: a catalogue as a prompt part, a tool for the body, reads recorded as knowledge; the storage stays its own. The issue still says Caelumora has no file system for agents; correct that when it is taken up. |
 | [55](55-notes-by-reflection.md) | M | After 166: reflection needs documents it can revise as its target. Private notes only by default. |
 
-Order: 270 → 284 → 58 → (65) → 166 → 55. Only 270, 284 and 58 belong to the first release.
+Order: 284 → 58 → (65) → 166 → 55. Only 284 and 58 belong to the first release.
 
 ### B3. Tools
 
@@ -160,8 +159,8 @@ Each milestone leaves the system usable; decisions come before the code that dep
 3.  **Working on files, safely.** Decide 169 and the small part of 20; 23's routes for workspaces
     and artifacts (steps 2 and 3); refactor `ToolProvider::execute` (226, first step); then 247,
     256, 276, 282, 208; 254 alongside.
-4.  **Sessions that last.** Decide 270, then 284, 58; 126. If reading files hits the context
-    window earlier, 284 moves into milestone 3.
+4.  **Sessions that last.** 284, 58; 126. If reading files hits the context window earlier, 284
+    moves into milestone 3.
 
 **This is the first release.** After it, roughly in this order: 140 · 237 (with 05 decided) · 65 →
 166 → 55 · 226 (concurrency) · 238 · 272 and 252 when a deployment asks · 124, 42 · and section C
@@ -190,7 +189,7 @@ The plan stands on assumptions the maintainer should confirm or correct:
 |---|---|
 | A - small | 07, 218, 223, 283 |
 | B1 - workspace | 20 (part), 23, 169, 208, 247, 254, 256, 272, 282 |
-| B2 - context and memory | 55, 58, 65, 166, 169, 270, 284 |
+| B2 - context and memory | 55, 58, 65, 166, 169, 284 |
 | B3 - tools | 126, 226, 276 |
 | B4 - sessions and team | 07, 10, 23 (part), 25, 140, 142, 221, 227, 125 (part) |
 | C - not now | 03, 04, 20, 26, 27, 42, 122, 124, 125, 139, 143, 181, 182, 237, 238, 252 |
