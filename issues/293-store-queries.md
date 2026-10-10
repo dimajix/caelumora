@@ -1,6 +1,6 @@
 # 293 — A store list takes no condition and no limit
 
-**Status:** in progress
+**Status:** done
 **Area:** Persistence
 
 ## The problem
@@ -163,3 +163,12 @@ instead of a method per question.
   callers lost their `?`. `ScopeField` holds the scope alone. The test of the scope conditions
   had one channel id in two sessions, which the uniqueness of channel ids rules out; it was made
   to keep to it.
+- **2026-10-10** — Done with phase 1, decided with the maintainer: phase 2, access as a condition
+  of the query, moves to issue [295](295-access-as-a-query-condition.md), and the item of *Done
+  when* that asks for it moves with it. Phase 2 gives no more correctness, since a limit is already
+  kept by reading on; it gives that unreadable entities are not read and that a database can push
+  access into its query. The memory and JSON stores gain little from it, so it waits for a store
+  that can execute a condition ([03](03-postgres-entity-store.md)). Discussing it showed that the
+  places a caller is a member of cannot be listed up front - the lists are long and include deleted
+  places -, so membership has to be a join the store resolves. Issue 295 records the discussion.
+  The clearance of a viewer in the views' lists stays a check afterwards.

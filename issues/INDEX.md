@@ -80,7 +80,7 @@ published before anyone else can take it.
 | [215](215-json-store-concurrent-puts-of-one-state.md) | done | Concurrent puts of one state in the JSON store can leave a journal beside the new snapshot and lose a change appended in between, and the test that puts one state concurrently fails now and then. |
 | [250](250-unique-names-per-name-space.md) | done | No kind keeps its names unique in its name space as a whole: channels check it by hand when created, not when renamed; agents, personalities, templates and users not at all. |
 | [292](292-store-lists-read-everything.md) | done | A list of what a user may read is made by reading every entity of the kind and asking the policy of each - for artifacts, of which there may be hundreds of thousands, per version too. |
-| [293](293-store-queries.md) | in progress | A store list takes no condition and no limit: every narrowing is done by its caller after everything was read, and no database could take it over. |
+| [293](293-store-queries.md) | done | A store list takes no condition and no limit: every narrowing is done by its caller after everything was read, and no database could take it over. |
 | [295](295-access-as-a-query-condition.md) | open | A list asks the policy entity by entity, so a database store cannot push access into its query and a full page may be followed by an empty one. |
 
 ## Sessions and channels
