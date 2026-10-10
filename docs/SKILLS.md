@@ -78,7 +78,8 @@ its text to members who may not read the skill.
     that names the skill, and into its history, unpublished). The channel's history records the
     command, not the text.
 *   **`list_skills`** gives the catalogue as a tool, for a model whose prompt was built before a
-    skill appeared; **`/skills @agent`** lists, privately, what the agent may load here - for its
+    skill appeared - each skill with its `skill_id`, for the web UI to link to (issue 301);
+    **`/skills @agent`** lists, privately, what the agent may load here - for its
     owner, as it answers for its owner (issue 255), so the issuer learns the names and descriptions
     of the owner's skills.
 

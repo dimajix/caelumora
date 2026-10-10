@@ -779,6 +779,51 @@ const SkillToolCallContent: React.FC<ToolCallContentProps> = ({call, result, onS
   );
 };
 
+/**
+ * The skills an agent may load, listed (issue 301): how many, and each with its name - linked to its
+ * page where the chat can open it - and what it is for, as `/skills` lists them.
+ */
+const SkillListToolCallContent: React.FC<ToolCallContentProps> = ({result, onSelectPage}) => {
+  const skills = objectsOf(resultObject(result)?.skills);
+  return (
+    <>
+      <div className="flex items-start gap-1.5 text-[11px]">
+        <BookOpen size={12} className="mt-0.5 opacity-60 shrink-0" />
+        <span>{skills !== null ? (skills.length === 0 ? 'No skills to load here' : `${counted(skills.length, 'skill', 'skills')} to load`) : 'Skills to load'}</span>
+      </div>
+      {resultHidden(result) ? (
+        <div className="mt-2 text-[11px] italic opacity-60">Skills not shown</div>
+      ) : skills !== null ? (
+        skills.length > 0 && (
+          <ResultBox>
+            <ul className="space-y-0.5">
+              {skills.map((skill, i) => {
+                const name = textOf(skill, 'name') ?? '?';
+                const skillId = textOf(skill, 'skill_id');
+                const description = textOf(skill, 'description');
+                return (
+                  <li key={i}>
+                    {skillId !== null && onSelectPage ? (
+                      <button type="button" onClick={() => onSelectPage({kind: 'skill', id: skillId})} title="Open the skill" className="font-mono text-blue-600 dark:text-blue-400 hover:underline break-all">
+                        {name}
+                      </button>
+                    ) : (
+                      <code className="font-mono break-all">{name}</code>
+                    )}
+                    {description && <span className="opacity-80"> — {description}</span>}
+                  </li>
+                );
+              })}
+            </ul>
+          </ResultBox>
+        )
+      ) : (
+        <FailedResult result={result} />
+      )}
+    </>
+  );
+};
+
 /** The handler of each presentation; one the server knows and this client does not falls back to the default. */
 const PRESENTATIONS: Record<ToolPresentation, React.FC<ToolCallContentProps>> = {
   default: DefaultToolCallContent,
@@ -794,6 +839,7 @@ const PRESENTATIONS: Record<ToolPresentation, React.FC<ToolCallContentProps>> = 
   file_publish: FilePublishToolCallContent,
   artifact_publish: ArtifactPublishToolCallContent,
   skill: SkillToolCallContent,
+  skill_list: SkillListToolCallContent,
 };
 
 interface ToolCallViewProps {

@@ -7,7 +7,8 @@
 //!   model has to know what it could load. Classified as the join of the
 //!   skills it lists.
 //! - **`list_skills`** gives the catalogue as a tool, for a model whose
-//!   prompt was built before a skill appeared; **`load_skill`** gives a
+//!   prompt was built before a skill appeared - each skill with its id, for
+//!   the channel to link to (issue 301); **`load_skill`** gives a
 //!   skill's text as the call's result, hidden from the channel, which sees
 //!   only which skill was loaded (issue 281), classified as the skill.
 //! - **`create_skill`** and **`update_skill`** let the agent write down
@@ -191,7 +192,7 @@ impl ToolProvider for SkillsComponent {
                 requires_approval: false,
                 visibility: ToolVisibility::SHOWN,
                 classification: None,
-                presentation: Default::default(),
+                presentation: ToolPresentation::SkillList,
             },
             Tool {
                 name: LOAD_SKILL_TOOL_NAME.to_string(),
@@ -276,7 +277,7 @@ impl ToolProvider for SkillsComponent {
         match name {
             LIST_SKILLS_TOOL_NAME => {
                 let skills = session_of(turn)?.views().usable_skills().await?;
-                let listed: Vec<Value> = skills.iter().map(|s| serde_json::json!({ "name": s.name(), "description": s.description().as_str() })).collect();
+                let listed: Vec<Value> = skills.iter().map(|s| serde_json::json!({ "name": s.name(), "description": s.description().as_str(), "skill_id": s.id() })).collect();
                 Ok(ToolOutput { value: serde_json::json!({ "skills": listed }), classification: Some(joined(&skills, &turn.classification())) })
             }
             LOAD_SKILL_TOOL_NAME => {
@@ -456,6 +457,12 @@ mod tests {
         assert_eq!(prompt.classification, Some(internal.clone()));
 
         let mut turn = world.turn(&mut state);
+        let listed = ToolProvider::execute(&component, LIST_SKILLS_TOOL_NAME, &serde_json::json!({}), None, &mut turn).await.unwrap();
+        assert_eq!(listed.value, serde_json::json!({ "skills": [{ "name": "release-notes", "description": "How we write a release note", "skill_id": made.id }] }), "each with its id, for a frontend to link to");
+        assert_eq!(listed.classification, Some(internal.clone()));
+        drop(turn);
+
+        let mut turn = world.turn(&mut state);
         let loaded = ToolProvider::execute(&component, LOAD_SKILL_TOOL_NAME, &serde_json::json!({ "name": "release-notes" }), None, &mut turn).await.unwrap();
         assert_eq!(loaded.value, Value::String("[Skill: release-notes]\n1. Collect.\n2. Group.\n".to_string()), "the text, under its title");
         assert_eq!(loaded.classification, Some(internal));
@@ -530,7 +537,9 @@ mod tests {
         let load = tools.iter().find(|t| t.name == LOAD_SKILL_TOOL_NAME).unwrap();
         assert_eq!(load.visibility, ToolVisibility::WITHOUT_RESULT);
         let skills: Vec<_> = tools.iter().filter(|t| t.presentation == ToolPresentation::Skill).map(|t| t.name.as_str()).collect();
-        assert_eq!(skills, [LOAD_SKILL_TOOL_NAME, CREATE_SKILL_TOOL_NAME, UPDATE_SKILL_TOOL_NAME], "shown as a skill; the catalogue as a call");
+        assert_eq!(skills, [LOAD_SKILL_TOOL_NAME, CREATE_SKILL_TOOL_NAME, UPDATE_SKILL_TOOL_NAME], "shown as a skill");
+        let list = tools.iter().find(|t| t.name == LIST_SKILLS_TOOL_NAME).unwrap();
+        assert_eq!((list.presentation, list.visibility), (ToolPresentation::SkillList, ToolVisibility::SHOWN), "the catalogue as a list of skills");
         assert!(tools.iter().filter(|t| t.name == LOAD_SKILL_TOOL_NAME || t.name == LIST_SKILLS_TOOL_NAME).all(|t| !t.requires_approval), "reading needs no approval");
     }
 }

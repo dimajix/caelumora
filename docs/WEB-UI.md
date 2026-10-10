@@ -221,7 +221,9 @@ its text in place. In the chat, `/skill` is shown as every command of an agent, 
 stands in the agent's history panel as what the issuer gave it, and the context panel lists the
 skill under "Knowledge read" ("A skill, loaded in …"). An agent's calls of the skill tools are
 shown by their presentation, `skill` (issue 281): the skill loaded by its name, one written or
-changed with its text, the name linked to the skill's page.
+changed with its text, the name linked to the skill's page; a call of `list_skills` by
+`skill_list` (issue 301), the skills listed with what each is for, as `/skills` lists them, each
+name linked to the skill's page.
 
 ### Artifacts
 
@@ -285,7 +287,9 @@ else who may read it - the session's owner, say - is shown its history and no in
     281) shows the skill a call loads, writes or changes by its name, and what it is for and its
     text, as Markdown, where the arguments hold them - never the text a skill loaded gave the agent;
     where the result names the skill (`skill_id`), the name opens its page in the chat
-    (`onSelectPage`, which `Layout` hands through `ChatView` and `MessageView`). Where a result
+    (`onSelectPage`, which `Layout` hands through `ChatView` and `MessageView`). The `skill_list`
+    handler (issue 301) shows how many skills an agent listed - "No skills to load here" for none -
+    and each by its name, which opens its page as `skill`'s does, and what it is for. Where a result
     keeps the record of the questions its call asked (`answers`, issue 165), the frame shows it
     (`AnswersRecord`, issue 268): who answered or declined, and each question with every choice that
     was offered, one below the other, the chosen ones marked and the others muted, "Other" with its

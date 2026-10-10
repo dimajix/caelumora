@@ -674,7 +674,7 @@ agent alike.
 | `publish_file` | `terminal_tool` | `path`, `name`, `description` (optional) | no (issue 275) | `SHOWN` | Offers a file of the workspace for download at its message, as a link to the file as it is now, with its digest (issue 273). |
 | `publish_artifact` | `artifact_tool` | `path`, `name`, `description` (optional) | as configured, yes by default | `SHOWN` | Publishes a file of the workspace as a version of an artifact: a fixed copy, kept beyond the workspace (issue 271, see [Artifacts](#artifacts)). |
 | `delete_file` | `terminal_tool` | `path` | as configured, yes by default | `SHOWN` | Deletes a file or an empty directory of the workspace. |
-| `list_skills` | `skills` | - | no | `SHOWN` | Lists the skills the agent may load here, each with what it is for ([SKILLS.md](SKILLS.md)). |
+| `list_skills` | `skills` | - | no | `SHOWN` | Lists the skills the agent may load here, each with what it is for and its `skill_id` ([SKILLS.md](SKILLS.md)). |
 | `load_skill` | `skills` | `name` | no | `WITHOUT_RESULT` | Gives the skill's text as plain text, classified as the skill; recorded as knowledge. |
 | `create_skill` | `skills` | `name`, `description`, `body`, `scope` (`session` or `user`) | as configured, yes by default | `SHOWN` | Writes a skill of the agent's owner, classified as the turn's label; answers with its `skill_id`. |
 | `update_skill` | `skills` | `name`, `description` (optional), `body` (optional) | as configured, yes by default | `SHOWN` | Changes a skill of the owner's, raised first to what the turn has seen; answers with its `skill_id`. |
@@ -682,6 +682,13 @@ agent alike.
 
 `stop`, `bye` and `silence` end the turn with the current tool step (`Turn::request_state`). Notes,
 private notes and agent memory are described in [MEMORY.md](MEMORY.md).
+
+`load_skill`, `create_skill` and `update_skill` are presented as `skill` (`ToolPresentation::Skill`,
+issue 281): the web UI shows the skill a call acts on by its name, linked to its page where the
+result holds its `skill_id`, and what it is for and its text where the arguments hold them.
+`list_skills` is presented as `skill_list` (`ToolPresentation::SkillList`, issue 301), as
+`list_files` beside `read_file`: how many skills the agent may load, each by its name, linked to
+its page, and what it is for.
 
 ### The workspace
 
