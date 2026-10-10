@@ -257,7 +257,10 @@ something - they check the request, and carry it out with their own rights. In t
 
 Whoever asked stays in the context as its initiator: for the record, and for which request a turn
 answers (issues 211, 222) - never for rights. The questions of a call that a tool puts to the
-agent's owner (`Addressee::Owner`, issue 165) go to the owner, not to whoever asked.
+agent's owner (`Addressee::Owner`, issue 165) go to the owner, not to whoever asked. What the
+runtime asks in someone's name on its own - whether a member of a channel could still start a
+command there (issue [254](../issues/254-commands-run-unbounded.md)) - has the system as its
+initiator.
 
 There is no delegation chain. An agent that mentions another does not delegate to it: the other
 answers for its own owner, bounded by the channel, with whoever began the conversation as its
@@ -344,7 +347,9 @@ says what is expected and why.
 
 **Every new action that acts in someone's name is added to the suite**, with what it asks and what
 it answers to each of them; so is every change to what an existing action asks. A test of the suite
-that changes is a change of the permissions an action needs, and is reviewed as one.
+that changes is a change of the permissions an action needs, and is reviewed as one. What the
+runtime asks in someone's name on its own, while an action runs, is not the action's: `asked` leaves
+it out, and its own test records it (`recorded`).
 
 ### Filters
 

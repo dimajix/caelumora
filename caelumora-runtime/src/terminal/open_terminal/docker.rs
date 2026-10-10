@@ -16,11 +16,13 @@
 //!   in `network`.
 //! - A task stops a container unused for `idle_stop`, and any running
 //!   container of the storage that no workspace in use here holds - one
-//!   left from an earlier run. Stopping a container ends the commands in it.
+//!   left from an earlier run. Stopping a container ends the commands in it,
+//!   which are forgotten then; ending one when told (issue 254) does not
+//!   start a container that is not running.
 
 use super::client::{Client, Key};
-use super::OpenTerminal;
-use crate::terminal::{Terminal, TerminalError, TerminalProvider, TerminalResult};
+use super::{OpenCommands, OpenTerminal};
+use crate::terminal::{CommandKey, Terminal, TerminalError, TerminalProvider, TerminalResult};
 use async_trait::async_trait;
 use bollard::errors::Error as DockerError;
 use bollard::exec::{CreateExecOptions, StartExecOptions};
@@ -68,6 +70,10 @@ struct Inner {
     image: String,
     network: String,
     idle_stop: Duration,
+    /// The commands its workspaces were given, which run for `max_run` at
+    /// most.
+    commands: Arc<OpenCommands>,
+    max_run: Duration,
     destination: Classification,
     /// The workspaces used here, each with its instance while it runs.
     slots: std::sync::Mutex<HashMap<WorkspaceId, Slot>>,
@@ -94,14 +100,15 @@ fn failed(what: &str, error: DockerError) -> TerminalError {
 
 impl DockerProvider {
     /// The provider of the storage `storage`, whose containers run `image`
-    /// in `network` and stop after `idle_stop` unused; what may be put into
-    /// it at most `destination`, `public` unless given. Starts the task that
-    /// stops what is not used - also what an earlier run left running.
+    /// in `network` and stop after `idle_stop` unused, and whose commands
+    /// run for `max_run` at most; what may be put into it at most
+    /// `destination`, `public` unless given. Starts the task that stops
+    /// what is not used - also what an earlier run left running.
     ///
     /// # Errors
     /// `Unavailable` outside a Tokio runtime, or where no Docker daemon can
     /// be addressed.
-    pub(crate) fn new(storage: &str, image: &str, network: &str, idle_stop: Duration, destination: Option<Classification>) -> TerminalResult<Self> {
+    pub(crate) fn new(storage: &str, image: &str, network: &str, idle_stop: Duration, max_run: Duration, destination: Option<Classification>) -> TerminalResult<Self> {
         let runtime = tokio::runtime::Handle::try_current()
             .map_err(|_| TerminalError::Unavailable("a Docker storage needs a running runtime".to_string()))?;
         let docker = Docker::connect_with_local_defaults().map_err(|e| failed("be addressed", e))?;
@@ -111,6 +118,8 @@ impl DockerProvider {
             image: image.to_string(),
             network: network.to_string(),
             idle_stop,
+            commands: Arc::default(),
+            max_run,
             destination: destination.unwrap_or(Classification::PUBLIC),
             slots: std::sync::Mutex::default(),
             reaper: std::sync::OnceLock::new(),
@@ -134,6 +143,11 @@ async fn reap(inner: Weak<Inner>, every: Duration) {
 impl Inner {
     fn labels(&self, id: WorkspaceId) -> HashMap<String, String> {
         HashMap::from([(STORAGE_LABEL.to_string(), self.storage.clone()), (WORKSPACE_LABEL.to_string(), id.to_string())])
+    }
+
+    /// The terminal of workspace `id` in the instance behind `client`.
+    fn terminal(&self, id: WorkspaceId, client: Arc<Client>) -> OpenTerminal {
+        OpenTerminal { client, base: BASE.to_string(), workspace: id, commands: Arc::clone(&self.commands), max_run: self.max_run }
     }
 
     fn slot(&self, id: WorkspaceId) -> Slot {
@@ -289,6 +303,7 @@ impl Inner {
             let Ok(mut held) = slot.try_lock() else { continue };
             if held.as_ref().is_some_and(|client| client.idle_for() >= self.idle_stop) {
                 self.stop(&name(*id)).await;
+                self.commands.forget(*id);
                 *held = None;
             }
         }
@@ -333,6 +348,7 @@ impl TerminalProvider for DockerProvider {
             Err(e) if missing(&e) => {}
             Err(e) => return Err(failed("remove a workspace's volume", e)),
         }
+        self.inner.commands.forget(id);
         drop(held);
         self.inner.slots.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).remove(&id);
         Ok(())
@@ -340,11 +356,32 @@ impl TerminalProvider for DockerProvider {
 
     async fn terminal_for(&self, id: WorkspaceId) -> TerminalResult<Arc<dyn Terminal>> {
         let client = self.inner.instance(id).await?;
-        Ok(Arc::new(OpenTerminal { client, base: BASE.to_string(), workspace: id }))
+        Ok(Arc::new(self.inner.terminal(id, client)))
     }
 
     fn has_shell(&self) -> bool {
         true
+    }
+
+    fn commands(&self) -> Vec<CommandKey> {
+        self.inner.commands.running()
+    }
+
+    async fn end_command(&self, (workspace, scope, id): &CommandKey) -> TerminalResult<()> {
+        let slot = self.inner.slots.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).get(workspace).map(Arc::clone);
+        let client = match slot {
+            Some(slot) => slot.lock().await.clone(),
+            None => None,
+        };
+        // Not running: what ran in it ended with it.
+        let Some(client) = client else {
+            self.inner.commands.forget(*workspace);
+            return Ok(());
+        };
+        match self.inner.terminal(*workspace, client).shell(scope) {
+            Some(shell) => crate::terminal::commands::end(shell.as_ref(), id).await,
+            None => Ok(()),
+        }
     }
 
     fn destination(&self) -> Option<&Classification> {
@@ -382,7 +419,7 @@ mod tests {
         }
         let image = std::env::var("CAELUMORA_DOCKER_IMAGE").unwrap_or_else(|_| "ghcr.io/open-webui/open-terminal:0.14.0".to_string());
         let storage = format!("test-{}", uuid::Uuid::new_v4().simple());
-        let provider = DockerProvider::new(&storage, &image, "bridge", Duration::from_secs(3), None).unwrap();
+        let provider = DockerProvider::new(&storage, &image, "bridge", Duration::from_secs(3), Duration::from_secs(3600), None).unwrap();
         let docker = provider.inner.docker.clone();
         let id = WorkspaceId::new();
         provider.create(id).await.unwrap();
@@ -394,11 +431,18 @@ mod tests {
         let started = shell.start("cat docs/a.md; echo; pwd; echo \"[$OPEN_TERMINAL_API_KEY]\"; touch made").await.unwrap();
         let state = shell.output(&started, 0, Duration::from_secs(10)).await.unwrap();
         assert_eq!((state.status, state.output.as_str()), (CommandStatus::Completed, "hello\n/workspace\n[]\n"));
+        let long = shell.start("sleep 600").await.unwrap();
+        let key = (id, "c".to_string(), long);
+        assert_eq!(provider.commands(), std::slice::from_ref(&key), "what may still run");
 
-        // Unused, it is stopped; used again, started with the same key and
-        // the same files - also by a provider of a later run.
+        // Unused, it is stopped, with the commands in it; used again,
+        // started with the same key and the same files - also by a provider
+        // of a later run.
         tokio::time::timeout(Duration::from_secs(30), async { while running(&docker, id).await { tokio::time::sleep(Duration::from_millis(500)).await } }).await.expect("stopped when unused");
-        let later = DockerProvider::new(&storage, &image, "bridge", Duration::from_secs(600), None).unwrap();
+        assert!(provider.commands().is_empty(), "ended with its container");
+        provider.end_command(&key).await.expect("one that ended is no error");
+        assert!(!running(&docker, id).await, "and its container is not started for it");
+        let later = DockerProvider::new(&storage, &image, "bridge", Duration::from_secs(600), Duration::from_secs(3600), None).unwrap();
         drop(provider);
         let terminal = later.terminal_for(id).await.expect("started again");
         let listed: Vec<String> = terminal.list(&WorkspacePath::root()).await.unwrap().into_iter().map(|e| e.name).collect();
@@ -420,7 +464,7 @@ mod tests {
         }
         let image = std::env::var("CAELUMORA_DOCKER_IMAGE").unwrap_or_else(|_| "ghcr.io/open-webui/open-terminal:0.14.0".to_string());
         let storage = format!("test-{}", uuid::Uuid::new_v4().simple());
-        let earlier = DockerProvider::new(&storage, &image, "bridge", Duration::from_secs(600), None).unwrap();
+        let earlier = DockerProvider::new(&storage, &image, "bridge", Duration::from_secs(600), Duration::from_secs(3600), None).unwrap();
         let docker = earlier.inner.docker.clone();
         let id = WorkspaceId::new();
         earlier.create(id).await.unwrap();
@@ -428,8 +472,32 @@ mod tests {
         drop(earlier);
         assert!(running(&docker, id).await, "left running");
 
-        let later = DockerProvider::new(&storage, &image, "bridge", Duration::from_secs(600), None).unwrap();
+        let later = DockerProvider::new(&storage, &image, "bridge", Duration::from_secs(600), Duration::from_secs(3600), None).unwrap();
         tokio::time::timeout(Duration::from_secs(30), async { while running(&docker, id).await { tokio::time::sleep(Duration::from_millis(500)).await } }).await.expect("stopped at start");
         later.remove(id).await.unwrap();
+    }
+
+    /// A command that runs as long as it may is killed by its container
+    /// itself, with what it started (issue 254).
+    #[tokio::test]
+    #[ignore = "needs a Docker daemon"]
+    async fn a_command_is_killed_by_its_container_once_it_ran_as_long_as_it_may() {
+        if std::env::var_os("CAELUMORA_DOCKER_TESTS").is_none() {
+            return eprintln!("CAELUMORA_DOCKER_TESTS is not set");
+        }
+        let image = std::env::var("CAELUMORA_DOCKER_IMAGE").unwrap_or_else(|_| "ghcr.io/open-webui/open-terminal:0.14.0".to_string());
+        let storage = format!("test-{}", uuid::Uuid::new_v4().simple());
+        let provider = DockerProvider::new(&storage, &image, "bridge", Duration::from_secs(600), Duration::from_secs(2), None).unwrap();
+        let id = WorkspaceId::new();
+        provider.create(id).await.unwrap();
+        let shell = provider.terminal_for(id).await.unwrap().shell("c").unwrap();
+
+        let long = shell.start("echo \"begun 'quoted'\"; sleep 41 & sleep 41").await.unwrap();
+        let ended = shell.output(&long, 0, Duration::from_secs(20)).await.unwrap();
+        assert_eq!((ended.status, ended.output.as_str()), (CommandStatus::Killed, "begun 'quoted'\n"), "{ended:?}");
+        assert!(provider.commands().is_empty(), "no longer listed");
+        let left = shell.start("pgrep -c -f '[s]leep 41' || true").await.unwrap();
+        assert_eq!(shell.output(&left, 0, Duration::from_secs(10)).await.unwrap().output.trim(), "0", "what it started went with it");
+        provider.remove(id).await.unwrap();
     }
 }

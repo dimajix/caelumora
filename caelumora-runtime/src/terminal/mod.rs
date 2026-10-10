@@ -12,12 +12,17 @@
 //!
 //! A terminal may have a `Shell`, a capability of the storage: commands run
 //! in the workspace's directory, each seen only under the scope it was
-//! started with - a channel - and kept a while after it ended.
+//! started with - a channel - and kept a while after it ended. A storage
+//! knows its commands (`commands.rs`, issue 254): its provider lists those
+//! that may still run and ends one when told, and none runs longer than the
+//! storage's `max_run`.
 
+mod commands;
 mod local;
 mod local_shell;
 mod open_terminal;
 
+pub(crate) use commands::CommandKey;
 pub(crate) use local::{write_whole, LocalProvider, WriteFailure};
 pub(crate) use open_terminal::{DockerProvider, SharedProvider};
 
@@ -219,13 +224,36 @@ pub trait Shell: Send + Sync + Debug {
 pub(crate) trait TerminalProvider: Send + Sync + Debug {
     /// Makes the place of the workspace `id`: empty.
     async fn create(&self, id: WorkspaceId) -> TerminalResult<()>;
-    /// Removes the place of the workspace `id`, with everything in it;
-    /// nothing there is no error.
+    /// Removes the place of the workspace `id`, with everything in it - the
+    /// commands running there ended first (issue 254); nothing there is no
+    /// error.
     async fn remove(&self, id: WorkspaceId) -> TerminalResult<()>;
     /// The terminal of the workspace `id`.
     async fn terminal_for(&self, id: WorkspaceId) -> TerminalResult<Arc<dyn Terminal>>;
     /// Whether its terminals have a shell - asked without reaching one.
     fn has_shell(&self) -> bool;
+    /// The commands of its workspaces that may still run (issue 254) -
+    /// listed without reaching any place.
+    fn commands(&self) -> Vec<CommandKey>;
+    /// Ends command `key` with everything it started, without asking
+    /// anything (issue 254): for what the runtime decided may no longer
+    /// run. One that ended meanwhile, or is no longer known, is no error;
+    /// a place that is not running is not started for it.
+    ///
+    /// # Errors
+    /// A `TerminalError` of reaching its place.
+    async fn end_command(&self, key: &CommandKey) -> TerminalResult<()>;
+    /// Ends the commands of workspace `id` that may still run, as
+    /// `end_command` ends one: what runs in a place goes before the place.
+    ///
+    /// # Errors
+    /// A `TerminalError` of reaching its place.
+    async fn end_commands_of(&self, id: WorkspaceId) -> TerminalResult<()> {
+        for key in self.commands().into_iter().filter(|(workspace, _, _)| *workspace == id) {
+            self.end_command(&key).await?;
+        }
+        Ok(())
+    }
     /// What may be put into this storage: the classification a workspace
     /// in it may have at most; `None` for no bound (issue 251, part B2).
     fn destination(&self) -> Option<&Classification>;

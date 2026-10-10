@@ -196,7 +196,7 @@ published before anyone else can take it.
 | [246](246-mcp-tool-hints.md) | done | An MCP server's hints on its tools - read-only, destructive - are ignored, so all tools of a server need approval alike. |
 | [247](247-tool-own-matcher.md) | open | A rule on tool calls can match an argument that is a language - a shell command, SQL - only by its text, which a chained command slips past. |
 | [252](252-openapi-tool.md) | open | A tool server that describes itself by OpenAPI - as most HTTP services and Open WebUI's tool servers do - cannot be reached; only MCP servers can. |
-| [254](254-commands-run-unbounded.md) | open | A command an agent's call hands back as running runs until the model ends it - past its turn, its session and the channel's access to the workspace. |
+| [254](254-commands-run-unbounded.md) | done | A command an agent's call hands back as running runs until the model ends it - past its turn, its session and the channel's access to the workspace. |
 | [267](267-move-file.md) | done | Agents cannot move or rename a file of the workspace, although both storages can, except by reading, writing and deleting it or through a shell. |
 | [273](273-publish-file.md) | done | An agent cannot point a user to a file of the workspace to download; it can only say in text where it lies. |
 | [275](275-publish-file-without-approval.md) | done | `publish_file` asks for approval like the other file tools, though it changes nothing and gives the file to nobody who could not download it already. |

@@ -13,6 +13,7 @@
 use caelumora_model::store::query::Query;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use anyhow::Error;
 use async_trait::async_trait;
@@ -21,7 +22,7 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId, PersonalityKind};
 use caelumora_model::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
 use caelumora_model::channel::{moderation_components, Channel, HistoryAccess, Participant};
-use caelumora_model::config::{ArtifactStorageConfig, ArtifactsConfig, StorageConfig, WorkspacesConfig};
+use caelumora_model::config::{ArtifactStorageConfig, ArtifactsConfig, StorageConfig, WorkspacesConfig, DEFAULT_MAX_RUN_SECS};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, StoredComponents};
 use caelumora_model::external_agent::{ConversationId, TaskId};
 use caelumora_model::confidentiality::{Classification, Clearance, Compartments, ConfidentialityRules, Confidentiality};
@@ -172,8 +173,8 @@ impl World {
         let mut registry = ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
         register(&mut registry);
         let files = tempfile::tempdir().unwrap();
-        let shell = StorageConfig::Local { root: files.path().join("shell"), shell: true, destination: Some(Classification::general(Confidentiality::Internal)) };
-        let workspaces = WorkspacesConfig { storage: [("main".to_string(), StorageConfig::Local { root: files.path().to_path_buf(), shell: false, destination: None }), ("shell".to_string(), shell)].into(), ..Default::default() };
+        let shell = StorageConfig::Local { root: files.path().join("shell"), shell: true, destination: Some(Classification::general(Confidentiality::Internal)), max_run_secs: DEFAULT_MAX_RUN_SECS };
+        let workspaces = WorkspacesConfig { storage: [("main".to_string(), StorageConfig::Local { root: files.path().to_path_buf(), shell: false, destination: None, max_run_secs: DEFAULT_MAX_RUN_SECS }), ("shell".to_string(), shell)].into(), ..Default::default() };
         let artifacts = ArtifactsConfig { storage: [("kept".to_string(), ArtifactStorageConfig::Local { root: files.path().join("artifacts"), destination: None })].into(), ..Default::default() };
         let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig { workspaces, artifacts, ..Default::default() }, registry).unwrap());
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
@@ -203,8 +204,17 @@ impl World {
     /// What the policy was asked in someone's name while `action` ran - a
     /// user's, or an agent's on its owner's behalf - in order. What the
     /// runtime asks in its own name is left out: it may do everything, and
-    /// asks only to read what it needs.
+    /// asks only to read what it needs. So is what it asks in someone's name
+    /// on its own, while the action runs - whether a command may still run
+    /// (issue 254): no action asks it.
     async fn asked<T>(&self, action: impl std::future::Future<Output = T>) -> (T, Vec<String>) {
+        let (result, asked) = self.recorded(action).await;
+        (result, asked.into_iter().filter(|line| !line.contains(", asked by system:")).collect())
+    }
+
+    /// What the policy was asked in someone's name while `action` ran, by
+    /// the action or by the runtime on its own, in order.
+    async fn recorded<T>(&self, action: impl std::future::Future<Output = T>) -> (T, Vec<String>) {
         self.policy.asked.lock().unwrap().clear();
         let result = action.await;
         let asked = std::mem::take(&mut *self.policy.asked.lock().unwrap());
@@ -2450,6 +2460,64 @@ async fn a_workspace_is_used_in_a_channel_by_its_members_as_its_list_lets_them_w
     workspaces.reclassify(&alice, docs.id, Classification::PUBLIC).await.unwrap();
     assert!(in_main(&bob).await.workspace().await.unwrap().is_none(), "not where what is seen may not flow into it");
     world.manager.stop_session(&alice, session.id()).await.unwrap();
+}
+
+/// Issue 254: a command is its channel's, and runs on only as long as some
+/// current member could start it there. The runtime asks so on its own, in
+/// each member's name, at every event that can change the answer - the
+/// first member who may suffices; once nobody may, it ends the command.
+#[tokio::test]
+async fn a_command_runs_on_only_while_some_member_could_start_it_in_its_channel() {
+    let world = World::new().await;
+    let workspaces = world.runtime.workspace_manager();
+    let alice = World::as_user(world.alice);
+    let docs = workspaces.create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "shell", None, Classification::general(Confidentiality::Internal)).await.unwrap();
+    let session = world.shared_session(&[], &[]).await;
+    session.set_workspace(&alice, Some(docs.id), Some(Grant::Read)).await.unwrap();
+    let (_, shell) = workspaces.shell_in(&alice, session.id(), session.channels()[0].id()).await.unwrap();
+    let shell = shell.expect("a shell");
+    let id = shell.start("sleep 30").await.unwrap();
+
+    // Asked again at a change, of the members in turn: alice may.
+    let (_, asked) = world.recorded(async {
+        workspaces.describe(&alice, docs.id, Some("Drafts")).await.unwrap();
+        while !world.policy.asked.lock().unwrap().iter().any(|line| line.contains("WriteWorkspace")) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }).await;
+    let reaching = |who: &str| [
+        format!("{who}, asked by system: GetSession(alice's) yes"), format!("{who}, asked by system: GetChannel(alice's) yes"),
+        format!("{who}, asked by system: JoinChannel({who}) yes"),
+    ];
+    let may = [&reaching("alice")[..], &checks(&["alice, asked by system: GetWorkspace(alice's) yes", "alice, asked by system: Publish yes", "alice, asked by system: Publish yes", "alice, asked by system: WriteWorkspace(alice's) yes"])].concat();
+    // How often it is asked depends on the events it sees; what, does not.
+    let rounds = |asked: &[String], round: &[String]| !asked.is_empty() && asked.chunks(round.len()).all(|one| one == round);
+    let asked: Vec<String> = asked.into_iter().filter(|line| line.contains("asked by system")).collect();
+    assert!(rounds(&asked, &may), "{asked:#?}");
+    assert_eq!(shell.output(&id, 0, Duration::ZERO).await.unwrap().status, CommandStatus::Running);
+
+    // Once the channel no longer uses the workspace, nobody may.
+    let channel = Arc::clone(&session.channels()[0]);
+    let (ended, asked) = world.recorded(async {
+        channel.update_uses_workspace(&alice, false).await.unwrap();
+        shell.output(&id, 0, Duration::from_secs(10)).await.unwrap()
+    }).await;
+    assert_eq!(ended.status, CommandStatus::Killed);
+    let asked: Vec<String> = asked.into_iter().filter(|line| line.contains("asked by system")).collect();
+    let nobody = [reaching("alice"), reaching("bob")].concat();
+    let (before, last) = asked.split_at(asked.len().saturating_sub(nobody.len()));
+    assert!(last == nobody && (before.is_empty() || rounds(before, &may)), "{asked:#?}");
+
+    // Stopping the session ends what runs in its channels, asking nothing
+    // besides what stopping it asks.
+    channel.update_uses_workspace(&alice, true).await.unwrap();
+    let (_, shell) = workspaces.shell_in(&alice, session.id(), channel.id()).await.unwrap();
+    let shell = shell.expect("a shell");
+    let id = shell.start("sleep 30").await.unwrap();
+    let (stopped, asked) = world.asked(world.manager.stop_session(&alice, session.id())).await;
+    assert!(stopped.unwrap());
+    assert_eq!(asked, checks(&["alice: GetSession(alice's) yes", "alice: StopSession(alice's) yes"]));
+    assert_eq!(shell.output(&id, 0, Duration::ZERO).await.unwrap().status, CommandStatus::Killed);
 }
 
 /// Issue 294: a command an agent's call handed back as running is ended by a

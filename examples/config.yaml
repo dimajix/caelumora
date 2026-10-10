@@ -31,7 +31,8 @@ seed:
 # `shell: true` lets agents run commands there with `terminal_tool` - on
 # Caelumora's host, as its user, with no isolation but the directory: only
 # for development. A storage with a shell takes no workspace classified
-# above its `destination` (default then: public).
+# above its `destination` (default then: public). A command runs for
+# `max_run_secs` (default 3600) at most, in any storage.
 workspaces:
   max_file_bytes: 52428800
   storage:
@@ -43,6 +44,7 @@ workspaces:
 #      root: "local/workspaces/dev"
 #      shell: true
 #      destination: { level: internal }
+#      max_run_secs: 3600
     # One Open Terminal instance that has the storage at `mount`, e.g. the
     # one of examples/docker-compose.yml; its key is OPEN_TERMINAL_API_KEY in
     # local/secrets.json. Every workspace of it lies in the one instance: a

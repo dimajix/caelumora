@@ -23,6 +23,14 @@
 //!   key is blanked in what a command is given, but a command can read it
 //!   from the server's process. Commands are told apart by `X-Session-Id`,
 //!   which keeps the tool's channels apart, not a command from the API.
+//! - It lists its commands only by `X-Session-Id`, and does not say which
+//!   workspace one runs in (issue 254): the storage keeps the commands it
+//!   started itself (`Commands`), and forgets them when Caelumora ends.
+//! - It bounds no command: a command is started under `timeout`, which
+//!   kills its process group once it ran for the storage's `max_run` - by
+//!   the instance itself, also when Caelumora no longer knows the command.
+//!   The instance tells that as a signal it was not sent, told here as
+//!   killed.
 //!
 //! No message of the instance is passed on: they name paths inside it.
 
@@ -34,7 +42,8 @@ mod wire;
 pub(crate) use docker::DockerProvider;
 pub(crate) use shared::SharedProvider;
 
-use super::{ByteStream, CommandState, CommandStatus, FileEntry, Shell, Terminal, TerminalError, TerminalResult, WorkspacePath};
+use super::commands::{locked, Commands, Kept};
+use super::{ByteStream, CommandKey, CommandState, CommandStatus, FileEntry, Shell, Terminal, TerminalError, TerminalResult, WorkspacePath};
 use async_trait::async_trait;
 use caelumora_model::workspace::WorkspaceId;
 use chrono::{DateTime, Utc};
@@ -42,8 +51,8 @@ use client::Client;
 use futures::{StreamExt, TryStreamExt};
 use reqwest::{Method, StatusCode};
 use std::collections::BTreeMap;
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 /// The most pieces of output one answer holds - with a pseudo-terminal's
 /// pieces of at most 4 KiB about the 1 MiB the `local` shell keeps; older
@@ -54,12 +63,40 @@ const MAX_WAIT: Duration = Duration::from_secs(300);
 /// How long a kill waits for the command's last output and exit code.
 const KILL_WAIT: Duration = Duration::from_secs(2);
 
-/// One workspace in an instance: its directory there, `base`.
+/// A command as it was started here (issue 254): it may run until it is
+/// seen to have ended, or for `max_run` at most.
+#[derive(Debug)]
+struct Started {
+    at: Instant,
+    max_run: Duration,
+    ended: Mutex<Option<Instant>>,
+}
+
+impl Started {
+    /// Whether it ran as long as it may.
+    fn ran_out(&self) -> bool {
+        self.at.elapsed() >= self.max_run
+    }
+}
+
+impl Kept for Arc<Started> {
+    fn ended(&self) -> Option<Instant> {
+        (*locked(&self.ended)).or_else(|| self.ran_out().then(|| self.at + self.max_run))
+    }
+}
+
+/// The commands the workspaces of an Open Terminal storage were given.
+type OpenCommands = Commands<Arc<Started>>;
+
+/// One workspace in an instance: its directory there, `base`, and the
+/// commands of its storage, which run for `max_run` at most.
 #[derive(Debug, Clone)]
 struct OpenTerminal {
     client: Arc<Client>,
     base: String,
     workspace: WorkspaceId,
+    commands: Arc<OpenCommands>,
+    max_run: Duration,
 }
 
 impl OpenTerminal {
@@ -257,6 +294,33 @@ struct OpenTerminalShell {
     scope: String,
 }
 
+impl OpenTerminalShell {
+    fn key(&self, id: &str) -> CommandKey {
+        (self.terminal.workspace, self.scope.clone(), id.to_string())
+    }
+
+    /// `asked`, what the instance told of command `id`, as the storage
+    /// keeps it: a command seen to have ended, or no longer known, has
+    /// ended; one that ended by a signal once it ran as long as it may was
+    /// killed by its `timeout`.
+    fn seen(&self, id: &str, asked: TerminalResult<CommandState>) -> TerminalResult<CommandState> {
+        let started = self.terminal.commands.get(&self.key(id)).ok();
+        let ended = match &asked {
+            Ok(state) => state.status != CommandStatus::Running,
+            Err(error) => matches!(error, TerminalError::UnknownCommand(_)),
+        };
+        if let Some(started) = started.as_ref().filter(|_| ended) {
+            locked(&started.ended).get_or_insert_with(Instant::now);
+        }
+        asked.map(|mut state| {
+            if state.status == CommandStatus::Failed && started.is_some_and(|started| started.ran_out()) {
+                state.status = CommandStatus::Killed;
+            }
+            state
+        })
+    }
+}
+
 #[async_trait]
 impl Shell for OpenTerminalShell {
     async fn start(&self, command: &str) -> TerminalResult<String> {
@@ -267,11 +331,17 @@ impl Shell for OpenTerminalShell {
             ("CAELUMORA_WORKSPACE", terminal.workspace.to_string()),
             // The instance's own key, which it hands every command else.
             ("OPEN_TERMINAL_API_KEY", String::new()),
+            ("CAELUMORA_COMMAND", command.to_string()),
         ]);
-        let request = wire::ExecRequest { command, cwd: &terminal.base, env };
+        // Bounded by the instance itself; the command from the environment,
+        // so that nothing of it needs quoting.
+        let bounded = format!("exec timeout -s KILL {} bash -c \"$CAELUMORA_COMMAND\"", terminal.max_run.as_secs_f64());
+        let request = wire::ExecRequest { command: &bounded, cwd: &terminal.base, env };
+        let at = Instant::now();
         // `wait=0` answers at once, whatever the instance's own default.
         let answer = terminal.client.send(Method::POST, &["execute"], &[("wait", "0".to_string())], Some(scope), Duration::ZERO, |r| r.json(&request)).await?;
         let process: wire::Process = terminal.client.parsed(answer).await?;
+        terminal.commands.insert(self.key(&process.id), Arc::new(Started { at, max_run: terminal.max_run, ended: Mutex::default() }));
         Ok(process.id)
     }
 
@@ -280,10 +350,11 @@ impl Shell for OpenTerminalShell {
         let wait = wait.min(MAX_WAIT);
         let query = [("offset", offset.to_string()), ("wait", wait.as_secs_f64().to_string()), ("tail", KEPT_ENTRIES.to_string())];
         let answer = client.send(Method::GET, &["execute", id, "status"], &query, Some(&self.scope), wait, |r| r).await?;
-        if answer.status() == StatusCode::NOT_FOUND {
-            return Err(TerminalError::UnknownCommand(id.to_string()));
-        }
-        OpenTerminal::state(id, client.parsed(answer).await?)
+        let asked = match answer.status() {
+            StatusCode::NOT_FOUND => Err(TerminalError::UnknownCommand(id.to_string())),
+            _ => client.parsed(answer).await.and_then(|process| OpenTerminal::state(id, process)),
+        };
+        self.seen(id, asked)
     }
 
     async fn kill(&self, id: &str, offset: u64) -> TerminalResult<CommandState> {
@@ -291,7 +362,7 @@ impl Shell for OpenTerminalShell {
         // SIGKILL to its process group, as the `local` shell sends.
         let answer = client.send(Method::DELETE, &["execute", id], &[("force", "true".to_string())], Some(&self.scope), KILL_WAIT, |r| r).await?;
         if answer.status() == StatusCode::NOT_FOUND {
-            return Err(TerminalError::UnknownCommand(id.to_string()));
+            return self.seen(id, Err(TerminalError::UnknownCommand(id.to_string())));
         }
         client.success(answer)?;
         self.output(id, offset, KILL_WAIT).await

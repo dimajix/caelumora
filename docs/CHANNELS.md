@@ -227,7 +227,9 @@ read it, for the person to reach it by the workspace.
 `SessionLoop::run` starts every channel in its `JoinSet`: those the session had and those created
 later, which it receives over a queue.
 
-*   Stopping the session aborts `run`, and with it every channel.
+*   Stopping the session aborts `run`, and with it every channel; the commands started in its
+    channels' workspace shell are ended (`WorkspaceManager::end_commands_in`, issue
+    [254](../issues/254-commands-run-unbounded.md)).
 *   Deleting a channel aborts that channel's task; its state is kept until it is purged.
 *   A channel deleted while it waits to be started is never started.
 *   A participant that cannot be run is left out when the channel starts, with a warning, and the

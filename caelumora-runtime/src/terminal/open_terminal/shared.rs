@@ -6,9 +6,9 @@
 //! storage.
 
 use super::client::{Client, Key};
-use super::OpenTerminal;
+use super::{OpenCommands, OpenTerminal};
 use caelumora_model::remote::RemoteEndpoint;
-use crate::terminal::{Terminal, TerminalError, TerminalProvider, TerminalResult};
+use crate::terminal::{CommandKey, Terminal, TerminalError, TerminalProvider, TerminalResult};
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::secret::SecretManager;
@@ -23,22 +23,26 @@ pub(crate) struct SharedProvider {
     client: Arc<Client>,
     /// Absolute in the instance, without a trailing `/`.
     mount: String,
+    /// The commands its workspaces were given, which run for `max_run` at
+    /// most.
+    commands: Arc<OpenCommands>,
+    max_run: Duration,
     destination: Classification,
 }
 
 impl SharedProvider {
     /// The provider of a storage at `mount` in the instance at `endpoint`,
-    /// whose key is resolved through `secrets`; what may be put into it at
-    /// most `destination`, `public` unless given - a command may send
-    /// anything anywhere. `mount` is as the configuration checked it
-    /// (`StorageConfig::check`).
+    /// whose key is resolved through `secrets`, whose commands run for
+    /// `max_run` at most; what may be put into it at most `destination`,
+    /// `public` unless given - a command may send anything anywhere. `mount`
+    /// is as the configuration checked it (`StorageConfig::check`).
     ///
     /// # Errors
     /// `Unavailable` for an endpoint that is no URL.
-    pub(crate) fn new(endpoint: RemoteEndpoint, mount: &str, destination: Option<Classification>, secrets: Arc<SecretManager>) -> TerminalResult<Self> {
+    pub(crate) fn new(endpoint: RemoteEndpoint, mount: &str, max_run: Duration, destination: Option<Classification>, secrets: Arc<SecretManager>) -> TerminalResult<Self> {
         let mount = mount.trim_end_matches('/').to_string();
         let client = Arc::new(Client::new(endpoint, Key::Endpoint(secrets), false)?);
-        Ok(Self { client, mount, destination: destination.unwrap_or(Classification::PUBLIC) })
+        Ok(Self { client, mount, commands: Arc::default(), max_run, destination: destination.unwrap_or(Classification::PUBLIC) })
     }
 
     fn place(&self, id: WorkspaceId) -> String {
@@ -46,7 +50,7 @@ impl SharedProvider {
     }
 
     fn terminal(&self, id: WorkspaceId) -> OpenTerminal {
-        OpenTerminal { client: Arc::clone(&self.client), base: self.place(id), workspace: id }
+        OpenTerminal { client: Arc::clone(&self.client), base: self.place(id), workspace: id, commands: Arc::clone(&self.commands), max_run: self.max_run }
     }
 }
 
@@ -59,6 +63,8 @@ impl TerminalProvider for SharedProvider {
     }
 
     async fn remove(&self, id: WorkspaceId) -> TerminalResult<()> {
+        // Nothing of it goes on writing into what is being removed.
+        self.end_commands_of(id).await?;
         let answer = self.client.send(Method::DELETE, &["files", "delete"], &[("path", self.place(id))], None, Duration::ZERO, |r| r).await?;
         match answer.status() {
             StatusCode::NOT_FOUND => Ok(()),
@@ -79,6 +85,18 @@ impl TerminalProvider for SharedProvider {
 
     fn has_shell(&self) -> bool {
         true
+    }
+
+    fn commands(&self) -> Vec<CommandKey> {
+        self.commands.running()
+    }
+
+    async fn end_command(&self, (workspace, scope, id): &CommandKey) -> TerminalResult<()> {
+        let terminal = self.terminal(*workspace);
+        match terminal.shell(scope) {
+            Some(shell) => crate::terminal::commands::end(shell.as_ref(), id).await,
+            None => Ok(()),
+        }
     }
 
     fn destination(&self) -> Option<&Classification> {
@@ -113,9 +131,16 @@ mod tests {
         RemoteEndpoint { auth: Some(RemoteAuthConfig::Bearer { secret: "OPEN_TERMINAL_API_KEY".to_string() }), ..RemoteEndpoint::new(url) }
     }
 
+    const MAX_RUN: Duration = Duration::from_secs(3600);
+
     async fn workspace() -> (StandIn, SharedProvider, Arc<dyn Terminal>, WorkspaceId) {
+        bounded(MAX_RUN).await
+    }
+
+    /// A workspace whose commands run for `max_run` at most.
+    async fn bounded(max_run: Duration) -> (StandIn, SharedProvider, Arc<dyn Terminal>, WorkspaceId) {
         let stand_in = stand_in::start().await;
-        let provider = SharedProvider::new(endpoint(&stand_in.url), MOUNT, None, secrets(KEY)).unwrap();
+        let provider = SharedProvider::new(endpoint(&stand_in.url), MOUNT, max_run, None, secrets(KEY)).unwrap();
         let id = WorkspaceId::new();
         provider.create(id).await.unwrap();
         let terminal = provider.terminal_for(id).await.unwrap();
@@ -225,15 +250,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_commands_it_started_are_listed_and_ended_when_told() {
+        let (_stand_in, provider, terminal, id) = workspace().await;
+        let shell = terminal.shell("c").unwrap();
+        let long = shell.start("sleep 30").await.unwrap();
+        let short = shell.start("true").await.unwrap();
+        shell.output(&short, 0, Duration::from_secs(5)).await.unwrap();
+
+        let key = (id, "c".to_string(), long.clone());
+        assert_eq!(provider.commands(), std::slice::from_ref(&key), "what may still run");
+        provider.end_command(&key).await.unwrap();
+        assert_eq!(shell.output(&long, 0, Duration::ZERO).await.unwrap().status, CommandStatus::Killed);
+        assert!(provider.commands().is_empty());
+        provider.end_command(&key).await.expect("one that ended is no error");
+        provider.end_command(&(id, "c".to_string(), "nonesuch".to_string())).await.expect("nor one not known");
+    }
+
+    #[tokio::test]
+    async fn what_runs_in_a_place_is_ended_before_it_is_removed() {
+        let (_stand_in, provider, terminal, id) = workspace().await;
+        let shell = terminal.shell("c").unwrap();
+        let long = shell.start("sleep 30").await.unwrap();
+        provider.remove(id).await.unwrap();
+        assert_eq!(shell.output(&long, 0, Duration::ZERO).await.unwrap().status, CommandStatus::Killed);
+        assert!(provider.commands().is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_instance_kills_a_command_that_runs_as_long_as_it_may() {
+        let (_stand_in, provider, terminal, _) = bounded(Duration::from_millis(500)).await;
+        let shell = terminal.shell("c").unwrap();
+        let id = shell.start("echo \"begun 'quoted'\"; sleep 37 & sleep 37").await.unwrap();
+        let ended = shell.output(&id, 0, Duration::from_secs(10)).await.unwrap();
+        assert_eq!((ended.status, ended.output.as_str()), (CommandStatus::Killed, "begun 'quoted'\n"), "the command as written, killed");
+        assert!(provider.commands().is_empty(), "no longer listed");
+        let left = shell.start("pgrep -c -f '[s]leep 37' || true").await.unwrap();
+        assert_eq!(shell.output(&left, 0, Duration::from_secs(5)).await.unwrap().output.trim(), "0", "what it started went with it");
+    }
+
+    #[tokio::test]
     async fn a_refused_key_and_an_instance_out_of_reach_are_told_without_the_endpoint() {
         let stand_in = stand_in::start().await;
-        let refused = SharedProvider::new(endpoint(&stand_in.url), MOUNT, None, secrets("wrong")).unwrap();
+        let refused = SharedProvider::new(endpoint(&stand_in.url), MOUNT, MAX_RUN, None, secrets("wrong")).unwrap();
         let error = refused.create(WorkspaceId::new()).await.unwrap_err();
         assert!(matches!(&error, TerminalError::Unavailable(why) if why.contains("refused the storage's key")), "{error}");
-        let away = SharedProvider::new(endpoint("http://user:secret@127.0.0.1:9"), MOUNT, None, secrets(KEY)).unwrap();
+        let away = SharedProvider::new(endpoint("http://user:secret@127.0.0.1:9"), MOUNT, MAX_RUN, None, secrets(KEY)).unwrap();
         let error = away.create(WorkspaceId::new()).await.unwrap_err().to_string();
         assert!(error.contains("not reached") && !error.contains("secret") && !error.contains("127.0.0.1"), "{error}");
-        assert!(matches!(SharedProvider::new(endpoint("no url"), MOUNT, None, secrets(KEY)), Err(TerminalError::Unavailable(_))));
+        assert!(matches!(SharedProvider::new(endpoint("no url"), MOUNT, MAX_RUN, None, secrets(KEY)), Err(TerminalError::Unavailable(_))));
         assert_eq!(refused.destination(), Some(&Classification::PUBLIC), "public unless given");
     }
 
@@ -255,7 +319,7 @@ mod tests {
         let url = std::env::var("CAELUMORA_OPEN_TERMINAL_URL").expect("CAELUMORA_OPEN_TERMINAL_URL");
         let file = caelumora_model::secret::file::FileSecretProvider::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../local/secrets.json"));
         let secrets = Arc::new(SecretManager::new(vec![Arc::new(file)], Arc::new(DummySecurityManager::new())));
-        let provider = SharedProvider::new(endpoint(&url), "/tmp/caelumora-workspaces", None, secrets).unwrap();
+        let provider = SharedProvider::new(endpoint(&url), "/tmp/caelumora-workspaces", MAX_RUN, None, secrets).unwrap();
         let id = WorkspaceId::new();
         provider.create(id).await.unwrap();
         let terminal = provider.terminal_for(id).await.unwrap();
