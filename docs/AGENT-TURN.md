@@ -588,10 +588,12 @@ is the `compaction` component's, which carries out `/compact` (see
 through `Turn::compact` and says what it did (`Compaction`), or that there is nothing to compact,
 or why it failed (`CompactionError`); the command tells the channel.
 
-The default strategy, `summary_compaction`, keeps at least the newest `keep_last` messages, from the
-start of the turn the oldest of them belongs to, so that no turn is cut apart; has the agent's own
-model summarise the rest, given as every call is (`Turn::context_until`); and gives the skills
-loaded in that rest again. The summary is a message of the agent in the role `user`, titled
+The default strategy, `summary_compaction`, keeps at least the newest `keep_last` messages, and with
+a tool's result the call it answers. A finished turn may be cut apart - a plan is one turn, and
+mostly the bulk of a context (issue 300) -, but not the turn under way, whose messages are collected
+as it is taken over, nor one given up because the channel was lowered below it, whose model is given
+only the tools it called. The strategy has the agent's own model summarise the rest, given as
+every call is (`Turn::context_until`), and gives the skills loaded in that rest again. The summary is a message of the agent in the role `user`, titled
 "Summary of the conversation so far", classified as the turn's label, and carries the tokens of its
 call. Compacting on the agent's own is [284](../issues/284-automatic-context-compaction.md); it asks
 the same strategy.

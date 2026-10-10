@@ -1,6 +1,6 @@
 # 300 — A compaction keeps a long turn whole and summarises almost nothing
 
-**Status:** open
+**Status:** done
 **Area:** Context & knowledge
 
 ## The problem
@@ -61,3 +61,13 @@ branch, saw nearly everything verbatim, so that it looked as if the compaction h
   analysed from Jonathan's stored state: one message summarised, the plan turn kept whole. Decided
   with the maintainer: option A, cutting within a finished turn, never between a tool call and its
   result.
+- **2026-10-10** — Done, as decided. `cut_at` moves the cut back only over tool results, to the
+  message that called the tools; a turn of `kept_whole` - the turn under way, and every turn given
+  up because the channel was lowered (`GivenUpReason::Lowered`) - is still kept from its first
+  message. The second was not in the plan: `Turn::context_until` resolves the part summarised as a
+  prefix, and a prefix that holds the start of a lowered turn but not its end would give the model
+  what the turn read, which may not flow into the channel any more. Answering again is not changed
+  by a turn cut apart: after a compaction its end is no longer last, so both `retried` and
+  `answers_again_after` refuse as they did for a turn kept whole. Tests: the cut keeps a result with
+  its call, cuts a long finished turn apart, and keeps a turn of `kept_whole` whole; which turns
+  those are. AGENT-TURN.md, *Compaction*. Nothing stored changes.
