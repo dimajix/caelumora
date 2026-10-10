@@ -57,6 +57,44 @@ and after how long), and the turn goes on with its next step.
 which a call is interrupted by itself. It helps when nobody watches, but needs a value that fits
 every tool; it does not replace a user's judgement that a call hangs. Can follow separately.
 
+## Decisions
+
+Taken with the maintainer on 2026-10-10.
+
+- **What it reaches, and what not.** Interrupting a call ends what the call does while it runs -
+  for `run_command`, the command it waits for (`KillOnDrop`). A command handed back as running is
+  no call any more: a `command_output` call that follows it is interrupted as a call, the wait
+  ends and the command runs on. The model is told and can end it with `kill_command`; that the
+  tool cannot tell why it was dropped is why it does not kill the command itself. A user who wants
+  to end such a command is issue [294](294-user-ends-a-command.md); commands that run on unbounded
+  are [254](254-commands-run-unbounded.md). Neither blocks this issue, nor this one them.
+- **Addressing by turn and call id.** `ToolCall::id` is the model's: optional, and not unique
+  across turns (Ollama answers `"1"`, `"2"`, … or none). A call is addressed by the agent, the turn
+  (`TurnId`, which the web UI knows since issue 235) and the call's id, e.g.
+  `POST …/participants/{aid}/turns/{turn_id}/tool-calls/{call_id}/cancel`, so that a request from
+  an outdated view cannot reach a call of a later turn with the same id. The agent gives every call
+  the model left without an id one of its own as it stamps the call (`stamp`/`label`), so that
+  every call can be addressed. A call not running (any more), or of a turn not under way, is
+  answered as such, not as an error that ends anything.
+- **The reason reaches the executor with the interruption.** The result the model is given is made
+  in the `ToolExecutor` alone, and a `CancellationToken` carries no reason. `execute` takes,
+  instead of the turn's token, a future that ends with why the call is interrupted: the turn ended,
+  or a user (who, after how long) interrupted it. That reason is a small enum of the tool module
+  which also makes the text of the result, in place of `interrupted_result()`. The agent makes the
+  future from its `RunControl`, which keeps a token per call - a child of the turn's - together
+  with who interrupted it.
+- **Every call of the step can be interrupted, also before it runs.** The web UI shows every call
+  without a result as "Executing", also those of the step that have not begun. The tokens are made
+  for all calls of the step as it begins; a call interrupted before it runs is not run and is
+  answered as `NotExecuted` ("a user skipped it before it ran"). No event of a call beginning is
+  needed for it, and it fits the concurrent calls of issue 226 as well.
+- **The status stays `Interrupted`.** For the call the outcome is the same as when its turn ends -
+  it ran, was broken off, and its effect is unknown; whether the turn goes on is the turn's
+  matter. The text of the result says it: who interrupted it, after how long, and that the turn
+  goes on.
+- **Permission** as in the considerations: `CancelChannel`, with its test in the security suite.
+- **A bound per call** is not part of this issue.
+
 ## Done when
 
 - A user who may cancel an agent's turn can interrupt one of its running tool calls; the call is
@@ -70,3 +108,7 @@ every tool; it does not replace a user's judgement that a call hangs. Can follow
   input - can only be ended with its whole turn or agent, not on its own.
 - 2026-10-09: With [280](280-tool-executor-trait.md), `GuardedToolExecutor` is called
   `ToolExecutor`; what is said of it above holds for it under its new name.
+- 2026-10-10: Looked at with the maintainer together with [254](254-commands-run-unbounded.md):
+  the decisions above recorded. The example of a shell command under *The problem* holds only while
+  `run_command` waits for it; for a command handed back as running, issue
+  [294](294-user-ends-a-command.md) was opened.
