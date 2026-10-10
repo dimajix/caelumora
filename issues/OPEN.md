@@ -47,6 +47,8 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [142](142-roles.md) | in progress | Users carry roles as strings, but nothing says which roles exist or what they grant - clearances among them. |
 | [181](181-where-roles-decide.md) | open | Nobody has reviewed where a user's roles - and soon an agent's - enter a permission check; today only the clearance at a channel's door asks for them. |
 | [169](169-changing-classified-content.md) | open | Nothing says who may change something classified once it is written, or that what the writer has seen must fit into its classification. |
+| [286](286-groups-as-subjects.md) | open | A workspace or an artifact cannot be shared with a team that users make themselves, only with people one by one, a role, or the members of a session or channel. |
+| [287](287-memberships-cache.md) | open | Every check of a membership or a role in an access list reads the entity store, for every event of a session or channel and every subscriber. |
 
 ## Tools and approvals
 

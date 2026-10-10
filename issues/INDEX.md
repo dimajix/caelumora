@@ -159,6 +159,8 @@ published before anyone else can take it.
 | [198](198-security-scenarios.md) | done | Nothing says, end to end, which permissions an action needs; a member whose personality was withdrawn locks everyone out of its session, and some actions look at others before the actor's own permission. |
 | [255](255-whose-name-agents-act-in.md) | done | An agent reads in its owner's name and acts in the name of whoever asked it, one call often in both, and which applies follows from where the code sits rather than from a rule. |
 | [264](264-agent-reads-channels-its-owner-may-not.md) | done | An agent reads another channel of its session by the flow rule alone, so it reads channels its owner may not, and membership hides nothing from a session's agents. |
+| [286](286-groups-as-subjects.md) | open | A workspace or an artifact cannot be shared with a team that users make themselves, only with people one by one, a role, or the members of a session or channel. |
+| [287](287-memberships-cache.md) | open | Every check of a membership or a role in an access list reads the entity store, for every event of a session or channel and every subscriber. |
 
 ## Tools and approvals
 
