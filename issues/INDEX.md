@@ -382,6 +382,7 @@ published before anyone else can take it.
 | [217](217-external-agent-reasoning.md) | rejected | What an external agent reports while it works is dropped, so its messages carry no reasoning and the chat shows nothing until it answers. |
 | [236](236-external-agent-not-told-of-changes.md) | done | A remote agent is not told when a message it was given is modified or taken back, so it goes on answering the old version. |
 | [251](251-open-terminal.md) | done | Agents have no workspace to run commands and keep files in, and Open Terminal, which offers one, is reachable only as an MCP server without approval by kind of tool, interruption or a channel's scope. |
+| [288](288-compaction-of-external-agents.md) | open | A personality of an external agent that lists `compaction` is given a default model and compacts what its remote agent is to be given next; nothing refuses it. |
 
 ## Open architecture questions
 

@@ -95,6 +95,12 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 |---|---|---|
 | [285](285-set-context-with-knowledge.md) | open | A turn's prompt parts and the knowledge read for them are set in two calls, so every caller of the `ContextProvider` records the knowledge itself. |
 
+## Integrations
+
+| No. | Status | Issue |
+|---|---|---|
+| [288](288-compaction-of-external-agents.md) | open | A personality of an external agent that lists `compaction` is given a default model and compacts what its remote agent is to be given next; nothing refuses it. |
+
 ## Open architecture questions
 
 | No. | Status | Issue |
