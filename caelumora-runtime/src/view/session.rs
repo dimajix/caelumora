@@ -2,7 +2,6 @@
 //! runs.
 
 use caelumora_model::store::query::{Filter, Query};
-use super::channel::Readable;
 use super::{ChannelView, ViewError, ViewResult, Views};
 use crate::channel::ChannelLoop;
 use crate::session::{Found, SessionLoop};
@@ -12,9 +11,8 @@ use caelumora_model::channel::{Channel, ChannelField, Participant};
 use caelumora_model::value::text::{Briefing, Summary};
 use caelumora_model::digest::Digest;
 use caelumora_model::note::Note;
-use caelumora_model::confidentiality::Classification;
 use caelumora_model::privacy::SessionPrivacy;
-use caelumora_model::security::{AccessQuestions, Place, SecurityContext};
+use caelumora_model::security::{AccessQuestions, ChannelReader, ChannelReading, Place, SecurityContext};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::snapshot::{DeletedSnapshot, Detail, ParticipantSnapshot, SessionSnapshot};
 use caelumora_model::store::EntityKind;
@@ -113,8 +111,8 @@ impl SessionView {
     pub async fn channels(&self) -> Vec<ChannelView> {
         let mut readable = Vec::new();
         for (channel, running) in self.channel_documents().await {
-            if self.readable(&channel).await == Some(Readable::Whole) {
-                readable.push(ChannelView::of(self.clone(), channel, running, Readable::Whole));
+            if self.readable(&channel).await == Some(ChannelReading::Whole) {
+                readable.push(ChannelView::of(self.clone(), channel, running, ChannelReading::Whole));
             }
         }
         readable
@@ -161,31 +159,22 @@ impl SessionView {
     }
 
     /// How the viewer may read `channel`: as a whole, entry by entry, or
-    /// not at all (`None`). Whoever may not read the channel - its owner,
-    /// its participants, an agent's owner or the agent itself (issue 264) -
-    /// reads none of it (`GetChannel`). Beyond that, a user reads it as a
-    /// whole if cleared for it; an agent as a whole if it may be copied
-    /// into its own channel by their classifications, and else entry by
-    /// entry.
-    async fn readable(&self, channel: &Channel) -> Option<Readable> {
-        let security = self.views.security();
-        let context = self.views.context();
-        if !security.may_read_channel(context, &channel.security_attributes).await {
-            return None;
-        }
-        if self.views.viewer().place().is_some() {
-            let from = Place { channel: channel.id, classification: channel.classification.clone(), session: self.privacy() };
-            let whole = self.views.may_copy_from(&from).await;
-            return Some(if whole { Readable::Whole } else { Readable::Released });
-        }
-        self.cleared_for(&channel.classification).await.then_some(Readable::Whole)
-    }
-
-    /// Whether the viewer is cleared for `classification` (issue 133):
-    /// reading a channel one is not cleared for is the same as reading one
-    /// that does not exist.
-    async fn cleared_for(&self, classification: &Classification) -> bool {
-        self.views.cleared_for(classification).await
+    /// not at all (`None`) - asked as `AccessQuestions::channel_reading`
+    /// asks it, an agent reading from its place, a user by their roles.
+    /// Whoever may not read the channel - its owner, its participants, an
+    /// agent's owner or the agent itself (issue 264) - reads none of it
+    /// (`GetChannel`).
+    async fn readable(&self, channel: &Channel) -> Option<ChannelReading> {
+        let at = Place { channel: channel.id, classification: channel.classification.clone(), session: self.privacy() };
+        let roles;
+        let reader = match self.views.viewer().place() {
+            Some(from) => ChannelReader::From(from),
+            None => {
+                roles = self.views.roles().await;
+                ChannelReader::Cleared(&roles)
+            }
+        };
+        self.views.security().channel_reading(self.views.context(), &channel.security_attributes, &at, reader).await
     }
 
     /// The document of channel `id`, if the session has it, with its loop

@@ -235,6 +235,24 @@ pub struct Place {
     pub session: SessionPrivacy,
 }
 
+/// How a channel may be read, where it may be read at all (issue 133): as
+/// a whole, or only what was released to where the reader reads from,
+/// entry by entry, each by its own classification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelReading {
+    Whole,
+    Released,
+}
+
+/// How someone reads a channel (issue 133): an agent from its own place -
+/// its channel, the classification it reads at, its session's privacy -,
+/// a user by what their roles clear them for.
+#[derive(Debug, Clone, Copy)]
+pub enum ChannelReader<'a> {
+    From(&'a Place),
+    Cleared(&'a [RoleId]),
+}
+
 impl ActionType<'_> {
     /// The action for the log: its kind and what identifies what it is
     /// about, never content - a tool call by its function, not its
@@ -635,6 +653,16 @@ pub trait AccessQuestions {
     /// always be copied into itself.
     async fn may_copy_information(&self, context: &SecurityContext, from: &Place, into: &Place) -> bool;
 
+    /// How `context` may read the channel with `channel` attributes, which
+    /// lies `at` its place (issues 133, 264, 296): not at all if it may not
+    /// read it (`GetChannel`). Beyond that, an agent reading from its place
+    /// reads it as a whole if what is there may be copied into that place,
+    /// and entry by entry otherwise; a user reads it as a whole if their
+    /// roles clear them for its classification, and not at all otherwise.
+    /// What the views reach a channel by, and what an operation in a channel
+    /// asks before it acts there.
+    async fn channel_reading(&self, context: &SecurityContext, channel: &SecurityAttributes, at: &Place, reader: ChannelReader<'_>) -> Option<ChannelReading>;
+
     /// Whether `context` may see what the agent with `agent` attributes saw
     /// when it wrote a message (`ReadAgentContext`, issue 41).
     async fn may_read_agent_context(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool;
@@ -761,6 +789,19 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
             return true;
         }
         self.check(context, ActionType::CopyInformation { from, into }).await
+    }
+
+    async fn channel_reading(&self, context: &SecurityContext, channel: &SecurityAttributes, at: &Place, reader: ChannelReader<'_>) -> Option<ChannelReading> {
+        if !self.may_read_channel(context, channel).await {
+            return None;
+        }
+        match reader {
+            ChannelReader::From(from) => Some(match self.may_copy_information(context, at, from).await {
+                true => ChannelReading::Whole,
+                false => ChannelReading::Released,
+            }),
+            ChannelReader::Cleared(roles) => self.may_see_channel(context, roles, &at.classification).await.then_some(ChannelReading::Whole),
+        }
     }
 
     async fn may_read_agent_context(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool {

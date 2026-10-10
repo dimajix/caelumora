@@ -640,7 +640,7 @@ impl Views {
     /// The roles of the viewer's user, which decide what they are cleared
     /// for (issue 133). Without them, only what is public: a failed lookup
     /// shows less.
-    async fn roles(&self) -> Vec<caelumora_model::role::RoleId> {
+    pub(super) async fn roles(&self) -> Vec<caelumora_model::role::RoleId> {
         user_roles(self.entities.as_ref(), self.viewer.context().principal_id).await.unwrap_or_default()
     }
 
