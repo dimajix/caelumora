@@ -209,7 +209,7 @@ Every list of the entity store takes a query (`caelumora_model::store::query`, i
     caller's to read.
 *   **Who may read what is still asked afterwards**, entity by entity, as before; a limit counts
     what the caller may read, reading on until it is met. That access becomes part of the query
-    is the second phase of issue 293.
+    waits for a store that can execute it (issue 295).
 
 Both stores take the keys of a kind first - the memory store from its map, the JSON store the names
 of the files, without reading one - and read an entity only when it is its turn: the memory store
