@@ -689,6 +689,8 @@ mod tests {
     /// asked as the list is read, and a page is filled from further on.
     #[tokio::test]
     async fn a_limit_counts_what_the_caller_may_read() {
+        use crate::actor::ActorId;
+        use crate::artifact::tests::version;
         use crate::artifact::{Artifact, ArtifactId};
         use crate::confidentiality::Classification;
         use crate::scope::Scope;
@@ -698,14 +700,14 @@ mod tests {
         let mut hers = Vec::new();
         for (index, owner) in [alice, bob, bob, alice, bob, alice].into_iter().enumerate() {
             let name = ScopedName::new(format!("a{index}.csv"), Scope::UserScope { user_id: owner }).unwrap();
-            let artifact = Artifact::new(ArtifactId::new(), name, "files", Classification::CHANNEL_DEFAULT, owner, crate::artifact::tests::version(b"a,b", crate::session::SessionId::new()));
+            let artifact = Artifact::new(ArtifactId::new(), name, "files", Classification::CHANNEL_DEFAULT, owner, version(b"a,b", SessionId::new()));
             store.create_artifact(&SecurityContext::system(), &artifact).await.unwrap();
             if owner == alice {
                 hers.push(artifact.id);
             }
         }
         hers.sort_by_key(|id| id.to_string());
-        let ctx = SecurityContext::new(crate::actor::ActorId::User(alice), Default::default(), Default::default());
+        let ctx = SecurityContext::new(ActorId::User(alice), Default::default(), Default::default());
         let mut read = Vec::new();
         let mut query = Query::all().limited(1);
         loop {

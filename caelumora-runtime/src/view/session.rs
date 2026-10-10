@@ -1,14 +1,14 @@
 //! A session as its viewer reached it: its document, and its loop if it
 //! runs.
 
-use caelumora_model::store::query::Query;
+use caelumora_model::store::query::{Filter, Query};
 use super::channel::Readable;
 use super::{ChannelView, ViewError, ViewResult, Views};
 use crate::channel::ChannelLoop;
 use crate::session::{Found, SessionLoop};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
-use caelumora_model::channel::{Channel, Participant};
+use caelumora_model::channel::{Channel, ChannelField, Participant};
 use caelumora_model::value::text::{Briefing, Summary};
 use caelumora_model::digest::Digest;
 use caelumora_model::note::Note;
@@ -17,7 +17,7 @@ use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::security::{AccessQuestions, Place, SecurityContext};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::snapshot::{DeletedSnapshot, Detail, ParticipantSnapshot, SessionSnapshot};
-use caelumora_model::store::EntityKind;
+use caelumora_model::store::{EntityKind, StoreError};
 use std::sync::Arc;
 use tracing::warn;
 
@@ -305,8 +305,8 @@ impl SessionView {
     pub async fn deleted_channels(&self) -> ViewResult<Vec<DeletedSnapshot<ChannelId>>> {
         let views = self.views();
         let context = views.context();
-        let failed = |e: caelumora_model::store::StoreError| ViewError::Failed(anyhow::Error::new(e).context(format!("listing the deleted channels of session {}", self.id())));
-        let of_this = Query::filtered(caelumora_model::store::query::Filter::eq(caelumora_model::channel::ChannelField::Session, &self.id()).map_err(failed)?);
+        let failed = |e: StoreError| ViewError::Failed(anyhow::Error::new(e).context(format!("listing the deleted channels of session {}", self.id())));
+        let of_this = Query::filtered(Filter::eq(ChannelField::Session, &self.id()).map_err(failed)?);
         let channels = views.entities().list_deleted_channels(context, &of_this).await.map_err(failed)?.items;
         let may_change = self.may_change().await;
         let mut deleted = Vec::new();

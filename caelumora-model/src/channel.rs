@@ -14,6 +14,7 @@ use crate::value::ValueError;
 use crate::security::{Grant, Membership, Secured, SecurityAttributes, Subject};
 use crate::session::SessionId;
 use crate::store::Journaled;
+use crate::store::query::Field;
 use crate::user::UserId;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -154,7 +155,7 @@ pub enum ChannelField {
     Session,
 }
 
-impl crate::store::query::Field for ChannelField {
+impl Field for ChannelField {
     fn path(self) -> &'static [&'static str] {
         match self {
             ChannelField::Session => &["session_id"],

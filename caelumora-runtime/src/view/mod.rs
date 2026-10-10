@@ -40,7 +40,9 @@ pub use session::{PrivateNotesElsewhere, SessionView};
 pub use skill::SkillView;
 pub use workspace::WorkspaceView;
 
-use caelumora_model::store::query::Query;
+use caelumora_model::artifact::{ArtifactField, ArtifactId};
+use caelumora_model::role::user_roles;
+use caelumora_model::store::query::{Filter, Query};
 use crate::runtime::{ActorRuntime, RuntimeManager};
 use crate::session::{Found, SessionLoop, SessionManager};
 use crate::tool::ToolError;
@@ -49,7 +51,7 @@ use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::removal::Removal;
-use caelumora_model::security::{AccessQuestions, Place, SecurityContext, SecurityManager};
+use caelumora_model::security::{AccessQuestions, Place, SecurityContext, SecurityManager, Subject};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::snapshot::{AgentSnapshot, DeletedSnapshot};
 use caelumora_model::workspace::WorkspaceId;
@@ -58,7 +60,7 @@ use caelumora_model::scope::{found_from, Scope, Scoped};
 use caelumora_model::value::name::Name;
 use crate::workspace::WorkspaceManager;
 use crate::skill::SkillManager;
-use caelumora_model::store::{EntityKind, EntityStore, StateStore, StoreResultExt};
+use caelumora_model::store::{EntityKind, EntityStore, StateStore, StoreError, StoreResultExt};
 use crate::component::ComponentRegistry;
 use std::sync::Arc;
 
@@ -116,7 +118,7 @@ pub enum ViewError {
     #[error("there is no skill named \"{0}\" that can be loaded here")]
     NoSkillNamed(String),
     #[error("There is no artifact {0}")]
-    ArtifactNotFound(caelumora_model::artifact::ArtifactId),
+    ArtifactNotFound(ArtifactId),
     /// Asked for by name, as an agent's tools do: no such channel, or
     /// nothing in it that can be read from where the viewer reads.
     #[error("there is no channel named \"{0}\" that can be read from here")]
@@ -424,12 +426,9 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn artifacts(&self) -> ViewResult<Vec<ArtifactView>> {
-        use caelumora_model::artifact::ArtifactField;
-        use caelumora_model::security::Subject;
-        use caelumora_model::store::query::Filter;
-        let failed = |e: caelumora_model::store::StoreError| ViewError::Failed(anyhow::Error::new(e).context("listing the artifacts"));
+        let failed = |e: StoreError| ViewError::Failed(anyhow::Error::new(e).context("listing the artifacts"));
         let principal = self.viewer.context().principal_id;
-        let roles = caelumora_model::role::user_roles(self.entities.as_ref(), principal).await.map_err(failed)?;
+        let roles = user_roles(self.entities.as_ref(), principal).await.map_err(failed)?;
         let subjects: Vec<Subject> = std::iter::once(Subject::Actor(principal)).chain(roles.into_iter().map(Subject::Role)).collect();
         let named = Filter::is_in(ArtifactField::Subject, &subjects).map_err(failed)?;
         let theirs = Filter::Or(vec![
@@ -453,7 +452,7 @@ impl Views {
     /// # Errors
     /// `ArtifactNotFound` if they may read nothing of it - one they are not
     /// cleared for is the same -; `Failed` if the store cannot read it.
-    pub async fn artifact(&self, id: caelumora_model::artifact::ArtifactId) -> ViewResult<ArtifactView> {
+    pub async fn artifact(&self, id: ArtifactId) -> ViewResult<ArtifactView> {
         let found = self.entities.get_artifact(&SecurityContext::system(), id).await.optional()
             .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context("reading an artifact")))?;
         match found {
@@ -507,7 +506,7 @@ impl Views {
     ///
     /// # Errors
     /// `Failed` if the store cannot list them.
-    pub async fn deleted_artifacts(&self) -> ViewResult<Vec<DeletedSnapshot<caelumora_model::artifact::ArtifactId>>> {
+    pub async fn deleted_artifacts(&self) -> ViewResult<Vec<DeletedSnapshot<ArtifactId>>> {
         let artifacts = self.entities.list_deleted_artifacts(self.viewer.context(), &Query::all()).await.map(|page| page.items)
             .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context("listing the deleted artifacts")))?;
         let policy = &self.security;
@@ -633,7 +632,7 @@ impl Views {
     /// for (issue 133). Without them, only what is public: a failed lookup
     /// shows less.
     async fn roles(&self) -> Vec<caelumora_model::role::RoleId> {
-        caelumora_model::role::user_roles(self.entities.as_ref(), self.viewer.context().principal_id).await.unwrap_or_default()
+        user_roles(self.entities.as_ref(), self.viewer.context().principal_id).await.unwrap_or_default()
     }
 
     /// Whether the viewer is cleared for `classification` (issue 133), by
@@ -714,7 +713,7 @@ impl Views {
     pub async fn usable_skills(&self) -> ViewResult<Vec<SkillView>> {
         let Some(place) = self.viewer.place() else { return Ok(Vec::new()) };
         let context = self.viewer.context();
-        let failed = |e: caelumora_model::store::StoreError| ViewError::Failed(anyhow::Error::new(e).context("listing the skills"));
+        let failed = |e: StoreError| ViewError::Failed(anyhow::Error::new(e).context("listing the skills"));
         let here = Scope::ChannelScope { session_id: place.session.id, channel_id: place.channel };
         let owner = context.principal_id.as_user_id();
         // Those seen from here, which the store is asked for alone (issue 293).

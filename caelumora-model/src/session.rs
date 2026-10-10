@@ -3,6 +3,7 @@ use crate::approval::ApprovalRule;
 use crate::component::ComponentConfig;
 use crate::privacy::PrivacyConfig;
 use crate::security::{Secured, SecurityAttributes};
+use crate::store::query::Field;
 use chrono::{DateTime, Utc};
 use crate::value::name::Name;
 use crate::value::text::{Briefing, Summary};
@@ -97,7 +98,7 @@ pub enum SessionField {
     Participant,
 }
 
-impl crate::store::query::Field for SessionField {
+impl Field for SessionField {
     fn path(self) -> &'static [&'static str] {
         match self {
             SessionField::Participants => &["participants"],

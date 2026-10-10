@@ -323,7 +323,7 @@ mod tests {
     use crate::security::{ActionType, SecurityAttributes, SecurityContext, SecurityManager};
     use crate::session::{Session, SessionId};
     use crate::store::{EntityStore, StoreError};
-    use crate::store::query::Query;
+    use crate::store::query::{NoField, Query};
     use crate::store::memory::MemoryStore;
     use crate::user::UserId;
     use crate::value::name::Name;
@@ -380,7 +380,7 @@ mod tests {
         let keys: Vec<(String, usize)> = ["a", "b", "c", "d"].into_iter().map(String::from).zip(0..).collect();
         let mut loaded = Vec::new();
         let page = super::Access::new(&OwnersAndContributors, &alice_ctx)
-            .page(keys, &Query::<crate::store::query::NoField>::all().limited(2), &super::SESSIONS, false, |n: usize| {
+            .page(keys, &Query::<NoField>::all().limited(2), &super::SESSIONS, false, |n: usize| {
                 loaded.push(n);
                 std::future::ready(Ok(Some(sessions[n].clone())))
             })

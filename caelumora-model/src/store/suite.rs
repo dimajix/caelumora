@@ -4,6 +4,7 @@
 //! concurrent writers - stays in that store's own tests.
 
 use crate::store::query::{Filter, Query};
+use crate::actor::ActorId;
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
 use crate::turn::TurnState;
 use crate::channel::{Channel, ChannelId, ChannelState};
@@ -212,7 +213,7 @@ pub(crate) async fn queries_behave(store: &dyn EntityStore) {
     let ctx = SecurityContext::system();
     let (alice, bob) = (UserId::new(), UserId::new());
     let (session, channel) = (SessionId::new(), ChannelId::new());
-    let bobs = Subject::Actor(crate::actor::ActorId::User(bob));
+    let bobs = Subject::Actor(ActorId::User(bob));
     let mut made = Vec::new();
     for (index, owner) in [alice, alice, bob, alice, bob].into_iter().enumerate() {
         let mut artifact = artifact_named(ScopedName::new(format!("a{index}.csv"), Scope::UserScope { user_id: owner }).unwrap());
@@ -238,7 +239,7 @@ pub(crate) async fn queries_behave(store: &dyn EntityStore) {
     assert_eq!(ids(&listed.items), sorted, "in the order of their ids");
     assert!(listed.next.is_none());
 
-    let owned = Filter::eq(ArtifactField::Owner, &crate::actor::ActorId::User(bob)).unwrap();
+    let owned = Filter::eq(ArtifactField::Owner, &ActorId::User(bob)).unwrap();
     let found = store.list_artifacts(&ctx, &Query::filtered(owned)).await.unwrap();
     let mut bobs_own = vec![made[2], made[4]];
     bobs_own.sort_by_key(|id| id.to_string());

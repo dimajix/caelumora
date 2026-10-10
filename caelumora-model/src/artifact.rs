@@ -11,9 +11,10 @@ use crate::actor::ActorId;
 use crate::confidentiality::Classification;
 use crate::digest::Digest;
 use crate::removal::Removal;
-use crate::scope::Scoped;
+use crate::scope::{Scoped, ScopedField};
 use crate::security::{AclEntry, Grant, Secured, SecurityAttributes};
 use crate::session::{ChannelId, SessionId};
+use crate::store::query::Field;
 use crate::user::UserId;
 use crate::value::name::ScopedName;
 use crate::value::text::Description;
@@ -47,12 +48,12 @@ pub enum ArtifactField {
     Subject,
 }
 
-impl crate::scope::ScopedField for ArtifactField {
+impl ScopedField for ArtifactField {
     const SCOPE: Self = ArtifactField::Scope;
     const CHANNEL_SCOPE_SESSION: Self = ArtifactField::ChannelScopeSession;
 }
 
-impl crate::store::query::Field for ArtifactField {
+impl Field for ArtifactField {
     fn path(self) -> &'static [&'static str] {
         match self {
             ArtifactField::Scope => &["scope"],

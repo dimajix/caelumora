@@ -1,6 +1,7 @@
 //! A channel as its viewer reached it, and its members.
 
-use caelumora_model::store::query::Query;
+use caelumora_model::artifact::ArtifactField;
+use caelumora_model::store::query::{Filter, Query};
 use super::member::{member_state, AgentMember, MemberState};
 use super::{AgentContextView, SessionView, ViewError, ViewResult, Views, WorkspaceView};
 use crate::channel::{visible_part, ChannelLoop, VisibleHistory};
@@ -89,9 +90,7 @@ impl ChannelView {
         if self.readable != Readable::Whole {
             return Ok(Vec::new());
         }
-        use caelumora_model::artifact::ArtifactField;
-        use caelumora_model::store::query::Filter;
-        let failed = |e: caelumora_model::store::StoreError| ViewError::Failed(anyhow::Error::new(e).context("listing the artifacts"));
+        let failed = |e: StoreError| ViewError::Failed(anyhow::Error::new(e).context("listing the artifacts"));
         let (session, channel) = (self.session.id(), self.channel.id);
         // Those with a version published here, which the store is asked for
         // alone (issue 293).
