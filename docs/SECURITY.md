@@ -51,14 +51,14 @@ artifact, preconfigured component - carries `SecurityAttributes`: an `owner_id` 
     part in it at the time.
 *   An agent is owned by whoever created it, and has an empty list: it reads its own definition as
     its owner, whose rights it acts with.
-*   A workspace is owned by the user it was made for, always a user, and grants nobody anything of
-    its own - its list stays empty (issue
-    [253](../issues/253-workspace.md)): outside a session only its owner works on it
-    (`GetWorkspace`) - not on one that lies in a session's scope, which is used within that session
-    alone - and only its owner changes, deletes and attaches it to a session
-    (`UpdateWorkspace`). In a session it is shared through the channels, whose members use it
-    where the channel uses it and the classifications let them (see
-    [CHANNELS.md](CHANNELS.md#its-workspace)) - no `GetWorkspace` is asked of them.
+*   A workspace is owned by the user it was made for, always a user (issue
+    [253](../issues/253-workspace.md)); only its owner changes, shares, deletes and attaches it to a
+    session (`UpdateWorkspace`). Its files are read by whom its list grants reading
+    (`GetWorkspace`) and changed by whom it grants writing (`WriteWorkspace`, issue 23) - by the
+    workspace, wherever they act, cleared for its classification. One made for a session lets the
+    session's members read and write it; one of its owner's grants nobody anything until shared - as
+    it is attached, or by its list. An agent uses it through a channel besides, where the channel
+    uses it and the classifications let it (see [CHANNELS.md](CHANNELS.md#its-workspace)).
 *   A skill (issue [22](../issues/22-skill-management.md)) is owned by the user it was made for -
     by an agent's tool, its owner - or by the system for a skill of the seed; whom its list grants
     reading read and use it. Using it - loading it into a turn - is `UseSkill`, granted as reading:

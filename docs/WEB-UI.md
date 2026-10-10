@@ -160,31 +160,35 @@ yes (issue 253), and participants (`NewChannelDialog`, issue 09).
 
 ### Workspaces
 
-The user's own workspaces (issue [253](../issues/253-workspace.md)) are listed below the sessions,
-each with where it lies where that is not their own scope, and a folded "Deleted workspaces" - the
-trash, as for sessions - below them; the list is loaded again on every global event about a
-workspace (`WorkspaceCreated`, `…Updated`, `…Deleted`, `…Restored`). "+" opens `NewWorkspaceDialog`:
-its name, the storage from those the server names - each with the kind of workspace it makes,
-files only or files and a shell (issue 266) -, whether its name lies in the user's scope or the
-global one, what it holds and its classification (`WorkspaceClassificationFields`, shared with
-`NewSessionDialog`) - what the server refuses, a name taken or a
-classification the user is not cleared for, is shown in the dialog.
+The workspaces the user may read (issue [253](../issues/253-workspace.md)) - their own and those
+shared with them (issue [23](../issues/23-acls-in-security-attributes.md)) - are listed below the
+sessions, each with where it lies where that is not their own scope, and a folded "Deleted
+workspaces" - the trash, as for sessions - below them; the list is loaded again on every global
+event about a workspace (`WorkspaceCreated`, `…Updated`, `…Deleted`, `…Restored`). "+" opens
+`NewWorkspaceDialog`: its name, the storage from those the server names - each with the kind of
+workspace it makes, files only or files and a shell (issue 266) -, whether its name lies in the
+user's scope or the global one, what it holds and its classification
+(`WorkspaceClassificationFields`, shared with `NewSessionDialog`) - what the server refuses, a name
+taken or a classification the user is not cleared for, is shown in the dialog.
 
 A workspace chosen there takes the place of a channel (`WorkspacePage`): what it is, the menu of
-what its owner may do - rename, describe, reclassify, delete - and its files (`FileBrowser`). One
-that lies in a session's scope is used within that session alone, and the page says so instead of
-showing its files.
+what its owner may do - rename, describe, reclassify, delete -, for its owner whom it is shared
+with (`AccessList`: each entry with what it grants, to change or take away; entries are added where
+it is attached), and its files (`FileBrowser`) - wherever it lies, also in a session's scope.
 
 `FileBrowser` shows one directory at a time, directories first, with a path back to the top. A file
 is downloaded through a plain link - the cookie goes with it, and the server sends it as an
 attachment; files are uploaded into the directory shown, one request each, the file as the body;
-deleting asks once more in the menu. It works on a `WorkspaceFiles` of the API client, which is the
-owner's way to the files (`api.ownedFiles`) or a channel's (`api.channelFiles`) - the browser does
-not know the difference.
+deleting asks once more in the menu. Uploading and deleting are offered only to whoever may change
+the files (`canWrite`, the workspace's `can_write`); who may only read is told so. It works on the
+`WorkspaceFiles` of the API client (`api.workspaceFiles`), always by the workspace, never through a
+channel (issue 23).
 
 A session's menu has "Workspace" (`SessionWorkspaceDialog`): the workspace attached, if the user
-may read it - its owner -, and to whoever may change the session one of their workspaces to attach,
-not one made for another session, or taking it away.
+may read it, and to whoever may change the session one of their own workspaces to attach, not one
+made for another session - shared with the session's members as chosen (`ShareSelect`: to read and
+change, the default, to read, or not) -, or taking it away. `NewSessionDialog` offers the same
+choice for one of the user's own chosen there.
 
 ### Skills
 
@@ -227,34 +231,34 @@ else who may read it - the session's owner, say - is shown its history and no in
     and its exit code, or the id it runs under; a call that follows or ends a command names its id.
     The `file_read`, `file_write` and `file_edit` handlers show the file's path and its text as it
     is - its lines kept, a long line wrapped at word boundaries, a long text scrolling in its box:
-    what was read, with which lines of how many and where to read on; what was written, and how
-    many bytes; the text replaced and the text put in its place, and how many places. The
-    `file_list` and `file_search` handlers (issue 265) show a directory listed - its path, its
-    entries as the file browser shows them, and whether the listing was cut off - and a search -
-    its pattern and where, its matches by file with their line numbers, and whether it stopped
-    early or skipped files. The `file_move` handler (issue 267) shows where a file or directory lay
-    and where it lies now, and whether it was renamed or moved. The `artifact_publish` handler
-    (issue 271) shows a published version as a card like `file_publish`'s (`DownloadCard`) - the
-    artifact's name, version, size and description, a download of that version through the
-    channel (`artifacts`, handed as `files` is), and "Keep" for its owner while it lies in the
-    session's scope, which it learns by asking for the artifact as theirs. The `file_publish`
-    handler (issue 273) shows a file offered for download as a card - its name, size and what it
-    is - with a download through the channel's workspace (`files`, which `ChatView` hands through
+    what was read, with which lines of how many and where to read on; what was written, and how many
+    bytes; the text replaced and the text put in its place, and how many places. The `file_list` and
+    `file_search` handlers (issue 265) show a directory listed - its path, its entries as the file
+    browser shows them, and whether the listing was cut off - and a search - its pattern and where,
+    its matches by file with their line numbers, and whether it stopped early or skipped files. The
+    `file_move` handler (issue 267) shows where a file or directory lay and where it lies now, and
+    whether it was renamed or moved. The `artifact_publish` handler (issue 271) shows a published
+    version as a card like `file_publish`'s (`DownloadCard`) - the artifact's name, version, size
+    and description, a download of that version through the channel (`artifacts`, handed as `files`
+    is), and "Keep" for its owner while it lies in the session's scope, which it learns by asking
+    for the artifact as theirs. The `file_publish` handler (issue 273) shows a file offered for
+    download as a card - its name, size and what it is - with a download from the session's
+    workspace, by its id as the channel names it (`files`, which `ChatView` hands through
     `MessageView`), and says when the file changed since it was offered - its size or when it was
-    changed differ - or is gone; whoever cannot use the workspace there, and every view outside
-    the chat, gets the card without the download. The `plan` handler shows a plan's summary and
-    its steps, numbered (issue 263). The `skill` handler (issue 281) shows the skill a call loads,
-    writes or changes by its name, and what it is for and its text, as Markdown, where the
-    arguments hold them - never the text a skill loaded gave the agent; where the result names the
-    skill (`skill_id`), the name opens its page in the chat (`onSelectSkill`, which `Layout` hands
-    through `ChatView` and `MessageView`).
-    Where a result keeps the record of the questions its call asked (`answers`, issue 165), the
-    frame shows it (`AnswersRecord`, issue 268): who answered or declined, and each question with
-    every choice that was offered, one below the other, the chosen ones marked and the others
-    muted, "Other" with its text, a written answer as a quote, a skipped question as such. A
-    question's text keeps its line breaks, so that an approver reads a command of several lines as
-    it was written. The `questions` handler of `ask_user` shows nothing raw: while it waits, its
-    questions as they were put and whom they wait for; once answered, nothing beyond the record.
+    changed differ - or is gone; whoever cannot use the workspace there, and every view outside the
+    chat, gets the card without the download. The `plan` handler shows a plan's summary and its
+    steps, numbered (issue 263). The `skill` handler (issue 281) shows the skill a call loads,
+    writes or changes by its name, and what it is for and its text, as Markdown, where the arguments
+    hold them - never the text a skill loaded gave the agent; where the result names the skill
+    (`skill_id`), the name opens its page in the chat (`onSelectSkill`, which `Layout` hands through
+    `ChatView` and `MessageView`). Where a result keeps the record of the questions its call asked
+    (`answers`, issue 165), the frame shows it (`AnswersRecord`, issue 268): who answered or
+    declined, and each question with every choice that was offered, one below the other, the chosen
+    ones marked and the others muted, "Other" with its text, a written answer as a quote, a skipped
+    question as such. A question's text keeps its line breaks, so that an approver reads a command
+    of several lines as it was written. The `questions` handler of `ask_user` shows nothing raw:
+    while it waits, its questions as they were put and whom they wait for; once answered, nothing
+    beyond the record.
 *   **While an agent answers**, its partial message is shown as it streams, its reasoning
     included: folded under "Thinking" until the answer begins (issue 216). Several agents answering
     at once each have an answer of their own, in the order they began (issue 203). Answers under
@@ -414,12 +418,12 @@ approval asked for by such a rule says so on its card (`explicit`).
 ### The channel's files
 
 Beside "Channel" and "Notes", the channel panel has "Files" (`ChannelWorkspacePanel`): the session's
-workspace as the user may use it in this channel (`GET …/workspace`) - its name, classification and
-what it holds - and its files, through the channel; or that no workspace is used in this channel,
-without why. The files are loaded again when the tab is shown, when a tool call of the channel
-ended (a `CompleteMessageGenerated` with tool results) and when the channel's switch changes. The
-"Channel" tab shows the switch - "Workspace: used here" - as a checkbox to whoever may change the
-channel, as text to everybody else (issue 251).
+workspace as the channel names it (`workspace_id`, where it uses it and the user may read it) - its
+name, classification and what it holds - and its files, by the workspace (issue 23); or that no
+workspace is used in this channel, without why. The files are loaded again when the tab is shown,
+when a tool call of the channel ended (a `CompleteMessageGenerated` with tool results) and when the
+channel's switch changes. The "Channel" tab shows the switch - "Workspace: used here" - as a
+checkbox to whoever may change the channel, as text to everybody else (issue 251).
 
 ### Members, moderator and notes
 

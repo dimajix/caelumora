@@ -149,10 +149,11 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/workspaces/{id}/classification", axum::routing::put(workspaces::reclassify_workspace))
         .route("/workspaces/{id}/restore", post(workspaces::restore_workspace))
         .route("/workspaces/{id}/purge", post(workspaces::purge_workspace))
-        .route("/workspaces/{id}/files", get(workspaces::owned_files))
+        .route("/workspaces/{id}/access", axum::routing::put(workspaces::set_access))
+        .route("/workspaces/{id}/files", get(workspaces::files))
         .route(
             "/workspaces/{id}/files/{*path}",
-            get(workspaces::download_owned_file).put(workspaces::upload_owned_file).delete(workspaces::delete_owned_file),
+            get(workspaces::download_file).put(workspaces::upload_file).delete(workspaces::delete_file),
         )
         .route("/artifacts", get(artifacts::list_artifacts))
         .route("/artifacts/{id}", get(artifacts::get_artifact).delete(artifacts::delete_artifact))
@@ -185,12 +186,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/sessions/{id}/channels/{cid}/uses-workspace", axum::routing::put(workspaces::set_uses_workspace))
         .route("/sessions/{id}/channels/{cid}/artifacts", get(artifacts::channel_artifacts))
         .route("/sessions/{id}/channels/{cid}/artifacts/{aid}/versions/{n}/content", get(artifacts::download_channel_version))
-        .route("/sessions/{id}/channels/{cid}/workspace", get(workspaces::channel_workspace))
-        .route("/sessions/{id}/channels/{cid}/workspace/files", get(workspaces::channel_files))
-        .route(
-            "/sessions/{id}/channels/{cid}/workspace/files/{*path}",
-            get(workspaces::download_channel_file).put(workspaces::upload_channel_file).delete(workspaces::delete_channel_file),
-        )
         .route(
             "/sessions/{id}/channels/{cid}/messages/{mid}",
             axum::routing::put(channels::modify_message).delete(channels::revoke_message),

@@ -15,8 +15,9 @@
 //!   (`KnowledgeSource::Workspace`).
 //!
 //! The workspace is reached through the turn's views on every call, before
-//! anything is sent: as a member of the channel, where the channel uses it
-//! and it and the channel flow both ways. A result is classified as the
+//! anything is sent: as a member of the channel, where the channel uses it,
+//! its access list lets the agent read it - change it, for the shell and
+//! the tools that write (issue 23) - and it and the channel flow both ways. A result is classified as the
 //! workspace. Which calls need approval is configured as for `mcp_tool`
 //! (`requires_approval`, an `ApprovalMode`): all, none, or all but those
 //! that only read; `command_output`, `kill_command` and `publish_file`
@@ -32,6 +33,7 @@ use crate::tool::{ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult}
 use async_trait::async_trait;
 use caelumora_model::approval::ToolMatcher;
 use caelumora_model::question::Answers;
+use caelumora_model::security::Grant;
 use caelumora_model::tool::{Tool, ToolCall, ToolParameters, ToolPresentation, ToolVisibility};
 use serde::Deserialize;
 use serde_json::Value;
@@ -137,7 +139,10 @@ impl ToolProvider for TerminalTool {
             return Err(ToolError::UnknownTool(name.to_string()));
         }
         let workspace = crate::tool::channel_workspace(turn).await?;
-        let terminal = workspace.terminal().await.map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+        // The shell may change anything its place reaches; of the files,
+        // what only reads needs only reading (issue 23).
+        let need = if is_shell || !files::read_only(name) { Grant::Write } else { Grant::Read };
+        let terminal = workspace.terminal(need).await.map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
         let value = match is_shell {
             true => shell::execute(&self.config, name, params, terminal.as_ref(), turn).await?,
             false => files::execute(&self.config, name, params, terminal.as_ref(), &workspace, turn).await?,

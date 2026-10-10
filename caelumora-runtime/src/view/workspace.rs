@@ -1,7 +1,8 @@
-//! A workspace as a viewer reaches it (issue 253): its owner in the list
-//! of their workspaces, or a member of a channel in which the session's
-//! workspace may be used (issue 251, decision 10). Nothing of its place is
-//! reachable past it but through `terminal`, which asks again.
+//! A workspace as a viewer reaches it (issue 253): directly, as its access
+//! list lets them wherever they act (issue 23), or - an agent - in a
+//! channel in which the session's workspace may be used (issue 251,
+//! decision 10). Nothing of its place is reachable past it but through
+//! `terminal`, which asks again.
 
 use super::{ViewError, Views};
 use crate::artifact::{ArtifactError, ArtifactResult};
@@ -9,9 +10,11 @@ use crate::terminal::{Terminal, WorkspacePath};
 use crate::workspace::{WorkspaceError, WorkspaceResult};
 use caelumora_model::artifact::Artifact;
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::security::AccessQuestions;
+use caelumora_model::actor::ActorId;
+use caelumora_model::security::{AccessQuestions, Grant, Membership, SecurityContext, Subject};
 use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::snapshot::WorkspaceSnapshot;
+use caelumora_model::snapshot::{AccessSnapshot, WorkspaceSnapshot};
+use caelumora_model::store::StoreResultExt;
 use caelumora_model::value::text::Description;
 use caelumora_model::workspace::{Workspace, WorkspaceId};
 use std::sync::Arc;
@@ -21,8 +24,8 @@ use tracing::warn;
 /// session and the channel as they are then.
 #[derive(Clone, Copy)]
 enum Way {
-    /// By its owner, directly.
-    Owned,
+    /// Directly, by its access list (issue 23).
+    Direct,
     /// In a channel of the session it is attached to.
     InChannel { session: SessionId, channel: ChannelId },
 }
@@ -35,8 +38,8 @@ pub struct WorkspaceView {
 }
 
 impl WorkspaceView {
-    pub(super) fn owned(views: Views, workspace: Workspace) -> Self {
-        Self { views, workspace, way: Way::Owned }
+    pub(super) fn direct(views: Views, workspace: Workspace) -> Self {
+        Self { views, workspace, way: Way::Direct }
     }
 
     pub(super) fn in_channel(views: Views, workspace: Workspace, session: SessionId, channel: ChannelId) -> Self {
@@ -75,20 +78,29 @@ impl WorkspaceView {
         self.views.workspace_manager().max_file_bytes()
     }
 
-    /// Whether the viewer may change it and attach it to a session
-    /// (`UpdateWorkspace`): its owner.
+    /// Whether the viewer may change it, share it and attach it to a
+    /// session (`UpdateWorkspace`): its owner.
     pub async fn may_change(&self) -> bool {
         self.views.security().may_change_workspace(self.views.context(), &self.workspace.security_attributes).await
     }
 
-    /// The terminal of its files, if the viewer may still use it the way
-    /// they reached it - asked again, of the workspace, the session and the
-    /// channel as they are now, since a view decides nothing.
+    /// Whether the viewer may change its files (`WriteWorkspace`, issue
+    /// 23) - in a channel, besides, only as far as the channel lets them use
+    /// it at all.
+    pub async fn may_write(&self) -> bool {
+        self.views.security().may_write_workspace(self.views.context(), &self.workspace.security_attributes).await
+    }
+
+    /// The terminal of its files for what `need` asks - reading them, or
+    /// changing them too (issue 23) -, if the viewer may still use it the
+    /// way they reached it: asked again, of the workspace, the session and
+    /// the channel as they are now, since a view decides nothing.
     ///
     /// # Errors
-    /// `NotFound` if they may no longer, `NotCleared`, `UnknownStorage`, or
-    /// a `TerminalError` of reaching its place.
-    pub async fn terminal(&self) -> WorkspaceResult<Arc<dyn Terminal>> {
+    /// `NotFound` if they may no longer, `ReadOnly` if they may not change
+    /// its files where `need` asks to, `NotCleared`, `UnknownStorage`, or a
+    /// `TerminalError` of reaching its place.
+    pub async fn terminal(&self, need: Grant) -> WorkspaceResult<Arc<dyn Terminal>> {
         let gone = || WorkspaceError::NotFound(self.workspace.id);
         // Out of reach is one case with gone; a failure to reach is logged.
         let unreached = |error: ViewError| {
@@ -98,14 +110,17 @@ impl WorkspaceView {
             gone()
         };
         let workspace = match self.way {
-            Way::Owned => self.views.workspace_manager().owned(self.views.context(), self.workspace.id).await?,
+            Way::Direct => self.views.workspace_manager().reached(self.views.context(), self.workspace.id, need).await?,
             Way::InChannel { session, channel } => {
                 let session = self.views.session(session).await.map_err(unreached)?;
                 let channel = session.channel(channel).await.map_err(unreached)?;
-                channel.workspace().await.map_err(unreached)?
+                let usable = channel.workspace().await.map_err(unreached)?
                     .filter(|usable| usable.id() == self.workspace.id)
-                    .ok_or_else(gone)?
-                    .workspace
+                    .ok_or_else(gone)?;
+                if need == Grant::Write && !usable.may_write().await {
+                    return Err(WorkspaceError::ReadOnly(self.workspace.id));
+                }
+                usable.workspace
             }
         };
         self.views.workspace_manager().terminal(&workspace).await
@@ -123,11 +138,16 @@ impl WorkspaceView {
     /// may no longer be used, or what `ArtifactManager::publish` reports.
     pub async fn publish_artifact(&self, at: &WorkspacePath, name: &str, description: Option<&str>) -> ArtifactResult<(Artifact, u32)> {
         let Way::InChannel { session, channel } = self.way else { return Err(ArtifactError::NotInChannel) };
-        let terminal = self.terminal().await?;
+        let terminal = self.terminal(Grant::Read).await?;
         self.views.artifact_manager().publish(self.views.context(), terminal.as_ref(), &self.workspace, at, name, description, session, channel).await
     }
 
     pub async fn snapshot(&self) -> WorkspaceSnapshot {
+        let can_change = self.may_change().await;
+        let access = match can_change {
+            true => self.access().await,
+            false => Vec::new(),
+        };
         WorkspaceSnapshot {
             id: self.workspace.id,
             name: self.workspace.name.to_string(),
@@ -136,7 +156,29 @@ impl WorkspaceView {
             description: self.workspace.description.clone(),
             classification: self.workspace.classification.clone(),
             has_shell: self.has_shell(),
-            can_change: self.may_change().await,
+            can_change,
+            can_write: self.may_write().await,
+            access,
         }
+    }
+
+    /// Its access list with whom each entry names called by name, read in
+    /// the runtime's name: its owner, who alone is shown it, may name a
+    /// session or user they cannot read themselves no more.
+    async fn access(&self) -> Vec<AccessSnapshot> {
+        let entities = self.views.entities();
+        let system = SecurityContext::system();
+        let mut access = Vec::with_capacity(self.workspace.security_attributes.acl.len());
+        for entry in &self.workspace.security_attributes.acl {
+            let name = match entry.subject {
+                Subject::Actor(ActorId::User(user)) => entities.get_user(&system, user).await.optional().ok().flatten().map(|u| u.username.to_string()),
+                Subject::Actor(_) => None,
+                Subject::Role(role) => self.views.security().role_name(role),
+                Subject::MemberOf(Membership::Session(session)) => entities.get_session(&system, session).await.optional().ok().flatten().map(|s| s.name.to_string()),
+                Subject::MemberOf(Membership::Channel(channel)) => entities.get_channel(&system, channel).await.optional().ok().flatten().map(|c| c.name.to_string()),
+            };
+            access.push(AccessSnapshot { subject: entry.subject, grant: entry.grant, name });
+        }
+        access
     }
 }

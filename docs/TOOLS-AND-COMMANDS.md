@@ -666,7 +666,12 @@ private notes and agent memory are described in [MEMORY.md](MEMORY.md).
 workspace, where its channel may use it ([CHANNELS.md](CHANNELS.md#its-workspace)): its files, and
 a shell in it where its storage gives one. The workspace is reached through the turn's views on
 every call, before anything is sent, and a call where there is none - or a command where its
-storage has no shell - fails and says so. `workspace_prompt_provider` tells the model beforehand
+storage has no shell - fails and says so. What its access list grants decides the rest (issue
+[23](../issues/23-acls-in-security-attributes.md)): the tools that only read files need reading
+(`GetWorkspace`), the others and every shell tool changing (`WriteWorkspace`) - a command may change
+anything its place reaches. Every tool is offered, and one that changes fails where the list grants
+reading alone; the prompt part says so beforehand. Offering only what may be called would need a
+`ToolProvider` that knows the turn. `workspace_prompt_provider` tells the model beforehand
 what it has, and which files at its root - an `AGENTS.md`, say - it is to read before it works on
 the files ([AGENT-TURN.md](AGENT-TURN.md#its-workspace), issue 279). Which calls need approval
 is configured as for `mcp_tool` (`requires_approval`, `ApprovalMode`): all - the default -, none,

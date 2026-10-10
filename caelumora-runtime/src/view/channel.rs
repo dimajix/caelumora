@@ -335,6 +335,13 @@ impl ChannelView {
     /// The channel as the viewer sees it at this moment (issue 80), with
     /// the details `detail` asks for. A detail that cannot be read is left
     /// empty: the channel can be shown without it.
+    /// The session's workspace, if the channel uses it and the viewer may
+    /// read it as its access list lets them (issue 23).
+    async fn readable_workspace(&self) -> Option<caelumora_model::workspace::WorkspaceId> {
+        let id = self.session.as_session().workspace.filter(|_| self.channel.uses_workspace)?;
+        self.views().workspace(id).await.ok().map(|workspace| workspace.id())
+    }
+
     pub async fn snapshot(&self, detail: Detail) -> ChannelSnapshot {
         let (mut members, mut former_members) = (Vec::new(), Vec::new());
         if detail.contains(Detail::MEMBERS) {
@@ -356,6 +363,7 @@ impl ChannelView {
             language: self.channel.language.clone(),
             approval_rules: self.channel.approval_rules.clone(),
             uses_workspace: self.channel.uses_workspace,
+            workspace_id: self.readable_workspace().await,
             can_change: self.may_change().await,
             members,
             former_members,

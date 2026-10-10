@@ -12,7 +12,7 @@ use caelumora_model::component::ComponentConfig;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::value::language::Language;
 use caelumora_model::event::GlobalEvent;
-use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityAttributes, SecurityContext, SecurityManager};
+use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Grant, Membership, SecurityAttributes, SecurityContext, SecurityManager, Subject};
 use crate::view::{Viewer, Views};
 use caelumora_model::privacy::{PrivacyConfig, SessionPrivacy};
 use caelumora_model::store::{EntityStore, StoreError, StoreResult, StoreResultExt};
@@ -264,20 +264,27 @@ impl SessionLoop {
     /// issue 251, decision 12) and lie where this session may use it - not
     /// in another session's scope. Taking it away shares nothing and asks
     /// no more. Its channels use it as their classifications and switches
-    /// let them, from their next use.
+    /// let them, from their next use - and as its access list lets each
+    /// member (issue 23): attaching shares nothing by itself, unless `share`
+    /// says how far the session's members may use it, which adds an entry
+    /// for them. Taking it away leaves the list as it is: it is the
+    /// workspace's, and its owner's to change.
     ///
     /// # Errors
     /// `StoreError::PermissionDenied` if `context` may not change the
     /// session or share the workspace, `StoreError::NotFound` if there is
     /// no workspace they may read, `SessionError::WorkspaceOutOfScope`, or
     /// whatever else storing reports.
-    pub async fn set_workspace(&self, context: &SecurityContext, workspace: Option<WorkspaceId>) -> Result<()> {
+    pub async fn set_workspace(&self, context: &SecurityContext, workspace: Option<WorkspaceId>, share: Option<Grant>) -> Result<()> {
         let session = self.session();
         self.security.require(context, ActionType::UpdateSession(&session.security_attributes), || StoreError::PermissionDenied).await?;
         if let Some(id) = workspace {
             require_attachable(self.security.as_ref(), self.entities.as_ref(), context, id, self.id).await?;
         }
         self.session_controller.update_workspace(context, workspace).await?;
+        if let (Some(id), Some(grant)) = (workspace, share) {
+            self.runtime_manager.workspace_manager().share(context, id, Subject::MemberOf(Membership::Session(self.id)), grant).await?;
+        }
         info!(session = %self.id, workspace = ?workspace, by = %context.caller_id, "Session's workspace changed");
         Ok(())
     }
@@ -729,9 +736,9 @@ impl SessionManager {
         let id = SessionId::new();
         // One of the user's chosen is asked about before anything is made.
         let existing = match &workspace {
-            Some(WorkspaceChoice::Existing(chosen)) => {
+            Some(WorkspaceChoice::Existing { id: chosen, share }) => {
                 require_attachable(self.security.as_ref(), store.as_ref(), context, *chosen, id).await?;
-                Some(*chosen)
+                Some((*chosen, *share))
             }
             _ => None,
         };
@@ -743,17 +750,23 @@ impl SessionManager {
             None => template.workspace.clone(),
             Some(WorkspaceChoice::New { storage, classification }) =>
                 Some(WorkspaceTemplate { name: name.clone(), scope: ScopeTemplate::SessionScope, storage, classification, description: None }),
-            Some(WorkspaceChoice::None | WorkspaceChoice::Existing(_)) => None,
+            Some(WorkspaceChoice::None | WorkspaceChoice::Existing { .. }) => None,
         };
         let (mut session, channels) = template.build(id, owner, name, language.as_ref(), participants)?;
         let workspaces = self.runtime_manager.workspace_manager();
         let workspace = match &wanted {
             Some(wanted) => Some(crate::template::resolve_workspace(workspaces, store.as_ref(), context, wanted, id, owner).await?),
-            None => existing.map(|chosen| (chosen, false)),
+            None => existing.map(|(chosen, _)| (chosen, false)),
         };
         session.workspace = workspace.as_ref().map(|(found, _)| *found);
         match self.create_session(context, session, channels).await {
-            Ok(session_loop) => Ok(session_loop),
+            Ok(session_loop) => {
+                // Shared once the session it is shared with exists (issue 23).
+                if let Some((chosen, Some(grant))) = existing {
+                    workspaces.share(context, chosen, Subject::MemberOf(Membership::Session(id)), grant).await?;
+                }
+                Ok(session_loop)
+            }
             Err(e) => {
                 // One made for this session goes with what failed.
                 if let Some((made, true)) = workspace {

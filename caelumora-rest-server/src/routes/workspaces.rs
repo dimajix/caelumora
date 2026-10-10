@@ -1,8 +1,6 @@
-//! Workspaces (issue 253): its owner lists, makes, changes, deletes and
-//! restores theirs and works on their files; a member of a channel works on
-//! the files of the session's workspace there, where it may be used (issue
-//! 251, decision 10). The files are reached through the workspace's
-//! `Terminal` alike, whichever way it was reached.
+//! Workspaces (issue 253): its owner lists, makes, changes, shares, deletes
+//! and restores theirs; whoever its access list lets reads its files, or
+//! changes them (issue 23) - by the workspace, never through a channel.
 //!
 //! Downloads are always served as attachments (`routes::attachment_response`),
 //! never inline: a file of a workspace is anybody's content, and HTML or SVG
@@ -11,7 +9,7 @@
 use crate::auth::AuthenticatedUser;
 use crate::error::{ApiError, Json, Path, Subject};
 use crate::models::{
-    AttachWorkspaceRequest, ChannelResponse, CreateWorkspaceRequest, DeletedResponse, FileResponse, FilesQuery, ListOptions, RenameWorkspaceRequest,
+    AccessEntry, AttachWorkspaceRequest, ChannelResponse, CreateWorkspaceRequest, DeletedResponse, FileResponse, FilesQuery, ListOptions, RenameWorkspaceRequest,
     SessionSnapshot, StorageResponse, UsesWorkspaceRequest, ItemDescriptionRequest, WorkspaceResponse,
 };
 use crate::state::AppState;
@@ -20,10 +18,10 @@ use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use caelumora_model::confidentiality::Classification;
+use caelumora_model::security::Grant;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::workspace::WorkspaceId;
 use caelumora_runtime::terminal::{Terminal, WorkspacePath};
-use caelumora_runtime::view::WorkspaceView;
 use futures::TryStreamExt;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -121,59 +119,44 @@ pub async fn purge_workspace(State(state): State<Arc<AppState>>, Path(id): Path<
     }
 }
 
-/// Lists a directory of the user's workspace `id`.
-pub async fn owned_files(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, Query(query): Query<FilesQuery>, user: AuthenticatedUser) -> Result<Json<Vec<FileResponse>>, ApiError> {
-    list(owned_terminal(&state, &user, WorkspaceId(id)).await?.as_ref(), &query.path).await
+/// Lists a directory of workspace `id`: whoever may read it (issue 23).
+pub async fn files(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, Query(query): Query<FilesQuery>, user: AuthenticatedUser) -> Result<Json<Vec<FileResponse>>, ApiError> {
+    list(terminal(&state, &user, WorkspaceId(id), Grant::Read).await?.as_ref(), &query.path).await
 }
 
-pub async fn download_owned_file(State(state): State<Arc<AppState>>, Path((id, path)): Path<(Uuid, String)>, user: AuthenticatedUser) -> Result<Response, ApiError> {
-    download(owned_terminal(&state, &user, WorkspaceId(id)).await?.as_ref(), &path).await
+pub async fn download_file(State(state): State<Arc<AppState>>, Path((id, path)): Path<(Uuid, String)>, user: AuthenticatedUser) -> Result<Response, ApiError> {
+    download(terminal(&state, &user, WorkspaceId(id), Grant::Read).await?.as_ref(), &path).await
 }
 
-pub async fn upload_owned_file(State(state): State<Arc<AppState>>, Path((id, path)): Path<(Uuid, String)>, user: AuthenticatedUser, body: Body) -> Result<StatusCode, ApiError> {
+/// Writes a file of workspace `id`: whoever may change its files.
+pub async fn upload_file(State(state): State<Arc<AppState>>, Path((id, path)): Path<(Uuid, String)>, user: AuthenticatedUser, body: Body) -> Result<StatusCode, ApiError> {
     let limit = state.runtime_manager.workspace_manager().max_file_bytes();
-    upload(owned_terminal(&state, &user, WorkspaceId(id)).await?.as_ref(), &path, body, limit).await
+    upload(terminal(&state, &user, WorkspaceId(id), Grant::Write).await?.as_ref(), &path, body, limit).await
 }
 
-pub async fn delete_owned_file(State(state): State<Arc<AppState>>, Path((id, path)): Path<(Uuid, String)>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
-    remove(owned_terminal(&state, &user, WorkspaceId(id)).await?.as_ref(), &path).await
+pub async fn delete_file(State(state): State<Arc<AppState>>, Path((id, path)): Path<(Uuid, String)>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
+    remove(terminal(&state, &user, WorkspaceId(id), Grant::Write).await?.as_ref(), &path).await
 }
 
-/// The session's workspace as the user may use it in this channel; `null`
-/// where they may not - which says nothing of why.
-pub async fn channel_workspace(State(state): State<Arc<AppState>>, Path((id, cid)): Path<(Uuid, Uuid)>, user: AuthenticatedUser) -> Result<Json<Option<WorkspaceResponse>>, ApiError> {
-    Ok(Json(match in_channel(&state, &user, SessionId(id), ChannelId(cid)).await? {
-        Some(workspace) => Some(workspace.snapshot().await.into()),
-        None => None,
-    }))
-}
-
-pub async fn channel_files(State(state): State<Arc<AppState>>, Path((id, cid)): Path<(Uuid, Uuid)>, Query(query): Query<FilesQuery>, user: AuthenticatedUser) -> Result<Json<Vec<FileResponse>>, ApiError> {
-    list(channel_terminal(&state, &user, SessionId(id), ChannelId(cid)).await?.as_ref(), &query.path).await
-}
-
-pub async fn download_channel_file(State(state): State<Arc<AppState>>, Path((id, cid, path)): Path<(Uuid, Uuid, String)>, user: AuthenticatedUser) -> Result<Response, ApiError> {
-    download(channel_terminal(&state, &user, SessionId(id), ChannelId(cid)).await?.as_ref(), &path).await
-}
-
-pub async fn upload_channel_file(State(state): State<Arc<AppState>>, Path((id, cid, path)): Path<(Uuid, Uuid, String)>, user: AuthenticatedUser, body: Body) -> Result<StatusCode, ApiError> {
-    let limit = state.runtime_manager.workspace_manager().max_file_bytes();
-    upload(channel_terminal(&state, &user, SessionId(id), ChannelId(cid)).await?.as_ref(), &path, body, limit).await
-}
-
-pub async fn delete_channel_file(State(state): State<Arc<AppState>>, Path((id, cid, path)): Path<(Uuid, Uuid, String)>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
-    remove(channel_terminal(&state, &user, SessionId(id), ChannelId(cid)).await?.as_ref(), &path).await
+/// Gives the workspace the access list in the body (issue 23), replacing
+/// the one it had: its owner's act.
+pub async fn set_access(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser, Json(entries): Json<Vec<AccessEntry>>) -> Result<Json<WorkspaceResponse>, ApiError> {
+    let id = WorkspaceId(id);
+    let acl = entries.into_iter().map(AccessEntry::into_acl).collect();
+    state.runtime_manager.workspace_manager().set_access(&user.security_context(), id, acl).await
+        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Workspace, &format!("sharing workspace {id}")))?;
+    Ok(Json(owned(&state, &user, id).await?))
 }
 
 /// Attaches the user's workspace to the session: its owner's act, into a
 /// session they may change.
 pub async fn attach_workspace(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser, Json(request): Json<AttachWorkspaceRequest>) -> Result<Json<SessionSnapshot>, ApiError> {
-    set_workspace(&state, &user, SessionId(id), Some(request.workspace_id)).await
+    set_workspace(&state, &user, SessionId(id), Some(request.workspace_id), request.share).await
 }
 
 /// Takes the attached workspace away from the session; it shares nothing.
 pub async fn detach_workspace(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<Json<SessionSnapshot>, ApiError> {
-    set_workspace(&state, &user, SessionId(id), None).await
+    set_workspace(&state, &user, SessionId(id), None, None).await
 }
 
 /// Sets whether the channel uses the session's workspace: whoever may
@@ -186,9 +169,9 @@ pub async fn set_uses_workspace(State(state): State<Arc<AppState>>, Path((id, ci
     Ok(Json(crate::routes::channel_view(&state, &user, session_id, channel_id).await?))
 }
 
-async fn set_workspace(state: &Arc<AppState>, user: &AuthenticatedUser, session_id: SessionId, workspace: Option<WorkspaceId>) -> Result<Json<SessionSnapshot>, ApiError> {
+async fn set_workspace(state: &Arc<AppState>, user: &AuthenticatedUser, session_id: SessionId, workspace: Option<WorkspaceId>, share: Option<Grant>) -> Result<Json<SessionSnapshot>, ApiError> {
     let session = crate::routes::ensure_session(state, user, session_id).await?;
-    session.set_workspace(&user.security_context(), workspace).await
+    session.set_workspace(&user.security_context(), workspace, share).await
         .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("changing the workspace of session {session_id}")))?;
     Ok(Json(crate::routes::session_view(state, user, session_id).await?))
 }
@@ -200,27 +183,13 @@ async fn owned(state: &Arc<AppState>, user: &AuthenticatedUser, id: WorkspaceId)
     Ok(workspace.snapshot().await.into())
 }
 
-async fn owned_terminal(state: &Arc<AppState>, user: &AuthenticatedUser, id: WorkspaceId) -> Result<Arc<dyn Terminal>, ApiError> {
+/// The terminal of workspace `id` for what `need` asks: reading its files,
+/// or changing them too (issue 23).
+async fn terminal(state: &Arc<AppState>, user: &AuthenticatedUser, id: WorkspaceId, need: Grant) -> Result<Arc<dyn Terminal>, ApiError> {
     let workspace = crate::routes::views(state, user).workspace(id).await
         .map_err(|e| ApiError::from_runtime(e.into(), Subject::Workspace, &format!("reading workspace {id}")))?;
-    terminal_of(&workspace).await
-}
-
-async fn in_channel(state: &Arc<AppState>, user: &AuthenticatedUser, session: SessionId, channel: ChannelId) -> Result<Option<WorkspaceView>, ApiError> {
-    crate::routes::channel_of(state, user, session, channel).await?.workspace().await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Workspace, "reading the channel's workspace"))
-}
-
-async fn channel_terminal(state: &Arc<AppState>, user: &AuthenticatedUser, session: SessionId, channel: ChannelId) -> Result<Arc<dyn Terminal>, ApiError> {
-    match in_channel(state, user, session, channel).await? {
-        Some(workspace) => terminal_of(&workspace).await,
-        None => Err(ApiError::not_found("workspace_not_found", "There is no workspace in this channel")),
-    }
-}
-
-async fn terminal_of(workspace: &WorkspaceView) -> Result<Arc<dyn Terminal>, ApiError> {
-    workspace.terminal().await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Workspace, &format!("reaching workspace {}", workspace.id())))
+    workspace.terminal(need).await
+        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Workspace, &format!("reaching workspace {id}")))
 }
 
 /// `text` as a path inside the workspace.

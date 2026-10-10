@@ -32,7 +32,7 @@ use caelumora_model::role::user_roles;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::scope::{Scope, Scoped};
 use caelumora_model::secret::SecretManager;
-use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityContext, SecurityManager};
+use caelumora_model::security::{AccessQuestions, AclEntry, ActionType, Enforcement, Grant, SecurityContext, SecurityManager, Subject};
 use caelumora_model::session::{Channel, Session};
 use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResultExt};
 use caelumora_model::value::name::ScopedName;
@@ -60,6 +60,10 @@ pub enum WorkspaceError {
     ClassificationRefused,
     #[error("you are not cleared for the classification of the workspace")]
     NotCleared,
+    /// What its access list grants the caller is reading, not changing its
+    /// files (issue 23).
+    #[error("you may read the workspace {0}, not change its files")]
+    ReadOnly(WorkspaceId),
     /// Its storage may not hold what is so classified (issue 251): a place
     /// with a shell or a remote side is cleared for so much.
     #[error("the storage '{0}' may not hold a workspace so classified")]
@@ -219,6 +223,42 @@ impl WorkspaceManager {
         self.update(ctx, id, WorkspaceUpdateEvent::ClassificationChanged(classification)).await
     }
 
+    /// Gives workspace `id` the access list `acl` (issue 23) on behalf of
+    /// `ctx`: its owner's act (`UpdateWorkspace`, asked as it is stored).
+    /// Announced without the list, which only its owner sees.
+    ///
+    /// # Errors
+    /// `NotFound` if there is none the caller may read, a `StoreError` -
+    /// `PermissionDenied` for anyone but its owner, `Validation` for an
+    /// entry that names anyone but a user.
+    pub async fn set_access(&self, ctx: &SecurityContext, id: WorkspaceId, acl: Vec<AclEntry>) -> WorkspaceResult<Workspace> {
+        let _writing = self.writing.lock().await;
+        let mut workspace = self.entities.get_workspace(ctx, id).await.map_err(store_error(id))?;
+        workspace.security_attributes.acl = acl;
+        workspace.updated_at = chrono::Utc::now();
+        self.entities.update_workspace(ctx, &workspace).await.map_err(store_error(id))?;
+        self.events.publish(GlobalEvent::WorkspaceUpdated(id, WorkspaceUpdateEvent::AccessChanged), workspace.security_attributes.clone());
+        info!(workspace = %id, by = %ctx.caller_id, "Workspace's access changed");
+        Ok(workspace)
+    }
+
+    /// Shares workspace `id` with `subject` as far as `grant` reaches, on
+    /// behalf of `ctx`: an entry added to its access list, unless one
+    /// already grants `subject` as much - one that grants less is widened.
+    ///
+    /// # Errors
+    /// As [`Self::set_access`].
+    pub async fn share(&self, ctx: &SecurityContext, id: WorkspaceId, subject: Subject, grant: Grant) -> WorkspaceResult<Workspace> {
+        let workspace = self.entities.get_workspace(ctx, id).await.map_err(store_error(id))?;
+        let mut acl = workspace.security_attributes.acl.clone();
+        if acl.iter().any(|entry| entry.subject == subject && entry.grant.covers(grant)) {
+            return Ok(workspace);
+        }
+        acl.retain(|entry| entry.subject != subject);
+        acl.push(AclEntry { subject, grant });
+        self.set_access(ctx, id, acl).await
+    }
+
     /// Applies `event` to workspace `id` on behalf of `ctx`: stored first,
     /// which is where the permission is checked (`UpdateWorkspace`), then
     /// announced.
@@ -238,6 +278,8 @@ impl WorkspaceManager {
                 self.require_classification(ctx, &workspace.storage, provider.as_ref(), classification).await?;
                 workspace.classification = classification.clone();
             }
+            // Changed by `set_access`, which announces it without the list.
+            WorkspaceUpdateEvent::AccessChanged => {}
         }
         workspace.updated_at = chrono::Utc::now();
         self.entities.update_workspace(ctx, &workspace).await.map_err(store_error(id))?;
@@ -298,17 +340,19 @@ impl WorkspaceManager {
         Ok(purged)
     }
 
-    /// Workspace `id`, used directly by whoever `ctx` acts for: its owner
-    /// (`GetWorkspace`), cleared for its classification.
+    /// Workspace `id`, used directly by whoever `ctx` acts for, wherever the
+    /// caller acts (issue 23): if its access list grants them what `need`
+    /// asks for (`GetWorkspace`, `WriteWorkspace`) and they are cleared for
+    /// its classification.
     ///
     /// # Errors
-    /// `NotFound` if there is none they may use, `NotCleared`, or whatever
+    /// `NotFound` if there is none they may read, `ReadOnly` if they may
+    /// not change its files where `need` asks to, `NotCleared`, or whatever
     /// else the store reports.
-    pub(crate) async fn owned(&self, ctx: &SecurityContext, id: WorkspaceId) -> WorkspaceResult<Workspace> {
+    pub(crate) async fn reached(&self, ctx: &SecurityContext, id: WorkspaceId, need: Grant) -> WorkspaceResult<Workspace> {
         let workspace = self.entities.get_workspace(ctx, id).await.map_err(store_error(id))?;
-        // Outside every session: what lies in one's scope is used in it alone.
-        if !workspace.name.scope.admits(&Scope::GlobalScope) {
-            return Err(WorkspaceError::NotFound(id));
+        if need == Grant::Write {
+            self.security.require(ctx, ActionType::WriteWorkspace(&workspace.security_attributes), || WorkspaceError::ReadOnly(id)).await?;
         }
         let roles = user_roles(self.entities.as_ref(), ctx.principal_id).await?;
         match self.security.may_see_channel(ctx, &roles, &workspace.classification).await {
@@ -319,12 +363,13 @@ impl WorkspaceManager {
 
     /// The workspace of `session`, if the caller of `ctx` may use it in
     /// `channel` (issue 251, decision 10): the channel is the session's and
-    /// uses the workspace, the caller is one of its current members, and
-    /// the workspace and the channel flow both ways - asked as the policy
-    /// asks what an actor puts into a channel (`Publish`). `None` otherwise,
-    /// also when the workspace is gone, without saying which of them
-    /// failed. The document is read in the runtime's name: a member need
-    /// not be its owner.
+    /// uses the workspace, the caller is one of its current members, its
+    /// access list lets `ctx` read it (`GetWorkspace`, issue 23) and the
+    /// workspace and the channel flow both ways - asked as the policy asks
+    /// what an actor puts into a channel (`Publish`). `None` otherwise, also
+    /// when the workspace is gone, without saying which of them failed.
+    /// Whether its files may be changed there is asked as they are
+    /// (`WorkspaceView::terminal`).
     ///
     /// # Errors
     /// Whatever reading the workspace reports, other than its absence.
@@ -340,6 +385,9 @@ impl WorkspaceManager {
         };
         if !workspace.name.scope.admits(&Scope::SessionScope { session_id: session.id }) {
             warn!(session = %session.id, workspace = %id, "A workspace of another session's scope is attached to a session");
+            return Ok(None);
+        }
+        if !self.security.check(ctx, ActionType::GetWorkspace(&workspace.security_attributes)).await {
             return Ok(None);
         }
         let (inside, outside) = (&workspace.classification, &channel.classification);

@@ -13,6 +13,7 @@ import {loadLastTemplate, saveLastTemplate} from '../session';
 import {storageLabel} from '../workspace';
 import {scopeLabel} from '../scope';
 import {ClassificationFields} from './ClassificationFields';
+import {ShareSelect, type Share} from './ShareSelect';
 
 /** What the workspace select offers besides the user's workspaces, which it names by their id. */
 const AS_TEMPLATE = 'template';
@@ -32,6 +33,8 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, o
   const [templateId, setTemplateId] = useState<string | null>(lastTemplateId);
   // `null` while the user has not changed the name, which then follows the template.
   const [name, setName] = useState<string | null>(null);
+  // How far one of the user's own, chosen, is shared with the session's members (issue 23).
+  const [share, setShare] = useState<Share>('write');
   // `null` while the user has not chosen, which then follows the template.
   const [workspaceChoice, setWorkspaceChoice] = useState<string | null>(null);
   const [storages, setStorages] = useState<StorageResponse[] | null>(null);
@@ -58,8 +61,8 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, o
   // The chosen template if it still exists, else the first (the server sorts them by name).
   const template = templates?.find(t => t.id === templateId) ?? templates?.[0];
   const sessionName = name ?? (template ? `New ${template.name}` : '');
-  // One made for another session is used there alone.
-  const offered = workspaces.filter(w => w.scope !== 'session');
+  // Only one's own is attached; one made for another session is used there alone.
+  const offered = workspaces.filter(w => w.can_change && w.scope !== 'session');
   const fallback = template?.workspace ? AS_TEMPLATE : NONE;
   const chosen = workspaceChoice === AS_TEMPLATE && !template?.workspace ? NONE : workspaceChoice ?? fallback;
   // Where a new one is made: as chosen, else the template's storage where it names one, else the first.
@@ -72,7 +75,7 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, o
       case AS_TEMPLATE: return undefined;
       case NONE: return template?.workspace ? {kind: 'none'} : undefined;
       case NEW: return {kind: 'new', storage: storageName, classification};
-      default: return {kind: 'existing', workspace_id: chosen};
+      default: return {kind: 'existing', workspace_id: chosen, ...(share ? {share} : {})};
     }
   };
 
@@ -182,9 +185,10 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, o
                     ? 'Named as the session, and gone with it.'
                     : chosen === NONE
                       ? 'One can be attached later.'
-                      : 'Its channels share it.'}
+                      : 'Its channels use it, for those its access list lets.'}
             </span>
           </label>
+          {offered.some(w => w.id === chosen) && <ShareSelect value={share} onChange={setShare} />}
 
           {chosen === NEW && (
             <>

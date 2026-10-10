@@ -309,3 +309,28 @@ Issues to open with it: a group of our own as a subject; a cache for `Membership
   - The terminal user no longer holds the role "user", which was configured nowhere.
   Stored data to delete: every entity store - users, personalities, sessions, channels, agents,
   skills, workspaces, artifacts. A configuration's `roles` need an `id` each.
+- **2026-10-10** — Step 2 done, decided with the maintainer before it was built:
+  - `WriteWorkspace` beside `GetWorkspace`: reading a workspace's files, the tools that only read
+    and listing are `Read`; uploading, deleting, the tools that write and every shell tool -
+    a command may change anything - are `Write`. `UpdateWorkspace` stays its owner's, sharing
+    included (`WorkspaceManager::set_access`, `PUT /workspaces/{id}/access`).
+  - A person reaches the files by the workspace, wherever they act (`WorkspaceManager::reached`,
+    `WorkspaceView::terminal(Grant)`): the list and their clearance; the scope no longer keeps a
+    workspace made for a session from being reached outside it. The four channel routes of the
+    workspace are gone; a channel's snapshot names the workspace by `workspace_id` where it uses
+    it and the viewer may read it. `GET /workspaces` lists what is shared with the user too.
+  - An agent still uses it through a channel - switch, flow rule -, and now as the list lets it
+    besides (`usable_in` asks `GetWorkspace`; changing asks `WriteWorkspace`, `ReadOnly`
+    otherwise); the prompt part says when it may only read.
+  - One made in a session's scope carries `MemberOf(session): Write` (`Workspace::new`). Attaching
+    one of a user's shares nothing unless `share` says `read` or `write`
+    (`SessionLoop::set_workspace`, `WorkspaceChoice::Existing`, the web UI's `ShareSelect`);
+    detaching leaves the list. Comparing the session's rules with the workspace's when attaching,
+    to spare entries for single sessions, is issue
+    [289](289-attach-compares-access.md).
+  - Deviation from what was agreed: tools are not offered by what the list grants -
+    `ToolProvider::tools` knows no turn, and even "no workspace in this channel" is answered at the
+    call today -, so a tool that changes fails at the call where the list grants reading. Offering
+    by the turn is a change of `ToolProvider` of its own.
+  - An artifact keeps an empty list until step 3 (`Artifact::validate`).
+  Stored data to delete: workspaces, whose attributes now carry the list.

@@ -182,11 +182,22 @@ choose, as a template's of the session's scope is made.
 Otherwise only the workspace's owner attaches it, to a session they may change
 (`SessionLoop::set_workspace`: `UpdateSession`, then `GetWorkspace` and `UpdateWorkspace`) - not one
 of another session's scope (`SessionError::WorkspaceOutOfScope`); whoever may change the session
-takes it away, which shares nothing. Announced as `WorkspaceChanged` of `SessionUpdateEvent`.
+takes it away. Announced as `WorkspaceChanged` of `SessionUpdateEvent`.
 
-In a session the workspace is used through a channel, by its current members - a person, or an
-agent acting there with its owner's rights, for whoever asked it - and nobody else, also not its
-owner from outside the channel. A channel uses it where
+**Attaching shares nothing by itself** (issue [23](../issues/23-acls-in-security-attributes.md)):
+who may use a workspace is its access list's to say (see
+[SECURITY.md](SECURITY.md#access-lists)). One made for a session lets the session's members read
+and write it (`MemberOf` the session, `Write`); one of its owner's grants nobody anything until they
+share it - when attaching it, chosen there (`share`, `read` or `write`: an entry `MemberOf` the
+session added, or one that grants less widened), or by its list afterwards
+(`WorkspaceManager::set_access`). Taking it away leaves the list as it is: it is the workspace's.
+
+A person reaches the workspace's files by the workspace, wherever they act - never through a
+channel: as its list lets them, and cleared for its classification (`WorkspaceView::terminal`,
+`GetWorkspace` to read, `WriteWorkspace` to change). An agent uses it through a channel, by its
+current members - acting there with its owner's rights, for whoever asked it -, as the list lets
+the agent - its owner, or the agent itself as a member - and only where the channel uses it. A
+channel uses it where
 
 *   its switch says so (`Channel::uses_workspace`, on unless its template, its creator
     (`ChannelSpec::uses_workspace`) or whoever may change the channel says otherwise:
@@ -198,10 +209,11 @@ owner from outside the channel. A channel uses it where
 
 So a session for a request can have a channel with the person who asked, classified below the
 workspace or with the switch off, and channels with helpers that work on its files. A view of a
-channel offers the workspace only where its viewer may use it there (`ChannelView::workspace`),
+channel offers the workspace to an agent only where it may use it there (`ChannelView::workspace`),
 and says nothing of it otherwise; using it asks again, of the session and the channel as they are
-then (`WorkspaceView::terminal`). Its owner works on it outside a session too, unless it lies in a
-session's scope.
+then, and whether the files may be changed (`ReadOnly` where the list grants reading). A channel's
+snapshot names the workspace by its id (`workspace_id`) where the channel uses it and the viewer may
+read it, for the person to reach it by the workspace.
 
 ### Running channels
 

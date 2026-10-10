@@ -8,8 +8,8 @@
 use crate::actor::ActorId;
 use crate::confidentiality::Classification;
 use crate::removal::Removal;
-use crate::scope::Scoped;
-use crate::security::{Secured, SecurityAttributes};
+use crate::scope::{Scope, Scoped};
+use crate::security::{Grant, Membership, Secured, SecurityAttributes, Subject};
 use crate::user::UserId;
 use crate::value::name::ScopedName;
 use crate::value::text::Description;
@@ -30,6 +30,9 @@ pub enum WorkspaceUpdateEvent {
     /// Reclassified as a whole: lowering releases every file in it, raising
     /// retracts nothing already read.
     ClassificationChanged(Classification),
+    /// Its access list changed (issue 23). Without the list: only its owner
+    /// sees it, while everybody who may read the workspace hears of this.
+    AccessChanged,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,9 +56,10 @@ pub struct Workspace {
     /// How everything in it is classified (issue 169): one container, whose
     /// files carry no label of their own.
     pub classification: Classification,
-    /// Owned by the user it was made for, with an empty access list: outside a
-    /// session only its owner works on it; in a session it is shared
-    /// through the channels that may use it (issue 251, decisions 10, 12).
+    /// Owned by the user it was made for (issue 251, decision 12), and
+    /// reached by whom its access list grants it (issue 23): one made for a
+    /// session is read and written by the session's members; one of its
+    /// owner's grants nobody anything until they share it.
     pub security_attributes: SecurityAttributes,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -68,16 +72,23 @@ pub struct Workspace {
 
 impl Workspace {
     /// A new workspace of `owner`, of `name` where it lies, in `storage`,
-    /// classified `classification`, without a description.
+    /// classified `classification`, without a description. One that lies
+    /// in a session's scope is the session's to work on: its members read
+    /// and write it (issue 23); any other grants nobody anything.
     pub fn new(name: ScopedName, storage: impl Into<String>, classification: Classification, owner: UserId) -> Self {
         let now = Utc::now();
+        let owned = SecurityAttributes::owned_by(ActorId::User(owner));
+        let security_attributes = match name.scope {
+            Scope::SessionScope { session_id } => owned.granting(Subject::MemberOf(Membership::Session(session_id)), Grant::Write),
+            _ => owned,
+        };
         Self {
             id: WorkspaceId::new(),
             name,
             storage: storage.into(),
             description: None,
             classification,
-            security_attributes: SecurityAttributes::owned_by(ActorId::User(owner)),
+            security_attributes,
             created_at: now,
             updated_at: now,
             deleted: None,
@@ -99,10 +110,9 @@ impl crate::removal::Stored for Workspace {
         self.deleted.as_ref()
     }
 
-    /// A workspace is a user's - the system's everybody could use - shared
-    /// through channels, not by an access list, and lies in a session's
-    /// scope, its owner's or the global one: not in a channel's, since a
-    /// session's channels share one.
+    /// A workspace is a user's - the system's everybody could use - and
+    /// lies in a session's scope, its owner's or the global one: not in a
+    /// channel's, since a session's channels share one.
     fn validate(&self) -> Result<(), String> {
         crate::scope::validate_users_own("workspace", &self.security_attributes, &self.name.scope)
     }
@@ -133,8 +143,9 @@ pub enum WorkspaceChoice {
     /// None, whatever the template names.
     None,
     /// One of its maker's own, attached as to a running session - theirs to
-    /// share and of no other session's scope.
-    Existing(WorkspaceId),
+    /// share and of no other session's scope -, shared with the session's
+    /// members as far as `share` says, if it says anything (issue 23).
+    Existing { id: WorkspaceId, share: Option<crate::security::Grant> },
     /// One made for the session alone, in its scope and named as it is, as
     /// a template's of the session's scope is made.
     New { storage: String, classification: Classification },
@@ -145,6 +156,7 @@ mod tests {
     use super::*;
     use crate::removal::Stored;
     use crate::scope::Scope;
+    use crate::security::AclEntry;
     use crate::session::{ChannelId, SessionId};
 
     fn named(scope: Scope) -> ScopedName {
@@ -166,12 +178,16 @@ mod tests {
     }
 
     #[test]
-    fn a_workspace_belongs_to_a_user_and_grants_nobody_anything_of_its_own() {
+    fn a_workspace_belongs_to_a_user_and_a_sessions_is_its_members_to_work_on() {
         let alice = UserId::new();
         let workspace = Workspace::new(named(Scope::GlobalScope), "main", Classification::CHANNEL_DEFAULT, alice);
         assert_eq!(workspace.owner(), Some(alice));
-        let shared = Workspace { security_attributes: workspace.security_attributes.clone().granting(crate::security::Subject::Actor(ActorId::User(UserId::new())), crate::security::Grant::Read), ..workspace.clone() };
-        assert!(shared.validate().is_err(), "not one with an access list");
+        assert!(workspace.security_attributes.acl.is_empty(), "one of its owner's grants nobody anything until shared");
+        let session_id = SessionId::new();
+        let sessions = Workspace::new(named(Scope::SessionScope { session_id }), "main", Classification::CHANNEL_DEFAULT, alice);
+        assert_eq!(sessions.security_attributes.acl, [AclEntry { subject: Subject::MemberOf(Membership::Session(session_id)), grant: Grant::Write }], "one made for a session, its members");
+        let shared = Workspace { security_attributes: workspace.security_attributes.clone().granting(Subject::Actor(ActorId::User(UserId::new())), Grant::Read), ..workspace.clone() };
+        assert!(shared.validate().is_ok(), "shared with someone");
         let systems = Workspace { security_attributes: SecurityAttributes::owned_by(ActorId::System), ..workspace };
         assert!(systems.validate().is_err(), "nor nobody's");
     }

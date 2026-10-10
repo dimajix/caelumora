@@ -226,6 +226,7 @@ impl ApiError {
                 WorkspaceError::StorageNotCleared(_) => return bad_request("storage_not_cleared"),
                 WorkspaceError::ClassificationRefused => return bad_request("invalid_classification"),
                 WorkspaceError::NotCleared => return Self::forbidden("not_cleared", detail),
+                WorkspaceError::ReadOnly(_) => return Self::forbidden("read_only", detail),
                 WorkspaceError::Invalid(e) => return Self::invalid_value(e),
                 WorkspaceError::Terminal(e) => return Self::of_terminal(e),
                 WorkspaceError::Store(StoreError::NotFound { .. }) => return Self::not_found("workspace_not_found", detail),

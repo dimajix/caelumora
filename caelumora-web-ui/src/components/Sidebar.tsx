@@ -632,8 +632,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <SessionWorkspaceDialog
           session={workspaceSession}
           workspaces={workspaces}
-          onSubmit={async (workspaceId) => {
-            const updated = await api.setSessionWorkspace(workspaceSession.id, workspaceId);
+          onSubmit={async (workspaceId, share) => {
+            const updated = await api.setSessionWorkspace(workspaceSession.id, workspaceId, share);
             setSessions(prev => upsert(prev, updated));
           }}
           onClose={() => setWorkspaceOf(null)}

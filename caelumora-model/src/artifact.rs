@@ -136,6 +136,10 @@ impl crate::removal::Stored for Artifact {
     /// numbered from 1 without gaps.
     fn validate(&self) -> Result<(), String> {
         crate::scope::validate_users_own("artifact", &self.security_attributes, &self.name.scope)?;
+        // Until artifacts are reached by their own list (issue 23, step 3).
+        if !self.security_attributes.acl.is_empty() {
+            return Err("an artifact grants nobody anything of its own: it is shared through the channels it is published in".to_string());
+        }
         if self.versions.is_empty() {
             return Err("an artifact has at least one version".to_string());
         }

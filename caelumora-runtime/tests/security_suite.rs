@@ -47,7 +47,7 @@ use caelumora_runtime::terminal::{ByteStream, Terminal, WorkspacePath};
 use caelumora_runtime::view::{ViewError, Viewer};
 use caelumora_runtime::workspace::WorkspaceError;
 use caelumora_runtime::artifact::ArtifactError;
-use caelumora_model::workspace::WorkspaceChoice;
+use caelumora_model::workspace::{WorkspaceChoice, WorkspaceId};
 
 /// The ownership policy, recording every question it is asked - who acted
 /// with whose rights and for whom, what, of whose entity, and what it
@@ -123,7 +123,7 @@ fn attributes_of<'a>(action: &ActionType<'a>) -> Option<&'a SecurityAttributes> 
         | GetUser(a) | CreateUser(a) | UpdateUser(a) | DeleteUser(a)
         | GetUserProfile(a) | CreateUserProfile(a) | UpdateUserProfile(a) | DeleteUserProfile(a)
         | CancelChannel(a) | WakeChannel(a) | RetryMessage(a) | AnswerQuestion(a)
-        | GetWorkspace(a) | CreateWorkspace(a) | UpdateWorkspace(a) | DeleteWorkspace(a)
+        | GetWorkspace(a) | WriteWorkspace(a) | CreateWorkspace(a) | UpdateWorkspace(a) | DeleteWorkspace(a)
         | GetSkill(a) | CreateSkill(a) | UpdateSkill(a) | DeleteSkill(a) | UseSkill(a)
         | GetArtifact(a) | CreateArtifact(a) | UpdateArtifact(a) | DeleteArtifact(a)
         | GetComponents(a) | CreateComponents(a) | UpdateComponents(a) | DeleteComponents(a)
@@ -2329,9 +2329,10 @@ async fn a_storage_holds_no_workspace_above_its_destination() {
     assert!(matches!(raised, Err(WorkspaceError::StorageNotCleared(_))), "{raised:?}");
 }
 
-/// Attaching a workspace shares it with the session's channels: its
-/// owner's act, into a session they may change (issue 251, decision 12);
-/// taking it away shares nothing and needs changing the session alone.
+/// Attaching a workspace is its owner's act, into a session they may change
+/// (issue 251, decision 12); it shares the workspace with the session's
+/// members only where asked to, by an entry of its access list (issue 23).
+/// Taking it away needs changing the session alone, and leaves the list.
 #[tokio::test]
 async fn only_its_owner_attaches_a_workspace_to_a_session_they_may_change() {
     let world = World::new().await;
@@ -2342,60 +2343,116 @@ async fn only_its_owner_attaches_a_workspace_to_a_session_they_may_change() {
     let his = workspaces.create(&bob, "his", Scope::UserScope { user_id: world.bob }, "main", None, internal).await.unwrap();
     let session = world.shared_session(&[], &[]).await;
 
-    let (refused, asked) = world.asked(session.set_workspace(&bob, Some(his.id))).await;
+    let (refused, asked) = world.asked(session.set_workspace(&bob, Some(his.id), None)).await;
     assert!(denied(&refused.unwrap_err()), "bob's own, into alice's session");
     assert_eq!(asked, checks(&["bob: UpdateSession(alice's) no"]), "refused before his workspace is asked about");
-    let (refused, asked) = world.asked(session.set_workspace(&alice, Some(his.id))).await;
+    let (refused, asked) = world.asked(session.set_workspace(&alice, Some(his.id), None)).await;
     assert!(not_found(&refused.unwrap_err()), "bob's, by alice");
     assert_eq!(asked, checks(&["alice: UpdateSession(alice's) yes", "alice: GetWorkspace(bob's) no"]));
 
-    let (attached, asked) = world.asked(session.set_workspace(&alice, Some(hers.id))).await;
+    let (attached, asked) = world.asked(session.set_workspace(&alice, Some(hers.id), None)).await;
     attached.expect("hers, into her session");
     assert_eq!(asked, checks(&["alice: UpdateSession(alice's) yes", "alice: GetWorkspace(alice's) yes", "alice: UpdateWorkspace(alice's) yes", "alice: GetSession(alice's) yes", "alice: UpdateSession(alice's) yes"]));
     assert_eq!(session.session().workspace, Some(hers.id));
+    let members = Subject::MemberOf(Membership::Session(session.id()));
+    assert!(world.store.get_workspace(&alice, hers.id).await.unwrap().security_attributes.acl.is_empty(), "attaching alone shares nothing");
 
-    assert!(denied(&session.set_workspace(&bob, None).await.unwrap_err()), "bob does not take it away");
-    session.set_workspace(&alice, None).await.expect("alice does");
+    session.set_workspace(&alice, Some(hers.id), Some(Grant::Read)).await.expect("shared with its members to read");
+    let acl = world.store.get_workspace(&alice, hers.id).await.unwrap().security_attributes.acl;
+    assert_eq!(acl, [caelumora_model::security::AclEntry { subject: members, grant: Grant::Read }]);
+    session.set_workspace(&alice, Some(hers.id), Some(Grant::Write)).await.expect("and widened to write");
+    let acl = world.store.get_workspace(&alice, hers.id).await.unwrap().security_attributes.acl;
+    assert_eq!(acl, [caelumora_model::security::AclEntry { subject: members, grant: Grant::Write }], "one entry, widened");
+
+    assert!(denied(&session.set_workspace(&bob, None, None).await.unwrap_err()), "bob does not take it away");
+    session.set_workspace(&alice, None, None).await.expect("alice does");
     assert_eq!(session.session().workspace, None);
+    assert_eq!(world.store.get_workspace(&alice, hers.id).await.unwrap().security_attributes.acl.len(), 1, "the list is the workspace's, and stays");
     world.manager.stop_session(&alice, session.id()).await.unwrap();
 }
 
 /// In a session, a workspace is used through the channels (issue 251,
-/// decisions 10, 11): by a current member - not its owner alone - where the
-/// channel uses it and it and the channel flow both ways; nobody else, and
-/// nothing says why.
+/// decisions 10, 11): by a current member - not its owner alone - whom its
+/// access list lets (issue 23), where the channel uses it and it and the
+/// channel flow both ways; nobody else, and nothing says why. What the list
+/// grants is reading, or changing the files too.
 #[tokio::test]
-async fn a_workspace_is_used_in_a_channel_by_its_members_where_both_flow() {
+async fn a_workspace_is_used_in_a_channel_by_its_members_as_its_list_lets_them_where_both_flow() {
     let world = World::new().await;
     let workspaces = world.runtime.workspace_manager();
     let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
     let docs = workspaces.create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
     let session = world.shared_session(&[], &[]).await;
-    session.set_workspace(&alice, Some(docs.id)).await.unwrap();
+    session.set_workspace(&alice, Some(docs.id), None).await.unwrap();
     let (session_id, main) = (session.id(), session.channels()[0].id());
     let in_main = |ctx: &SecurityContext| {
         let views = world.manager.views(Viewer::new(ctx.clone()));
         async move { views.session(session_id).await.unwrap().channel(main).await.unwrap() }
     };
 
+    assert!(in_main(&bob).await.workspace().await.unwrap().is_none(), "not shared: not his to use, though attached");
+    workspaces.share(&alice, docs.id, Subject::MemberOf(Membership::Session(session_id)), Grant::Read).await.unwrap();
     let (usable, asked) = world.asked(async { in_main(&bob).await.workspace().await.unwrap() }).await;
     let bobs = usable.expect("bob, a member of the channel, uses alice's workspace there");
-    assert!(asked.ends_with(&checks(&["bob: Publish yes", "bob: Publish yes"])), "both ways, not GetWorkspace: {asked:?}");
-    let terminal = bobs.terminal().await.expect("and reaches its files");
+    assert!(asked.ends_with(&checks(&["bob: GetWorkspace(alice's) yes", "bob: Publish yes", "bob: Publish yes"])), "its list, then both ways: {asked:?}");
+    assert!(matches!(bobs.terminal(Grant::Write).await, Err(WorkspaceError::ReadOnly(_))), "reading, not changing, where it grants reading");
+    workspaces.share(&alice, docs.id, Subject::MemberOf(Membership::Session(session_id)), Grant::Write).await.unwrap();
+    let terminal = bobs.terminal(Grant::Write).await.expect("and reaches its files");
     terminal.write(&WorkspacePath::parse("notes/a.md").unwrap(), file("from bob"), 100).await.unwrap();
     let owned = world.manager.views(Viewer::new(alice.clone())).workspace(docs.id).await.unwrap();
-    assert_eq!(read(owned.terminal().await.unwrap().as_ref(), "notes/a.md").await, "from bob", "the same files as its owner's");
+    assert_eq!(read(owned.terminal(Grant::Read).await.unwrap().as_ref(), "notes/a.md").await, "from bob", "the same files as its owner's");
 
     let channel = Arc::clone(&session.channels()[0]);
     assert!(denied(&channel.update_uses_workspace(&bob, false).await.unwrap_err()), "a member does not switch it off");
     channel.update_uses_workspace(&alice, false).await.expect("the channel's owner does");
     assert!(in_main(&bob).await.workspace().await.unwrap().is_none(), "not where the channel does not use it");
-    assert!(matches!(bobs.terminal().await, Err(WorkspaceError::NotFound(_))), "asked again when used");
+    assert!(matches!(bobs.terminal(Grant::Read).await, Err(WorkspaceError::NotFound(_))), "asked again when used");
     channel.update_uses_workspace(&alice, true).await.unwrap();
 
     workspaces.reclassify(&alice, docs.id, Classification::PUBLIC).await.unwrap();
     assert!(in_main(&bob).await.workspace().await.unwrap().is_none(), "not where what is seen may not flow into it");
     world.manager.stop_session(&alice, session.id()).await.unwrap();
+}
+
+/// Issue 23: a workspace is reached by its access list, wherever one acts -
+/// not through a channel: who it is shared with reads it, or changes its
+/// files as far as the list grants; only its owner shares it, never with an
+/// agent; who it is not shared with does not learn it exists.
+#[tokio::test]
+async fn a_workspace_is_reached_by_its_list_wherever_one_acts() {
+    let world = World::new().await;
+    let workspaces = world.runtime.workspace_manager();
+    let (alice, bob, carol) = (World::as_user(world.alice), World::as_user(world.bob), World::as_user(world.carol));
+    let docs = workspaces.create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
+    let views = |ctx: &SecurityContext| world.manager.views(Viewer::new(ctx.clone()));
+    assert!(matches!(views(&bob).workspace(docs.id).await, Err(ViewError::WorkspaceNotFound(_))), "not shared: not there for him");
+
+    let bobs = SecurityAttributes::owned_by(ActorId::User(world.alice)).granting(Subject::Actor(ActorId::User(world.bob)), Grant::Read).acl;
+    let (refused, asked) = world.asked(workspaces.set_access(&bob, docs.id, bobs.clone())).await;
+    assert!(matches!(refused, Err(WorkspaceError::NotFound(_))), "nobody shares what they cannot read: {refused:?}");
+    assert_eq!(asked, checks(&["bob: GetWorkspace(alice's) no"]));
+    let (shared, asked) = world.asked(workspaces.set_access(&alice, docs.id, bobs.clone())).await;
+    shared.expect("its owner shares it");
+    assert_eq!(asked, checks(&["alice: GetWorkspace(alice's) yes", "alice: GetWorkspace(alice's) yes", "alice: UpdateWorkspace(alice's) yes"]), "read, then changed as stored");
+
+    let elsewhere = SecurityContext::new(ActorId::User(world.bob), SessionId::new(), ChannelId::new());
+    let his = views(&elsewhere).workspace(docs.id).await.expect("he reads it, wherever he acts");
+    his.terminal(Grant::Read).await.expect("its files");
+    assert!(matches!(his.terminal(Grant::Write).await, Err(WorkspaceError::ReadOnly(_))), "not to change them");
+    let seen = his.snapshot().await;
+    assert!(!seen.can_write && !seen.can_change && seen.access.is_empty(), "nor whom else it is shared with");
+    let listed: Vec<WorkspaceId> = views(&bob).workspaces().await.unwrap().iter().map(|w| w.id()).collect();
+    assert_eq!(listed, [docs.id], "listed among his");
+    let owners = views(&alice).workspace(docs.id).await.unwrap().snapshot().await;
+    assert_eq!(owners.access.iter().map(|e| e.name.as_deref()).collect::<Vec<_>>(), [Some("bob")], "its owner sees whom, by name");
+    assert!(matches!(workspaces.set_access(&bob, docs.id, Vec::new()).await, Err(WorkspaceError::Store(StoreError::PermissionDenied))), "a reader does not change the list");
+    assert!(matches!(views(&carol).workspace(docs.id).await, Err(ViewError::WorkspaceNotFound(_))), "nor is it there for carol");
+
+    let writers = SecurityAttributes::owned_by(ActorId::User(world.alice)).granting(Subject::Actor(ActorId::User(world.bob)), Grant::Write).acl;
+    workspaces.set_access(&alice, docs.id, writers).await.unwrap();
+    views(&bob).workspace(docs.id).await.unwrap().terminal(Grant::Write).await.expect("where it grants writing, he writes");
+    let agent = SecurityAttributes::owned_by(ActorId::User(world.alice)).granting(Subject::Actor(ActorId::Agent(AgentId::new())), Grant::Read).acl;
+    assert!(matches!(workspaces.set_access(&alice, docs.id, agent).await, Err(WorkspaceError::Store(StoreError::Validation(_)))), "never with an agent (issue 255)");
 }
 
 /// Who takes part in the session but not in the channel does not use the
@@ -2409,7 +2466,7 @@ async fn a_workspace_is_not_used_in_a_channel_by_who_is_not_in_it() {
     let alice = World::as_user(world.alice);
     let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
     let session = world.shared_session(&[], &[waiting]).await;
-    session.set_workspace(&alice, Some(docs.id)).await.unwrap();
+    session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
     let as_agent = alice.next(ActorId::Agent(waiting), ActorId::User(world.alice));
     let main = world.manager.views(Viewer::new(as_agent)).session(session.id()).await.unwrap().channel(session.channels()[0].id()).await.unwrap();
     assert!(main.workspace().await.unwrap().is_none());
@@ -2436,14 +2493,14 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
     let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
     let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
     let session = world.shared_session(&[], &[]).await;
-    session.set_workspace(&alice, Some(docs.id)).await.unwrap();
+    session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
     let (session_id, main) = (session.id(), session.channels()[0].id());
     let in_main = |ctx: &SecurityContext| {
         let views = world.manager.views(Viewer::new(ctx.clone()));
         async move { views.session(session_id).await.unwrap().channel(main).await.unwrap() }
     };
     let workspace = in_main(&alice).await.workspace().await.unwrap().expect("hers to use");
-    let terminal = workspace.terminal().await.unwrap();
+    let terminal = workspace.terminal(Grant::Write).await.unwrap();
     let at = WorkspacePath::parse("out/report.csv").unwrap();
     terminal.write(&at, file("a,b"), 100).await.unwrap();
 
@@ -2521,7 +2578,7 @@ async fn asked_for_a_call(kind: &str, function: &str, arguments: serde_json::Val
     let alice = World::as_user(world.alice);
     let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "shell", None, Classification::general(Confidentiality::Internal)).await.unwrap();
     let session = world.shared_session(&[helper], &[]).await;
-    session.set_workspace(&alice, Some(docs.id)).await.unwrap();
+    session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
     let main = Arc::clone(&session.channels()[0]);
 
     let place = world.files.path().join("shell").join(docs.id.to_string());
@@ -2545,16 +2602,18 @@ async fn asked_for_a_call(kind: &str, function: &str, arguments: serde_json::Val
 /// one context (issue 255) - the call and the workspace with alice's
 /// rights, its owner's, asked by bob - and the workspace through the
 /// channel as the agent reads every other place, with its owner's
-/// clearance (issue 142): no `GetWorkspace`, its terminal reached through
-/// the session, its flow both ways, before anything is sent to the
-/// storage.
+/// clearance (issue 142): its terminal reached through the session, its
+/// access list asked (`GetWorkspace`, issue 23), its flow both ways, before
+/// anything is sent to the storage.
 fn asked_as_a_call_on_the_workspace(asked: &[String]) {
     let calling: Vec<&String> = asked.iter().filter(|line| line.contains("CallTool")).collect();
     assert!(!calling.is_empty() && calling.iter().all(|line| *line == "alice as helper, asked by bob: CallTool yes"), "the call as its owner, asked by bob: {asked:?}");
     let agents: Vec<&String> = asked.iter().filter(|line| line.contains("as helper")).collect();
     assert!(agents.iter().all(|line| line.starts_with("alice as helper, asked by bob:") && line.ends_with(" yes")), "one context for all the turn does: {asked:?}");
-    let reaching: Vec<&String> = agents.iter().copied().filter(|line| line.contains("GetSession") || line.contains("GetWorkspace")).collect();
-    assert_eq!(reaching, ["alice as helper, asked by bob: GetSession(alice's) yes"], "its terminal through the session, the channel's workspace without GetWorkspace");
+    assert!(agents.contains(&&"alice as helper, asked by bob: GetSession(alice's) yes".to_string()), "its terminal through the session: {asked:?}");
+    let listed: Vec<&String> = agents.iter().copied().filter(|line| line.contains("Workspace")).collect();
+    assert!(listed.iter().any(|line| line.contains("GetWorkspace")), "its list asked: {asked:?}");
+    assert!(listed.iter().all(|line| line.ends_with("Workspace(alice's) yes")), "and only of the workspace attached: {asked:?}");
     assert!(agents.iter().filter(|line| line.contains("Publish")).count() >= 4, "the flow both ways, for the workspace and its terminal: {asked:?}");
 }
 
@@ -2563,6 +2622,7 @@ fn asked_as_a_call_on_the_workspace(asked: &[String]) {
 async fn an_agents_command_is_called_for_its_owner_and_reaches_the_workspace_through_its_channel() {
     let asked = asked_for_a_call_on_the_workspace("run_command", serde_json::json!({ "command": "echo ran > ran.txt" }), &[], "ran.txt", |world| world.alice).await;
     asked_as_a_call_on_the_workspace(&asked);
+    assert!(asked.contains(&"alice as helper, asked by bob: WriteWorkspace(alice's) yes".to_string()), "a command may change anything: {asked:?}");
 }
 
 /// An agent's change of a file (issue 251, step 9) asks what a command asks.
@@ -2570,6 +2630,7 @@ async fn an_agents_command_is_called_for_its_owner_and_reaches_the_workspace_thr
 async fn an_agents_file_tool_asks_what_a_command_asks() {
     let asked = asked_for_a_call_on_the_workspace("write_file", serde_json::json!({ "path": "notes/a.md", "content": "written" }), &[], "notes/a.md", |world| world.alice).await;
     asked_as_a_call_on_the_workspace(&asked);
+    assert!(asked.contains(&"alice as helper, asked by bob: WriteWorkspace(alice's) yes".to_string()), "a change of its files: {asked:?}");
 }
 
 /// An agent's move of a file (issue 267) asks what any change of a file
@@ -2629,9 +2690,10 @@ async fn a_workspace_of_a_session_s_scope_is_made_with_it_and_goes_with_it() {
     let made = world.store.get_workspace(&alice, mine).await.expect("hers");
     assert_eq!(made.name.scope, Scope::SessionScope { session_id: first.id() });
 
+    assert_eq!(made.security_attributes.acl, [caelumora_model::security::AclEntry { subject: Subject::MemberOf(Membership::Session(first.id())), grant: Grant::Write }], "its members' to work on (issue 23)");
     let owned = world.manager.views(Viewer::new(alice.clone())).workspace(mine).await.unwrap();
-    assert!(matches!(owned.terminal().await, Err(WorkspaceError::NotFound(_))), "not used outside its session, not even by its owner");
-    let refused = second.set_workspace(&alice, Some(mine)).await.unwrap_err();
+    assert!(owned.terminal(Grant::Write).await.is_ok(), "used directly, wherever who may use it acts (issue 23)");
+    let refused = second.set_workspace(&alice, Some(mine), None).await.unwrap_err();
     assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::WorkspaceOutOfScope(_))), "nor attached to another session: {refused}");
 
     world.manager.delete_session(&alice, first.id()).await.unwrap();
@@ -2690,13 +2752,13 @@ async fn a_workspace_chosen_as_a_session_is_made_takes_the_place_of_its_template
     let without = world.manager.create_from_template(&alice, template, None, Some(WorkspaceChoice::None)).await.expect("without one");
     assert_eq!(without.session().workspace, None);
 
-    let (attached, asked) = world.asked(world.manager.create_from_template(&alice, template, None, Some(WorkspaceChoice::Existing(hers.id)))).await;
+    let (attached, asked) = world.asked(world.manager.create_from_template(&alice, template, None, Some(WorkspaceChoice::Existing { id: hers.id, share: None }))).await;
     let attached = attached.expect("hers");
     assert_eq!(attached.session().workspace, Some(hers.id));
     assert_eq!(asked[..3], checks(&["alice: GetSessionTemplate(system's) yes", "alice: GetWorkspace(alice's) yes", "alice: UpdateWorkspace(alice's) yes"]), "{asked:?}");
     assert!(!asked.iter().any(|line| line.contains("UpdateSession")), "she is making the session: {asked:?}");
 
-    let (refused, asked) = world.asked(world.manager.create_from_template(&alice, template, None, Some(WorkspaceChoice::Existing(his.id)))).await;
+    let (refused, asked) = world.asked(world.manager.create_from_template(&alice, template, None, Some(WorkspaceChoice::Existing { id: his.id, share: None }))).await;
     assert!(not_found(&refused.unwrap_err()), "not bob's");
     assert_eq!(asked, checks(&["alice: GetSessionTemplate(system's) yes", "alice: GetWorkspace(bob's) no"]), "refused before anything is made");
 
@@ -2704,7 +2766,7 @@ async fn a_workspace_chosen_as_a_session_is_made_takes_the_place_of_its_template
     let own = world.store.get_workspace(&alice, made.session().workspace.expect("attached")).await.unwrap();
     assert_eq!((own.name.name.as_str(), &own.name.scope, own.storage.as_str()), ("Report", &Scope::SessionScope { session_id: made.id() }, "main"));
     assert_eq!(own.owner(), Some(world.alice));
-    let refused = world.manager.create_from_template(&alice, template, None, Some(WorkspaceChoice::Existing(own.id))).await.unwrap_err();
+    let refused = world.manager.create_from_template(&alice, template, None, Some(WorkspaceChoice::Existing { id: own.id, share: None })).await.unwrap_err();
     assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::WorkspaceOutOfScope(_))), "not of another session's scope: {refused}");
 
     let sessions = views().sessions().await.unwrap().len();

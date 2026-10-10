@@ -1,7 +1,7 @@
-// The session's workspace as the user may use it in this channel (issues
-// 251, 253): its name, classification and what it holds, and its files -
-// or that there is none to use here, without why: the channel may not use
-// it, the classifications may not let it, or none is attached.
+// The session's workspace as the channel shows it (issues 251, 253): its
+// name, classification and what it holds, and its files as its access list
+// lets the user (issue 23) - or that there is none here, without why: the
+// channel does not use it, the user may not read it, or none is attached.
 
 import React, {useEffect, useMemo, useState} from 'react';
 import {HardDrive, Shield} from 'lucide-react';
@@ -12,31 +12,35 @@ import {classificationDescription, classificationLabel} from '../confidentiality
 import {FileBrowser} from './FileBrowser';
 
 interface ChannelWorkspacePanelProps {
-  sessionId: string;
-  channelId: string;
+  /** The session's workspace as the channel names it, if the user may read it. */
+  workspaceId?: string;
   /** Changes whenever the workspace or its files may have changed - a tool call ended, the channel's switch. */
   version: number;
 }
 
-export const ChannelWorkspacePanel: React.FC<ChannelWorkspacePanelProps> = ({sessionId, channelId, version}) => {
-  // `undefined` while it is fetched, `null` where there is none to use.
-  const [workspace, setWorkspace] = useState<WorkspaceResponse | null | undefined>(undefined);
-  const files = useMemo(() => api.channelFiles(sessionId, channelId), [sessionId, channelId]);
+export const ChannelWorkspacePanel: React.FC<ChannelWorkspacePanelProps> = ({workspaceId, version}) => {
+  // What was fetched, and for which workspace: `null` where it could not be.
+  const [fetched, setFetched] = useState<{id: string; workspace: WorkspaceResponse | null} | null>(null);
+  const files = useMemo(() => workspaceId ? api.workspaceFiles(workspaceId) : null, [workspaceId]);
 
   useEffect(() => {
+    if (!workspaceId) return;
     let current = true;
-    api.getChannelWorkspace(sessionId, channelId)
-      .then(found => { if (current) setWorkspace(found); })
+    api.getWorkspace(workspaceId)
+      .then(found => { if (current) setFetched({id: workspaceId, workspace: found}); })
       .catch(error => {
         if (!current) return;
         reportError('Failed to fetch the workspace of the channel', error);
-        setWorkspace(null);
+        setFetched({id: workspaceId, workspace: null});
       });
     return () => { current = false; };
-  }, [sessionId, channelId, version]);
+  }, [workspaceId, version]);
+
+  // `undefined` while it is fetched, `null` where there is none to use.
+  const workspace = !workspaceId ? null : fetched?.id === workspaceId ? fetched.workspace : undefined;
 
   if (workspace === undefined) return null;
-  if (workspace === null) {
+  if (workspace === null || !files) {
     return <div className="text-xs italic text-gray-500">No workspace is used in this channel.</div>;
   }
   return (
@@ -51,7 +55,8 @@ export const ChannelWorkspacePanel: React.FC<ChannelWorkspacePanelProps> = ({ses
           <Shield size={12} /> {classificationLabel(workspace.classification)}
         </div>
       </div>
-      <FileBrowser files={files} version={version} />
+      {!workspace.can_write && <div className="text-xs italic text-gray-500">You may read its files, not change them.</div>}
+      <FileBrowser files={files} version={version} canWrite={workspace.can_write} />
     </div>
   );
 };

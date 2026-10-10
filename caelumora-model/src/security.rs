@@ -95,11 +95,15 @@ pub enum ActionType<'a> {
     CreateUserProfile(&'a SecurityAttributes),
     UpdateUserProfile(&'a SecurityAttributes),
     DeleteUserProfile(&'a SecurityAttributes),
-    /// Reading a workspace (issue 253), carrying its attributes - and
-    /// working on its files outside a session, and attaching it to one. In
-    /// a session it is used through the channels, which decide who may
-    /// (issue 251, decision 10).
+    /// Reading a workspace (issue 253), carrying its attributes: the
+    /// document, and its files - listing, downloading, the tools that only
+    /// read (issue 23: what its access list grants `Read`). An agent using
+    /// it through a channel is bounded by the channel besides.
     GetWorkspace(&'a SecurityAttributes),
+    /// Changing the files of a workspace (issue 23), carrying its
+    /// attributes: uploading, deleting, the tools that write, a command in
+    /// its shell - what its access list grants `Write`.
+    WriteWorkspace(&'a SecurityAttributes),
     ListWorkspaces,
     CreateWorkspace(&'a SecurityAttributes),
     /// Changing a workspace - its name, description, classification - with
@@ -274,6 +278,7 @@ impl ActionType<'_> {
             ActionType::UpdateUserProfile(_) => "UpdateUserProfile".into(),
             ActionType::DeleteUserProfile(_) => "DeleteUserProfile".into(),
             ActionType::GetWorkspace(_) => "GetWorkspace".into(),
+            ActionType::WriteWorkspace(_) => "WriteWorkspace".into(),
             ActionType::ListWorkspaces => "ListWorkspaces".into(),
             ActionType::CreateWorkspace(_) => "CreateWorkspace".into(),
             ActionType::UpdateWorkspace(_) => "UpdateWorkspace".into(),
@@ -574,9 +579,13 @@ pub trait AccessQuestions {
     async fn may_change_session(&self, context: &SecurityContext, session: &SecurityAttributes) -> bool;
 
     /// Whether `context` may change a workspace with these attributes - its
-    /// name, description, classification - and attach it to a session
-    /// (`UpdateWorkspace`, issue 253).
+    /// name, description, classification, access list - and attach it to a
+    /// session (`UpdateWorkspace`, issue 253).
     async fn may_change_workspace(&self, context: &SecurityContext, workspace: &SecurityAttributes) -> bool;
+
+    /// Whether `context` may change the files of a workspace with these
+    /// attributes (`WriteWorkspace`, issue 23).
+    async fn may_write_workspace(&self, context: &SecurityContext, workspace: &SecurityAttributes) -> bool;
 
     /// Whether `context` may change an artifact with these attributes -
     /// keep it in another scope, describe it, delete it (`UpdateArtifact`,
@@ -693,6 +702,10 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
 
     async fn may_change_workspace(&self, context: &SecurityContext, workspace: &SecurityAttributes) -> bool {
         self.check(context, ActionType::UpdateWorkspace(workspace)).await
+    }
+
+    async fn may_write_workspace(&self, context: &SecurityContext, workspace: &SecurityAttributes) -> bool {
+        self.check(context, ActionType::WriteWorkspace(workspace)).await
     }
 
     async fn may_change_artifact(&self, context: &SecurityContext, artifact: &SecurityAttributes) -> bool {
@@ -997,6 +1010,9 @@ impl SecurityManager for OwnershipSecurityManager {
             // Using a skill is granted as reading it is: what the owner may
             // read the agent may follow (issue 22).
             ActionType::UseSkill(a) => self.granted(a, Grant::Read, context, true).await,
+            // Changing a workspace's files: what its list grants writing
+            // (issue 23) - to the principal, or an agent taking part itself.
+            ActionType::WriteWorkspace(a) => self.granted(a, Grant::Write, context, true).await,
             ActionType::CancelChannel(a)
             | ActionType::WakeChannel(a)
             | ActionType::RetryMessage(a)
@@ -1475,6 +1491,16 @@ mod tests {
         assert!(!policy.granted(&readable, Grant::Write, &context(bob), false).await, "read, not write");
         let writable = SecurityAttributes::owned_by(alice).granting(Subject::Actor(bob), Grant::Write);
         assert!(policy.granted(&writable, Grant::Read, &context(bob), false).await, "who may write may read");
+    }
+
+    #[tokio::test]
+    async fn a_workspaces_files_are_read_and_changed_as_its_list_grants() {
+        let (alice, bob, carol) = (user(), user(), user());
+        let theirs = SecurityAttributes::owned_by(alice).granting(Subject::Actor(bob), Grant::Read).granting(Subject::Actor(carol), Grant::Write);
+        assert!(allows(alice, ActionType::WriteWorkspace(&theirs)).await, "its owner");
+        assert!(allows(bob, ActionType::GetWorkspace(&theirs)).await && !allows(bob, ActionType::WriteWorkspace(&theirs)).await, "a reader reads");
+        assert!(allows(carol, ActionType::GetWorkspace(&theirs)).await && allows(carol, ActionType::WriteWorkspace(&theirs)).await, "a writer both");
+        assert!(!allows(carol, ActionType::UpdateWorkspace(&theirs)).await, "changing the workspace itself stays the owner's");
     }
 
     #[test]

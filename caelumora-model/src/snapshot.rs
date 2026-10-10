@@ -122,6 +122,10 @@ pub struct ChannelSnapshot {
     /// Whether its members work on the workspace of its session here (issue
     /// 251), where the classifications let them.
     pub uses_workspace: bool,
+    /// The session's workspace, if the channel uses it and the viewer may
+    /// read it - reached by its own id, never through the channel (issue
+    /// 23).
+    pub workspace_id: Option<crate::workspace::WorkspaceId>,
     /// Whether the viewer may rename the channel and add or remove its
     /// participants (`UpdateChannel`, issue 46).
     pub can_change: bool,
@@ -282,9 +286,25 @@ pub struct WorkspaceSnapshot {
     pub classification: Classification,
     /// Whether its storage gives it a shell (issue 251).
     pub has_shell: bool,
-    /// Whether the viewer may change it - rename, describe, reclassify -
-    /// and attach it to a session (`UpdateWorkspace`).
+    /// Whether the viewer may change it - rename, describe, reclassify,
+    /// share - and attach it to a session (`UpdateWorkspace`).
     pub can_change: bool,
+    /// Whether the viewer may change its files (`WriteWorkspace`, issue
+    /// 23); who may not, reads them.
+    pub can_write: bool,
+    /// Its access list (issue 23), for whoever may change it - empty for
+    /// everybody else, who need not learn whom else it is shared with.
+    pub access: Vec<AccessSnapshot>,
+}
+
+/// An entry of an access list as its owner sees it (issue 23): whom it
+/// grants what, and how whom is called - a user's, a session's, a channel's
+/// or a role's name - where that is known.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AccessSnapshot {
+    pub subject: crate::security::Subject,
+    pub grant: crate::security::Grant,
+    pub name: Option<String>,
 }
 
 /// An artifact as the viewer sees it (issue 271): its owner, among their

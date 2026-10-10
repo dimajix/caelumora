@@ -1,8 +1,8 @@
-// The files of a workspace (issue 253), reached one way or the other -
-// directly by its owner, or through a channel (`WorkspaceFiles`): one
-// directory at a time with a path back to the top, downloads as plain
-// links, uploads into the directory shown, deleting with a second click.
-// What may be done is the server's to decide; a refusal is reported.
+// The files of a workspace (issue 253), as its access list lets the user
+// (issue 23): one directory at a time with a path back to the top,
+// downloads as plain links, and - for who may change them - uploads into
+// the directory shown and deleting with a second click. What may be done
+// is the server's to decide; a refusal is reported.
 
 import React, {useEffect, useRef, useState} from 'react';
 import {ChevronRight, File, Folder, RefreshCw, Trash2, Upload} from 'lucide-react';
@@ -21,9 +21,11 @@ interface FileBrowserProps {
   files: WorkspaceFiles;
   /** Changes whenever the files may have changed elsewhere - after a tool call, say. */
   version?: number;
+  /** Whether the user may change the files: uploading and deleting are offered then alone. */
+  canWrite: boolean;
 }
 
-export const FileBrowser: React.FC<FileBrowserProps> = ({files, version = 0}) => {
+export const FileBrowser: React.FC<FileBrowserProps> = ({files, version = 0, canWrite}) => {
   const [dir, setDir] = useState('');
   const [entries, setEntries] = useState<FileEntry[] | null>(null);
   const [reload, setReload] = useState(0);
@@ -92,16 +94,20 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({files, version = 0}) =>
         >
           <RefreshCw size={12} />
         </button>
-        <button
-          onClick={() => input.current?.click()}
-          disabled={isUploading}
-          className="flex items-center gap-1 px-2 py-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50"
-          title={dir === '' ? 'Upload files into the workspace' : `Upload files into ${dir}`}
-        >
-          <Upload size={12} />
-          {isUploading ? 'Uploading…' : 'Upload'}
-        </button>
-        <input ref={input} type="file" multiple className="hidden" onChange={(e) => void upload(e.target.files)} />
+        {canWrite && (
+          <>
+            <button
+              onClick={() => input.current?.click()}
+              disabled={isUploading}
+              className="flex items-center gap-1 px-2 py-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50"
+              title={dir === '' ? 'Upload files into the workspace' : `Upload files into ${dir}`}
+            >
+              <Upload size={12} />
+              {isUploading ? 'Uploading…' : 'Upload'}
+            </button>
+            <input ref={input} type="file" multiple className="hidden" onChange={(e) => void upload(e.target.files)} />
+          </>
+        )}
       </div>
 
       {entries === null ? null : sorted.length === 0 ? (
@@ -126,13 +132,15 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({files, version = 0}) =>
                 )}
                 {!entry.is_dir && <span className="shrink-0 text-xs text-gray-500">{formatSize(entry.size)}</span>}
                 {modified && <span className="shrink-0 text-xs text-gray-500 hidden lg:inline" title={modified.full}>{modified.short}</span>}
-                <ActionMenu
-                  label={`Options of ${entry.name}`}
-                  className="p-1 opacity-0 group-hover/file:opacity-100 focus:opacity-100 transition-opacity"
-                  actions={[
-                    {label: 'Delete', icon: Trash2, danger: true, confirm: entry.is_dir ? 'Delete directory?' : 'Delete file?', onSelect: () => void remove(path)},
-                  ]}
-                />
+                {canWrite && (
+                  <ActionMenu
+                    label={`Options of ${entry.name}`}
+                    className="p-1 opacity-0 group-hover/file:opacity-100 focus:opacity-100 transition-opacity"
+                    actions={[
+                      {label: 'Delete', icon: Trash2, danger: true, confirm: entry.is_dir ? 'Delete directory?' : 'Delete file?', onSelect: () => void remove(path)},
+                    ]}
+                  />
+                )}
               </li>
             );
           })}

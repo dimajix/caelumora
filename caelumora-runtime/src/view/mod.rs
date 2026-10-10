@@ -376,26 +376,34 @@ impl Views {
         Ok(deleted)
     }
 
-    /// The viewer's own workspaces (issue 253), in the order the store lists
-    /// them: a workspace grants nobody anything of its own, so these are the ones they
-    /// own (issue 251, decision 12).
+    /// The workspaces the viewer may read (issue 23) - their own and those
+    /// shared with them, wherever they lie - and is cleared for, in the
+    /// order the store lists them.
     ///
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn workspaces(&self) -> ViewResult<Vec<WorkspaceView>> {
         let workspaces = self.entities.list_workspaces(self.viewer.context()).await
             .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context("listing the workspaces")))?;
-        Ok(workspaces.into_iter().map(|workspace| WorkspaceView::owned(self.clone(), workspace)).collect())
+        let mut readable = Vec::with_capacity(workspaces.len());
+        for workspace in workspaces {
+            if self.cleared_for(&workspace.classification).await {
+                readable.push(WorkspaceView::direct(self.clone(), workspace));
+            }
+        }
+        Ok(readable)
     }
 
-    /// Workspace `id`, if the viewer may read it (`GetWorkspace`): its
-    /// owner.
+    /// Workspace `id`, if the viewer may read it (`GetWorkspace`, issue 23)
+    /// and is cleared for it.
     ///
     /// # Errors
-    /// `WorkspaceNotFound` if there is none they may read.
+    /// `WorkspaceNotFound` if there is none they may read - one they are
+    /// not cleared for is the same.
     pub async fn workspace(&self, id: WorkspaceId) -> ViewResult<WorkspaceView> {
         match self.entities.get_workspace(self.viewer.context(), id).await.optional() {
-            Ok(Some(workspace)) => Ok(WorkspaceView::owned(self.clone(), workspace)),
+            Ok(Some(workspace)) if self.cleared_for(&workspace.classification).await => Ok(WorkspaceView::direct(self.clone(), workspace)),
+            Ok(Some(_)) => Err(ViewError::WorkspaceNotFound(id)),
             Ok(None) => Err(ViewError::WorkspaceNotFound(id)),
             Err(e) => Err(ViewError::Failed(anyhow::Error::new(e).context("reading a workspace"))),
         }

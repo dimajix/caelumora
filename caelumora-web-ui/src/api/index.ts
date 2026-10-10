@@ -1,5 +1,7 @@
 import type {
+  AccessEntry,
   AddParticipantRequest,
+  Grant,
   CreateSkillRequest,
   SkillResponse,
   Description,
@@ -46,9 +48,9 @@ function filePath(path: string): string {
 }
 
 /**
- * The files of a workspace, reached one way (issue 253): directly by its
- * owner, or through a channel of the session it is attached to. Every path
- * is one inside the workspace, `/` between its parts.
+ * The files of a workspace (issue 253), reached by the workspace itself, as
+ * its access list lets the user (issue 23). Every path is one inside the
+ * workspace, `/` between its parts.
  */
 export interface WorkspaceFiles {
   /** The entries of the directory `path`; `''` is the workspace itself. */
@@ -728,21 +730,20 @@ export const api = {
     await ensureOk(res, 'Failed to delete the skill for good');
   },
 
-  /** The files of the user's own workspace, outside a session. */
-  ownedFiles(workspaceId: string): WorkspaceFiles {
+  /** The files of a workspace the user may read (issue 23), wherever it is used. */
+  workspaceFiles(workspaceId: string): WorkspaceFiles {
     return filesAt(`/workspaces/${workspaceId}`);
   },
 
-  /** The session's workspace as the user may use it in the channel; `null` where they may not. */
-  async getChannelWorkspace(sessionId: string, channelId: string): Promise<WorkspaceResponse | null> {
-    const res = await request(`/sessions/${sessionId}/channels/${channelId}/workspace`);
-    await ensureOk(res, 'Failed to fetch the workspace of the channel');
+  /** Gives the user's workspace the access list `access`, replacing the one it had (issue 23). */
+  async setWorkspaceAccess(workspaceId: string, access: AccessEntry[]): Promise<WorkspaceResponse> {
+    const res = await request(`/workspaces/${workspaceId}/access`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(access.map(({kind, id, grant}) => ({kind, id, grant}))),
+    });
+    await ensureOk(res, 'Failed to share the workspace');
     return res.json();
-  },
-
-  /** The files of the session's workspace, through the channel. */
-  channelFiles(sessionId: string, channelId: string): WorkspaceFiles {
-    return filesAt(`/sessions/${sessionId}/channels/${channelId}/workspace`);
   },
 
   /** The artifacts published in a channel, as its reader reaches them (issue 271). */
@@ -776,14 +777,18 @@ export const api = {
     return res.json();
   },
 
-  /** Attaches one of the user's workspaces to their session, or with `null` takes it away. */
-  async setSessionWorkspace(sessionId: string, workspaceId: string | null): Promise<SessionSnapshot> {
+  /**
+   * Attaches one of the user's workspaces to their session - shared with its
+   * members as far as `share` says, with nobody if `null` (issue 23) -, or with
+   * `null` takes it away, which leaves its access list as it is.
+   */
+  async setSessionWorkspace(sessionId: string, workspaceId: string | null, share: Grant | null = null): Promise<SessionSnapshot> {
     const res = workspaceId === null
       ? await request(`/sessions/${sessionId}/workspace`, {method: 'DELETE'})
       : await request(`/sessions/${sessionId}/workspace`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workspace_id: workspaceId }),
+        body: JSON.stringify({ workspace_id: workspaceId, ...(share ? {share} : {}) }),
       });
     await ensureOk(res, workspaceId === null ? 'Failed to detach the workspace' : 'Failed to attach the workspace');
     return res.json();
