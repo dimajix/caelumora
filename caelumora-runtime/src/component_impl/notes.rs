@@ -1,9 +1,9 @@
 //! The `notes` component (issue 17): an agent notes what it wants to
 //! remember in a channel, and is given what every agent of the channel noted.
 //!
-//! Its tools `note` and `revoke_note` change the agent's own notes - taken
-//! over when the turn completes, see `crate::agent::notes::AgentNotes`;
-//! `read_notes` reads
+//! Its tools `write_note`, `update_note` and `revoke_note` change the
+//! agent's own notes - taken over when the turn completes, see
+//! `crate::agent::notes::AgentNotes`; `read_notes` reads
 //! the notes of another channel of the session, or of all it may read. Every
 //! read is recorded as a `KnowledgeRef` with the turn's messages. Its prompt part
 //! gives the model the notes of all agents of the channel before the turn's
@@ -34,7 +34,8 @@ use tracing::warn;
 
 pub const NOTES_KIND: &str = "notes";
 
-pub const NOTE_TOOL_NAME: &str = "note";
+pub const WRITE_NOTE_TOOL_NAME: &str = "write_note";
+pub const UPDATE_NOTE_TOOL_NAME: &str = "update_note";
 pub const REVOKE_NOTE_TOOL_NAME: &str = "revoke_note";
 pub const READ_NOTES_TOOL_NAME: &str = "read_notes";
 pub const RECLASSIFY_NOTE_TOOL_NAME: &str = "reclassify_note";
@@ -56,15 +57,29 @@ impl ToolProvider for NotesComponent {
     fn tools(&self) -> Vec<Tool> {
         vec![
             Tool {
-                name: NOTE_TOOL_NAME.to_string(),
+                name: WRITE_NOTE_TOOL_NAME.to_string(),
                 description: "Note something worth remembering in this channel - a fact, a decision, \
                     a preference of the user. Every participant of the channel is shown your notes \
-                    from now on, you included. Keep a note short and self-contained. To change a \
-                    note, revoke it and note the new version."
+                    from now on, you included. Keep a note short and self-contained, and update one \
+                    rather than writing a second on the same thing."
                     .to_string(),
                 parameters: ToolParameters::object(
                     [("text", ToolParameters::string("What to note"))],
                     ["text"],
+                ),
+                requires_approval: false,
+                visibility: ToolVisibility::SHOWN,
+                classification: None,
+                presentation: Default::default(),
+            },
+            Tool {
+                name: UPDATE_NOTE_TOOL_NAME.to_string(),
+                description: "Change what one of your own notes in this channel says, by its number, when \
+                    it is no longer quite right. Give its whole new text; it keeps its number."
+                    .to_string(),
+                parameters: ToolParameters::object(
+                    [("id", ToolParameters::number("The number of your note")), ("text", ToolParameters::string("Its new text"))],
+                    ["id", "text"],
                 ),
                 requires_approval: false,
                 visibility: ToolVisibility::SHOWN,
@@ -101,8 +116,8 @@ impl ToolProvider for NotesComponent {
                 description: "Read what the agents of another channel of this session noted. Without \
                     a channel, lists every channel you may read with its notes - also how to find out \
                     which channels there are. The notes of your own channel are already shown to you. \
-                    Notes of another channel come without numbers: they can only be revoked or \
-                    reclassified in that channel."
+                    Notes of another channel come without numbers: they can only be updated, \
+                    revoked or reclassified in that channel."
                     .to_string(),
                 parameters: ToolParameters::object(
                     [("channel", ToolParameters::string("The name of the channel; omit it for all channels"))],
@@ -118,7 +133,8 @@ impl ToolProvider for NotesComponent {
 
     async fn execute(&self, name: &str, params: &Value, _answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
         let value = match name {
-            NOTE_TOOL_NAME => self.execute_note(params, turn),
+            WRITE_NOTE_TOOL_NAME => self.execute_write_note(params, turn),
+            UPDATE_NOTE_TOOL_NAME => self.execute_update_note(params, turn),
             REVOKE_NOTE_TOOL_NAME => self.execute_revoke_note(params, turn),
             READ_NOTES_TOOL_NAME => return self.execute_read_notes(params, turn).await,
             RECLASSIFY_NOTE_TOOL_NAME => self.execute_reclassify_note(params, turn).await,
@@ -131,10 +147,21 @@ impl ToolProvider for NotesComponent {
 }
 
 impl NotesComponent {
-    /// `note(text)`: notes `text`, published when the turn completes.
-    fn execute_note(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
+    /// `write_note(text)`: notes `text`, published when the turn completes.
+    fn execute_write_note(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
         let id = AgentNotes::note(turn, NoteKind::Public, text_argument(params)?);
         Ok(serde_json::json!({ "status": "noted", "id": id.0 }))
+    }
+
+    /// `update_note(id, text)`: changes the text of one of the agent's own
+    /// current notes.
+    fn execute_update_note(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
+        let id: NoteId = id_argument(params)?;
+        if AgentNotes::update(turn, NoteKind::Public, id, text_argument(params)?) {
+            Ok(serde_json::json!({ "status": "updated", "id": id.0 }))
+        } else {
+            Err(ToolError::InvalidParameter(format!("you have no note #{id}; only your own current notes can be updated")))
+        }
     }
 
     /// `revoke_note(id)`: revokes one of the agent's own current notes.
@@ -249,7 +276,7 @@ impl PromptProvider for NotesComponent {
 /// there are none.
 fn render<'a>(own: &[Note], others: impl Iterator<Item = (&'a str, &'a [Note])>) -> String {
     let numbered = |notes: &[Note]| notes.iter().map(|n| format!("#{}: {}", n.id, n.text)).collect();
-    let mut sections = vec![Section::new(format!("Your notes (change them with `{NOTE_TOOL_NAME}` and `{REVOKE_NOTE_TOOL_NAME}`):"), numbered(own))];
+    let mut sections = vec![Section::new(format!("Your notes (change them with `{WRITE_NOTE_TOOL_NAME}`, `{UPDATE_NOTE_TOOL_NAME}` and `{REVOKE_NOTE_TOOL_NAME}`):"), numbered(own))];
     sections.extend(others.map(|(name, notes)| Section::new(format!("Notes of {name}:"), numbered(notes))));
     render_sections("Notes in this channel", "What its participants noted to remember.", &sections)
 }
@@ -313,7 +340,7 @@ mod tests {
         let context = SecurityContext::default().next(ActorId::Agent(agent), ActorId::None);
         state.begin_turn(Default::default(), context, Default::default(), Vec::new(), Default::default());
         let mut turn = Turn::of(agent, "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached()).expect("a turn was begun");
-        tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "tea" }), None, &mut turn).await.unwrap();
+        tools.execute(WRITE_NOTE_TOOL_NAME, &serde_json::json!({ "text": "tea" }), None, &mut turn).await.unwrap();
         let above = serde_json::json!({ "id": 1, "level": "strictly_confidential" });
         assert!(matches!(tools.execute(RECLASSIFY_NOTE_TOOL_NAME, &above, None, &mut turn).await, Err(ToolError::PermissionDenied(_))), "never above the channel");
         let unknown = serde_json::json!({ "id": 2, "level": "public" });
@@ -331,7 +358,7 @@ mod tests {
         let tools = NotesComponent { security_manager: Arc::new(caelumora_model::security::DummySecurityManager::new()) };
         {
             let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached());
-            let noted = tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "tea" }), None, &mut turn).await.unwrap();
+            let noted = tools.execute(WRITE_NOTE_TOOL_NAME, &serde_json::json!({ "text": "tea" }), None, &mut turn).await.unwrap();
             assert_eq!(noted.value["id"], 1);
             assert!(AgentNotes::current(&turn.work(), NoteKind::Public).is_empty(), "not before the turn completes");
             let unknown = tools.execute(REVOKE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 7 }), None, &mut turn).await;
@@ -342,7 +369,7 @@ mod tests {
         {
             let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached());
             tools.execute(REVOKE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn).await.unwrap();
-            tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "coffee" }), None, &mut turn).await.unwrap();
+            tools.execute(WRITE_NOTE_TOOL_NAME, &serde_json::json!({ "text": "coffee" }), None, &mut turn).await.unwrap();
             turn.commit(false, &Discard).await;
             let notes = state.notes.current();
             assert_eq!(notes.iter().map(|n| (n.id.0, n.text.as_str())).collect::<Vec<_>>(), [(2, "coffee")], "a new number for the new version");
@@ -351,10 +378,45 @@ mod tests {
             // A turn that does not complete publishes nothing: the next one
             // starts without its changes.
             let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached());
-            tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "lost" }), None, &mut turn).await.unwrap();
+            tools.execute(WRITE_NOTE_TOOL_NAME, &serde_json::json!({ "text": "lost" }), None, &mut turn).await.unwrap();
             let turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached());
             assert!(!turn.commit(false, &Discard).await.channel_state_changed);
         }
+    }
+
+    #[tokio::test]
+    async fn an_updated_note_keeps_its_number_and_is_classified_as_the_turn_that_updated_it() {
+        use caelumora_model::confidentiality::{Classification, Confidentiality};
+        let mut state = AgentChannelState::default();
+        let tools = NotesComponent { security_manager: Arc::new(caelumora_model::security::DummySecurityManager::new()) };
+        let texts = |state: &AgentChannelState| state.notes.current().into_iter().map(|n| (n.id.0, n.text)).collect::<Vec<_>>();
+        {
+            let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached());
+            tools.execute(WRITE_NOTE_TOOL_NAME, &serde_json::json!({ "text": "tea" }), None, &mut turn).await.unwrap();
+            tools.execute(WRITE_NOTE_TOOL_NAME, &serde_json::json!({ "text": "Berlin" }), None, &mut turn).await.unwrap();
+            let updated = tools.execute(UPDATE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 2, "text": "Hamburg" }), None, &mut turn).await.expect("noted in this turn");
+            assert_eq!(updated.value, serde_json::json!({ "status": "updated", "id": 2 }));
+            tools.execute(RECLASSIFY_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1, "level": "public" }), None, &mut turn).await.expect("released");
+            turn.commit(false, &Discard).await;
+            assert_eq!(texts(&state), [(1, "tea".to_string()), (2, "Hamburg".to_string())]);
+        }
+        let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached());
+        let internal = Classification::general(Confidentiality::Internal);
+        turn.see(&internal);
+        let unknown = tools.execute(UPDATE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 7, "text": "x" }), None, &mut turn).await;
+        assert!(matches!(unknown, Err(ToolError::InvalidParameter(_))), "not one of its notes");
+        let empty = tools.execute(UPDATE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1, "text": " " }), None, &mut turn).await;
+        assert!(matches!(empty, Err(ToolError::InvalidParameter(_))), "a note says something");
+        tools.execute(UPDATE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1, "text": "coffee" }), None, &mut turn).await.unwrap();
+        tools.execute(REVOKE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 2 }), None, &mut turn).await.unwrap();
+        let revoked = tools.execute(UPDATE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 2, "text": "Munich" }), None, &mut turn).await;
+        assert!(matches!(revoked, Err(ToolError::InvalidParameter(_))), "a revoked note is not updated");
+        let noted = tools.execute(WRITE_NOTE_TOOL_NAME, &serde_json::json!({ "text": "Munich" }), None, &mut turn).await.unwrap();
+        assert_eq!(noted.value["id"], 3, "an update uses up no number");
+        turn.commit(false, &Discard).await;
+        let notes = state.notes.current();
+        assert_eq!(texts(&state), [(1, "coffee".to_string()), (3, "Munich".to_string())]);
+        assert_eq!(notes[0].classification, internal, "the release was of the old text");
     }
 
     #[tokio::test]
@@ -363,7 +425,7 @@ mod tests {
         let tools = NotesComponent { security_manager: Arc::new(caelumora_model::security::DummySecurityManager::new()) };
         {
             let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached());
-            tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "draft" }), None, &mut turn).await.unwrap();
+            tools.execute(WRITE_NOTE_TOOL_NAME, &serde_json::json!({ "text": "draft" }), None, &mut turn).await.unwrap();
             tools.execute(REVOKE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn).await.expect("noted in this turn");
             let again = tools.execute(REVOKE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn).await;
             assert!(matches!(again, Err(ToolError::InvalidParameter(_))), "revoked already");
@@ -373,7 +435,7 @@ mod tests {
             assert!(state.notes.current().is_empty());
         }
         let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached());
-        let noted = tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "final" }), None, &mut turn).await.unwrap();
+        let noted = tools.execute(WRITE_NOTE_TOOL_NAME, &serde_json::json!({ "text": "final" }), None, &mut turn).await.unwrap();
         assert_eq!(noted.value["id"], 2);
     }
 }

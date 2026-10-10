@@ -6,7 +6,8 @@
 //! `commit` applies when the turn completes. [`AgentMemory`] is the
 //! logic on top: which entries may
 //! be recalled in the turn's channel - as the policy decides, asked in the
-//! agent's name (issue 131) - remembering, forgetting and reclassifying. The
+//! agent's name (issue 131) - remembering, updating, forgetting and
+//! reclassifying. The
 //! `agent_memory` component uses it for its tools and prompt part; anything
 //! else that works with an agent's memory in a turn uses it too. What it
 //! needs of the session - its privacy, and that of the sessions entries
@@ -155,6 +156,21 @@ impl AgentMemory {
         let own = turn.session()?;
         let here = own.views().viewer().place()?.clone();
         Self::may_recall(&stored, &here, own.views(), &mut Vec::new(), security, turn.security_context()).await.then_some(entry)
+    }
+
+    /// Updates entry `id` - one the turn may change (see
+    /// [`find`](Self::find)) - to say `text` when the turn completes (issue
+    /// 302): classified as the turn has seen so far and written in its
+    /// channel, as an entry it remembers is, and recalled from then on where
+    /// one remembered here would be. Returns whether there was one.
+    pub async fn update(turn: &mut Turn<'_>, id: MemoryId, text: String, security: &dyn SecurityManager) -> bool {
+        if Self::find(turn, id, security).await.is_none() {
+            return false;
+        }
+        let classification = turn.label();
+        let origin = Self::origin(turn);
+        turn.stage_memory(MemoryChange::Update { id, text, classification }, origin);
+        true
     }
 
     /// Forgets entry `id` - one the turn may change (see

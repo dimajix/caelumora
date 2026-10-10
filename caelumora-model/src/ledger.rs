@@ -1,12 +1,12 @@
-//! A ledger: entries of text that are only added, removed and reclassified,
-//! kept as a chain of those changes (issue 92). An agent's notes
+//! A ledger: entries of text that are added, updated, removed and
+//! reclassified, kept as a chain of those changes (issue 92). An agent's notes
 //! (`crate::note`, issue 17) and its memory (`crate::memory`, issue 62) are
 //! ledgers; they work alike and differ only in what they are called and in
 //! where a change is recorded to have been made - which a [`LedgerKind`]
 //! says.
 //!
 //! What stands now is the chain's active branch read from start to end
-//! (issue 08). A new version of an entry is a removal and a new entry. The
+//! (issue 08). A new version of an entry keeps its number (issue 302). The
 //! number of an entry is never given twice, on any branch: a reader may have
 //! read it before it was removed, or on a branch no longer active.
 
@@ -42,6 +42,10 @@ pub enum Change<Id> {
     /// channel's classification, and a later change of the channel changes
     /// none of its entries.
     Add { id: Id, text: String, classification: Classification },
+    /// The entry `id` says `text` from now on (issue 302), classified as the
+    /// turn that wrote it had seen, as a new entry is: a release of the old
+    /// text does not carry over. It stands where it was updated.
+    Update { id: Id, text: String, classification: Classification },
     Remove { id: Id },
     /// The entry `id` is classified `classification` from now on (issue
     /// 133): released, or raised.
@@ -78,9 +82,9 @@ pub struct Item<K: LedgerKind> {
     /// The label of the turn that wrote it, unless it was reclassified
     /// since (issues 133, 168).
     pub classification: Classification,
-    /// Where it was added.
+    /// Where it was added, or last updated.
     pub origin: K::Origin,
-    /// The message it follows.
+    /// The message it follows: the one its text was written after.
     pub after: MessageId,
     pub written_at: DateTime<Utc>,
 }
@@ -140,7 +144,7 @@ impl<K: LedgerKind> Chain<LedgerEntry<K>> {
 fn added<Id: Copy + Into<u32>>(change: &Change<Id>) -> Option<u32> {
     match change {
         Change::Add { id, .. } => Some((*id).into()),
-        Change::Remove { .. } | Change::Reclassify { .. } => None,
+        Change::Update { .. } | Change::Remove { .. } | Change::Reclassify { .. } => None,
     }
 }
 
@@ -156,6 +160,15 @@ fn fold<K: LedgerKind>(items: &mut Vec<Item<K>>, change: &Change<K::Id>, origin:
             after,
             written_at,
         }),
+        Change::Update { id, text, classification } => {
+            if let Some(item) = items.iter_mut().find(|i| i.id == *id) {
+                item.text = text.clone();
+                item.classification = classification.clone();
+                item.origin = origin.clone();
+                item.after = after;
+                item.written_at = written_at;
+            }
+        }
         Change::Remove { id } => items.retain(|i| i.id != *id),
         Change::Reclassify { id, classification } => {
             if let Some(item) = items.iter_mut().find(|i| i.id == *id) {
@@ -231,6 +244,30 @@ mod tests {
         let current = chain.current();
         assert_eq!((current[0].id, current[0].text.as_str(), &current[0].classification), (NoteId(1), "a", &released));
         assert_eq!(chain.next_id(), NoteId(2));
+    }
+
+    #[test]
+    fn an_updated_entry_keeps_its_number_and_place_and_stands_where_it_was_updated() {
+        use crate::confidentiality::Confidentiality;
+        let mut chain = NoteChain::default();
+        push(&mut chain, add(1, "The user likes tea."), MessageId::new());
+        push(&mut chain, add(2, "The user lives in Berlin."), MessageId::new());
+        let released = Classification::general(Confidentiality::Public);
+        push(&mut chain, Change::Reclassify { id: NoteId(1), classification: released }, MessageId::new());
+        let (later, internal) = (MessageId::new(), Classification::general(Confidentiality::Internal));
+        push(&mut chain, Change::Update { id: NoteId(1), text: "The user likes coffee.".to_string(), classification: internal.clone() }, later);
+        push(&mut chain, Change::Update { id: NoteId(7), text: "nothing".to_string(), classification: internal.clone() }, MessageId::new());
+
+        let current = chain.current();
+        let texts: Vec<(NoteId, &str)> = current.iter().map(|n| (n.id, n.text.as_str())).collect();
+        assert_eq!(texts, [(NoteId(1), "The user likes coffee."), (NoteId(2), "The user lives in Berlin.")], "in its place; no entry for a number that does not stand");
+        assert_eq!((&current[0].classification, current[0].after), (&internal, later), "as the turn that updated it, which the release did not cover");
+        assert_eq!(chain.next_id(), NoteId(3), "an update uses up no number");
+
+        let staged = [Change::Update { id: NoteId(2), text: "The user lives in Hamburg.".to_string(), classification: internal }];
+        let standing = chain.with_staged(staged.iter().map(|c| (c, NoteOrigin::default())));
+        assert_eq!(standing.get(NoteId(2)).map(|n| n.text.as_str()), Some("The user lives in Hamburg."));
+        assert_eq!(standing.next_id(), NoteId(3));
     }
 
     #[test]

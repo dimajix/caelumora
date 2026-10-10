@@ -649,14 +649,17 @@ agent alike.
 | `ask_user` | `ask_user_tool` | `questions` (1-5, each with `header`, `question`, optional `choices` and `multi_select`), `ask` (handles, at least one) | no | `SHOWN` | Asks the users named and waits for their answers, which are its result (see [Questions](#questions)). |
 | `create_plan` | `create_plan_tool` | `summary`, `steps` (each with `description`) | no | `SHOWN` | Submits a multi-step plan; a plan in progress is extended, not replaced. Presented as `plan`: the summary and the numbered steps. |
 | `{id}__{name}` | `mcp_tool` | as the server declares | per `requires_approval`, yes by default; with `"unless_read_only"` not for a tool the server marks read-only | `SHOWN` | A tool of a remote MCP server. |
-| `note` | `notes` | `text` | no | `SHOWN` | Notes something in the channel, visible to every participant. |
+| `write_note` | `notes` | `text` | no | `SHOWN` | Notes something in the channel, visible to every participant. |
+| `update_note` | `notes` | `id`, `text` | no | `SHOWN` | Changes the text of one of the agent's own notes; it keeps its number (issue 302). |
 | `revoke_note` | `notes` | `id` | no | `SHOWN` | Revokes one of the agent's own notes. |
 | `read_notes` | `notes` | `channel` (optional) | no | `SHOWN` | Reads the notes of another channel, or of every readable channel. |
 | `reclassify_note` | `notes` | `id`, `level`, `compartments` (optional) | yes | `SHOWN` | Reclassifies one of the agent's notes, never above the channel (issue 133). |
-| `note_private` | `private_notes` | `text` | no | `HIDDEN` | Notes something only the agent (and its owner) sees. |
+| `write_private_note` | `private_notes` | `text` | no | `HIDDEN` | Notes something only the agent (and its owner) sees. |
+| `update_private_note` | `private_notes` | `id`, `text` | no | `HIDDEN` | Changes the text of one of the agent's private notes. |
 | `revoke_private_note` | `private_notes` | `id` | no | `HIDDEN` | Revokes one of the agent's private notes. |
 | `reclassify_private_note` | `private_notes` | `id`, `level`, `compartments` (optional) | yes | `HIDDEN` | Reclassifies one of the agent's private notes, never above the channel (issue 133). |
 | `remember` | `agent_memory` | `text` | no | `HIDDEN` | Remembers something across channels and sessions. |
+| `update_memory` | `agent_memory` | `id`, `text` | no | `HIDDEN` | Changes the text of something remembered that may be recalled here. |
 | `forget` | `agent_memory` | `id` | no | `HIDDEN` | Forgets something remembered. |
 | `reclassify_memory` | `agent_memory` | `id`, `level`, `compartments` (optional) | yes | `HIDDEN` | Reclassifies something remembered that may be recalled here, never above the channel (issue 133). |
 | `run_command` | `terminal_tool` | `command`, `wait_secs` (optional, at most `max_wait_secs`) | as configured, yes by default | `SHOWN` | Runs a shell command in the session's workspace and follows it; answers with its output and exit code, or with its id while it runs (see [The workspace](#the-workspace)). |

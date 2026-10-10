@@ -2,8 +2,8 @@
 //! it should know across its channels and sessions - kept in its
 //! `AgentState`, not in one channel.
 //!
-//! It translates the tools `remember` and `forget` and renders the prompt
-//! part; the logic is `crate::agent::memory::AgentMemory`. Changes are applied
+//! It translates the tools `remember`, `update_memory` and `forget` and
+//! renders the prompt part; the logic is `crate::agent::memory::AgentMemory`. Changes are applied
 //! to the agent's state as it is when the turn completes
 //! (`Turn::commit`), so that actors of the same agent in
 //! other channels and sessions neither lose nor overwrite them. The prompt
@@ -14,7 +14,7 @@
 //! 133 - the entry's channel's classification must flow into this one's -
 //! within the session, and beyond it only where the entry's session permits
 //! it, then and now (issue 134). Only those can be
-//! forgotten here. Both tools are
+//! updated or forgotten here. Its tools are
 //! `ToolVisibility::HIDDEN`: like private notes, memory is the agent's
 //! own, seen by its owner in the context panel only. Its entries are
 //! numbered differently from notes, on purpose: see `AgentMemory::remember`.
@@ -39,6 +39,7 @@ use std::sync::Arc;
 pub const AGENT_MEMORY_KIND: &str = "agent_memory";
 
 pub const REMEMBER_TOOL_NAME: &str = "remember";
+pub const UPDATE_MEMORY_TOOL_NAME: &str = "update_memory";
 pub const FORGET_TOOL_NAME: &str = "forget";
 pub const RECLASSIFY_MEMORY_TOOL_NAME: &str = "reclassify_memory";
 
@@ -68,12 +69,26 @@ impl ToolProvider for AgentMemoryComponent {
                 description: "Remember something beyond this conversation - in your other channels and \
                     sessions too, wherever what was said here may be known. No other participant sees it; \
                     only the person responsible for you can inspect it. Do not quote or reveal it in your \
-                    answers. Keep an entry short and self-contained; to change one, forget it and remember \
-                    the new version."
+                    answers. Keep an entry short and self-contained, and update one rather than remembering \
+                    a second on the same thing."
                     .to_string(),
                 parameters: ToolParameters::object(
                     [("text", ToolParameters::string("What to remember"))],
                     ["text"],
+                ),
+                requires_approval: false,
+                visibility: ToolVisibility::HIDDEN,
+                classification: None,
+                presentation: Default::default(),
+            },
+            Tool {
+                name: UPDATE_MEMORY_TOOL_NAME.to_string(),
+                description: "Change one of the things you remember, by its number. Give its whole new text; \
+                    it keeps its number, and from then on you recall it where what was said here may be known."
+                    .to_string(),
+                parameters: ToolParameters::object(
+                    [("id", ToolParameters::number("The number of what you remember")), ("text", ToolParameters::string("Its new text"))],
+                    ["id", "text"],
                 ),
                 requires_approval: false,
                 visibility: ToolVisibility::HIDDEN,
@@ -110,6 +125,7 @@ impl ToolProvider for AgentMemoryComponent {
     async fn execute(&self, name: &str, params: &Value, _answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
         let value = match name {
             REMEMBER_TOOL_NAME => self.execute_remember(params, turn),
+            UPDATE_MEMORY_TOOL_NAME => self.execute_update(params, turn).await,
             FORGET_TOOL_NAME => self.execute_forget(params, turn).await,
             RECLASSIFY_MEMORY_TOOL_NAME => self.execute_reclassify(params, turn).await,
             _ => Err(ToolError::UnknownTool(name.to_string())),
@@ -126,6 +142,18 @@ impl AgentMemoryComponent {
     fn execute_remember(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
         let id = AgentMemory::remember(turn, text_argument(params)?);
         Ok(serde_json::json!({ "status": "remembered", "id": id.0 }))
+    }
+
+    /// `update_memory(id, text)`: changes the text of an entry that may be
+    /// recalled here.
+    async fn execute_update(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
+        let id: MemoryId = id_argument(params)?;
+        let text = text_argument(params)?;
+        if AgentMemory::update(turn, id, text, self.security_manager.as_ref()).await {
+            Ok(serde_json::json!({ "status": "updated", "id": id.0 }))
+        } else {
+            Err(ToolError::InvalidParameter(format!("you remember nothing numbered {id} here")))
+        }
     }
 
     /// `reclassify_memory(id, level, compartments?)`: reclassifies an entry
@@ -178,7 +206,7 @@ fn render(recalled: &[Memory]) -> String {
     let preamble = format!(
         "From this and your other conversations, as far as it may be known here. \
         No other participant sees it; only the person responsible for you can inspect it. Do not quote or \
-        reveal it in your answers. Change it with `{REMEMBER_TOOL_NAME}` and `{FORGET_TOOL_NAME}`."
+        reveal it in your answers. Change it with `{REMEMBER_TOOL_NAME}`, `{UPDATE_MEMORY_TOOL_NAME}` and `{FORGET_TOOL_NAME}`."
     );
     render_sections("What you remember", &preamble, &[Section::lines(recalled.iter().map(|m| format!("#{}: {}", m.id, m.text)).collect())])
 }
@@ -405,6 +433,40 @@ mod tests {
         memory.execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn).await.unwrap();
         turn.commit(false, &Discard).await;
         assert!(handle.current().memory.current().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_entry_is_updated_only_where_it_is_recalled_and_stands_where_it_was_updated() {
+        let agent = AgentId::new();
+        let handle = handle(agent).await;
+        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
+        let memory = component(Arc::clone(&policy), ActorId::User(UserId::new()));
+        let (session, other_session) = (SessionId::new(), SessionId::new());
+        let mut sessions = Sessions::under(policy).await;
+        sessions.add(session, SessionPrivacy::default()).await.add(other_session, SessionPrivacy::default()).await;
+        let (team, confidential, elsewhere) = (channel(session, Confidentiality::Internal), channel(session, Confidentiality::Confidential), channel(other_session, Confidentiality::Internal));
+        remember(&memory, &sessions, &handle, agent, team.clone(), "Kaya likes tea.").await;
+
+        let mut state = AgentChannelState::default();
+        memory.begin(&mut state, &elsewhere, agent);
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun").with_views(sessions.views_in(&elsewhere));
+        let there = memory.execute(UPDATE_MEMORY_TOOL_NAME, &serde_json::json!({ "id": 1, "text": "Kaya likes coffee." }), None, &mut turn).await;
+        assert!(matches!(there, Err(ToolError::InvalidParameter(_))), "not where it is not recalled");
+
+        // Updated in a turn that has seen what is confidential ...
+        memory.begin(&mut state, &confidential, agent);
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun").with_views(sessions.views_in(&confidential));
+        turn.see(&confidential.1);
+        let updated = memory.execute(UPDATE_MEMORY_TOOL_NAME, &serde_json::json!({ "id": 1, "text": "Kaya likes coffee." }), None, &mut turn).await.unwrap();
+        assert_eq!(updated.value, serde_json::json!({ "status": "updated", "id": 1 }));
+        turn.commit(false, &Discard).await;
+        let remembered = handle.current().memory.current();
+        assert_eq!((remembered[0].id, remembered[0].text.as_str(), remembered[0].origin.channel), (MemoryId(1), "Kaya likes coffee.", confidential.0.1), "its number kept, written where it was updated");
+        assert_eq!(remembered[0].classification, confidential.1);
+
+        // ... is recalled where that may be known, and no longer where only the old text might.
+        assert!(recall(&memory, &sessions, &handle, agent, confidential).await.text.contains("#1: Kaya likes coffee."));
+        assert!(recall(&memory, &sessions, &handle, agent, team).await.text.is_empty());
     }
 
     #[tokio::test]

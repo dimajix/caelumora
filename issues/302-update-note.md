@@ -1,6 +1,6 @@
 # 302 — A note cannot be changed, only revoked and written again
 
-**Status:** open
+**Status:** done
 **Area:** Context & knowledge
 
 ## The problem
@@ -66,6 +66,19 @@ Raised by the maintainer.
   text stays in the context, as a revoked note's does today. [55](55-notes-by-reflection.md) -
   tidying notes up would use `update_note`.
 
+## Decision
+
+By the maintainer (2026-10-10): the proposals above as they stand, and `update_memory` with them.
+
+1. **`Change::Update`** in the ledger; the entry keeps its number and its place among the others.
+2. **The new text carries the turn's label**, as a new entry does; a release of the old text does
+   not carry over.
+3. **It stands where it was updated:** origin, the message it follows and `written_at` are the
+   update's. For memory that means the entry is recalled from then on where one remembered in the
+   updating turn's channel would be.
+4. **`write_note`, `update_note`; `write_private_note`, `update_private_note`; `update_memory`.**
+   `remember` and `forget` keep their names.
+
 ## Done when
 
 - An agent changes the text of one of its notes with `update_note`, and of a private note with
@@ -82,3 +95,10 @@ Raised by the maintainer.
 - **2026-10-10** — Issue created at the maintainer's request: an `update_note` tool, and `note`
   renamed to `write_note`. Proposal above; the classification of an updated note, where it stands,
   and whether memory gets `update_memory` are still to decide.
+- **2026-10-10** — Decided as proposed, with `update_memory` (see *Decision*). Done:
+  `Change::Update` in `caelumora_model::ledger`, folded in place with the update's classification,
+  origin, message and time; `AgentNotes::update` and `AgentMemory::update`, which change only what
+  `revoke` and `forget` may remove; the tools `update_note`, `update_private_note` and
+  `update_memory`; `note` and `note_private` renamed to `write_note` and `write_private_note`. The
+  tool descriptions and prompt parts no longer tell the model to revoke and write again. Stored
+  agent states and histories that hold calls of `note` or `note_private` are to be deleted.

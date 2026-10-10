@@ -309,7 +309,7 @@ published before anyone else can take it.
 | [279](279-agents-md-in-workspace.md) | done | An agent is not told of an `AGENTS.md` in its workspace, and there is no skill that helps it write one for an existing project. |
 | [284](284-automatic-context-compaction.md) | open | An agent's context is compacted only when somebody asks for it; nothing compacts it before a model call that would not fit, least of all within the turn that makes it. |
 | [300](300-compaction-keeps-long-turns-whole.md) | done | A compaction keeps the turn its newest messages reach into whole, so that a long plan is never summarised and almost nothing is freed. |
-| [302](302-update-note.md) | open | A note cannot be changed, only revoked and written again under a new number, and `note` is not named after what it does like `revoke_note` and `read_notes`. |
+| [302](302-update-note.md) | done | A note cannot be changed, only revoked and written again under a new number, and `note` is not named after what it does like `revoke_note` and `read_notes`. |
 
 ## Maintenance
 
