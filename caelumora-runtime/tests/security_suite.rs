@@ -2459,10 +2459,10 @@ async fn a_command_is_ended_in_its_channel_by_who_may_change_the_workspace_there
         async move { views.session(session_id).await.unwrap().channel(main).await.unwrap().workspace().await.unwrap().expect("used in main") }
     };
     // As `run_command` starts them: under the channel's scope.
-    let shell = in_main(&alice).await.terminal(Grant::Write).await.unwrap().shell().expect("a shell");
-    let started = shell.start(&main.to_string(), "sleep 30").await.unwrap();
-    let other = ChannelId::new().to_string();
-    let elsewhere = shell.start(&other, "sleep 30").await.unwrap();
+    let terminal = in_main(&alice).await.terminal(Grant::Write).await.unwrap();
+    let started = terminal.shell(&main.to_string()).expect("a shell").start("sleep 30").await.unwrap();
+    let other = terminal.shell(&ChannelId::new().to_string()).expect("a shell");
+    let elsewhere = other.start("sleep 30").await.unwrap();
 
     let bobs = in_main(&bob).await;
     let (refused, asked) = world.asked(bobs.kill_command(&started, 0)).await;
@@ -2479,7 +2479,7 @@ async fn a_command_is_ended_in_its_channel_by_who_may_change_the_workspace_there
     assert!(matches!(unknown, Err(WorkspaceError::Terminal(TerminalError::UnknownCommand(_)))), "not one of another channel: {unknown:?}");
     let direct = world.manager.views(Viewer::new(alice.clone())).workspace(docs.id).await.unwrap().kill_command(&elsewhere, 0).await;
     assert!(matches!(direct, Err(WorkspaceError::NotInChannel)), "nor by the workspace reached directly: {direct:?}");
-    shell.kill(&other, &elsewhere, 0).await.unwrap();
+    other.kill(&elsewhere, 0).await.unwrap();
     world.manager.stop_session(&alice, session.id()).await.unwrap();
 }
 

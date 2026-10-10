@@ -39,7 +39,6 @@ const KILL_WITHIN: Duration = Duration::from_secs(5);
 /// Kills a command if dropped before `disarm`.
 struct KillOnDrop {
     shell: Arc<dyn Shell>,
-    scope: String,
     id: String,
     armed: bool,
 }
@@ -56,9 +55,9 @@ impl Drop for KillOnDrop {
             return;
         }
         let Ok(runtime) = tokio::runtime::Handle::try_current() else { return };
-        let (shell, scope, id) = (Arc::clone(&self.shell), std::mem::take(&mut self.scope), std::mem::take(&mut self.id));
+        let (shell, id) = (Arc::clone(&self.shell), std::mem::take(&mut self.id));
         runtime.spawn(async move {
-            match tokio::time::timeout(KILL_WITHIN, shell.kill(&scope, &id, 0)).await {
+            match tokio::time::timeout(KILL_WITHIN, shell.kill(&id, 0)).await {
                 Ok(Ok(_)) => {}
                 Ok(Err(e)) => warn!(command = %id, "The command of an interrupted call could not be killed: {e}"),
                 Err(_) => warn!(command = %id, "The command of an interrupted call was not killed in time"),
@@ -190,23 +189,22 @@ pub(super) async fn execute(config: &TerminalToolConfig, name: &str, params: &Va
         return Ok(result(config, state));
     }
     let terminal = workspace.terminal(Grant::Write).await.map_err(unusable)?;
-    let shell = terminal.shell().ok_or_else(|| ToolError::ExecutionFailed("the workspace's storage gives it no shell".to_string()))?;
-    let scope = turn.channel_id().to_string();
+    let shell = terminal.shell(&turn.channel_id().to_string()).ok_or_else(|| ToolError::ExecutionFailed("the workspace's storage gives it no shell".to_string()))?;
     let state = match name {
         RUN_COMMAND => {
             let Run { command, wait_secs } = arguments(params)?;
             if command.trim().is_empty() {
                 return Err(ToolError::InvalidParameter("'command' must name a command".to_string()));
             }
-            let id = shell.start(&scope, &command).await.map_err(failed)?;
-            let guard = KillOnDrop { shell: Arc::clone(&shell), scope: scope.clone(), id: id.clone(), armed: true };
-            let state = shell.output(&scope, &id, 0, wait(config, wait_secs)).await;
+            let id = shell.start(&command).await.map_err(failed)?;
+            let guard = KillOnDrop { shell: Arc::clone(&shell), id: id.clone(), armed: true };
+            let state = shell.output(&id, 0, wait(config, wait_secs)).await;
             guard.disarm();
             state
         }
         _ => {
             let Follow { id, offset, wait_secs } = arguments(params)?;
-            shell.output(&scope, &id, offset.unwrap_or(0), wait(config, wait_secs)).await
+            shell.output(&id, offset.unwrap_or(0), wait(config, wait_secs)).await
         }
     }.map_err(failed)?;
     Ok(result(config, state))

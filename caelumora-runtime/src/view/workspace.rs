@@ -154,8 +154,8 @@ impl WorkspaceView {
     pub async fn kill_command(&self, id: &str, offset: u64) -> WorkspaceResult<CommandState> {
         let Way::InChannel { channel, .. } = self.way else { return Err(WorkspaceError::NotInChannel) };
         let terminal = self.terminal(Grant::Write).await?;
-        let shell = terminal.shell().ok_or_else(|| TerminalError::UnknownCommand(id.to_string()))?;
-        Ok(shell.kill(&channel.to_string(), id, offset).await?)
+        let shell = terminal.shell(&channel.to_string()).ok_or_else(|| TerminalError::UnknownCommand(id.to_string()))?;
+        Ok(shell.kill(id, offset).await?)
     }
 
     pub async fn snapshot(&self) -> WorkspaceSnapshot {

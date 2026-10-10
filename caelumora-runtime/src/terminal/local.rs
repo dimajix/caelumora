@@ -270,9 +270,9 @@ impl Terminal for LocalTerminal {
         fs::rename(&source, &target).await.map_err(|e| failed(to, e))
     }
 
-    fn shell(&self) -> Option<Arc<dyn Shell>> {
+    fn shell(&self, scope: &str) -> Option<Arc<dyn Shell>> {
         let commands = Arc::clone(self.commands.as_ref()?);
-        Some(Arc::new(LocalShell { dir: self.dir.clone(), workspace: self.workspace, commands }))
+        Some(Arc::new(LocalShell { dir: self.dir.clone(), workspace: self.workspace, scope: scope.to_string(), commands }))
     }
 }
 

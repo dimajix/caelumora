@@ -390,9 +390,9 @@ mod tests {
         let terminal = provider.terminal_for(id).await.expect("started");
         assert!(running(&docker, id).await);
         terminal.write(&path("docs/a.md"), content("hello"), 100).await.expect("the workspace is the image user's to write");
-        let shell = terminal.shell().unwrap();
-        let started = shell.start("c", "cat docs/a.md; echo; pwd; echo \"[$OPEN_TERMINAL_API_KEY]\"; touch made").await.unwrap();
-        let state = shell.output("c", &started, 0, Duration::from_secs(10)).await.unwrap();
+        let shell = terminal.shell("c").unwrap();
+        let started = shell.start("cat docs/a.md; echo; pwd; echo \"[$OPEN_TERMINAL_API_KEY]\"; touch made").await.unwrap();
+        let state = shell.output(&started, 0, Duration::from_secs(10)).await.unwrap();
         assert_eq!((state.status, state.output.as_str()), (CommandStatus::Completed, "hello\n/workspace\n[]\n"));
 
         // Unused, it is stopped; used again, started with the same key and

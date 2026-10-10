@@ -43,7 +43,9 @@ inside the workspace.
 
 A terminal may have a `Shell`, a capability of its storage (`TerminalProvider::has_shell`): commands
 started in the workspace's directory, followed by what they print and killed with everything they
-started, each seen only under the scope it was started with - the tool passes the channel. The
+started. A shell is made for one scope (`Terminal::shell(scope)`, issue
+[296](../issues/296-workspace-operations-on-the-view.md)) and sees the commands started under it
+alone; for the storage a scope is any text, for the runtime it is the channel. The
 `local` provider's shell is opt-in (`shell`): `bash -c` on Caelumora's host, a process group per
 command, an environment cleared but for `PATH`, `HOME` (the workspace), `LANG`, `TERM=dumb`,
 `NO_COLOR` and `CAELUMORA_WORKSPACE`, the newest 1 MiB of output kept, and a command kept five

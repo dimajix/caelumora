@@ -162,8 +162,9 @@ pub trait Terminal: Send + Sync + Debug {
     async fn mkdir(&self, path: &WorkspacePath) -> TerminalResult<()>;
     /// Moves `from` to `to`, which must not exist.
     async fn move_entry(&self, from: &WorkspacePath, to: &WorkspacePath) -> TerminalResult<()>;
-    /// Its shell, if its storage has one.
-    fn shell(&self) -> Option<Arc<dyn Shell>>;
+    /// Its shell as `scope` sees it - the commands started under that scope
+    /// alone (issue 296) -, if its storage has one.
+    fn shell(&self, scope: &str) -> Option<Arc<dyn Shell>>;
 }
 
 /// Where a command stands.
@@ -195,19 +196,21 @@ pub struct CommandState {
     pub truncated: bool,
 }
 
-/// Commands in a workspace (issue 251): started at once, followed by what
-/// they print, killed with everything they started. A command is seen only
-/// under the `scope` it was started with.
+/// Commands in a workspace (issue 251) as one scope sees them: started at
+/// once, followed by what they print, killed with everything they started.
+/// A shell is bound to its scope when it is made (`Terminal::shell`, issue
+/// 296) and sees the commands started under it alone; for a storage a
+/// scope is any text.
 #[async_trait]
 pub trait Shell: Send + Sync + Debug {
     /// Starts `command` in the workspace's directory; answers its id at once.
-    async fn start(&self, scope: &str, command: &str) -> TerminalResult<String>;
+    async fn start(&self, command: &str) -> TerminalResult<String>;
     /// What command `id` printed since `offset`, once it ended or `wait` is
     /// over, whichever is first.
-    async fn output(&self, scope: &str, id: &str, offset: u64, wait: Duration) -> TerminalResult<CommandState>;
+    async fn output(&self, id: &str, offset: u64, wait: Duration) -> TerminalResult<CommandState>;
     /// Ends command `id` and what it started; what it printed since
     /// `offset`.
-    async fn kill(&self, scope: &str, id: &str, offset: u64) -> TerminalResult<CommandState>;
+    async fn kill(&self, id: &str, offset: u64) -> TerminalResult<CommandState>;
 }
 
 /// What makes and reaches the places of the workspaces of one storage
