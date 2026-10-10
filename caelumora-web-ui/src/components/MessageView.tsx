@@ -67,7 +67,7 @@ export const Reasoning: React.FC<{text: string; thinking?: boolean; ownerOnly?: 
         {thinking ? (
           <span className="inline-flex items-center gap-1.5">
             Thinking
-            <span className="w-1.5 h-1.5 bg-current rounded-full animate-pulse" />
+            <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-working" />
           </span>
         ) : 'Thought'}
         {ownerOnly && (

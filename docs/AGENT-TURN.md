@@ -9,7 +9,8 @@ in a turn in [COMPONENTS.md](COMPONENTS.md); tools and approvals in
 ## The cognitive cycle
 
 `AgentActor::run` is a state machine over `ActorState`. Two states wait between turns, five belong
-to a turn.
+to a turn; one, `CarryingOutCommand`, is entered and left while the agent waits (see *A command
+turn* below).
 
 **Between turns** (`Idle`, `Sleeping`) the agent waits for the next event, and takes it in together
 with everything queued behind it - what came while it was busy - in order (`actor::intake::take_in`,
@@ -232,9 +233,13 @@ asked the agent for, rather than answering: `AgentChannelState::begin_command_tu
 no tools and the command kept in `TurnState::command`, and the component that carries the command
 out stages on it as a tool does. Taken over, it records the command before its end
 (`HistoryEntry::CommandExecuted`, with whom it was asked by); not carried out, it is dropped
-without an end - nothing was said or applied. It announces neither its start nor its end, is not
+without an end - nothing was said or applied. It announces no answer's start nor end, is not
 the turn under way that a cancel or a retry reaches, and is never stored under way: one found
-after a restart is dropped. See
+after a restart is dropped. Admitted, it tells the issuer alone that it began (`CommandStarted`,
+issue [299](../issues/299-command-under-way-not-shown.md)). An awake agent stands at
+`CarryingOutCommand` meanwhile, which is no state of a turn (`in_turn`) and which no cancel ends,
+and is `Idle` again after; a sleeping one carries the command out asleep and stays `Sleeping`, so
+that `/wakeup` still wakes it and the moderator still leaves it out. See
 [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md#commands-of-an-agent).
 
 Both use the turn up and hand back the contexts it had as an `Answering` (`crate::actor`), which

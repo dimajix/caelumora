@@ -295,8 +295,8 @@ every message, in the message's span. Neither a frontend nor the channel decides
 
 User commands (`/help`, `/wakeup`, `/nudge`) are run by the user's actor in the same way; a command
 an agent carries out itself (issue 269) the user's actor sends to that agent as `CommandRequested`,
-which the agent - run here or elsewhere - carries out in a turn of its own and answers with
-`CommandExecuted` or `CommandFailed`. See [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md).
+which the agent - run here or elsewhere - carries out in a turn of its own, tells the issuer it
+began (`CommandStarted`, issue 299) and answers with `CommandExecuted` or `CommandFailed`. See [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md).
 
 ## Changing what was said
 
@@ -790,7 +790,8 @@ The built-in moderator, `policy_moderator` (the default), routes the way every c
     goes to the users, not to the agents (issue 220); so does where an agent stands,
     `StateChanged` (issue 243), and how a turn was given up, `TurnGivenUp`;
 *   approvals and announced commands go to whom they concern: a request for a command to the agent
-    it names alone, its answer to the issuer alone if private, else to every user (issue 269);
+    it names alone, that it began to the issuer alone (issue 299), its answer to the issuer alone
+    if private, else to every user (issue 269);
 *   every agent a message `@`-mentions is asked to respond;
 *   a chain between agents ends at a limit (see below).
 

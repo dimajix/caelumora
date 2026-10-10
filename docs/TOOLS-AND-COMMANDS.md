@@ -612,12 +612,18 @@ agent alike.
     ([SECURITY.md](SECURITY.md#in-whose-name-an-agent-acts)) - and its executor asks again, in the
     context the request came with, whether the issuer may ask for it. The component stages what
     the command changes, as a tool does. Carried out, the turn is taken over and stored; not carried
-    out, it is dropped as if it had never begun. A command turn is no answer: it announces neither
-    its start nor its end, asks nobody to respond, can be neither cancelled nor asked for again, and
-    is never stored under way - one found after a restart is dropped, unanswered.
+    out, it is dropped as if it had never begun. A command turn is no answer: it announces no
+    answer's start nor end, asks nobody to respond, can be neither cancelled nor asked for again,
+    and is never stored under way - one found after a restart is dropped, unanswered.
+*   **Begun** (issue 299). Admitted, the agent tells the issuer alone that it began -
+    `ActorEvent::CommandStarted` with the turn's id, which its answer carries too -, whatever its
+    answer's visibility: for `/compact`, the issuer sees it begin and everybody sees it done. An
+    awake agent stands at `CarryingOutCommand` meanwhile, told to every user by `StateChanged`; a
+    sleeping one stays `Sleeping`.
 *   **Answered.** Carried out, the agent answers `ActorEvent::CommandExecuted` with its turn's id -
     to the issuer alone (`to`) if the answer is private, to every user otherwise; not carried out,
-    `ActorEvent::CommandFailed` to the issuer alone, with why in the words of `CommandError`. A
+    `ActorEvent::CommandFailed` to the issuer alone, with why in the words of `CommandError` and the
+    turn's id if it had told them it began. A
     command answers what it did, not what it read: nothing withholds its answer as a tool's result
     is withheld.
 *   **Recorded.** What an agent carried out, with its arguments and on whose word, goes into the

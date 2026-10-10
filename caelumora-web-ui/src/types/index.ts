@@ -60,7 +60,7 @@ export type ParticipantKind = 'user' | 'agent' | 'approver';
 export type PersonalityKind = 'internal' | 'external';
 
 /** Where an agent stands (issue 243), as `StateChanged` and a member's `state` name it. */
-export type ActorState = 'Idle' | 'Sleeping' | 'Planning' | 'ExecutingTools' | 'WaitingForUser' | 'Reflecting' | 'Cancelling';
+export type ActorState = 'Idle' | 'Sleeping' | 'Planning' | 'ExecutingTools' | 'WaitingForUser' | 'Reflecting' | 'Cancelling' | 'CarryingOutCommand';
 
 /** A participant of a channel. */
 /**
@@ -519,10 +519,10 @@ export interface Message {
   // UI only: the answer to a user command. `command` is its name;
   // `private` if only the issuer sees it. One an agent carried out (issue
   // 269) also names the `agent`, its `args` and, from the history, the
-  // `issuer`; `failed` if the agent did not carry it out. A command of the
-  // channel is never part of the history, one an agent carried out is -
-  // without what it answered.
-  commandOutput?: {command: string; private: boolean; args?: string; agent?: string; issuer?: string; failed?: boolean};
+  // `issuer`; `failed` if the agent did not carry it out, `underWay` while
+  // it carries it out (issue 299). A command of the channel is never part of
+  // the history, one an agent carried out is - without what it answered.
+  commandOutput?: {command: string; private: boolean; args?: string; agent?: string; issuer?: string; failed?: boolean; underWay?: boolean};
   // UI only: its sender was removed from the channel before its tool calls
   // were answered (issue 162) - those without a result never will be.
   abandoned?: boolean;
@@ -610,8 +610,16 @@ export interface ActorEvent {
    * for everybody.
    */
   CommandExecuted?: { command: string; args: string; output: string; to: ActorId | null; turn_id: string | null };
-  /** The agent did not carry out the command (issue 269); shown to the issuer alone. */
-  CommandFailed?: { command: string; reason: string; to: ActorId };
+  /**
+   * The agent began to carry out a command (issue 299), in its turn
+   * `turn_id`, whose answer ends it; told to the issuer alone.
+   */
+  CommandStarted?: { command: string; args: string; to: ActorId; turn_id: string };
+  /**
+   * The agent did not carry out the command (issue 269); shown to the issuer
+   * alone. `turn_id` is the turn it had begun in, if it said so.
+   */
+  CommandFailed?: { command: string; reason: string; to: ActorId; turn_id: string | null };
   /**
    * `participant` was removed from the channel by the envelope's sender
    * (issue 162); nothing of it follows, so whatever of it was under way has

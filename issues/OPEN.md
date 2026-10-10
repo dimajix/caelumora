@@ -73,7 +73,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [282](282-message-attachments.md) | open | A user cannot attach an image or a file to a message, so a model that can see, such as Gemma 4, is never shown one. |
 | [283](283-show-agent-components.md) | open | The web UI does not show what an agent was built from, so its owner cannot see which components it has or which came from an included list. |
 | [298](298-pick-users-and-roles-to-share-with.md) | open | The web UI shares a workspace or an artifact only with the members of a session or channel, not with a user or a role by name, since the REST API lists neither. |
-| [299](299-command-under-way-not-shown.md) | open | A command an agent carries out, such as `/compact`, is shown only once it is done: nothing tells that the agent began, and it is shown idle meanwhile. |
 
 ## Context and knowledge
 

@@ -2,13 +2,23 @@
 
 @plugin '@tailwindcss/typography';
 
-/* The dot of an agent that works (issue 243): green, pulsing in colour and size. */
+/*
+  The dot of an agent that works (issue 243): green, pulsing in colour and
+  size - beside its answer under way too. One that carries out a command
+  pulses so in orange (issue 299).
+*/
 @theme {
   --animate-working: working 1.2s ease-in-out infinite;
+  --animate-command: command 1.2s ease-in-out infinite;
 
   @keyframes working {
     0%, 100% { transform: scale(1); background-color: var(--color-green-600); }
     50% { transform: scale(1.5); background-color: var(--color-green-300); }
+  }
+
+  @keyframes command {
+    0%, 100% { transform: scale(1); background-color: var(--color-orange-600); }
+    50% { transform: scale(1.5); background-color: var(--color-orange-300); }
   }
 }
 

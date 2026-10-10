@@ -227,16 +227,29 @@ pub enum ActorEvent {
         to: Option<ActorId>,
         turn_id: Option<TurnId>,
     },
+    /// The agent began to carry out the command `command` with `args`,
+    /// asked by `to` (issue 299), in the turn `turn_id`: it took it up and
+    /// may ask for it. Told to the issuer alone, whatever its answer's
+    /// visibility - the answer, `CommandExecuted` or `CommandFailed` with
+    /// the same `turn_id`, ends it. Never written to a history.
+    CommandStarted {
+        command: String,
+        args: String,
+        to: ActorId,
+        turn_id: TurnId,
+    },
     /// The agent did not carry out the command `command` (issue 269): it
     /// is none of its own, the issuer may not run it, its arguments are
     /// invalid, or it failed. `reason` is worded for the issuer, `to`, as
     /// `CommandError` words it - never the error itself, which stays in
-    /// the log. Shown to the issuer alone and never written to a history:
-    /// nothing happened.
+    /// the log. `turn_id` is the turn it had begun in, if it told the
+    /// issuer so (`CommandStarted`). Shown to the issuer alone and never
+    /// written to a history: nothing happened.
     CommandFailed {
         command: String,
         reason: String,
         to: ActorId,
+        turn_id: Option<TurnId>,
     },
     /// `participant` was removed from the channel (issue 162). The envelope's
     /// sender is who removed it - the runtime itself, `ActorId::System`, if
@@ -398,6 +411,7 @@ impl ActorEvent {
             ActorEvent::TurnGivenUp { .. } => "TurnGivenUp",
             ActorEvent::CommandRequested { .. } => "CommandRequested",
             ActorEvent::NudgeRequested { .. } => "NudgeRequested",
+            ActorEvent::CommandStarted { .. } => "CommandStarted",
             ActorEvent::CommandExecuted { .. } => "CommandExecuted",
             ActorEvent::CommandFailed { .. } => "CommandFailed",
             ActorEvent::ParticipantRemoved { .. } => "ParticipantRemoved",
@@ -532,6 +546,9 @@ impl Envelope {
             ActorEvent::CommandExecuted { command, to, .. } => {
                 format!("CommandExecuted(sender_id={}, sender_name={}, command={}, to={})", ctx.sender_id, ctx.sender_name, command, to.map_or("everybody".to_string(), |to| to.to_string()))
             }
+            ActorEvent::CommandStarted { command, to, .. } => {
+                format!("CommandStarted(sender_id={}, sender_name={}, command={}, to={})", ctx.sender_id, ctx.sender_name, command, to)
+            }
             ActorEvent::CommandFailed { command, to, .. } => {
                 format!("CommandFailed(sender_id={}, sender_name={}, command={}, to={})", ctx.sender_id, ctx.sender_name, command, to)
             }
@@ -586,12 +603,18 @@ pub enum ActorState {
     Sleeping,
     /// Waiting for a person: an approval of a tool call (issue 165).
     WaitingForUser,
+    /// Carrying out a command an awake agent was asked for (issues 269,
+    /// 299) - `/compact`, say, which has its model summarise. Between the
+    /// turns of its answers, as `Idle` is: a command turn is no answer, and
+    /// a request to respond waits until it is done; nor can a cancel end it.
+    /// A sleeping agent carries a command out asleep, and stays `Sleeping`.
+    CarryingOutCommand,
 }
 
 impl ActorState {
     /// Every state, in the order of its declaration - its byte
     /// (`#[repr(u8)]`) is its place here.
-    const ALL: [ActorState; 7] = [
+    const ALL: [ActorState; 8] = [
         ActorState::Idle,
         ActorState::Planning,
         ActorState::ExecutingTools,
@@ -599,12 +622,14 @@ impl ActorState {
         ActorState::Cancelling,
         ActorState::Sleeping,
         ActorState::WaitingForUser,
+        ActorState::CarryingOutCommand,
     ];
 
     /// Whether the state belongs to a turn - an error in it ends the turn,
-    /// not the actor - rather than waiting between turns.
+    /// not the actor - rather than waiting between turns. Carrying out a
+    /// command is between turns: it is done while the actor waits.
     pub fn in_turn(self) -> bool {
-        !matches!(self, ActorState::Idle | ActorState::Sleeping)
+        !matches!(self, ActorState::Idle | ActorState::Sleeping | ActorState::CarryingOutCommand)
     }
 
     /// Whether a cancel can still end the turn in this state (issues 235,
@@ -679,6 +704,7 @@ mod tests {
         assert!(holder.replace(ActorState::Sleeping, ActorState::Idle));
         assert_eq!(holder.load(), ActorState::Idle);
         assert!(ActorState::WaitingForUser.in_turn() && !ActorState::Sleeping.in_turn());
+        assert!(!ActorState::CarryingOutCommand.in_turn() && !ActorState::CarryingOutCommand.interruptible(), "no answer, and no cancel ends it");
     }
 
     #[test]

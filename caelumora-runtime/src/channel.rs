@@ -4217,6 +4217,7 @@ mod tests {
         );
         register_no_secrets(&mut registry);
         register_heard(&mut registry);
+        register_marking_command(&mut registry);
         let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store, secrets, security, &caelumora_model::config::AppConfig::default(), registry).unwrap());
         let channel = Channel {
             summary: None, briefing: None,
@@ -4381,13 +4382,19 @@ mod tests {
         stuck
     }
 
-    /// The answer to a command that reaches `watch`.
-    async fn command_answer(watch: &mut crate::actor::user::ChannelWatch) -> Envelope {
+    /// What reaches `watch` of a command carried out (issues 269, 299):
+    /// that it began, if it was told so, the states the agent told of
+    /// meanwhile, and the answer.
+    async fn command_events(watch: &mut crate::actor::user::ChannelWatch) -> (Option<Envelope>, Vec<ActorState>, Envelope) {
         tokio::time::timeout(Duration::from_secs(5), async {
+            let (mut started, mut states) = (None, Vec::new());
             loop {
                 let envelope = watch.events.recv().await.expect("the channel is running");
-                if matches!(envelope.event, ActorEvent::CommandExecuted { .. } | ActorEvent::CommandFailed { .. }) {
-                    break envelope;
+                match envelope.event {
+                    ActorEvent::CommandStarted { .. } => started = Some(envelope),
+                    ActorEvent::StateChanged(state) => states.push(state),
+                    ActorEvent::CommandExecuted { .. } | ActorEvent::CommandFailed { .. } => break (started, states, envelope),
+                    _ => {}
                 }
             }
         }).await.expect("the command is answered")
@@ -4402,8 +4409,14 @@ mod tests {
 
         let reply = actor.execute_command("mark", "@helper twice").await.expect("sent to the agent");
         assert!(reply.output.is_none() && reply.span_id.is_some(), "answered later, on the stream: {reply:?}");
-        let answer = command_answer(&mut watch).await;
+        let (started, states, answer) = command_events(&mut watch).await;
+        let started = started.expect("she is told it began (issue 299)");
+        let ActorEvent::CommandStarted { command, args, to, turn_id: begun } = started.event else { unreachable!() };
+        assert_eq!((command.as_str(), args.as_str(), to), ("mark", "twice", ActorId::User(alice)));
+        assert_eq!((started.context.sender_id, started.context.span_id), (ActorId::Agent(agent), reply.span_id.unwrap()), "by the agent, in the span of the request");
+        assert_eq!(states, [ActorState::CarryingOutCommand], "shown carrying it out meanwhile");
         let ActorEvent::CommandExecuted { command, args, output, to, turn_id } = answer.event else { panic!("carried out, not {:?}", answer.event) };
+        assert_eq!(turn_id, Some(begun), "the answer ends what began");
         assert_eq!((command.as_str(), args.as_str(), output.as_str(), to), ("mark", "twice", "Marked.", Some(ActorId::User(alice))), "without the handle, to her alone");
         assert_eq!(answer.context.sender_id, ActorId::Agent(agent));
         assert_eq!(answer.context.span_id, reply.span_id.unwrap(), "in the span of the request");
@@ -4421,7 +4434,8 @@ mod tests {
         let recorded = channel.state.lock().await.history.items().into_iter()
             .any(|item| matches!(item, HistoryEntry::CommandExecuted { issuer, actor, ref command, .. } if issuer == ActorId::User(alice) && actor == ActorId::Agent(agent) && command == "mark"));
         assert!(recorded, "the channel's history records what was carried out, and on whose word");
-        assert_eq!(helper.state(), ActorState::Idle, "no answer begun");
+        assert_eq!(told_states(&mut watch.events, agent, ActorState::Idle).await, [ActorState::Idle], "idle again after, and no answer begun");
+        assert_eq!(helper.state(), ActorState::Idle);
         running.abort();
     }
 
@@ -4434,9 +4448,10 @@ mod tests {
         let before = channel.state.lock().await.history.items().len();
 
         actor.execute_command("mark", "@helper fail").await.expect("sent to the agent");
-        let answer = command_answer(&mut watch).await;
-        let ActorEvent::CommandFailed { command, reason, to } = answer.event else { panic!("failed, not {:?}", answer.event) };
-        assert_eq!((command.as_str(), to), ("mark", ActorId::User(alice)));
+        let (started, _, answer) = command_events(&mut watch).await;
+        let Some(ActorEvent::CommandStarted { turn_id: begun, .. }) = started.map(|e| e.event) else { panic!("it began") };
+        let ActorEvent::CommandFailed { command, reason, to, turn_id } = answer.event else { panic!("failed, not {:?}", answer.event) };
+        assert_eq!((command.as_str(), to, turn_id), ("mark", ActorId::User(alice), Some(begun)), "ending what began");
         assert!(reason.contains("it was told to"), "{reason}");
 
         let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
@@ -4473,8 +4488,10 @@ mod tests {
         let mut watch = actor.watch();
 
         actor.execute_command("mark", "@helper asleep").await.expect("sent to the agent");
-        let answer = command_answer(&mut watch).await;
+        let (started, states, answer) = command_events(&mut watch).await;
         assert!(matches!(answer.event, ActorEvent::CommandExecuted { .. }), "carried out asleep: {:?}", answer.event);
+        assert!(started.is_some(), "she is told it began, asleep or not");
+        assert!(states.is_empty(), "shown asleep all along (issue 299): {states:?}");
         let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
         assert_eq!(state.notes.current().len(), 1);
         assert_eq!(helper.state(), ActorState::Sleeping, "a command wakes nobody");
@@ -5105,6 +5122,30 @@ mod tests {
             }
         }).await.expect("it answers and is idle again");
         assert_eq!(told, ["Planning", "ResponseStarted", "TurnFinished", "Idle"]);
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn an_external_agent_is_shown_carrying_out_a_command_as_an_agent_run_here_is() {
+        use crate::external::ExternalEvent;
+        use caelumora_model::component::ComponentDescriptor;
+        let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![vec![
+            Ok(ExternalEvent::Message("Hello, alice.".to_string())),
+            Ok(ExternalEvent::Completed),
+        ]]));
+        let mut components = external_components();
+        components.component_nodes.push(ComponentDescriptor::new("marking", "test_marking"));
+        let Stuck { channel, context, agent, mut events, running, .. } = start(external_channel(remote, components, |_| None).await.expect("runs")).await;
+        answered(&mut events, agent).await;
+        let actor = channel.user_actor(alice_of(&context)).unwrap();
+        let mut watch = actor.watch();
+
+        actor.execute_command("mark", "@hermes once").await.expect("sent to the agent");
+        let (started, states, answer) = command_events(&mut watch).await;
+        assert!(matches!(started.map(|e| e.event), Some(ActorEvent::CommandStarted { .. })), "she is told it began");
+        assert_eq!(states.last(), Some(&ActorState::CarryingOutCommand), "shown carrying it out: {states:?}");
+        assert!(matches!(answer.event, ActorEvent::CommandExecuted { .. }), "{:?}", answer.event);
+        assert_eq!(told_states(&mut watch.events, agent, ActorState::Idle).await, [ActorState::Idle], "and idle again after");
         running.abort();
     }
 

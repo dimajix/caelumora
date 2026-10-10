@@ -312,7 +312,9 @@ else who may read it - the session's owner, say - is shown its history and no in
     reload. The channel-wide answer of a command is shown but never stored. A command an agent
     carried out (issue 269) is shown as the agent's notice - with what it answered, live, to the
     issuer or to everybody -, kept once by its turn, and from the history after a reload without the
-    answer; one it did not carry out is a notice for the issuer alone. An agent removed while
+    answer; one it did not carry out is a notice for the issuer alone. The issuer sees the notice
+    as soon as the agent begins (`CommandStarted`, issue 299), with an orange pulsing dot, and its
+    answer or failure takes its place. An agent removed while
     it answers gives its turn up and says so, which is shown as any turn given up (issue 262); once
     it has ended, the channel says so with `ParticipantRemoved`, and nothing of it follows: what
     an agent aborted without a word left - its partial answer, the stop button, its calls still
@@ -491,9 +493,12 @@ the menus, and placed again when its size changes.
 
 Each agent has a dot for where it stands (issue 243), its state as the dot's title: green when
 idle, green pulsing in colour and size while it works (`Planning`, `ExecutingTools`, `Reflecting`,
-`Cancelling`), amber while it waits for an approval, a still blue while it sleeps, and grey where
+`Cancelling`), orange pulsing so while it carries out a command (`CarryingOutCommand`, issue 299),
+amber while it waits for an approval, a still blue while it sleeps, and grey where
 nothing runs - the channel does not run, or the agent is gone. Users and approvers have none. The
-dot starts from the member's `state` in the snapshot and follows `StateChanged`. An agent whose
+dot starts from the member's `state` in the snapshot and follows `StateChanged`. The dots beside an
+answer under way in the chat - "generating…", "Thinking", the step of a plan it works on - pulse as
+a working agent's does, in green (`animate-working`). An agent whose
 answer a cancel can still end - working or waiting for an approval - has a stop icon where its
 member's `can_cancel` allows it (`POST …/participants/{aid}/cancel`); so has its answer under way in
 the chat, offered to everybody before.

@@ -84,14 +84,15 @@ impl AgentCommands {
     pub(super) async fn admit(&self, name: &str, issuer: &SecurityContext) -> CommandResult<Command> {
         let Some(channel) = self.runtime.channel_loop() else { return Err(CommandError::Unknown(name.to_string())) };
         let agent = self.agent.load().security_attributes.clone();
-        self.executor.admitted(name, issuer, &agent, &channel.security_attributes()).await
+        self.executor.admitted(name, issuer, &agent, &channel.security_attributes()).await.map(|admitted| admitted.command().clone())
     }
 
     /// Carries out the `CommandRequested` in `request` in a turn of its own,
     /// begun on `state` in the request's contexts continued in the agent's
     /// name (`Answering::to`): its owner's rights, whoever asked its
     /// initiator. The executor asks again, in the context the request came
-    /// with, whether the issuer may ask for it.
+    /// with, whether the issuer may ask for it; admitted, the agent tells the
+    /// issuer alone that it began (`CommandStarted`, issue 299).
     ///
     /// Carried out, the turn is taken over - what the command staged applied,
     /// the command recorded before the turn's end - and stored, and the
@@ -99,8 +100,9 @@ impl AgentCommands {
     /// answer. Not carried out, the turn is dropped as if it had never begun:
     /// nothing was said or applied, so nothing is recorded, and the agent
     /// answers `CommandFailed` to the issuer. A command turn is no answer:
-    /// it announces neither its start nor its end, asks nobody to respond and
-    /// is never asked for again.
+    /// it announces no answer's start nor end, asks nobody to respond and
+    /// is never asked for again. Where the agent stands meanwhile is its
+    /// actor's to tell.
     pub(super) async fn carry_out(&self, state: &mut AgentChannelState, request: &Envelope, output: &dyn EventSender) {
         let ActorEvent::CommandRequested { command, args, .. } = &request.event else { return };
         let issuer = request.context.sender_id;
@@ -123,7 +125,18 @@ impl AgentCommands {
             warn!("Agent {} lost the turn it began for /{}", agent_id, command);
             return;
         };
-        let carried_out = self.executor.execute(command, args, &request.security, &attributes, &channel_attributes, &mut turn).await;
+        let mut started = false;
+        let carried_out = match self.executor.admitted(command, &request.security, &attributes, &channel_attributes).await {
+            Ok(admitted) => {
+                let start = ActorEvent::CommandStarted { command: command.clone(), args: args.clone(), to: issuer, turn_id };
+                if let Err(e) = answering.send(start, output).await {
+                    warn!("{:#}", e);
+                }
+                started = true;
+                admitted.execute(args, &mut turn).await
+            }
+            Err(e) => Err(e),
+        };
         let event = match carried_out {
             Ok(answer) => {
                 let committed = turn.commit(false, output).await;
@@ -146,7 +159,7 @@ impl AgentCommands {
                     CommandError::Failed { .. } => warn!("Agent {} {} could not carry out /{} for {}: {}", agent_id, name, command, issuer, e),
                     _ => debug!("Agent {} {} does not carry out /{} for {}: {}", agent_id, name, command, issuer, e),
                 }
-                ActorEvent::CommandFailed { command: command.clone(), reason: e.to_string(), to: issuer }
+                ActorEvent::CommandFailed { command: command.clone(), reason: e.to_string(), to: issuer, turn_id: started.then_some(turn_id) }
             }
         };
         if let Err(e) = answering.send(event, output).await {
