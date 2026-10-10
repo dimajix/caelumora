@@ -384,9 +384,10 @@ question, in the viewer's name:
     23); an `ArtifactView` holds the versions the viewer may read - by the artifact's list or the
     version's own, asked as `GetArtifact` with `Artifact::version_attributes` - and hands out the
     content of those alone (`content`), which the `ArtifactManager` reads without asking (issue
-    [292](../issues/292-store-lists-read-everything.md)); `ChannelView::artifacts()` lists those
-    published in the channel, alike. The manager carries out what changes an artifact, each
-    operation checking itself;
+    [292](../issues/292-store-lists-read-everything.md)); `Views::artifacts()` lists the viewer's
+    own and those shared with them by name, `ChannelView::artifacts()` those published in the
+    channel, alike. The manager carries out what changes an artifact, each operation checking
+    itself;
 *   `Views::channel_of(session, channel)` reaches what a memory entry's origin or a `KnowledgeRef`
     names, wherever it is, and answers `None` for what is gone or not the viewer's to read.
 

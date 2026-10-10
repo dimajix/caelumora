@@ -6,6 +6,7 @@ use crate::confidentiality::{Classification, ConfidentialityRules};
 use crate::privacy::SessionPrivacy;
 use crate::role::{RoleId, Roles};
 use crate::store::EntityKind;
+use crate::store::query::FieldValue;
 use crate::tool::ToolCall;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -420,6 +421,28 @@ pub enum Subject {
 pub enum Membership {
     Session(SessionId),
     Channel(ChannelId),
+}
+
+/// A subject as a query compares it, after serde's tags:
+/// `{"actor": {"User": "…"}}`, `{"role": "…"}`.
+impl From<Subject> for FieldValue {
+    fn from(subject: Subject) -> Self {
+        match subject {
+            Subject::Actor(actor) => FieldValue::tagged("actor", actor),
+            Subject::Role(role) => FieldValue::tagged("role", role),
+            Subject::MemberOf(place) => FieldValue::tagged("member_of", place),
+        }
+    }
+}
+
+/// A place as a query compares it, after serde's tags: `{"session": "…"}`.
+impl From<Membership> for FieldValue {
+    fn from(place: Membership) -> Self {
+        match place {
+            Membership::Session(id) => FieldValue::tagged("session", id),
+            Membership::Channel(id) => FieldValue::tagged("channel", id),
+        }
+    }
 }
 
 /// What an entry of an access list grants (issue 23). What is neither -
@@ -1578,4 +1601,18 @@ mod tests {
         assert_eq!(policy.require(&context(owner), ActionType::DeleteSession(&hers), || Refused).await, Ok(()));
         assert_eq!(policy.require(&context(stranger), ActionType::DeleteSession(&hers), || Refused).await, Err(Refused));
     }
+
+    /// A subject and a place as a query compares them (issue 293).
+    #[test]
+    fn a_subject_meets_exactly_the_subjects_equal_to_it() {
+        let id = uuid::Uuid::new_v4();
+        let places = [Membership::Session(SessionId(id)), Membership::Channel(ChannelId(id)), Membership::Channel(ChannelId::new())];
+        crate::store::query::meets_exactly_its_equals(&places);
+        crate::store::query::meets_exactly_its_equals(&[
+            Subject::Actor(ActorId::User(crate::user::UserId(id))), Subject::Actor(ActorId::Agent(crate::agent::AgentId(id))),
+            Subject::Actor(ActorId::System), Subject::Role(RoleId(id)), Subject::Role(RoleId::new()),
+            Subject::MemberOf(places[0]), Subject::MemberOf(places[1]), Subject::MemberOf(places[2]),
+        ]);
+    }
+
 }

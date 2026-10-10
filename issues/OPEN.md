@@ -18,7 +18,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [04](04-postgres-state-store.md) | open | `StateStore` likewise — and it holds the state whose loss is most expensive, including agents suspended on an approval. |
 | [05](05-postgres-event-recorder.md) | open | The `Recorder` hook is wired into every channel, but `BlackholeRecorder` is the only implementation, so nothing is recorded. |
 | [182](182-entity-reads-not-cached.md) | open | Personalities, agents and users are read from the store again for every use - for every member of a channel, on every turn - though they change rarely. |
-| [293](293-store-queries.md) | open | A store list takes no condition and no limit: every narrowing is done by its caller after everything was read, and no database could take it over. |
+| [293](293-store-queries.md) | in progress | A store list takes no condition and no limit: every narrowing is done by its caller after everything was read, and no database could take it over. |
 
 ## Sessions and channels
 

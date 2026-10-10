@@ -40,6 +40,9 @@ pub use session::{PrivateNotesElsewhere, SessionView};
 pub use skill::SkillView;
 pub use workspace::WorkspaceView;
 
+use caelumora_model::artifact::{ArtifactField, ArtifactId};
+use caelumora_model::role::user_roles;
+use caelumora_model::store::query::{Filter, Query};
 use crate::runtime::{ActorRuntime, RuntimeManager};
 use crate::session::{Found, SessionLoop, SessionManager};
 use crate::tool::ToolError;
@@ -48,7 +51,7 @@ use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::removal::Removal;
-use caelumora_model::security::{AccessQuestions, Place, SecurityContext, SecurityManager};
+use caelumora_model::security::{AccessQuestions, Place, SecurityContext, SecurityManager, Subject};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::snapshot::{AgentSnapshot, DeletedSnapshot};
 use caelumora_model::workspace::WorkspaceId;
@@ -115,7 +118,7 @@ pub enum ViewError {
     #[error("there is no skill named \"{0}\" that can be loaded here")]
     NoSkillNamed(String),
     #[error("There is no artifact {0}")]
-    ArtifactNotFound(caelumora_model::artifact::ArtifactId),
+    ArtifactNotFound(ArtifactId),
     /// Asked for by name, as an agent's tools do: no such channel, or
     /// nothing in it that can be read from where the viewer reads.
     #[error("there is no channel named \"{0}\" that can be read from here")]
@@ -132,6 +135,15 @@ pub enum ViewError {
     /// Reaching it failed; the cause is in the log.
     #[error("Reading failed")]
     Failed(#[source] anyhow::Error),
+}
+
+impl ViewError {
+    /// Reaching something failed: `error`, with what was being done, for
+    /// the log - the viewer learns only that it failed.
+    pub(crate) fn failed<E>(error: E, doing: impl std::fmt::Display + Send + Sync + 'static) -> Self
+    where E: std::error::Error + Send + Sync + 'static {
+        ViewError::Failed(anyhow::Error::new(error).context(doing))
+    }
 }
 
 pub type ViewResult<T> = std::result::Result<T, ViewError>;
@@ -253,8 +265,8 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn sessions(&self) -> ViewResult<Vec<SessionView>> {
-        let sessions = self.entities.list_sessions(self.viewer.context()).await
-            .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context("listing the sessions")))?;
+        let sessions = self.entities.list_sessions(self.viewer.context(), &Query::all()).await.map(|page| page.items)
+            .map_err(|e| ViewError::failed(e, "listing the sessions"))?;
         // The store lists what the viewer may read; a running session is
         // reached through its loop.
         Ok(sessions.into_iter()
@@ -316,7 +328,7 @@ impl Views {
     /// it there.
     async fn gone_session<T>(&self, id: SessionId) -> ViewResult<Reached<T>> {
         let deleted = self.entities.get_deleted_session(&SecurityContext::system(), id).await.optional()
-            .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context(format!("looking up session {id}"))))?;
+            .map_err(|e| ViewError::failed(e, format!("looking up session {id}")))?;
         Ok(match deleted {
             Some(session) if self.security.may_read_session(self.viewer.context(), &session.security_attributes).await =>
                 session.deleted.map_or(Reached::Never, Reached::Gone),
@@ -328,7 +340,7 @@ impl Views {
     /// could read it were it there.
     async fn gone_channel<T>(&self, session: SessionId, id: ChannelId) -> ViewResult<Reached<T>> {
         let deleted = self.entities.get_deleted_channel(&SecurityContext::system(), id).await.optional()
-            .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context(format!("looking up channel {id}"))))?;
+            .map_err(|e| ViewError::failed(e, format!("looking up channel {id}")))?;
         Ok(match deleted {
             Some(channel) if channel.session_id == session
                 && self.security.may_read_channel(self.viewer.context(), &channel.security_attributes).await =>
@@ -343,8 +355,8 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn agents(&self) -> ViewResult<Vec<AgentSnapshot>> {
-        let agents = self.entities.list_agents(self.viewer.context()).await
-            .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context("listing the agents")))?;
+        let agents = self.entities.list_agents(self.viewer.context(), &Query::all()).await.map(|page| page.items)
+            .map_err(|e| ViewError::failed(e, "listing the agents"))?;
         let policy = &self.security;
         let mut listed = Vec::with_capacity(agents.len());
         for agent in agents {
@@ -360,8 +372,8 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn deleted_agents(&self) -> ViewResult<Vec<DeletedSnapshot<AgentId>>> {
-        let agents = self.entities.list_deleted_agents(self.viewer.context()).await
-            .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context("listing the deleted agents")))?;
+        let agents = self.entities.list_deleted_agents(self.viewer.context(), &Query::all()).await.map(|page| page.items)
+            .map_err(|e| ViewError::failed(e, "listing the deleted agents"))?;
         let policy = &self.security;
         let mut deleted = Vec::with_capacity(agents.len());
         for agent in agents {
@@ -385,8 +397,8 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn workspaces(&self) -> ViewResult<Vec<WorkspaceView>> {
-        let workspaces = self.entities.list_workspaces(self.viewer.context()).await
-            .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context("listing the workspaces")))?;
+        let workspaces = self.entities.list_workspaces(self.viewer.context(), &Query::all()).await.map(|page| page.items)
+            .map_err(|e| ViewError::failed(e, "listing the workspaces"))?;
         let mut readable = Vec::with_capacity(workspaces.len());
         for workspace in workspaces {
             if self.cleared_for(&workspace.classification).await {
@@ -407,22 +419,33 @@ impl Views {
             Ok(Some(workspace)) if self.cleared_for(&workspace.classification).await => Ok(WorkspaceView::direct(self.clone(), workspace)),
             Ok(Some(_)) => Err(ViewError::WorkspaceNotFound(id)),
             Ok(None) => Err(ViewError::WorkspaceNotFound(id)),
-            Err(e) => Err(ViewError::Failed(anyhow::Error::new(e).context("reading a workspace"))),
+            Err(e) => Err(ViewError::failed(e, "reading a workspace")),
         }
     }
 
-    /// The artifacts the viewer may read anything of (issues 271, 23) -
-    /// their own and those shared with them, by the artifact's list or a
-    /// version's - and is cleared for, each with the versions they may
-    /// read. Read in the runtime's name and asked here: the store's own
-    /// check knows the artifact's list, not those of its versions. Every
-    /// artifact is read - issue 293 is to ask the store for fewer.
+    /// The viewer's artifacts (issues 271, 23, 293): those they own and
+    /// those shared with them by name - an entry naming them or one of their
+    /// roles, in the artifact's list or a version's -, each with the
+    /// versions they may read, if they are cleared for it. What they read
+    /// only as a member of a channel is found through that channel
+    /// (`ChannelView::artifacts`). The store is asked for these alone, in
+    /// the runtime's name - its own check knows the artifact's list, not
+    /// those of its versions -, and each is asked of the policy here.
     ///
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn artifacts(&self) -> ViewResult<Vec<ArtifactView>> {
-        let artifacts = self.entities.list_artifacts(&SecurityContext::system()).await
-            .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context("listing the artifacts")))?;
+        let failed = |e| ViewError::failed(e, "listing the artifacts");
+        let principal = self.viewer.context().principal_id;
+        let roles = user_roles(self.entities.as_ref(), principal).await.map_err(failed)?;
+        let subjects: Vec<Subject> = std::iter::once(Subject::Actor(principal)).chain(roles.into_iter().map(Subject::Role)).collect();
+        let named = Filter::is_in(ArtifactField::Subject, subjects);
+        let theirs = Filter::Or(vec![
+            Filter::eq(ArtifactField::Owner, principal),
+            Filter::any(ArtifactField::Acl, named.clone()),
+            Filter::any(ArtifactField::Versions, Filter::any(ArtifactField::VersionAcl, named)),
+        ]);
+        let artifacts = self.entities.list_artifacts(&SecurityContext::system(), &Query::filtered(theirs)).await.map_err(failed)?.items;
         let mut readable = Vec::new();
         for artifact in artifacts {
             if let Some(view) = self.readable_artifact(artifact).await {
@@ -438,9 +461,9 @@ impl Views {
     /// # Errors
     /// `ArtifactNotFound` if they may read nothing of it - one they are not
     /// cleared for is the same -; `Failed` if the store cannot read it.
-    pub async fn artifact(&self, id: caelumora_model::artifact::ArtifactId) -> ViewResult<ArtifactView> {
+    pub async fn artifact(&self, id: ArtifactId) -> ViewResult<ArtifactView> {
         let found = self.entities.get_artifact(&SecurityContext::system(), id).await.optional()
-            .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context("reading an artifact")))?;
+            .map_err(|e| ViewError::failed(e, "reading an artifact"))?;
         match found {
             Some(artifact) => self.readable_artifact(artifact).await.ok_or(ViewError::ArtifactNotFound(id)),
             None => Err(ViewError::ArtifactNotFound(id)),
@@ -492,9 +515,9 @@ impl Views {
     ///
     /// # Errors
     /// `Failed` if the store cannot list them.
-    pub async fn deleted_artifacts(&self) -> ViewResult<Vec<DeletedSnapshot<caelumora_model::artifact::ArtifactId>>> {
-        let artifacts = self.entities.list_deleted_artifacts(self.viewer.context()).await
-            .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context("listing the deleted artifacts")))?;
+    pub async fn deleted_artifacts(&self) -> ViewResult<Vec<DeletedSnapshot<ArtifactId>>> {
+        let artifacts = self.entities.list_deleted_artifacts(self.viewer.context(), &Query::all()).await.map(|page| page.items)
+            .map_err(|e| ViewError::failed(e, "listing the deleted artifacts"))?;
         let policy = &self.security;
         let mut deleted = Vec::with_capacity(artifacts.len());
         for artifact in artifacts {
@@ -517,8 +540,8 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn deleted_workspaces(&self) -> ViewResult<Vec<DeletedSnapshot<WorkspaceId>>> {
-        let workspaces = self.entities.list_deleted_workspaces(self.viewer.context()).await
-            .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context("listing the deleted workspaces")))?;
+        let workspaces = self.entities.list_deleted_workspaces(self.viewer.context(), &Query::all()).await.map(|page| page.items)
+            .map_err(|e| ViewError::failed(e, "listing the deleted workspaces"))?;
         let policy = &self.security;
         let mut deleted = Vec::with_capacity(workspaces.len());
         for workspace in workspaces {
@@ -541,8 +564,8 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn deleted_sessions(&self) -> ViewResult<Vec<DeletedSnapshot<SessionId>>> {
-        let sessions = self.entities.list_deleted_sessions(self.viewer.context()).await
-            .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context("listing the deleted sessions")))?;
+        let sessions = self.entities.list_deleted_sessions(self.viewer.context(), &Query::all()).await.map(|page| page.items)
+            .map_err(|e| ViewError::failed(e, "listing the deleted sessions"))?;
         let policy = &self.security;
         let mut deleted = Vec::with_capacity(sessions.len());
         for session in sessions {
@@ -610,7 +633,7 @@ impl Views {
     /// `Failed` if it cannot be looked up.
     pub(crate) async fn privacy_of(&self, id: SessionId) -> ViewResult<Option<SessionPrivacy>> {
         let session = self.entities.get_session(&SecurityContext::system(), id).await.optional()
-            .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context(format!("looking up session {id}"))))?;
+            .map_err(|e| ViewError::failed(e, format!("looking up session {id}")))?;
         Ok(session.as_ref().map(SessionPrivacy::of))
     }
 
@@ -618,7 +641,7 @@ impl Views {
     /// for (issue 133). Without them, only what is public: a failed lookup
     /// shows less.
     async fn roles(&self) -> Vec<caelumora_model::role::RoleId> {
-        caelumora_model::role::user_roles(self.entities.as_ref(), self.viewer.context().principal_id).await.unwrap_or_default()
+        user_roles(self.entities.as_ref(), self.viewer.context().principal_id).await.unwrap_or_default()
     }
 
     /// Whether the viewer is cleared for `classification` (issue 133), by
@@ -635,8 +658,8 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn skills(&self) -> ViewResult<Vec<SkillView>> {
-        let skills = self.entities.list_skills(self.viewer.context()).await
-            .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context("listing the skills")))?;
+        let skills = self.entities.list_skills(self.viewer.context(), &Query::all()).await.map(|page| page.items)
+            .map_err(|e| ViewError::failed(e, "listing the skills"))?;
         let mut readable = Vec::with_capacity(skills.len());
         for skill in skills {
             if self.cleared_for(&skill.classification).await {
@@ -654,7 +677,7 @@ impl Views {
         let skill = match self.entities.get_skill(self.viewer.context(), id).await.optional() {
             Ok(Some(skill)) => skill,
             Ok(None) => return Err(ViewError::SkillNotFound(id)),
-            Err(e) => return Err(ViewError::Failed(anyhow::Error::new(e).context("reading a skill"))),
+            Err(e) => return Err(ViewError::failed(e, "reading a skill")),
         };
         match self.cleared_for(&skill.classification).await {
             true => Ok(SkillView::of(self.clone(), skill)),
@@ -668,8 +691,8 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn deleted_skills(&self) -> ViewResult<Vec<DeletedSnapshot<SkillId>>> {
-        let skills = self.entities.list_deleted_skills(self.viewer.context()).await
-            .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context("listing the deleted skills")))?;
+        let skills = self.entities.list_deleted_skills(self.viewer.context(), &Query::all()).await.map(|page| page.items)
+            .map_err(|e| ViewError::failed(e, "listing the deleted skills"))?;
         let policy = &self.security;
         let mut deleted = Vec::with_capacity(skills.len());
         for skill in skills {
@@ -699,8 +722,12 @@ impl Views {
     pub async fn usable_skills(&self) -> ViewResult<Vec<SkillView>> {
         let Some(place) = self.viewer.place() else { return Ok(Vec::new()) };
         let context = self.viewer.context();
-        let skills = self.entities.list_skills(context).await
-            .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context("listing the skills")))?;
+        let failed = |e| ViewError::failed(e, "listing the skills");
+        let here = Scope::ChannelScope { session_id: place.session.id, channel_id: place.channel };
+        let owner = context.principal_id.as_user_id();
+        // Those seen from here, which the store is asked for alone (issue 293).
+        let seen = Query::filtered(Scope::seen_from(&here, owner));
+        let skills = self.entities.list_skills(context, &seen).await.map_err(failed)?.items;
         let mut usable = Vec::with_capacity(skills.len());
         for skill in skills {
             if self.security.may_use_skill(context, &skill.security_attributes).await
@@ -709,8 +736,6 @@ impl Views {
                 usable.push(skill);
             }
         }
-        let here = Scope::ChannelScope { session_id: place.session.id, channel_id: place.channel };
-        let owner = context.principal_id.as_user_id();
         Ok(found_from(&usable, &here, owner).into_iter().map(|skill| SkillView::of(self.clone(), skill.clone())).collect())
     }
 

@@ -138,6 +138,7 @@ async fn existing_workspace(store: &dyn EntityStore, context: &SecurityContext, 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::store::query::Query;
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::confidentiality::Visibility;
     use caelumora_model::actor::ActorId;
@@ -254,7 +255,7 @@ mod tests {
         let refused = resolve_participants(store.as_ref(), &as_user(owner), &template(vec![taken]), SessionId::new(), owner).await
             .expect_err("the global one is of another personality");
         assert!(matches!(refused.downcast_ref::<TemplateError>(), Some(TemplateError::AgentNameTaken(name)) if *name == "helper"), "{refused}");
-        assert_eq!(store.list_agents(&system).await.unwrap().len(), 3, "and none is made: the user's, the session's, the global one");
+        assert_eq!(store.list_agents(&system, &Query::all()).await.map(|page| page.items).unwrap().len(), 3, "and none is made: the user's, the session's, the global one");
     }
 
     /// Allows everything, and has another make the agent `helper` between a
@@ -291,7 +292,7 @@ mod tests {
 
         let participants = resolve_participants(store.as_ref(), &as_user(owner), &template(vec![helper(personality)]), SessionId::new(), owner).await
             .expect("the one made meanwhile");
-        let agents = store.list_agents(&system).await.unwrap();
+        let agents = store.list_agents(&system, &Query::all()).await.map(|page| page.items).unwrap();
         assert_eq!(agents.len(), 1, "no second one");
         assert!(matches!(participants[0].1, Participant::Agent(id) if id == agents[0].id && agents[0].security_attributes.owner_id == ActorId::None), "the other's");
     }
@@ -308,7 +309,7 @@ mod tests {
         let refused = resolve_participants(store.as_ref(), &as_user(owner), &template(vec![helper(personality)]), SessionId::new(), owner).await
             .expect_err("the name is another's");
         assert!(matches!(refused.downcast_ref::<StoreError>(), Some(StoreError::NameTaken { entity: "agent" })), "{refused}");
-        assert_eq!(store.list_agents(&system).await.unwrap().len(), 1, "and no second one is made");
+        assert_eq!(store.list_agents(&system, &Query::all()).await.map(|page| page.items).unwrap().len(), 1, "and no second one is made");
     }
 
     #[tokio::test]
@@ -329,7 +330,7 @@ mod tests {
                 .expect_err("not one outside it");
             assert!(matches!(refused.downcast_ref::<TemplateError>(), Some(TemplateError::PersonalityOutOfScope(name)) if *name == "planner"), "{scope:?}: {refused}");
         }
-        assert_eq!(store.list_agents(&system).await.unwrap().len(), 1, "none is made outside it");
+        assert_eq!(store.list_agents(&system, &Query::all()).await.map(|page| page.items).unwrap().len(), 1, "none is made outside it");
     }
 
     #[tokio::test]

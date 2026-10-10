@@ -11,9 +11,10 @@ use crate::actor::ActorId;
 use crate::confidentiality::Classification;
 use crate::digest::Digest;
 use crate::removal::Removal;
-use crate::scope::Scoped;
+use crate::scope::{Scoped, ScopedField};
 use crate::security::{AclEntry, Grant, Secured, SecurityAttributes};
 use crate::session::{ChannelId, SessionId};
+use crate::store::query::Field;
 use crate::user::UserId;
 use crate::value::name::ScopedName;
 use crate::value::text::Description;
@@ -21,6 +22,48 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 define_id!(ArtifactId);
+
+/// What a query of artifacts may name (issue 293), each where it lies in
+/// an artifact as it is stored. Those of a version lie within an element of
+/// `Versions`, those of an entry within an element of `Acl` or `VersionAcl`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArtifactField {
+    /// Where it lies: a `Scope`.
+    Scope,
+    /// Who owns it: an `ActorId`.
+    Owner,
+    /// Its own access list: entries.
+    Acl,
+    /// Its versions.
+    Versions,
+    /// Of a version: the session it was published in.
+    VersionSession,
+    /// Of a version: the channel it was published in.
+    VersionChannel,
+    /// Of a version: its own access list - entries.
+    VersionAcl,
+    /// Of an entry of an access list: whom it names, a `Subject`.
+    Subject,
+}
+
+impl ScopedField for ArtifactField {
+    const SCOPE: Self = ArtifactField::Scope;
+}
+
+impl Field for ArtifactField {
+    fn path(self) -> &'static [&'static str] {
+        match self {
+            ArtifactField::Scope => &["scope"],
+            ArtifactField::Owner => &["security_attributes", "owner_id"],
+            ArtifactField::Acl => &["security_attributes", "acl"],
+            ArtifactField::Versions => &["versions"],
+            ArtifactField::VersionSession => &["session_id"],
+            ArtifactField::VersionChannel => &["channel_id"],
+            ArtifactField::VersionAcl => &["acl"],
+            ArtifactField::Subject => &["subject"],
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Artifact {

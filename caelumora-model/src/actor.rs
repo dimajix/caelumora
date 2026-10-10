@@ -15,6 +15,7 @@ use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU8, Ordering};
 use uuid::Uuid;
+use crate::store::query::FieldValue;
 
 #[derive(Debug, Clone, Copy, Default, Display, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ActorId {
@@ -29,6 +30,21 @@ pub enum ActorId {
     /// so that a context nobody filled in has no rights (issue 11).
     System,
 }
+/// An actor as a query compares it, after serde's tags: `{"User": "…"}`,
+/// `"System"`. A participant, whose variants have the same form, is asked
+/// by the actor it is.
+impl From<ActorId> for FieldValue {
+    fn from(actor: ActorId) -> Self {
+        match actor {
+            ActorId::None => FieldValue::from("None"),
+            ActorId::User(id) => FieldValue::tagged("User", id),
+            ActorId::Agent(id) => FieldValue::tagged("Agent", id),
+            ActorId::Approver(id) => FieldValue::tagged("Approver", id),
+            ActorId::System => FieldValue::from("System"),
+        }
+    }
+}
+
 impl ActorId {
     /// The name every approver is shown with.
     pub const APPROVER_NAME: &'static str = "Approver";
@@ -688,4 +704,17 @@ mod tests {
             "the end of the turn is still announced"
         );
     }
+
+    /// An actor as a query compares it (issue 293): the variant counts, not
+    /// only the UUID.
+    #[test]
+    fn an_actor_meets_exactly_the_actors_equal_to_it() {
+        let id = Uuid::new_v4();
+        crate::store::query::meets_exactly_its_equals(&[
+            ActorId::None, ActorId::System,
+            ActorId::User(UserId(id)), ActorId::User(UserId::new()),
+            ActorId::Agent(AgentId(id)), ActorId::Approver(ApproverId(id)),
+        ]);
+    }
+
 }

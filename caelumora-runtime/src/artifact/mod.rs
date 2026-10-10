@@ -30,7 +30,7 @@ use caelumora_model::config::{ArtifactStorageConfig, ArtifactsConfig};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::digest::ContentDigest;
 use caelumora_model::event::GlobalEvent;
-use caelumora_model::scope::{Scope, Scoped};
+use caelumora_model::scope::Scope;
 use caelumora_model::security::{AccessQuestions, AclEntry, ActionType, Enforcement, Grant, Membership, SecurityAttributes, SecurityContext, SecurityManager, Subject};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResultExt};
@@ -398,11 +398,9 @@ impl ArtifactManager {
     pub(crate) async fn purge_lying_in(&self, holder: &Scope) -> ArtifactResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for artifact in self.entities.list_deleted_artifacts(&system).await? {
-            if holder.contains(&artifact.scoped_name().scope) {
-                self.storage(&artifact.storage)?.remove(artifact.id).await?;
-                self.entities.purge_artifact(&system, artifact.id).await?;
-            }
+        for artifact in self.entities.list_deleted_artifacts(&system, &crate::scoped::within(holder)).await?.items {
+            self.storage(&artifact.storage)?.remove(artifact.id).await?;
+            self.entities.purge_artifact(&system, artifact.id).await?;
         }
         Ok(())
     }

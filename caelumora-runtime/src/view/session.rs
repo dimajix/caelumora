@@ -1,13 +1,14 @@
 //! A session as its viewer reached it: its document, and its loop if it
 //! runs.
 
+use caelumora_model::store::query::{Filter, Query};
 use super::channel::Readable;
 use super::{ChannelView, ViewError, ViewResult, Views};
 use crate::channel::ChannelLoop;
 use crate::session::{Found, SessionLoop};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
-use caelumora_model::channel::{Channel, Participant};
+use caelumora_model::channel::{Channel, ChannelField, Participant};
 use caelumora_model::value::text::{Briefing, Summary};
 use caelumora_model::digest::Digest;
 use caelumora_model::note::Note;
@@ -195,7 +196,7 @@ impl SessionView {
             Some(session_loop) => Ok(session_loop.channel_by_id(id).map(|channel_loop| (Arc::clone(&channel_loop.channel()), Some(channel_loop)))),
             None if self.session.channels.contains(&id) => {
                 let channel = self.views.entities().get_channel(&SecurityContext::system(), id).await
-                    .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context(format!("reading channel {id}"))))?;
+                    .map_err(|e| ViewError::failed(e, format!("reading channel {id}")))?;
                 Ok(Some((Arc::new(channel), None)))
             }
             None => Ok(None),
@@ -304,11 +305,12 @@ impl SessionView {
     pub async fn deleted_channels(&self) -> ViewResult<Vec<DeletedSnapshot<ChannelId>>> {
         let views = self.views();
         let context = views.context();
-        let channels = views.entities().list_deleted_channels(context).await
-            .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context(format!("listing the deleted channels of session {}", self.id()))))?;
+        let failed = |e| ViewError::failed(e, format!("listing the deleted channels of session {}", self.id()));
+        let of_this = Query::filtered(Filter::eq(ChannelField::Session, self.id()));
+        let channels = views.entities().list_deleted_channels(context, &of_this).await.map_err(failed)?.items;
         let may_change = self.may_change().await;
         let mut deleted = Vec::new();
-        for channel in channels.into_iter().filter(|c| c.session_id == self.id()) {
+        for channel in channels {
             let Some(removal) = channel.deleted.clone() else { continue };
             deleted.push(DeletedSnapshot {
                 id: channel.id,

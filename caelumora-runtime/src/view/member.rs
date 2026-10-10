@@ -123,7 +123,7 @@ impl MemberState for UserMember {
     async fn introduction(&self) -> ViewResult<Option<String>> {
         let introduction = self.introduction.get_or_try_init(|| async {
             let profile = self.store.get_user_profile(&SecurityContext::system(), self.id).await.optional()
-                .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context(format!("reading the introduction of {}", ActorId::User(self.id)))))?;
+                .map_err(|e| ViewError::failed(e, format!("reading the introduction of {}", ActorId::User(self.id))))?;
             Ok::<_, ViewError>(profile.and_then(|profile| profile.introduction).map(String::from))
         }).await?;
         Ok(introduction.clone())
@@ -177,7 +177,7 @@ impl StateRef {
     /// The error for a state that cannot be read, logged.
     fn failed(&self, e: StoreError) -> ViewError {
         warn!("Cannot read the state of agent {} in channel {}: {}", self.agent, self.channel, e);
-        ViewError::Failed(anyhow::Error::new(e).context(format!("reading the state of {} in channel {}", ActorId::Agent(self.agent), self.channel)))
+        ViewError::failed(e, format!("reading the state of {} in channel {}", ActorId::Agent(self.agent), self.channel))
     }
 }
 
@@ -208,7 +208,7 @@ impl MemberState for AgentMemberState {
     async fn personality(&self) -> ViewResult<Option<&Personality>> {
         let personality = self.personality.get_or_try_init(|| async {
             self.store.get_personality(&SecurityContext::system(), self.agent.personality_id).await.optional()
-                .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context(format!("reading the personality of agent {}", self.agent.id))))
+                .map_err(|e| ViewError::failed(e, format!("reading the personality of agent {}", self.agent.id)))
         }).await?;
         Ok(personality.as_ref())
     }

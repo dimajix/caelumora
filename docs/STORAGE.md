@@ -174,6 +174,58 @@ would bypass.
 There are two implementations: `MemoryStore`, for tests, and `JsonFileStore`, which keeps one JSON
 file per document.
 
+### Queries
+
+Every list of the entity store takes a query (`caelumora_model::store::query`, issue
+[293](../issues/293-store-queries.md)) and answers a page:
+
+*   **A filter** - purely declarative, so that a database could push it into a `WHERE` clause:
+    equality, membership in a set of values, absence, `And`, `Or`, `Not`, and whether any element
+    of a collection meets a condition of its own (`Any`). It names fields of the kind (an
+    `ArtifactField`, say), each a path into the document as it is serialized; a field used within
+    `Any` lies within the element. What a kind may be asked:
+    *   personalities, session templates, agents, workspaces and skills share the field of what
+        lies in a scope (`ScopeField`): its scope;
+    *   artifacts have those and more (`ArtifactField`): the owner, the access list, the versions
+        with the place each was published in and their own lists;
+    *   channels have their session (`ChannelField`), sessions their participants
+        (`SessionField`);
+    *   users, profiles and components have none yet (`NoField`).
+*   **Values** (`FieldValue`) take the forms serde writes, but are made without it, so that making
+    a filter cannot fail: a `Uuid` for every id, a `Text` for a unit variant (`"GlobalScope"`), and
+    `Tagged` for a variant (`{"User": "…"}`). `Tagged` meets an object that *has* its key with a
+    matching value - containment, as `@>` in Postgres -, so that a value names only what
+    identifies it: a channel's scope its channel alone, whose id is unique. `ActorId`, `Subject`,
+    `Membership` and `Scope` convert by `From`, written after serde's tags; a test per type holds
+    each to meeting exactly the serialized values equal to it. A participant is asked by the
+    `ActorId` of the same form.
+*   **Scope conditions** are made by the scope, so that the rule lives with `Scope`:
+    `Scope::within` is what lies in a scope or within it, as `contains` says - what goes with a
+    session when it is deleted, restored or purged -, and `Scope::seen_from` what is found from a
+    place by a user, as the lookup by name finds it. A test holds each to the rule it states.
+*   **A limit and a cursor**: the entities in the order of their keys - their ids -, at most so
+    many, after the one the cursor names. A page cut short by its limit hands out the cursor to go
+    on with (`Page::next`); the page after it may be empty, where nothing that followed was the
+    caller's to read.
+*   **Who may read what is still asked afterwards**, entity by entity, as before; a limit counts
+    what the caller may read, reading on until it is met. That access becomes part of the query
+    is the second phase of issue 293.
+
+Both stores take the keys of a kind first - the memory store from its map, the JSON store the names
+of the files, without reading one - and read an entity only when it is its turn: the memory store
+judges the filter on it serialized, the JSON store on the document as JSON, before reading it as
+its type. What follows a page's limit is not read. Without a limit both still go through every
+entity of the kind - without a policy question for those the filter drops, but without an index
+either.
+
+Every list that narrows what it read says so in its query: what lies in a scope, the channels of a
+session, the sessions an agent takes part in, the skills found from a place, the artifacts of a
+channel, and a user's own and those shared with them. What a query cannot say yet stays code at
+the caller: what was deleted since a time - a comparison the filter does not make -, a lookup by a
+name, which compares names normalized
+(issue [250](../issues/250-unique-names-per-name-space.md)), and a viewer's clearance, which the
+views still check afterwards.
+
 ### Deleted entities
 
 What a user deletes is to be kept, marked, and removed for good only by a purge - an administrator's

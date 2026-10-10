@@ -2,6 +2,7 @@ pub(crate) mod access;
 pub mod json;
 pub mod memberships;
 pub mod memory;
+pub mod query;
 #[cfg(test)]
 pub(crate) mod suite;
 
@@ -20,7 +21,11 @@ use crate::user::{User, UserId, UserProfile};
 use crate::value::name::ScopedName;
 use crate::workspace::{Workspace, WorkspaceId};
 use crate::skill::{Skill, SkillId};
-use crate::artifact::{Artifact, ArtifactId};
+use crate::artifact::{Artifact, ArtifactField, ArtifactId};
+use crate::channel::ChannelField;
+use crate::scope::ScopeField;
+use crate::session::SessionField;
+use crate::store::query::{NoField, Page, Query};
 
 
 #[derive(Debug, thiserror::Error)]
@@ -171,11 +176,11 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn get_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality>;
     async fn update_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()>;
     async fn delete_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool>;
-    async fn list_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>>;
+    async fn list_personalities(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Personality>>;
     async fn restore_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<()>;
     async fn purge_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool>;
     async fn get_deleted_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality>;
-    async fn list_deleted_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>>;
+    async fn list_deleted_personalities(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Personality>>;
     async fn find_personality_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Personality>;
 
     // Session templates
@@ -183,11 +188,11 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn get_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<SessionTemplate>;
     async fn update_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()>;
     async fn delete_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool>;
-    async fn list_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>>;
+    async fn list_session_templates(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<SessionTemplate>>;
     async fn restore_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<()>;
     async fn purge_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool>;
     async fn get_deleted_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<SessionTemplate>;
-    async fn list_deleted_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>>;
+    async fn list_deleted_session_templates(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<SessionTemplate>>;
     async fn find_session_template_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<SessionTemplate>;
 
     // Agents
@@ -195,11 +200,11 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn get_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent>;
     async fn update_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()>;
     async fn delete_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<bool>;
-    async fn list_agents(&self, ctx: &SecurityContext) -> StoreResult<Vec<Agent>>;
+    async fn list_agents(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Agent>>;
     async fn restore_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<()>;
     async fn purge_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<bool>;
     async fn get_deleted_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent>;
-    async fn list_deleted_agents(&self, ctx: &SecurityContext) -> StoreResult<Vec<Agent>>;
+    async fn list_deleted_agents(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Agent>>;
     async fn find_agent_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Agent>;
 
     // Sessions
@@ -207,11 +212,11 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn get_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session>;
     async fn update_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()>;
     async fn delete_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool>;
-    async fn list_sessions(&self, ctx: &SecurityContext) -> StoreResult<Vec<Session>>;
+    async fn list_sessions(&self, ctx: &SecurityContext, query: &Query<SessionField>) -> StoreResult<Page<Session>>;
     async fn restore_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<()>;
     async fn purge_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool>;
     async fn get_deleted_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session>;
-    async fn list_deleted_sessions(&self, ctx: &SecurityContext) -> StoreResult<Vec<Session>>;
+    async fn list_deleted_sessions(&self, ctx: &SecurityContext, query: &Query<SessionField>) -> StoreResult<Page<Session>>;
 
     // Channels (issue 70): documents of their own, which the session lists
     // by id.
@@ -219,11 +224,11 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn get_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel>;
     async fn update_channel(&self, ctx: &SecurityContext, value: &Channel) -> StoreResult<()>;
     async fn delete_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool>;
-    async fn list_channels(&self, ctx: &SecurityContext) -> StoreResult<Vec<Channel>>;
+    async fn list_channels(&self, ctx: &SecurityContext, query: &Query<ChannelField>) -> StoreResult<Page<Channel>>;
     async fn restore_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<()>;
     async fn purge_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool>;
     async fn get_deleted_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel>;
-    async fn list_deleted_channels(&self, ctx: &SecurityContext) -> StoreResult<Vec<Channel>>;
+    async fn list_deleted_channels(&self, ctx: &SecurityContext, query: &Query<ChannelField>) -> StoreResult<Page<Channel>>;
 
     // Users - they belong to the system: everybody reads them, only the
     // system changes them (issue 94).
@@ -231,11 +236,11 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn get_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User>;
     async fn update_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()>;
     async fn delete_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool>;
-    async fn list_users(&self, ctx: &SecurityContext) -> StoreResult<Vec<User>>;
+    async fn list_users(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<User>>;
     async fn restore_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<()>;
     async fn purge_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool>;
     async fn get_deleted_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User>;
-    async fn list_deleted_users(&self, ctx: &SecurityContext) -> StoreResult<Vec<User>>;
+    async fn list_deleted_users(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<User>>;
     async fn find_user_by_name(&self, ctx: &SecurityContext, name: &str) -> StoreResult<User>;
 
     // User profiles - what a user says about themselves (issue 176), one
@@ -245,11 +250,11 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn get_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<UserProfile>;
     async fn update_user_profile(&self, ctx: &SecurityContext, value: &UserProfile) -> StoreResult<()>;
     async fn delete_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool>;
-    async fn list_user_profiles(&self, ctx: &SecurityContext) -> StoreResult<Vec<UserProfile>>;
+    async fn list_user_profiles(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<UserProfile>>;
     async fn restore_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<()>;
     async fn purge_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool>;
     async fn get_deleted_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<UserProfile>;
-    async fn list_deleted_user_profiles(&self, ctx: &SecurityContext) -> StoreResult<Vec<UserProfile>>;
+    async fn list_deleted_user_profiles(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<UserProfile>>;
 
     // Workspaces (issue 253) - their files are no part of the document, and
     // whoever purges one removes them.
@@ -257,11 +262,11 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn get_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace>;
     async fn update_workspace(&self, ctx: &SecurityContext, value: &Workspace) -> StoreResult<()>;
     async fn delete_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<bool>;
-    async fn list_workspaces(&self, ctx: &SecurityContext) -> StoreResult<Vec<Workspace>>;
+    async fn list_workspaces(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Workspace>>;
     async fn restore_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<()>;
     async fn purge_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<bool>;
     async fn get_deleted_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace>;
-    async fn list_deleted_workspaces(&self, ctx: &SecurityContext) -> StoreResult<Vec<Workspace>>;
+    async fn list_deleted_workspaces(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Workspace>>;
     async fn find_workspace_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Workspace>;
 
     // Skills (issue 22)
@@ -269,11 +274,11 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn get_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<Skill>;
     async fn update_skill(&self, ctx: &SecurityContext, value: &Skill) -> StoreResult<()>;
     async fn delete_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<bool>;
-    async fn list_skills(&self, ctx: &SecurityContext) -> StoreResult<Vec<Skill>>;
+    async fn list_skills(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Skill>>;
     async fn restore_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<()>;
     async fn purge_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<bool>;
     async fn get_deleted_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<Skill>;
-    async fn list_deleted_skills(&self, ctx: &SecurityContext) -> StoreResult<Vec<Skill>>;
+    async fn list_deleted_skills(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Skill>>;
     async fn find_skill_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Skill>;
 
     // Artifacts (issue 271) - their content is no part of the document, and
@@ -282,11 +287,11 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn get_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<Artifact>;
     async fn update_artifact(&self, ctx: &SecurityContext, value: &Artifact) -> StoreResult<()>;
     async fn delete_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<bool>;
-    async fn list_artifacts(&self, ctx: &SecurityContext) -> StoreResult<Vec<Artifact>>;
+    async fn list_artifacts(&self, ctx: &SecurityContext, query: &Query<ArtifactField>) -> StoreResult<Page<Artifact>>;
     async fn restore_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<()>;
     async fn purge_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<bool>;
     async fn get_deleted_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<Artifact>;
-    async fn list_deleted_artifacts(&self, ctx: &SecurityContext) -> StoreResult<Vec<Artifact>>;
+    async fn list_deleted_artifacts(&self, ctx: &SecurityContext, query: &Query<ArtifactField>) -> StoreResult<Page<Artifact>>;
     async fn find_artifact_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Artifact>;
 }
 
@@ -302,7 +307,7 @@ pub trait ComponentStore : Debug + Sync + Send {
     async fn get_components(&self, ctx: &SecurityContext, id: &str) -> StoreResult<StoredComponents>;
     async fn update_components(&self, ctx: &SecurityContext, value: &StoredComponents) -> StoreResult<()>;
     async fn delete_components(&self, ctx: &SecurityContext, id: &str) -> StoreResult<bool>;
-    async fn list_components(&self, ctx: &SecurityContext) -> StoreResult<Vec<StoredComponents>>;
+    async fn list_components(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<StoredComponents>>;
 }
 
 /// The runtime state (issue 193): every kind `Journaled`, read whole and
@@ -396,7 +401,7 @@ mod tests {
         store.create_session(&ctx, &session1).await.unwrap();
         store.create_session(&ctx, &session2).await.unwrap();
 
-        let sessions = store.list_sessions(&ctx).await.unwrap();
+        let sessions = store.list_sessions(&ctx, &Query::all()).await.map(|page| page.items).unwrap();
         assert_eq!(sessions.len(), 2);
         assert!(sessions.iter().any(|s| s.id == session1.id));
         assert!(sessions.iter().any(|s| s.id == session2.id));

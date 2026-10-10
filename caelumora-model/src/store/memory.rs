@@ -18,6 +18,13 @@ use crate::skill::{Skill, SkillId};
 use crate::artifact::{Artifact, ArtifactId};
 use std::fmt::Display;
 use std::hash::Hash;
+use crate::store::query::{self, Field, Filter, NoField, Page, Query};
+use std::future::ready;
+use serde::Serialize;
+use crate::artifact::ArtifactField;
+use crate::channel::ChannelField;
+use crate::scope::ScopeField;
+use crate::session::SessionField;
 
 #[derive(Debug)]
 pub struct MemoryStore {
@@ -230,26 +237,42 @@ impl MemoryStore {
         self.access(ctx).read_deleted(found, kind, key.to_string()).await
     }
 
-    async fn list_deleted_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions) -> StoreResult<Vec<T>>
-    where K: Eq + Hash + Send + Sync, T: Deletable + Clone + Send + Sync {
-        let access = self.access(ctx);
-        access.allow(kind.list).await?;
-        let all = self.read_lock(map, |v| v.values().cloned().collect());
-        Ok(access.filter_deleted(all, kind).await)
+    /// The keys of `map`, each as it orders a list and as it finds the
+    /// entity, in no order.
+    fn keys<K, T>(&self, map: &RwLock<HashMap<K, T>>) -> Vec<(String, K)>
+    where K: Display + Clone {
+        self.read_lock(map, |v| v.keys().map(|key| (key.to_string(), key.clone())).collect())
     }
 
-    async fn list_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions) -> StoreResult<Vec<T>>
-    where K: Eq + Hash + Send + Sync, T: Stored + Clone + Send + Sync {
+    /// The entity of `key` in `map`, if it is there and meets `filter`.
+    fn meeting_in<K, T, F>(&self, map: &RwLock<HashMap<K, T>>, key: &K, filter: Option<&Filter<F>>) -> StoreResult<Option<T>>
+    where K: Eq + Hash, T: Serialize + Clone, F: Field {
+        match self.read_lock(map, |v| v.get(key).cloned()) {
+            Some(value) => query::meeting(value, filter),
+            None => Ok(None),
+        }
+    }
+
+    async fn list_deleted_in<K, T, F>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, query: &Query<F>) -> StoreResult<Page<T>>
+    where K: Eq + Hash + Display + Clone + Send + Sync, T: Deletable + Serialize + Clone + Send + Sync, F: Field {
         let access = self.access(ctx);
         access.allow(kind.list).await?;
-        let all = self.read_lock(map, |v| v.values().cloned().collect());
-        Ok(access.filter(all, kind).await)
+        let filter = query.filter.as_ref();
+        access.page(self.keys(map), query, kind, true, |key: K| ready(self.meeting_in(map, &key, filter))).await
+    }
+
+    async fn list_in<K, T, F>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, query: &Query<F>) -> StoreResult<Page<T>>
+    where K: Eq + Hash + Display + Clone + Send + Sync, T: Stored + Serialize + Clone + Send + Sync, F: Field {
+        let access = self.access(ctx);
+        access.allow(kind.list).await?;
+        let filter = query.filter.as_ref();
+        access.page(self.keys(map), query, kind, false, |key: K| ready(self.meeting_in(map, &key, filter))).await
     }
 
     /// The one of `name`, in exactly its scope, among those listed.
     async fn find_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, name: &ScopedName) -> StoreResult<T>
-    where K: Eq + Hash + Send + Sync, T: Stored + Scoped + Clone + Send + Sync {
-        let all = self.list_in(ctx, map, kind).await?;
+    where K: Eq + Hash + Display + Clone + Send + Sync, T: Stored + Scoped + Serialize + Clone + Send + Sync {
+        let all = self.list_in(ctx, map, kind, &Query::<NoField>::all()).await?.items;
         require_entity(all.into_iter().find(|d| d.scoped_name() == *name), kind.entity.name(), name.to_string())
     }
 }
@@ -276,8 +299,8 @@ impl EntityStore for MemoryStore {
     async fn delete_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool> {
         self.delete_in(ctx, &self.personalities, &PERSONALITIES, id).await
     }
-    async fn list_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>> {
-        self.list_in(ctx, &self.personalities, &PERSONALITIES).await
+    async fn list_personalities(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Personality>> {
+        self.list_in(ctx, &self.personalities, &PERSONALITIES, query).await
     }
     async fn restore_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<()> {
         self.restore_named_in(ctx, &self.personalities, &PERSONALITIES, id).await
@@ -288,8 +311,8 @@ impl EntityStore for MemoryStore {
     async fn get_deleted_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
         self.get_deleted_in(ctx, &self.personalities, &PERSONALITIES, &id).await
     }
-    async fn list_deleted_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>> {
-        self.list_deleted_in(ctx, &self.personalities, &PERSONALITIES).await
+    async fn list_deleted_personalities(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Personality>> {
+        self.list_deleted_in(ctx, &self.personalities, &PERSONALITIES, query).await
     }
     async fn find_personality_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Personality> {
         self.find_in(ctx, &self.personalities, &PERSONALITIES, name).await
@@ -308,8 +331,8 @@ impl EntityStore for MemoryStore {
     async fn delete_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool> {
         self.delete_in(ctx, &self.session_templates, &SESSION_TEMPLATES, id).await
     }
-    async fn list_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>> {
-        self.list_in(ctx, &self.session_templates, &SESSION_TEMPLATES).await
+    async fn list_session_templates(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<SessionTemplate>> {
+        self.list_in(ctx, &self.session_templates, &SESSION_TEMPLATES, query).await
     }
     async fn restore_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<()> {
         self.restore_named_in(ctx, &self.session_templates, &SESSION_TEMPLATES, id).await
@@ -320,8 +343,8 @@ impl EntityStore for MemoryStore {
     async fn get_deleted_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<SessionTemplate> {
         self.get_deleted_in(ctx, &self.session_templates, &SESSION_TEMPLATES, &id).await
     }
-    async fn list_deleted_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>> {
-        self.list_deleted_in(ctx, &self.session_templates, &SESSION_TEMPLATES).await
+    async fn list_deleted_session_templates(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<SessionTemplate>> {
+        self.list_deleted_in(ctx, &self.session_templates, &SESSION_TEMPLATES, query).await
     }
     async fn find_session_template_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<SessionTemplate> {
         self.find_in(ctx, &self.session_templates, &SESSION_TEMPLATES, name).await
@@ -340,8 +363,8 @@ impl EntityStore for MemoryStore {
     async fn delete_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<bool> {
         self.delete_in(ctx, &self.agents, &AGENTS, id).await
     }
-    async fn list_agents(&self, ctx: &SecurityContext) -> StoreResult<Vec<Agent>> {
-        self.list_in(ctx, &self.agents, &AGENTS).await
+    async fn list_agents(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Agent>> {
+        self.list_in(ctx, &self.agents, &AGENTS, query).await
     }
     async fn restore_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<()> {
         self.restore_named_in(ctx, &self.agents, &AGENTS, id).await
@@ -352,8 +375,8 @@ impl EntityStore for MemoryStore {
     async fn get_deleted_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
         self.get_deleted_in(ctx, &self.agents, &AGENTS, &id).await
     }
-    async fn list_deleted_agents(&self, ctx: &SecurityContext) -> StoreResult<Vec<Agent>> {
-        self.list_deleted_in(ctx, &self.agents, &AGENTS).await
+    async fn list_deleted_agents(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Agent>> {
+        self.list_deleted_in(ctx, &self.agents, &AGENTS, query).await
     }
     async fn find_agent_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Agent> {
         self.find_in(ctx, &self.agents, &AGENTS, name).await
@@ -373,8 +396,8 @@ impl EntityStore for MemoryStore {
     async fn delete_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool> {
         self.delete_in(ctx, &self.sessions, &SESSIONS, id).await
     }
-    async fn list_sessions(&self, ctx: &SecurityContext) -> StoreResult<Vec<Session>> {
-        self.list_in(ctx, &self.sessions, &SESSIONS).await
+    async fn list_sessions(&self, ctx: &SecurityContext, query: &Query<SessionField>) -> StoreResult<Page<Session>> {
+        self.list_in(ctx, &self.sessions, &SESSIONS, query).await
     }
     async fn restore_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<()> {
         self.restore_in(ctx, &self.sessions, &SESSIONS, id).await
@@ -385,8 +408,8 @@ impl EntityStore for MemoryStore {
     async fn get_deleted_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session> {
         self.get_deleted_in(ctx, &self.sessions, &SESSIONS, &id).await
     }
-    async fn list_deleted_sessions(&self, ctx: &SecurityContext) -> StoreResult<Vec<Session>> {
-        self.list_deleted_in(ctx, &self.sessions, &SESSIONS).await
+    async fn list_deleted_sessions(&self, ctx: &SecurityContext, query: &Query<SessionField>) -> StoreResult<Page<Session>> {
+        self.list_deleted_in(ctx, &self.sessions, &SESSIONS, query).await
     }
 
     // Channels (issue 70)
@@ -402,8 +425,8 @@ impl EntityStore for MemoryStore {
     async fn delete_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool> {
         self.delete_in(ctx, &self.channels, &CHANNELS, id).await
     }
-    async fn list_channels(&self, ctx: &SecurityContext) -> StoreResult<Vec<Channel>> {
-        self.list_in(ctx, &self.channels, &CHANNELS).await
+    async fn list_channels(&self, ctx: &SecurityContext, query: &Query<ChannelField>) -> StoreResult<Page<Channel>> {
+        self.list_in(ctx, &self.channels, &CHANNELS, query).await
     }
     async fn restore_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<()> {
         self.restore_named_in(ctx, &self.channels, &CHANNELS, id).await
@@ -414,8 +437,8 @@ impl EntityStore for MemoryStore {
     async fn get_deleted_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel> {
         self.get_deleted_in(ctx, &self.channels, &CHANNELS, &id).await
     }
-    async fn list_deleted_channels(&self, ctx: &SecurityContext) -> StoreResult<Vec<Channel>> {
-        self.list_deleted_in(ctx, &self.channels, &CHANNELS).await
+    async fn list_deleted_channels(&self, ctx: &SecurityContext, query: &Query<ChannelField>) -> StoreResult<Page<Channel>> {
+        self.list_deleted_in(ctx, &self.channels, &CHANNELS, query).await
     }
 
     // Users - found by name as well, since a username is an identity
@@ -432,8 +455,8 @@ impl EntityStore for MemoryStore {
     async fn delete_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
         self.delete_in(ctx, &self.users, &USERS, id).await
     }
-    async fn list_users(&self, ctx: &SecurityContext) -> StoreResult<Vec<User>> {
-        self.list_in(ctx, &self.users, &USERS).await
+    async fn list_users(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<User>> {
+        self.list_in(ctx, &self.users, &USERS, query).await
     }
     async fn restore_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<()> {
         self.restore_named_in(ctx, &self.users, &USERS, id).await
@@ -444,11 +467,11 @@ impl EntityStore for MemoryStore {
     async fn get_deleted_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
         self.get_deleted_in(ctx, &self.users, &USERS, &id).await
     }
-    async fn list_deleted_users(&self, ctx: &SecurityContext) -> StoreResult<Vec<User>> {
-        self.list_deleted_in(ctx, &self.users, &USERS).await
+    async fn list_deleted_users(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<User>> {
+        self.list_deleted_in(ctx, &self.users, &USERS, query).await
     }
     async fn find_user_by_name(&self, ctx: &SecurityContext, name: &str) -> StoreResult<User> {
-        let users = self.list_in(ctx, &self.users, &USERS).await?;
+        let users = self.list_in(ctx, &self.users, &USERS, &Query::<NoField>::all()).await?.items;
         require_entity(users.into_iter().find(|u| u.username == name), "user", name.to_string())
     }
 
@@ -465,8 +488,8 @@ impl EntityStore for MemoryStore {
     async fn delete_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
         self.delete_in(ctx, &self.user_profiles, &USER_PROFILES, id).await
     }
-    async fn list_user_profiles(&self, ctx: &SecurityContext) -> StoreResult<Vec<UserProfile>> {
-        self.list_in(ctx, &self.user_profiles, &USER_PROFILES).await
+    async fn list_user_profiles(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<UserProfile>> {
+        self.list_in(ctx, &self.user_profiles, &USER_PROFILES, query).await
     }
     async fn restore_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<()> {
         self.restore_in(ctx, &self.user_profiles, &USER_PROFILES, id).await
@@ -477,8 +500,8 @@ impl EntityStore for MemoryStore {
     async fn get_deleted_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<UserProfile> {
         self.get_deleted_in(ctx, &self.user_profiles, &USER_PROFILES, &id).await
     }
-    async fn list_deleted_user_profiles(&self, ctx: &SecurityContext) -> StoreResult<Vec<UserProfile>> {
-        self.list_deleted_in(ctx, &self.user_profiles, &USER_PROFILES).await
+    async fn list_deleted_user_profiles(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<UserProfile>> {
+        self.list_deleted_in(ctx, &self.user_profiles, &USER_PROFILES, query).await
     }
 
     // Workspaces (issue 253)
@@ -494,8 +517,8 @@ impl EntityStore for MemoryStore {
     async fn delete_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<bool> {
         self.delete_in(ctx, &self.workspaces, &WORKSPACES, id).await
     }
-    async fn list_workspaces(&self, ctx: &SecurityContext) -> StoreResult<Vec<Workspace>> {
-        self.list_in(ctx, &self.workspaces, &WORKSPACES).await
+    async fn list_workspaces(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Workspace>> {
+        self.list_in(ctx, &self.workspaces, &WORKSPACES, query).await
     }
     async fn restore_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<()> {
         self.restore_named_in(ctx, &self.workspaces, &WORKSPACES, id).await
@@ -506,8 +529,8 @@ impl EntityStore for MemoryStore {
     async fn get_deleted_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace> {
         self.get_deleted_in(ctx, &self.workspaces, &WORKSPACES, &id).await
     }
-    async fn list_deleted_workspaces(&self, ctx: &SecurityContext) -> StoreResult<Vec<Workspace>> {
-        self.list_deleted_in(ctx, &self.workspaces, &WORKSPACES).await
+    async fn list_deleted_workspaces(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Workspace>> {
+        self.list_deleted_in(ctx, &self.workspaces, &WORKSPACES, query).await
     }
     async fn find_workspace_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Workspace> {
         self.find_in(ctx, &self.workspaces, &WORKSPACES, name).await
@@ -526,8 +549,8 @@ impl EntityStore for MemoryStore {
     async fn delete_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<bool> {
         self.delete_in(ctx, &self.skills, &SKILLS, id).await
     }
-    async fn list_skills(&self, ctx: &SecurityContext) -> StoreResult<Vec<Skill>> {
-        self.list_in(ctx, &self.skills, &SKILLS).await
+    async fn list_skills(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Skill>> {
+        self.list_in(ctx, &self.skills, &SKILLS, query).await
     }
     async fn restore_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<()> {
         self.restore_named_in(ctx, &self.skills, &SKILLS, id).await
@@ -538,8 +561,8 @@ impl EntityStore for MemoryStore {
     async fn get_deleted_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<Skill> {
         self.get_deleted_in(ctx, &self.skills, &SKILLS, &id).await
     }
-    async fn list_deleted_skills(&self, ctx: &SecurityContext) -> StoreResult<Vec<Skill>> {
-        self.list_deleted_in(ctx, &self.skills, &SKILLS).await
+    async fn list_deleted_skills(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Skill>> {
+        self.list_deleted_in(ctx, &self.skills, &SKILLS, query).await
     }
     async fn find_skill_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Skill> {
         self.find_in(ctx, &self.skills, &SKILLS, name).await
@@ -558,8 +581,8 @@ impl EntityStore for MemoryStore {
     async fn delete_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<bool> {
         self.delete_in(ctx, &self.artifacts, &ARTIFACTS, id).await
     }
-    async fn list_artifacts(&self, ctx: &SecurityContext) -> StoreResult<Vec<Artifact>> {
-        self.list_in(ctx, &self.artifacts, &ARTIFACTS).await
+    async fn list_artifacts(&self, ctx: &SecurityContext, query: &Query<ArtifactField>) -> StoreResult<Page<Artifact>> {
+        self.list_in(ctx, &self.artifacts, &ARTIFACTS, query).await
     }
     async fn restore_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<()> {
         self.restore_named_in(ctx, &self.artifacts, &ARTIFACTS, id).await
@@ -570,8 +593,8 @@ impl EntityStore for MemoryStore {
     async fn get_deleted_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<Artifact> {
         self.get_deleted_in(ctx, &self.artifacts, &ARTIFACTS, &id).await
     }
-    async fn list_deleted_artifacts(&self, ctx: &SecurityContext) -> StoreResult<Vec<Artifact>> {
-        self.list_deleted_in(ctx, &self.artifacts, &ARTIFACTS).await
+    async fn list_deleted_artifacts(&self, ctx: &SecurityContext, query: &Query<ArtifactField>) -> StoreResult<Page<Artifact>> {
+        self.list_deleted_in(ctx, &self.artifacts, &ARTIFACTS, query).await
     }
     async fn find_artifact_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Artifact> {
         self.find_in(ctx, &self.artifacts, &ARTIFACTS, name).await
@@ -593,8 +616,8 @@ impl ComponentStore for MemoryStore {
     async fn delete_components(&self, ctx: &SecurityContext, id: &str) -> StoreResult<bool> {
         self.remove_in(ctx, &self.components, &COMPONENTS, &id.to_string()).await
     }
-    async fn list_components(&self, ctx: &SecurityContext) -> StoreResult<Vec<StoredComponents>> {
-        self.list_in(ctx, &self.components, &COMPONENTS).await
+    async fn list_components(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<StoredComponents>> {
+        self.list_in(ctx, &self.components, &COMPONENTS, query).await
     }
 }
 
@@ -655,6 +678,51 @@ mod tests {
     #[tokio::test]
     async fn behaves_as_an_entity_store() {
         suite::entity_store_behaves(&MemoryStore::new()).await;
+    }
+
+    #[tokio::test]
+    async fn answers_queries() {
+        suite::queries_behave(&MemoryStore::new()).await;
+    }
+
+    /// A limit counts what the caller may read (issue 293): the policy is
+    /// asked as the list is read, and a page is filled from further on.
+    #[tokio::test]
+    async fn a_limit_counts_what_the_caller_may_read() {
+        use crate::actor::ActorId;
+        use crate::artifact::tests::version;
+        use crate::artifact::{Artifact, ArtifactId};
+        use crate::confidentiality::Classification;
+        use crate::scope::Scope;
+        use crate::security::OwnershipSecurityManager;
+        let store = MemoryStore::with_security_manager(Arc::new(OwnershipSecurityManager::new()));
+        let (alice, bob) = (UserId::new(), UserId::new());
+        let mut hers = Vec::new();
+        for (index, owner) in [alice, bob, bob, alice, bob, alice].into_iter().enumerate() {
+            let name = ScopedName::new(format!("a{index}.csv"), Scope::UserScope { user_id: owner }).unwrap();
+            let artifact = Artifact::new(ArtifactId::new(), name, "files", Classification::CHANNEL_DEFAULT, owner, version(b"a,b", SessionId::new()));
+            store.create_artifact(&SecurityContext::system(), &artifact).await.unwrap();
+            if owner == alice {
+                hers.push(artifact.id);
+            }
+        }
+        hers.sort_by_key(|id| id.to_string());
+        let ctx = SecurityContext::new(ActorId::User(alice), Default::default(), Default::default());
+        let mut read = Vec::new();
+        let mut query = Query::all().limited(1);
+        loop {
+            let page = store.list_artifacts(&ctx, &query).await.unwrap();
+            read.extend(page.items.iter().map(|a| a.id));
+            match page.next {
+                Some(cursor) => {
+                    assert_eq!(page.items.len(), 1, "every page that goes on is full, however many of bob's lie between");
+                    query = Query::all().limited(1).after(cursor);
+                }
+                // The last page may be empty: what followed was bob's.
+                None => break,
+            }
+        }
+        assert_eq!(read, hers, "hers alone, in the order of their ids");
     }
 
     #[tokio::test]

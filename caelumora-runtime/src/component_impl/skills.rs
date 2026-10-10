@@ -430,6 +430,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::store::query::Query;
     use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
     use crate::workspace::testing::session_with_workspace;
     use caelumora_model::agent::AgentChannelState;
@@ -488,7 +489,7 @@ mod tests {
         assert!(mine.is_ok(), "{mine:?}");
         drop(turn);
 
-        let skills = world.runtime.entity_store().list_skills(&SecurityContext::system()).await.unwrap();
+        let skills = world.runtime.entity_store().list_skills(&SecurityContext::system(), &Query::all()).await.map(|page| page.items).unwrap();
         let deploy = skills.iter().find(|s| s.name.name.as_str() == "deploy").expect("made");
         let owner = world.context.principal_id;
         assert_eq!((deploy.security_attributes.owner_id, &deploy.name.scope), (owner, &Scope::SessionScope { session_id: world.session.id() }), "its owner's, in the session");

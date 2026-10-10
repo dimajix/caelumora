@@ -14,6 +14,7 @@ use crate::value::ValueError;
 use crate::security::{Grant, Membership, Secured, SecurityAttributes, Subject};
 use crate::session::SessionId;
 use crate::store::Journaled;
+use crate::store::query::Field;
 use crate::user::UserId;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -144,6 +145,21 @@ crate::impl_deletable!(Channel);
 impl Scoped for Channel {
     fn scoped_name(&self) -> ScopedName {
         ScopedName { name: self.name.clone(), scope: Scope::SessionScope { session_id: self.session_id } }
+    }
+}
+
+/// What a query of channels may name (issue 293).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelField {
+    /// The session it belongs to.
+    Session,
+}
+
+impl Field for ChannelField {
+    fn path(self) -> &'static [&'static str] {
+        match self {
+            ChannelField::Session => &["session_id"],
+        }
     }
 }
 

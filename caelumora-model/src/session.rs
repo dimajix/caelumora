@@ -3,6 +3,7 @@ use crate::approval::ApprovalRule;
 use crate::component::ComponentConfig;
 use crate::privacy::PrivacyConfig;
 use crate::security::{Secured, SecurityAttributes};
+use crate::store::query::Field;
 use chrono::{DateTime, Utc};
 use crate::value::name::Name;
 use crate::value::text::{Briefing, Summary};
@@ -84,6 +85,25 @@ impl Session {
     pub fn describe(&mut self, summary: Option<&str>, briefing: Option<&str>) -> Result<(), ValueError> {
         (self.summary, self.briefing) = (Summary::optional(summary)?, Briefing::optional(briefing)?);
         Ok(())
+    }
+}
+
+/// What a query of sessions may name (issue 293). `Participant` is an
+/// element of `Participants`, the whole of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionField {
+    /// Its participants.
+    Participants,
+    /// A participant, within `Participants`.
+    Participant,
+}
+
+impl Field for SessionField {
+    fn path(self) -> &'static [&'static str] {
+        match self {
+            SessionField::Participants => &["participants"],
+            SessionField::Participant => &[],
+        }
     }
 }
 

@@ -13,12 +13,13 @@
 //! what holds the scope was permitted, and what lies in it may be another's
 //! to delete by the policy - a contributor's agent in the owner's session.
 
+use caelumora_model::store::query::Query;
 use crate::event::EventBus;
 use crate::artifact::ArtifactManager;
 use crate::workspace::WorkspaceManager;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::removal::Stored;
-use caelumora_model::scope::{Scoped, Scope};
+use caelumora_model::scope::{Scope, ScopedField};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::{EntityStore, StateStore, StoreError, StoreResult};
 use caelumora_model::value::name::ScopedName;
@@ -33,25 +34,25 @@ use tracing::warn;
 /// Whatever the store reports; what was deleted before stays deleted.
 pub(crate) async fn delete_scoped_in(store: &dyn EntityStore, events: &EventBus, holder: &Scope) -> StoreResult<()> {
     let system = SecurityContext::system();
-    for personality in lying_in(store.list_personalities(&system).await?, holder) {
+    for personality in store.list_personalities(&system, &within(holder)).await?.items {
         store.delete_personality(&system, personality.id).await?;
     }
-    for template in lying_in(store.list_session_templates(&system).await?, holder) {
+    for template in store.list_session_templates(&system, &within(holder)).await?.items {
         store.delete_session_template(&system, template.id).await?;
     }
-    for agent in lying_in(store.list_agents(&system).await?, holder) {
+    for agent in store.list_agents(&system, &within(holder)).await?.items {
         store.delete_agent(&system, agent.id).await?;
         events.publish(GlobalEvent::AgentDeleted(agent.id), agent.security_attributes.clone());
     }
-    for workspace in lying_in(store.list_workspaces(&system).await?, holder) {
+    for workspace in store.list_workspaces(&system, &within(holder)).await?.items {
         store.delete_workspace(&system, workspace.id).await?;
         events.publish(GlobalEvent::WorkspaceDeleted(workspace.id), workspace.security_attributes.clone());
     }
-    for skill in lying_in(store.list_skills(&system).await?, holder) {
+    for skill in store.list_skills(&system, &within(holder)).await?.items {
         store.delete_skill(&system, skill.id).await?;
         events.publish(GlobalEvent::SkillDeleted(skill.id), skill.security_attributes.clone());
     }
-    for artifact in lying_in(store.list_artifacts(&system).await?, holder) {
+    for artifact in store.list_artifacts(&system, &within(holder)).await?.items {
         store.delete_artifact(&system, artifact.id).await?;
         events.publish(GlobalEvent::ArtifactDeleted(artifact.id), artifact.security_attributes.clone());
     }
@@ -69,28 +70,28 @@ pub(crate) async fn delete_scoped_in(store: &dyn EntityStore, events: &EventBus,
 /// restored.
 pub(crate) async fn restore_scoped_in(store: &dyn EntityStore, events: &EventBus, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()> {
     let system = SecurityContext::system();
-    for personality in deleted_with(store.list_deleted_personalities(&system).await?, holder, since) {
+    for personality in deleted_since(store.list_deleted_personalities(&system, &within(holder)).await?.items, since) {
         unless_taken(store.restore_personality(&system, personality.id).await, "personality", &personality.name)?;
     }
-    for template in deleted_with(store.list_deleted_session_templates(&system).await?, holder, since) {
+    for template in deleted_since(store.list_deleted_session_templates(&system, &within(holder)).await?.items, since) {
         unless_taken(store.restore_session_template(&system, template.id).await, "session template", &template.name)?;
     }
-    for agent in deleted_with(store.list_deleted_agents(&system).await?, holder, since) {
+    for agent in deleted_since(store.list_deleted_agents(&system, &within(holder)).await?.items, since) {
         if unless_taken(store.restore_agent(&system, agent.id).await, "agent", &agent.name)? {
             events.publish(GlobalEvent::AgentRestored(agent.id), agent.security_attributes.clone());
         }
     }
-    for workspace in deleted_with(store.list_deleted_workspaces(&system).await?, holder, since) {
+    for workspace in deleted_since(store.list_deleted_workspaces(&system, &within(holder)).await?.items, since) {
         if unless_taken(store.restore_workspace(&system, workspace.id).await, "workspace", &workspace.name)? {
             events.publish(GlobalEvent::WorkspaceRestored(workspace.id), workspace.security_attributes.clone());
         }
     }
-    for skill in deleted_with(store.list_deleted_skills(&system).await?, holder, since) {
+    for skill in deleted_since(store.list_deleted_skills(&system, &within(holder)).await?.items, since) {
         if unless_taken(store.restore_skill(&system, skill.id).await, "skill", &skill.name)? {
             events.publish(GlobalEvent::SkillRestored(skill.id), skill.security_attributes.clone());
         }
     }
-    for artifact in deleted_with(store.list_deleted_artifacts(&system).await?, holder, since) {
+    for artifact in deleted_since(store.list_deleted_artifacts(&system, &within(holder)).await?.items, since) {
         if unless_taken(store.restore_artifact(&system, artifact.id).await, "artifact", &artifact.name)? {
             events.publish(GlobalEvent::ArtifactRestored(artifact.id), artifact.security_attributes.clone());
         }
@@ -120,17 +121,17 @@ fn unless_taken(restored: StoreResult<()>, kind: &str, name: &ScopedName) -> Sto
 /// report.
 pub(crate) async fn purge_scoped_in(store: &dyn EntityStore, states: &dyn StateStore, workspaces: &WorkspaceManager, artifacts: &ArtifactManager, holder: &Scope) -> anyhow::Result<()> {
     let system = SecurityContext::system();
-    for personality in lying_in(store.list_deleted_personalities(&system).await?, holder) {
+    for personality in store.list_deleted_personalities(&system, &within(holder)).await?.items {
         store.purge_personality(&system, personality.id).await?;
     }
-    for template in lying_in(store.list_deleted_session_templates(&system).await?, holder) {
+    for template in store.list_deleted_session_templates(&system, &within(holder)).await?.items {
         store.purge_session_template(&system, template.id).await?;
     }
-    for agent in lying_in(store.list_deleted_agents(&system).await?, holder) {
+    for agent in store.list_deleted_agents(&system, &within(holder)).await?.items {
         store.purge_agent(&system, agent.id).await?;
         states.delete_agent_state(agent.id).await?;
     }
-    for skill in lying_in(store.list_deleted_skills(&system).await?, holder) {
+    for skill in store.list_deleted_skills(&system, &within(holder)).await?.items {
         store.purge_skill(&system, skill.id).await?;
     }
     workspaces.purge_lying_in(holder).await?;
@@ -138,13 +139,14 @@ pub(crate) async fn purge_scoped_in(store: &dyn EntityStore, states: &dyn StateS
     Ok(())
 }
 
-/// Those of `scoped` that lie in `holder` or within it.
-fn lying_in<D: Scoped>(scoped: Vec<D>, holder: &Scope) -> Vec<D> {
-    scoped.into_iter().filter(|d| holder.contains(&d.scoped_name().scope)).collect()
+/// The query of what lies in `holder` or within it (issue 293), which the
+/// store answers by the scope.
+pub(crate) fn within<F: ScopedField>(holder: &Scope) -> Query<F> {
+    Query { filter: holder.within(), ..Query::all() }
 }
 
-/// Those of `scoped` that lie in `holder` or within it and were
-/// deleted at `since` or later.
-fn deleted_with<D: Scoped + Stored>(scoped: Vec<D>, holder: &Scope, since: DateTime<Utc>) -> Vec<D> {
-    lying_in(scoped, holder).into_iter().filter(|d| d.deleted().is_some_and(|removal| removal.at >= since)).collect()
+/// Those of `deleted` that were deleted at `since` or later - a comparison
+/// a query does not make yet.
+fn deleted_since<D: Stored>(deleted: Vec<D>, since: DateTime<Utc>) -> Vec<D> {
+    deleted.into_iter().filter(|d| d.deleted().is_some_and(|removal| removal.at >= since)).collect()
 }
