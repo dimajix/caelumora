@@ -29,6 +29,7 @@ mod shell;
 use crate::agent::turn::Turn;
 use crate::component::{config_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::terminal::TerminalError;
+use crate::workspace::WorkspaceError;
 use crate::tool::{ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::approval::ToolMatcher;
@@ -100,6 +101,12 @@ pub(crate) fn failed(error: TerminalError) -> ToolError {
     }
 }
 
+/// That the workspace could not be used as a call needs it, as the model is
+/// told it.
+fn unusable(error: WorkspaceError) -> ToolError {
+    ToolError::ExecutionFailed(error.to_string())
+}
+
 #[async_trait]
 impl ToolProvider for TerminalTool {
     fn description(&self) -> String {
@@ -139,13 +146,14 @@ impl ToolProvider for TerminalTool {
             return Err(ToolError::UnknownTool(name.to_string()));
         }
         let workspace = crate::tool::channel_workspace(turn).await?;
-        // The shell may change anything its place reaches; of the files,
-        // what only reads needs only reading (issue 23).
-        let need = if is_shell || !files::read_only(name) { Grant::Write } else { Grant::Read };
-        let terminal = workspace.terminal(need).await.map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
         let value = match is_shell {
-            true => shell::execute(&self.config, name, params, terminal.as_ref(), turn).await?,
-            false => files::execute(&self.config, name, params, terminal.as_ref(), &workspace, turn).await?,
+            true => shell::execute(&self.config, name, params, &workspace, turn).await?,
+            false => {
+                // What only reads needs only reading (issue 23).
+                let need = if files::read_only(name) { Grant::Read } else { Grant::Write };
+                let terminal = workspace.terminal(need).await.map_err(unusable)?;
+                files::execute(&self.config, name, params, terminal.as_ref(), &workspace, turn).await?
+            }
         };
         Ok(ToolOutput::classified(value, workspace.classification().clone()))
     }

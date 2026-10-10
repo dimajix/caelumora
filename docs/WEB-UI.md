@@ -359,7 +359,10 @@ else who may read it - the session's owner, say - is shown its history and no in
     issue 235); the other answers go on. A tool call shown as "Executing" has a stop icon of its
     own while its agent runs tools and the member's `can_cancel` allows it: it interrupts that
     call alone, and the agent goes on (`POST …/participants/{aid}/tool-calls/{call_id}/cancel`
-    with the turn, issue 276).
+    with the turn, issue 276). A command a call handed back as "Still running" has a stop icon at
+    its status for whoever may change the workspace's files (`can_write`): it ends the command and
+    what it started (`POST …/commands/{command_id}/kill`, issue 294). It is gone once a later
+    result in the channel shows the command ended (`endedCommands`), or the user ended it.
 *   **Input.** A line starting with `/` is sent as a command, `//` as a literal slash
     (`command.ts`). Typing `@` completes the members' handles, `/` the commands the user may see -
     the channel's, and the agents' with each handle that carries one out and `@all` (issue 269). An
@@ -423,10 +426,12 @@ approval asked for by such a rule says so on its card (`explicit`).
 Beside "Channel" and "Notes", the channel panel has "Files" (`ChannelWorkspacePanel`): the session's
 workspace as the channel names it (`workspace_id`, where it uses it and the user may read it) - its
 name, classification and what it holds - and its files, by the workspace (issue 23); or that no
-workspace is used in this channel, without why. The files are loaded again when the tab is shown,
-when a tool call of the channel ended (a `CompleteMessageGenerated` with tool results) and when the
-channel's switch changes. The "Channel" tab shows the switch - "Workspace: used here" - as a
-checkbox to whoever may change the channel, as text to everybody else (issue 251).
+workspace is used in this channel, without why. `ChatView` fetches the workspace, which the stop
+icon of a command needs as well, and hands it to the panel. The files are loaded again when the tab
+is shown, when a tool call of the channel ended (a `CompleteMessageGenerated` with tool results),
+when the user ended a command and when the channel's switch changes. The "Channel" tab shows the
+switch - "Workspace: used here" - as a checkbox to whoever may change the channel, as text to
+everybody else (issue 251).
 
 ### Members, moderator and notes
 

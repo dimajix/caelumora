@@ -9,7 +9,7 @@ import {BookOpen, CheckCircle2, Download, EyeOff, Package, PackageCheck, File, S
 import type {ArtifactResponse, Question, ToolCall, ToolPresentation, ToolResult, ToolResultStatus, ToolVisibility} from '../types';
 import {api, type ChannelArtifacts, type WorkspaceFiles} from '../api';
 import {ApiRequestError, reportError} from '../errors';
-import {formatArguments, formatSize, formatTimestamp, ownerOnly} from '../messages';
+import {commandResult, formatArguments, formatSize, formatTimestamp, ownerOnly, type CommandResult} from '../messages';
 import {AnswersRecord, ChoiceRows, QuestionHeading} from './QuestionView';
 import {MarkdownMessage} from './MarkdownMessage';
 
@@ -71,6 +71,10 @@ export interface ToolCallContentProps {
   artifacts?: ChannelArtifacts;
   /** Opens a skill's page in the place of the channel; absent outside the chat. */
   onSelectSkill?: (skillId: string) => void;
+  /** Ends a command a call handed back as running (issue 294); absent where the user may not change the workspace's files. */
+  onKillCommand?: (commandId: string) => void;
+  /** The commands a result in the channel, or the user, ended: none is offered to be ended again. */
+  endedCommands?: ReadonlySet<string>;
 }
 
 /** The default presentation: the call's arguments and its result, as they are. */
@@ -112,26 +116,6 @@ function argumentsObject(args: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
-/** What a shell tool answers of a command (issue 251). */
-interface CommandResult {
-  id: string;
-  status: 'running' | 'completed' | 'killed' | 'failed';
-  output: string;
-  truncated: boolean;
-  exit_code?: number;
-}
-
-/** The result of a successful call of a shell tool, or `null` for any other. */
-function commandResult(result: ToolResult): CommandResult | null {
-  if (result.status && result.status !== 'ok') return null;
-  try {
-    const parsed = JSON.parse(result.content);
-    return typeof parsed?.id === 'string' && typeof parsed?.status === 'string' && typeof parsed?.output === 'string' ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
 /** Where a command stands, as its result says. */
 function commandStatus(command: CommandResult): string {
   switch (command.status) {
@@ -146,7 +130,7 @@ function commandStatus(command: CommandResult): string {
  * A shell command (issue 251): the command as a line of code, what it printed as a terminal shows it,
  * and where it stands. A call that follows or ends a command started before names it by its id.
  */
-const ShellToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) => {
+const ShellToolCallContent: React.FC<ToolCallContentProps> = ({call, result, onKillCommand, endedCommands}) => {
   const args = argumentsObject(call.arguments);
   const command = typeof args?.command === 'string' ? args.command : null;
   const followed = typeof args?.id === 'string' ? args.id : null;
@@ -175,8 +159,19 @@ const ShellToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) =>
               {answered.output}
             </pre>
           )}
-          <div className={`mt-1 text-[11px] ${failed ? 'text-amber-600 dark:text-amber-400' : 'opacity-60'}`}>
-            {commandStatus(answered)}
+          <div className="mt-1 flex items-center gap-1 text-[11px]">
+            <span className={failed ? 'text-amber-600 dark:text-amber-400' : 'opacity-60'}>{commandStatus(answered)}</span>
+            {answered.status === 'running' && onKillCommand && !endedCommands?.has(answered.id) && (
+              <button
+                type="button"
+                onClick={() => onKillCommand(answered.id)}
+                className="p-0.5 rounded-sm text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
+                title="End this command and what it started"
+                aria-label="End this command"
+              >
+                <Square size={10} fill="currentColor" />
+              </button>
+            )}
           </div>
         </div>
       ) : result && (
@@ -797,9 +792,13 @@ interface ToolCallViewProps {
   onSelectSkill?: (skillId: string) => void;
   /** Interrupts the call alone while it runs, for who may (issue 276); the turn goes on. */
   onInterrupt?: () => void;
+  /** Ends a command the call handed back as running, for who may (issue 294). */
+  onKillCommand?: (commandId: string) => void;
+  /** The commands ended already, which are not offered to be ended. */
+  endedCommands?: ReadonlySet<string>;
 }
 
-export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, abandoned, files, filesVersion, artifacts, onSelectSkill, onInterrupt}) => {
+export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, abandoned, files, filesVersion, artifacts, onSelectSkill, onInterrupt, onKillCommand, endedCommands}) => {
   const Content = PRESENTATIONS[call.presentation ?? 'default'] ?? DefaultToolCallContent;
   return (
     <div className="bg-gray-50 dark:bg-gray-800 rounded-sm border border-gray-200 dark:border-gray-600 overflow-hidden">
@@ -855,7 +854,7 @@ export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, abandon
         </div>
       </div>
       <div className="p-2">
-        <Content call={call} result={result} files={files} filesVersion={filesVersion} artifacts={artifacts} onSelectSkill={onSelectSkill} />
+        <Content call={call} result={result} files={files} filesVersion={filesVersion} artifacts={artifacts} onSelectSkill={onSelectSkill} onKillCommand={onKillCommand} endedCommands={endedCommands} />
         {result?.answers && (
           // Set apart from what the presentation shows, where it shows anything.
           <div className="not-first:mt-2 not-first:pt-2 not-first:border-t border-gray-200 dark:border-gray-700">

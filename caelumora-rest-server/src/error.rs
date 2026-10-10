@@ -227,6 +227,7 @@ impl ApiError {
                 WorkspaceError::ClassificationRefused => return bad_request("invalid_classification"),
                 WorkspaceError::NotCleared => return Self::forbidden("not_cleared", detail),
                 WorkspaceError::ReadOnly(_) => return Self::forbidden("read_only", detail),
+                WorkspaceError::NotInChannel => return bad_request("invalid_scope"),
                 WorkspaceError::Invalid(e) => return Self::invalid_value(e),
                 WorkspaceError::Terminal(e) => return Self::of_terminal(e),
                 WorkspaceError::Store(StoreError::NotFound { .. }) => return Self::not_found("workspace_not_found", detail),
@@ -536,6 +537,8 @@ mod tests {
             assert_eq!(file(TerminalError::NotFound("a".to_string())), (404, "file_not_found"));
             assert_eq!(file(TerminalError::NotEmpty("a".to_string())), (409, "directory_not_empty"));
             assert_eq!(file(TerminalError::Unavailable("permission denied".to_string())), (503, "storage_unavailable"));
+            assert_eq!(workspace(WorkspaceError::ReadOnly(id)), (403, "read_only"), "a command ended where the files are only read (issue 294)");
+            assert_eq!(workspace(WorkspaceError::Terminal(TerminalError::UnknownCommand("7".to_string()))), (404, "command_not_found"), "nor one not started in the channel");
             assert_eq!(answer(not_found("workspace"), Subject::Session), (404, "workspace_not_found"), "as attaching reports it");
             assert_eq!(answer(anyhow::Error::new(SessionError::WorkspaceOutOfScope(id)), Subject::Session), (400, "workspace_out_of_scope"));
         {

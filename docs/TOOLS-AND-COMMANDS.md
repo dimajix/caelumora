@@ -130,8 +130,8 @@ dropped as above and answered as `interrupted`, saying who interrupted it, after
 the turn goes on; one interrupted before it runs is not run and is answered as `not_executed`.
 The other calls of the step run, and the model is asked again with the results. For a shell
 command, this reaches the command only while `run_command` waits for it
-([The workspace](#the-workspace)); one handed back as running is no call any more (issue
-[294](../issues/294-user-ends-a-command.md)).
+([The workspace](#the-workspace)); one handed back as running is no call any more, and a user ends
+it as a command (issue [294](../issues/294-user-ends-a-command.md)).
 
 Dropping a future ends it: none of the tool's code runs after the `await` it stood at, and what the
 future holds - timers, sockets, open requests - is released. That is all the stopping a tool gets;
@@ -740,8 +740,17 @@ the one thing a tool does after its future is gone, in a task of its own that is
 seconds and logged, and that the drop does not await. It is a deliberate exception to "a tool binds
 whatever it starts to its own future": a command lives with the storage, so that one handed back
 as running outlives the call, and one left running by a dropped call would go on writing into the
-workspace after the turn that started it. A command handed back as running is the model's to end;
-nothing bounds how long it runs yet (issue [254](../issues/254-commands-run-unbounded.md)).
+workspace after the turn that started it.
+
+A command handed back as running is ended by the model, with `kill_command`, or by a user who may
+change the workspace's files in the channel (issue [294](../issues/294-user-ends-a-command.md),
+`POST …/channels/{cid}/commands/{command_id}/kill`). Both go through `WorkspaceView::kill_command`:
+it reaches the workspace as the channel offers it, for writing, and looks for the command under the
+channel - so that who may end a command is who could have started it there, and a command is seen
+only in its channel, both kept in one place. A workspace reached directly ends none
+(`WorkspaceError::NotInChannel`). The agent is told nothing besides; it sees `killed` the next time
+it follows the command. Nothing bounds how long a command runs yet (issue
+[254](../issues/254-commands-run-unbounded.md)).
 
 ### Artifacts
 

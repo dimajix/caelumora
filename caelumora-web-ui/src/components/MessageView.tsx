@@ -147,9 +147,13 @@ interface MessageViewProps {
   onSelectSkill?: (skillId: string) => void;
   /** Interrupts one of its calls alone while it runs (issue 276); offered where given. */
   onInterruptCall?: (call: ToolCall) => void;
+  /** Ends a command one of its calls handed back as running (issue 294); offered where given. */
+  onKillCommand?: (commandId: string) => void;
+  /** The commands ended already in the channel. */
+  endedCommands?: ReadonlySet<string>;
 }
 
-export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, badges, actions, className, files, filesVersion, artifacts, onSelectSkill, onInterruptCall}) => (
+export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, badges, actions, className, files, filesVersion, artifacts, onSelectSkill, onInterruptCall, onKillCommand, endedCommands}) => (
   <div
     className={cn(
       "max-w-[80%] p-3 rounded-lg shadow-xs",
@@ -181,7 +185,7 @@ export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, 
       <div className="mt-2 space-y-2">
         {msg.tool_calls.map((call, cidx) => (
           <ToolCallView key={cidx} call={call} result={msg.tool_results?.find(r => r.id === call.id)} abandoned={msg.abandoned} files={files} filesVersion={filesVersion} artifacts={artifacts} onSelectSkill={onSelectSkill}
-            onInterrupt={onInterruptCall && call.id ? () => onInterruptCall(call) : undefined} />
+            onInterrupt={onInterruptCall && call.id ? () => onInterruptCall(call) : undefined} onKillCommand={onKillCommand} endedCommands={endedCommands} />
         ))}
       </div>
     )}

@@ -1,6 +1,6 @@
 # 294 — A command running in the background can be ended only by the model, not by a user
 
-**Status:** open
+**Status:** done
 **Area:** Tools and approvals
 
 ## The problem
@@ -92,3 +92,15 @@ Taken with the maintainer on 2026-10-10.
   276 reaches a hanging command only while `run_command` waits for it, 254 only at the boundaries of
   access; a user who wants to end a command running in the background can do neither.
 - 2026-10-10: Looked at with the maintainer: the decisions above recorded.
+- 2026-10-10: Done. `WorkspaceView::kill_command(id, offset)` ends a command of the channel the
+  workspace was reached through (`WorkspaceError::NotInChannel` for one reached directly), with its
+  terminal reached for writing; the tool `kill_command` goes through it, and a workspace without a
+  shell is answered as a command not known there. REST:
+  `POST /sessions/{id}/channels/{cid}/commands/{command_id}/kill`, answering the command as a
+  `run_command` result does. Different from the decision: a command not known in the channel is
+  `404 command_not_found`, the code a `TerminalError::UnknownCommand` had already, not
+  `unknown_command`, which names a user command that does not exist (`400`). The web UI shows a
+  stop icon at a result "Still running as …" for `can_write`, until a later result or the user
+  ended the command; `ChatView` now fetches the channel's workspace and hands it to
+  `ChannelWorkspacePanel`. The security suite covers it
+  (`a_command_is_ended_in_its_channel_by_who_may_change_the_workspace_there`).

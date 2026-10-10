@@ -58,7 +58,10 @@ artifact, preconfigured component - carries `SecurityAttributes`: an `owner_id` 
     workspace, wherever they act, cleared for its classification. One made for a session lets the
     session's members read and write it; one of its owner's grants nobody anything until shared - as
     it is attached, or by its list. An agent uses it through a channel besides, where the channel
-    uses it and the classifications let it (see [CHANNELS.md](CHANNELS.md#its-workspace)).
+    uses it and the classifications let it (see [CHANNELS.md](CHANNELS.md#its-workspace)). A
+    command of its shell is seen only in the channel it was started in, and ended there by whom
+    may change the files there - who could have started it (`WriteWorkspace`, issue
+    [294](../issues/294-user-ends-a-command.md)).
 *   A skill (issue [22](../issues/22-skill-management.md)) is owned by the user it was made for -
     by an agent's tool, its owner - or by the system for a skill of the seed; whom its list grants
     reading read and use it. Using it - loading it into a turn - is `UseSkill`, granted as reading:

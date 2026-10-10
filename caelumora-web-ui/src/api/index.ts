@@ -438,6 +438,12 @@ export const api = {
     await ensureOk(res, 'Failed to stop the answer');
   },
 
+  /** Ends the command `commandId` of the workspace's shell, started in the channel, with what it started (issue 294). */
+  async killCommand(sessionId: string, channelId: string, commandId: string): Promise<void> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/commands/${encodeURIComponent(commandId)}/kill`, {method: 'POST'});
+    await ensureOk(res, 'Failed to end the command');
+  },
+
   /** Interrupts the tool call `callId` of agent `actorUuid` in its turn `turnId` alone; the turn goes on (issue 276). */
   async interruptToolCall(sessionId: string, channelId: string, actorUuid: string, turnId: string, callId: string): Promise<void> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/participants/${actorUuid}/tool-calls/${encodeURIComponent(callId)}/cancel`, {

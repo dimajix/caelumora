@@ -62,7 +62,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [252](252-openapi-tool.md) | open | A tool server that describes itself by OpenAPI - as most HTTP services and Open WebUI's tool servers do - cannot be reached; only MCP servers can. |
 | [254](254-commands-run-unbounded.md) | open | A command an agent's call hands back as running runs until the model ends it - past its turn, its session and the channel's access to the workspace. |
 | [290](290-tools-offered-by-the-turn.md) | open | A model is offered every tool of its components in every turn, also those it may not call where it is - a workspace's tools where there is none, or where its list grants reading alone. |
-| [294](294-user-ends-a-command.md) | open | A command an agent's call handed back as running can be ended only by the model; a user who sees it hang has no way to end it. |
 
 ## User interaction
 
