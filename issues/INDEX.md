@@ -259,6 +259,7 @@ published before anyone else can take it.
 | [283](283-show-agent-components.md) | open | The web UI does not show what an agent was built from, so its owner cannot see which components it has or which came from an included list. |
 | [291](291-share-artifacts-in-the-web-ui.md) | done | The web UI has no page of an artifact: its owner can neither see nor change whom it and its versions are shared with. |
 | [298](298-pick-users-and-roles-to-share-with.md) | open | The web UI shares a workspace or an artifact only with the members of a session or channel, not with a user or a role by name, since the REST API lists neither. |
+| [299](299-command-under-way-not-shown.md) | open | A command an agent carries out, such as `/compact`, is shown only once it is done: nothing tells that the agent began, and it is shown idle meanwhile. |
 
 ## Context and knowledge
 
@@ -306,6 +307,7 @@ published before anyone else can take it.
 | [249](249-prompt-part-titles.md) | done | Some prompt parts have no title and run into the others, and some have one that is a paragraph. |
 | [279](279-agents-md-in-workspace.md) | done | An agent is not told of an `AGENTS.md` in its workspace, and there is no skill that helps it write one for an existing project. |
 | [284](284-automatic-context-compaction.md) | open | An agent's context is compacted only when somebody asks for it; nothing compacts it before a model call that would not fit, least of all within the turn that makes it. |
+| [300](300-compaction-keeps-long-turns-whole.md) | open | A compaction keeps the turn its newest messages reach into whole, so that a long plan is never summarised and almost nothing is freed. |
 
 ## Maintenance
 
