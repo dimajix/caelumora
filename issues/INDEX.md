@@ -294,6 +294,7 @@ published before anyone else can take it.
 | [237](237-erasing-a-message.md) | open | A message written by mistake can be taken back but not erased: it stays in every participant's record and in the contexts built on it. |
 | [249](249-prompt-part-titles.md) | done | Some prompt parts have no title and run into the others, and some have one that is a paragraph. |
 | [279](279-agents-md-in-workspace.md) | done | An agent is not told of an `AGENTS.md` in its workspace, and there is no skill that helps it write one for an existing project. |
+| [284](284-automatic-context-compaction.md) | open | An agent's context is compacted only when somebody asks for it; nothing compacts it before a model call that would not fit, least of all within the turn that makes it. |
 
 ## Maintenance
 
