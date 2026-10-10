@@ -18,6 +18,7 @@ mod state;
 
 use crate::auth::{Auth, TokenService};
 use crate::state::AppState;
+use caelumora_model::store::memberships::StoreMemberships;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Caelumora REST Server")]
@@ -40,9 +41,13 @@ async fn main() -> anyhow::Result<()> {
 
     logging::init(&config.logging, LogTarget::Stderr, "info,tower_http=debug,axum::rejection=trace")?;
 
-    let security_manager = config.create_security_manager();
+    // The policy learns who takes part where from the store it guards
+    // (issue 23): made before the store, bound to it once it exists.
+    let memberships = Arc::new(StoreMemberships::new());
+    let security_manager = config.create_security_manager(Arc::<StoreMemberships>::clone(&memberships));
     let state_store = config.create_state_store(Arc::clone(&security_manager))?;
     let entity_store = config.create_entity_store(Arc::clone(&security_manager))?;
+    memberships.bind(&entity_store);
     let component_store = config.create_component_store(Arc::clone(&security_manager))?;
     let secret_manager = config.create_secret_manager(Arc::clone(&security_manager))?;
     let user_manager = config.create_user_manager(Arc::clone(&entity_store))?;
@@ -66,7 +71,7 @@ async fn main() -> anyhow::Result<()> {
     )?);
     let session_manager = Arc::new(SessionManager::new(Arc::clone(&runtime_manager)));
 
-    caelumora_runtime::seed::load(entity_store.as_ref(), component_store.as_ref(), &config.seed).await?;
+    caelumora_runtime::seed::load(entity_store.as_ref(), component_store.as_ref(), security_manager.as_ref(), &config.seed).await?;
 
     let state = Arc::new(AppState {
         auth,

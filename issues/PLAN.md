@@ -30,10 +30,9 @@ Measured against that target, three gaps remain:
 
 1.  **Working on files is not yet safe to hand out.** A workspace keeps no versions (256): what an
     agent overwrote cannot be taken back. A rule that allows a shell command matches only its
-    text, so a chained command slips past it (247). Who may reach a workspace's files or an
-    artifact follows from the channel one stands in, not from the thing (23). What tools and
-    external agents produce besides text is dropped (208), and a user cannot show an agent an
-    image (282) - see [block B1](#b1-workspace-and-artifacts).
+    text, so a chained command slips past it (247). What tools and external agents produce
+    besides text is dropped (208), and a user cannot show an agent an image (282) - see
+    [block B1](#b1-workspace-and-artifacts).
 2.  **A session ends at the context window** unless somebody types `/compact` in time (284), and
     working on files reaches it fast: tool results are the bulk of a context, and a long turn
     cannot be compacted from outside. This is the gap that weighs most.
@@ -59,7 +58,6 @@ Decisions that cost an hour and close an issue are listed under [D](#d-questiona
 
 | No. | What is to do | Note |
 |---|---|---|
-| [23](23-acls-in-security-attributes.md) | Access lists: `SecurityAttributes { owner_id, acl }` with entries for a user, a role by id, the members of a session or channel; a workspace's files and an artifact reached by their own routes, by whoever the list and the clearance admit, never through a channel; a session's admission rule. | Decided 2026-10-10, five steps in the issue. First: it changes the ground the rest stands on - the routes, the attributes, where membership is checked. Its step 4 (admission) belongs to B4. |
 | [169](169-changing-classified-content.md) | The rule for changing something classified from several places: fixed container, the writer's label must flow into it, every change records where it was made. | Proposal complete. Skills raise their classification to what the changing turn has seen, while 169's *Done when* wants a classification to change "only by an act of its own" - decide 169 against that, before 256 records writes and 166 builds a third answer. |
 | [20](20-transactional-effects.md) (part) | Tools declare whether they have an effect or only read; at-least-once made visible, nothing more. | The rest of 20 waits (see C). |
 | [247](247-tool-own-matcher.md) | A matcher that understands a shell command, so that "and from now on" does not allow chained commands. | Next: `run_command` exists, and without this a rule on it is unsafe. |
@@ -67,14 +65,16 @@ Decisions that cost an hour and close an issue are listed under [D](#d-questiona
 | [254](254-commands-run-unbounded.md) | Bound a command handed back as running to its turn, its session and the channel's access to the workspace. | In part for `open_terminal_docker`. A call that hangs *while* it runs is 276 (B3). |
 | [208](208-generated-artifacts.md) | Take in what A2A agents and MCP tools produce besides text - files, images - as artifacts, in the existing `ArtifactStorage`. | |
 | [272](272-artifacts-in-s3.md) | An `s3` provider of `ArtifactStorage`. | Nothing blocks it; when a deployment asks. |
-| [282](282-message-attachments.md) | A user attaches images to a message; the model that can see is given them, the one that cannot is told. | Decided in part: what is stored refers, the copies the model is given carry the content, fetched by the turn through a cache. Open: whether an attachment is part of its message or a file of the user's, as an artifact - decide with 23's list on artifacts in mind. |
+| [282](282-message-attachments.md) | A user attaches images to a message; the model that can see is given them, the one that cannot is told. | Decided in part: what is stored refers, the copies the model is given carry the content, fetched by the turn through a cache. Open: whether an attachment is part of its message or a file of the user's, as an artifact - which artifacts' lists, and those of their versions, would then decide who reads it. |
+| [289](289-attach-compares-access.md) | Attaching a workspace compares its access list with the session's: no entry for the session where the list reaches its members already. | Spares lists of single sessions; needs the session's admission rule (221) for a comparison by subjects. |
+| [291](291-share-artifacts-in-the-web-ui.md) | A page of an artifact in the web UI: its versions, and for its owner whom it and its versions are shared with. | Sharing is REST alone until then; the workspace page's `AccessList` is the pattern. |
 | - | A diff presentation for write calls (a `ToolPresentation` of its own). | No issue yet; worth one. |
 
 **Deliberately not in the first release:** converting formats (PDF, office documents) to text,
 images for models that see.
 
-Order: decide **169** and the small part of **20** → **23** (steps 1 to 3) → **247** → **256** →
-**282** → **208**; **254** alongside; **272** when wanted.
+Order: decide **169** and the small part of **20** → **247** → **256** → **282** → **208**; **254**
+and **291** alongside; **289** after 221; **272** when wanted.
 
 ### B2. Sessions that last: context and memory
 
@@ -95,6 +95,7 @@ Order: 284 → 58 → (65) → 166 → 55. Only 284 and 58 belong to the first r
 |---|---|---|
 | [226](226-concurrent-tool-calls.md) | M + M | Two steps. The first - tools read the turn and *return* their effects instead of holding `&mut Turn` - changes `ToolProvider::execute` for every provider, the file tools, `terminal_tool` and the skills' tools among them; every new tool makes it dearer. It also gives 20 its "declares an effect". Running concurrently is the second step, in the agent's loop, and can wait. |
 | [276](276-interrupt-one-tool-call.md) | M | Interrupt one hanging call - a `run_command` waiting for input - and let the turn go on with the result, instead of ending the turn. A token per call, a child of the turn's; a new action, so with its test in the security suite, and a stop button at the call in the web UI. Belongs to the first release: working with a shell produces exactly these calls. |
+| [290](290-tools-offered-by-the-turn.md) | M | Offer a model only the tools it may call where it is - a workspace's tools where there is one, those that change where its list grants writing. A `ToolProvider` that knows the turn, asked where the turn's tool sets are built; the call keeps its own check. |
 | [126](126-mcp-tools-discovered-once.md) | M | Refresh in the provider; an MCP server's set already says when it is unavailable. What remains is following a server that changes or comes back - the same question for 252 once it exists. |
 
 247 and 254 are tools too, but belong to the workspace: see B1.
@@ -104,8 +105,7 @@ Order: 284 → 58 → (65) → 166 → 55. Only 284 and 58 belong to the first r
 | No. | Size | Note |
 |---|---|---|
 | [25](25-file-user-backend.md) | M | The file backend itself is missing. Without it there are no passwords. With it: roles from the file (142's remainder) and the TUI's real identity (10's remainder) - three "in progress" issues close together. |
-| [221](221-adding-session-participants.md) | L | High value: a session that needs one more agent has to be created anew. Shares "one way of creating an agent" with templates; the lookup by name within a scope that it needs exists. |
-| [23](23-acls-in-security-attributes.md) (step 4) | M | A session's admission rule, from its template, empty for nobody, which its owner may only narrow - what 221 needs to say whom a session may take in. The capabilities of a role (23, decision 4: a right without an object) are where an administrator's rights go. |
+| [221](221-adding-session-participants.md) | L | High value: a session that needs one more agent has to be created anew. Shares "one way of creating an agent" with templates; the lookup by name within a scope that it needs exists. Comes with the session's admission rule decided in 23 (decision 5): from its template, empty for nobody, which its owner may only narrow. |
 | [07](07-session-deletion-audit.md) | S | See A. Purging by hand needs an administrator: take **only** that part of [125](125-invisible-admin.md) - the role, granted `ReadDeleted`/`Restore`/`Purge` as capabilities (23, decision 4); the actions exist, only the system holds `Purge` -, not the invisible live following. |
 | [227](227-agent-management.md) | M | Agents on their own: a list, renaming, the trash. The backend of the trash exists; the web UI is missing. Belongs with 221 - both are about agents outside one channel. |
 | [140](140-audit-log.md) | M | Seven issues point at it (07, 13, 14, 125, 143, 164, 169). Not needed to *use* the system, but it is what makes the confidentiality model accountable. First thing after the first release - or earlier, if the release is to be shown to someone who asks "who released this". |
@@ -119,6 +119,8 @@ Sound issues whose time has not come. None of them changes what a user can do wi
 | [03](03-postgres-entity-store.md), [04](04-postgres-state-store.md) | The JSON stores carry one process. 04's shape is decided; nothing is lost by waiting. |
 | [122](122-several-instances.md) | The model is agreed; building it needs 03 and 04 and a load that does not exist. |
 | [26](26-database-user-backend.md), [27](27-ldap-user-backend.md) | The provider seam exists; 25 comes first. LDAP when a deployment asks for it. |
+| [286](286-groups-as-subjects.md) | Groups of our own as subjects of access lists: sharing with a team rather than with people one by one. Wanted once several workspaces are shared with the same people. |
+| [287](287-memberships-cache.md) | A cache of memberships and roles for the policy. Pays where many events and subscribers meet; correctness came first. |
 | [182](182-entity-reads-not-cached.md) | Caching pays with Postgres or large channels. |
 | [139](139-mcp-result-classification.md) | Small, but no MCP server classifies its results yet. Do it when one does. |
 | [252](252-openapi-tool.md) | A generic OpenAPI tool is worth having, but has no concrete service waiting for it: Open Terminal has a component of its own. Do it when a second OpenAPI service is to be reached - that service decides the open questions (the default of the filter, API keys in a header). |
@@ -153,12 +155,11 @@ Each milestone leaves the system usable; decisions come before the code that dep
 
 1.  **Clear the table.** The decisions of section D (19, 18, 21, 05, 57, 59, 173 - no code), and
     the small ones: 218, 223.
-2.  **A team can log in, and a session can change.** 23's access lists (step 1) and admission
-    rule (step 4); 25 with the remainders of 10 and 142; 07, the administrator's capabilities of
-    125; 221; 227.
-3.  **Working on files, safely.** Decide 169 and the small part of 20; 23's routes for workspaces
-    and artifacts (steps 2 and 3); refactor `ToolProvider::execute` (226, first step); then 247,
-    256, 276, 282, 208; 254 alongside.
+2.  **A team can log in, and a session can change.** 25 with the remainders of 10 and 142; 07, the
+    administrator's capabilities of 125; 221 with the admission rule; 227.
+3.  **Working on files, safely.** Decide 169 and the small part of 20; refactor
+    `ToolProvider::execute` (226, first step); then 247, 256, 276, 282, 208, 290, 291; 254
+    alongside; 289 after 221.
 4.  **Sessions that last.** 284, 58; 126. If reading files hits the context window earlier, 284
     moves into milestone 3.
 
@@ -171,8 +172,6 @@ Not covered by any issue and worth one each:
 *   **A second `LLMClient`.** `ollama_client` is the only one; a client for the OpenAI-compatible
     API would open llama.cpp, vLLM and hosted models without touching anything else.
 *   **A diff presentation for write calls** of the workspace.
-*   **A group of our own** as a subject of access lists, and **a cache of memberships** - both
-    named by 23 as issues to open.
 
 ## Open questions
 
@@ -188,9 +187,9 @@ The plan stands on assumptions the maintainer should confirm or correct:
 | Section | Issues |
 |---|---|
 | A - small | 07, 218, 223, 283 |
-| B1 - workspace | 20 (part), 23, 169, 208, 247, 254, 256, 272, 282 |
+| B1 - workspace | 20 (part), 169, 208, 247, 254, 256, 272, 282, 289, 291 |
 | B2 - context and memory | 55, 58, 65, 166, 169, 284 |
-| B3 - tools | 126, 226, 276 |
-| B4 - sessions and team | 07, 10, 23 (part), 25, 140, 142, 221, 227, 125 (part) |
-| C - not now | 03, 04, 20, 26, 27, 42, 122, 124, 125, 139, 143, 181, 182, 237, 238, 252 |
+| B3 - tools | 126, 226, 276, 290 |
+| B4 - sessions and team | 07, 10, 25, 140, 142, 221, 227, 125 (part) |
+| C - not now | 03, 04, 20, 26, 27, 42, 122, 124, 125, 139, 143, 181, 182, 237, 238, 252, 286, 287 |
 | D - questionable | 05, 18, 19, 21, 24, 57, 59, 173 |

@@ -578,9 +578,9 @@ mod tests {
         }
     }
 
-    /// The agent's attributes: owned by the first user, the others contributors.
+    /// The agent's attributes: owned by the first user, read by the others.
     fn shared(users: &[UserId]) -> SecurityAttributes {
-        SecurityAttributes { owner_id: ActorId::User(users[0]), contributors: users[1..].iter().map(|u| ActorId::User(*u)).collect() }
+        users[1..].iter().fold(SecurityAttributes::owned_by(ActorId::User(users[0])), |a, u| a.granting(caelumora_model::security::Subject::Actor(ActorId::User(*u)), caelumora_model::security::Grant::Read))
     }
 
     #[tokio::test]

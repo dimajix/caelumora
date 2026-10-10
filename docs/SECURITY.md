@@ -42,30 +42,38 @@ A policy defined outside the binary is [24](../issues/24-opa-security-manager.md
 ## Ownership
 
 Every stored entity - session, channel, agent, personality, session template, workspace, skill,
-artifact, preconfigured component - carries `SecurityAttributes`: an `owner_id` and a list of
-`contributors` (issue 11). This is the one place ownership is recorded.
+artifact, preconfigured component - carries `SecurityAttributes`: an `owner_id` and an access list,
+`acl` (issues 11, 23). This is the one place ownership and access are recorded; see
+[Access lists](#access-lists).
 
-*   A session and its channels are owned by the user they were created for; their users and agents
-    are contributors.
-*   An agent is owned by whoever created it, and contributes to its own definition.
-*   A workspace is owned by the user it was made for, always a user, and has no contributors (issue
-    [253](../issues/253-workspace.md)): outside a session only its owner works on it
-    (`GetWorkspace`) - not on one that lies in a session's scope, which is used within that session
-    alone - and only its owner changes, deletes and attaches it to a session
-    (`UpdateWorkspace`). In a session it is shared through the channels, whose members use it
-    where the channel uses it and the classifications let them (see
-    [CHANNELS.md](CHANNELS.md#its-workspace)) - no `GetWorkspace` is asked of them.
+*   A session and its channels are owned by the user they were created for, and read by their
+    members: an entry `MemberOf` the session or the channel itself, matched against whoever takes
+    part in it at the time.
+*   An agent is owned by whoever created it, and has an empty list: it reads its own definition as
+    its owner, whose rights it acts with.
+*   A workspace is owned by the user it was made for, always a user (issue
+    [253](../issues/253-workspace.md)); only its owner changes, shares, deletes and attaches it to a
+    session (`UpdateWorkspace`). Its files are read by whom its list grants reading
+    (`GetWorkspace`) and changed by whom it grants writing (`WriteWorkspace`, issue 23) - by the
+    workspace, wherever they act, cleared for its classification. One made for a session lets the
+    session's members read and write it; one of its owner's grants nobody anything until shared - as
+    it is attached, or by its list. An agent uses it through a channel besides, where the channel
+    uses it and the classifications let it (see [CHANNELS.md](CHANNELS.md#its-workspace)).
 *   A skill (issue [22](../issues/22-skill-management.md)) is owned by the user it was made for -
-    by an agent's tool, its owner - or by the system for a skill of the seed; its contributors read
-    and use it. Using it - loading it into a turn - is `UseSkill`, granted as reading: what the
-    owner may read, the agent may follow. A user is shown one only if cleared for its
+    by an agent's tool, its owner - or by the system for a skill of the seed; whom its list grants
+    reading read and use it. Using it - loading it into a turn - is `UseSkill`, granted as reading:
+    what the owner may read, the agent may follow. A user is shown one only if cleared for its
     classification; see [SKILLS.md](SKILLS.md#who-may-do-what).
-*   An artifact is owned by the user the agent that published it acts for, always a user, and has no
-    contributors (issue [271](../issues/271-publishing-artifacts.md)): its owner reads every version
-    (`GetArtifact`), wherever it lies, and alone keeps, describes and deletes it (`UpdateArtifact`,
-    `DeleteArtifact`). A version is read by whoever reads the channel it was published in as a
-    whole, through the channel's view - no `GetArtifact` is asked of them, and none of the versions
-    published elsewhere is shown.
+*   An artifact is owned by the user the agent that published it acts for, always a user (issue
+    [271](../issues/271-publishing-artifacts.md)); only its owner keeps, describes, shares and
+    deletes it (`UpdateArtifact`, `DeleteArtifact`). Its own list grants the whole of it; each
+    version has a list of its own besides, which publishing gives the members of the channel it is
+    published in (issue 23). A version is read (`GetArtifact` with `Artifact::version_attributes`)
+    by whom either grants it, by the artifact, wherever they act and cleared for its
+    classification - so drafts published in a channel of few reach nobody who reads only the
+    version published to many. A version is added by whom the artifact's list grants `Write`
+    (`WriteArtifact`); a version's list grants reading alone. Whoever reads a version sees the
+    artifact's name and its owner's description, and of the versions only those they may read.
 *   Initial data belongs to the system.
 *   A `User` record belongs to the system, too (issue 94): only the user providers and the setup
     write it, so that nobody can grant themselves roles. What a user writes about themselves lives
@@ -95,12 +103,13 @@ artifact, preconfigured component - carries `SecurityAttributes`: an `owner_id` 
 The `OwnershipSecurityManager` decides by those attributes and the context's principal - a user
 themselves, an agent its owner (see [In whose name an agent acts](#in-whose-name-an-agent-acts)):
 
-*   The owner may do everything. Contributors may read and use - write into a session, cancel or
-    wake a channel, ask an agent in it to answer again (`RetryMessage`, issue 234), answer the
-    questions of an agent's call (`AnswerQuestion`, issue 165 - whether they were asked is the
-    agent's to check, not the policy's). What belongs to the system, everybody may read and use.
+*   The owner may do everything. Whom an entry grants `Read` may read and use - write into a
+    session, cancel or wake a channel, ask an agent in it to answer again (`RetryMessage`, issue
+    234), answer the questions of an agent's call (`AnswerQuestion`, issue 165 - whether they were
+    asked is the agent's to check, not the policy's). What belongs to the system, everybody may read
+    and use.
 *   An agent reads (`Get*`) what its owner may read, and what it takes part in itself - as the
-    caller, a contributor of the channel or session (issue
+    caller, a member of the channel or session (issue
     [264](../issues/264-agent-reads-channels-its-owner-may-not.md)). Everything else it does, it
     does as its owner: changing, deleting, cancelling and the rest are the principal's.
 *   Creating is only allowed with oneself as owner; changing and deleting only for the owner.
@@ -113,7 +122,7 @@ themselves, an agent its owner (see [In whose name an agent acts](#in-whose-name
     caller, an agent for its own message even when it acts for its owner - not the channel's owner.
 *   A command an agent carries out itself (issue [269](../issues/269-agent-commands.md)) is
     seen and asked for (`ShowAgentCommand`, `ExecuteAgentCommand`, each with the agent's and the
-    channel's attributes) by whoever may write in the channel - its contributors -, unless the
+    channel's attributes) by whoever may write in the channel - its members -, unless the
     command says it is for the agent's owners alone (`Command::owners_only`): then by whoever
     answers for the agent, as `ApproveToolCall` is granted. Who may not run one does not see it.
 *   Deleting an agent is its owner's (`DeleteAgent`). That it leaves channels owned by others is
@@ -170,10 +179,42 @@ What is not a store call asks first and acts afterwards.
     runtime's name.
 *   Renaming stores first - which is where it is checked - and changes the live entity only then.
 
+### Access lists
+
+An access list (`SecurityAttributes::acl`, issue [23](../issues/23-acls-in-security-attributes.md))
+holds entries `AclEntry { subject, grant }`. It only adds to what the owner may do - allow-only: the
+union of the entries, no denial, no precedence. The owner needs no entry and cannot lose theirs.
+
+*   **Grants.** `Read` - getting, listing, using - and `Write`, which covers reading and the
+    content besides. No action asks for `Write` yet. Changing the attributes, deleting,
+    reclassifying stay the owner's.
+*   **Subjects**, matched against the context's principal, and for what is read also against its
+    caller (issue 264):
+    *   `Actor` - a user. Never an agent, the system or nobody: an agent acts with its owner's
+        rights (issue 255), and an entry for it would let it reach what the person responsible for
+        it may not. The stores refuse such an entry (`SecurityAttributes::validate`).
+    *   `Role` - by its `RoleId`. The roles that count for a user are their own; for an agent its
+        owner's, narrowed by its personality's limiting roles wherever a role is matched - the one
+        way an agent may do less than its owner.
+    *   `MemberOf` - the current participants of a session or a channel (`Membership`), users and
+        agents, not approvers. A member counts wherever they act, not only in that place.
+*   **What the policy learns.** Whether someone is a member, and which roles count for them, are
+    facts the attributes do not carry. The policy asks a `Memberships` source it is made with,
+    only where an entry names one: `StoreMemberships` reads the one session, channel, user or
+    agent asked about from the entity store, in the system's name - also a deleted session or
+    channel, whose members are told of the deletion. The policy is made before the store, which
+    takes it, so a binary binds the store to the memberships afterwards; until then nobody is a
+    member of anything.
+*   **Roles by id.** What is stored names a role by its id - an entry, `User::roles`, a
+    personality's `roles`; the configuration gives every role an `id` beside its `name`. What is
+    written by hand names roles - the user providers' configuration, a seed - and is resolved when
+    it is loaded; an unknown name is an error. The `SecurityManager` translates both ways
+    (`role_id`, `role_name`).
+
 ### Not decided yet
 
-*   Roles such as an administrator, and richer access lists
-    ([23](../issues/23-acls-in-security-attributes.md)).
+*   Roles such as an administrator - a right without an object, a capability of a role (issue 23,
+    decision 4).
 *   What happens to an owner's entities when the owner is removed. For now they stay.
 
 ## In whose name an agent acts
@@ -202,9 +243,9 @@ something - they check the request, and carry it out with their own rights. In t
     it read to whoever it answers next (issue
     [131](../issues/131-agent-memory-bypasses-policy.md)) - so what it may read is fixed by its
     owner, not by who happens to ask.
-2.  **The owner checks the request**, where a call is admitted (`ToolExecutor::admit`): the
-    policy, the owner's rules for the place - evaluated in their name, as their own answer (issue
-    13) - and the approval of the owner or their contributors, for an agent of the system the
+2.  **The owner checks the request**, where a call is admitted (`ToolExecutor::admit`): the policy,
+    the owner's rules for the place - evaluated in their name, as their own answer (issue 13) - and
+    the approval of the owner or whom the agent's list lets read it, for an agent of the system the
     channel's owner (see [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md#who-may-approve)). A
     personality's limiting roles narrow the agent further. A tool that needs no approval is the
     owner's approval given in advance.
@@ -336,7 +377,7 @@ question, in the viewer's name:
     ownership policy grants its owner alone: what an agent was built from is configuration, and
     the preconfigured components it includes may have been shared with its owner alone;
     `may_approve()` asks `ApproveToolCall`, which the ownership policy grants the agent's owner and
-    contributors, for an agent of the system the channel's owner (issue 14, see
+    whom its list lets read it, for an agent of the system the channel's owner (issue 14, see
     [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md#who-may-approve));
 *   `Views::channel_of(session, channel)` reaches what a memory entry's origin or a `KnowledgeRef`
     names, wherever it is, and answers `None` for what is gone or not the viewer's to read.

@@ -13,7 +13,8 @@
 
 use crate::event::EventBus;
 use caelumora_model::actor::ActorId;
-use caelumora_model::confidentiality::{user_roles, Classification};
+use caelumora_model::confidentiality::Classification;
+use caelumora_model::role::user_roles;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityContext, SecurityManager};

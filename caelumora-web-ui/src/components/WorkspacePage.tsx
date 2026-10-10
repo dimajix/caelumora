@@ -1,12 +1,11 @@
-// One of the user's workspaces (issue 253), in the place of a channel: what
+// A workspace the user may read (issue 253), in the place of a channel: what
 // it is - its name, where it lies, its storage, its classification and what
-// it holds - with what its owner may do to it, and its files. One of a
-// session's scope is used within that session alone: its files are reached
-// from a channel of it, not here.
+// it holds - with what its owner may do to it, whom it is shared with (issue
+// 23), and its files, as its access list lets the user.
 
 import React, {useEffect, useMemo, useState} from 'react';
 import {Edit2, FileText, HardDrive, Shield, Trash2} from 'lucide-react';
-import type {Compartment, WorkspaceResponse} from '../types';
+import type {AccessEntry, Compartment, Grant, WorkspaceResponse} from '../types';
 import {api} from '../api';
 import {reportError} from '../errors';
 import {CONFIDENTIALITY_LEVELS, classificationDescription, classificationLabel} from '../confidentiality';
@@ -27,7 +26,7 @@ export const WorkspacePage: React.FC<WorkspacePageProps> = ({workspaceId, onDele
   const [text, setText] = useState('');
   const [isReclassifying, setIsReclassifying] = useState(false);
   const [compartments, setCompartments] = useState<Compartment[]>([]);
-  const files = useMemo(() => api.ownedFiles(workspaceId), [workspaceId]);
+  const files = useMemo(() => api.workspaceFiles(workspaceId), [workspaceId]);
 
   useEffect(() => {
     let current = true;
@@ -60,6 +59,14 @@ export const WorkspacePage: React.FC<WorkspacePageProps> = ({workspaceId, onDele
       }
     } catch (error) {
       reportError(field === 'name' ? 'Failed to rename the workspace' : 'Failed to describe the workspace', error);
+    }
+  };
+
+  const share = async (access: AccessEntry[]) => {
+    try {
+      changed(await api.setWorkspaceAccess(workspace.id, access));
+    } catch (error) {
+      reportError('Failed to share the workspace', error);
     }
   };
 
@@ -119,13 +126,11 @@ export const WorkspacePage: React.FC<WorkspacePageProps> = ({workspaceId, onDele
           )}
         </div>
 
-        {workspace.scope === 'session' ? (
-          <div className="text-sm text-gray-600 dark:text-gray-400">
-            It was made for one session and is used within it alone: its files are reached from a channel of that session.
-          </div>
-        ) : (
-          <FileBrowser files={files} />
+        {workspace.can_change && (
+          <AccessList access={workspace.access ?? []} onChange={(access) => void share(access)} />
         )}
+        {!workspace.can_write && <div className="text-xs italic text-gray-500">You may read its files, not change them.</div>}
+        <FileBrowser files={files} canWrite={workspace.can_write} />
       </div>
 
       {isReclassifying && (
@@ -142,3 +147,59 @@ export const WorkspacePage: React.FC<WorkspacePageProps> = ({workspaceId, onDele
     </div>
   );
 };
+
+/** What `kind` of whom an entry names is called, for a reader. */
+const KIND_LABELS: Record<AccessEntry['kind'], string> = {
+  user: 'User',
+  role: 'Role',
+  session: 'Members of the session',
+  channel: 'Members of the channel',
+};
+
+interface AccessListProps {
+  access: AccessEntry[];
+  onChange: (access: AccessEntry[]) => void;
+}
+
+/**
+ * Whom the workspace is shared with (issue 23), for its owner: each entry
+ * with what it grants, which can be changed, or taken away. Entries are
+ * added where the workspace is attached to a session.
+ */
+const AccessList: React.FC<AccessListProps> = ({access, onChange}) => (
+  <div className="space-y-1">
+    <h3 className="text-sm font-medium text-gray-800 dark:text-gray-100">Shared with</h3>
+    {access.length === 0 ? (
+      <div className="text-xs italic text-gray-500">Nobody but you. Attaching it to a session can share it with the session's members.</div>
+    ) : (
+      <ul className="space-y-1 text-sm">
+        {access.map((entry, index) => (
+          <li key={`${entry.kind}-${entry.id}`} className="flex items-center gap-2">
+            <span className="flex-1 min-w-0 truncate">
+              <span className="text-xs text-gray-500">{KIND_LABELS[entry.kind]}: </span>
+              {entry.name ?? <span className="italic text-gray-500">gone</span>}
+            </span>
+            <select
+              value={entry.grant}
+              onChange={(e) => onChange(access.map((other, i) => i === index ? {...other, grant: e.target.value as Grant} : other))}
+              className="rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-1 py-0.5 text-xs"
+              aria-label={`What ${entry.name ?? 'it'} may do`}
+            >
+              <option value="read">reads</option>
+              <option value="write">reads and changes</option>
+            </select>
+            <button
+              type="button"
+              onClick={() => onChange(access.filter((_, i) => i !== index))}
+              className="p-1 rounded-md text-gray-500 hover:text-red-500 hover:bg-gray-100 dark:hover:bg-gray-800"
+              title="No longer share with them"
+              aria-label={`No longer share with ${entry.name ?? 'them'}`}
+            >
+              <Trash2 size={12} />
+            </button>
+          </li>
+        ))}
+      </ul>
+    )}
+  </div>
+);

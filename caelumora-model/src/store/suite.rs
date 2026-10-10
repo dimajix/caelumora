@@ -151,7 +151,7 @@ fn user(username: &str) -> User {
         id: UserId::new(),
         username: Name::new(username).unwrap(),
         email: String::new(),
-        roles: vec!["user".to_string()],
+        roles: vec![crate::role::RoleId::new()],
         deleted: None,
     }
 }

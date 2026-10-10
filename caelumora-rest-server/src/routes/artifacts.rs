@@ -1,11 +1,12 @@
-//! Artifacts (issue 271): their owner lists, reads, keeps, describes,
-//! deletes and restores theirs; a reader of a channel lists the artifacts
-//! published there and downloads those versions. A version is downloaded as
-//! an attachment (`routes::attachment_response`), named as its artifact.
+//! Artifacts (issue 271): their owner keeps, describes, shares, deletes and
+//! restores theirs; whoever the artifact's list or a version's lets reads
+//! those versions (issue 23), by the artifact, never through a channel - a
+//! channel lists what was published in it. A version is downloaded as an
+//! attachment (`routes::attachment_response`), named as its artifact.
 
 use crate::auth::AuthenticatedUser;
 use crate::error::{ApiError, Json, Path, Subject};
-use crate::models::{ArtifactResponse, DeletedResponse, ItemDescriptionRequest, KeepArtifactRequest, ListOptions};
+use crate::models::{AccessEntry, ArtifactResponse, DeletedResponse, ItemDescriptionRequest, KeepArtifactRequest, ListOptions};
 use crate::state::AppState;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
@@ -20,8 +21,9 @@ fn failed(error: ArtifactError, action: &str) -> ApiError {
     ApiError::from_runtime(error.into(), Subject::Artifact, action)
 }
 
-/// The user's own artifacts - or, with `?deleted=true`, those they
-/// deleted, the trash.
+/// The artifacts the user may read anything of - their own and those
+/// shared with them - or, with `?deleted=true`, those they deleted, the
+/// trash.
 pub async fn list_artifacts(State(state): State<Arc<AppState>>, Query(options): Query<ListOptions>, user: AuthenticatedUser) -> Result<Response, ApiError> {
     let views = crate::routes::views(&state, &user);
     if options.deleted {
@@ -34,13 +36,14 @@ pub async fn list_artifacts(State(state): State<Arc<AppState>>, Query(options): 
     Ok(Json(artifacts.into_iter().map(ArtifactResponse::from).collect::<Vec<_>>()).into_response())
 }
 
-/// The user's artifact `id`, with every version.
+/// Artifact `id`, with the versions the user may read.
 pub async fn get_artifact(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<Json<ArtifactResponse>, ApiError> {
     Ok(Json(owned(&state, &user, ArtifactId(id)).await?))
 }
 
-/// Version `number` of the user's artifact `id`, as its owner reads it.
-pub async fn download_owned_version(State(state): State<Arc<AppState>>, Path((id, number)): Path<(Uuid, u32)>, user: AuthenticatedUser) -> Result<Response, ApiError> {
+/// Version `number` of artifact `id`: whoever its list or the version's
+/// lets read it (issue 23).
+pub async fn download_version(State(state): State<Arc<AppState>>, Path((id, number)): Path<(Uuid, u32)>, user: AuthenticatedUser) -> Result<Response, ApiError> {
     let id = ArtifactId(id);
     let (artifact, size, content) = state.runtime_manager.artifact_manager().content(&user.security_context(), id, number).await
         .map_err(|e| failed(e, &format!("reading version {number} of artifact {id}")))?;
@@ -105,17 +108,17 @@ pub async fn channel_artifacts(State(state): State<Arc<AppState>>, Path((id, cid
     Ok(Json(artifacts.into_iter().map(ArtifactResponse::from).collect()))
 }
 
-/// Version `number` of artifact `aid`, if it was published in the channel,
-/// as a reader of the channel reads it.
-pub async fn download_channel_version(State(state): State<Arc<AppState>>, Path((id, cid, aid, number)): Path<(Uuid, Uuid, Uuid, u32)>, user: AuthenticatedUser) -> Result<Response, ApiError> {
-    let channel = crate::routes::channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let aid = ArtifactId(aid);
-    let (artifact, size, content) = channel.artifact_content(aid, number).await
-        .map_err(|e| failed(e, &format!("reading version {number} of artifact {aid}")))?;
-    Ok(crate::routes::attachment_response(size, content, artifact.name.as_str()))
+/// Gives the artifact the access list in the body for the whole of it
+/// (issue 23), replacing the one it had: its owner's act.
+pub async fn set_access(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser, Json(entries): Json<Vec<AccessEntry>>) -> Result<Json<ArtifactResponse>, ApiError> {
+    let id = ArtifactId(id);
+    let acl = entries.into_iter().map(AccessEntry::into_acl).collect();
+    state.runtime_manager.artifact_manager().set_access(&user.security_context(), id, acl).await
+        .map_err(|e| failed(e, &format!("sharing artifact {id}")))?;
+    Ok(Json(owned(&state, &user, id).await?))
 }
 
-/// The user's artifact `id`, as they see it.
+/// Artifact `id`, as the user sees it.
 async fn owned(state: &Arc<AppState>, user: &AuthenticatedUser, id: ArtifactId) -> Result<ArtifactResponse, ApiError> {
     let artifact = crate::routes::views(state, user).artifact(id).await
         .map_err(|e| ApiError::from_runtime(e.into(), Subject::Artifact, &format!("reading artifact {id}")))?;

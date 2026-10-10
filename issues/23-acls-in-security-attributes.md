@@ -1,6 +1,6 @@
 # 23 — Access lists: the thing decides, not where one stands
 
-**Status:** open
+**Status:** done
 **Area:** Identity and access management
 
 *Rewritten on 2026-10-10 against what [142](142-roles.md), [253](253-workspace.md),
@@ -199,7 +199,7 @@ stop at its creation.
 | Artifact | `MemberOf(channel it was published in): Read` | the owner |
 | Skill | its readers as `Actor: Read` (seed, `create_skill`) | the owner |
 | Session, channel | `MemberOf(self): Read` | - |
-| Agent | `Actor(itself): Read` | - |
+| Agent | empty: it reads its own definition as its owner (issue 255) | the owner |
 | Session's `admission` | the template's | the owner narrows |
 
 ### 8. What this does not change
@@ -287,3 +287,94 @@ Issues to open with it: a group of our own as a subject; a cache for `Membership
   and a personality's limiting roles narrow an agent wherever a role is matched, the one way it
   does less than its owner; a right without an object - creating, administering - is a capability
   of a role in the configuration, not built yet. Branch `issue-23-acls`.
+- **2026-10-10** — Step 1 done, without a change in who may do what - the security suite passes
+  as it was, and gains a test of its own. Built:
+  - `caelumora_model::role`: `RoleId`, `Roles` (moved out of `confidentiality`, each role an `id`,
+    a `name`, its clearances), `user_roles`. `User::roles`, `Personality::roles` and
+    `JoinChannel` hold ids; `accept_any`'s configuration and a seed's personalities name roles,
+    resolved when they are loaded (`AppConfig::role_ids`, `SeedPersonality`); the
+    `SecurityManager` translates (`role_id`, `role_name`), the policy that allows everything too.
+  - `SecurityAttributes { owner_id, acl }` with `AclEntry`, `Subject`, `Membership`, `Grant`;
+    `contributors` and `participant_attributes` are gone. A session and a channel carry
+    `MemberOf` themselves; an agent carries nothing - the table of decision 7 said
+    `Actor(itself)`, which decision 3 forbids and which 255 made needless. The stores refuse an
+    entry naming anyone but a user (`SecurityAttributes::validate`).
+  - The ownership policy evaluates the list (`granted`), learning memberships and roles from a
+    `Memberships` it is made with; `StoreMemberships` reads the one place, user or agent asked
+    about, a deleted session or channel too, holds the store weakly and is bound by the binaries
+    once the store exists. The policy's `match` stays the one exhaustive mapping of decision 2;
+    no action asks for `Write` yet.
+  - A participant removed from a channel is no member when its removal is announced, so the
+    announcement is delivered with an entry for them besides, never stored.
+  - The terminal user no longer holds the role "user", which was configured nowhere.
+  Stored data to delete: every entity store - users, personalities, sessions, channels, agents,
+  skills, workspaces, artifacts. A configuration's `roles` need an `id` each.
+- **2026-10-10** — Step 2 done, decided with the maintainer before it was built:
+  - `WriteWorkspace` beside `GetWorkspace`: reading a workspace's files, the tools that only read
+    and listing are `Read`; uploading, deleting, the tools that write and every shell tool -
+    a command may change anything - are `Write`. `UpdateWorkspace` stays its owner's, sharing
+    included (`WorkspaceManager::set_access`, `PUT /workspaces/{id}/access`).
+  - A person reaches the files by the workspace, wherever they act (`WorkspaceManager::reached`,
+    `WorkspaceView::terminal(Grant)`): the list and their clearance; the scope no longer keeps a
+    workspace made for a session from being reached outside it. The four channel routes of the
+    workspace are gone; a channel's snapshot names the workspace by `workspace_id` where it uses
+    it and the viewer may read it. `GET /workspaces` lists what is shared with the user too.
+  - An agent still uses it through a channel - switch, flow rule -, and now as the list lets it
+    besides (`usable_in` asks `GetWorkspace`; changing asks `WriteWorkspace`, `ReadOnly`
+    otherwise); the prompt part says when it may only read.
+  - One made in a session's scope carries `MemberOf(session): Write` (`Workspace::new`). Attaching
+    one of a user's shares nothing unless `share` says `read` or `write`
+    (`SessionLoop::set_workspace`, `WorkspaceChoice::Existing`, the web UI's `ShareSelect`);
+    detaching leaves the list. Comparing the session's rules with the workspace's when attaching,
+    to spare entries for single sessions, is issue
+    [289](289-attach-compares-access.md).
+  - Deviation from what was agreed: tools are not offered by what the list grants -
+    `ToolProvider::tools` knows no turn, and even "no workspace in this channel" is answered at the
+    call today -, so a tool that changes fails at the call where the list grants reading. Offering
+    by the turn is a change of `ToolProvider` of its own.
+  - An artifact keeps an empty list until step 3 (`Artifact::validate`).
+  Stored data to delete: workspaces, whose attributes now carry the list.
+- **2026-10-10** — Step 3 done, decided with the maintainer before it was built. A list on the
+  artifact alone (decision 7's `MemberOf(channel it was published in)`) would have let the members
+  of every channel a version was published in read all versions - drafts published where few are
+  among them. Instead, beside the artifact's own list, **every version carries a list of its own**
+  (`ArtifactVersion::acl`), which publishing gives the members of its channel; a version is read by
+  whom either grants it (`Artifact::version_attributes`, asked as `GetArtifact`), so a draft kept
+  to a private channel reaches nobody who reads the version published to the team. One meaning
+  for an entry everywhere: it grants what it hangs on.
+  - The description a publication gives goes to its version; the artifact's own is its owner's,
+    set by `describe`. Whoever reads a version sees the artifact's name and its owner's
+    description, and of the versions only those they may read - their numbers show that others
+    exist, accepted.
+  - Adding a version is `WriteArtifact`, what the artifact's list grants `Write` - its owner
+    always; a version's list grants reading alone (`Artifact::validate`). The artifact is changed
+    in the runtime's name then, its owner unchanged. Keeping, describing, sharing
+    (`ArtifactManager::set_access`, `PUT /artifacts/{id}/access`) and deleting stay its owner's.
+  - Reading goes through the manager (`readable`, `reached`, `all_readable`, `published_in` with
+    the viewer's context), which reads in the runtime's name and asks per version - the store's
+    own check knows the artifact's list alone. `content` asks the clearance besides. Events about
+    a version go to its readers, those about the artifact to all who read any version
+    (`reader_attributes`).
+  - The channel's download route is gone; `GET …/channels/{cid}/artifacts` stays, listing what
+    was published there that the viewer may read. Showing and changing whom an artifact is shared
+    with in the web UI is issue [291](291-share-artifacts-in-the-web-ui.md); changing a version's
+    own list after publishing is not offered yet.
+  - Names of whom a list names are resolved in one place for workspaces and artifacts
+    (`Views::access_snapshots`).
+  Stored data to delete: artifacts, whose versions now carry a list and a description.
+- **2026-10-10** — Step 4 moved to issue [221](221-adding-session-participants.md), with the
+  maintainer: nobody is taken into a session after it was built today - a channel takes in only
+  the session's participants, which its template fixes -, so an admission rule would have had
+  nothing to check. Decision 5 stands and is built with 221, whose *Done when* it now carries.
+  Step 5 was done along the way: the documents were brought up to date with each step
+  (SECURITY.md's *Access lists*, CHANNELS.md, CONFIDENTIALITY.md, REST-SERVER.md, WEB-UI.md,
+  TOOLS-AND-COMMANDS.md, CONFIGURATION.md, SKILLS.md, ARCHITECTURE.md). Closed: the attributes
+  hold an access list of users, roles by id and members of a place, allow-only, the owner
+  implied; a workspace's files and an artifact's versions are reached by their lists, never
+  through a channel; the policy answers membership through `Memberships`, reading the one place
+  named; the security suite covers members, strangers, readers and writers, drafts kept to their
+  channel and an entry naming an agent refused. Left: the admission rule (221), groups of our own
+  (286), a cache of memberships (287), comparing access when attaching (289), tools offered by the
+  turn (290), sharing artifacts in the web UI (291), the capabilities of a role (decision 4, with
+  125 or 221). Stored data to delete over all steps: every entity store; a configuration's roles
+  need an id each.

@@ -18,7 +18,8 @@ use caelumora_model::channel::{Channel, ChannelId, ChannelState, HistoryAccess, 
 use crate::controller::{AgentController, ChannelController, ControllerManager, UserController};
 use caelumora_model::agent::{Personality, PersonalityKind};
 use caelumora_model::approval::{ApprovalRule, Approver};
-use caelumora_model::confidentiality::{user_roles, Classification};
+use caelumora_model::confidentiality::Classification;
+use caelumora_model::role::{user_roles, RoleId};
 use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::question::{QuestionError, QuestionId, Questions};
 use caelumora_model::message::{Message, MessageId};
@@ -205,7 +206,7 @@ impl Member {
     ///
     /// # Errors
     /// Whatever reading a user reports, but that they are gone.
-    async fn clearances(&self, store: &dyn EntityStore) -> Result<Vec<Vec<String>>> {
+    async fn clearances(&self, store: &dyn EntityStore) -> Result<Vec<Vec<RoleId>>> {
         match self {
             Member::User(user) => Ok(vec![user_roles(store, ActorId::User(user.id())).await?]),
             Member::Agent(agent, personality) | Member::ExternalAgent(agent, personality) => {

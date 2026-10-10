@@ -130,7 +130,8 @@ impl ToolProvider for ArtifactTool {
             "digest": version.digest,
             "path": at.to_string(),
         });
-        if let Some(description) = &artifact.description {
+        // The version's, as it was published (issue 23).
+        if let Some(description) = &version.description {
             result["description"] = json!(description.to_string());
         }
         Ok(ToolOutput::classified(result, artifact.classification.clone()))

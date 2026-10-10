@@ -226,6 +226,7 @@ impl ApiError {
                 WorkspaceError::StorageNotCleared(_) => return bad_request("storage_not_cleared"),
                 WorkspaceError::ClassificationRefused => return bad_request("invalid_classification"),
                 WorkspaceError::NotCleared => return Self::forbidden("not_cleared", detail),
+                WorkspaceError::ReadOnly(_) => return Self::forbidden("read_only", detail),
                 WorkspaceError::Invalid(e) => return Self::invalid_value(e),
                 WorkspaceError::Terminal(e) => return Self::of_terminal(e),
                 WorkspaceError::Store(StoreError::NotFound { .. }) => return Self::not_found("workspace_not_found", detail),
@@ -254,6 +255,7 @@ impl ApiError {
             match e {
                 ArtifactError::NotFound(_) | ArtifactError::Store(StoreError::NotFound { .. }) => return Self::not_found("artifact_not_found", detail),
                 ArtifactError::VersionNotFound { .. } => return Self::not_found("version_not_found", detail),
+                ArtifactError::NotCleared => return Self::forbidden("not_cleared", detail),
                 ArtifactError::NotConfigured => return bad_request("artifacts_not_configured"),
                 ArtifactError::UnknownStorage(_) => return bad_request("unknown_storage"),
                 ArtifactError::StorageNotCleared(_) => return bad_request("storage_not_cleared"),

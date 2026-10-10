@@ -324,8 +324,8 @@ people who clicked: under `Any` an `allow` wins whoever answered first, under `A
 Who may approve a call is the `SecurityManager`'s to decide, and the approver enforces it (issue
 14): the action `ApproveToolCall` carries the attributes of the agent - loaded, never taken from the
 request, which the agent makes itself - and of the channel. The ownership policy grants it the
-agent's owner and contributors, who are responsible for it also in someone else's channel; for an
-agent of the system, the channel's owner.
+agent's owner and whom the agent's access list lets read it, who are responsible for it also in
+someone else's channel; for an agent of the system, the channel's owner.
 
 *   An answer counts only if its sender may approve: the approver asks with the context the answer
     came with (`Enforcement::require`) and leaves out any other, logged and without telling the
@@ -666,7 +666,12 @@ private notes and agent memory are described in [MEMORY.md](MEMORY.md).
 workspace, where its channel may use it ([CHANNELS.md](CHANNELS.md#its-workspace)): its files, and
 a shell in it where its storage gives one. The workspace is reached through the turn's views on
 every call, before anything is sent, and a call where there is none - or a command where its
-storage has no shell - fails and says so. `workspace_prompt_provider` tells the model beforehand
+storage has no shell - fails and says so. What its access list grants decides the rest (issue
+[23](../issues/23-acls-in-security-attributes.md)): the tools that only read files need reading
+(`GetWorkspace`), the others and every shell tool changing (`WriteWorkspace`) - a command may change
+anything its place reaches. Every tool is offered, and one that changes fails where the list grants
+reading alone; the prompt part says so beforehand. Offering only what may be called would need a
+`ToolProvider` that knows the turn. `workspace_prompt_provider` tells the model beforehand
 what it has, and which files at its root - an `AGENTS.md`, say - it is to read before it works on
 the files ([AGENT-TURN.md](AGENT-TURN.md#its-workspace), issue 279). Which calls need approval
 is configured as for `mcp_tool` (`requires_approval`, `ApprovalMode`): all - the default -, none,
@@ -734,19 +739,22 @@ in their descriptions - a link for a look now, an artifact for a result to be ke
 
 It is reached as the file tools are, through the turn's views and the workspace of the channel
 (`tool::channel_workspace`), and publishes in the name of whoever the agent acts for: its owner, who
-makes the artifact (`CreateArtifact`) or adds to theirs (`UpdateArtifact`), asked before anything is
-kept. An artifact is published into the session's scope, under its name - the file's unless given,
-at most 100 characters -, made with its first version and given one more by every later publication
-under that name. It is classified as the workspace, fixed with its first version; a later version
-from a workspace classified otherwise is refused - publish it under another name. A storage takes
-nothing above its `destination`. The content is read up to `artifacts.max_bytes` and kept as it
-streams, its digest taken as it passes. Its result is `{artifact, version, name, size, digest, path,
-description?}`, classified as the artifact, and is presented as `artifact_publish`. It changes what
-is kept, so it is approved where changes are; the approver reads which file is published as which
-artifact.
+makes the artifact (`CreateArtifact`), or adds a version where the artifact's list lets them
+(`WriteArtifact`, issue 23 - its owner always), asked before anything is kept. The version is read
+by the members of the channel it is published in (an entry `MemberOf` the channel in its own list),
+and carries the description it was published with. An artifact is published into the session's
+scope, under its name - the file's unless given, at most 100 characters -, made with its first
+version and given one more by every later publication under that name. It is classified as the
+workspace, fixed with its first version; a later version from a workspace classified otherwise is
+refused - publish it under another name. A storage takes nothing above its `destination`. The
+content is read up to `artifacts.max_bytes` and kept as it streams, its digest taken as it passes.
+Its result is `{artifact, version, name, size, digest, path, description?}`, classified as the
+artifact, and is presented as `artifact_publish`. It changes what is kept, so it is approved where
+changes are; the approver reads which file is published as which artifact.
 
-Whoever reads the channel as a whole downloads the versions published there; the artifact's owner
-reads every version and keeps it beyond the session, in their scope or the global one; one that is
+The members of the channel download the version published there, by the artifact, wherever they
+act; whom the artifact's own list grants it read every version; its owner reads every version,
+shares it and keeps it beyond the session, in their scope or the global one; one that is
 not kept goes with the session, its content too (see [STORAGE.md](STORAGE.md) and
 [SECURITY.md](SECURITY.md#ownership)).
 

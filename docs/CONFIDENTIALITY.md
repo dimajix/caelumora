@@ -216,10 +216,11 @@ them; so a clearance is not judged by the flow rule, but by its own (`Clearances
     them - the same, or one it may read.
 
 A clearance follows from roles ([142](../issues/142-roles.md)). The `roles` section of the
-configuration names the roles and the clearances each grants (`Roles`); the user provider gives
-users their roles - for now by its own configuration. A user's clearances are all their roles'; an
-agent's are its owner's, since it must not see more than the person responsible for it. A user whose
-roles grant nothing sees only what is public. Without a `roles` section, clearances are not checked.
+configuration names the roles - each with an id, which is what is stored - and the clearances each
+grants (`Roles`, `caelumora_model::role`); the user provider gives users their roles - for now by
+its own configuration. A user's clearances are all their roles'; an agent's are its owner's, since
+it must not see more than the person responsible for it. A user whose roles grant nothing sees only
+what is public. Without a `roles` section, clearances are not checked.
 
 ### Personalities limit their agents
 
@@ -263,16 +264,17 @@ which carry none of their own: one container, as issue
 [169](../issues/169-changing-classified-content.md) proposes. Who works on it is cleared as a
 reader of a channel so classified would be:
 
-*   Its owner, outside a session - unless it lies in a session's scope: cleared for it
+*   A person, by the workspace - its owner, or whom its access list lets (issue
+    [23](../issues/23-acls-in-security-attributes.md)), wherever they act: cleared for it
     (`JoinChannel` with the workspace in the channel's place) when they make it, raise it and use
-    it.
-*   A member of a channel classified L, in a session it is attached to, where the workspace,
+    it. Where they act decides nothing: what they read reaches only them.
+*   An agent, in a channel classified L of a session it is attached to, where the workspace,
     classified W, and the channel flow both ways - W into L, since what is read there reaches the
     channel; L into W, since what was seen in the channel may be written there. Asked as an actor
-    putting something into a place is (`Publish` of W into L and of L into W, in the member's name -
-    an agent's, as it reads every other place, its owner's), at every use. With compartments and a
-    read relation that is not symmetric this is stricter than equality. A member is cleared for L,
-    so nothing else is asked.
+    putting something into a place is (`Publish` of W into L and of L into W, in the agent's name,
+    as it reads every other place, its owner's), at every use, besides the access list. With
+    compartments and a read relation that is not symmetric this is stricter than equality. A member
+    is cleared for L, so nothing else is asked.
 
 A storage bounds what may be put into it (issue [251](../issues/251-open-terminal.md), part B2):
 its `destination`, the classification a workspace in it may have at most - where its files go, and

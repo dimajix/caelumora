@@ -10,6 +10,7 @@ use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::{ChannelId, SessionId};
+use caelumora_model::security::{AclEntry, Grant, Membership, Subject};
 use caelumora_model::template::{ScopeTemplate, SessionTemplate, SessionTemplateId};
 use caelumora_model::user::{UserId, UserProfile};
 use caelumora_model::value::text::{Briefing, Introduction, Summary};
@@ -39,8 +40,13 @@ pub struct CreateSessionRequest {
 pub enum SessionWorkspaceRequest {
     /// None, whatever the template names.
     None,
-    /// One of the user's own.
-    Existing { workspace_id: WorkspaceId },
+    /// One of the user's own, shared with the session's members as far as
+    /// `share` says - `read` or `write` -, with nobody if absent (issue 23).
+    Existing {
+        workspace_id: WorkspaceId,
+        #[serde(default)]
+        share: Option<Grant>,
+    },
     /// One made for the session alone, in a configured storage; `internal`
     /// without compartments unless named, as a workspace made on its own.
     New {
@@ -54,7 +60,7 @@ impl From<SessionWorkspaceRequest> for WorkspaceChoice {
     fn from(request: SessionWorkspaceRequest) -> Self {
         match request {
             SessionWorkspaceRequest::None => Self::None,
-            SessionWorkspaceRequest::Existing { workspace_id } => Self::Existing(workspace_id),
+            SessionWorkspaceRequest::Existing { workspace_id, share } => Self::Existing { id: workspace_id, share },
             SessionWorkspaceRequest::New { storage, classification } =>
                 Self::New { storage, classification: classification.unwrap_or(Classification::CHANNEL_DEFAULT) },
         }
@@ -420,15 +426,73 @@ pub struct WorkspaceResponse {
     pub classification: Classification,
     /// Whether its storage gives it a shell: agents can run commands in it.
     pub has_shell: bool,
-    /// Whether you may change it - rename, describe, reclassify - and
-    /// attach it to a session: its owner.
+    /// Whether you may change it - rename, describe, reclassify, share -
+    /// and attach it to a session: its owner.
     pub can_change: bool,
+    /// Whether you may change its files (issue 23); who may not, reads them.
+    pub can_write: bool,
+    /// Whom it is shared with (issue 23) - only for its owner, empty for
+    /// everybody else.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub access: Vec<AccessEntry>,
 }
 
 impl From<snapshot::WorkspaceSnapshot> for WorkspaceResponse {
     fn from(view: snapshot::WorkspaceSnapshot) -> Self {
         let (scope, session_id) = ScopeKind::of(&view.scope);
-        Self { id: view.id, name: view.name, scope, session_id, storage: view.storage, description: view.description, classification: view.classification, has_shell: view.has_shell, can_change: view.can_change }
+        let access = view.access.into_iter().filter_map(AccessEntry::of).collect();
+        Self {
+            id: view.id, name: view.name, scope, session_id, storage: view.storage, description: view.description, classification: view.classification,
+            has_shell: view.has_shell, can_change: view.can_change, can_write: view.can_write, access,
+        }
+    }
+}
+
+/// An entry of an access list (issue 23) as it is written and shown: whom
+/// it grants `read` or `write` - a user, a role, or the members of a
+/// session or a channel, by `kind` and `id` -, and how whom is called where
+/// it is shown and known.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AccessEntry {
+    pub kind: AccessKind,
+    pub id: Uuid,
+    pub grant: Grant,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AccessKind {
+    User,
+    Role,
+    Session,
+    Channel,
+}
+
+impl AccessEntry {
+    /// The entry as it is shown; `None` for one that names no user, role
+    /// or place, which no list stores.
+    fn of(entry: snapshot::AccessSnapshot) -> Option<Self> {
+        let (kind, id) = match entry.subject {
+            Subject::Actor(caelumora_model::actor::ActorId::User(user)) => (AccessKind::User, user.0),
+            Subject::Actor(_) => return None,
+            Subject::Role(role) => (AccessKind::Role, role.0),
+            Subject::MemberOf(Membership::Session(session)) => (AccessKind::Session, session.0),
+            Subject::MemberOf(Membership::Channel(channel)) => (AccessKind::Channel, channel.0),
+        };
+        Some(Self { kind, id, grant: entry.grant, name: entry.name })
+    }
+
+    /// The entry as it is stored; its name, if written, is ignored.
+    pub fn into_acl(self) -> AclEntry {
+        let subject = match self.kind {
+            AccessKind::User => Subject::Actor(caelumora_model::actor::ActorId::User(caelumora_model::user::UserId(self.id))),
+            AccessKind::Role => Subject::Role(caelumora_model::role::RoleId(self.id)),
+            AccessKind::Session => Subject::MemberOf(Membership::Session(SessionId(self.id))),
+            AccessKind::Channel => Subject::MemberOf(Membership::Channel(ChannelId(self.id))),
+        };
+        AclEntry { subject, grant: self.grant }
     }
 }
 
@@ -572,11 +636,16 @@ pub struct ArtifactResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<Description>,
     pub classification: Classification,
-    /// Oldest first.
+    /// Oldest first; those you may read alone (issue 23).
     pub versions: Vec<ArtifactVersionResponse>,
-    /// Whether you may change it - keep it, describe it, delete it: its
-    /// owner.
+    /// Whether you may change it - keep it, describe it, share it, delete
+    /// it: its owner.
     pub can_change: bool,
+    /// Whether you may add a version to it (issue 23).
+    pub can_write: bool,
+    /// Whom it is shared with as a whole (issue 23) - only for its owner.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub access: Vec<AccessEntry>,
 }
 
 /// A version of an artifact: what was published, where and by whom.
@@ -587,21 +656,34 @@ pub struct ArtifactVersionResponse {
     pub digest: caelumora_model::digest::Digest,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub media_type: Option<String>,
+    /// What it is, as it was described when it was published (issue 23).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<Description>,
     pub session_id: SessionId,
     pub channel_id: ChannelId,
     pub published_by: ActorId,
     pub published_at: DateTime<Utc>,
+    /// Who reads it besides whom the artifact is shared with - the members
+    /// of the channel it was published in - only for its owner.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub access: Vec<AccessEntry>,
 }
 
 impl From<snapshot::ArtifactSnapshot> for ArtifactResponse {
     fn from(view: snapshot::ArtifactSnapshot) -> Self {
         let artifact = view.artifact;
         let (scope, session_id) = ScopeKind::of(&artifact.name.scope);
+        let mut version_access = view.version_access;
         let versions = artifact.versions.into_iter().map(|v| ArtifactVersionResponse {
-            number: v.number, size: v.size, digest: v.digest, media_type: v.media_type,
+            access: version_access.remove(&v.number).unwrap_or_default().into_iter().filter_map(AccessEntry::of).collect(),
+            number: v.number, size: v.size, digest: v.digest, media_type: v.media_type, description: v.description,
             session_id: v.session_id, channel_id: v.channel_id, published_by: v.published_by, published_at: v.published_at,
         }).collect();
-        Self { id: artifact.id, name: artifact.name.name.to_string(), scope, session_id, description: artifact.description, classification: artifact.classification, versions, can_change: view.can_change }
+        let access = view.access.into_iter().filter_map(AccessEntry::of).collect();
+        Self {
+            id: artifact.id, name: artifact.name.name.to_string(), scope, session_id, description: artifact.description, classification: artifact.classification, versions,
+            can_change: view.can_change, can_write: view.can_write, access,
+        }
     }
 }
 
@@ -620,10 +702,14 @@ pub struct StorageResponse {
     pub has_shell: bool,
 }
 
-/// The workspace to attach to a session (issue 253).
+/// The workspace to attach to a session (issue 253), shared with the
+/// session's members as far as `share` says - `read` or `write` -, with
+/// nobody if absent (issue 23).
 #[derive(Debug, Deserialize)]
 pub struct AttachWorkspaceRequest {
     pub workspace_id: WorkspaceId,
+    #[serde(default)]
+    pub share: Option<Grant>,
 }
 
 /// Whether a channel uses the session's workspace (issue 251).
@@ -745,6 +831,10 @@ pub struct ChannelResponse {
     /// Whether its members work on the session's workspace here (issue
     /// 251), where the classifications let them.
     pub uses_workspace: bool,
+    /// The session's workspace, if the channel uses it and you may read it:
+    /// its files are at `/workspaces/{id}/files` (issue 23).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<WorkspaceId>,
     /// Whether the requesting user may rename the channel, add or remove
     /// its participants (issue 46) and set its approval rules.
     pub can_change: bool,
@@ -768,6 +858,7 @@ impl From<snapshot::ChannelSnapshot> for ChannelResponse {
             language: view.language,
             approval_rules: view.approval_rules,
             uses_workspace: view.uses_workspace,
+            workspace_id: view.workspace_id,
             can_change: view.can_change,
             former_members: view.former_members.into_iter().filter_map(ChannelMemberResponse::of).collect(),
         }
@@ -1255,7 +1346,7 @@ mod tests {
     fn a_channel_view_is_answered_with_kinds_and_a_name_for_the_deleted() {
         let (alice, approver) = (ActorId::User(UserId::new()), ActorId::Approver(ApproverId(Uuid::new_v4())));
         let member = |id, name: Option<&str>| snapshot::MemberSnapshot { id, name: name.map(str::to_string), handle: None, can_read_context: false, can_read_tools: false, can_read_components: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), pending_questions: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None, commands: Vec::new(), introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
-        let view = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(),
+        let view = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(), workspace_id: None,
             uses_workspace: true,
             id: ChannelId::new(),
             name: "main".to_string(),
@@ -1277,7 +1368,7 @@ mod tests {
 
     #[test]
     fn what_a_place_is_for_is_left_out_where_nothing_was_said_or_read() {
-        let view = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(), id: ChannelId::new(), name: "main".to_string(),
+        let view = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(), workspace_id: None, id: ChannelId::new(), name: "main".to_string(),
             uses_workspace: true,
             moderator: None, responder_policy: None, classification: Classification::CHANNEL_DEFAULT, language: None, can_change: false, members: Vec::new(), former_members: Vec::new() };
         let json = serde_json::to_value(ChannelResponse::from(view.clone())).unwrap();
@@ -1307,7 +1398,7 @@ mod tests {
             left: None, can_delete: false, turn_under_way: None, state: None, commands: Vec::new(),
             introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None,
         };
-        let channel = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(),
+        let channel = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(), workspace_id: None,
             uses_workspace: true,
             id: ChannelId::new(),
             name: "main".to_string(),
@@ -1347,7 +1438,7 @@ mod tests {
         let (alice, helper) = (ActorId::User(UserId::new()), ActorId::Agent(caelumora_model::agent::AgentId::new()));
         let left = caelumora_model::removal::Removal::now(alice);
         let member = |id, left| snapshot::MemberSnapshot { id, name: Some("x".to_string()), handle: None, can_read_context: true, can_read_tools: false, can_read_components: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), pending_questions: Vec::new(), left, can_delete: false, turn_under_way: None, state: None, commands: Vec::new(), introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
-        let view = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(),
+        let view = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(), workspace_id: None,
             uses_workspace: true,
             id: ChannelId::new(),
             name: "main".to_string(),
@@ -1415,7 +1506,8 @@ mod tests {
         assert_eq!(parse(serde_json::json!({ "template_id": template })), None, "the template's");
         assert_eq!(parse(serde_json::json!({ "template_id": template, "workspace": { "kind": "none" } })), Some(WorkspaceChoice::None));
         let id = WorkspaceId::new();
-        assert_eq!(parse(serde_json::json!({ "template_id": template, "workspace": { "kind": "existing", "workspace_id": id } })), Some(WorkspaceChoice::Existing(id)));
+        assert_eq!(parse(serde_json::json!({ "template_id": template, "workspace": { "kind": "existing", "workspace_id": id } })), Some(WorkspaceChoice::Existing { id, share: None }));
+        assert_eq!(parse(serde_json::json!({ "template_id": template, "workspace": { "kind": "existing", "workspace_id": id, "share": "write" } })), Some(WorkspaceChoice::Existing { id, share: Some(Grant::Write) }), "shared with its members");
         assert_eq!(
             parse(serde_json::json!({ "template_id": template, "workspace": { "kind": "new", "storage": "sandbox" } })),
             Some(WorkspaceChoice::New { storage: "sandbox".to_string(), classification: Classification::CHANNEL_DEFAULT }),

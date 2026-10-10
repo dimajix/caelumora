@@ -13,9 +13,8 @@
 //! Whether anyone but an actor's owner sees something at all is a separate
 //! axis, `Visibility`: ownership, not sensitivity.
 
-use crate::actor::ActorId;
-use crate::security::{Place, SecurityContext};
-use crate::store::{EntityStore, StoreResult, StoreResultExt};
+use crate::role::{RoleId, Roles};
+use crate::security::Place;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -369,102 +368,16 @@ impl Clearance {
 pub struct Clearances(Vec<Clearance>);
 
 impl Clearances {
+    /// These clearances.
+    pub(crate) fn new(clearances: Vec<Clearance>) -> Self {
+        Self(clearances)
+    }
+
     /// Whether what is classified `classification` may be seen - by one of
     /// the clearances, or because it is public.
     pub fn admits(&self, classification: &Classification, compartments: &Compartments) -> bool {
         classification.level == Confidentiality::Public || self.0.iter().any(|c| c.sees(classification, compartments))
     }
-}
-
-/// The roles the administrator configured, each with the clearances it
-/// grants (issue 133, [142]). Written as a list of definitions, each a
-/// `name` and its `clearances` - the `roles` section of the configuration.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
-#[serde(try_from = "Vec<RoleDefinition>")]
-pub struct Roles {
-    grants: BTreeMap<String, Vec<Clearance>>,
-}
-
-/// One role as the configuration defines it.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RoleDefinition {
-    name: String,
-    #[serde(default)]
-    clearances: Vec<Clearance>,
-}
-
-#[derive(Debug, Error, PartialEq, Eq)]
-pub enum RoleError {
-    #[error("A role needs a name")]
-    UnnamedRole,
-    #[error("Role '{0}' is configured twice")]
-    DuplicateRole(String),
-    #[error("Role '{0}' is not configured")]
-    UnknownRole(String),
-    #[error("Role '{role}' grants a clearance for compartment '{compartment}', which is not configured")]
-    UnknownCompartment { role: String, compartment: Compartment },
-}
-
-impl TryFrom<Vec<RoleDefinition>> for Roles {
-    type Error = RoleError;
-
-    fn try_from(definitions: Vec<RoleDefinition>) -> Result<Self, Self::Error> {
-        let mut grants = BTreeMap::new();
-        for definition in definitions {
-            if definition.name.is_empty() {
-                return Err(RoleError::UnnamedRole);
-            }
-            if grants.contains_key(&definition.name) {
-                return Err(RoleError::DuplicateRole(definition.name));
-            }
-            grants.insert(definition.name, definition.clearances);
-        }
-        Ok(Self { grants })
-    }
-}
-
-impl Roles {
-    /// The roles `definitions` name, each with the clearances it grants.
-    pub fn new(definitions: impl IntoIterator<Item = (String, Vec<Clearance>)>) -> Result<Self, RoleError> {
-        Self::try_from(definitions.into_iter().map(|(name, clearances)| RoleDefinition { name, clearances }).collect::<Vec<_>>())
-    }
-
-    /// Nothing if every compartment the roles grant is configured.
-    pub fn check(&self, compartments: &Compartments) -> Result<(), RoleError> {
-        for (role, clearances) in &self.grants {
-            for compartment in clearances.iter().filter_map(|c| c.compartment.as_ref()) {
-                if !compartments.reads.contains_key(compartment) {
-                    return Err(RoleError::UnknownCompartment { role: role.clone(), compartment: compartment.clone() });
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Nothing if `role` is configured.
-    pub fn check_role(&self, role: &str) -> Result<(), RoleError> {
-        if self.grants.contains_key(role) { Ok(()) } else { Err(RoleError::UnknownRole(role.to_string())) }
-    }
-
-    /// Everything someone with `roles` is cleared for. A role that is not
-    /// configured grants nothing.
-    pub fn clearances_of(&self, roles: &[String]) -> Clearances {
-        Clearances(roles.iter().filter_map(|r| self.grants.get(r)).flatten().cloned().collect())
-    }
-}
-
-/// The roles of `actor` if it is a user (issues 133, 142), read in the
-/// runtime's name: what someone is cleared for decides, it is not shown.
-/// None for anyone else - an agent's are its owner's, which its caller
-/// asks for - and none for a user that no longer exists. Read from the
-/// store each time: roles change at a login, past any copy of the user.
-///
-/// # Errors
-/// Whatever else reading the user reports.
-pub async fn user_roles(store: &dyn EntityStore, actor: ActorId) -> StoreResult<Vec<String>> {
-    let ActorId::User(id) = actor else { return Ok(Vec::new()) };
-    Ok(store.get_user(&SecurityContext::system(), id).await.optional()?.map(|user| user.roles).unwrap_or_default())
 }
 
 /// The confidentiality rules as Caelumora applies them (issue 133): the
@@ -494,6 +407,11 @@ impl ConfidentialityRules {
         Self { roles: Some(roles), ..self }
     }
 
+    /// The configured roles; `None` where clearances are not checked.
+    pub fn roles(&self) -> Option<&Roles> {
+        self.roles.as_ref()
+    }
+
     /// Whether what is at `from` may be copied into `into` (issue 264): a
     /// channel into itself always; within a session as the classifications
     /// decide; beyond it only where the session of `from` permits it as
@@ -521,7 +439,7 @@ impl ConfidentialityRules {
 
     /// Whether someone with `roles` is cleared for what is classified
     /// `classification`. Without roles configured, everybody is.
-    pub fn cleared(&self, roles: &[String], classification: &Classification) -> bool {
+    pub fn cleared(&self, roles: &[RoleId], classification: &Classification) -> bool {
         match &self.roles {
             Some(configured) => configured.clearances_of(roles).admits(classification, &self.compartments),
             None => true,
@@ -682,25 +600,6 @@ mod tests {
     }
 
     #[test]
-    fn roles_grant_clearances_and_name_only_configured_compartments() {
-        let roles = Roles::new([
-            ("hr".to_string(), vec![Clearance { level: Confidential, compartment: Some(compartment("hr")) }]),
-            ("staff".to_string(), vec![Clearance { level: Internal, compartment: None }]),
-        ]).unwrap();
-        let compartments = organisation();
-        assert_eq!(roles.check(&compartments), Ok(()));
-        let both = roles.clearances_of(&["hr".to_string(), "staff".to_string(), "unknown".to_string()]);
-        assert!(both.admits(&classified(Confidential, &["hr"]), &compartments) && both.admits(&Classification::general(Internal), &compartments));
-        assert_eq!(roles.check_role("unknown"), Err(RoleError::UnknownRole("unknown".to_string())));
-        let typo = Roles::new([("x".to_string(), vec![Clearance { level: Internal, compartment: Some(compartment("hrr")) }])]).unwrap();
-        assert!(matches!(typo.check(&compartments), Err(RoleError::UnknownCompartment { .. })));
-        let written: Roles = serde_json::from_value(serde_json::json!([
-            {"name": "hr", "clearances": [{"level": "confidential", "compartment": "hr"}, {"level": "internal"}]}
-        ])).unwrap();
-        assert!(written.clearances_of(&["hr".to_string()]).admits(&Classification::general(Internal), &compartments));
-    }
-
-    #[test]
     fn the_read_relation_is_closed_transitively() {
         let compartments = organisation();
         assert!(compartments.may_read(&compartment("hr_management"), &compartment("finance")), "through hr");
@@ -760,9 +659,11 @@ mod tests {
 
         let secret = classified(Confidential, &["hr"]);
         assert!(rules.cleared(&[], &secret), "without roles, clearances are not checked");
-        let roles = Roles::new([("hr".to_string(), vec![Clearance { level: Confidential, compartment: Some(compartment("hr")) }])]).unwrap();
+        let hr = RoleId::new();
+        let roles = Roles::new([(hr, "hr".to_string(), vec![Clearance { level: Confidential, compartment: Some(compartment("hr")) }])]).unwrap();
         let rules = rules.with_roles(roles);
-        assert!(rules.cleared(&["hr".to_string()], &secret));
+        assert_eq!(rules.roles().and_then(|r| r.name_of(hr)), Some("hr"));
+        assert!(rules.cleared(&[hr], &secret));
         assert!(!rules.cleared(&[], &secret) && rules.cleared(&[], &Classification::general(Public)), "with roles, nobody else but for what is public");
     }
 }

@@ -62,7 +62,7 @@ const MAX_PATTERN_CHARS: usize = 500;
 const MAX_COMPILED_PATTERN_BYTES: usize = 1 << 20;
 
 /// Whether the file tool `name` only reads.
-fn read_only(name: &str) -> bool {
+pub(super) fn read_only(name: &str) -> bool {
     matches!(name, LIST_FILES | READ_FILE | GREP_FILES | PUBLISH_FILE)
 }
 

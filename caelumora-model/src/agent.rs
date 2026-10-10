@@ -17,6 +17,7 @@ use crate::turn::{CommandRequest, TurnState};
 use crate::work::{TurnId, Work};
 use crate::note::{NoteChain, NoteChange, NoteOrigin, Notes};
 use crate::removal::Removal;
+use crate::role::RoleId;
 use crate::scope::Scoped;
 use crate::value::name::ScopedName;
 use crate::value::text::{Description, Introduction};
@@ -81,7 +82,7 @@ pub struct Personality {
     /// [`Personality::limiting_roles`]. Not their roles: an agent is
     /// cleared by its owner's, these can only narrow them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub roles: Option<Vec<String>>,
+    pub roles: Option<Vec<RoleId>>,
     /// What the personality is, for whoever chooses one: a catalogue line.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<Description>,
@@ -119,7 +120,7 @@ impl Personality {
     /// one that names none is limited to no roles - what is `public` - since
     /// what its agents are given leaves the system. Like every clearance,
     /// it counts only where roles are configured.
-    pub fn limiting_roles(&self) -> Option<&[String]> {
+    pub fn limiting_roles(&self) -> Option<&[RoleId]> {
         match (&self.roles, self.kind) {
             (Some(roles), _) => Some(roles),
             (None, PersonalityKind::External) => Some(&[]),
@@ -192,12 +193,9 @@ impl Agent {
     /// that a change of the personality reaches it (issue 176).
     pub fn new(name: ScopedName, personality: &Personality, owner: ActorId) -> Self {
         let agent_id = AgentId(Uuid::new_v4());
-        // The agent itself contributes, so that it may read its own
-        // definition (issue 11).
-        let security_attributes = SecurityAttributes {
-            owner_id: owner,
-            contributors: vec![ActorId::Agent(agent_id)],
-        };
+        // Read by its owner, whose rights it acts with (issue 255): it reads
+        // its own definition as its owner.
+        let security_attributes = SecurityAttributes::owned_by(owner);
         Agent {
             id: agent_id,
             personality_id: personality.id,
@@ -764,10 +762,11 @@ pub(crate) mod tests {
         assert_eq!(personality.limiting_roles(), None, "internal, none named: the owner's alone");
         personality.kind = PersonalityKind::External;
         assert_eq!(personality.limiting_roles(), Some(&[][..]), "external, none named: public only");
-        personality.roles = Some(vec!["staff".to_string()]);
-        assert_eq!(personality.limiting_roles(), Some(&["staff".to_string()][..]));
+        let staff = RoleId::new();
+        personality.roles = Some(vec![staff]);
+        assert_eq!(personality.limiting_roles(), Some(&[staff][..]));
         personality.kind = PersonalityKind::Internal;
-        assert_eq!(personality.limiting_roles(), Some(&["staff".to_string()][..]), "named, internal too");
+        assert_eq!(personality.limiting_roles(), Some(&[staff][..]), "named, internal too");
     }
 
     #[test]

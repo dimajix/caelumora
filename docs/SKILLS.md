@@ -27,7 +27,7 @@ in [CONFIDENTIALITY.md](CONFIDENTIALITY.md).
         the skill is loaded;
     *   one `classification` for all of it;
     *   `SecurityAttributes`: its owner - a user, or the system for a skill of the seed, which lies
-        in the global scope alone - and the contributors it is shared with;
+        in the global scope alone - and an access list of those it is shared with;
     *   when it was made and changed, and `deleted` (issue 164).
 *   **No versions.** What was loaded stands in the transcript word for word, with its digest in
     the knowledge of the turn; a skill changed afterwards is loaded anew next time.
@@ -37,16 +37,17 @@ in [CONFIDENTIALITY.md](CONFIDENTIALITY.md).
 Two questions, apart (issue 22, decision 2):
 
 *   **Managing** a skill is asked as for every entity: `GetSkill`, `ListSkills`, `CreateSkill`,
-    `UpdateSkill`, `DeleteSkill`. Under the ownership policy its owner may do everything, its
-    contributors read it, a skill of the system is everybody's to read. A user is shown a skill
-    only if cleared for its classification, as a channel (`Views::cleared_for`). Making or
-    reclassifying one asks `Classify` and the owner's clearance, as for a workspace, so that nobody
-    writes what they could not read.
+    `UpdateSkill`, `DeleteSkill`. Under the ownership policy its owner may do everything, whom its
+    access list grants reading read it, a skill of the system is everybody's to read. A user is
+    shown a skill only if cleared for its classification, as a channel (`Views::cleared_for`).
+    Making or reclassifying one asks `Classify` and the owner's clearance, as for a workspace, so
+    that nobody writes what they could not read.
 *   **Using** a skill - loading it into a turn - is `UseSkill`, asked in the turn's context: the
-    agent for its owner, whoever asked as initiator ([SECURITY.md](SECURITY.md#in-whose-name-an-agent-acts)).
-    The ownership policy grants it as reading: what the owner may read, the agent may follow.
-    Besides, the skill's classification must flow into the channel (`Publish`, as what a turn
-    writes is asked): a skill classified above the channel is not loaded there.
+    agent for its owner, whoever asked as initiator
+    ([SECURITY.md](SECURITY.md#in-whose-name-an-agent-acts)). The ownership policy grants it as
+    reading: what the owner may read, the agent may follow. Besides, the skill's classification must
+    flow into the channel (`Publish`, as what a turn writes is asked): a skill classified above the
+    channel is not loaded there.
 
 The skills an agent may load where it is are `Views::usable_skills`: of those it may read, each it
 may use whose classification flows into its channel, and of those, for every name, the one found

@@ -1,3 +1,4 @@
+use crate::role::RoleId;
 use crate::security::SecurityContext;
 use crate::store::{EntityStore, StoreError, StoreResultExt};
 use crate::user::{User, UserId};
@@ -26,10 +27,10 @@ use std::sync::Arc;
 #[derive(Debug)]
 pub struct AcceptAnyUserProvider {
     store: Arc<dyn EntityStore>,
-    /// The roles of the users named (issue 142).
-    roles: BTreeMap<String, Vec<String>>,
+    /// The roles of the users named (issue 142), by their ids (issue 23).
+    roles: BTreeMap<String, Vec<RoleId>>,
     /// The roles of everybody else.
-    default_roles: Vec<String>,
+    default_roles: Vec<RoleId>,
 }
 
 impl AcceptAnyUserProvider {
@@ -40,13 +41,13 @@ impl AcceptAnyUserProvider {
 
     /// A provider that gives the users named in `roles` theirs, and
     /// everybody else `default_roles`.
-    pub fn with_roles(store: Arc<dyn EntityStore>, roles: BTreeMap<String, Vec<String>>, default_roles: Vec<String>) -> Self {
+    pub fn with_roles(store: Arc<dyn EntityStore>, roles: BTreeMap<String, Vec<RoleId>>, default_roles: Vec<RoleId>) -> Self {
         Self { store, roles, default_roles }
     }
 
     /// The roles of `username`, as configured - named as names are
     /// compared (issue 250).
-    fn roles_of(&self, username: &Name) -> Vec<String> {
+    fn roles_of(&self, username: &Name) -> Vec<RoleId> {
         self.roles.iter()
             .find(|(configured, _)| *username == configured.as_str())
             .map_or_else(|| self.default_roles.clone(), |(_, roles)| roles.clone())
@@ -142,18 +143,19 @@ mod tests {
     #[tokio::test]
     async fn gives_the_configured_roles_and_follows_a_change() {
         let store: Arc<dyn EntityStore> = Arc::new(MemoryStore::new());
-        let roles = BTreeMap::from([("alice".to_string(), vec!["hr".to_string()])]);
-        let provider = AcceptAnyUserProvider::with_roles(Arc::clone(&store), roles, vec!["staff".to_string()]);
+        let (hr, staff) = (RoleId::new(), RoleId::new());
+        let roles = BTreeMap::from([("alice".to_string(), vec![hr])]);
+        let provider = AcceptAnyUserProvider::with_roles(Arc::clone(&store), roles, vec![staff]);
         let alice = provider.authenticate("alice", &Credential::Password("x")).await.unwrap().unwrap();
         let bob = provider.authenticate("bob", &Credential::Password("x")).await.unwrap().unwrap();
-        assert_eq!((alice.roles, bob.roles), (vec!["hr".to_string()], vec!["staff".to_string()]));
+        assert_eq!((alice.roles, bob.roles), (vec![hr], vec![staff]));
         let shouted = provider.authenticate("ALICE", &Credential::Password("x")).await.unwrap().unwrap();
-        assert_eq!((shouted.id, shouted.roles), (alice.id, vec!["hr".to_string()]), "a username is compared as a name");
+        assert_eq!((shouted.id, shouted.roles), (alice.id, vec![hr]), "a username is compared as a name");
 
         let changed = AcceptAnyUserProvider::with_roles(store, BTreeMap::new(), Vec::new());
         let again = changed.authenticate("alice", &Credential::Password("x")).await.unwrap().unwrap();
         assert!(again.roles.is_empty(), "the configuration decides, also for a user already stored");
-        assert_eq!(changed.get_user(again.id).await.unwrap().unwrap().roles, Vec::<String>::new(), "and it is stored");
+        assert_eq!(changed.get_user(again.id).await.unwrap().unwrap().roles, Vec::<RoleId>::new(), "and it is stored");
     }
 
     #[tokio::test]
@@ -169,7 +171,7 @@ mod tests {
             id: UserId::new(),
             username: Name::new("user").unwrap(),
             email: "user@example.com".to_string(),
-            roles: vec!["user".to_string()],
+            roles: vec![RoleId::new()],
             deleted: None,
         };
         store.create_user(&SecurityContext::default(), &existing).await.unwrap();

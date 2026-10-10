@@ -1,26 +1,29 @@
 // The workspace of a session (issue 253): the one attached, as far as the
 // user may read it, and attaching one of theirs - not one made for another
-// session - or taking it away. Who may is the server's to decide: attaching
-// is the workspace's owner's, into a session they may change.
+// session -, shared with the session's members as far as chosen (issue 23),
+// or taking it away. Who may is the server's to decide: attaching is the
+// workspace's owner's, into a session they may change.
 
 import React, {useState} from 'react';
 import {X} from 'lucide-react';
 import type {SessionSnapshot, WorkspaceResponse} from '../types';
 import {ApiRequestError, reportError} from '../errors';
 import {scopeLabel} from '../scope';
+import {ShareSelect, type Share} from './ShareSelect';
 
 interface SessionWorkspaceDialogProps {
   session: SessionSnapshot;
   /** The user's own workspaces. */
   workspaces: WorkspaceResponse[];
-  onSubmit: (workspaceId: string | null) => Promise<void>;
+  onSubmit: (workspaceId: string | null, share: Share) => Promise<void>;
   onClose: () => void;
 }
 
 export const SessionWorkspaceDialog: React.FC<SessionWorkspaceDialogProps> = ({session, workspaces, onSubmit, onClose}) => {
-  // One made for another session is used there alone.
-  const offered = workspaces.filter(w => w.scope !== 'session' || w.session_id === session.id);
+  // Only one's own is attached; one made for another session is used there alone.
+  const offered = workspaces.filter(w => w.can_change && (w.scope !== 'session' || w.session_id === session.id));
   const [chosen, setChosen] = useState(session.workspace?.id ?? offered[0]?.id ?? '');
+  const [share, setShare] = useState<Share>('write');
   const [problem, setProblem] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -28,7 +31,7 @@ export const SessionWorkspaceDialog: React.FC<SessionWorkspaceDialogProps> = ({s
     setIsSaving(true);
     setProblem(null);
     try {
-      await onSubmit(workspaceId);
+      await onSubmit(workspaceId, share);
       onClose();
     } catch (error) {
       if (error instanceof ApiRequestError && error.status < 500 && error.status !== 401) {
@@ -63,8 +66,8 @@ export const SessionWorkspaceDialog: React.FC<SessionWorkspaceDialogProps> = ({s
 
         <div className="space-y-4 p-4 text-sm">
           <div className="text-xs text-gray-400">
-            Its channels share it: their members work on its files where the channel uses it and is classified
-            alike.
+            Its channels use it where they are classified alike - for those its access list lets: attaching it
+            shares it with the session's members only as chosen below.
           </div>
           <div>
             <span className="text-xs text-gray-400">Attached: </span>
@@ -85,6 +88,7 @@ export const SessionWorkspaceDialog: React.FC<SessionWorkspaceDialogProps> = ({s
               </select>
             </label>
           )}
+          {session.can_change && offered.length > 0 && <ShareSelect value={share} onChange={setShare} />}
           {session.can_change && offered.length === 0 && (
             <div className="text-xs italic text-gray-500">You have no workspace to attach.</div>
           )}
@@ -108,7 +112,7 @@ export const SessionWorkspaceDialog: React.FC<SessionWorkspaceDialogProps> = ({s
             <button
               type="button"
               onClick={() => void act(chosen)}
-              disabled={!chosen || isSaving || chosen === session.workspace?.id}
+              disabled={!chosen || isSaving || (chosen === session.workspace?.id && share === null)}
               className="rounded-md bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
             >
               Attach

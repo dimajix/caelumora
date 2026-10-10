@@ -27,6 +27,7 @@ use std::sync::Arc;
 use std::thread;
 use tokio::sync::mpsc;
 use uuid::Uuid;
+use caelumora_model::store::memberships::StoreMemberships;
 
 fn render_content(message: &Message, content: &str, handles: &HashMap<ActorId, String>) -> String {
     let mentioned: Vec<&String> = message.mentions.iter().filter_map(|id| handles.get(id)).collect();
@@ -440,9 +441,13 @@ async fn main() -> anyhow::Result<()> {
     // Into a file by default: log lines on the terminal would break the prompt.
     logging::init(&config.logging, LogTarget::File(PathBuf::from("local/tui.log")), "info")?;
 
-    let security_manager = config.create_security_manager();
+    // The policy learns who takes part where from the store it guards
+    // (issue 23): made before the store, bound to it once it exists.
+    let memberships = Arc::new(StoreMemberships::new());
+    let security_manager = config.create_security_manager(Arc::<StoreMemberships>::clone(&memberships));
     let state_store = config.create_state_store(Arc::clone(&security_manager))?;
     let entity_store = config.create_entity_store(Arc::clone(&security_manager))?;
+    memberships.bind(&entity_store);
     let component_store = config.create_component_store(Arc::clone(&security_manager))?;
     let secret_manager = config.create_secret_manager(Arc::clone(&security_manager))?;
 
@@ -454,7 +459,7 @@ async fn main() -> anyhow::Result<()> {
         &config,
         ComponentRegistry::built_in(Arc::clone(&component_store)),
     )?);
-    caelumora_runtime::seed::load(entity_store.as_ref(), component_store.as_ref(), &config.seed).await?;
+    caelumora_runtime::seed::load(entity_store.as_ref(), component_store.as_ref(), security_manager.as_ref(), &config.seed).await?;
 
     let owner = UserId::default();
     // The session is this terminal user's own.
@@ -466,7 +471,9 @@ async fn main() -> anyhow::Result<()> {
             id: owner,
             username: Name::new("user")?,
             email: "user@example.com".to_string(),
-            roles: vec!["user".to_string()],
+            // The role "user" it had was configured nowhere and granted
+            // nothing; the terminal user's identity is issue 10's.
+            roles: Vec::new(),
             deleted: None,
         }).await?;
     }

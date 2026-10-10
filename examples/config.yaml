@@ -164,7 +164,10 @@ compartments:
   - name: finance
 
 # The roles and the clearances each grants (issues 133, 142): a level, and at
-# most one compartment - none for what is general. A user's clearance is every
+# most one compartment - none for what is general. Every role has an id of
+# its own (issue 23), which is what is stored - for a user, in an access list;
+# a name may change, the id may not. What is written by hand - the user
+# providers above, a seed - names roles by their names. A user's clearance is every
 # clearance of their roles, an agent's its owner's - narrowed by the roles
 # its personality names, if it names any (an external agent naming none sees
 # only what is public); who is not cleared for a channel's classification
@@ -172,13 +175,16 @@ compartments:
 # clearance sees only what is public. Without this section clearances are
 # not checked.
 roles:
-  - name: staff
+  - id: 6b1c0c8e-2f4a-4d47-9a51-3f0e0c4b7a11
+    name: staff
     clearances:
       - { level: internal }
-  - name: hr
+  - id: 0e7f3a52-9c1d-4b8e-8f26-5a4d2c7b9e03
+    name: hr
     clearances:
       - { level: confidential, compartment: hr }
-  - name: management
+  - id: c4d9e2a7-1b3f-4e6c-a8d5-7f2b0e9c1a64
+    name: management
     clearances:
       - { level: confidential, compartment: management }
       - { level: confidential }

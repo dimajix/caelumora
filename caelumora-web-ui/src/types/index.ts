@@ -189,6 +189,8 @@ export interface ChannelResponse {
   approval_rules: ApprovalRule[];
   /** Whether its members work on the session's workspace here (issue 251), where the classifications let them. */
   uses_workspace: boolean;
+  /** The session's workspace, if the channel uses it and you may read it (issue 23). */
+  workspace_id?: string;
   /** Whether you may rename it, add or remove participants (issue 46) and set its approval rules. */
   can_change: boolean;
   /** Who took part and left (issue 164), in the order they left, each with `left`. */
@@ -320,7 +322,22 @@ export interface SessionSnapshot {
 /** Where a workspace (issue 251), a skill (issue 22) or an artifact (issue 271) lies: of one session, the owner's, or global. */
 export type ScopeKind = 'session' | 'user' | 'global';
 
-/** A workspace (issue 253), as its owner or a member of a channel using it sees it. */
+/** What an entry of an access list grants (issue 23): reading, or changing the files too. */
+export type Grant = 'read' | 'write';
+
+/**
+ * An entry of a workspace's access list (issue 23): whom - a user, a role, or
+ * the members of a session or a channel - it grants what, with how whom is
+ * called where the server knows it.
+ */
+export interface AccessEntry {
+  kind: 'user' | 'role' | 'session' | 'channel';
+  id: string;
+  grant: Grant;
+  name?: string;
+}
+
+/** A workspace (issue 253), as whoever its access list lets read it sees it (issue 23). */
 export interface WorkspaceResponse {
   id: string;
   name: string;
@@ -333,8 +350,12 @@ export interface WorkspaceResponse {
   classification: Classification;
   /** Whether its storage gives it a shell: agents can run commands in it. */
   has_shell: boolean;
-  /** Whether you may change it and attach it to a session: its owner. */
+  /** Whether you may change it, share it and attach it to a session: its owner. */
   can_change: boolean;
+  /** Whether you may change its files (issue 23); who may not, reads them. */
+  can_write: boolean;
+  /** Whom it is shared with - only for its owner. */
+  access?: AccessEntry[];
 }
 
 /**
@@ -374,12 +395,17 @@ export interface ArtifactResponse {
   /** `session`: published in it, and gone with it unless kept. */
   scope: ScopeKind;
   session_id?: string;
+  /** What it is as a whole, as its owner describes it. */
   description?: string;
   classification: Classification;
-  /** Oldest first. */
+  /** Oldest first; those you may read alone (issue 23). */
   versions: ArtifactVersion[];
-  /** Whether you may keep, describe or delete it: its owner. */
+  /** Whether you may keep, describe, share or delete it: its owner. */
   can_change: boolean;
+  /** Whether you may add a version (issue 23). */
+  can_write: boolean;
+  /** Whom it is shared with as a whole - only for its owner. */
+  access?: AccessEntry[];
 }
 
 /** A version of an artifact: what was published, where and by whom. */
@@ -388,10 +414,14 @@ export interface ArtifactVersion {
   size: number;
   digest: string;
   media_type?: string;
+  /** What it is, as it was described when it was published (issue 23). */
+  description?: string;
   session_id: string;
   channel_id: string;
   published_by: ActorId;
   published_at: string;
+  /** Who reads it besides whom the artifact is shared with - only for its owner. */
+  access?: AccessEntry[];
 }
 
 export interface CreateWorkspaceRequest {
@@ -686,7 +716,8 @@ export interface CreateSessionRequest {
 /** The workspace a new session is given in place of its template's (issue 266). */
 export type SessionWorkspaceRequest =
   | {kind: 'none'}
-  | {kind: 'existing'; workspace_id: string}
+  /** One of the user's own, shared with the session's members as far as `share` says (issue 23). */
+  | {kind: 'existing'; workspace_id: string; share?: Grant}
   /** Made for the session alone and named as it; `internal` unless classified. */
   | {kind: 'new'; storage: string; classification?: Classification};
 

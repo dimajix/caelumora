@@ -31,7 +31,8 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::digest::ContentDigest;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::scope::{Scope, Scoped};
-use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityAttributes, SecurityContext, SecurityManager};
+use caelumora_model::role::user_roles;
+use caelumora_model::security::{AccessQuestions, AclEntry, ActionType, Enforcement, Grant, Membership, SecurityAttributes, SecurityContext, SecurityManager, Subject};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResultExt};
 use caelumora_model::value::name::ScopedName;
@@ -53,6 +54,8 @@ pub enum ArtifactError {
     NotFound(ArtifactId),
     #[error("no version {version} of artifact {artifact}")]
     VersionNotFound { artifact: ArtifactId, version: u32 },
+    #[error("you are not cleared for the classification of the artifact")]
+    NotCleared,
     #[error("no storage of artifacts is configured")]
     NotConfigured,
     #[error("the storage '{0}' of artifacts is not configured")]
@@ -183,13 +186,15 @@ impl ArtifactManager {
         let name = ScopedName::new(name, Scope::SessionScope { session_id: session })?;
         let description = Description::optional(description)?;
         let _writing = self.writing.lock().await;
-        let existing = self.entities.find_artifact_by_name(ctx, &name).await.optional()?;
+        // Found whoever's it is, so that one not the caller's to add to is
+        // refused as such rather than taken for a name to make anew.
+        let existing = self.entities.find_artifact_by_name(&SecurityContext::system(), &name).await.optional()?;
         let (id, number, storage_name) = match &existing {
             Some(artifact) => {
+                self.security.require(ctx, ActionType::WriteArtifact(&artifact.security_attributes), || StoreError::PermissionDenied).await?;
                 if artifact.classification != workspace.classification {
                     return Err(ArtifactError::ClassifiedOtherwise(artifact.name.name.to_string()));
                 }
-                self.security.require(ctx, ActionType::UpdateArtifact(&artifact.security_attributes), || StoreError::PermissionDenied).await?;
                 (artifact.id, artifact.latest().map_or(1, |latest| latest.number + 1), artifact.storage.clone())
             }
             None => {
@@ -225,18 +230,20 @@ impl ArtifactManager {
             }
         };
 
-        let version = ArtifactVersion { number, size, digest, media_type: None, session_id: session, channel_id: channel, published_by: ctx.caller_id, published_at: Utc::now() };
+        // Read by the members of the channel it is published in (issue 23):
+        // a draft published where few are reaches nobody who reads a later
+        // version published where many are.
+        let acl = vec![AclEntry { subject: Subject::MemberOf(Membership::Channel(channel)), grant: Grant::Read }];
+        let version = ArtifactVersion { number, size, digest, media_type: None, description, session_id: session, channel_id: channel, published_by: ctx.caller_id, published_at: Utc::now(), acl };
         let stored = match existing {
             Some(mut artifact) => {
                 artifact.add_version(version);
-                if description.is_some() {
-                    artifact.description = description;
-                }
-                self.entities.update_artifact(ctx, &artifact).await.map(|()| artifact)
+                // Changed in the runtime's name: whoever may add a version
+                // need not own the artifact (`WriteArtifact`, asked above).
+                self.entities.update_artifact(&SecurityContext::system(), &artifact).await.map(|()| artifact)
             }
             None => {
-                let mut artifact = Artifact::new(id, name, storage_name, workspace.classification.clone(), owner, version);
-                artifact.description = description;
+                let artifact = Artifact::new(id, name, storage_name, workspace.classification.clone(), owner, version);
                 self.entities.create_artifact(ctx, &artifact).await.map(|()| artifact)
             }
         };
@@ -247,7 +254,8 @@ impl ArtifactManager {
                 return Err(e.into());
             }
         };
-        self.events.publish(GlobalEvent::ArtifactPublished(id, number), artifact.security_attributes.clone());
+        let readers = artifact.version(number).map_or_else(|| artifact.security_attributes.clone(), |version| artifact.version_attributes(version));
+        self.events.publish(GlobalEvent::ArtifactPublished(id, number), readers);
         info!(artifact = %id, version = number, by = %ctx.caller_id, "Artifact published");
         Ok((artifact, number))
     }
@@ -263,54 +271,108 @@ impl ArtifactManager {
         }
     }
 
-    /// The content of version `number` of artifact `id`, read by its owner
-    /// (`GetArtifact`), wherever it lies.
-    ///
-    /// # Errors
-    /// `NotFound` if there is none the caller may read, `VersionNotFound`,
-    /// `UnknownStorage`, or `Unavailable`.
-    pub async fn content(&self, ctx: &SecurityContext, id: ArtifactId, number: u32) -> ArtifactResult<(Artifact, u64, ByteStream)> {
-        let artifact = self.entities.get_artifact(ctx, id).await.map_err(store_error(id))?;
-        self.content_of(artifact, number).await
-    }
-
-    /// The content of version `number` of artifact `id`, if it was
-    /// published in `channel` of `session` - read for whoever may read that
-    /// channel, which the channel's view asked before it asks here.
-    ///
-    /// # Errors
-    /// `NotFound` if there is no such artifact, `VersionNotFound` if it has
-    /// no such version published there, `UnknownStorage`, or `Unavailable`.
-    pub(crate) async fn published_content(&self, id: ArtifactId, number: u32, session: SessionId, channel: ChannelId) -> ArtifactResult<(Artifact, u64, ByteStream)> {
-        let artifact = self.entities.get_artifact(&SecurityContext::system(), id).await.map_err(store_error(id))?;
-        match artifact.version(number) {
-            Some(version) if version.session_id == session && version.channel_id == channel => self.content_of(artifact, number).await,
-            _ => Err(ArtifactError::VersionNotFound { artifact: id, version: number }),
+    /// `artifact` with the versions `ctx` may read (issue 23) - all of them
+    /// where the artifact's own list grants it, otherwise those whose own
+    /// list does -, if any.
+    pub(crate) async fn readable(&self, ctx: &SecurityContext, mut artifact: Artifact) -> Option<Artifact> {
+        if self.security.may_read_artifact(ctx, &artifact.security_attributes).await {
+            return Some(artifact);
         }
+        let mut readable = Vec::with_capacity(artifact.versions.len());
+        for version in std::mem::take(&mut artifact.versions) {
+            if self.security.may_read_artifact(ctx, &artifact.version_attributes(&version)).await {
+                readable.push(version);
+            }
+        }
+        artifact.versions = readable;
+        (!artifact.versions.is_empty()).then_some(artifact)
     }
 
-    /// The artifacts with a version published in `channel` of `session`,
-    /// each with those versions alone - read for whoever may read that
-    /// channel, which the channel's view asked before it asks here.
+    /// Artifact `id` with the versions `ctx` may read, wherever they act
+    /// (issue 23), read in the runtime's name and asked of it here.
     ///
     /// # Errors
-    /// Whatever the store reports.
-    pub(crate) async fn published_in(&self, session: SessionId, channel: ChannelId) -> ArtifactResult<Vec<Artifact>> {
-        let all = self.entities.list_artifacts(&SecurityContext::system()).await?;
-        Ok(all.into_iter()
-            .filter_map(|mut artifact| {
-                artifact.versions.retain(|version| version.session_id == session && version.channel_id == channel);
-                (!artifact.versions.is_empty()).then_some(artifact)
-            })
-            .collect())
+    /// `NotFound` if there is none they may read anything of, or whatever
+    /// the store reports.
+    pub async fn reached(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<Artifact> {
+        let artifact = self.entities.get_artifact(&SecurityContext::system(), id).await.map_err(store_error(id))?;
+        self.readable(ctx, artifact).await.ok_or(ArtifactError::NotFound(id))
     }
 
-    async fn content_of(&self, artifact: Artifact, number: u32) -> ArtifactResult<(Artifact, u64, ByteStream)> {
+    /// The content of version `number` of artifact `id`, read by whom the
+    /// artifact's list or the version's grants it (`GetArtifact`, issue 23),
+    /// wherever they act and cleared for its classification.
+    ///
+    /// # Errors
+    /// `NotFound` if there is no artifact they may read anything of,
+    /// `VersionNotFound` if they may not read that version or it does not
+    /// exist, `NotCleared`, `UnknownStorage`, or `Unavailable`.
+    pub async fn content(&self, ctx: &SecurityContext, id: ArtifactId, number: u32) -> ArtifactResult<(Artifact, u64, ByteStream)> {
+        let artifact = self.reached(ctx, id).await?;
         if artifact.version(number).is_none() {
-            return Err(ArtifactError::VersionNotFound { artifact: artifact.id, version: number });
+            return Err(ArtifactError::VersionNotFound { artifact: id, version: number });
+        }
+        let roles = user_roles(self.entities.as_ref(), ctx.principal_id).await?;
+        if !self.security.may_see_channel(ctx, &roles, &artifact.classification).await {
+            return Err(ArtifactError::NotCleared);
         }
         let (size, content) = self.storage(&artifact.storage)?.get(artifact.id, number).await?;
         Ok((artifact, size, content))
+    }
+
+    /// The artifacts with a version published in `channel` of `session`,
+    /// each with those versions alone that `ctx` may read.
+    ///
+    /// # Errors
+    /// Whatever the store reports.
+    pub(crate) async fn published_in(&self, ctx: &SecurityContext, session: SessionId, channel: ChannelId) -> ArtifactResult<Vec<Artifact>> {
+        let all = self.entities.list_artifacts(&SecurityContext::system()).await?;
+        let mut published = Vec::new();
+        for mut artifact in all {
+            artifact.versions.retain(|version| version.session_id == session && version.channel_id == channel);
+            if artifact.versions.is_empty() {
+                continue;
+            }
+            if let Some(readable) = self.readable(ctx, artifact).await {
+                published.push(readable);
+            }
+        }
+        Ok(published)
+    }
+
+    /// Every artifact `ctx` may read anything of (issue 23), each with the
+    /// versions they may read.
+    ///
+    /// # Errors
+    /// Whatever the store reports.
+    pub(crate) async fn all_readable(&self, ctx: &SecurityContext) -> ArtifactResult<Vec<Artifact>> {
+        let all = self.entities.list_artifacts(&SecurityContext::system()).await?;
+        let mut readable = Vec::new();
+        for artifact in all {
+            if let Some(artifact) = self.readable(ctx, artifact).await {
+                readable.push(artifact);
+            }
+        }
+        Ok(readable)
+    }
+
+    /// Gives artifact `id` the access list `acl` for the whole of it (issue
+    /// 23) on behalf of `ctx`: its owner's act (`UpdateArtifact`, asked as
+    /// it is stored). The lists of its versions stay as they are.
+    ///
+    /// # Errors
+    /// `NotFound` if there is none the caller may read, or what the store
+    /// reports - `PermissionDenied`, `Validation` for an entry that names
+    /// anyone but a user.
+    pub async fn set_access(&self, ctx: &SecurityContext, id: ArtifactId, acl: Vec<AclEntry>) -> ArtifactResult<Artifact> {
+        let _writing = self.writing.lock().await;
+        let mut artifact = self.entities.get_artifact(ctx, id).await.map_err(store_error(id))?;
+        artifact.security_attributes.acl = acl;
+        artifact.updated_at = Utc::now();
+        self.entities.update_artifact(ctx, &artifact).await?;
+        self.events.publish(GlobalEvent::ArtifactUpdated(id), artifact.reader_attributes());
+        info!(artifact = %id, by = %ctx.caller_id, "Artifact's access changed");
+        Ok(artifact)
     }
 
     /// Keeps artifact `id` in `scope` - its owner's or the global one -,
@@ -332,7 +394,7 @@ impl ArtifactManager {
         artifact.name.scope = scope;
         artifact.updated_at = Utc::now();
         self.entities.update_artifact(ctx, &artifact).await?;
-        self.events.publish(GlobalEvent::ArtifactUpdated(id), artifact.security_attributes.clone());
+        self.events.publish(GlobalEvent::ArtifactUpdated(id), artifact.reader_attributes());
         info!(artifact = %id, by = %ctx.caller_id, "Artifact kept");
         Ok(artifact)
     }
@@ -350,7 +412,7 @@ impl ArtifactManager {
         artifact.description = Description::optional(description)?;
         artifact.updated_at = Utc::now();
         self.entities.update_artifact(ctx, &artifact).await?;
-        self.events.publish(GlobalEvent::ArtifactUpdated(id), artifact.security_attributes.clone());
+        self.events.publish(GlobalEvent::ArtifactUpdated(id), artifact.reader_attributes());
         Ok(artifact)
     }
 
@@ -365,7 +427,7 @@ impl ArtifactManager {
         if !self.entities.delete_artifact(ctx, id).await? {
             return Ok(false);
         }
-        self.events.publish(GlobalEvent::ArtifactDeleted(id), artifact.security_attributes);
+        self.events.publish(GlobalEvent::ArtifactDeleted(id), artifact.reader_attributes());
         info!(artifact = %id, by = %ctx.caller_id, "Artifact deleted");
         Ok(true)
     }
@@ -379,7 +441,7 @@ impl ArtifactManager {
         let _writing = self.writing.lock().await;
         self.entities.restore_artifact(ctx, id).await.map_err(store_error(id))?;
         let artifact = self.entities.get_artifact(ctx, id).await.map_err(store_error(id))?;
-        self.events.publish(GlobalEvent::ArtifactRestored(id), artifact.security_attributes);
+        self.events.publish(GlobalEvent::ArtifactRestored(id), artifact.reader_attributes());
         info!(artifact = %id, by = %ctx.caller_id, "Artifact restored");
         Ok(())
     }

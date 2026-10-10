@@ -29,6 +29,7 @@ use caelumora_model::confidentiality::Classification;
 use serde::Deserialize;
 use std::sync::Arc;
 use tracing::warn;
+use caelumora_model::security::Grant;
 
 pub const WORKSPACE_PROMPT_PROVIDER_KIND: &str = "workspace_prompt_provider";
 
@@ -76,7 +77,7 @@ impl WorkspacePromptProvider {
         if self.instruction_files.is_empty() {
             return Vec::new();
         }
-        let terminal = match workspace.terminal().await {
+        let terminal = match workspace.terminal(Grant::Read).await {
             Ok(terminal) => terminal,
             Err(error) => {
                 warn!(workspace = %workspace.id(), "Looking for the instruction files of a workspace failed: {error}");
@@ -112,8 +113,9 @@ fn listed(names: &[&WorkspacePath], last: &str) -> String {
 }
 
 /// What the agent is told of `workspace`, at whose root lie `found` of the
-/// instruction files `names`.
-fn told(workspace: &WorkspaceView, names: &[WorkspacePath], found: &[&WorkspacePath]) -> String {
+/// instruction files `names`, and which it may change if `writable` (issue
+/// 23).
+fn told(workspace: &WorkspaceView, writable: bool, names: &[WorkspacePath], found: &[&WorkspacePath]) -> String {
     let mut text = format!(
         "You work on the files of the workspace \"{}\" of this session, which you share with the people and agents of \
         the channels that use it. Everything in it is classified {}.\n",
@@ -123,10 +125,10 @@ fn told(workspace: &WorkspaceView, names: &[WorkspacePath], found: &[&WorkspaceP
     if let Some(description) = workspace.description() {
         text.push_str(&format!("What it holds, as its owner describes it: {description}\n"));
     }
-    text.push_str(if workspace.has_shell() {
-        "You can run shell commands in it.\n"
-    } else {
-        "Its storage gives it no shell: you cannot run commands in it.\n"
+    text.push_str(match (writable, workspace.has_shell()) {
+        (false, _) => "You may read its files, not change them, and run no commands in it.\n",
+        (true, true) => "You can run shell commands in it.\n",
+        (true, false) => "Its storage gives it no shell: you cannot run commands in it.\n",
     });
     if !found.is_empty() {
         let (lie, them) = if found.len() == 1 { ("lies", "it") } else { ("lie", "them") };
@@ -160,7 +162,8 @@ impl PromptProvider for WorkspacePromptProvider {
         Ok(match channel.workspace().await? {
             Some(workspace) => {
                 let found = self.instruction_files_in(&workspace).await;
-                Prompt::classified(told(&workspace, &self.instruction_files, &found), workspace.classification().clone())
+                let writable = workspace.may_write().await;
+                Prompt::classified(told(&workspace, writable, &self.instruction_files, &found), workspace.classification().clone())
             }
             None => Prompt::classified(
                 titled(TITLE, "There is no workspace you can use in this channel: no files to work on, no commands to run.\n"),

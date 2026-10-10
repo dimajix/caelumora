@@ -48,8 +48,8 @@ pub struct Skill {
     /// How the whole of it is classified: where it may be loaded, and what
     /// a turn that loaded it has seen.
     pub classification: Classification,
-    /// Its owner - a user, or the system for a skill of the seed - and the
-    /// contributors it is shared with, who read and use it. Left out in a
+    /// Its owner - a user, or the system for a skill of the seed - and an
+    /// access list of those it is shared with, who read and use it. Left out in a
     /// seed, which gives its skills to the system (`Seed::apply`).
     #[serde(default)]
     pub security_attributes: SecurityAttributes,

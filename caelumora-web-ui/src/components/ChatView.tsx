@@ -228,8 +228,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   // Changes whenever the session's workspace or its files may have changed
   // here: a tool call ended, the channel's switch was set (issue 253).
   const [workspaceVersion, setWorkspaceVersion] = useState(0);
-  // The workspace's files as this user may use them here: what a call offers is downloaded from them (issue 273).
-  const workspaceFiles = useMemo(() => api.channelFiles(sessionId, channelId), [sessionId, channelId]);
+  // The workspace's files as this user may read them (issue 23): what a call offers is downloaded from them (issue 273).
+  const workspaceId = channel?.workspace_id;
+  const workspaceFiles = useMemo(() => workspaceId ? api.workspaceFiles(workspaceId) : null, [workspaceId]);
   // The channel's artifacts as this user reaches them: what a call published is downloaded from them (issue 271).
   const channelArtifacts = useMemo(() => api.channelArtifacts(sessionId, channelId), [sessionId, channelId]);
   // The widths of the channel panel and of the panel showing an agent's
@@ -1237,7 +1238,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
       key={key}
       message={msg}
       members={members}
-      files={workspaceFiles}
+      files={workspaceFiles ?? undefined}
       filesVersion={workspaceVersion}
       artifacts={channelArtifacts}
       onSelectSkill={onSelectSkill}
@@ -1736,7 +1737,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
             </button>
           </div>
           {sideTab === 'notes' ? <NotesList notes={notes} /> : sideTab === 'workspace' ? (
-            <ChannelWorkspacePanel sessionId={sessionId} channelId={channelId} version={workspaceVersion} />
+            <ChannelWorkspacePanel workspaceId={workspaceId} version={workspaceVersion} />
           ) : (<>
           {channel && (
             <ChannelDescription channel={channel} onEdit={() => setIsDescribing(true)} />
