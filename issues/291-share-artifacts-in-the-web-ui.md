@@ -1,6 +1,6 @@
 # 291 — An artifact's owner cannot see or change whom it is shared with in the web UI
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -44,3 +44,27 @@ an artifact at all, nor a list of the user's artifacts.
 
 - **2026-10-10** — Opened at the maintainer's request with step 3 of issue 23: artifacts are shared
   over REST; the web UI follows here.
+- **2026-10-10** — Done, decided with the maintainer before it was built:
+  - First a step of its own without changes of behaviour: what is shown in the place of a channel
+    is one `Page` in `Layout`, not a selected workspace and a selected skill side by side
+    (`onSelectPage` replaces `onSelectSkill`); the sidebar's lists are one `PageList` with
+    `usePageList`; `AccessList` is a component of its own.
+  - `ArtifactPage`: the artifact, its owner's menu - describe, keep, delete -, its list as a whole
+    (`AccessList`) and its versions, newest first, each with its download and, for the owner, whom
+    it reaches besides. A version's own list is shown, not changed: nothing asked for it, and REST
+    does not offer it. The sidebar lists the artifacts `GET /artifacts` lists, with their trash;
+    the card in the chat opens the page ("Open") for whoever may read the artifact.
+  - **Adding entries**: the members of a session the user may read, or of one of its channels -
+    for workspaces and artifacts alike, in `AccessList`. Users and roles are not offered, since
+    the REST API lists neither; that is issue
+    [298](298-pick-users-and-roles-to-share-with.md).
+  - **Where and by whom**, by name, comes from the server, not from what the UI knows of the
+    user's sessions: `ArtifactView::snapshot` with `Detail::PUBLICATIONS` reaches each version's
+    channel as every channel is reached (`Views::channel_of`) and names it, its session and the
+    publisher only for whoever may read it - a version shared beyond its channel names nothing of
+    it (security suite). `GET /artifacts/{id}` and what answers like it carry
+    `session_name`, `channel_name` and `published_by_name`; lists do not.
+  - A page is closed when its list loses the entry, no longer when the list lacks it: an artifact
+    read only as a member of a channel is not listed, yet opened from the chat.
+  - The card said "Kept in your artifacts." to every reader of a kept artifact since issue 23
+    lets readers fetch it; it says so to its owner alone now.

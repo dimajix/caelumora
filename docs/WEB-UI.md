@@ -51,7 +51,7 @@ The UI shows what the server says and repeats no rule of its own:
 | `src/moderator.ts`, `src/confidentiality.ts`, `src/workspace.ts`, `src/scope.ts` | Labels and explanations of responder policies, classifications, storages, and where a workspace or a skill lies |
 | `src/page.ts`, `src/pageList.ts` | What is shown in the place of a channel (`Page`), and the entries of a list in the sidebar it is opened from (`usePageList`) |
 | `src/App.tsx` | Login state, keep-alive, the error banner, the layout |
-| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `ToolCallView`, `QuestionCard`, `QuestionView`, `MarkdownMessage`, `GrowingTextarea`, `ContextPanel`, `HistoryPanel`, `ToolsPanel`, `PrivateNotesPanel`, `ToolSetList`, `DeletedList`, `NotesList`, `TokenGauge`, `HoverCard`, `ActionMenu`, `ResizeHandle`, `UsageStats`, `NewSessionDialog`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ApprovalRulesDialog`, `ErrorBanner`, `PageList`, `AccessList`, `WorkspacePage`, `FileBrowser`, `ChannelWorkspacePanel`, `NewWorkspaceDialog`, `ClassificationFields`, `SessionWorkspaceDialog`, `SkillPage`, `NewSkillDialog` |
+| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `ToolCallView`, `QuestionCard`, `QuestionView`, `MarkdownMessage`, `GrowingTextarea`, `ContextPanel`, `HistoryPanel`, `ToolsPanel`, `PrivateNotesPanel`, `ToolSetList`, `DeletedList`, `NotesList`, `TokenGauge`, `HoverCard`, `ActionMenu`, `ResizeHandle`, `UsageStats`, `NewSessionDialog`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ApprovalRulesDialog`, `ErrorBanner`, `PageList`, `AccessList`, `WorkspacePage`, `FileBrowser`, `ChannelWorkspacePanel`, `NewWorkspaceDialog`, `ClassificationFields`, `SessionWorkspaceDialog`, `SkillPage`, `NewSkillDialog`, `ArtifactPage` |
 
 ## Talking to the server
 
@@ -174,8 +174,21 @@ taken or a classification the user is not cleared for, is shown in the dialog.
 
 A workspace chosen there takes the place of a channel (`WorkspacePage`): what it is, the menu of
 what its owner may do - rename, describe, reclassify, delete -, for its owner whom it is shared
-with (`AccessList`: each entry with what it grants, to change or take away; entries are added where
-it is attached), and its files (`FileBrowser`) - wherever it lies, also in a session's scope.
+with (`AccessList`), and its files (`FileBrowser`) - wherever it lies, also in a session's scope.
+
+`AccessList` shows each entry of the list with what it grants, to change or take away, and below
+them adds the members of a session the user may read, or of one of its channels, with what they
+may do - reading unless chosen otherwise (issue
+[291](../issues/291-share-artifacts-in-the-web-ui.md)). The session is chosen first, from
+`GET /sessions`; its channels are loaded once it is. Users and roles are not offered: the REST API
+lists neither. A list that names nobody says so; the workspace's and the artifact's page say in
+their own words what each grant means.
+
+The lists of workspaces, skills and artifacts in the sidebar are one component (`PageList`, with
+`usePageList`): each entry with where it lies where that is not the user's own scope, "+" where one
+is made here, and its trash. A page shown in the place of a channel (`Page`, `src/page.ts`) is
+closed when the list it was listed in loses its entry; one the list never had - an artifact read
+only as a member of a channel, opened from the chat - stays.
 
 `FileBrowser` shows one directory at a time, directories first, with a path back to the top. A file
 is downloaded through a plain link - the cookie goes with it, and the server sends it as an
@@ -210,6 +223,26 @@ skill under "Knowledge read" ("A skill, loaded in …"). An agent's calls of the
 shown by their presentation, `skill` (issue 281): the skill loaded by its name, one written or
 changed with its text, the name linked to the skill's page.
 
+### Artifacts
+
+The artifacts the user may read (issue [291](../issues/291-share-artifacts-in-the-web-ui.md)) -
+their own and those shared with them by name, as `GET /artifacts` lists them - are listed below the
+skills, with a folded "Deleted artifacts", the trash; the list is loaded again on every event about
+an artifact (`ArtifactPublished`, `…Updated`, `…Deleted`, `…Restored`). Nothing is made there: an
+artifact is published by an agent (issue 271). An artifact read only as a member of the channel it
+was published in is not listed, but opened from its card in the chat.
+
+An artifact opens on a page of its own (`ArtifactPage`), in the place of a channel: its name, what
+its owner says of it, where it lies - "gone with it unless kept" in a session's scope - and its
+classification. Its owner describes it, keeps it among their artifacts or for everyone while it
+lies in a session's scope, and deletes it from its menu, and shares it as a whole (`AccessList`:
+reading every version, or reading and adding versions). Whoever may add versions without owning it
+is told so. Below, its versions the user may read, newest first, each with its size, media type
+and description, its download, when it was published, and where and by whom - by name where the
+server names them, for whoever may read that channel, the channel opening on a click; "a channel
+you do not read" otherwise. Its owner sees whom each version reaches besides (`access` of the
+version), which publishing set and the page does not change.
+
 ### A channel
 
 `ChatView` shows one channel. Only a participant follows it live, over the channel's stream; anyone
@@ -241,25 +274,25 @@ else who may read it - the session's owner, say - is shown its history and no in
     whether it was renamed or moved. The `artifact_publish` handler (issue 271) shows a published
     version as a card like `file_publish`'s (`DownloadCard`) - the artifact's name, version, size
     and description, a download of that version by the artifact (`artifacts`, handed as `files` is;
-    issue 23), and "Keep" for its owner while it lies in the session's scope, which it learns by
-    asking for the artifact as theirs. The `file_publish` handler (issue 273) shows a file offered
-    for download as a card - its name, size and what it is - with a download from the session's
-    workspace, by its id as the channel names it (`files`, which `ChatView` hands through
-    `MessageView`), and says when the file changed since it was offered - its size or when it was
-    changed differ - or is gone; whoever cannot use the workspace there, and every view outside the
-    chat, gets the card without the download. The `plan` handler shows a plan's summary and its
-    steps, numbered (issue 263). The `skill` handler (issue 281) shows the skill a call loads,
-    writes or changes by its name, and what it is for and its text, as Markdown, where the arguments
-    hold them - never the text a skill loaded gave the agent; where the result names the skill
-    (`skill_id`), the name opens its page in the chat (`onSelectPage`, which `Layout` hands through
-    `ChatView` and `MessageView`). Where a result keeps the record of the questions its call asked
-    (`answers`, issue 165), the frame shows it (`AnswersRecord`, issue 268): who answered or
-    declined, and each question with every choice that was offered, one below the other, the chosen
-    ones marked and the others muted, "Other" with its text, a written answer as a quote, a skipped
-    question as such. A question's text keeps its line breaks, so that an approver reads a command
-    of several lines as it was written. The `questions` handler of `ask_user` shows nothing raw:
-    while it waits, its questions as they were put and whom they wait for; once answered, nothing
-    beyond the record.
+    issue 23), "Keep" for its owner while it lies in the session's scope, and "Open", its page
+    (issue 291), for whoever may read the artifact, which it learns by asking for it. The
+    `file_publish` handler (issue 273) shows a file offered for download as a card - its name, size
+    and what it is - with a download from the session's workspace, by its id as the channel names it
+    (`files`, which `ChatView` hands through `MessageView`), and says when the file changed since it
+    was offered - its size or when it was changed differ - or is gone; whoever cannot use the
+    workspace there, and every view outside the chat, gets the card without the download. The `plan`
+    handler shows a plan's summary and its steps, numbered (issue 263). The `skill` handler (issue
+    281) shows the skill a call loads, writes or changes by its name, and what it is for and its
+    text, as Markdown, where the arguments hold them - never the text a skill loaded gave the agent;
+    where the result names the skill (`skill_id`), the name opens its page in the chat
+    (`onSelectPage`, which `Layout` hands through `ChatView` and `MessageView`). Where a result
+    keeps the record of the questions its call asked (`answers`, issue 165), the frame shows it
+    (`AnswersRecord`, issue 268): who answered or declined, and each question with every choice that
+    was offered, one below the other, the chosen ones marked and the others muted, "Other" with its
+    text, a written answer as a quote, a skipped question as such. A question's text keeps its line
+    breaks, so that an approver reads a command of several lines as it was written. The `questions`
+    handler of `ask_user` shows nothing raw: while it waits, its questions as they were put and whom
+    they wait for; once answered, nothing beyond the record.
 *   **While an agent answers**, its partial message is shown as it streams, its reasoning
     included: folded under "Thinking" until the answer begins (issue 216). Several agents answering
     at once each have an answer of their own, in the order they began (issue 203). Answers under

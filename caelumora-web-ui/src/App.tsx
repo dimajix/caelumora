@@ -3,6 +3,7 @@ import {Sidebar} from './components/Sidebar';
 import {ChatView} from './components/ChatView';
 import {WorkspacePage} from './components/WorkspacePage';
 import {SkillPage} from './components/SkillPage';
+import {ArtifactPage} from './components/ArtifactPage';
 import {Login} from './components/Login';
 import {ErrorBanner} from './components/ErrorBanner';
 import {api} from './api';
@@ -69,12 +70,12 @@ interface LayoutProps {
   onLogout: () => void;
 }
 
-/** The sidebar, and beside it a channel or a page in its place - a workspace or a skill. */
+/** The sidebar, and beside it a channel or a page in its place - a workspace, a skill or an artifact. */
 function Layout({ user, onLogout }: LayoutProps) {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
   // What is shown in the place of a channel: one of the user's workspaces
-  // (issue 253) or a skill (issue 22).
+  // (issue 253), a skill (issue 22) or an artifact (issue 291).
   const [page, setPage] = useState<Page | null>(null);
 
   const handleSelectChannel = (sessionId: string, channelId: string) => {
@@ -123,6 +124,8 @@ function Layout({ user, onLogout }: LayoutProps) {
           <WorkspacePage key={page.id} workspaceId={page.id} onDeleted={(id) => handlePageGone('workspace', id)} />
         ) : page?.kind === 'skill' ? (
           <SkillPage key={page.id} skillId={page.id} onDeleted={(id) => handlePageGone('skill', id)} />
+        ) : page?.kind === 'artifact' ? (
+          <ArtifactPage key={page.id} artifactId={page.id} onDeleted={(id) => handlePageGone('artifact', id)} onSelectChannel={handleSelectChannel} />
         ) : selectedSessionId && selectedChannelId ? (
           <ChatView
             sessionId={selectedSessionId}

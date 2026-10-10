@@ -1,8 +1,9 @@
-// What is shown in the place of a channel - a workspace (issue 253) or a
-// skill (issue 22) -, opened from the sidebar or from what the chat links to.
+// What is shown in the place of a channel - a workspace (issue 253), a skill
+// (issue 22) or an artifact (issue 291) -, opened from the sidebar or from
+// what the chat links to.
 
 /** What kind of thing a page shows. */
-export type PageKind = 'workspace' | 'skill';
+export type PageKind = 'workspace' | 'skill' | 'artifact';
 
 /** The page of the thing `id`, of kind `kind`. */
 export interface Page {

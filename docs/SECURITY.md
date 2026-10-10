@@ -394,7 +394,10 @@ question, in the viewer's name:
     content of those alone (`content`), which the `ArtifactManager` reads without asking (issue
     [292](../issues/292-store-lists-read-everything.md)); `Views::artifacts()` lists the viewer's
     own and those shared with them by name, `ChannelView::artifacts()` those published in the
-    channel, alike. The manager carries out what changes an artifact, each operation checking
+    channel, alike. Where each version was published and by whom (`ArtifactView::snapshot` with
+    `Detail::PUBLICATIONS`, issue 291) is named only where the viewer reaches that channel
+    (`Views::channel_of`), so that a version shared beyond it names nothing of it. The manager
+    carries out what changes an artifact, each operation checking
     itself; and the `WorkspaceManager` what is done with a workspace's files - its terminal reached
     directly (`terminal`) or in a channel (`terminal_in`), its shell there (`shell_in`), ending a
     command (`kill_command`) - asking afresh, as the views ask (issue

@@ -8,6 +8,7 @@ import {
   HardDrive,
   LogOut,
   MessageSquare,
+  Package,
   Plus,
   Shield,
   ShieldAlert,
@@ -15,7 +16,7 @@ import {
   User,
   Users
 } from 'lucide-react';
-import type {ChannelResponse, SessionSnapshot, SkillResponse, UserResponse, WorkspaceResponse} from '../types';
+import type {ArtifactResponse, ChannelResponse, SessionSnapshot, SkillResponse, UserResponse, WorkspaceResponse} from '../types';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
 import {dispatchGlobalEvent, sessionChange} from '../globalEvents';
@@ -53,10 +54,11 @@ function channelName(channel: ChannelResponse): string {
 function trashChangedBy(event: Record<string, unknown>): boolean {
   const kind = Object.keys(event)[0];
   return kind === 'SessionDeleted' || kind === 'SessionRestored' || kind === 'ChannelDeleted' || kind === 'ChannelRestored'
-    || kind === 'WorkspaceDeleted' || kind === 'WorkspaceRestored' || kind === 'SkillDeleted' || kind === 'SkillRestored';
+    || kind === 'WorkspaceDeleted' || kind === 'WorkspaceRestored' || kind === 'SkillDeleted' || kind === 'SkillRestored'
+    || kind === 'ArtifactDeleted' || kind === 'ArtifactRestored';
 }
 
-/** Whether `event` is about something whose events are named `prefix…` - `Workspace`, `Skill`. */
+/** Whether `event` is about something whose events are named `prefix…` - `Workspace`, `Skill`, `Artifact`. */
 function isAbout(event: Record<string, unknown>, prefix: string): boolean {
   return Object.keys(event)[0]?.startsWith(prefix) ?? false;
 }
@@ -92,10 +94,10 @@ interface SidebarProps {
   onSessionDeleted: (sessionId: string) => void;
   /** The selected channel no longer exists - deleted here or elsewhere. */
   onChannelDeleted: (channelId: string) => void;
-  /** What is shown in the place of a channel - a workspace (issue 253) or a skill (issue 22). */
+  /** What is shown in the place of a channel - a workspace (issue 253), a skill (issue 22) or an artifact (issue 291). */
   page: Page | null;
   onSelectPage: (page: Page) => void;
-  /** The page's workspace or skill no longer exists, or may no longer be read. */
+  /** What the page shows no longer exists, or may no longer be read. */
   onPageGone: (kind: PageKind, id: string) => void;
 }
 
@@ -112,12 +114,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onPageGone,
 }) => {
   const [sessions, setSessions] = useState<SessionSnapshot[]>([]);
-  // The workspaces (issue 253) and skills (issue 22) the user may read,
-  // loaded again on every event about one of them.
+  // The workspaces (issue 253), skills (issue 22) and artifacts (issue 291)
+  // the user may read, loaded again on every event about one of them.
   const workspaces = usePageList<WorkspaceResponse>('workspace', 'workspaces', () => api.getWorkspaces(), page, onPageGone);
   const [isCreatingWorkspace, setIsCreatingWorkspace] = useState(false);
   const skills = usePageList<SkillResponse>('skill', 'skills', () => api.getSkills(), page, onPageGone);
   const [isCreatingSkill, setIsCreatingSkill] = useState(false);
+  const artifacts = usePageList<ArtifactResponse>('artifact', 'artifacts', () => api.getArtifacts(), page, onPageGone);
   // The session whose workspace is shown, by id, so that the dialog follows it.
   const [workspaceOf, setWorkspaceOf] = useState<string | null>(null);
   const workspaceSession = sessions.find(s => s.id === workspaceOf) ?? null;
@@ -167,6 +170,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const trashChangedFromStream = useEffectEvent(() => trashChanged());
   const workspacesChangedFromStream = useEffectEvent(() => workspaces.reload());
   const skillsChangedFromStream = useEffectEvent(() => skills.reload());
+  const artifactsChangedFromStream = useEffectEvent(() => artifacts.reload());
   const refreshSessionFromStream = useEffectEvent((sessionId: string) => void refreshSession(sessionId));
 
   // The list is the global stream's: its snapshot, then its events (issue
@@ -193,6 +197,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         if (trashChangedBy(event)) trashChangedFromStream();
         if (isAbout(event, 'Workspace')) workspacesChangedFromStream();
         if (isAbout(event, 'Skill')) skillsChangedFromStream();
+        if (isAbout(event, 'Artifact')) artifactsChangedFromStream();
         const change = sessionChange(event);
         if (change.kind === 'remove') {
           removeSessionFromStream(change.sessionId);
@@ -458,6 +463,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
           trashVersion={trashVersion}
           restore={(skillId) => api.restoreSkill(skillId)}
           purge={(skillId) => api.purgeSkill(skillId)}
+        />
+
+        <PageList
+          list={artifacts}
+          title="Artifacts"
+          icon={Package}
+          page={page}
+          onSelectPage={onSelectPage}
+          loadDeleted={() => api.getDeletedArtifacts()}
+          trashVersion={trashVersion}
+          restore={(artifactId) => api.restoreArtifact(artifactId)}
+          purge={(artifactId) => api.purgeArtifact(artifactId)}
         />
       </div>
 

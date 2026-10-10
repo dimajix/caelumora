@@ -33,7 +33,8 @@ use caelumora_model::value::text::{Description, Introduction};
 use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::scope::Scope;
 use caelumora_model::secret::SecretManager;
-use caelumora_model::security::{ActionType, Grant, Membership, OwnershipSecurityManager, Reclassified, SecurityAttributes, SecurityContext, SecurityManager, Subject};
+use caelumora_model::security::{AclEntry, ActionType, Grant, Membership, OwnershipSecurityManager, Reclassified, SecurityAttributes, SecurityContext, SecurityManager, Subject};
+use caelumora_model::snapshot::{Detail, PublicationSnapshot};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::store::{ComponentStore, EntityStore, StateStore, StoreError};
 use caelumora_model::store::memory::MemoryStore;
@@ -2748,17 +2749,28 @@ async fn drafts_of_an_artifact_stay_with_the_channel_they_were_published_in() {
     let (_, final_one) = publish(&world, &alice, session_id, main, &at, "report.md", Some("The report")).await.expect("the final one");
     assert_eq!(final_one, 2);
 
-    let his = world.manager.views(Viewer::new(bob.clone())).artifact(artifact.id).await.expect("bob reads what reached the team").snapshot().await;
+    let his = world.manager.views(Viewer::new(bob.clone())).artifact(artifact.id).await.expect("bob reads what reached the team").snapshot(Detail::PUBLICATIONS).await;
     assert_eq!(his.artifact.versions.iter().map(|v| v.number).collect::<Vec<_>>(), [2], "the final one alone");
     assert_eq!(his.artifact.versions[0].description.as_ref().map(|d| d.to_string()), Some("The report".to_string()));
     assert!(his.artifact.description.is_none() && his.access.is_empty() && his.version_access.is_empty(), "nothing said of the draft, nor whom it reaches");
+    let where_published = |publication: &PublicationSnapshot| (publication.channel_name.clone(), publication.published_by.clone());
+    assert_eq!(his.publications.values().map(where_published).collect::<Vec<_>>(), [("main".to_string(), Some("alice".to_string()))], "where it was published and by whom, as a member of the channel");
     assert_eq!(read_version(&world, &bob, artifact.id, 1).await, Read::NoVersion, "not the draft");
     assert_eq!(read_version(&world, &bob, artifact.id, 2).await, Read::Content(5, "final".to_string()), "the final one");
 
-    let hers = world.manager.views(Viewer::new(alice.clone())).artifact(artifact.id).await.unwrap().snapshot().await;
+    let hers = world.manager.views(Viewer::new(alice.clone())).artifact(artifact.id).await.unwrap().snapshot(Detail::PUBLICATIONS).await;
     assert_eq!(hers.artifact.versions.len(), 2, "its owner reads both");
     let names: Vec<Option<String>> = hers.version_access.values().map(|access| access[0].name.clone()).collect();
     assert_eq!(names, [Some("drafts".to_string()), Some("main".to_string())], "and sees where each reaches");
+    assert_eq!(hers.publications.values().map(|p| p.channel_name.clone()).collect::<Vec<_>>(), ["drafts", "main"], "and where each was published");
+
+    // Shared by name with carol, who takes part in neither channel: she
+    // reads both, and learns nothing of where they were published.
+    let carol = World::as_user(world.carol);
+    world.runtime.artifact_manager().set_access(&alice, artifact.id, vec![AclEntry { subject: Subject::Actor(ActorId::User(world.carol)), grant: Grant::Read }]).await.unwrap();
+    let theirs = world.manager.views(Viewer::new(carol.clone())).artifact(artifact.id).await.expect("shared with carol").snapshot(Detail::PUBLICATIONS).await;
+    assert_eq!(theirs.artifact.versions.len(), 2, "carol reads both");
+    assert!(theirs.publications.is_empty(), "but not where they were published, nor by whom");
     world.manager.stop_session(&alice, session_id).await.unwrap();
 }
 

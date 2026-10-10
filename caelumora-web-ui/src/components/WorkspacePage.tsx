@@ -131,7 +131,8 @@ export const WorkspacePage: React.FC<WorkspacePageProps> = ({workspaceId, onDele
           <AccessList
             access={workspace.access ?? []}
             onChange={(access) => void share(access)}
-            nobody="Nobody but you. Attaching it to a session can share it with the session's members."
+            nobody="Nobody but you."
+            grants={{read: 'reads', write: 'reads and changes'}}
           />
         )}
         {!workspace.can_write && <div className="text-xs italic text-gray-500">You may read its files, not change them.</div>}

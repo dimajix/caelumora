@@ -2,7 +2,7 @@
 // of a channel (`PageList`): loaded, loaded again on an event about one of
 // them, and the page of one no longer listed closed.
 
-import {useCallback, useEffect, useState} from 'react';
+import {useCallback, useEffect, useRef, useState} from 'react';
 import type {ScopeKind} from './types';
 import {reportError} from './errors';
 import type {Page, PageKind} from './page';
@@ -29,8 +29,10 @@ export interface PageListState<T extends Listed> {
 
 /**
  * The entries of kind `kind` the user may read, loaded by `load` and again
- * on `reload`. The page of one the list no longer has is gone
- * (`onPageGone`): deleted, here or elsewhere, or no longer readable.
+ * on `reload`. The page of one the list had and no longer has is gone
+ * (`onPageGone`): deleted, here or elsewhere, or no longer readable. A page
+ * of one the list never had - an artifact read only as a member of the
+ * channel it was published in, opened from the chat - stays.
  */
 export function usePageList<T extends Listed>(
   kind: PageKind,
@@ -41,6 +43,8 @@ export function usePageList<T extends Listed>(
 ): PageListState<T> {
   const [items, setItems] = useState<T[]>([]);
   const [version, setVersion] = useState(0);
+  // The ids the list had before its last change.
+  const listed = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     let current = true;
@@ -53,10 +57,14 @@ export function usePageList<T extends Listed>(
   }, [version]);
 
   useEffect(() => {
-    if (page?.kind === kind && version > 0 && !items.some(item => item.id === page.id)) {
+    const before = listed.current;
+    listed.current = new Set(items.map(item => item.id));
+    if (page?.kind === kind && before.has(page.id) && !listed.current.has(page.id)) {
       onPageGone(kind, page.id);
     }
-  }, [items, page, kind, version, onPageGone]);
+    // Asked when the list changes alone: a page opened since is not gone.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items]);
 
   const add = useCallback((item: T) => setItems(prev => (prev.some(i => i.id === item.id) ? prev : [...prev, item])), []);
   const reload = useCallback(() => setVersion(v => v + 1), []);

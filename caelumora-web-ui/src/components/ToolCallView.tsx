@@ -658,38 +658,43 @@ const DownloadCard: React.FC<{
   </div>
 );
 
-/** The user's own artifact `id` as they see it - `null` if it is not theirs, or not known yet - and keeping it. */
-function useOwnedArtifact(id: string | null): [ArtifactResponse | null, () => Promise<void>] {
-  const [owned, setOwned] = useState<ArtifactResponse | null>(null);
+/**
+ * Artifact `id` as the user sees it - `null` if they may read none of its versions, or it is not
+ * known yet - and keeping it, which is its owner's (`can_change`).
+ */
+function useArtifact(id: string | null): [ArtifactResponse | null, () => Promise<void>] {
+  const [artifact, setArtifact] = useState<ArtifactResponse | null>(null);
   useEffect(() => {
     if (id === null) return;
     let current = true;
-    // Refused for whoever is not its owner: then there is nothing to keep.
-    api.getArtifact(id).then(found => { if (current) setOwned(found); }).catch(() => { if (current) setOwned(null); });
+    // Refused for whoever may read none of its versions any more: then it has no page for them.
+    api.getArtifact(id).then(found => { if (current) setArtifact(found); }).catch(() => { if (current) setArtifact(null); });
     return () => { current = false; };
   }, [id]);
   const keep = async () => {
     if (id === null) return;
     try {
-      setOwned(await api.keepArtifact(id, 'user'));
+      setArtifact(await api.keepArtifact(id, 'user'));
     } catch (error) {
       reportError('Failed to keep the artifact', error);
     }
   };
-  return [owned, keep];
+  return [artifact, keep];
 }
 
 /**
  * A file published as a version of an artifact (issue 271): a card with its name, version and size,
- * a download of that version - fixed, whatever became of the file -, and for its owner "Keep" while
- * it lies in the session's scope, so that it outlives the session.
+ * a download of that version - fixed, whatever became of the file -, for its owner "Keep" while it
+ * lies in the session's scope, so that it outlives the session, and "Open" to its page (issue 291)
+ * for whoever reaches the artifact itself.
  */
-const ArtifactPublishToolCallContent: React.FC<ToolCallContentProps> = ({call, result, artifacts}) => {
+const ArtifactPublishToolCallContent: React.FC<ToolCallContentProps> = ({call, result, artifacts, onSelectPage}) => {
   const args = argumentsObject(call.arguments);
   const published = resultObject(result);
   const id = textOf(published, 'artifact');
   const version = numberOf(published, 'version');
-  const [owned, keep] = useOwnedArtifact(id);
+  const [artifact, keep] = useArtifact(id);
+  const owned = artifact?.can_change ? artifact : null;
   if (call.arguments === null) return <span className="text-[11px] italic opacity-60">File not shown</span>;
   const path = textOf(published, 'path') ?? textOf(args, 'path');
   if (!published) {
@@ -705,15 +710,29 @@ const ArtifactPublishToolCallContent: React.FC<ToolCallContentProps> = ({call, r
       description={textOf(published, 'description')}
       note={kept ?? (artifacts ? null : 'Download it from the chat.')}
       href={artifacts && id !== null && version !== null ? artifacts.url(id, version) : null}
-      actions={owned?.can_change && owned.scope === 'session' && (
-        <button
-          type="button"
-          onClick={() => void keep()}
-          title="Keep it beyond this session, among your artifacts"
-          className="flex items-center gap-1 rounded-md border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 text-xs px-2.5 py-1"
-        >
-          <PackageCheck size={12} /> Keep
-        </button>
+      actions={(
+        <>
+          {owned?.scope === 'session' && (
+            <button
+              type="button"
+              onClick={() => void keep()}
+              title="Keep it beyond this session, among your artifacts"
+              className="flex items-center gap-1 rounded-md border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 text-xs px-2.5 py-1"
+            >
+              <PackageCheck size={12} /> Keep
+            </button>
+          )}
+          {artifact && onSelectPage && (
+            <button
+              type="button"
+              onClick={() => onSelectPage({kind: 'artifact', id: artifact.id})}
+              title="Its versions, and whom it is shared with"
+              className="flex items-center gap-1 rounded-md border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 text-xs px-2.5 py-1"
+            >
+              <Package size={12} /> Open
+            </button>
+          )}
+        </>
       )}
     />
   );

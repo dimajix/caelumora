@@ -1,8 +1,8 @@
 // A list in the sidebar of what opens as a page in the place of a channel -
-// workspaces (issue 253), skills (issue 22): those the user may read, each
-// with where it lies where that is not their own scope, loaded again on
-// every global event about one of them, with "+" to make one and the
-// trash (issue 164) folded below.
+// workspaces (issue 253), skills (issue 22), artifacts (issue 291): those the
+// user may read, each with where it lies where that is not their own scope,
+// loaded again on every global event about one of them, with "+" to make
+// one where one is made here, and the trash (issue 164) folded below.
 
 import React from 'react';
 import {Plus, type LucideIcon} from 'lucide-react';

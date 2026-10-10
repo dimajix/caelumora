@@ -388,7 +388,7 @@ export interface CreateSkillRequest {
   classification?: Classification;
 }
 
-/** An artifact (issue 271): its owner's, with every version, or as a reader of a channel sees it, with the versions published there. */
+/** An artifact (issue 271), as whoever reads any of its versions sees it (issue 23): with those versions alone. */
 export interface ArtifactResponse {
   id: string;
   name: string;
@@ -420,6 +420,14 @@ export interface ArtifactVersion {
   channel_id: string;
   published_by: ActorId;
   published_at: string;
+  /**
+   * The names of where it was published and of who published it (issue 291) - where one artifact
+   * is fetched, for whoever may read that channel; `published_by_name` is absent too for a
+   * publisher gone.
+   */
+  session_name?: string;
+  channel_name?: string;
+  published_by_name?: string;
   /** Who reads it besides whom the artifact is shared with - only for its owner. */
   access?: AccessEntry[];
 }

@@ -771,15 +771,77 @@ export const api = {
         await ensureOk(res, 'Failed to list the artifacts');
         return res.json();
       },
-      url: (artifact, version) => `${API_BASE}/artifacts/${artifact}/versions/${version}/content`,
+      url: (artifact, version) => api.artifactVersionUrl(artifact, version),
     };
   },
 
-  /** The user's artifact `artifactId`, with every version; refused for one not theirs. */
+  /** Where version `version` of artifact `artifactId` is downloaded - a plain link; the cookie goes with it. */
+  artifactVersionUrl(artifactId: string, version: number): string {
+    return `${API_BASE}/artifacts/${artifactId}/versions/${version}/content`;
+  },
+
+  /** The artifacts the user may read (issue 291): their own, and those shared with them by name. */
+  async getArtifacts(): Promise<ArtifactResponse[]> {
+    const res = await request('/artifacts');
+    await ensureOk(res, 'Failed to fetch the artifacts');
+    return res.json();
+  },
+
+  /** The user's artifacts they deleted, the trash. */
+  async getDeletedArtifacts(): Promise<Deleted[]> {
+    const res = await request('/artifacts?deleted=true');
+    await ensureOk(res, 'Failed to fetch the deleted artifacts');
+    return res.json();
+  },
+
+  /**
+   * Artifact `artifactId`, with the versions the user may read, where each was published as far as
+   * they may read its channel (issue 291), and for its owner whom it is shared with.
+   */
   async getArtifact(artifactId: string): Promise<ArtifactResponse> {
     const res = await request(`/artifacts/${artifactId}`);
     await ensureOk(res, 'Failed to fetch the artifact');
     return res.json();
+  },
+
+  /** Says what the artifact is as a whole; `null` or empty takes it away. */
+  async describeArtifact(artifactId: string, description: string | null): Promise<ArtifactResponse> {
+    const res = await request(`/artifacts/${artifactId}/description`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({description}),
+    });
+    await ensureOk(res, 'Failed to describe the artifact');
+    return res.json();
+  },
+
+  /** Gives the user's artifact the access list `access` for the whole of it, replacing the one it had (issue 23). */
+  async setArtifactAccess(artifactId: string, access: AccessEntry[]): Promise<ArtifactResponse> {
+    const res = await request(`/artifacts/${artifactId}/access`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(access),
+    });
+    await ensureOk(res, 'Failed to share the artifact');
+    return res.json();
+  },
+
+  /** Deletes the artifact: kept, with its versions, until it is purged. */
+  async deleteArtifact(artifactId: string): Promise<void> {
+    const res = await request(`/artifacts/${artifactId}`, {method: 'DELETE'});
+    await ensureOk(res, 'Failed to delete the artifact');
+  },
+
+  async restoreArtifact(artifactId: string): Promise<ArtifactResponse> {
+    const res = await request(`/artifacts/${artifactId}/restore`, {method: 'POST'});
+    await ensureOk(res, 'Failed to restore the artifact');
+    return res.json();
+  },
+
+  /** Removes a deleted artifact for good, with its versions. */
+  async purgeArtifact(artifactId: string): Promise<void> {
+    const res = await request(`/artifacts/${artifactId}/purge`, {method: 'POST'});
+    await ensureOk(res, 'Failed to delete the artifact for good');
   },
 
   /** Keeps the user's artifact beyond its session, in their scope or the global one. */
