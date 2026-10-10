@@ -85,7 +85,9 @@ keeps a directory per artifact under its root and a file per version, written wh
 as a local workspace's files are. The `ArtifactManager` is the one writer of artifact documents and
 the only code that holds the storages: a version's content is kept before the document says it
 exists, and removed again if the document cannot be stored; an artifact is purged with its content,
-the content first. Artifacts are entities, not state: each has its own owner and permissions, a name
+the content first. It is given the content to publish - its size, its bytes and its classification
+- and knows no workspace: where the content comes from is its caller's (issue
+[296](../issues/296-workspace-operations-on-the-view.md)). Artifacts are entities, not state: each has its own owner and permissions, a name
 unique in its scope and a trash, and one that is kept leaves the session it was published in - it
 can be the state of neither a session nor a channel (issue 271). Object storage is issue
 [272](../issues/272-artifacts-in-s3.md).

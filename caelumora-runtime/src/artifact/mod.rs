@@ -22,7 +22,7 @@ mod local;
 
 use crate::component::{ComponentError, ComponentResult};
 use crate::event::EventBus;
-use crate::terminal::{ByteStream, Terminal, TerminalError, WorkspacePath};
+use crate::terminal::{ByteStream, TerminalError};
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::artifact::{Artifact, ArtifactId, ArtifactVersion};
@@ -37,7 +37,6 @@ use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResultExt
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;
-use caelumora_model::workspace::Workspace;
 use chrono::Utc;
 use futures::StreamExt;
 use local::LocalArtifactStorage;
@@ -160,25 +159,27 @@ impl ArtifactManager {
         self.storages.get(name).ok_or_else(|| ArtifactError::UnknownStorage(name.to_string()))
     }
 
-    /// Publishes the file `at` of `workspace`, read through `terminal`, as
-    /// a version of the artifact `name` in the session `session`'s scope,
-    /// published in `channel` by the agent `ctx` names as its caller, for
-    /// the user it acts for: the artifact of that name there gains a
-    /// version, or is made with its first. Its owner may change it, or
-    /// make it (`UpdateArtifact`, `CreateArtifact`), asked before anything
-    /// is kept; its storage may hold what is classified as the workspace.
-    /// The content is kept first, its digest taken as it is; a document
-    /// that cannot be stored leaves no content. Answers the artifact as it
-    /// is now, and the number of the new version.
+    /// Publishes `content` - its size and its bytes, as a file of a
+    /// workspace is read -, classified as `classification`, as a version
+    /// of the artifact `name` in the session `session`'s scope, published in
+    /// `channel` by the agent `ctx` names as its caller, for the user it
+    /// acts for: the artifact of that name there gains a version, or is
+    /// made with its first. Its owner may change it, or make it
+    /// (`UpdateArtifact`, `CreateArtifact`), asked before anything is kept;
+    /// its storage may hold what is so classified. Where the content comes
+    /// from is the caller's (issue 296): read before the artifact's own
+    /// permission is asked, it gives nothing away to one who could read it.
+    /// The content is kept first, its digest taken as it is; a document that
+    /// cannot be stored leaves no content. Answers the artifact as it is
+    /// now, and the number of the new version.
     ///
     /// # Errors
     /// `NotConfigured`, `OwnerNotAUser`, `Invalid` for a name that is
     /// none, `ClassifiedOtherwise`, `StorageNotCleared`, `TooLarge`,
-    /// `Changed`, a `TerminalError` of reading the file, `Unavailable`, or
-    /// whatever the store reports - `PermissionDenied` and `NameTaken`
-    /// among it.
+    /// `Changed`, `Unavailable`, or whatever the store reports -
+    /// `PermissionDenied` and `NameTaken` among it.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn publish(&self, ctx: &SecurityContext, terminal: &dyn Terminal, workspace: &Workspace, at: &WorkspacePath, name: &str, description: Option<&str>, session: SessionId, channel: ChannelId) -> ArtifactResult<(Artifact, u32)> {
+    pub(crate) async fn publish(&self, ctx: &SecurityContext, (size, content): (u64, ByteStream), classification: &Classification, name: &str, description: Option<&str>, session: SessionId, channel: ChannelId) -> ArtifactResult<(Artifact, u32)> {
         let ActorId::User(owner) = ctx.principal_id else { return Err(ArtifactError::OwnerNotAUser) };
         let name = ScopedName::new(name, Scope::SessionScope { session_id: session })?;
         let description = Description::optional(description)?;
@@ -189,7 +190,7 @@ impl ArtifactManager {
         let (id, number, storage_name) = match &existing {
             Some(artifact) => {
                 self.security.require(ctx, ActionType::WriteArtifact(&artifact.security_attributes), || StoreError::PermissionDenied).await?;
-                if artifact.classification != workspace.classification {
+                if artifact.classification != *classification {
                     return Err(ArtifactError::ClassifiedOtherwise(artifact.name.name.to_string()));
                 }
                 (artifact.id, artifact.latest().map_or(1, |latest| latest.number + 1), artifact.storage.clone())
@@ -202,12 +203,11 @@ impl ArtifactManager {
         };
         let storage = self.storage(&storage_name)?;
         if let Some(destination) = storage.destination() {
-            if !self.security.may_publish(ctx, ctx.caller_id, &workspace.classification, destination).await {
+            if !self.security.may_publish(ctx, ctx.caller_id, classification, destination).await {
                 return Err(ArtifactError::StorageNotCleared(storage_name));
             }
         }
 
-        let (size, content) = terminal.read(at).await?;
         if size > self.max_bytes {
             return Err(ArtifactError::TooLarge { limit: self.max_bytes });
         }
@@ -240,7 +240,7 @@ impl ArtifactManager {
                 self.entities.update_artifact(&SecurityContext::system(), &artifact).await.map(|()| artifact)
             }
             None => {
-                let artifact = Artifact::new(id, name, storage_name, workspace.classification.clone(), owner, version);
+                let artifact = Artifact::new(id, name, storage_name, classification.clone(), owner, version);
                 self.entities.create_artifact(ctx, &artifact).await.map(|()| artifact)
             }
         };

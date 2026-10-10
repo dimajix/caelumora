@@ -137,7 +137,8 @@ impl WorkspaceView {
     pub async fn publish_artifact(&self, at: &WorkspacePath, name: &str, description: Option<&str>) -> ArtifactResult<(Artifact, u32)> {
         let Way::InChannel { session, channel } = self.way else { return Err(ArtifactError::NotInChannel) };
         let terminal = self.terminal(Grant::Read).await?;
-        self.views.artifact_manager().publish(self.views.context(), terminal.as_ref(), &self.workspace, at, name, description, session, channel).await
+        let content = terminal.read(at).await?;
+        self.views.artifact_manager().publish(self.views.context(), content, &self.workspace.classification, name, description, session, channel).await
     }
 
     /// Ends the command `id` of its shell, started in the channel it was
