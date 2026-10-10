@@ -203,9 +203,12 @@ Every list of the entity store takes a query (`caelumora_model::store::query`, i
     what the caller may read, reading on until it is met. That access becomes part of the query
     is the second phase of issue 293.
 
-The memory store judges the filter on each entity serialized, the JSON store on each document as
-it is read, before reading it as its type. Both still go through every entity of the kind: without
-a policy question for those the filter drops, but without an index either.
+Both stores take the keys of a kind first - the memory store from its map, the JSON store the names
+of the files, without reading one - and read an entity only when it is its turn: the memory store
+judges the filter on it serialized, the JSON store on the document as JSON, before reading it as
+its type. What follows a page's limit is not read. Without a limit both still go through every
+entity of the kind - without a policy question for those the filter drops, but without an index
+either.
 
 Every list that narrows what it read says so in its query: what lies in a scope, the channels of a
 session, the sessions an agent takes part in, the skills found from a place, the artifacts of a

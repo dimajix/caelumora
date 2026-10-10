@@ -32,6 +32,7 @@
 //! except filtering a list, which is a question.
 
 use crate::removal::Stored;
+use std::future::Future;
 use crate::scope::Scoped;
 use crate::store::query::{self, Cursor, Field, Page, Query};
 use crate::security::{ActionType, Enforcement, SecurityAttributes, SecurityContext, SecurityManager};
@@ -69,23 +70,19 @@ impl<'a> Access<'a> {
         Ok(value)
     }
 
-    /// The page of `candidates` that `query` asks for (issue 293): in the
-    /// order of their keys, after its cursor, those that meet its filter -
-    /// judged on what `document` makes of one, where the store does not
-    /// hold it serialized and judged it before -, and of those the ones the
-    /// caller may read - among what was deleted, if `deleted` -, until its
-    /// limit.
-    pub(crate) async fn page<T, F, D>(&self, candidates: Vec<(String, T)>, query: &Query<F>, kind: &Actions, deleted: bool, document: D) -> StoreResult<Page<T>>
-    where T: Stored, F: Field, D: Fn(&T) -> StoreResult<Option<serde_json::Value>> {
+    /// The page that `query` asks for (issue 293) among the entities
+    /// `keys` name, each key with what the entity is found by: in the order
+    /// of the keys, after its cursor, each entity loaded by `load` only when
+    /// it is its turn - `None` if it does not meet the query's filter, which
+    /// `load` judges, or is gone -, and of those the ones the caller may
+    /// read - among what was deleted, if `deleted` -, until its limit. What
+    /// follows the limit is not loaded.
+    pub(crate) async fn page<T, F, K, L, R>(&self, keys: Vec<(String, K)>, query: &Query<F>, kind: &Actions, deleted: bool, mut load: L) -> StoreResult<Page<T>>
+    where T: Stored, F: Field, L: FnMut(K) -> R, R: Future<Output = StoreResult<Option<T>>> {
         let mut items = Vec::new();
-        let mut remaining = query::ordered_after(candidates, query).peekable();
-        while let Some((key, candidate)) = remaining.next() {
-            if let Some(filter) = &query.filter {
-                match document(&candidate)? {
-                    Some(serialized) if filter.matches(&serialized) => {}
-                    _ => continue,
-                }
-            }
+        let mut remaining = query::ordered_after(keys, query).peekable();
+        while let Some((key, found_by)) = remaining.next() {
+            let Some(candidate) = load(found_by).await? else { continue };
             let readable = match deleted {
                 true => self.readable_deleted(&candidate, kind).await,
                 false => self.readable(&candidate, kind).await,
@@ -370,6 +367,28 @@ mod tests {
             security_attributes: contributors.into_iter().fold(SecurityAttributes::owned_by(owner), |a, c| a.granting(crate::security::Subject::Actor(c), crate::security::Grant::Read)),
             deleted: None,
         }
+    }
+
+    /// A page loads an entity only when it is its turn, and nothing after
+    /// its limit (issue 293): what the caller may not read is loaded and
+    /// passed over, what follows the last one is only seen to exist.
+    #[tokio::test]
+    async fn a_page_loads_nothing_after_its_limit() {
+        let (alice, alice_ctx) = user();
+        let (carol, _) = user();
+        let sessions = [session(carol, Vec::new()), session(alice, Vec::new()), session(alice, Vec::new()), session(alice, Vec::new())];
+        let keys: Vec<(String, usize)> = ["a", "b", "c", "d"].into_iter().map(String::from).zip(0..).collect();
+        let mut loaded = Vec::new();
+        let page = super::Access::new(&OwnersAndContributors, &alice_ctx)
+            .page(keys, &Query::<crate::store::query::NoField>::all().limited(2), &super::SESSIONS, false, |n: usize| {
+                loaded.push(n);
+                std::future::ready(Ok(Some(sessions[n].clone())))
+            })
+            .await
+            .unwrap();
+        assert_eq!(page.items.iter().map(|s| s.id).collect::<Vec<_>>(), [sessions[1].id, sessions[2].id]);
+        assert_eq!(page.next.as_ref().map(|cursor| cursor.as_str()), Some("c"));
+        assert_eq!(loaded, [0, 1, 2], "carol's is loaded and passed over, the last is never loaded");
     }
 
     #[tokio::test]

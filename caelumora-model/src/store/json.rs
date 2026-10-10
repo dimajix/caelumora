@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex, MutexGuard};
-use crate::store::query::{Field, NoField, Page, Query};
+use crate::store::query::{Field, Filter, NoField, Page, Query};
 use crate::artifact::ArtifactField;
 use crate::channel::ChannelField;
 use crate::scope::ScopeField;
@@ -265,11 +265,13 @@ fn require_entity<T>(value: Option<T>, entity: &'static str, id: String) -> Stor
     value.ok_or(StoreError::NotFound { entity, id })
 }
 
-/// Every `*.json` file in `dir`, each with its key - the file's name
-/// without `.json`; temporary files of writes in progress, or left behind by
-/// a crash, are not among them.
-async fn read_all_from_dir<T: DeserializeOwned>(dir: &Path) -> StoreResult<Vec<(String, T)>> {
-    let mut values = Vec::new();
+/// The documents in `dir` - every `*.json` file -, each with its key, the
+/// file's name without `.json`, and its path; temporary files of writes in
+/// progress, or left behind by a crash, are not among them. Only the
+/// directory is read: a document is read when it is its turn
+/// (`read_meeting`).
+async fn documents_in_dir(dir: &Path) -> StoreResult<Vec<(String, PathBuf)>> {
+    let mut documents = Vec::new();
     let mut entries = tokio::fs::read_dir(dir).await.map_err(to_backend_error)?;
     loop {
         let path = match entries.next_entry().await {
@@ -286,33 +288,34 @@ async fn read_all_from_dir<T: DeserializeOwned>(dir: &Path) -> StoreResult<Vec<(
         }
 
         let key = path.file_stem().and_then(|stem| stem.to_str()).unwrap_or_default().to_string();
-        match read_json_opt(&path).await {
-            Ok(Some(value)) => values.push((key, value)),
-            Ok(None) => {}
-            Err(err) => {
-                warn!("Failed to read JSON file {:?}: {}", path, err);
-            }
-        }
+        documents.push((key, path));
     }
-    Ok(values)
+    Ok(documents)
 }
 
-/// The documents in `dir` that meet the filter of `query`, each read as
-/// JSON and judged so before it is read as a `T`, with its key - the name of
-/// its file -, and the query with its filter taken: what remains for
-/// `query::page` to apply.
-async fn matching_in_dir<T: DeserializeOwned, F: Field>(dir: &Path, query: &Query<F>) -> StoreResult<(Vec<(String, T)>, Query<F>)> {
-    let mut matching = Vec::new();
-    for (key, document) in read_all_from_dir::<serde_json::Value>(dir).await? {
-        if query.filter.as_ref().is_some_and(|filter| !filter.matches(&document)) {
-            continue;
+/// The document at `path` as a `T`, if it meets `filter` - judged on it as
+/// JSON, before it is read as its type. `None` as well if it is gone,
+/// deleted since its directory was read, or cannot be read, which is
+/// logged: one broken document does not break a list.
+async fn read_meeting<T: DeserializeOwned, F: Field>(path: PathBuf, filter: Option<&Filter<F>>) -> StoreResult<Option<T>> {
+    let document = match read_json_opt::<serde_json::Value>(&path).await {
+        Ok(Some(document)) => document,
+        Ok(None) => return Ok(None),
+        Err(err) => {
+            warn!("Failed to read JSON file {:?}: {}", path, err);
+            return Ok(None);
         }
-        match serde_json::from_value::<T>(document) {
-            Ok(value) => matching.push((key, value)),
-            Err(err) => warn!("Failed to read the document {} in {:?}: {}", key, dir, err),
+    };
+    if filter.is_some_and(|filter| !filter.matches(&document)) {
+        return Ok(None);
+    }
+    match serde_json::from_value::<T>(document) {
+        Ok(value) => Ok(Some(value)),
+        Err(err) => {
+            warn!("Failed to read the document {:?}: {}", path, err);
+            Ok(None)
         }
     }
-    Ok((matching, Query { filter: None, ..query.clone() }))
 }
 
 async fn delete_if_exists(path: &Path) -> StoreResult<bool> {
@@ -417,8 +420,12 @@ fn dir_of(path: &Path) -> StoreResult<PathBuf> {
 
 /// Refuses `value` if another document in `dir` has its name (issue 250).
 async fn name_free_in<T: Stored + Scoped + DeserializeOwned>(dir: &Path, value: &T, kind: &Actions) -> StoreResult<()> {
-    let others: Vec<T> = read_all_from_dir::<T>(dir).await?.into_iter().map(|(_, other)| other).collect();
-    name_free(value, &others, kind)
+    for (_, path) in documents_in_dir(dir).await? {
+        if let Some(other) = read_meeting::<T, NoField>(path, None).await? {
+            name_free(value, [&other], kind)?;
+        }
+    }
+    Ok(())
 }
 
 /// The operations of every kind (issues 93, 164), each document a file at
@@ -556,15 +563,15 @@ impl JsonFileStore {
     async fn list_deleted_dir<T: Deletable + DeserializeOwned + Send, F: Field>(&self, ctx: &SecurityContext, kind: &Actions, dir: PathBuf, query: &Query<F>) -> StoreResult<Page<T>> {
         let access = self.access(ctx);
         access.allow(kind.list).await?;
-        let (candidates, unfiltered) = matching_in_dir::<T, F>(&dir, query).await?;
-        access.page(candidates, &unfiltered, kind, true, |_: &T| Ok(None)).await
+        let filter = query.filter.as_ref();
+        access.page(documents_in_dir(&dir).await?, query, kind, true, |path| read_meeting::<T, F>(path, filter)).await
     }
 
     async fn list_dir<T: Stored + DeserializeOwned + Send, F: Field>(&self, ctx: &SecurityContext, kind: &Actions, dir: PathBuf, query: &Query<F>) -> StoreResult<Page<T>> {
         let access = self.access(ctx);
         access.allow(kind.list).await?;
-        let (candidates, unfiltered) = matching_in_dir::<T, F>(&dir, query).await?;
-        access.page(candidates, &unfiltered, kind, false, |_: &T| Ok(None)).await
+        let filter = query.filter.as_ref();
+        access.page(documents_in_dir(&dir).await?, query, kind, false, |path| read_meeting::<T, F>(path, filter)).await
     }
 
     /// The one of `name`, in exactly its scope, among those listed.

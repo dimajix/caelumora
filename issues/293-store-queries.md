@@ -131,3 +131,8 @@ instead of a method per question.
     are lookups by name.
   - The store suite runs queries by scope, by a channel's session and by a participant on both
     stores.
+- **2026-10-10** — At the maintainer's request, a list no longer reads every document before it
+  filters: both stores hand `Access::page` the keys of a kind - the JSON store the names of the
+  files, without reading one - and a function that reads one entity, judged against the filter,
+  only when it is its turn; what follows the limit is not read. A test shows a page loading what
+  it passes over and nothing after its limit.

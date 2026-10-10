@@ -165,6 +165,7 @@ pub struct Page<T> {
 
 /// `candidates` in the order of their keys, from after the cursor of
 /// `query` on - what a list goes through, one by one, until its limit.
+/// Each key comes with what the entity is found by.
 pub(crate) fn ordered_after<T, F: Field>(mut candidates: Vec<(String, T)>, query: &Query<F>) -> impl Iterator<Item = (String, T)> {
     candidates.sort_by(|(l, _), (r, _)| l.cmp(r));
     let start = match &query.after {
@@ -174,9 +175,16 @@ pub(crate) fn ordered_after<T, F: Field>(mut candidates: Vec<(String, T)>, query
     candidates.into_iter().skip(start)
 }
 
-/// `value` serialized, for a filter to be evaluated on.
-pub(crate) fn serialized<T: Serialize>(value: &T) -> StoreResult<Option<Value>> {
-    json(value).map(Some)
+/// `value`, if it meets `filter`, judged on it serialized - for a store
+/// that holds its entities as values, not as documents.
+///
+/// # Errors
+/// `StoreError::Validation` if `value` cannot be serialized.
+pub(crate) fn meeting<T: Serialize, F: Field>(value: T, filter: Option<&Filter<F>>) -> StoreResult<Option<T>> {
+    match filter {
+        None => Ok(Some(value)),
+        Some(filter) => Ok(filter.matches(&json(&value)?).then_some(value)),
+    }
 }
 
 #[cfg(test)]

@@ -18,7 +18,8 @@ use crate::skill::{Skill, SkillId};
 use crate::artifact::{Artifact, ArtifactId};
 use std::fmt::Display;
 use std::hash::Hash;
-use crate::store::query::{self, Field, NoField, Page, Query};
+use crate::store::query::{self, Field, Filter, NoField, Page, Query};
+use std::future::ready;
 use serde::Serialize;
 use crate::artifact::ArtifactField;
 use crate::channel::ChannelField;
@@ -236,29 +237,41 @@ impl MemoryStore {
         self.access(ctx).read_deleted(found, kind, key.to_string()).await
     }
 
-    /// Every entity of `map` with its key, in no order.
-    fn keyed<K, T>(&self, map: &RwLock<HashMap<K, T>>) -> Vec<(String, T)>
-    where K: Display, T: Clone {
-        self.read_lock(map, |v| v.iter().map(|(key, value)| (key.to_string(), value.clone())).collect())
+    /// The keys of `map`, each as it orders a list and as it finds the
+    /// entity, in no order.
+    fn keys<K, T>(&self, map: &RwLock<HashMap<K, T>>) -> Vec<(String, K)>
+    where K: Display + Clone {
+        self.read_lock(map, |v| v.keys().map(|key| (key.to_string(), key.clone())).collect())
+    }
+
+    /// The entity of `key` in `map`, if it is there and meets `filter`.
+    fn meeting_in<K, T, F>(&self, map: &RwLock<HashMap<K, T>>, key: &K, filter: Option<&Filter<F>>) -> StoreResult<Option<T>>
+    where K: Eq + Hash, T: Serialize + Clone, F: Field {
+        match self.read_lock(map, |v| v.get(key).cloned()) {
+            Some(value) => query::meeting(value, filter),
+            None => Ok(None),
+        }
     }
 
     async fn list_deleted_in<K, T, F>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, query: &Query<F>) -> StoreResult<Page<T>>
-    where K: Eq + Hash + Display + Send + Sync, T: Deletable + Serialize + Clone + Send + Sync, F: Field {
+    where K: Eq + Hash + Display + Clone + Send + Sync, T: Deletable + Serialize + Clone + Send + Sync, F: Field {
         let access = self.access(ctx);
         access.allow(kind.list).await?;
-        access.page(self.keyed(map), query, kind, true, query::serialized).await
+        let filter = query.filter.as_ref();
+        access.page(self.keys(map), query, kind, true, |key: K| ready(self.meeting_in(map, &key, filter))).await
     }
 
     async fn list_in<K, T, F>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, query: &Query<F>) -> StoreResult<Page<T>>
-    where K: Eq + Hash + Display + Send + Sync, T: Stored + Serialize + Clone + Send + Sync, F: Field {
+    where K: Eq + Hash + Display + Clone + Send + Sync, T: Stored + Serialize + Clone + Send + Sync, F: Field {
         let access = self.access(ctx);
         access.allow(kind.list).await?;
-        access.page(self.keyed(map), query, kind, false, query::serialized).await
+        let filter = query.filter.as_ref();
+        access.page(self.keys(map), query, kind, false, |key: K| ready(self.meeting_in(map, &key, filter))).await
     }
 
     /// The one of `name`, in exactly its scope, among those listed.
     async fn find_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, name: &ScopedName) -> StoreResult<T>
-    where K: Eq + Hash + Display + Send + Sync, T: Stored + Scoped + Serialize + Clone + Send + Sync {
+    where K: Eq + Hash + Display + Clone + Send + Sync, T: Stored + Scoped + Serialize + Clone + Send + Sync {
         let all = self.list_in(ctx, map, kind, &Query::<NoField>::all()).await?.items;
         require_entity(all.into_iter().find(|d| d.scoped_name() == *name), kind.entity.name(), name.to_string())
     }
