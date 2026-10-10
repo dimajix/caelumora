@@ -1,6 +1,6 @@
 # 292 — A list of what a user may read is made by reading everything
 
-**Status:** open
+**Status:** done
 **Area:** Persistence
 
 ## The problem
@@ -13,9 +13,10 @@ a file read per entity, with any store a policy question per entity - and since 
 
 Artifacts make it worst, because there can be hundreds of thousands of them:
 
-- `ArtifactManager::published_in` - what was published in a channel, `GET …/channels/{cid}/artifacts`
-  - reads every artifact in the system's name and keeps those with a version published there
-  (since issue 271), then asks per version whether the viewer may read it (since 23, step 3).
+- `ArtifactManager::published_in` - what was published in a channel,
+  `GET …/channels/{cid}/artifacts` - reads every artifact in the system's name and keeps those
+  with a version published there (since issue 271), then asks per version whether the viewer may
+  read it (since 23, step 3).
 - `ArtifactManager::all_readable` - the user's list, `GET /artifacts` - reads every artifact in the
   system's name and asks per artifact and per version. It cannot ask the store with the user's
   context: the store's check knows the artifact's own list, not those of its versions, and would
@@ -73,3 +74,18 @@ The manager keeps the operations: publishing, keeping, describing, sharing, dele
 - **2026-10-10** — Opened at the maintainer's request, reviewing issue 23: `list_artifacts` may
   return hundreds of thousands of artifacts, and `published_in` and `all_readable` read them all
   in the system's name; reading belongs into the views besides.
+- **2026-10-10** — Step 2 - queries instead of scans - went to issue [293](293-store-queries.md),
+  opened at the maintainer's request: one declarative condition and a limit for every list,
+  rather than methods of their own for artifacts by place and by subject.
+- **2026-10-10** — Step 1 done, branch `issue-292-store-lists`, without a change in who may read
+  what - the security suite passes as it was: what a viewer may read of artifacts is decided in
+  the views (`Views::artifacts`, `Views::artifact` and `ChannelView::artifacts`, by
+  `Views::readable_artifact`), which hand out an `ArtifactView` holding the versions the viewer
+  may read; its `content` hands out those alone, read by the manager without asking
+  (`ArtifactManager::content_of`), as `WorkspaceManager::terminal` does. The manager's
+  `readable`, `reached`, `all_readable`, `published_in` and `content` are gone; it carries out
+  publishing, keeping, describing, sharing and deleting. One answer changed, aligned with
+  workspaces: an artifact whose classification the viewer is not cleared for is not there for
+  them (`404 artifact_not_found`), where its download answered `403 not_cleared`
+  (`ArtifactError::NotCleared` is gone). The lists still read every artifact; that is 293's.
+  Closed with step 1: what remains of *Done when* - the queries - is 293's.

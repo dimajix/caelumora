@@ -31,7 +31,6 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::digest::ContentDigest;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::scope::{Scope, Scoped};
-use caelumora_model::role::user_roles;
 use caelumora_model::security::{AccessQuestions, AclEntry, ActionType, Enforcement, Grant, Membership, SecurityAttributes, SecurityContext, SecurityManager, Subject};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResultExt};
@@ -54,8 +53,6 @@ pub enum ArtifactError {
     NotFound(ArtifactId),
     #[error("no version {version} of artifact {artifact}")]
     VersionNotFound { artifact: ArtifactId, version: u32 },
-    #[error("you are not cleared for the classification of the artifact")]
-    NotCleared,
     #[error("no storage of artifacts is configured")]
     NotConfigured,
     #[error("the storage '{0}' of artifacts is not configured")]
@@ -271,89 +268,17 @@ impl ArtifactManager {
         }
     }
 
-    /// `artifact` with the versions `ctx` may read (issue 23) - all of them
-    /// where the artifact's own list grants it, otherwise those whose own
-    /// list does -, if any.
-    pub(crate) async fn readable(&self, ctx: &SecurityContext, mut artifact: Artifact) -> Option<Artifact> {
-        if self.security.may_read_artifact(ctx, &artifact.security_attributes).await {
-            return Some(artifact);
-        }
-        let mut readable = Vec::with_capacity(artifact.versions.len());
-        for version in std::mem::take(&mut artifact.versions) {
-            if self.security.may_read_artifact(ctx, &artifact.version_attributes(&version)).await {
-                readable.push(version);
-            }
-        }
-        artifact.versions = readable;
-        (!artifact.versions.is_empty()).then_some(artifact)
-    }
-
-    /// Artifact `id` with the versions `ctx` may read, wherever they act
-    /// (issue 23), read in the runtime's name and asked of it here.
+    /// The content of version `number` of `artifact`, with its size -
+    /// asking nothing: whoever reaches the artifact decided who may
+    /// (`ArtifactView::content`, issue 292).
     ///
     /// # Errors
-    /// `NotFound` if there is none they may read anything of, or whatever
-    /// the store reports.
-    pub async fn reached(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<Artifact> {
-        let artifact = self.entities.get_artifact(&SecurityContext::system(), id).await.map_err(store_error(id))?;
-        self.readable(ctx, artifact).await.ok_or(ArtifactError::NotFound(id))
-    }
-
-    /// The content of version `number` of artifact `id`, read by whom the
-    /// artifact's list or the version's grants it (`GetArtifact`, issue 23),
-    /// wherever they act and cleared for its classification.
-    ///
-    /// # Errors
-    /// `NotFound` if there is no artifact they may read anything of,
-    /// `VersionNotFound` if they may not read that version or it does not
-    /// exist, `NotCleared`, `UnknownStorage`, or `Unavailable`.
-    pub async fn content(&self, ctx: &SecurityContext, id: ArtifactId, number: u32) -> ArtifactResult<(Artifact, u64, ByteStream)> {
-        let artifact = self.reached(ctx, id).await?;
+    /// `VersionNotFound`, `UnknownStorage`, or `Unavailable`.
+    pub(crate) async fn content_of(&self, artifact: &Artifact, number: u32) -> ArtifactResult<(u64, ByteStream)> {
         if artifact.version(number).is_none() {
-            return Err(ArtifactError::VersionNotFound { artifact: id, version: number });
+            return Err(ArtifactError::VersionNotFound { artifact: artifact.id, version: number });
         }
-        let roles = user_roles(self.entities.as_ref(), ctx.principal_id).await?;
-        if !self.security.may_see_channel(ctx, &roles, &artifact.classification).await {
-            return Err(ArtifactError::NotCleared);
-        }
-        let (size, content) = self.storage(&artifact.storage)?.get(artifact.id, number).await?;
-        Ok((artifact, size, content))
-    }
-
-    /// The artifacts with a version published in `channel` of `session`,
-    /// each with those versions alone that `ctx` may read.
-    ///
-    /// # Errors
-    /// Whatever the store reports.
-    pub(crate) async fn published_in(&self, ctx: &SecurityContext, session: SessionId, channel: ChannelId) -> ArtifactResult<Vec<Artifact>> {
-        let all = self.entities.list_artifacts(&SecurityContext::system()).await?;
-        let mut published = Vec::new();
-        for mut artifact in all {
-            artifact.versions.retain(|version| version.session_id == session && version.channel_id == channel);
-            if artifact.versions.is_empty() {
-                continue;
-            }
-            if let Some(readable) = self.readable(ctx, artifact).await {
-                published.push(readable);
-            }
-        }
-        Ok(published)
-    }
-
-    /// Every artifact `ctx` may read anything of (issue 23), each with the
-    /// versions they may read.
-    ///
-    /// # Errors
-    /// Whatever the store reports.
-    pub(crate) async fn all_readable(&self, ctx: &SecurityContext) -> ArtifactResult<Vec<Artifact>> {
-        let all = self.entities.list_artifacts(&SecurityContext::system()).await?;
-        let mut readable = Vec::new();
-        for artifact in all {
-            if let Some(artifact) = self.readable(ctx, artifact).await {
-                readable.push(artifact);
-            }
-        }
-        Ok(readable)
+        self.storage(&artifact.storage)?.get(artifact.id, number).await
     }
 
     /// Gives artifact `id` the access list `acl` for the whole of it (issue

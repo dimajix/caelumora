@@ -33,7 +33,11 @@ pub async fn list_artifacts(State(state): State<Arc<AppState>>, Query(options): 
     }
     let artifacts = views.artifacts().await
         .map_err(|e| ApiError::from_runtime(e.into(), Subject::Artifact, "listing the artifacts"))?;
-    Ok(Json(artifacts.into_iter().map(ArtifactResponse::from).collect::<Vec<_>>()).into_response())
+    let mut listed = Vec::with_capacity(artifacts.len());
+    for artifact in artifacts {
+        listed.push(ArtifactResponse::from(artifact.snapshot().await));
+    }
+    Ok(Json(listed).into_response())
 }
 
 /// Artifact `id`, with the versions the user may read.
@@ -45,9 +49,11 @@ pub async fn get_artifact(State(state): State<Arc<AppState>>, Path(id): Path<Uui
 /// lets read it (issue 23).
 pub async fn download_version(State(state): State<Arc<AppState>>, Path((id, number)): Path<(Uuid, u32)>, user: AuthenticatedUser) -> Result<Response, ApiError> {
     let id = ArtifactId(id);
-    let (artifact, size, content) = state.runtime_manager.artifact_manager().content(&user.security_context(), id, number).await
+    let artifact = crate::routes::views(&state, &user).artifact(id).await
+        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Artifact, &format!("reading artifact {id}")))?;
+    let (size, content) = artifact.content(number).await
         .map_err(|e| failed(e, &format!("reading version {number} of artifact {id}")))?;
-    Ok(crate::routes::attachment_response(size, content, artifact.name.as_str()))
+    Ok(crate::routes::attachment_response(size, content, artifact.artifact().name.as_str()))
 }
 
 /// Keeps the artifact beyond its session, in the user's scope or the
@@ -104,8 +110,13 @@ pub async fn purge_artifact(State(state): State<Arc<AppState>>, Path(id): Path<U
 /// versions, as a reader of the channel sees them.
 pub async fn channel_artifacts(State(state): State<Arc<AppState>>, Path((id, cid)): Path<(Uuid, Uuid)>, user: AuthenticatedUser) -> Result<Json<Vec<ArtifactResponse>>, ApiError> {
     let channel = crate::routes::channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let artifacts = channel.artifacts().await.map_err(|e| failed(e, "listing the channel's artifacts"))?;
-    Ok(Json(artifacts.into_iter().map(ArtifactResponse::from).collect()))
+    let artifacts = channel.artifacts().await
+        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Artifact, "listing the channel's artifacts"))?;
+    let mut listed = Vec::with_capacity(artifacts.len());
+    for artifact in artifacts {
+        listed.push(ArtifactResponse::from(artifact.snapshot().await));
+    }
+    Ok(Json(listed))
 }
 
 /// Gives the artifact the access list in the body for the whole of it
@@ -122,5 +133,5 @@ pub async fn set_access(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>
 async fn owned(state: &Arc<AppState>, user: &AuthenticatedUser, id: ArtifactId) -> Result<ArtifactResponse, ApiError> {
     let artifact = crate::routes::views(state, user).artifact(id).await
         .map_err(|e| ApiError::from_runtime(e.into(), Subject::Artifact, &format!("reading artifact {id}")))?;
-    Ok(ArtifactResponse::from(artifact))
+    Ok(ArtifactResponse::from(artifact.snapshot().await))
 }

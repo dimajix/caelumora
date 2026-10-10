@@ -68,13 +68,14 @@ Decisions that cost an hour and close an issue are listed under [D](#d-questiona
 | [282](282-message-attachments.md) | A user attaches images to a message; the model that can see is given them, the one that cannot is told. | Decided in part: what is stored refers, the copies the model is given carry the content, fetched by the turn through a cache. Open: whether an attachment is part of its message or a file of the user's, as an artifact - which artifacts' lists, and those of their versions, would then decide who reads it. |
 | [289](289-attach-compares-access.md) | Attaching a workspace compares its access list with the session's: no entry for the session where the list reaches its members already. | Spares lists of single sessions; needs the session's admission rule (221) for a comparison by subjects. |
 | [291](291-share-artifacts-in-the-web-ui.md) | A page of an artifact in the web UI: its versions, and for its owner whom it and its versions are shared with. | Sharing is REST alone until then; the workspace page's `AccessList` is the pattern. |
+| [293](293-store-queries.md) | Store lists take a declarative condition, an order, a limit and a cursor; the policy's access becomes part of the query in a second phase. | The artifacts' lists read every artifact today. At least its first phase before 291 lists artifacts in the web UI. |
 | - | A diff presentation for write calls (a `ToolPresentation` of its own). | No issue yet; worth one. |
 
 **Deliberately not in the first release:** converting formats (PDF, office documents) to text,
 images for models that see.
 
 Order: decide **169** and the small part of **20** → **247** → **256** → **282** → **208**; **254**
-and **291** alongside; **289** after 221; **272** when wanted.
+alongside; **293** (phase 1), then **291**; **289** after 221; **272** when wanted.
 
 ### B2. Sessions that last: context and memory
 
@@ -158,7 +159,7 @@ Each milestone leaves the system usable; decisions come before the code that dep
 2.  **A team can log in, and a session can change.** 25 with the remainders of 10 and 142; 07, the
     administrator's capabilities of 125; 221 with the admission rule; 227.
 3.  **Working on files, safely.** Decide 169 and the small part of 20; refactor
-    `ToolProvider::execute` (226, first step); then 247, 256, 276, 282, 208, 290, 291; 254
+    `ToolProvider::execute` (226, first step); then 247, 256, 276, 282, 208, 290, 293, 291; 254
     alongside; 289 after 221.
 4.  **Sessions that last.** 284, 58; 126. If reading files hits the context window earlier, 284
     moves into milestone 3.
@@ -187,7 +188,7 @@ The plan stands on assumptions the maintainer should confirm or correct:
 | Section | Issues |
 |---|---|
 | A - small | 07, 218, 223, 283 |
-| B1 - workspace | 20 (part), 169, 208, 247, 254, 256, 272, 282, 289, 291 |
+| B1 - workspace | 20 (part), 169, 208, 247, 254, 256, 272, 282, 289, 291, 293 |
 | B2 - context and memory | 55, 58, 65, 166, 169, 284 |
 | B3 - tools | 126, 226, 276, 290 |
 | B4 - sessions and team | 07, 10, 25, 140, 142, 221, 227, 125 (part) |

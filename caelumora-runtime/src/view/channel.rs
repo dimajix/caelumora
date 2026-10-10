@@ -20,7 +20,7 @@ use caelumora_model::value::name::Name;
 use caelumora_model::note::Note;
 use caelumora_model::removal::Removal;
 use caelumora_model::work::TurnId;
-use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Place};
+use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Place, SecurityContext};
 use caelumora_model::session::ChannelId;
 use caelumora_model::snapshot::{ChannelSnapshot, Detail, MemberSnapshot, PublishedNotes};
 use caelumora_model::store::StoreError;
@@ -84,16 +84,26 @@ impl ChannelView {
     ///
     /// # Errors
     /// What the artifacts' manager reports.
-    pub async fn artifacts(&self) -> crate::artifact::ArtifactResult<Vec<caelumora_model::snapshot::ArtifactSnapshot>> {
+    pub async fn artifacts(&self) -> ViewResult<Vec<super::ArtifactView>> {
         if self.readable != Readable::Whole {
             return Ok(Vec::new());
         }
-        let published = self.views().artifact_manager().published_in(self.views().context(), self.session.id(), self.channel.id).await?;
-        let mut snapshots = Vec::with_capacity(published.len());
-        for artifact in published {
-            snapshots.push(self.views().artifact_snapshot(artifact).await);
+        // Every artifact is read - issue 293 is to ask the store for those
+        // published here alone.
+        let all = self.views().entities().list_artifacts(&SecurityContext::system()).await
+            .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context("listing the artifacts")))?;
+        let (session, channel) = (self.session.id(), self.channel.id);
+        let mut published = Vec::new();
+        for mut artifact in all {
+            artifact.versions.retain(|version| version.session_id == session && version.channel_id == channel);
+            if artifact.versions.is_empty() {
+                continue;
+            }
+            if let Some(view) = self.views().readable_artifact(artifact).await {
+                published.push(view);
+            }
         }
-        Ok(snapshots)
+        Ok(published)
     }
 
     pub fn id(&self) -> ChannelId {

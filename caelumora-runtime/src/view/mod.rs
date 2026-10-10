@@ -25,6 +25,7 @@
 //! for a client that lists and offers: the node's data with its questions
 //! answered at one moment.
 
+mod artifact;
 mod channel;
 mod context;
 mod member;
@@ -32,6 +33,7 @@ mod session;
 mod skill;
 mod workspace;
 
+pub use artifact::ArtifactView;
 pub use channel::{ChannelView, MemberView};
 pub use context::{AgentContextView, ContextError};
 pub use session::{PrivateNotesElsewhere, SessionView};
@@ -48,7 +50,7 @@ use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::removal::Removal;
 use caelumora_model::security::{AccessQuestions, Place, SecurityContext, SecurityManager};
 use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::snapshot::{AgentSnapshot, ArtifactSnapshot, DeletedSnapshot};
+use caelumora_model::snapshot::{AgentSnapshot, DeletedSnapshot};
 use caelumora_model::workspace::WorkspaceId;
 use caelumora_model::skill::SkillId;
 use caelumora_model::scope::{found_from, Scope, Scoped};
@@ -412,49 +414,57 @@ impl Views {
     /// The artifacts the viewer may read anything of (issues 271, 23) -
     /// their own and those shared with them, by the artifact's list or a
     /// version's - and is cleared for, each with the versions they may
-    /// read.
+    /// read. Read in the runtime's name and asked here: the store's own
+    /// check knows the artifact's list, not those of its versions. Every
+    /// artifact is read - issue 293 is to ask the store for fewer.
     ///
     /// # Errors
     /// `Failed` if the store cannot list them.
-    pub async fn artifacts(&self) -> ViewResult<Vec<ArtifactSnapshot>> {
-        let artifacts = self.artifact_manager().all_readable(self.viewer.context()).await
+    pub async fn artifacts(&self) -> ViewResult<Vec<ArtifactView>> {
+        let artifacts = self.entities.list_artifacts(&SecurityContext::system()).await
             .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context("listing the artifacts")))?;
-        let mut snapshots = Vec::with_capacity(artifacts.len());
+        let mut readable = Vec::new();
         for artifact in artifacts {
-            if self.cleared_for(&artifact.classification).await {
-                snapshots.push(self.artifact_snapshot(artifact).await);
+            if let Some(view) = self.readable_artifact(artifact).await {
+                readable.push(view);
             }
         }
-        Ok(snapshots)
+        Ok(readable)
     }
 
-    /// Artifact `id`, if the viewer may read it (`GetArtifact`): its owner.
+    /// Artifact `id`, with the versions the viewer may read, if they may
+    /// read any and are cleared for it (issues 271, 23).
     ///
     /// # Errors
-    /// `ArtifactNotFound` if there is none they may read.
-    pub async fn artifact(&self, id: caelumora_model::artifact::ArtifactId) -> ViewResult<ArtifactSnapshot> {
-        match self.artifact_manager().reached(self.viewer.context(), id).await {
-            Ok(artifact) if self.cleared_for(&artifact.classification).await => Ok(self.artifact_snapshot(artifact).await),
-            Ok(_) | Err(crate::artifact::ArtifactError::NotFound(_)) => Err(ViewError::ArtifactNotFound(id)),
-            Err(e) => Err(ViewError::Failed(anyhow::Error::new(e).context("reading an artifact"))),
+    /// `ArtifactNotFound` if they may read nothing of it - one they are not
+    /// cleared for is the same -; `Failed` if the store cannot read it.
+    pub async fn artifact(&self, id: caelumora_model::artifact::ArtifactId) -> ViewResult<ArtifactView> {
+        let found = self.entities.get_artifact(&SecurityContext::system(), id).await.optional()
+            .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context("reading an artifact")))?;
+        match found {
+            Some(artifact) => self.readable_artifact(artifact).await.ok_or(ViewError::ArtifactNotFound(id)),
+            None => Err(ViewError::ArtifactNotFound(id)),
         }
     }
 
-    /// `artifact` as the viewer sees it - with the versions they may read,
-    /// as it is handed here -: whether they may change it or add to it, and
-    /// for its owner whom it and its versions are shared with.
-    pub(crate) async fn artifact_snapshot(&self, artifact: caelumora_model::artifact::Artifact) -> ArtifactSnapshot {
+    /// `artifact` with the versions the viewer may read - all of them where
+    /// the artifact's own list grants it, otherwise those whose own list
+    /// does (issue 23) -, if any and if they are cleared for it.
+    pub(super) async fn readable_artifact(&self, mut artifact: caelumora_model::artifact::Artifact) -> Option<ArtifactView> {
         let context = self.viewer.context();
-        let can_change = self.security.may_change_artifact(context, &artifact.security_attributes).await;
-        let can_write = self.security.may_write_artifact(context, &artifact.security_attributes).await;
-        let (mut access, mut version_access) = (Vec::new(), std::collections::BTreeMap::new());
-        if can_change {
-            access = self.access_snapshots(&artifact.security_attributes.acl).await;
-            for version in &artifact.versions {
-                version_access.insert(version.number, self.access_snapshots(&version.acl).await);
+        if !self.security.may_read_artifact(context, &artifact.security_attributes).await {
+            let mut readable = Vec::with_capacity(artifact.versions.len());
+            for version in std::mem::take(&mut artifact.versions) {
+                if self.security.may_read_artifact(context, &artifact.version_attributes(&version)).await {
+                    readable.push(version);
+                }
             }
+            artifact.versions = readable;
         }
-        ArtifactSnapshot { artifact, can_change, can_write, access, version_access }
+        if artifact.versions.is_empty() || !self.cleared_for(&artifact.classification).await {
+            return None;
+        }
+        Some(ArtifactView::of(self.clone(), artifact))
     }
 
     /// The entries `acl` with whom each names called by name (issue 23),
