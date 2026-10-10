@@ -199,6 +199,7 @@ published before anyone else can take it.
 | [275](275-publish-file-without-approval.md) | done | `publish_file` asks for approval like the other file tools, though it changes nothing and gives the file to nobody who could not download it already. |
 | [276](276-interrupt-one-tool-call.md) | open | A tool call that hangs can be interrupted only by ending its whole turn or agent, not on its own so that the agent goes on with the turn. |
 | [281](281-tool-argument-visibility.md) | done | A tool's arguments share one visibility flag with its result, so a call cannot publish what it was asked and hide what it returned. |
+| [290](290-tools-offered-by-the-turn.md) | open | A model is offered every tool of its components in every turn, also those it may not call where it is - a workspace's tools where there is none, or where its list grants reading alone. |
 
 ## User interaction
 
