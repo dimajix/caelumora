@@ -103,6 +103,16 @@ pub(crate) trait Actor: Any + Debug + Send + Sync {
     /// model call without waiting for anything.
     fn cancel(&self) {}
 
+    /// Interrupts its tool call `call` of the turn `turn` alone (issue 276),
+    /// on behalf of `by`, called so, if that call runs or waits to run in
+    /// the turn under way, and returns whether it did: the call is answered
+    /// as interrupted and the turn goes on. Synchronous like `cancel`, and
+    /// like it the consequence of an act that was checked. An actor without
+    /// tool calls of its own keeps the default: it had no such call.
+    fn interrupt_tool_call(&self, _turn: TurnId, _call: &str, _by: String) -> bool {
+        false
+    }
+
     /// Its turn under way (issue 235), if it is in one that can still be
     /// ended. None for an actor without such turns - a user, an approver,
     /// an external agent, whose answers are its remote side's.

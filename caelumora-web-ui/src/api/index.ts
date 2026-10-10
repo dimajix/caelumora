@@ -438,6 +438,16 @@ export const api = {
     await ensureOk(res, 'Failed to stop the answer');
   },
 
+  /** Interrupts the tool call `callId` of agent `actorUuid` in its turn `turnId` alone; the turn goes on (issue 276). */
+  async interruptToolCall(sessionId: string, channelId: string, actorUuid: string, turnId: string, callId: string): Promise<void> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/participants/${actorUuid}/tool-calls/${encodeURIComponent(callId)}/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ turn_id: turnId }),
+    });
+    await ensureOk(res, 'Failed to interrupt the tool call');
+  },
+
   async cancelChannel(sessionId: string, channelId: string): Promise<void> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/cancel`, {
       method: 'POST',

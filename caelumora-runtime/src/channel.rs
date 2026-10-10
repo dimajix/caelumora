@@ -130,6 +130,10 @@ pub enum ChannelError {
     /// with nothing after it (issue 259).
     #[error("turn {turn} can be asked for again in channel {channel} neither as under way nor as the last one given up")]
     TurnNotRetryable { turn: TurnId, channel: ChannelId },
+    /// A tool call is interrupted on its own only while it runs or waits to
+    /// run in the turn under way (issue 276).
+    #[error("tool call {call} of turn {turn} does not run in channel {channel}")]
+    ToolCallNotRunning { call: String, turn: TurnId, channel: ChannelId },
     /// A participant not cleared for the channel's classification - to
     /// join it, or for the classification it would be raised to (issue
     /// 133).
@@ -871,6 +875,31 @@ impl ChannelLoop {
         self.actor_by_id(actor)
             .ok_or(ChannelError::NotAParticipant { participant: actor, channel: self.id })?
             .cancel();
+        Ok(())
+    }
+
+    /// Interrupts the tool call `call` of `actor`'s turn `turn` alone (issue
+    /// 276), on behalf of `context`'s initiator: the call is answered as
+    /// interrupted by them - or, not yet run, as not executed - and the turn
+    /// goes on. Under the permission to cancel the channel, as
+    /// `cancel_actor`: who may end a turn may end a part of it.
+    ///
+    /// # Errors
+    /// `ChannelError::Forbidden` if the `SecurityManager` refuses
+    /// `CancelChannel`, before anything of the actor is looked at;
+    /// `NotAParticipant` if `actor` is not in this channel;
+    /// `ToolCallNotRunning` if the call neither runs nor waits to run in
+    /// that turn, or the turn is not under way.
+    pub async fn interrupt_tool_call(&self, context: &SecurityContext, actor: ActorId, turn: TurnId, call: &str) -> Result<()> {
+        let channel = self.channel.load();
+        self.require(context, ActionType::CancelChannel(&channel.security_attributes), "cancelling").await?;
+        let actor = self.actor_by_id(actor)
+            .ok_or(ChannelError::NotAParticipant { participant: actor, channel: self.id })?;
+        // Named to the model as the channel knows them.
+        let by = self.actor_by_id(context.initiator_id).map_or_else(|| "A user".to_string(), |initiator| initiator.name().to_string());
+        if !actor.interrupt_tool_call(turn, call, by) {
+            return Err(ChannelError::ToolCallNotRunning { call: call.to_string(), turn, channel: self.id }.into());
+        }
         Ok(())
     }
 
@@ -3692,13 +3721,21 @@ mod tests {
     /// An agent whose model calls the `sleep` tool, which sleeps longer
     /// than any test waits, and would then say what it is never asked for.
     async fn with_an_agent_in_a_long_tool() -> (Stuck, Arc<Scripted>) {
+        with_an_agent_in_long_tools(&["1"]).await
+    }
+
+    /// An agent whose model calls a tool that sleeps a minute, once for
+    /// each of `calls`, by their ids, and then answers "never given".
+    async fn with_an_agent_in_long_tools(calls: &[&str]) -> (Stuck, Arc<Scripted>) {
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         use caelumora_model::message::MessageRole;
         use caelumora_model::tool::{ToolCall, ToolVisibility};
 
         let call = Message {
             role: MessageRole::Assistant,
-            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "sleep".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
+            tool_calls: calls.iter()
+                .map(|id| ToolCall { id: Some(id.to_string()), function_name: "sleep".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() })
+                .collect(),
             ..Message::new(Classification::CHANNEL_DEFAULT)
         };
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
@@ -3803,6 +3840,33 @@ mod tests {
         assert!(results[0].started_at.is_some(), "it ran");
         settled(&helper, ActorState::Idle).await;
         assert_eq!(model.0.lock().unwrap().len(), 1, "the second answer was never asked for");
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn a_tool_call_interrupted_alone_is_answered_so_and_the_turn_goes_on() {
+        use caelumora_model::tool::ToolResultStatus;
+
+        let (Stuck { channel, context, agent, mut events, running, .. }, model) = with_an_agent_in_long_tools(&["1", "2"]).await;
+        let turn = channel.turn_under_way(ActorId::Agent(agent)).expect("under way");
+        let not_running = |refused: Result<()>| matches!(refused.expect_err("refused").downcast_ref::<ChannelError>(), Some(ChannelError::ToolCallNotRunning { .. }));
+        assert!(not_running(channel.interrupt_tool_call(&context, ActorId::Agent(agent), TurnId::new(), "1").await), "not of another turn");
+        assert!(not_running(channel.interrupt_tool_call(&context, ActorId::Agent(agent), turn, "3").await), "no such call");
+
+        // The second call, still to run, first; then the one that runs.
+        channel.interrupt_tool_call(&context, ActorId::Agent(agent), turn, "2").await.expect("it waits to run");
+        channel.interrupt_tool_call(&context, ActorId::Agent(agent), turn, "1").await.expect("it runs");
+        assert!(not_running(channel.interrupt_tool_call(&context, ActorId::Agent(agent), turn, "1").await), "once");
+
+        let finished = answered(&mut events, agent).await;
+        let results: Vec<_> = finished.iter().flat_map(|m| m.tool_results.iter()).collect();
+        assert_eq!(results.iter().map(|r| r.status).collect::<Vec<_>>(), [ToolResultStatus::Interrupted, ToolResultStatus::NotExecuted], "{finished:?}");
+        assert!(results[0].started_at.is_some() && results[1].started_at.is_none(), "the first ran, the second never did");
+        let alice = channel.actor_by_id(context.initiator_id).expect("she takes part").name().to_string();
+        assert!(results.iter().all(|r| r.content.contains(&format!("{alice} interrupted this tool call"))), "the model is told who: {results:?}");
+        let said: Vec<_> = finished.iter().filter_map(|m| m.content.clone()).collect();
+        assert_eq!(said, ["never given"], "the turn goes on with the results");
+        assert_eq!(model.0.lock().unwrap().len(), 0, "the model was asked again");
         running.abort();
     }
 

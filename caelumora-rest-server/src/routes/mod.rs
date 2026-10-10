@@ -200,6 +200,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/sessions/{id}/channels/{cid}/participants/{aid}", get(channels::get_participant).delete(channels::remove_participant))
         .route("/sessions/{id}/channels/{cid}/participants/{aid}/cancel", post(channels::cancel_participant))
         .route("/sessions/{id}/channels/{cid}/participants/{aid}/retry", post(channels::retry_turn))
+        .route("/sessions/{id}/channels/{cid}/participants/{aid}/tool-calls/{call_id}/cancel", post(channels::interrupt_tool_call))
         .route(
             "/sessions/{id}/channels/{cid}/actors/{aid}/messages/{mid}/context",
             get(channels::message_context),

@@ -46,6 +46,7 @@ import type {
   QuestionRequest,
   QuestionResponse,
   TokenUsage,
+  ToolCall,
   UserResponse,
 } from '../types';
 import {NotesList} from './NotesList';
@@ -1049,6 +1050,28 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   };
 
   /**
+   * Whether the user may interrupt a call of `msg` alone (issue 276): one
+   * of its turn, while its agent runs tools and their `can_cancel` allows it.
+   * Only calls without a result show the offer.
+   */
+  const mayInterruptCallsOf = (msg: Message) => {
+    if (!msg.turn_id || !msg.sender_id) return false;
+    const sender = actorKey(msg.sender_id);
+    return members.some(m => actorKey(m.id) === sender && m.can_cancel && m.state === 'ExecutingTools');
+  };
+
+  /** Interrupts the call `call` of `msg` alone; the agent's turn goes on (issue 276). */
+  const interruptCall = async (msg: Message, call: ToolCall) => {
+    const uuid = msg.sender_id ? memberUuid(actorKey(msg.sender_id)) : undefined;
+    if (!uuid || !msg.turn_id || !call.id) return;
+    try {
+      await api.interruptToolCall(sessionId, channelId, uuid, msg.turn_id, call.id);
+    } catch (error) {
+      reportError('Failed to interrupt the tool call', error);
+    }
+  };
+
+  /**
    * Asks for another answer instead of `answer`, still under way (issue
    * 235): offered once its turn is known and where its answerer's
    * `can_retry` allows it (issue 242). Refused if the answer ended
@@ -1242,6 +1265,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
       filesVersion={workspaceVersion}
       artifacts={channelArtifacts}
       onSelectSkill={onSelectSkill}
+      onInterruptCall={mayInterruptCallsOf(msg) ? (call) => void interruptCall(msg, call) : undefined}
       badges={channel && msg.classification && !sameClassification(msg.classification, channel.classification)
         ? [`released: ${classificationLabel(msg.classification)}`]
         : undefined}

@@ -673,6 +673,31 @@ async fn cancelling_one_actor_is_for_whoever_may_cancel_the_channel() {
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
+/// Interrupting one tool call of an actor (issue 276) is cancelling a part
+/// of its turn, asked as cancelling one actor (S4): `CancelChannel` of the
+/// channel. Whoever may - bob as a participant - learns that no such call
+/// runs; who may not is refused before anything of the actor or its calls
+/// is looked at.
+#[tokio::test]
+async fn interrupting_one_tool_call_is_for_whoever_may_cancel_the_channel() {
+    let world = World::new().await;
+    let global = world.personality("global", None, &[]).await;
+    let helper = world.agent("helper", world.alice, &global).await;
+    let session = world.shared_session(&[helper], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let (bob, carol) = (World::as_user(world.bob), World::as_user(world.carol));
+    world.manager.open_session(&bob, session.id()).await.expect("he opens it");
+
+    let (permitted, asked) = world.asked(main.interrupt_tool_call(&bob, ActorId::Agent(helper), TurnId::new(), "1")).await;
+    assert!(matches!(permitted.expect_err("no call runs").downcast_ref::<ChannelError>(), Some(ChannelError::ToolCallNotRunning { .. })), "his to interrupt, but nothing runs");
+    assert_eq!(asked, checks(&["bob: CancelChannel(alice's) yes"]), "asked as cancelling the channel");
+
+    let (refused, asked) = world.asked(main.interrupt_tool_call(&carol, ActorId::Agent(helper), TurnId::new(), "1")).await;
+    assert!(denied(&refused.expect_err("not hers to interrupt")), "refused, not told whether the call runs");
+    assert_eq!(asked, checks(&["carol: CancelChannel(alice's) no"]));
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
 /// M1: a message is its author's to modify and to take back (issue 234) -
 /// not another participant's. Asked by the author's actor before it sends
 /// the change, and again by the channel as it admits it, with whether the

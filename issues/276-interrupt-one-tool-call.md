@@ -1,6 +1,6 @@
 # 276 — A tool call that hangs cannot be interrupted on its own, only with its turn
 
-**Status:** open
+**Status:** done
 **Area:** Tools and approvals
 
 ## The problem
@@ -112,3 +112,12 @@ Taken with the maintainer on 2026-10-10.
   the decisions above recorded. The example of a shell command under *The problem* holds only while
   `run_command` waits for it; for a command handed back as running, issue
   [294](294-user-ends-a-command.md) was opened.
+- 2026-10-10: Done. `ChannelLoop::interrupt_tool_call` (`CancelChannel`, in the security suite)
+  reaches the agent through `Actor::interrupt_tool_call`; its `RunControl` keeps, per call of the
+  step, where the name of whoever interrupts it goes (`begin_calls`, `interrupt_call`), and
+  `ToolExecutor::execute` waits on a future ending with an `Interruption` instead of the turn's
+  token. REST: `POST …/participants/{aid}/tool-calls/{call_id}/cancel` with `{turn_id}`,
+  `409 tool_call_not_running`; the web UI offers a stop icon at a call shown as "Executing" while
+  its agent runs tools. Different from the decision: the agent does not give calls without an id
+  one of its own - the Ollama client, the only one, already does (a UUID); a call without an id
+  would be answered as not running.

@@ -120,6 +120,19 @@ the call keeps when it started, so that it counts as having run - a turn given u
 and its result where they were said (issue 258) - and the model is told to check its effect
 before calling it again.
 
+A user may also interrupt one call alone and let the turn go on (issue 276, see
+[CHANNELS.md](CHANNELS.md#cancelling)). The executor does not wait on a token but on a future
+that ends with why the call is broken off (`Interruption`): the turn ended, or a user interrupted
+this call. The agent makes it from its `RunControl`, which, as a step of calls begins, keeps for
+every call with an id where the name of whoever interrupts it goes (`begin_calls`,
+`interrupt_call`), as long as the call runs or waits to run. A call interrupted while it runs is
+dropped as above and answered as `interrupted`, saying who interrupted it, after how long, and that
+the turn goes on; one interrupted before it runs is not run and is answered as `not_executed`.
+The other calls of the step run, and the model is asked again with the results. For a shell
+command, this reaches the command only while `run_command` waits for it
+([The workspace](#the-workspace)); one handed back as running is no call any more (issue
+[294](../issues/294-user-ends-a-command.md)).
+
 Dropping a future ends it: none of the tool's code runs after the `await` it stood at, and what the
 future holds - timers, sockets, open requests - is released. That is all the stopping a tool gets;
 it does not see the token, and there is no way yet for one to clean up otherwise. A tool therefore:
@@ -366,13 +379,14 @@ Every call ends with a result the model can act on (issue 15).
     `forbidden` (by policy - without the reason, which stays in the log), `timed_out` (no approval
     in time), `declined` (a user declined the call's questions), `invalid_arguments`, `failed` (with
     the tool's error), `not_executed` (the tool never ran: its turn ended first, or the server
-    restarted before it ran), `interrupted` (the tool ran, but its turn was cancelled or stopped
-    before it ended) and `unknown_tool` (with the tools that do exist).
+    restarted before it ran, or a user interrupted it before it ran), `interrupted` (the tool ran,
+    but its turn was cancelled or stopped, or a user interrupted it, before it ended) and
+    `unknown_tool` (with the tools that do exist).
 *   The same status is stored as `ToolCallResult::status`, so the UI and an audit trail can tell
     refusals and failures from results.
 *   The wording lives in `crate::tool` (`ToolError::to_result`, `denied_result`, `timed_out_result`,
     `declined_result`, `forbidden_result`, `abandoned_result`, `not_executed_result`,
-    `interrupted_result`).
+    `interrupted_result`, `skipped_result`, `Interruption`).
 *   No call is left without a result. A turn that ends while calls of its step have none - cancelled
     while waiting for an approval, given up - answers them as `not_executed`, saying why the turn
     ended, and says the tool message with the results of those that did run (`ToolCalls::abandon`,

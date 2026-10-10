@@ -563,6 +563,14 @@ but the channel does not become quiet: being quiet is the channel's state, not o
 others go on answering and are asked to respond as before, and the answer the cancelled turn is
 taken over with reaches everyone as any answer does - another agent may respond to it.
 
+`ChannelLoop::interrupt_tool_call` ends less: one tool call of an actor's turn, named by the turn
+and the call's id, while it runs or waits to run in its step (issue 276). The call is answered as
+interrupted by whoever asked - one not yet run as not executed - and the turn goes on with its next
+step, so that the model can deal with it. It is cancelling a part of a turn, under the same
+permission (`CancelChannel`), asked first, as for `cancel_actor`; a call that does not run (any
+more), or a turn that is not under way, is `ChannelError::ToolCallNotRunning`. See
+[TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md#running-tool-calls).
+
 ### Waking
 
 A quiet channel is woken in one of two ways:

@@ -297,6 +297,7 @@ impl ApiError {
                 ChannelError::MessageRevoked { .. } => return Self::conflict("message_revoked", detail),
                 ChannelError::NotAnAgentsMessage { .. } => return Self::conflict("not_an_agents_message", detail),
                 ChannelError::TurnNotRetryable { .. } => return Self::conflict("turn_not_retryable", detail),
+                ChannelError::ToolCallNotRunning { .. } => return Self::conflict("tool_call_not_running", detail),
                 ChannelError::NotCleared { .. } => return Self::forbidden("not_cleared", detail),
                 ChannelError::Question { reason: caelumora_model::question::QuestionError::NotOpen, .. } => return Self::not_found("question_not_found", detail),
                 ChannelError::Question { reason: caelumora_model::question::QuestionError::NotAsked, .. } => return Self::forbidden("not_asked", detail),
@@ -517,6 +518,7 @@ mod tests {
         assert_eq!(answer(anyhow::Error::new(ChannelError::MessageRevoked { message, channel }), Subject::Session), (409, "message_revoked"));
         assert_eq!(answer(anyhow::Error::new(ChannelError::NotAnAgentsMessage { message, channel }), Subject::Session), (409, "not_an_agents_message"));
         assert_eq!(answer(anyhow::Error::new(ChannelError::TurnNotRetryable { turn: caelumora_model::work::TurnId::new(), channel }), Subject::Session), (409, "turn_not_retryable"));
+        assert_eq!(answer(anyhow::Error::new(ChannelError::ToolCallNotRunning { call: "1".to_string(), turn: caelumora_model::work::TurnId::new(), channel }), Subject::Cancel), (409, "tool_call_not_running"));
         assert_eq!(answer(anyhow::Error::new(ChannelError::NotCleared { participant: someone, channel }), Subject::Participant), (403, "not_cleared"));
         {
             use caelumora_runtime::terminal::TerminalError;
