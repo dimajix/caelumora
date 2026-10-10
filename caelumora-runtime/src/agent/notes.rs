@@ -4,7 +4,7 @@
 //! Both are chains in the agent's `AgentChannelState`; `Turn` offers only
 //! plain access to them - reading them, staging `NoteChange`s that
 //! `commit` pushes when the turn completes (issue 65). [`AgentNotes`]
-//! is the logic on top: numbering, noting, revoking, reclassifying - each
+//! is the logic on top: numbering, noting, updating, revoking, reclassifying - each
 //! looking at the notes as they stand with the turn's own changes in them
 //! ([`AgentNotes::effective`], issue 156). The `notes` and `private_notes`
 //! components use it; anything else that works with an agent's notes in a
@@ -88,6 +88,19 @@ impl AgentNotes {
         let classification = turn.label();
         turn.stage_note(kind, NoteChange::Add { id, text, classification });
         id
+    }
+
+    /// Updates note `id` - one of the current notes, or one noted earlier in
+    /// this turn - to say `text` when the turn completes (issue 302),
+    /// classified as the turn has seen so far, as a new note is. `false` if
+    /// there is no such note (or it is revoked).
+    pub fn update(turn: &mut Turn, kind: NoteKind, id: NoteId, text: String) -> bool {
+        if Self::effective(turn, kind).get(id).is_none() {
+            return false;
+        }
+        let classification = turn.label();
+        turn.stage_note(kind, NoteChange::Update { id, text, classification });
+        true
     }
 
     /// Revokes note `id` - one of the current notes, or one noted earlier in

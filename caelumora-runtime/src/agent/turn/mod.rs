@@ -415,7 +415,7 @@ mod tests {
         state.begin_turn(Default::default(), Default::default(), Default::default(), Vec::new(), Default::default());
         let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached()).expect("a turn was begun");
 
-        let call = ToolCall { id: Some("1".to_string()), function_name: "note_private".to_string(), arguments: serde_json::json!({"text": "secret"}), visibility: ToolVisibility::HIDDEN, presentation: Default::default() };
+        let call = ToolCall { id: Some("1".to_string()), function_name: "write_private_note".to_string(), arguments: serde_json::json!({"text": "secret"}), visibility: ToolVisibility::HIDDEN, presentation: Default::default() };
         let message = Message { role: MessageRole::Assistant, tool_calls: vec![call], ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) };
         turn.push_message(message.clone());
         turn.send_event(ActorEvent::CompleteMessageGenerated(message.clone()), &output).await.unwrap();

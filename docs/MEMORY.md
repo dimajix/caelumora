@@ -12,12 +12,13 @@ every read is recorded. How a turn takes over what it staged is described in
 All three kinds of memory work alike:
 
 *   **Chains that are only appended to.** Each is a chain of changes on the generic `Chain` type
-    (see [AGENT-TURN.md](AGENT-TURN.md#the-transcript-as-a-chain)): entries "note" or "revoke N",
-    "remember" or "forget N". What is remembered now is the chain's active branch read from start to
-    end; a number, once given, is not given again on any branch. Notes branch with the conversation,
-    agent memory does not (issue 19, point 7).
-*   **Only the author changes them.** An agent notes, revokes, remembers and forgets only its own
-    entries.
+    (see [AGENT-TURN.md](AGENT-TURN.md#the-transcript-as-a-chain)): entries "note", "update N" or
+    "revoke N", "remember", "update N" or "forget N". What is remembered now is the chain's active
+    branch read from start to end; a number, once given, is not given again on any branch, and an
+    entry that is updated keeps its own (issue 302). Notes branch with the conversation, agent
+    memory does not (issue 19, point 7).
+*   **Only the author changes them.** An agent notes, updates, revokes, remembers and forgets only
+    its own entries.
 *   **Commit, don't write.** A tool stages its change on the turn; the change is applied by
     `Turn::commit` when the turn completes, and a turn that fails leaves none (issue 65).
 *   **The logic is a wrapper around the turn.** `Turn` knows nothing of notes or memory.
@@ -32,28 +33,33 @@ All three kinds of memory work alike:
 ## Notes
 
 The `notes` component (issue 17) lets an agent note what it wants to remember in a channel. Its
-tools `note` and `revoke_note` change the agent's own notes; its prompt part gives the model the
-notes of every agent in the channel. Notes belong to the agent that wrote them and are published in
-the channel.
+tools `write_note`, `update_note` and `revoke_note` change the agent's own notes; its prompt part
+gives the model the notes of every agent in the channel. Notes belong to the agent that wrote them
+and are published in the channel.
 
 *   **Where they live.** Each agent keeps its notes per channel in `AgentChannelState::notes`, a
     `NoteChain`. Every entry records the message it follows and, as its `NoteOrigin`, the digest of
     the agent's transcript.
 *   **A ledger.** `NoteChain` and `MemoryChain` are one chain, `caelumora_model::ledger::Ledger<K>`
-    (issue 92), a `Chain<LedgerEntry<K>>`: `Change`s - `Add`, `Remove`, `Reclassify` - read from
-    start to end into the `Item`s that stand now. The `LedgerKind` (`Notes`, `Memories`) says only
-    what differs: the type of the numbers, where a change is recorded to have been made
+    (issue 92), a `Chain<LedgerEntry<K>>`: `Change`s - `Add`, `Update`, `Remove`, `Reclassify` -
+    read from start to end into the `Item`s that stand now. The `LedgerKind` (`Notes`, `Memories`)
+    says only what differs: the type of the numbers, where a change is recorded to have been made
     (`Origin`), and the digest's scheme and whether the origin is part of it. Revoking a note and
-    forgetting a memory entry are both a `Remove`.
+    forgetting a memory entry are both a `Remove`; updating either is an `Update`.
+*   **Updating.** An `Update` (issue 302) replaces the text of an entry that stands, which keeps
+    its number and its place among the others. The new text carries the label of the turn that
+    wrote it, as a new entry does: a release of the old text does not carry over. The entry stands
+    where it was updated - its origin, the message it follows and when it was written are the
+    update's.
 *   **Numbers.** Notes are numbered per agent, counting up, and a number is never given again, so
-    that a model can repeat it to revoke.
-*   **Changed where they were written.** The tools revoke and reclassify notes of the turn's
-    channel only; the chain of another channel is written by the agent's actor there (issue 60). A
-    number names a note in one chain, so numbers are shown only for notes of the turn's channel:
-    `read_notes` lists the notes of other channels without them, and so does the private notes
-    prompt part for the agent's private notes from other channels.
-*   **Staging.** `AgentNotes` numbers, notes, revokes and reclassifies (`NoteKind::Public` or
-    `Private`). A change is staged as a `NoteChange` of its kind (`Turn::stage_note`, kept in
+    that a model can repeat it to update or revoke.
+*   **Changed where they were written.** The tools update, revoke and reclassify notes of the
+    turn's channel only; the chain of another channel is written by the agent's actor there (issue
+    60). A number names a note in one chain, so numbers are shown only for notes of the turn's
+    channel: `read_notes` lists the notes of other channels without them, and so does the private
+    notes prompt part for the agent's private notes from other channels.
+*   **Staging.** `AgentNotes` numbers, notes, updates, revokes and reclassifies (`NoteKind::Public`
+    or `Private`). A change is staged as a `NoteChange` of its kind (`Turn::stage_note`, kept in
     `TurnState::notes` or `private_notes`) and pushed into its chain when the turn completes, after
     the turn's last message in the history.
 *   **What the turn sees.** Each operation looks at the notes as they stand with the turn's own
@@ -75,7 +81,8 @@ the channel.
 ## Private notes
 
 The `private_notes` component (issue 51) gives an agent a second chain per channel,
-`AgentChannelState::private_notes`, with its own tools `note_private` and `revoke_private_note`.
+`AgentChannelState::private_notes`, with its own tools `write_private_note`, `update_private_note`
+and `revoke_private_note`.
 
 *   **Own numbering.** Private notes are numbered separately, so that gaps in the public numbers do
     not reveal them.
@@ -106,9 +113,10 @@ notes, chosen per personality ([68](../issues/68-notes-in-agent-state.md)).
 *   **Where it lives.** The memory is a `MemoryChain` in the agent's own `AgentState`
     (`AgentState::memory`), not in one channel. It does not branch with a channel's history. Every
     change records its `MemoryOrigin`: the channel it was made in and the privacy of that channel's
-    session then; an entry stands with the origin it was added at.
-*   **Tools.** `remember(text)` and `forget(id)`, both `ToolVisibility::HIDDEN`: like private notes,
-    memory is the agent's own, seen by its owner in the context panel only.
+    session then; an entry stands with the origin it was added or last updated at.
+*   **Tools.** `remember(text)`, `update_memory(id, text)` and `forget(id)`, all
+    `ToolVisibility::HIDDEN`: like private notes, memory is the agent's own, seen by its owner in
+    the context panel only.
 *   **Where it is recalled.** Every entry carries the label of the turn that wrote it - the
     classification of what the turn had seen, at most its channel's
     ([CONFIDENTIALITY.md](CONFIDENTIALITY.md#what-a-turn-writes-as), issue 168) - and is recalled
@@ -126,8 +134,8 @@ notes, chosen per personality ([68](../issues/68-notes-in-agent-state.md)).
          current one is looked up through the turn's views (`Views::privacy_of`), in the runtime's
          name - not an edge the agent could follow; of a session that is gone, the one kept decides,
          and one that cannot be looked up recalls nothing. A turn in no session - in tests - recalls
-         nothing. Only entries recalled in a channel, or remembered in the turn, can be forgotten
-         there, or reclassified (`reclassify_memory`, see
+         nothing. Only entries recalled in a channel, or remembered in the turn, can be updated,
+         forgotten there, or reclassified (`reclassify_memory`, see
          [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reclassification)): `AgentMemory::find` looks the
          entry up in the memory as it stands with the turn's changes (`AgentMemory::effective`,
          issue 156) and asks the policy about that one entry.
@@ -224,7 +232,7 @@ behind them are recorded). "Branches" means: follows the branch of the conversat
 | **Turn state** | The working state of a turn: plan, pending tool calls, the changes staged to the agent's states; what the turn says goes into the transcript and the history at once ([260](../issues/260-turn-messages-into-the-transcript.md)). | agent in channel | turn | discarded |
 | **Notes** | Entries in an agent's public note chain of one channel, published there, with provenance; only the author writes and revokes ([17](../issues/17-information-sharing-within-session.md)). | agent in channel | session | yes |
 | **Session memory** | The union of the active public note chains of all agents in all channels of a session - a view, not a store. | session | session | per channel |
-| **Agent memory** | An alternative to private notes, chosen per personality ([68](../issues/68-notes-in-agent-state.md)): what an agent remembers across its channels and sessions: a chain in its `AgentState` (component `agent_memory`, tools `remember` / `forget`), each entry carrying the label of the turn that wrote it and recalled only where that may be read ([62](../issues/62-json-store-concurrent-writes.md)). | agent | beyond the session | no |
+| **Agent memory** | An alternative to private notes, chosen per personality ([68](../issues/68-notes-in-agent-state.md)): what an agent remembers across its channels and sessions: a chain in its `AgentState` (component `agent_memory`, tools `remember` / `update_memory` / `forget`), each entry carrying the label of the turn that wrote it and recalled only where that may be read ([62](../issues/62-json-store-concurrent-writes.md)). | agent | beyond the session | no |
 | **Private notes** | An agent's private note chain in one channel - the same mechanism as notes, readable only by the agent, carrying the classification of that channel ([51](../issues/51-agent-private-notes.md)). | agent in channel | session | yes |
 | **Agent session memory** | The union of an agent's active private note chains across its channels - a view, readable only by the agent, each note only where its channel's classification allows. | agent in session | session | per channel |
 | **Agent knowledge** | What an agent keeps across sessions, committed from notes ([18](../issues/18-knowledge-sharing.md)). | agent | permanent | no |

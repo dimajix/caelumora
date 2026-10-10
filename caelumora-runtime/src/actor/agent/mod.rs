@@ -1195,7 +1195,7 @@ mod tests {
     #[test]
     fn a_resumed_turn_answers_unfinished_tool_calls_as_not_executed_instead_of_running_them() {
         use caelumora_model::tool::{ToolCallState, ToolVisibility};
-        let tool_call = ToolCall { id: None, function_name: "note".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
+        let tool_call = ToolCall { id: None, function_name: "write_note".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
         let ready = ToolCallState::approved(tool_call.clone());
         let done = ToolCallState::answered(tool_call.clone(), ToolCallResult::of(&tool_call, ToolResultStatus::Ok, "done".to_string(), caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT));
         let waiting = ToolCallState::pending(tool_call.clone(), String::new(), false, caelumora_model::approval::ToolMatcher::exact(&tool_call), None);

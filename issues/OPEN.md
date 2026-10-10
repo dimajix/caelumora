@@ -93,7 +93,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [237](237-erasing-a-message.md) | open | A message written by mistake can be taken back but not erased: it stays in every participant's record and in the contexts built on it. |
 | [284](284-automatic-context-compaction.md) | open | An agent's context is compacted only when somebody asks for it; nothing compacts it before a model call that would not fit, least of all within the turn that makes it. |
 | [300](300-compaction-keeps-long-turns-whole.md) | open | A compaction keeps the turn its newest messages reach into whole, so that a long plan is never summarised and almost nothing is freed. |
-| [302](302-update-note.md) | open | A note cannot be changed, only revoked and written again under a new number, and `note` is not named after what it does like `revoke_note` and `read_notes`. |
 
 ## Open architecture questions
 
