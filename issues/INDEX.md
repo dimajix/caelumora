@@ -360,6 +360,7 @@ published before anyone else can take it.
 | [260](260-turn-messages-into-the-transcript.md) | done | A turn keeps its messages apart from the transcript until it ends, so two places hold what an agent said and every reader puts them together. |
 | [270](270-personality-inheritance.md) | done | Every personality writes out its whole list of components, so what every agent should have is repeated in each and a later addition reaches only those touched by hand. |
 | [280](280-tool-executor-trait.md) | done | `ToolExecutor` is a replaceable facet whose only implementation is `DefaultToolExecutor`, and its shape cannot serve the variations it was made replaceable for. |
+| [285](285-set-context-with-knowledge.md) | open | A turn's prompt parts and the knowledge read for them are set in two calls, so every caller of the `ContextProvider` records the knowledge itself. |
 
 ## Integrations
 
