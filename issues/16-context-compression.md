@@ -323,3 +323,11 @@ In the model, with the REST and web UI parts that show the record.
   knowledge with the message, so `/skill` makes one call where it made two. Hashed as the message,
   so every digest stays what it was. Stored data: a skill given before stays a `Message` entry;
   delete the local `agent_channel_state` data, or accept that a compaction will not know it.
+- **2026-10-10** — Step 2 done (plan C): `AgentChannelState::compact` begins the transcript anew
+  with the replacement - each message with the knowledge it is, if it is one, so a skill goes in as
+  `Given` - and the entries kept as they stand; `HistoryEntry::Compacted { turn_id, actor, from, to,
+  at }` records it in the agent's history, `Turn::compact` offers it to components. Prompt parts
+  the turn placed after an entry are dropped with the old branch, so that a turn's context always
+  resolves; who placed them places them again (284). `usage` counts a message kept once. REST
+  gives the history item as `{"compacted": {…}}`, the web UI's history panel marks it. Beside it:
+  REST-SERVER.md did not list `command_executed` among the history items; it does now.

@@ -215,7 +215,10 @@ A history - the channel's in the snapshot and from `GET …/history`, an agent's
 said, `{"said": …}`, where a step of a turn's plan began, `{"plan_step_started": {"turn_id",
 "actor", "step_index", "total_steps", "description", "at"}}` (issue 263, the channel's only), or
 how a turn ended, `{"turn_finished": {"turn_id", "actor", "at"}}` or `{"turn_given_up":
-{"turn_id", "actor", "reason", "at"}}`, `actor` being whose turn it was. The
+{"turn_id", "actor", "reason", "at"}}`, a command an agent carried out, `{"command_executed":
+{"turn_id", "actor", "issuer", "command", "args", "at"}}` (issue 269), or - in an agent's history
+only - a compaction of its context, `{"compacted": {"turn_id", "actor", "from", "to", "at"}}` with
+the digests of its transcript before and after (issue 16); `actor` is whose turn it was. The
 snapshot carries the last 20 items as `items`, and `has_more` if there are older ones. Read from
 another channel entry by entry, a history holds the messages released, and neither a turn's end
 nor the start of a step.

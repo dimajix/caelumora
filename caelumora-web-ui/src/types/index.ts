@@ -870,7 +870,9 @@ export type HistoryItem<M> =
   | {plan_step_started: {turn_id: string; actor: ActorId; step_index: number; total_steps: number; description: string; at: string}}
   | {turn_finished: {turn_id: string; actor: ActorId; at: string}}
   | {turn_given_up: {turn_id: string; actor: ActorId; reason: GivenUpReason; at: string}}
-  | {command_executed: {turn_id: string; actor: ActorId; issuer: ActorId; command: string; args: string; at: string}};
+  | {command_executed: {turn_id: string; actor: ActorId; issuer: ActorId; command: string; args: string; at: string}}
+  /** An agent replaced its context `from` by `to` (issue 16); in an agent's history only. */
+  | {compacted: {turn_id: string; actor: ActorId; from: string; to: string; at: string}};
 
 /** What an agent's model saw when it produced a message (issues 06, 47). */
 export interface MessageContextResponse {

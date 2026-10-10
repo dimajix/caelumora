@@ -952,7 +952,7 @@ pub struct CommandReplyResponse {
 /// where a step of a turn's plan began (issue 263) or how a turn ended, and
 /// whose it was. Written as an object named by its kind: `{"said": …}`,
 /// `{"plan_step_started": {…}}`, `{"turn_finished": {…}}`,
-/// `{"turn_given_up": {…}}`.
+/// `{"turn_given_up": {…}}`, `{"command_executed": {…}}`, `{"compacted": {…}}`.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HistoryItemResponse<M> {
@@ -962,6 +962,9 @@ pub enum HistoryItemResponse<M> {
     PlanStepStarted { turn_id: TurnId, actor: ActorId, step_index: usize, total_steps: usize, description: String, at: DateTime<Utc> },
     /// An agent carried out a command in its turn (issue 269).
     CommandExecuted { turn_id: TurnId, actor: ActorId, issuer: ActorId, command: String, args: String, at: DateTime<Utc> },
+    /// An agent replaced its context `from` by `to` in its turn (issue 16);
+    /// in an agent's history only.
+    Compacted { turn_id: TurnId, actor: ActorId, from: caelumora_model::digest::Digest, to: caelumora_model::digest::Digest, at: DateTime<Utc> },
 }
 
 impl<M> HistoryItemResponse<M> {
@@ -975,6 +978,7 @@ impl<M> HistoryItemResponse<M> {
             HistoryEntry::TurnGivenUp { turn_id, actor, reason, at } => Some(Self::TurnGivenUp { turn_id, actor, reason, at }),
             HistoryEntry::PlanStepStarted { turn_id, actor, step_index, total_steps, description, at } => Some(Self::PlanStepStarted { turn_id, actor, step_index, total_steps, description, at }),
             HistoryEntry::CommandExecuted { turn_id, actor, issuer, command, args, at } => Some(Self::CommandExecuted { turn_id, actor, issuer, command, args, at }),
+            HistoryEntry::Compacted { turn_id, actor, from, to, at } => Some(Self::Compacted { turn_id, actor, from, to, at }),
             HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. } => None,
         }
     }
@@ -1240,6 +1244,10 @@ mod tests {
         let json = serde_json::to_value(command).unwrap();
         assert_eq!(json["command_executed"]["command"], "compact");
         assert_eq!(json["command_executed"]["issuer"], serde_json::to_value(issuer).unwrap());
+        let (from, to) = (caelumora_model::digest::content(b"before"), caelumora_model::digest::content(b"after"));
+        let compacted = HistoryItemResponse::<Message>::of(HistoryEntry::Compacted { turn_id: turn, actor, from, to, at: chrono::Utc::now() }, |m| m).unwrap();
+        let json = serde_json::to_value(compacted).unwrap();
+        assert_eq!((json["compacted"]["from"].clone(), json["compacted"]["to"].clone()), (serde_json::to_value(from).unwrap(), serde_json::to_value(to).unwrap()));
         assert!(HistoryItemResponse::<Message>::of(HistoryEntry::Fitted { channel: Classification::PUBLIC }, |m| m).is_none(), "a change is in the message it changed");
     }
 

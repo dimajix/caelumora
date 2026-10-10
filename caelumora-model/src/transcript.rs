@@ -139,6 +139,12 @@ impl Chain<TranscriptEntry> {
         self.push_with(TranscriptEntry::Message(msg), crate::digest::transcript_chain)
     }
 
+    /// Appends `entry` as it is - a copy of one on another branch, kept
+    /// through a compaction (issue 16).
+    pub(crate) fn push_entry(&mut self, entry: TranscriptEntry) {
+        self.push_with(entry, crate::digest::transcript_chain);
+    }
+
     /// Appends `msg`, given to read as `source` (issue 16), and returns the
     /// digest of the transcript before it.
     pub fn give(&mut self, msg: Message, source: KnowledgeSource) -> Option<Digest> {
