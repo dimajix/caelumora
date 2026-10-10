@@ -1,281 +1,254 @@
-# 23 — ACLs in `SecurityAttributes`
+# 23 — Access lists: the thing decides, not where one stands
 
 **Status:** open
-**Area:** Identity & access management
+**Area:** Identity and access management
+
+*Rewritten on 2026-10-10 against what [142](142-roles.md), [253](253-workspace.md),
+[255](255-whose-name-agents-act-in.md) and [271](271-publishing-artifacts.md) built; the text it
+replaces is in git, and what it had decided and what changed is under `## History`.*
 
 ## The problem
 
-`SecurityAttributes` holds exactly one field, `owner_id: ActorId`, and nothing reads it
-([11](11-agent-ownership.md)). There is no way to express that a second user may read a session,
-that a role may start sessions from a template, or that one agent — and only that one — may execute
-a given tool. Access is therefore all-or-nothing per deployment, and with `DummySecurityManager` the
-answer is always "all".
+`SecurityAttributes` is an `owner_id` and a list of `contributors`, and the ownership policy knows
+three answers: the owner does everything, contributors read and use, the system's is everybody's.
+That is all one can say about who may reach a thing - and for the two kinds of thing that hold
+files, nothing at all:
 
-What is missing is the *data*: an access control list on the objects being protected, saying which
-subject may perform which kind of operation. The decision itself stays where it is —
-`SecurityManager` remains the single policy decision point; ACLs are only the attributes it reads.
-
-Three things have to be decided together, and the third is the one with no obvious answer:
-
-1.  **Which entities carry `SecurityAttributes` at all.**
-2.  **What a subject is** — an `ActorId`, or a role, of which there is today only an unread
-    `User.roles: Vec<String>`.
-3.  **What an entry grants.** `Create`, `Read`, `List`/`Find`, `Write`, `Delete`, `Execute` is the
-    obvious verb set, but not every verb means anything for every entity kind, and a verb set that
-    is two thirds inapplicable is a sign that the model is wrong rather than merely incomplete.
+- **A workspace and an artifact have no contributors** (`validate_users_own`). They are "shared
+  through channels": a file of a workspace is read by whoever is a *current member* of a channel of
+  the session it is attached to, where the channel's switch is on and the two flow both ways
+  (CHANNELS.md, *Its workspace*); a version of an artifact by whoever reads the channel it was
+  published in. Outside a channel only the owner reaches a workspace (`GetWorkspace`), and one in
+  a session's scope nobody. The REST paths say so: `/sessions/{sid}/channels/{cid}/workspace/…`.
+- So the right to a file is a property of **where the caller stands**, not of the file. The same
+  file has a different authorization path per channel; a user cleared for the workspace's
+  classification cannot download a file through a channel classified below it, though the flow
+  rule exists to protect the channel, not the user; a workspace cannot be given to a colleague
+  outside any session; and what becomes of an artifact's readers when its channel is deleted, or
+  when they leave it, nobody has said.
+- **The contributors of a session and a channel are a mirror of their participants**
+  (`participant_attributes`) - computed for a channel at every change of its participants, for a
+  session once, when it is built from its template, and never again. Everything else sets them
+  by hand: an agent contributes to itself, a skill's are written or seeded.
+- **Nothing says who may be taken into a session** but the clearance at the door (issue 142):
+  whoever may change a session invites whom they like.
 
 ## Why it matters
 
-Every issue in this area is blocked on the absence of this data. [10](10-user-authentication.md)
-produces an authenticated identity with nothing to check it against.
-[12](12-user-and-agent-permissions.md) asks how to combine two sets of rights that do not exist.
-[14](14-approval-privilege.md) needs to say who is entitled to approve. [22](22-skill-management.md)
-needs to say who may load which skill. Each of them can be answered once there is a place to write
-the answer down, and none of them before.
+- Working on files is the target of the first release (PLAN.md): people and agents share a
+  workspace, and a result is published as an artifact. Who may reach those has to be a rule of the
+  thing - readable, settable, lasting - not an accident of membership.
+- Every issue that wants to grant something to somebody other than an owner waits for this: an
+  administrator ([125](125-invisible-admin.md)), the approval privilege
+  ([14](14-approval-privilege.md)), adding participants to a session
+  ([221](221-adding-session-participants.md)), which needs a rule for whom.
+- It lands before there is production data; stored data may still be deleted (AGENTS.md), so no
+  default for existing objects has to be chosen.
 
-It also matters that this lands *before* there is production data. Retrofitting an ACL onto stored
-entities means choosing a default for every existing object, and every default is wrong for
-somebody.
+## Decisions
 
-## Considerations
+Taken with the maintainer on 2026-10-10.
 
-### Which entities need `SecurityAttributes`
+### 1. The thing decides
 
-Today the field exists on `Agent`, `Session` and `Channel`, seeded from `SessionContext::owner` when
-a template is instantiated. The proposal adds skills and tools. The full inventory is larger:
+Whether a caller may reach a workspace, an artifact, a skill, a session is decided by that thing's
+`SecurityAttributes` - and by the caller's clearance for its classification - never by the session
+or channel the caller happens to act in. "User X is a member of channel Y" is a fact about Y, and
+counts whether or not X is in Y at the moment.
 
-- **`Session`, `Channel`, `Agent`** — already have the field, nothing reads it.
-- **`Personality`** — defines what an agent *is*; whoever may edit a personality controls every
-  agent instantiated from it. Needs both an edit right and an instantiate right, and those are not
-  the same right.
-- **`SessionTemplate`** — same argument: starting a session from a template is the interesting
-  operation, editing it is the dangerous one.
-- **`ComponentDescriptor`** — preconfigured components are referenceable from anywhere via `kind:
-  "ref"`, and an `mcp_tool` descriptor names a secret. A component descriptor is the most privileged
-  object in the store and the one with no attributes at all today.
-- **`User`** — who may read, list and update a user.
-- **`Role`** — does not exist as an entity yet (below), and needs attributes of its own.
-- **`RoleAssignment`** — the mapping from actors and external groups onto roles is itself the most
-  privilege-granting object in the system: whoever may write `ldap-group ops -> role admin` has
-  granted admin. It needs attributes for the same reason a role does, and it must not be reachable
-  by anyone who can merely edit a backend's configuration file.
-- **`Skill`** ([22](22-skill-management.md)) — the loading right is the whole point of that issue.
-- **Tools** are the awkward case, because a tool is not a stored entity. Tools are produced by
-  `ToolProvider` components at build time, and an `mcp_tool`'s list is discovered from a remote
-  server at runtime — so no ACL written in advance can enumerate them. Either the ACL lives on the
-  `ComponentDescriptor` and applies to everything that component exposes (coarse, but it matches
-  where the credential already sits), or tool entries are name patterns (`github-mcp__*`), which is
-  the same namespacing convention `mcp_tool` already uses. Per-tool entries for tools that do not
-  exist until connect time cannot be validated at authoring time either way.
-- **Secrets** are worse: `ActionType::ReadSecret(&str)` names a key, and a key is a string in a
-  provider, not an object. Either secrets get a descriptor entity that can carry attributes, or the
-  ACL is part of the provider configuration. This should be decided here rather than left to
-  [12](12-user-and-agent-permissions.md), which assumes the answer.
-- **State** (`AgentState`, `SessionState`, `ChannelState`) deliberately gets nothing of its own:
-  `StateStore` does not even take a `SecurityContext` today, and state belongs to exactly one
-  entity. It should inherit, not carry a second copy that can drift.
-- **Messages and history** likewise. Access to messages follows channel membership; a per-message
-  ACL would be a weaker duplicate of it.
+So the REST paths that reach a workspace's files and an artifact's versions *through* a channel go.
+A channel's view names the workspace (`ChannelView::workspace`, the id), and the client reaches it
+at `/workspaces/{id}/…`; an artifact at `/artifacts/{id}/…`. Both answer whoever the access list
+admits and whose clearance covers the classification (as `may_see_channel` asks for a channel).
 
-### Ownership is already stored twice
+The flow rule between a workspace and a channel (CONFIDENTIALITY.md, *Workspaces*) stays where it
+protects the *channel*: an agent using the workspace through its tools in a channel is bounded by
+it, as today. Two layers, both asked: the access list says whether one may reach a thing, the
+classification whether it may flow to where one stands.
 
-`Metadata` carries `owner: UserId` *and* `scope: Scope`; `SecurityAttributes` carries `owner_id:
-ActorId`. They can disagree, the types differ (an agent can own something, a `Metadata.owner`
-cannot), and `Channel` has `SecurityAttributes` but no `Metadata` at all while `Personality` has
-`Metadata` but no `SecurityAttributes`. Adding an ACL next to a duplicated owner field makes three
-sources of truth. The overlap has to be resolved first — most likely by `Metadata` keeping name,
-description and scope, and everything security-relevant moving into `SecurityAttributes`.
+### 2. The attributes
 
-### What a subject is: actors and roles, never groups
+```
+SecurityAttributes { owner_id: ActorId, acl: Vec<AclEntry> }
+AclEntry { subject: Subject, grant: Grant }
+Subject = Actor(ActorId) | Role(RoleId) | MemberOf(Session(SessionId) | Channel(ChannelId))
+Grant   = Read | Write
+```
 
-Three subject vocabularies are already half-started in the code and none is finished:
+- **The owner holds everything, implicitly and unrevocably**; the list only adds. Changing the
+  attributes, deleting, reclassifying, attaching a workspace to a session are the owner's alone
+  and no grant - the ownership policy as it is.
+- **Allow-only.** The effective rights are the union of the matching entries; there is no deny, no
+  precedence. Deny is what an external policy expresses well ([24](24-opa-security-manager.md)).
+- **`contributors` goes.** What was set by hand becomes `Actor` entries with `Read` (an agent on
+  itself, a skill's readers); what was a mirror of membership is not mirrored any more (decision 6).
+- **Two grants.** `Read` covers getting, listing, downloading, using (`UseSkill` is granted as
+  reading today); `Write` covers changing content - a workspace's files, an artifact's next version,
+  a skill's body. Which `ActionType` needs which is one exhaustive mapping
+  `ActionType -> (EntityKind, Grant | Owner)`, so that a new action cannot be added without saying
+  what it needs. Whether a third grant (`Use`, `Execute`) is ever needed is decided at that mapping,
+  not in advance. `Create` stays a question of the scope one creates in, `List` a filter by `Read`
+  (how stores check, SECURITY.md).
 
-- `ActorId` — real, used everywhere, covers users and agents.
-- `Scope::GroupScope { group_id: Uuid }` — a group id in the scope hierarchy, with no `Group`
-  entity, no `GroupId` newtype and no membership anywhere.
-- `User.roles: Vec<String>` — exists on every user and is read by nothing.
+### 3. Subjects
 
-An ACL entry names an `ActorId` or a **`RoleId`**, and nothing else. Groups are deliberately not a
-subject type, even though every directory has them, because a group answers a different question
-than an ACL asks. A group is *who* — externally defined, with whatever meaning the organisation gave
-it (`team-platform`, `berlin-office`). A role is *what, in this system* — defined by us, and
-therefore something an ACL can be validated against when it is written.
+- **`Actor`** - a user. An agent is never a subject: it acts with its owner's rights (issue 255),
+  so an entry is matched against the context's *principal*. An entry naming an agent would let it
+  reach what the person responsible for it may not, and is refused when the attributes are
+  validated.
+- **`Role`** - by a **`RoleId`**, a stable id as everything stored has one: the `roles` section of
+  `AppConfig` (issue 142) gives every role an `id` beside its `name` and its clearances, and the
+  id is what is stored - in an entry, in `User::roles`, in a personality's limiting roles. What is
+  written by hand names roles - the user providers' configuration, a seed - and is resolved to ids
+  when it is loaded, failing on a name the configuration does not know; what is shown to a person
+  names them again. Both translations are the `SecurityManager`'s (`role_id(name)`,
+  `role_name(id)`), which holds the configured roles anyway. A user's roles are read where they
+  decide, as for the clearance (issue 181); an agent's are its owner's, **narrowed by its
+  personality's limiting roles wherever a role is matched** - an entry of a list, a capability -
+  not only at the door as today (`Member::require_cleared`): an agent limited to `staff` does not
+  match `Role(hr): Read` on a workspace though its owner holds `hr`. What its owner is granted as
+  an `Actor` stays the agent's too; who wants to keep it from the agent grants the role, not the
+  person. A bound that only takes, never gives - an IAM permission boundary in small. This is the
+  one way an agent may do less than its owner; it settles [181](181-where-roles-decide.md)'s
+  question of where roles count: wherever an entry names one. An entry naming an unknown role is
+  refused when it is written.
+- **`MemberOf`** - the current participants of a session or a channel: users, and agents through
+  their owner - *or* as the caller, for what an agent takes part in itself (issue 264). This is the
+  entry that replaces "shared through channels": a workspace made for a session carries
+  `MemberOf(session)`, an artifact published in a channel `MemberOf(channel)`.
+- **Not a subject: a group of the directory** (LDAP, a user file's groups). The reason of 2026-09-13
+  stands: the directory is not ours, its names cannot be validated when an entry is written and
+  differ per backend; they map onto roles in one place, the user provider. **A group of our own** -
+  a team, an entity with members that users make and manage - fits the same slot and is wanted for
+  sharing a workspace with "the project"; it is an entity with ownership and scope of its own and
+  comes as an issue of its own, after this one.
 
-The reason this matters here rather than being a terminology preference: we do not control the
-directory. If entries referenced directory groups, every ACL would be coupled to a foreign naming
-scheme that we cannot check at authoring time, that changes without us, and that does not exist at
-all in a deployment running the file backend ([25](25-file-user-backend.md)). The three user
-backends would each supply a different subject vocabulary. With roles as the only collective
-subject, all ACLs speak one language, and the deployment's reality arrives at exactly one place
-instead of being spread across every object's ACL.
+### 4. Rights of a role
 
-That one place is the **role assignment**: a mapping from an actor, or from an external group name
-delivered by a user backend, onto a role. A user's effective roles are the union of the roles
-assigned to them directly and the roles their groups map to, resolved once at authentication and
-cached with the session — which is exactly the resolution [26](26-database-user-backend.md) and
-[27](27-ldap-user-backend.md) already have to perform for membership.
+A right *on a thing* lives in the thing's list; a right *without a thing* - creating a session, a
+personality, a template; reading what was deleted and purging it, for an administrator
+([125](125-invisible-admin.md)); whatever [181](181-where-roles-decide.md) finds should ask for a
+role - has no object to live on and belongs to the role, in the configuration, beside the
+clearances it grants already:
 
-Two properties keep this from becoming a second permission mechanism:
+```yaml
+roles:
+  - id: …
+    name: admin
+    clearances: [ … ]
+    capabilities: [create_session, create_personality, read_deleted, purge]
+```
 
-- **A role is a subject label, not a bundle of rights.** It names a set of principals and holds no
-  permissions of its own; rights come only from ACL entries, on objects and on scopes. This has to
-  be written down explicitly, because the word suggests the opposite — in textbook RBAC a role *is*
-  a permission set. If a role could carry rights directly there would again be two places to look
-  when answering why somebody may do something, which is the thing this whole issue exists to avoid.
-- **An assignment carries a `Scope`**, defaulting to `GlobalScope`. That is the difference between
-  "alice is an admin" and "alice is an admin *of this session*", it costs one field, and `Scope`
-  already exists with a working `contains()`. Without it, session- or channel-local roles get
-  re-invented later as a parallel mechanism.
+One fact has one home: "role r may read workspace Y" is Y's entry `Role(r): Read`, never a line
+of r's. The mapping of decision 2 then says of every action what it needs: `Grant | Owner |
+Capability(…)`. A capability bounded to a scope ("may create sessions in …") can be a field later;
+the first release needs none.
 
-Consequences for what is already in the code:
+AWS IAM does it the same way: a *resource-based policy* on the thing (a bucket policy) and an
+*identity-based policy* on the identity - and `CreateBucket` is only ever the identity's, on
+`Resource: "*"`. Both are evaluated as a union without precedence, as this list is; the cost that
+"why may X" has two places to look is paid there with tooling, here with a refusal that names what
+was missing (`ActionType::describe`). What AWS calls a *role* is an identity one assumes - closer to
+an agent acting as its owner (255) than to a role of ours, which is an IAM *group*. Not built now;
+written down so that the configuration and the mapping have the shape.
 
-- `User.roles: Vec<String>` stops being dead and becomes the direct half of the assignment — though
-  it should hold role identifiers rather than free strings, and for a directory-backed user the
-  roles are computed from the mapping rather than stored.
-- `Scope::GroupScope { group_id: Uuid }` should become a role scope or be removed. Leaving a group
-  id in the scope hierarchy while groups are not a subject type anywhere else is precisely the kind
-  of third, unfinished vocabulary this section is trying to end.
-- Allow-only union stays trivial: the effective right set is the union over the subject's direct
-  entries and all of its roles, with no precedence rule to define.
+### 5. The session's admission rule
 
-What is given up is the ability to write a directory group straight into an ACL. In an organisation
-with hundreds of directory groups that is mapping work — but mechanical work, done once, and ACLs
-are rarely written against hundreds of groups. The coupling avoided is worth more.
+A session carries, besides its `acl`, an **`admission: Vec<Subject>`**: who may be taken in after it
+was built. It comes from the template (`SessionTemplate::admission`, written by whoever may change
+the template) when the session is built; the template's own participants are taken in as the
+template says and are not asked. Everyone added later - `add_participant`, and whatever
+[221](221-adding-session-participants.md) builds - must match it, *and* pass the clearance at the
+door as today. **Empty means nobody**: a session whose template says nothing takes nobody in later.
+**The owner may narrow it, never widen it**: `UpdateSession` admits a new `admission` only if every
+subject of it was in the old one. A channel takes in only who the session took in, as now.
 
-### Identifiers
+### 6. Membership is the policy's to check
 
-Both subject kinds are identified by a UUID: `ActorId` as it already is, and `RoleId` as a new
-`define_id!` newtype. A role's name lives in its `Metadata` alongside its description, and nothing
-references it.
+An entry `MemberOf(…)` names one session or one channel; whether the principal (or the caller) is a
+participant of it is a fact the `SecurityManager` establishes itself, not something the caller
+passes in - the caller cannot know which places a list names. The `OwnershipSecurityManager` takes
+a **`Memberships`** source when it is made, as it takes the `ConfidentialityRules`:
 
-For `ActorId` this only confirms what the user backends already require. A `UserId` ends up in
-`SecurityAttributes.owner_id`, in `Metadata.owner` and in every persisted session, and it has to
-survive a rename in a directory we do not control — which is why [25](25-file-user-backend.md),
-[26](26-database-user-backend.md) and [27](27-ldap-user-backend.md) all derive it from an immutable
-external key rather than from a login name. `ActorId::Approver(Uuid)` has no name to use in the
-first place.
+```
+trait Memberships { async fn is_member_of(&self, actor: ActorId, place: Place) -> bool; }
+Place = Session(SessionId) | Channel(ChannelId)
+```
 
-For `RoleId` the reason is renaming, and renaming is not the rare event it looks like: a deployment
-introduces a uniform naming scheme after the fact and renames everything it has, or somebody finds a
-typo in a role that is already referenced from a hundred ACLs. Neither of those is a change of
-meaning, and neither should require touching a single reference. A name used as a key makes both of
-them a migration; a UUID makes them an edit of one field.
+The runtime implements it over the stores in the system's name, reading the one session or channel
+the entry names - never scanning. It is asked only when a list holds such an entry. A session's and
+a channel's own readers are answered the same way: their lists hold `MemberOf(self)` rather than a
+mirror of their participants, so that membership has one source and a session's list does not
+stop at its creation.
 
-The cost is that the readable part is gone exactly where things are read: hand-written ACLs, a role
-assignment file, a Rego policy in [24](24-opa-security-manager.md). That is a real loss and it has
-to be paid back deliberately rather than assumed away:
+- **Reentrancy.** A store checks after it has loaded, with the value in hand and no lock held (the
+  memory store's `std::sync::RwLock` guard cannot live across the `await`); the manager reading
+  another entity through the store is then a second, independent call. To be verified for every
+  path when step 1 is built, lists and the JSON store included.
+- **A cache** of memberships, fed by the participant events, is an optimisation and an issue of its
+  own; correctness first.
+- A denied read stays "not found", as today, and a filtered list is indistinguishable from an
+  empty one.
 
-- Anything hand-authored refers to roles by name and resolves them to ids when it is loaded, failing
-  loudly on a name that does not exist. This is possible precisely because roles are ours and
-  enumerable — the property that disqualified directory groups as subjects.
-- Anything rendered to a human — an error, a log line, an ACL listing — resolves the id back to the
-  name. A permission error naming only a UUID is the failure mode [02](02-better-error-messages.md)
-  describes.
-- Policy input documents carry both, and policies match on the id. A Rego rule matching on a name
-  would reintroduce exactly the breakage the UUID prevents, so the name in the input is for reading
-  and decision logs only.
+### 7. Defaults
 
-### What an entry grants — and why the verb list is the hard part
+| Thing | List when made | Who adds |
+|---|---|---|
+| Workspace in a session's scope | `MemberOf(session): Read, Write` | - |
+| Workspace of a user's | empty; attaching it to a session shares nothing | the owner adds `MemberOf(session)` as the explicit act of sharing - offered where it is attached |
+| Artifact | `MemberOf(channel it was published in): Read` | the owner |
+| Skill | its readers as `Actor: Read` (seed, `create_skill`) | the owner |
+| Session, channel | `MemberOf(self): Read` | - |
+| Agent | `Actor(itself): Read` | - |
+| Session's `admission` | the template's | the owner narrows |
 
-`Create` / `Read` / `List`+`Find` / `Write` / `Delete` / `Execute` applied uniformly to every kind
-is the simplest thing that could work, and its problem is visible immediately: `Execute` on a
-`Session` means nothing, `Create` on an existing `Agent` means nothing, and an ACL editor would
-offer both.
+### 8. What this does not change
 
-Options:
+- `CallTool`, `ReadSecret` and the credentials of components stay as they are (issue 255: the
+  owner's); an access list on a component descriptor can follow when something needs it.
+- The confidentiality actions and the flow rule (CONFIDENTIALITY.md).
+- Roles of an agent's own ([181](181-where-roles-decide.md), 179).
+- Stored data: no compatibility. Stores with sessions, channels, agents, skills, workspaces and
+  artifacts are deleted; the seed is adapted.
 
-- **A verb enum per entity kind.** Type-safe and self-documenting, but `SecurityAttributes` is one
-  struct shared by all kinds, so it would need a type parameter or a per-kind variant, and every
-  store, serializer and API gains a case per kind. The safety is real; the cost is spread over the
-  whole codebase.
-- **A single generic verb set, with nonsensical combinations simply never granted.** Cheap and
-  uniform, and wrong entries are inert rather than dangerous — but nothing stops them being written,
-  and "inert" is only true as long as no future verb reuses the name.
-- **Derive the verbs from `ActionType`.** This is the option worth taking seriously, because the
-  enumeration already exists and is already the authoritative list of securable operations:
-  `GetPersonality`, `PutSessionTemplate`, `CallTool`, `ReadSecret` and the rest. Instead of
-  inventing a second vocabulary that has to be kept in sync by hand, add one total function
-  `ActionType -> (EntityKind, Verb)`: a single exhaustive `match`, so the compiler forces every new
-  `ActionType` variant to declare what it is. ACL entries stay generic, and `Verb::applies_to(kind)`
-  — derived from the image of that mapping — lets the authoring path reject `Execute` on a session
-  instead of storing it.
+## Plan
 
-Independently of which is chosen, two of the proposed verbs are not instance permissions at all:
+Each step reviewable on its own; the first changes nothing in who may do what.
 
-- **`Create` has no instance to hang on.** The object does not exist when the check runs, so the
-  permission is really "may create an object of this kind *here*" — a property of the container, not
-  of the created object.
-- **`List` / `Find` is elementwise `Read`.** If listing were a separate grant, `list_personalities`
-  would have two answers that can disagree. The defensible semantics is that a list returns exactly
-  what the caller may read, which makes `List` a filter rather than a verb — at the cost of N checks
-  per call, and that cost is the reason the alternative keeps getting proposed. Once there is a
-  Postgres store ([03](03-postgres-entity-store.md)) the filter wants to be a query predicate rather
-  than a post-filter, which argues for keeping the ACL shape simple enough to translate into SQL.
+1. **Restructure.** `RoleId` in the `roles` section, `User::roles` and a personality's limiting
+   roles as ids, the user providers and the seed naming roles and resolving them on load, the
+   `SecurityManager` translating; `SecurityAttributes { owner_id, acl }`; `Memberships` and the
+   policy evaluating `Actor`, `Role` and `MemberOf`; the mapping
+   `ActionType -> (EntityKind, Grant | Owner)`; sessions
+   and channels with `MemberOf(self)`, agents and skills with `Actor` entries; validation (no agent
+   as a subject, known roles); the security suite as it is, passing.
+2. **Workspaces.** `/workspaces/{id}/…` for whoever the list and the clearance admit; the channel
+   routes removed, `ChannelView::workspace` the id; defaults of decision 7; the flow rule kept for
+   the tools; the web UI following; the suite extended.
+3. **Artifacts**, likewise, with `MemberOf(channel)` on publishing.
+4. **Admission.** `SessionTemplate::admission`, `Session::admission`, checked in `add_participant`;
+   the owner narrowing only; the seed's templates say whom.
+5. **Documents.** SECURITY.md (*Ownership* becomes *Access lists*), CHANNELS.md, CONFIDENTIALITY.md
+   (*Workspaces*), REST-SERVER.md, WEB-UI.md, STORAGE.md; which stored data is deleted.
 
-So the model that falls out is: **instance permissions** (`Read`, `Write`, `Delete`,
-`Execute`/`Use`) on the object, and **collection permissions** (`Create`, and enumeration if it
-stays separate) on a *scope*. `Scope` already exists, already forms a hierarchy and already has
-`contains()` — it is the natural home for the second kind, and it gives inheritance for free.
-
-### Inheritance, and allow-only
-
-If a `Channel` inherits its `Session`'s entries, a session template does not have to restate an ACL
-per channel, and containment already has a meaning via `Scope::contains`. The price is that a child
-can then only add rights, never remove them — which is consistent with making the whole model
-**allow-only**: the effective decision is the union of matching entries, there is no precedence
-order to argue about, and no way to write two entries whose combined meaning nobody can predict.
-Deny entries are what gets asked for later; they are also exactly what an external policy engine
-expresses well ([24](24-opa-security-manager.md)), which is an argument for leaving them out of the
-attribute model rather than building a second, weaker policy language.
-
-### The plumbing problem: the PDP cannot see the attributes
-
-`SecurityManager::check(&SecurityContext, ActionType)` receives, for half the variants, only an id:
-`GetAgent(AgentId)`, `DeleteSession(SessionId)`, `GetComponent(&str)`. An ACL-evaluating manager
-would have to load the entity to read its ACL — but the store is what calls the manager, so the
-manager calling the store is a cycle.
-
-- The clean fix is to **pass the attributes in**, by having the store load first and check second,
-  with the variant carrying `&SecurityAttributes` or the object itself — which is already how
-  `PutPersonality(&Personality)` and `UpdateSession(&Session)` work. It also makes the decision
-  better: today `GetAgent(AgentId)` can only be decided on an id.
-- A store handle on the manager with an ungated read path works but puts a hole in the store for the
-  benefit of the component that is supposed to be guarding it.
-- Checking after the load changes what a refusal looks like: `StoreError` distinguishes `NotFound`
-  from `PermissionDenied`, and telling the caller which one it was discloses that the object exists.
-  Which of the two a denied read returns is a decision, not an implementation detail — and the same
-  question decides whether a filtered list is indistinguishable from an empty one.
-
-### Defaults and existing data
-
-Every object in the repository today is constructed with `SecurityAttributes::default()`, i.e.
-`owner_id: ActorId::None`. A strict reading of an empty ACL as "nobody" locks out every existing
-JSON store on upgrade. An implied owner grant — the owner always holds the instance verbs, the ACL
-only adds — avoids that and matches how people expect ownership to behave, but it makes ownership
-unrevocable, which has to be a conscious choice.
+Issues to open with it: a group of our own as a subject; a cache for `Memberships`.
 
 ## Done when
 
-- The set of entities carrying `SecurityAttributes` is decided and the field added, including the
-  answer for tools and secrets, which have no entity.
-- The duplication between `Metadata.owner` and `SecurityAttributes.owner_id` is resolved rather than
-  extended.
-- A subject type exists — `ActorId` plus a real `RoleId`, both UUIDs, with a `Role` entity carrying
-  the name in its `Metadata` — together with a role assignment that maps actors and backend-supplied
-  group names onto roles, carries a `Scope`, and is a permission-protected entity rather than
-  backend configuration.
-- It is written down that a role holds no rights of its own, and `Scope::GroupScope` is either
-  converted to a role scope or removed.
-- Role names survive the round trip: hand-written configuration names roles and fails loudly on an
-  unknown one, and everything shown to a human resolves ids back to names.
-- The verb model is decided, with an explicit answer for `Create` and `List`/`Find`, and a single
-  place that maps `ActionType` onto it so that a new action cannot be added without declaring what
-  it requires.
-- Inheritance and the allow-only rule are written down here.
-- `SecurityManager` receives enough to evaluate an entry — i.e. the attributes of the object being
-  acted on, not only its id — and a `SecurityManager` implementation that actually reads ACLs exists
-  next to `DummySecurityManager`.
-- The default for an object with an empty ACL is decided, and existing stores keep working.
+- `SecurityAttributes` holds an access list of `Actor`, `Role` and `MemberOf` entries with `Read`
+  and `Write`, allow-only, the owner implied; `contributors` is gone.
+- Roles have an id in the configuration; stored roles are ids, hand-written ones names, and the
+  `SecurityManager` translates both ways.
+- A workspace's files and an artifact's versions are reached by their own routes, by whoever the
+  list and the clearance admit, never through a channel; the channel routes are gone.
+- A session has an admission rule from its template, empty for nobody, that its owner can narrow
+  and not widen, checked for everyone taken in later.
+- The policy answers `MemberOf` through a `Memberships` source of the runtime, reading the one place
+  named; the reentrancy of the stores is verified.
+- The security suite covers reading a workspace and an artifact as a member, a stranger, and a
+  member of another channel of the session; narrowing and widening the admission; an entry naming
+  an agent refused.
+- The documents of the plan's step 5 describe it.
 
 ## History
 
@@ -299,3 +272,18 @@ unrevocable, which has to be a conscious choice.
   migrations across every reference. The readability that is given up is bought back explicitly —
   configuration names roles and resolves them on load, human-facing output resolves them back, and
   policies match on the id while carrying the name for display.
+- **2026-10-10** — Rewritten with the maintainer, now that a concrete need exceeds owner and
+  contributors: workspaces (253) and artifacts (271) are reached only through a channel, and the
+  right to a file should be the file's. What changed against the text of 2026-09-13: a role keeps
+  its `RoleId`, but as a field of the configuration (142 configures roles there), not of a `Role`
+  entity, and there is no stored assignment - the user provider gives users their roles and maps
+  the directory's groups; the `SecurityManager` translates ids and names; a role does carry
+  something now, its clearances; a group of the directory is still no subject, a group of our
+  own is to come as an issue of its own; `contributors` becomes the list rather than standing beside
+  it; membership of a session or channel is a subject, established by the policy through a
+  `Memberships` source that reads the one place named - a cache is an optimisation for later; the
+  grants are `Read` and `Write`, the rest the owner's; a session gets an admission rule from its
+  template, empty for nobody, which its owner may only narrow; agents are never subjects (255),
+  and a personality's limiting roles narrow an agent wherever a role is matched, the one way it
+  does less than its owner; a right without an object - creating, administering - is a capability
+  of a role in the configuration, not built yet. Branch `issue-23-acls`.
