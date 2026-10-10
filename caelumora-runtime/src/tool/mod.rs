@@ -84,19 +84,6 @@ pub fn arguments<T: DeserializeOwned>(params: &Value) -> ToolResult<T> {
     T::deserialize(params).map_err(|e| ToolError::InvalidParameter(e.to_string()))
 }
 
-/// The workspace of the turn's channel, if the agent may use it there - for
-/// the tools that work on it (issues 251, 271).
-///
-/// # Errors
-/// `ExecutionFailed` where there is none it may use, or the turn is in no
-/// session.
-pub(crate) async fn channel_workspace(turn: &Turn<'_>) -> ToolResult<crate::view::WorkspaceView> {
-    let session = turn.session().ok_or_else(|| ToolError::ExecutionFailed("the turn is in no session".to_string()))?;
-    let channel = session.channel(turn.channel_id()).await?;
-    channel.workspace().await?
-        .ok_or_else(|| ToolError::ExecutionFailed("there is no workspace you can use in this channel".to_string()))
-}
-
 /// The parameter `id` of a tool that takes the number of an entry, e.g. a
 /// note to revoke.
 pub fn id_argument<T: DeserializeOwned>(params: &Value) -> ToolResult<T> {

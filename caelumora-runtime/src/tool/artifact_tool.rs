@@ -6,16 +6,18 @@
 //! as a link to it as it is now (issue 273).
 //!
 //! The workspace is reached as `terminal_tool` reaches it, through the
-//! turn's views, and the artifact's manager through the workspace's view:
-//! components are given no services when they are made. Without an
-//! artifact storage configured, a call fails and says so. The result is
+//! `WorkspaceManager` in the turn's channel, for reading; the file read is
+//! handed to the `ArtifactManager` (issue 296) - both services its kind
+//! uses. Without an artifact storage configured, a call fails and says so. The result is
 //! classified as the artifact, which is classified as the workspace.
 
 use crate::agent::turn::Turn;
-use crate::artifact::ArtifactError;
+use crate::artifact::{ArtifactError, ArtifactManager};
 use crate::component::{config_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::terminal::WorkspacePath;
-use crate::tool::{arguments, channel_workspace, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
+use crate::tool::{arguments, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
+use crate::workspace::WorkspaceManager;
+use caelumora_model::security::Grant;
 use async_trait::async_trait;
 use caelumora_model::question::Answers;
 use caelumora_model::store::StoreError;
@@ -44,6 +46,8 @@ struct ArtifactToolConfig {
 #[derive(Debug)]
 pub struct ArtifactTool {
     config: ArtifactToolConfig,
+    workspaces: Arc<WorkspaceManager>,
+    artifacts: Arc<ArtifactManager>,
 }
 
 #[derive(Deserialize)]
@@ -61,7 +65,6 @@ struct Publish {
 fn failed(error: ArtifactError) -> ToolError {
     match error {
         ArtifactError::Invalid(_) | ArtifactError::ClassifiedOtherwise(_) | ArtifactError::TooLarge { .. } | ArtifactError::Changed => ToolError::InvalidParameter(error.to_string()),
-        ArtifactError::Terminal(e) => super::terminal_tool::failed(e),
         ArtifactError::Store(StoreError::NameTaken { .. }) => ToolError::InvalidParameter("an artifact of that name in this session is someone else's: publish under another name".to_string()),
         ArtifactError::Store(StoreError::PermissionDenied) => ToolError::PermissionDenied("publishing an artifact here".to_string()),
         error => ToolError::ExecutionFailed(error.to_string()),
@@ -119,8 +122,11 @@ impl ToolProvider for ArtifactTool {
             _ => at.file_name().unwrap_or_default().to_string(),
         };
         let description = description.as_deref().map(str::trim).filter(|d| !d.is_empty());
-        let workspace = channel_workspace(turn).await?;
-        let (artifact, number) = workspace.publish_artifact(&at, &name, description).await.map_err(failed)?;
+        let (ctx, session, channel) = (turn.security_context(), turn.session_id(), turn.channel_id());
+        let (workspace, terminal) = self.workspaces.terminal_in(ctx, session, channel, Grant::Read).await
+            .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+        let content = terminal.read(&at).await.map_err(super::terminal_tool::failed)?;
+        let (artifact, number) = self.artifacts.publish(ctx, content, &workspace.classification, &name, description, session, channel).await.map_err(failed)?;
         let version = artifact.version(number).ok_or_else(|| ToolError::ExecutionFailed(format!("version {number} of the artifact is missing")))?;
         let mut result = json!({
             "artifact": artifact.id,
@@ -140,11 +146,12 @@ impl ToolProvider for ArtifactTool {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(ARTIFACT_TOOL_KIND).provides::<dyn ToolProvider>(),
-        |descriptor, _context| {
+        ComponentKind::new(ARTIFACT_TOOL_KIND).provides::<dyn ToolProvider>().uses::<WorkspaceManager>().uses::<ArtifactManager>(),
+        |descriptor, context| {
             let config: ArtifactToolConfig = config_of_params(&descriptor.params)?;
+            let (workspaces, artifacts) = (Arc::clone(context.service::<WorkspaceManager>()?), Arc::clone(context.service::<ArtifactManager>()?));
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(ArtifactTool { config }));
+            facets.insert::<dyn ToolProvider>(Arc::new(ArtifactTool { config, workspaces, artifacts }));
             Ok(facets)
         },
     );
@@ -153,11 +160,12 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workspace::testing::session_with_workspace;
+    use crate::workspace::testing::{session_with_workspace, WithWorkspace};
     use caelumora_model::agent::AgentChannelState;
 
-    fn tool(params: Value) -> ArtifactTool {
-        ArtifactTool { config: serde_json::from_value(params).unwrap() }
+    fn tool(world: &WithWorkspace, params: Value) -> ArtifactTool {
+        let (workspaces, artifacts) = (Arc::clone(world.runtime.workspace_manager()), Arc::clone(world.runtime.artifact_manager()));
+        ArtifactTool { config: serde_json::from_value(params).unwrap(), workspaces, artifacts }
     }
 
     #[tokio::test]
@@ -165,7 +173,7 @@ mod tests {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
         let mut turn = world.turn(&mut state);
-        let tool = tool(json!({}));
+        let tool = tool(&world, json!({}));
         std::fs::create_dir_all(world.dir().join("out")).unwrap();
         std::fs::write(world.dir().join("out/report.csv"), "a,b").unwrap();
 
@@ -193,13 +201,14 @@ mod tests {
         assert!(matches!(long, Err(ToolError::InvalidParameter(_))), "a name of at most 100 characters: {long:?}");
     }
 
-    #[test]
-    fn a_publication_is_approved_as_a_change_and_presented_as_one() {
-        let asks = |mode: Value| tool(json!({ "requires_approval": mode })).tools()[0].requires_approval;
+    #[tokio::test]
+    async fn a_publication_is_approved_as_a_change_and_presented_as_one() {
+        let world = session_with_workspace().await;
+        let asks = |mode: Value| tool(&world, json!({ "requires_approval": mode })).tools()[0].requires_approval;
         assert!(asks(json!(true)) && asks(json!("unless_read_only")), "it changes what is kept");
         assert!(!asks(json!(false)));
-        assert!(tool(json!({})).tools()[0].requires_approval, "unless configured");
-        assert_eq!(tool(json!({})).tools()[0].presentation, ToolPresentation::ArtifactPublish);
-        assert_eq!(tool(json!({})).describe(PUBLISH_ARTIFACT, &json!({ "path": "out/r.csv", "name": "Report.csv" })).unwrap(), "Publish 'out/r.csv' in the workspace as the artifact 'Report.csv'");
+        assert!(tool(&world, json!({})).tools()[0].requires_approval, "unless configured");
+        assert_eq!(tool(&world, json!({})).tools()[0].presentation, ToolPresentation::ArtifactPublish);
+        assert_eq!(tool(&world, json!({})).describe(PUBLISH_ARTIFACT, &json!({ "path": "out/r.csv", "name": "Report.csv" })).unwrap(), "Publish 'out/r.csv' in the workspace as the artifact 'Report.csv'");
     }
 }

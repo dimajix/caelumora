@@ -220,10 +220,10 @@ impl ExternalAgent for A2aAgentComponent {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
-        ComponentKind::new(A2A_AGENT_KIND).provides::<dyn ExternalAgent>(),
+        ComponentKind::new(A2A_AGENT_KIND).provides::<dyn ExternalAgent>().uses::<SecretManager>(),
         |descriptor, context| async move {
             let config: A2aAgentConfig = config_of_params(&descriptor.params)?;
-            let component = A2aAgentComponent::build(descriptor.id.clone(), config, Arc::clone(&context.secret_manager), &context.security_context).await?;
+            let component = A2aAgentComponent::build(descriptor.id.clone(), config, Arc::clone(context.service::<SecretManager>()?), &context.security_context).await?;
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ExternalAgent>(Arc::new(component));
             Ok(facets)

@@ -12,8 +12,7 @@
 //! (`AppConfig::component_defaults`), or else the kind registered in code.
 
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
-use caelumora_model::secret::SecretManager;
-use caelumora_model::security::{SecurityContext, SecurityManager};
+use caelumora_model::security::SecurityContext;
 use caelumora_model::store::{ComponentStore, StoreError};
 use futures::future::BoxFuture;
 use serde::de::DeserializeOwned;
@@ -37,6 +36,10 @@ pub enum ComponentError {
     Cycle { component: String, facet: &'static str, other: String },
     #[error("invalid configuration: {0}")]
     InvalidConfig(String),
+    /// A component asked for a service of the runtime its kind does not
+    /// declare it uses, or one the runtime does not have (issue 296).
+    #[error("the {0} is not a service offered to the component")]
+    NoService(&'static str),
     /// The preconfigured components `id` a `ref` names cannot be read -
     /// gone, or not the reader's to read, a share withdrawn (issue 270):
     /// what keeps an agent from being run, as its personality's would
@@ -91,14 +94,15 @@ pub fn config_of_params<T: DeserializeOwned>(params: &serde_json::Value) -> Comp
     result.map_err(|e| ComponentError::InvalidConfig(format!("invalid parameters: {e}")))
 }
 
-/// A facet type, by its id and - for messages - its name.
+/// A type, by its id and - for messages - its name: of a facet a component
+/// provides, or of a service it uses.
 #[derive(Debug, Clone, Copy)]
-struct FacetType {
+struct TypeKey {
     id: TypeId,
     name: &'static str,
 }
 
-impl FacetType {
+impl TypeKey {
     fn of<T: ?Sized + 'static>() -> Self {
         // The trait's name without its path: `dyn crate::context::PromptProvider`
         // is shown as `PromptProvider`.
@@ -109,20 +113,18 @@ impl FacetType {
 }
 
 /// What a component is built with: the environment of the whole graph - the
-/// security context it is built under, the secrets it may resolve - and,
-/// while it is built, the
-/// other components of its graph, asked for by type (`all`, `one`). This is
-/// all a component is given: not its actor's runtime, so that it cannot store
-/// its actor's state or act as its actor past the `Turn` it is called with
-/// (issue 128).
+/// security context it is built under, the services of the runtime it uses
+/// (`service`) - and, while it is built, the other components of its graph,
+/// asked for by type (`all`, `one`). This is all a component is given: not its
+/// actor's runtime, so that it cannot store its actor's state past the `Turn`
+/// it is called with (issue 128); and of the services, only those its kind
+/// declares it uses (`ComponentKind::uses`, issue 296).
 #[derive(Clone)]
 pub struct ComponentContext {
     pub security_context: SecurityContext,
-    /// The policy, for the questions a component asks in
-    /// `security_context` (`AccessQuestions`) - such as what an agent's
-    /// memory may recall in its channel (issue 131).
-    pub security_manager: Arc<dyn SecurityManager>,
-    pub secret_manager: Arc<SecretManager>,
+    /// The services of the runtime: all of them in the context a graph is
+    /// built with, those its kind uses in the one a component is given.
+    services: ComponentServices,
     /// The graph being built and the component this context was given to;
     /// set by `ComponentContainer::from_config`.
     building: Option<(Arc<Graph>, String)>,
@@ -132,17 +134,36 @@ impl std::fmt::Debug for ComponentContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ComponentContext")
             .field("security_context", &self.security_context)
+            .field("services", &self.services.names())
             .field("building", &self.building.as_ref().map(|(_, component)| component))
             .finish()
     }
 }
 
 impl ComponentContext {
-    /// The environment a component graph is built in:
-    /// `ComponentContainer::from_config` gives each component this context,
-    /// through which it reaches the others.
-    pub fn new(security_context: SecurityContext, security_manager: Arc<dyn SecurityManager>, secret_manager: Arc<SecretManager>) -> Self {
-        Self { security_context, security_manager, secret_manager, building: None }
+    /// The environment a component graph is built in, with the services of
+    /// the runtime: `ComponentContainer::from_config` gives each component
+    /// this context, with the services its kind uses, through which it
+    /// reaches the others.
+    pub fn new(security_context: SecurityContext, services: ComponentServices) -> Self {
+        Self { security_context, services, building: None }
+    }
+
+    /// The service `T` of the runtime - the policy (`dyn SecurityManager`),
+    /// the secrets (`SecretManager`), the workspaces (`WorkspaceManager`) -,
+    /// for a component whose kind declares it uses it.
+    ///
+    /// # Errors
+    /// `ComponentError::NoService` if the kind does not declare it, or the
+    /// runtime has none.
+    pub fn service<T: ?Sized + Send + Sync + 'static>(&self) -> ComponentResult<&Arc<T>> {
+        self.services.get::<T>().ok_or(ComponentError::NoService(TypeKey::of::<T>().name))
+    }
+
+    /// The context for a component of a kind that uses `services`: this one,
+    /// with those of its services alone.
+    fn for_kind(&self, services: &[TypeKey]) -> Self {
+        Self { services: self.services.only(services), ..self.clone() }
     }
 
     /// Every other component of the graph that provides `T`, in the order of
@@ -174,30 +195,49 @@ impl ComponentContext {
     }
 }
 
-/// The facets a component provides, by type.
+/// Values by their type, each an `Arc<T>` of a trait object or a type: the
+/// facets a component provides (`ComponentFacets`), the services of the
+/// runtime (`ComponentServices`).
 #[derive(Default, Debug, Clone)]
-pub struct ComponentFacets {
+pub struct TypeMap {
     map: HashMap<TypeId, (&'static str, Arc<dyn Any + Send + Sync>)>,
 }
 
-impl ComponentFacets {
+/// The facets a component provides, by type.
+pub type ComponentFacets = TypeMap;
+
+/// The services of the runtime a component may use, by type (issue 296).
+pub type ComponentServices = TypeMap;
+
+impl TypeMap {
     pub fn empty() -> Self {
         Self::default()
     }
 
     pub fn insert<T: ?Sized + Send + Sync + 'static>(&mut self, value: Arc<T>) {
-        let facet = FacetType::of::<T>();
-        self.map.insert(facet.id, (facet.name, Arc::new(value) as Arc<dyn Any + Send + Sync>));
+        let key = TypeKey::of::<T>();
+        self.map.insert(key.id, (key.name, Arc::new(value) as Arc<dyn Any + Send + Sync>));
     }
 
-    pub fn get<T: ?Sized + Send + Sync + 'static>(&self) -> Option<Arc<T>> {
+    /// It with `value` besides.
+    pub fn with<T: ?Sized + Send + Sync + 'static>(mut self, value: Arc<T>) -> Self {
+        self.insert(value);
+        self
+    }
+
+    pub fn get<T: ?Sized + Send + Sync + 'static>(&self) -> Option<&Arc<T>> {
         self.map
             .get(&TypeId::of::<T>())
             .and_then(|(_, boxed)| boxed.downcast_ref::<Arc<T>>())
-            .cloned()
     }
 
-    /// The names of the facets, sorted - for messages.
+    /// It with the values of `keys` alone.
+    fn only(&self, keys: &[TypeKey]) -> Self {
+        let map = keys.iter().filter_map(|key| self.map.get(&key.id).map(|value| (key.id, value.clone()))).collect();
+        Self { map }
+    }
+
+    /// The names of the values' types, sorted - for messages.
     fn names(&self) -> Vec<&'static str> {
         let mut names: Vec<_> = self.map.values().map(|(name, _)| *name).collect();
         names.sort_unstable();
@@ -212,17 +252,26 @@ impl ComponentFacets {
 #[derive(Debug, Clone)]
 pub struct ComponentKind {
     name: String,
-    provides: Vec<FacetType>,
+    provides: Vec<TypeKey>,
+    uses: Vec<TypeKey>,
 }
 
 impl ComponentKind {
     pub fn new(name: &str) -> Self {
-        Self { name: name.to_string(), provides: Vec::new() }
+        Self { name: name.to_string(), provides: Vec::new(), uses: Vec::new() }
     }
 
     /// Declares that components of this kind provide `T`.
     pub fn provides<T: ?Sized + 'static>(mut self) -> Self {
-        self.provides.push(FacetType::of::<T>());
+        self.provides.push(TypeKey::of::<T>());
+        self
+    }
+
+    /// Declares that components of this kind use the service `T` of the
+    /// runtime: their factory is given it (`ComponentContext::service`), and
+    /// none it does not declare (issue 296).
+    pub fn uses<T: ?Sized + 'static>(mut self) -> Self {
+        self.uses.push(TypeKey::of::<T>());
         self
     }
 }
@@ -231,7 +280,8 @@ type ComponentFactory = Box<dyn Fn(ComponentDescriptor, ComponentContext) -> Box
 
 /// A registered kind.
 struct Registration {
-    provides: Vec<FacetType>,
+    provides: Vec<TypeKey>,
+    uses: Vec<TypeKey>,
     factory: ComponentFactory,
 }
 
@@ -240,7 +290,7 @@ struct Registration {
 /// that makes sense.
 #[derive(Debug, Clone)]
 struct Single {
-    facet: FacetType,
+    facet: TypeKey,
     default_kind: Option<String>,
 }
 
@@ -308,7 +358,7 @@ impl ComponentRegistry {
             let built = factory(&descriptor, &context);
             Box::pin(std::future::ready(built))
         });
-        self.kinds.insert(kind.name, Registration { provides: kind.provides, factory });
+        self.kinds.insert(kind.name, Registration { provides: kind.provides, uses: kind.uses, factory });
     }
 
     /// Registers `kind` with a factory that waits: for a remote system, or
@@ -319,7 +369,7 @@ impl ComponentRegistry {
         Fut: Future<Output = ComponentResult<ComponentFacets>> + Send + 'static,
     {
         let factory: ComponentFactory = Box::new(move |descriptor, context| Box::pin(factory(descriptor, context)));
-        self.kinds.insert(kind.name, Registration { provides: kind.provides, factory });
+        self.kinds.insert(kind.name, Registration { provides: kind.provides, uses: kind.uses, factory });
     }
 
     /// Makes `T` a facet of which there is exactly one per container, built
@@ -328,7 +378,7 @@ impl ComponentRegistry {
     /// no default, a container that is asked for `T` and provides none fails
     /// to build it (issue 179: a remote agent has no default).
     pub fn single<T: ?Sized + 'static>(&mut self, default_kind: Option<&str>) {
-        let facet = FacetType::of::<T>();
+        let facet = TypeKey::of::<T>();
         self.singles.insert(facet.id, Single { facet, default_kind: default_kind.map(str::to_string) });
     }
 
@@ -382,7 +432,7 @@ impl ComponentRegistry {
     /// (`ref`) and none of its own provides `T`: what that one provides only
     /// its descriptor in the store tells.
     pub fn kind_of<T: ?Sized + 'static>(&self, config: &ComponentConfig) -> Option<String> {
-        let facet = FacetType::of::<T>();
+        let facet = TypeKey::of::<T>();
         if !self.singles.contains_key(&facet.id) {
             return None;
         }
@@ -397,7 +447,7 @@ impl ComponentRegistry {
     }
 
     /// The facets `kind` provides; `None` for a kind that is not registered.
-    fn provides(&self, kind: &str) -> Option<&[FacetType]> {
+    fn provides(&self, kind: &str) -> Option<&[TypeKey]> {
         self.kinds.get(kind).map(|registration| registration.provides.as_slice())
     }
 
@@ -444,7 +494,7 @@ impl ComponentRegistry {
         let Some(registration) = self.kinds.get(&node.kind) else {
             return Err(ComponentError::UnsupportedKind(node.kind.clone()));
         };
-        Ok((registration.factory)(node, context))
+        Ok((registration.factory)(node, context.for_kind(&registration.uses)))
     }
 }
 
@@ -459,7 +509,7 @@ struct ComponentNode {
 
 impl ComponentNode {
     fn get<T: ?Sized + Send + Sync + 'static>(&self) -> Option<ComponentImpl<T>> {
-        self.facets.get::<T>().map(|facet| ComponentImpl { id: self.id.clone(), fail_policy: self.fail_policy, facet })
+        self.facets.get::<T>().map(|facet| ComponentImpl { id: self.id.clone(), fail_policy: self.fail_policy, facet: Arc::clone(facet) })
     }
 }
 
@@ -525,7 +575,7 @@ enum State {
 #[derive(Debug)]
 struct Planned {
     descriptor: ComponentDescriptor,
-    provides: Vec<FacetType>,
+    provides: Vec<TypeKey>,
 }
 
 /// A component graph, built on demand: each component when it is asked for,
@@ -547,7 +597,7 @@ struct Graph {
 impl Graph {
     /// The planned component `index`, built if it is not yet. `asked` is who
     /// asked for which facet, for the message if it is being built.
-    fn ensure(self: &Arc<Self>, index: usize, asked: Option<(&str, FacetType)>) -> BoxFuture<'static, ComponentResult<Arc<ComponentNode>>> {
+    fn ensure(self: &Arc<Self>, index: usize, asked: Option<(&str, TypeKey)>) -> BoxFuture<'static, ComponentResult<Arc<ComponentNode>>> {
         let graph = Arc::clone(self);
         let asked = asked.map(|(component, facet)| (component.to_string(), facet));
         Box::pin(async move {
@@ -568,7 +618,7 @@ impl Graph {
 
     /// Builds `descriptor` with a context through which it reaches the rest
     /// of the graph, and checks that it provides exactly `provides`.
-    async fn construct(self: &Arc<Self>, descriptor: &ComponentDescriptor, provides: &[FacetType]) -> ComponentResult<Arc<ComponentNode>> {
+    async fn construct(self: &Arc<Self>, descriptor: &ComponentDescriptor, provides: &[TypeKey]) -> ComponentResult<Arc<ComponentNode>> {
         let failed = |cause| ComponentError::Build { component: descriptor.id.clone(), kind: descriptor.kind.clone(), cause: Box::new(cause) };
         let context = ComponentContext { building: Some((Arc::clone(self), descriptor.id.clone())), ..self.context.clone() };
         let facets = self.registry.dispatch(descriptor.clone(), context).map_err(failed)?.await.map_err(failed)?;
@@ -590,7 +640,7 @@ impl Graph {
 
     /// Every planned component that provides `T`, except `asking` itself.
     async fn all<T: ?Sized + Send + Sync + 'static>(self: &Arc<Self>, asking: Option<&str>) -> ComponentResult<Vec<ComponentImpl<T>>> {
-        let facet = FacetType::of::<T>();
+        let facet = TypeKey::of::<T>();
         let mut found = Vec::new();
         for (index, planned) in self.planned.iter().enumerate() {
             if Some(planned.descriptor.id.as_str()) == asking || !planned.provides.iter().any(|f| f.id == facet.id) {
@@ -605,7 +655,7 @@ impl Graph {
     /// The one component that provides the single `T`: the planned one, or
     /// the default.
     async fn one<T: ?Sized + Send + Sync + 'static>(self: &Arc<Self>, asking: Option<&str>) -> ComponentResult<ComponentImpl<T>> {
-        let facet = FacetType::of::<T>();
+        let facet = TypeKey::of::<T>();
         let not_single = || ComponentError::InvalidConfig(format!("{} is not a facet of which there is one", facet.name));
         if !self.registry.singles.contains_key(&facet.id) {
             return Err(not_single());
@@ -625,7 +675,7 @@ impl Graph {
     }
 
     /// The default for the single `facet`, built if it is not yet.
-    async fn default(self: &Arc<Self>, facet: FacetType, asked: Option<(&str, FacetType)>) -> ComponentResult<Arc<ComponentNode>> {
+    async fn default(self: &Arc<Self>, facet: TypeKey, asked: Option<(&str, TypeKey)>) -> ComponentResult<Arc<ComponentNode>> {
         let descriptor = self.own_defaults.get(&facet.id).cloned()
             .or_else(|| self.registry.default_of(facet.id))
             .ok_or_else(|| ComponentError::InvalidConfig(format!("no component provides {}, and it has no default", facet.name)))?;
@@ -653,7 +703,7 @@ impl Graph {
 }
 
 /// The error for asking for a component that is being built.
-fn cycle(asked: Option<(String, FacetType)>, other: &str) -> ComponentError {
+fn cycle(asked: Option<(String, TypeKey)>, other: &str) -> ComponentError {
     match asked {
         Some((component, facet)) => ComponentError::Cycle { component, facet: facet.name, other: other.to_string() },
         // Only a component being built asks for another while the graph is
@@ -791,7 +841,7 @@ impl ComponentContainer {
     pub async fn one<T: ?Sized + Send + Sync + 'static>(&self) -> ComponentResult<ComponentImpl<T>> {
         match &self.graph {
             Some(graph) => graph.one::<T>(None).await,
-            None => Err(ComponentError::InvalidConfig(format!("an empty container has no {}", FacetType::of::<T>().name))),
+            None => Err(ComponentError::InvalidConfig(format!("an empty container has no {}", TypeKey::of::<T>().name))),
         }
     }
 }
@@ -800,7 +850,7 @@ impl ComponentContainer {
 mod tests {
     use super::*;
     use caelumora_model::component::StoredComponents;
-    use caelumora_model::security::DummySecurityManager;
+    use caelumora_model::security::{DummySecurityManager, SecurityManager};
     use caelumora_model::session::SessionId;
     use caelumora_model::store::memory::MemoryStore;
     use serde_json::json;
@@ -818,11 +868,8 @@ mod tests {
     }
 
     fn context_with_session(session_id: SessionId) -> ComponentContext {
-        ComponentContext::new(
-            SecurityContext { session_id, ..SecurityContext::default() },
-            Arc::new(DummySecurityManager::new()),
-            Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new()))),
-        )
+        let services = ComponentServices::empty().with(Arc::new(DummySecurityManager::new()) as Arc<dyn SecurityManager>);
+        ComponentContext::new(SecurityContext { session_id, ..SecurityContext::default() }, services)
     }
 
     fn descriptor(id: &str, kind: &str, params: serde_json::Value) -> ComponentDescriptor {
@@ -1047,6 +1094,28 @@ mod tests {
 
         let message = error.to_string();
         assert!(message.contains("'liar'") && message.contains("instead of the declared [Named]"), "{message}");
+    }
+
+    /// A kind is given the services it declares it uses (issue 296), and
+    /// none it does not: the context of the graph has the policy, the one of
+    /// `blind` does not.
+    #[tokio::test]
+    async fn a_component_is_given_the_services_its_kind_uses_alone() {
+        let mut registry = ComponentRegistry::new(Arc::new(MemoryStore::new()));
+        registry.register(ComponentKind::new("seeing").provides::<dyn Named>().uses::<dyn SecurityManager>(), |node, context| {
+            context.service::<dyn SecurityManager>()?;
+            Ok(named(&node.id))
+        });
+        registry.register(ComponentKind::new("blind").provides::<dyn Named>(), |node, context| {
+            context.service::<dyn SecurityManager>()?;
+            Ok(named(&node.id))
+        });
+        let registry = Arc::new(registry);
+
+        ComponentContainer::from_config(&config(&[("seeing", "seeing")]), &registry, &test_context()).await.expect("given what it uses");
+        let error = ComponentContainer::from_config(&config(&[("blind", "blind")]), &registry, &test_context())
+            .await.expect_err("not what it does not declare");
+        assert!(causes(&error).iter().any(|e| matches!(e, ComponentError::NoService("SecurityManager"))), "{error}");
     }
 
     /// A registry with the single `Choice`, the kinds `default` and `other`

@@ -194,9 +194,9 @@ mod tests {
     #[tokio::test]
     async fn a_command_runs_in_the_workspace_with_the_instance_s_key_blanked() {
         let (stand_in, _, terminal, id) = workspace().await;
-        let shell = terminal.shell().expect("an instance has a shell");
-        let started = shell.start("channel-a", "echo made > made.txt; printf 'line\\n'; echo \"key=$OPEN_TERMINAL_API_KEY\"; exit 3").await.unwrap();
-        let state = shell.output("channel-a", &started, 0, Duration::from_secs(5)).await.unwrap();
+        let shell = terminal.shell("channel-a").expect("an instance has a shell");
+        let started = shell.start("echo made > made.txt; printf 'line\\n'; echo \"key=$OPEN_TERMINAL_API_KEY\"; exit 3").await.unwrap();
+        let state = shell.output(&started, 0, Duration::from_secs(5)).await.unwrap();
         assert_eq!((state.status, state.exit_code), (CommandStatus::Completed, Some(3)));
         assert_eq!(state.output, "line\nkey=\n", "carriage returns dropped, the key not given");
         assert!(stand_in.root.path().join(id.to_string()).join("made.txt").is_file(), "run in the workspace");
@@ -207,21 +207,21 @@ mod tests {
             assert_eq!((env["TERM"].as_str(), env["CAELUMORA_WORKSPACE"].as_str()), ("dumb", id.to_string().as_str()));
         }
 
-        let again = shell.output("channel-a", &started, state.next_offset, Duration::ZERO).await.unwrap();
+        let again = shell.output(&started, state.next_offset, Duration::ZERO).await.unwrap();
         assert_eq!(again.output, "", "nothing new after the offset");
-        assert!(matches!(shell.output("channel-b", &started, 0, Duration::ZERO).await, Err(TerminalError::UnknownCommand(c)) if c == started), "not seen from another channel");
+        assert!(matches!(terminal.shell("channel-b").unwrap().output(&started, 0, Duration::ZERO).await, Err(TerminalError::UnknownCommand(c)) if c == started), "not seen from another channel");
     }
 
     #[tokio::test]
     async fn a_long_command_is_followed_and_killed_with_what_it_started() {
         let (_stand_in, _, terminal, _) = workspace().await;
-        let shell = terminal.shell().unwrap();
-        let id = shell.start("c", "echo begun; sleep 30 & sleep 30").await.unwrap();
-        let state = shell.output("c", &id, 0, Duration::from_millis(300)).await.unwrap();
+        let shell = terminal.shell("c").unwrap();
+        let id = shell.start("echo begun; sleep 30 & sleep 30").await.unwrap();
+        let state = shell.output(&id, 0, Duration::from_millis(300)).await.unwrap();
         assert_eq!((state.status, state.output.as_str()), (CommandStatus::Running, "begun\n"));
-        let killed = shell.kill("c", &id, state.next_offset).await.unwrap();
+        let killed = shell.kill(&id, state.next_offset).await.unwrap();
         assert_eq!(killed.status, CommandStatus::Killed);
-        assert!(matches!(shell.kill("c", "nonesuch", 0).await, Err(TerminalError::UnknownCommand(_))));
+        assert!(matches!(shell.kill("nonesuch", 0).await, Err(TerminalError::UnknownCommand(_))));
     }
 
     #[tokio::test]
@@ -268,21 +268,21 @@ mod tests {
         assert!(matches!(terminal.delete(&path("docs")).await, Err(TerminalError::NotEmpty(_))));
         terminal.move_entry(&path("docs/a.md"), &path("b/a.md")).await.unwrap();
 
-        let shell = terminal.shell().unwrap();
         let scope = uuid::Uuid::new_v4().to_string();
-        let started = shell.start(&scope, "cat b/a.md; echo; echo \"key=[$OPEN_TERMINAL_API_KEY]\"; pwd; exit 3").await.unwrap();
-        let state = shell.output(&scope, &started, 0, Duration::from_secs(10)).await.unwrap();
+        let shell = terminal.shell(&scope).unwrap();
+        let started = shell.start("cat b/a.md; echo; echo \"key=[$OPEN_TERMINAL_API_KEY]\"; pwd; exit 3").await.unwrap();
+        let state = shell.output(&started, 0, Duration::from_secs(10)).await.unwrap();
         assert_eq!((state.status, state.exit_code), (CommandStatus::Completed, Some(3)), "{state:?}");
         assert_eq!(state.output, format!("hello\nkey=[]\n/tmp/caelumora-workspaces/{id}\n"));
-        assert!(matches!(shell.output("elsewhere", &started, 0, Duration::ZERO).await, Err(TerminalError::UnknownCommand(_))));
+        assert!(matches!(terminal.shell("elsewhere").unwrap().output(&started, 0, Duration::ZERO).await, Err(TerminalError::UnknownCommand(_))));
 
-        let long = shell.start(&scope, "echo begun; sleep 60 & sleep 60").await.unwrap();
-        let running = shell.output(&scope, &long, 0, Duration::from_millis(500)).await.unwrap();
+        let long = shell.start("echo begun; sleep 60 & sleep 60").await.unwrap();
+        let running = shell.output(&long, 0, Duration::from_millis(500)).await.unwrap();
         assert_eq!((running.status, running.output.as_str()), (CommandStatus::Running, "begun\n"));
-        let killed = shell.kill(&scope, &long, running.next_offset).await.unwrap();
+        let killed = shell.kill(&long, running.next_offset).await.unwrap();
         assert_eq!(killed.status, CommandStatus::Killed);
-        let left = shell.start(&scope, "pgrep -c -f '[s]leep 60' || true").await.unwrap();
-        let left = shell.output(&scope, &left, 0, Duration::from_secs(10)).await.unwrap();
+        let left = shell.start("pgrep -c -f '[s]leep 60' || true").await.unwrap();
+        let left = shell.output(&left, 0, Duration::from_secs(10)).await.unwrap();
         assert_eq!(left.output.trim(), "0", "what it started went with it");
 
         provider.remove(id).await.unwrap();

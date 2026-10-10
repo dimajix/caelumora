@@ -105,6 +105,10 @@ Components are wired the way Spring Boot wires beans (issue 99).
     `ComponentKind::new(KIND).provides::<dyn ToolProvider>()…`, the counterpart of a bean's class.
     The components providing a facet are thus known before any of them is built, and the container
     checks that each factory kept to what its kind declared.
+*   **A kind declares the services it uses.** `ComponentKind::new(KIND)…uses::<WorkspaceManager>()`
+    (issue 296): its factory is given those services of the runtime, and no other, and takes them
+    from its context by type (`context.service::<WorkspaceManager>()`), keeping them as fields. A
+    service it does not declare is refused as `ComponentError::NoService`, naming it.
 *   **A component asks for what it needs, by type.** Its factory calls `context.all::<dyn
     PromptProvider>().await` (or `one::<T>()`). This builds the components that provide the facet on
     demand, recursively, and returns every *other* one in the order of the configuration, each with
@@ -164,9 +168,15 @@ that holds the default kind (`component_impl`, `llm`, `external`, `moderator`, `
     server's tools, with its credential - it reads in it. What it asks while a turn runs, it asks in
     the turn's context (`Turn::security_context`, `AgentWork::security_context`): one context per
     piece of work (issue 255),
-*   the `SecurityManager`, for the questions a component asks (`AccessQuestions`; the memory asks
-    what it may recall, issue 131),
-*   the `SecretManager`,
+*   the services of the runtime (`ComponentServices`, issue
+    [296](../issues/296-workspace-operations-on-the-view.md)), by their type, of which a component
+    is given those its kind declares it uses (`ComponentKind::uses`): the `SecurityManager`, for the
+    questions a component asks (`AccessQuestions`; the memory asks what it may recall, issue 131),
+    the `SecretManager`, and the `WorkspaceManager` and the `ArtifactManager`, through which
+    `terminal_tool`, `artifact_tool` and `workspace_prompt_provider` work on the workspace of
+    their turn's channel. The runtime makes them once (`RuntimeManager::component_services`);
+    they are not fields of the context, so that a new one needs no new field and no component is
+    given one it does not declare,
 *   nothing of the session: what a component reads of it - the other channels, their notes and
     histories, what its agent may recall - it reads through the `Turn` it is called with
     (`Turn::session`, issue 163; see [MEMORY.md](MEMORY.md#reading-other-channels)),
@@ -176,8 +186,10 @@ that holds the default kind (`component_impl`, `llm`, `external`, `moderator`, `
 Components are not given their actor's `ActorRuntime`
 ([128](../issues/128-actor-runtime-in-components.md)): through it they could store the actor's state
 or act as the actor past the `Turn` they are called with. What a component may use at build time is
-exactly what `ComponentContext` holds. A new need gets its own narrow handle there, as reading other
-channels did.
+exactly what `ComponentContext` holds: a service of the runtime it needs is declared by its kind,
+which is where it shows who may use what. A service that acts in someone's name - a manager - takes
+the security context with each call; while a turn runs, a component calls it with the turn's
+(`Turn::security_context`), never with the context it was built in.
 
 ## Writing a component
 

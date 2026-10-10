@@ -105,7 +105,7 @@ impl AgentActor {
             actor_runtime.component_registry(),
             // Its components get nothing of its runtime (issue 128); what they
             // read of the session they read through their turn (issue 163).
-            &ComponentContext::new(security_context.clone(), Arc::clone(actor_runtime.security_manager()), Arc::clone(actor_runtime.secret_manager())),
+            &ComponentContext::new(security_context.clone(), actor_runtime.component_services().clone()),
         )
         .await?;
         let context_provider = components.one::<dyn ContextProvider>().await?;

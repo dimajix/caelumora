@@ -319,11 +319,11 @@ impl ToolProvider for McpToolProvider {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
-        ComponentKind::new(MCP_TOOL_KIND).provides::<dyn ToolProvider>(),
+        ComponentKind::new(MCP_TOOL_KIND).provides::<dyn ToolProvider>().uses::<SecretManager>(),
         |descriptor, context| async move {
             let config: McpToolConfig = config_of_params(&descriptor.params)?;
 
-            let secret_manager = Arc::clone(&context.secret_manager);
+            let secret_manager = Arc::clone(context.service::<SecretManager>()?);
             let discover = async {
                 let auth_header = config.endpoint.bearer_token(&secret_manager, &context.security_context).await?;
                 discover_tools(&descriptor.id, &config, auth_header).await

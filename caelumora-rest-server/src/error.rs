@@ -227,7 +227,7 @@ impl ApiError {
                 WorkspaceError::ClassificationRefused => return bad_request("invalid_classification"),
                 WorkspaceError::NotCleared => return Self::forbidden("not_cleared", detail),
                 WorkspaceError::ReadOnly(_) => return Self::forbidden("read_only", detail),
-                WorkspaceError::NotInChannel => return bad_request("invalid_scope"),
+                WorkspaceError::NotUsableInChannel => return Self::not_found("workspace_not_found", detail),
                 WorkspaceError::Invalid(e) => return Self::invalid_value(e),
                 WorkspaceError::Terminal(e) => return Self::of_terminal(e),
                 WorkspaceError::Store(StoreError::NotFound { .. }) => return Self::not_found("workspace_not_found", detail),
@@ -262,14 +262,13 @@ impl ApiError {
                 ArtifactError::ClassifiedOtherwise(_) => return Self::conflict("classified_otherwise", detail),
                 ArtifactError::TooLarge { .. } => return bad_request("too_large"),
                 ArtifactError::Changed => return Self::conflict("changed", detail),
-                ArtifactError::NotInChannel | ArtifactError::InvalidScope => return bad_request("invalid_scope"),
+                ArtifactError::InvalidScope => return bad_request("invalid_scope"),
                 ArtifactError::Invalid(e) => return Self::invalid_value(e),
-                ArtifactError::Terminal(e) => return Self::of_terminal(e),
                 ArtifactError::Store(StoreError::NameTaken { .. }) => return Self::conflict("name_taken", detail),
                 ArtifactError::Store(StoreError::PermissionDenied) => return Self::forbidden(subject.forbidden(), format!("{} is not permitted", capitalize(action))),
                 // A caller that is no user, the workspace's own failure, the
                 // storage or the store broke: not the client's request.
-                ArtifactError::OwnerNotAUser | ArtifactError::Workspace(_) | ArtifactError::Unavailable(_) | ArtifactError::Store(_) => {}
+                ArtifactError::OwnerNotAUser | ArtifactError::Unavailable(_) | ArtifactError::Store(_) => {}
             }
         }
         if let Some(e) = error.downcast_ref::<TerminalError>() {

@@ -1700,9 +1700,9 @@ async fn with_remote_at_work(calls: &Arc<Mutex<Vec<&'static str>>>, declared: Op
 /// there is one.
 async fn with_remote(calls: &Arc<Mutex<Vec<&'static str>>>, declared: Option<Classification>, gate: Option<Arc<tokio::sync::Semaphore>>) -> World {
     let calls = Arc::clone(calls);
-    World::with_kinds(|registry| registry.register(ComponentKind::new("remote_at_work").provides::<dyn ExternalAgent>(), move |_, context| {
+    World::with_kinds(|registry| registry.register(ComponentKind::new("remote_at_work").provides::<dyn ExternalAgent>().uses::<SecretManager>(), move |_, context| {
         let mut facets = ComponentFacets::empty();
-        facets.insert::<dyn ExternalAgent>(Arc::new(RemoteAtWork { secrets: Arc::clone(&context.secret_manager), calls: Arc::clone(&calls), declared: declared.clone(), gate: gate.clone() }));
+        facets.insert::<dyn ExternalAgent>(Arc::new(RemoteAtWork { secrets: Arc::clone(context.service::<SecretManager>()?), calls: Arc::clone(&calls), declared: declared.clone(), gate: gate.clone() }));
         Ok(facets)
     })).await
 }
@@ -2287,6 +2287,16 @@ async fn read(terminal: &dyn Terminal, path: &str) -> String {
     String::from_utf8(chunks.into_iter().flat_map(|chunk| chunk.unwrap().to_vec()).collect()).unwrap()
 }
 
+/// Publishes the file `at` of the workspace of channel `channel` as a
+/// version of the artifact `name`, in `ctx`'s name, as `artifact_tool` does
+/// (issue 296): the workspace reached there for reading, the file read, and
+/// what was read handed to the `ArtifactManager`.
+async fn publish(world: &World, ctx: &SecurityContext, session: SessionId, channel: ChannelId, at: &WorkspacePath, name: &str, description: Option<&str>) -> Result<(caelumora_model::artifact::Artifact, u32), ArtifactError> {
+    let (workspace, terminal) = world.runtime.workspace_manager().terminal_in(ctx, session, channel, Grant::Read).await.expect("the workspace, to read");
+    let content = terminal.read(at).await.expect("the file");
+    world.runtime.artifact_manager().publish(ctx, content, &workspace.classification, name, description, session, channel).await
+}
+
 /// A workspace is its owner's alone (issue 251, decision 12): made by a
 /// user cleared for its classification, read, changed, deleted and
 /// restored by them, by nobody else - and purged by the system, its files
@@ -2421,18 +2431,20 @@ async fn a_workspace_is_used_in_a_channel_by_its_members_as_its_list_lets_them_w
     let (usable, asked) = world.asked(async { in_main(&bob).await.workspace().await.unwrap() }).await;
     let bobs = usable.expect("bob, a member of the channel, uses alice's workspace there");
     assert!(asked.ends_with(&checks(&["bob: GetWorkspace(alice's) yes", "bob: Publish yes", "bob: Publish yes"])), "its list, then both ways: {asked:?}");
-    assert!(matches!(bobs.terminal(Grant::Write).await, Err(WorkspaceError::ReadOnly(_))), "reading, not changing, where it grants reading");
+    assert_eq!(bobs.id(), docs.id);
+    let his = |need| workspaces.terminal_in(&bob, session_id, main, need);
+    assert!(matches!(his(Grant::Write).await, Err(WorkspaceError::ReadOnly(_))), "reading, not changing, where it grants reading");
     workspaces.share(&alice, docs.id, Subject::MemberOf(Membership::Session(session_id)), Grant::Write).await.unwrap();
-    let terminal = bobs.terminal(Grant::Write).await.expect("and reaches its files");
+    let (_, terminal) = his(Grant::Write).await.expect("and reaches its files");
     terminal.write(&WorkspacePath::parse("notes/a.md").unwrap(), file("from bob"), 100).await.unwrap();
-    let owned = world.manager.views(Viewer::new(alice.clone())).workspace(docs.id).await.unwrap();
-    assert_eq!(read(owned.terminal(Grant::Read).await.unwrap().as_ref(), "notes/a.md").await, "from bob", "the same files as its owner's");
+    let (_, owned) = workspaces.terminal(&alice, docs.id, Grant::Read).await.unwrap();
+    assert_eq!(read(owned.as_ref(), "notes/a.md").await, "from bob", "the same files as its owner's");
 
     let channel = Arc::clone(&session.channels()[0]);
     assert!(denied(&channel.update_uses_workspace(&bob, false).await.unwrap_err()), "a member does not switch it off");
     channel.update_uses_workspace(&alice, false).await.expect("the channel's owner does");
     assert!(in_main(&bob).await.workspace().await.unwrap().is_none(), "not where the channel does not use it");
-    assert!(matches!(bobs.terminal(Grant::Read).await, Err(WorkspaceError::NotFound(_))), "asked again when used");
+    assert!(matches!(his(Grant::Read).await, Err(WorkspaceError::NotUsableInChannel)), "asked again when used");
     channel.update_uses_workspace(&alice, true).await.unwrap();
 
     workspaces.reclassify(&alice, docs.id, Classification::PUBLIC).await.unwrap();
@@ -2444,7 +2456,8 @@ async fn a_workspace_is_used_in_a_channel_by_its_members_as_its_list_lets_them_w
 /// user through the workspace as the channel offers it - by whoever may
 /// change its files there, who could have started the command; not by who
 /// only reads them. A command is seen only in the channel it was started
-/// in, and a workspace reached directly ends none.
+/// in, and ended only there (issue 296: by the `WorkspaceManager`, asked as
+/// the views ask it).
 #[tokio::test]
 async fn a_command_is_ended_in_its_channel_by_who_may_change_the_workspace_there() {
     let world = World::new().await;
@@ -2454,32 +2467,29 @@ async fn a_command_is_ended_in_its_channel_by_who_may_change_the_workspace_there
     let session = world.shared_session(&[], &[]).await;
     session.set_workspace(&alice, Some(docs.id), Some(Grant::Read)).await.unwrap();
     let (session_id, main) = (session.id(), session.channels()[0].id());
-    let in_main = |ctx: &SecurityContext| {
-        let views = world.manager.views(Viewer::new(ctx.clone()));
-        async move { views.session(session_id).await.unwrap().channel(main).await.unwrap().workspace().await.unwrap().expect("used in main") }
-    };
-    // As `run_command` starts them: under the channel's scope.
-    let shell = in_main(&alice).await.terminal(Grant::Write).await.unwrap().shell().expect("a shell");
-    let started = shell.start(&main.to_string(), "sleep 30").await.unwrap();
-    let other = ChannelId::new().to_string();
-    let elsewhere = shell.start(&other, "sleep 30").await.unwrap();
+    // As `run_command` starts them: in the shell of the channel.
+    let (_, shell) = workspaces.shell_in(&alice, session_id, main).await.unwrap();
+    let started = shell.expect("a shell").start("sleep 30").await.unwrap();
+    let (_, terminal) = workspaces.terminal(&alice, docs.id, Grant::Write).await.unwrap();
+    let other = terminal.shell(&ChannelId::new().to_string()).expect("a shell");
+    let elsewhere = other.start("sleep 30").await.unwrap();
 
-    let bobs = in_main(&bob).await;
-    let (refused, asked) = world.asked(bobs.kill_command(&started, 0)).await;
+    let (refused, asked) = world.asked(workspaces.kill_command(&bob, session_id, main, &started, 0)).await;
     assert!(matches!(refused, Err(WorkspaceError::ReadOnly(_))), "not by who only reads its files: {refused:?}");
-    // Asked again as it is now: the channel, the workspace as the channel
-    // offers it, then whether he may change its files.
+    // Asked as it is now, as the views ask it: the session, the channel and
+    // whether he is cleared for it, the workspace as the channel offers it,
+    // then whether he may change its files.
     let reached = ["bob: GetSession(alice's) yes", "bob: GetChannel(alice's) yes", "bob: JoinChannel(bob) yes", "bob: GetWorkspace(alice's) yes", "bob: Publish yes", "bob: Publish yes"];
     assert_eq!(asked, checks(&[&reached[..], &["bob: WriteWorkspace(alice's) no"]].concat()));
     workspaces.share(&alice, docs.id, Subject::MemberOf(Membership::Session(session_id)), Grant::Write).await.unwrap();
-    let (killed, asked) = world.asked(bobs.kill_command(&started, 0)).await;
+    let (killed, asked) = world.asked(workspaces.kill_command(&bob, session_id, main, &started, 0)).await;
     assert_eq!(killed.expect("by who may change them").status, CommandStatus::Killed);
     assert_eq!(asked, checks(&[&reached[..], &["bob: WriteWorkspace(alice's) yes"]].concat()));
-    let unknown = bobs.kill_command(&elsewhere, 0).await;
+    let unknown = workspaces.kill_command(&bob, session_id, main, &elsewhere, 0).await;
     assert!(matches!(unknown, Err(WorkspaceError::Terminal(TerminalError::UnknownCommand(_)))), "not one of another channel: {unknown:?}");
-    let direct = world.manager.views(Viewer::new(alice.clone())).workspace(docs.id).await.unwrap().kill_command(&elsewhere, 0).await;
-    assert!(matches!(direct, Err(WorkspaceError::NotInChannel)), "nor by the workspace reached directly: {direct:?}");
-    shell.kill(&other, &elsewhere, 0).await.unwrap();
+    let nowhere = workspaces.kill_command(&alice, session_id, ChannelId::new(), &started, 0).await;
+    assert!(matches!(nowhere, Err(WorkspaceError::NotUsableInChannel)), "nor in a channel with none to use: {nowhere:?}");
+    other.kill(&elsewhere, 0).await.unwrap();
     world.manager.stop_session(&alice, session.id()).await.unwrap();
 }
 
@@ -2506,8 +2516,8 @@ async fn a_workspace_is_reached_by_its_list_wherever_one_acts() {
 
     let elsewhere = SecurityContext::new(ActorId::User(world.bob), SessionId::new(), ChannelId::new());
     let his = views(&elsewhere).workspace(docs.id).await.expect("he reads it, wherever he acts");
-    his.terminal(Grant::Read).await.expect("its files");
-    assert!(matches!(his.terminal(Grant::Write).await, Err(WorkspaceError::ReadOnly(_))), "not to change them");
+    workspaces.terminal(&elsewhere, docs.id, Grant::Read).await.expect("its files");
+    assert!(matches!(workspaces.terminal(&elsewhere, docs.id, Grant::Write).await, Err(WorkspaceError::ReadOnly(_))), "not to change them");
     let seen = his.snapshot().await;
     assert!(!seen.can_write && !seen.can_change && seen.access.is_empty(), "nor whom else it is shared with");
     let listed: Vec<WorkspaceId> = views(&bob).workspaces().await.unwrap().iter().map(|w| w.id()).collect();
@@ -2519,7 +2529,7 @@ async fn a_workspace_is_reached_by_its_list_wherever_one_acts() {
 
     let writers = SecurityAttributes::owned_by(ActorId::User(world.alice)).granting(Subject::Actor(ActorId::User(world.bob)), Grant::Write).acl;
     workspaces.set_access(&alice, docs.id, writers).await.unwrap();
-    views(&bob).workspace(docs.id).await.unwrap().terminal(Grant::Write).await.expect("where it grants writing, he writes");
+    workspaces.terminal(&bob, docs.id, Grant::Write).await.expect("where it grants writing, he writes");
     let agent = SecurityAttributes::owned_by(ActorId::User(world.alice)).granting(Subject::Actor(ActorId::Agent(AgentId::new())), Grant::Read).acl;
     assert!(matches!(workspaces.set_access(&alice, docs.id, agent).await, Err(WorkspaceError::Store(StoreError::Validation(_)))), "never with an agent (issue 255)");
 }
@@ -2592,17 +2602,16 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
         let views = world.manager.views(Viewer::new(ctx.clone()));
         async move { views.session(session_id).await.unwrap().channel(main).await.unwrap() }
     };
-    let workspace = in_main(&alice).await.workspace().await.unwrap().expect("hers to use");
-    let terminal = workspace.terminal(Grant::Write).await.unwrap();
+    let (_, terminal) = world.runtime.workspace_manager().terminal_in(&alice, session_id, main, Grant::Write).await.expect("hers to use");
     let at = WorkspacePath::parse("out/report.csv").unwrap();
     terminal.write(&at, file("a,b"), 100).await.unwrap();
 
-    let (published, asked) = world.asked(workspace.publish_artifact(&at, "report.csv", Some("The figures"))).await;
+    let (published, asked) = world.asked(publish(&world, &alice, session_id, main, &at, "report.csv", Some("The figures"))).await;
     let (artifact, first) = published.expect("published");
     assert_eq!((first, &artifact.name.scope, artifact.owner()), (1, &Scope::SessionScope { session_id }, Some(world.alice)));
     assert!(asked.contains(&"alice: CreateArtifact(alice's) yes".to_string()), "made in her name: {asked:?}");
     terminal.write(&at, file("a,b\n1,2"), 100).await.unwrap();
-    let (published, asked) = world.asked(workspace.publish_artifact(&at, "report.csv", None)).await;
+    let (published, asked) = world.asked(publish(&world, &alice, session_id, main, &at, "report.csv", None)).await;
     assert_eq!(published.expect("a second version").1, 2);
     assert!(asked.contains(&"alice: WriteArtifact(alice's) yes".to_string()), "added to as hers: {asked:?}");
 
@@ -2612,8 +2621,8 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
     assert_eq!(read_version(&world, &bob, artifact.id, 3).await, Read::NoVersion);
     assert_eq!(read_version(&world, &World::as_user(world.carol), artifact.id, 1).await, Read::NoArtifact, "nobody else, who learns nothing");
 
-    let bobs = in_main(&bob).await.workspace().await.unwrap().expect("bob uses it too");
-    let refused = bobs.publish_artifact(&at, "report.csv", None).await;
+    assert!(in_main(&bob).await.workspace().await.unwrap().is_some(), "bob uses it too");
+    let refused = publish(&world, &bob, session_id, main, &at, "report.csv", None).await;
     assert!(matches!(refused, Err(ArtifactError::Store(StoreError::PermissionDenied))), "nor adds to alice's artifact of that name: {refused:?}");
     let listed = |ctx: &SecurityContext| {
         let views = world.manager.views(Viewer::new(ctx.clone()));
@@ -2627,12 +2636,12 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
     assert!(matches!(artifacts.set_access(&bob, artifact.id, writers.clone()).await, Err(ArtifactError::NotFound(_))), "nor shares it");
     artifacts.set_access(&alice, artifact.id, writers).await.expect("its owner shares it");
     assert_eq!(listed(&bob).await, [artifact.id], "shared with him by name, it is among his");
-    let (added, third) = bobs.publish_artifact(&at, "report.csv", None).await.expect("whom it is shared with to write adds a version");
+    let (added, third) = publish(&world, &bob, session_id, main, &at, "report.csv", None).await.expect("whom it is shared with to write adds a version");
     assert_eq!((third, added.owner()), (3, Some(world.alice)), "hers still");
     assert!(matches!(artifacts.keep(&bob, artifact.id, Scope::UserScope { user_id: world.bob }).await, Err(ArtifactError::Store(StoreError::PermissionDenied))), "nor keeps it");
     let kept_one = artifacts.keep(&alice, artifact.id, Scope::UserScope { user_id: world.alice }).await.expect("its owner keeps it");
     assert_eq!(kept_one.name.scope, Scope::UserScope { user_id: world.alice });
-    let (left, _) = workspace.publish_artifact(&at, "draft.csv", None).await.unwrap();
+    let (left, _) = publish(&world, &alice, session_id, main, &at, "draft.csv", None).await.unwrap();
 
     world.manager.stop_session(&alice, session_id).await.unwrap();
     world.manager.delete_session(&alice, session_id).await.unwrap();
@@ -2656,16 +2665,19 @@ async fn drafts_of_an_artifact_stay_with_the_channel_they_were_published_in() {
     session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
     let drafts = session.create_channel(&alice, ChannelSpec { name: "drafts".to_string(), components: quiet(), participants: vec![], classification: None, language: None, uses_workspace: None }).await.expect("hers alone").id();
     let (session_id, main) = (session.id(), session.channels()[0].id());
-    let workspace_in = |channel| {
-        let views = world.manager.views(Viewer::new(alice.clone()));
-        async move { views.session(session_id).await.unwrap().channel(channel).await.unwrap().workspace().await.unwrap().expect("hers to use") }
+    let workspaces = world.runtime.workspace_manager();
+    let write_in = |channel, text| {
+        let alice = &alice;
+        async move {
+            let (_, terminal) = workspaces.terminal_in(alice, session_id, channel, Grant::Write).await.expect("hers to use");
+            terminal.write(&WorkspacePath::parse("report.md").unwrap(), file(text), 100).await.unwrap();
+        }
     };
     let at = WorkspacePath::parse("report.md").unwrap();
-    let (in_drafts, in_main) = (workspace_in(drafts).await, workspace_in(main).await);
-    in_drafts.terminal(Grant::Write).await.unwrap().write(&at, file("rough"), 100).await.unwrap();
-    let (artifact, _) = in_drafts.publish_artifact(&at, "report.md", Some("Still wrong about Q3")).await.expect("a draft");
-    in_main.terminal(Grant::Write).await.unwrap().write(&at, file("final"), 100).await.unwrap();
-    let (_, final_one) = in_main.publish_artifact(&at, "report.md", Some("The report")).await.expect("the final one");
+    write_in(drafts, "rough").await;
+    let (artifact, _) = publish(&world, &alice, session_id, drafts, &at, "report.md", Some("Still wrong about Q3")).await.expect("a draft");
+    write_in(main, "final").await;
+    let (_, final_one) = publish(&world, &alice, session_id, main, &at, "report.md", Some("The report")).await.expect("the final one");
     assert_eq!(final_one, 2);
 
     let his = world.manager.views(Viewer::new(bob.clone())).artifact(artifact.id).await.expect("bob reads what reached the team").snapshot().await;
@@ -2837,8 +2849,7 @@ async fn a_workspace_of_a_session_s_scope_is_made_with_it_and_goes_with_it() {
     assert_eq!(made.name.scope, Scope::SessionScope { session_id: first.id() });
 
     assert_eq!(made.security_attributes.acl, [caelumora_model::security::AclEntry { subject: Subject::MemberOf(Membership::Session(first.id())), grant: Grant::Write }], "its members' to work on (issue 23)");
-    let owned = world.manager.views(Viewer::new(alice.clone())).workspace(mine).await.unwrap();
-    assert!(owned.terminal(Grant::Write).await.is_ok(), "used directly, wherever who may use it acts (issue 23)");
+    assert!(world.runtime.workspace_manager().terminal(&alice, mine, Grant::Write).await.is_ok(), "used directly, wherever who may use it acts (issue 23)");
     let refused = second.set_workspace(&alice, Some(mine), None).await.unwrap_err();
     assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::WorkspaceOutOfScope(_))), "nor attached to another session: {refused}");
 

@@ -61,3 +61,8 @@ actor outside of the `Turn` it is called with.
   then exactly what the struct holds - a new need gets its own narrow handle, as reading other
   channels did. (a) was not enough: every component lives in the runtime crate, so `pub(crate)`
   would have kept none of them out. (c) would have been this with an extra type around one field.
+- **2026-10-10** — Loosened by [296](296-workspace-operations-on-the-view.md): components are given
+  the runtime's services their kind declares (`ComponentKind::uses`), among them the
+  `WorkspaceManager`, with which a component could act as its agent outside of a turn - as it could
+  with the views of a turn it keeps. What a kind may use is written down where it is registered;
+  a manager is called with the turn's security context.

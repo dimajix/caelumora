@@ -43,7 +43,9 @@ inside the workspace.
 
 A terminal may have a `Shell`, a capability of its storage (`TerminalProvider::has_shell`): commands
 started in the workspace's directory, followed by what they print and killed with everything they
-started, each seen only under the scope it was started with - the tool passes the channel. The
+started. A shell is made for one scope (`Terminal::shell(scope)`, issue
+[296](../issues/296-workspace-operations-on-the-view.md)) and sees the commands started under it
+alone; for the storage a scope is any text, for the runtime it is the channel. The
 `local` provider's shell is opt-in (`shell`): `bash -c` on Caelumora's host, a process group per
 command, an environment cleared but for `PATH`, `HOME` (the workspace), `LANG`, `TERM=dumb`,
 `NO_COLOR` and `CAELUMORA_WORKSPACE`, the newest 1 MiB of output kept, and a command kept five
@@ -83,7 +85,9 @@ keeps a directory per artifact under its root and a file per version, written wh
 as a local workspace's files are. The `ArtifactManager` is the one writer of artifact documents and
 the only code that holds the storages: a version's content is kept before the document says it
 exists, and removed again if the document cannot be stored; an artifact is purged with its content,
-the content first. Artifacts are entities, not state: each has its own owner and permissions, a name
+the content first. It is given the content to publish - its size, its bytes and its classification
+- and knows no workspace: where the content comes from is its caller's (issue
+[296](../issues/296-workspace-operations-on-the-view.md)). Artifacts are entities, not state: each has its own owner and permissions, a name
 unique in its scope and a trash, and one that is kept leaves the session it was published in - it
 can be the state of neither a session nor a channel (issue 271). Object storage is issue
 [272](../issues/272-artifacts-in-s3.md).

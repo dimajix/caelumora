@@ -402,7 +402,7 @@ impl Views {
         let mut readable = Vec::with_capacity(workspaces.len());
         for workspace in workspaces {
             if self.cleared_for(&workspace.classification).await {
-                readable.push(WorkspaceView::direct(self.clone(), workspace));
+                readable.push(WorkspaceView::of(self.clone(), workspace));
             }
         }
         Ok(readable)
@@ -416,7 +416,7 @@ impl Views {
     /// not cleared for is the same.
     pub async fn workspace(&self, id: WorkspaceId) -> ViewResult<WorkspaceView> {
         match self.entities.get_workspace(self.viewer.context(), id).await.optional() {
-            Ok(Some(workspace)) if self.cleared_for(&workspace.classification).await => Ok(WorkspaceView::direct(self.clone(), workspace)),
+            Ok(Some(workspace)) if self.cleared_for(&workspace.classification).await => Ok(WorkspaceView::of(self.clone(), workspace)),
             Ok(Some(_)) => Err(ViewError::WorkspaceNotFound(id)),
             Ok(None) => Err(ViewError::WorkspaceNotFound(id)),
             Err(e) => Err(ViewError::failed(e, "reading a workspace")),
@@ -640,7 +640,7 @@ impl Views {
     /// The roles of the viewer's user, which decide what they are cleared
     /// for (issue 133). Without them, only what is public: a failed lookup
     /// shows less.
-    async fn roles(&self) -> Vec<caelumora_model::role::RoleId> {
+    pub(super) async fn roles(&self) -> Vec<caelumora_model::role::RoleId> {
         user_roles(self.entities.as_ref(), self.viewer.context().principal_id).await.unwrap_or_default()
     }
 

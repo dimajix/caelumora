@@ -175,13 +175,8 @@ pub async fn set_uses_workspace(State(state): State<Arc<AppState>>, Path((id, ci
 /// channel (issue 294): whoever may change the workspace's files there.
 /// Answers how the command stands, with what it printed.
 pub async fn kill_command(State(state): State<Arc<AppState>>, Path((id, cid, command_id)): Path<(Uuid, Uuid, String)>, user: AuthenticatedUser) -> Result<Json<CommandResponse>, ApiError> {
-    let ending = || format!("ending command {command_id}");
-    let channel = crate::routes::channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let workspace = channel.workspace().await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Workspace, &ending()))?
-        .ok_or_else(|| ApiError::not_found("workspace_not_found", "There is no workspace you can use in this channel".to_string()))?;
-    let killed = workspace.kill_command(&command_id, 0).await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Workspace, &ending()))?;
+    let killed = state.runtime_manager.workspace_manager().kill_command(&user.security_context(), SessionId(id), ChannelId(cid), &command_id, 0).await
+        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Workspace, &format!("ending command {command_id}")))?;
     Ok(Json(killed.into()))
 }
 
@@ -202,10 +197,9 @@ async fn owned(state: &Arc<AppState>, user: &AuthenticatedUser, id: WorkspaceId)
 /// The terminal of workspace `id` for what `need` asks: reading its files,
 /// or changing them too (issue 23).
 async fn terminal(state: &Arc<AppState>, user: &AuthenticatedUser, id: WorkspaceId, need: Grant) -> Result<Arc<dyn Terminal>, ApiError> {
-    let workspace = crate::routes::views(state, user).workspace(id).await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Workspace, &format!("reading workspace {id}")))?;
-    workspace.terminal(need).await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Workspace, &format!("reaching workspace {id}")))
+    let (_, terminal) = state.runtime_manager.workspace_manager().terminal(&user.security_context(), id, need).await
+        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Workspace, &format!("reaching workspace {id}")))?;
+    Ok(terminal)
 }
 
 /// `text` as a path inside the workspace.

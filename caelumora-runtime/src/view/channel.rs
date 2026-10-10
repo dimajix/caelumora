@@ -22,24 +22,13 @@ use caelumora_model::value::name::Name;
 use caelumora_model::note::Note;
 use caelumora_model::removal::Removal;
 use caelumora_model::work::TurnId;
-use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Place, SecurityContext};
+use caelumora_model::security::{AccessQuestions, ActionType, ChannelReading, Enforcement, Place, SecurityContext};
 use caelumora_model::session::ChannelId;
 use caelumora_model::snapshot::{ChannelSnapshot, Detail, MemberSnapshot, PublishedNotes};
 use caelumora_model::store::StoreError;
 use caelumora_model::tool::ToolSet;
 use std::sync::Arc;
 use tracing::warn;
-
-/// How much of a channel its viewer may read (issue 133).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Readable {
-    /// All of it.
-    Whole,
-    /// Only what was released to where the viewer reads from: entry by
-    /// entry, each by its own classification. A channel of which nothing
-    /// is readable is answered as one that does not exist.
-    Released,
-}
 
 /// A channel the viewer may read.
 #[derive(Debug, Clone)]
@@ -49,11 +38,11 @@ pub struct ChannelView {
     channel: Arc<Channel>,
     /// Its loop, if it runs.
     running: Option<Arc<ChannelLoop>>,
-    readable: Readable,
+    readable: ChannelReading,
 }
 
 impl ChannelView {
-    pub(super) fn of(session: SessionView, channel: Arc<Channel>, running: Option<Arc<ChannelLoop>>, readable: Readable) -> Self {
+    pub(super) fn of(session: SessionView, channel: Arc<Channel>, running: Option<Arc<ChannelLoop>>, readable: ChannelReading) -> Self {
         Self { session, channel, running, readable }
     }
 
@@ -76,7 +65,7 @@ impl ChannelView {
     pub async fn workspace(&self) -> ViewResult<Option<WorkspaceView>> {
         let usable = self.views().workspace_manager().usable_in(self.views().context(), self.session.as_session(), &self.channel).await
             .map_err(|e| ViewError::failed(e, "reading the session's workspace"))?;
-        Ok(usable.map(|workspace| WorkspaceView::in_channel(self.views().clone(), workspace, self.session.id(), self.channel.id)))
+        Ok(usable.map(|workspace| WorkspaceView::of(self.views().clone(), workspace)))
     }
 
     /// The artifacts with a version published in this channel, each with
@@ -87,7 +76,7 @@ impl ChannelView {
     /// # Errors
     /// What the artifacts' manager reports.
     pub async fn artifacts(&self) -> ViewResult<Vec<super::ArtifactView>> {
-        if self.readable != Readable::Whole {
+        if self.readable != ChannelReading::Whole {
             return Ok(Vec::new());
         }
         let failed = |e| ViewError::failed(e, "listing the artifacts");
@@ -171,8 +160,8 @@ impl ChannelView {
     /// those released to where it reads from.
     pub(super) async fn may_read_entry(&self, classification: &Classification) -> bool {
         match self.readable {
-            Readable::Whole => true,
-            Readable::Released => self.views().may_copy_from(&self.place(classification)).await,
+            ChannelReading::Whole => true,
+            ChannelReading::Released => self.views().may_copy_from(&self.place(classification)).await,
         }
     }
 
@@ -261,7 +250,7 @@ impl ChannelView {
                 VisibleHistory { items: visible_part(start, state.history.items()), digest: state.history.digest(), start }
             }
         };
-        if self.readable == Readable::Released {
+        if self.readable == ChannelReading::Released {
             // The messages released, and nothing of how turns ended: that
             // would tell of work in the channel whose messages are not
             // released (issue 258).
@@ -296,7 +285,7 @@ impl ChannelView {
                 published.push(notes);
             }
         }
-        if self.readable == Readable::Released && published.iter().all(|p| p.notes.is_empty()) {
+        if self.readable == ChannelReading::Released && published.iter().all(|p| p.notes.is_empty()) {
             return Err(self.nothing_released());
         }
         Ok(published)
@@ -328,7 +317,7 @@ impl ChannelView {
     fn shows_approvals(&self) -> bool {
         let viewer = self.views().viewer().context().caller_id;
         let takes_part = self.channel.participants.iter().any(|p| matches!(p, Participant::User(_)) && p.actor_id() == viewer);
-        takes_part && self.readable == Readable::Whole
+        takes_part && self.readable == ChannelReading::Whole
     }
 
     /// The channel as the viewer sees it at this moment (issue 80), with
@@ -671,7 +660,7 @@ impl MemberView {
     /// `Failed` if its state cannot be read.
     pub async fn context(&self) -> ViewResult<AgentContextView> {
         let agent = self.readable_agent().await?;
-        if self.channel.readable == Readable::Released {
+        if self.channel.readable == ChannelReading::Released {
             return Err(ViewError::Forbidden { actor: self.id() });
         }
         agent.context().await
@@ -775,7 +764,7 @@ impl MemberView {
 impl ChannelView {
     /// Of `notes`, those the viewer may read (`may_read_entry`).
     async fn released(&self, notes: Vec<Note>) -> Vec<Note> {
-        if self.readable == Readable::Whole {
+        if self.readable == ChannelReading::Whole {
             return notes;
         }
         let mut released = Vec::with_capacity(notes.len());

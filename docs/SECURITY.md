@@ -390,7 +390,10 @@ question, in the viewer's name:
     [292](../issues/292-store-lists-read-everything.md)); `Views::artifacts()` lists the viewer's
     own and those shared with them by name, `ChannelView::artifacts()` those published in the
     channel, alike. The manager carries out what changes an artifact, each operation checking
-    itself;
+    itself; and the `WorkspaceManager` what is done with a workspace's files - its terminal reached
+    directly (`terminal`) or in a channel (`terminal_in`), its shell there (`shell_in`), ending a
+    command (`kill_command`) - asking afresh, as the views ask (issue
+    [296](../issues/296-workspace-operations-on-the-view.md));
 *   `Views::channel_of(session, channel)` reaches what a memory entry's origin or a `KnowledgeRef`
     names, wherever it is, and answers `None` for what is gone or not the viewer's to read.
 
@@ -414,8 +417,12 @@ answered. The REST server only maps snapshots to responses (`From<snapshot::Chan
 ChannelResponse` and the like, in `models.rs`) and asks the `SecurityManager` nothing. A frontend
 never asks the access questions itself.
 
-A node is data the viewer was allowed to reach; it decides nothing. An operation never relies on it:
-it checks its own permission when it acts.
+A node is data the viewer was allowed to reach; it decides nothing, and it does nothing: a view is
+read, and offers nothing that changes something or acts in someone's name - not a terminal, not a
+command - which is its owner's, the manager's (issue 296). An operation never relies on a node: it
+checks its own permission when it acts. Where it acts in a channel, it asks first whether the
+caller may read the channel, as the views reach one: `AccessQuestions::channel_reading`, the one
+place that decides how a channel is read - an agent from its place, a user by their roles.
 
 ## Users
 

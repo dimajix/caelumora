@@ -101,17 +101,18 @@ impl LocalCommands {
     }
 }
 
-/// The shell of one workspace.
+/// The shell of one workspace, as one scope sees it.
 #[derive(Debug)]
 pub(super) struct LocalShell {
     pub(super) dir: PathBuf,
     pub(super) workspace: WorkspaceId,
+    pub(super) scope: String,
     pub(super) commands: Arc<LocalCommands>,
 }
 
 impl LocalShell {
-    fn key(&self, scope: &str, id: &str) -> Key {
-        (self.workspace, scope.to_string(), id.to_string())
+    fn key(&self, id: &str) -> Key {
+        (self.workspace, self.scope.clone(), id.to_string())
     }
 }
 
@@ -165,7 +166,7 @@ fn state(id: &str, running: &Running, offset: u64) -> CommandState {
 
 #[async_trait]
 impl Shell for LocalShell {
-    async fn start(&self, scope: &str, command: &str) -> TerminalResult<String> {
+    async fn start(&self, command: &str) -> TerminalResult<String> {
         let mut child = tokio::process::Command::new("bash")
             .arg("-c")
             .arg(command)
@@ -210,19 +211,19 @@ impl Shell for LocalShell {
 
         let id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
         let command = Arc::new(Command { running, group, _task: AbortOnDropHandle::new(task) });
-        self.commands.kept().insert(self.key(scope, &id), command);
+        self.commands.kept().insert(self.key(&id), command);
         Ok(id)
     }
 
-    async fn output(&self, scope: &str, id: &str, offset: u64, wait: Duration) -> TerminalResult<CommandState> {
-        let command = self.commands.get(&self.key(scope, id))?;
+    async fn output(&self, id: &str, offset: u64, wait: Duration) -> TerminalResult<CommandState> {
+        let command = self.commands.get(&self.key(id))?;
         let mut end = command.running.end.subscribe();
         let _ = tokio::time::timeout(wait, end.wait_for(Option::is_some)).await;
         Ok(state(id, &command.running, offset))
     }
 
-    async fn kill(&self, scope: &str, id: &str, offset: u64) -> TerminalResult<CommandState> {
-        let command = self.commands.get(&self.key(scope, id))?;
+    async fn kill(&self, id: &str, offset: u64) -> TerminalResult<CommandState> {
+        let command = self.commands.get(&self.key(id))?;
         if command.running.end.borrow().is_none() {
             command.running.killed.store(true, Ordering::SeqCst);
             if let Some(group) = command.group {
@@ -240,8 +241,14 @@ impl Shell for LocalShell {
 mod tests {
     use super::*;
 
+    /// The shell of a workspace in `dir`, as the scope "channel" sees it.
     fn shell(dir: &std::path::Path) -> LocalShell {
-        LocalShell { dir: dir.to_path_buf(), workspace: WorkspaceId::new(), commands: Arc::default() }
+        LocalShell { dir: dir.to_path_buf(), workspace: WorkspaceId::new(), scope: "channel".to_string(), commands: Arc::default() }
+    }
+
+    /// The shell of the same workspace as `scope` sees it.
+    fn seen_from(shell: &LocalShell, scope: &str) -> LocalShell {
+        LocalShell { dir: shell.dir.clone(), workspace: shell.workspace, scope: scope.to_string(), commands: Arc::clone(&shell.commands) }
     }
 
     const LONG: Duration = Duration::from_secs(10);
@@ -250,12 +257,12 @@ mod tests {
     async fn a_command_runs_in_the_workspace_and_its_output_is_followed() {
         let dir = tempfile::tempdir().unwrap();
         let shell = shell(dir.path());
-        let id = shell.start("channel", "echo hello; pwd; echo oops >&2; exit 3").await.unwrap();
-        let done = shell.output("channel", &id, 0, LONG).await.unwrap();
+        let id = shell.start("echo hello; pwd; echo oops >&2; exit 3").await.unwrap();
+        let done = shell.output(&id, 0, LONG).await.unwrap();
         assert_eq!((done.status, done.exit_code), (CommandStatus::Completed, Some(3)));
         let real = std::fs::canonicalize(dir.path()).unwrap();
         assert!(done.output.contains("hello") && done.output.contains(&real.display().to_string()) && done.output.contains("oops"), "{:?}", done.output);
-        let again = shell.output("channel", &id, done.next_offset, Duration::ZERO).await.unwrap();
+        let again = shell.output(&id, done.next_offset, Duration::ZERO).await.unwrap();
         assert_eq!(again.output, "", "nothing new past the offset");
     }
 
@@ -263,8 +270,8 @@ mod tests {
     async fn a_command_sees_nothing_of_caelumora_s_environment() {
         let dir = tempfile::tempdir().unwrap();
         let shell = shell(dir.path());
-        let id = shell.start("channel", "env | sort").await.unwrap();
-        let done = shell.output("channel", &id, 0, LONG).await.unwrap();
+        let id = shell.start("env | sort").await.unwrap();
+        let done = shell.output(&id, 0, LONG).await.unwrap();
         let names: Vec<&str> = done.output.lines().filter_map(|line| line.split('=').next()).filter(|name| !["PWD", "SHLVL", "_"].contains(name)).collect();
         assert_eq!(names, ["CAELUMORA_WORKSPACE", "HOME", "LANG", "NO_COLOR", "PATH", "TERM"], "{}", done.output);
     }
@@ -273,8 +280,8 @@ mod tests {
     async fn a_command_is_seen_under_its_scope_alone() {
         let dir = tempfile::tempdir().unwrap();
         let shell = shell(dir.path());
-        let id = shell.start("one", "true").await.unwrap();
-        let elsewhere = shell.output("other", &id, 0, Duration::ZERO).await;
+        let id = shell.start("true").await.unwrap();
+        let elsewhere = seen_from(&shell, "other").output(&id, 0, Duration::ZERO).await;
         assert!(matches!(elsewhere, Err(TerminalError::UnknownCommand(_))), "{elsewhere:?}");
     }
 
@@ -282,13 +289,13 @@ mod tests {
     async fn a_long_command_is_handed_back_running_and_killed_with_what_it_started() {
         let dir = tempfile::tempdir().unwrap();
         let shell = shell(dir.path());
-        let id = shell.start("channel", "echo started; sleep 30 & sleep 30").await.unwrap();
-        let running = shell.output("channel", &id, 0, Duration::from_millis(300)).await.unwrap();
+        let id = shell.start("echo started; sleep 30 & sleep 30").await.unwrap();
+        let running = shell.output(&id, 0, Duration::from_millis(300)).await.unwrap();
         assert_eq!(running.status, CommandStatus::Running);
         assert!(running.output.contains("started"), "{:?}", running.output);
-        let killed = shell.kill("channel", &id, running.next_offset).await.unwrap();
+        let killed = shell.kill(&id, running.next_offset).await.unwrap();
         assert_eq!(killed.status, CommandStatus::Killed);
-        let after = std::process::Command::new("pgrep").args(["-g", &shell.commands.get(&shell.key("channel", &id)).unwrap().group.unwrap().to_string()]).output().unwrap();
+        let after = std::process::Command::new("pgrep").args(["-g", &shell.commands.get(&shell.key(&id)).unwrap().group.unwrap().to_string()]).output().unwrap();
         assert!(after.stdout.is_empty(), "nothing of its group runs on: {:?}", String::from_utf8_lossy(&after.stdout));
     }
 

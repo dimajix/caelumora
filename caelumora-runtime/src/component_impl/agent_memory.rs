@@ -185,10 +185,10 @@ fn render(recalled: &[Memory]) -> String {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(AGENT_MEMORY_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>(),
+        ComponentKind::new(AGENT_MEMORY_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>().uses::<dyn SecurityManager>(),
         |_descriptor, context| {
             let component = Arc::new(AgentMemoryComponent {
-                security_manager: Arc::clone(&context.security_manager),
+                security_manager: Arc::clone(context.service::<dyn SecurityManager>()?),
             });
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::<AgentMemoryComponent>::clone(&component));

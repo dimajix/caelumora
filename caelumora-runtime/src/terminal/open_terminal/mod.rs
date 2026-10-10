@@ -243,46 +243,58 @@ impl Terminal for OpenTerminal {
         }
     }
 
-    fn shell(&self) -> Option<Arc<dyn Shell>> {
-        Some(Arc::new(self.clone()))
+    fn shell(&self, scope: &str) -> Option<Arc<dyn Shell>> {
+        Some(Arc::new(OpenTerminalShell { terminal: self.clone(), scope: scope.to_string() }))
     }
 }
 
+/// The shell of one workspace in an instance, as one scope sees it: the
+/// scope goes with every request, and the instance shows the commands of
+/// that scope alone.
+#[derive(Debug)]
+struct OpenTerminalShell {
+    terminal: OpenTerminal,
+    scope: String,
+}
+
 #[async_trait]
-impl Shell for OpenTerminal {
-    async fn start(&self, scope: &str, command: &str) -> TerminalResult<String> {
+impl Shell for OpenTerminalShell {
+    async fn start(&self, command: &str) -> TerminalResult<String> {
+        let OpenTerminalShell { terminal, scope } = self;
         let env = BTreeMap::from([
             ("TERM", "dumb".to_string()),
             ("NO_COLOR", "1".to_string()),
-            ("CAELUMORA_WORKSPACE", self.workspace.to_string()),
+            ("CAELUMORA_WORKSPACE", terminal.workspace.to_string()),
             // The instance's own key, which it hands every command else.
             ("OPEN_TERMINAL_API_KEY", String::new()),
         ]);
-        let request = wire::ExecRequest { command, cwd: &self.base, env };
+        let request = wire::ExecRequest { command, cwd: &terminal.base, env };
         // `wait=0` answers at once, whatever the instance's own default.
-        let answer = self.client.send(Method::POST, &["execute"], &[("wait", "0".to_string())], Some(scope), Duration::ZERO, |r| r.json(&request)).await?;
-        let process: wire::Process = self.client.parsed(answer).await?;
+        let answer = terminal.client.send(Method::POST, &["execute"], &[("wait", "0".to_string())], Some(scope), Duration::ZERO, |r| r.json(&request)).await?;
+        let process: wire::Process = terminal.client.parsed(answer).await?;
         Ok(process.id)
     }
 
-    async fn output(&self, scope: &str, id: &str, offset: u64, wait: Duration) -> TerminalResult<CommandState> {
+    async fn output(&self, id: &str, offset: u64, wait: Duration) -> TerminalResult<CommandState> {
+        let client = &self.terminal.client;
         let wait = wait.min(MAX_WAIT);
         let query = [("offset", offset.to_string()), ("wait", wait.as_secs_f64().to_string()), ("tail", KEPT_ENTRIES.to_string())];
-        let answer = self.client.send(Method::GET, &["execute", id, "status"], &query, Some(scope), wait, |r| r).await?;
+        let answer = client.send(Method::GET, &["execute", id, "status"], &query, Some(&self.scope), wait, |r| r).await?;
         if answer.status() == StatusCode::NOT_FOUND {
             return Err(TerminalError::UnknownCommand(id.to_string()));
         }
-        Self::state(id, self.client.parsed(answer).await?)
+        OpenTerminal::state(id, client.parsed(answer).await?)
     }
 
-    async fn kill(&self, scope: &str, id: &str, offset: u64) -> TerminalResult<CommandState> {
+    async fn kill(&self, id: &str, offset: u64) -> TerminalResult<CommandState> {
+        let client = &self.terminal.client;
         // SIGKILL to its process group, as the `local` shell sends.
-        let answer = self.client.send(Method::DELETE, &["execute", id], &[("force", "true".to_string())], Some(scope), KILL_WAIT, |r| r).await?;
+        let answer = client.send(Method::DELETE, &["execute", id], &[("force", "true".to_string())], Some(&self.scope), KILL_WAIT, |r| r).await?;
         if answer.status() == StatusCode::NOT_FOUND {
             return Err(TerminalError::UnknownCommand(id.to_string()));
         }
-        self.client.success(answer)?;
-        self.output(scope, id, offset, KILL_WAIT).await
+        client.success(answer)?;
+        self.output(id, offset, KILL_WAIT).await
     }
 }
 
