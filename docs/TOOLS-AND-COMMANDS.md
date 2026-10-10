@@ -750,8 +750,16 @@ the shell through `WorkspaceManager::shell_in` (issue
 workspace, the shell bound to the channel - so that who may end a command is who could have started
 it there, and a command is seen only in its channel, both kept in one place; `run_command` and
 `command_output` reach it the same way. The agent is told nothing besides; it sees `killed` the
-next time it follows the command. Nothing bounds how long a command runs yet (issue
-[254](../issues/254-commands-run-unbounded.md)).
+next time it follows the command.
+
+A command nobody ends is ended by the runtime (issue
+[254](../issues/254-commands-run-unbounded.md)): once it ran for its storage's `max_run_secs`, once
+its session is stopped, once its workspace is purged, and once nobody may run it any longer where it
+was started. A command is its channel's, not its
+starter's: it runs on as long as some current member of the channel could start it there - the
+workspace usable in the channel for them and its files writable, as `shell_in` asks. An agent
+removed from the channel leaves its command to the members who remain. The agent sees `killed` here
+as well.
 
 ### Artifacts
 

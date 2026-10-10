@@ -21,10 +21,16 @@
 //! what lies in a session's scope is used within that session only
 //! (`Scope::admits`), and is deleted, restored and purged with it - its
 //! place removed by `purge_lying_in`.
+//!
+//! A command in a workspace is its channel's - the scope of its shell -
+//! and runs on only as long as some current member of the channel could
+//! start it there, as `shell_in` asks (issue 254): a task ends every other
+//! command its storage lists, at each event that can change the answer and
+//! besides every `COMMANDS_CHECKED_EVERY`.
 
 use crate::component::{ComponentError, ComponentResult};
 use crate::event::EventBus;
-use crate::terminal::{CommandState, DockerProvider, LocalProvider, Shell, SharedProvider, Terminal, TerminalError, TerminalProvider};
+use crate::terminal::{CommandKey, CommandState, DockerProvider, LocalProvider, Shell, SharedProvider, Terminal, TerminalError, TerminalProvider};
 use caelumora_model::actor::ActorId;
 use caelumora_model::config::{StorageConfig, WorkspacesConfig};
 use caelumora_model::confidentiality::Classification;
@@ -34,6 +40,7 @@ use caelumora_model::scope::Scope;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::security::{AccessQuestions, AclEntry, ActionType, ChannelReader, Enforcement, Grant, Place, SecurityContext, SecurityManager, Subject};
+use caelumora_model::channel::Participant;
 use caelumora_model::session::{Channel, ChannelId, Session, SessionId};
 use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResultExt};
 use caelumora_model::value::name::ScopedName;
@@ -42,10 +49,16 @@ use caelumora_model::value::ValueError;
 use caelumora_model::workspace::{Workspace, WorkspaceId, WorkspaceUpdateEvent};
 use std::collections::BTreeMap;
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock, Weak};
 use std::time::Duration;
-use tokio::sync::Mutex;
+use tokio::sync::broadcast::error::RecvError;
+use tokio::sync::{broadcast, Mutex};
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{info, warn};
+
+/// How often the commands of the storages are checked besides the events
+/// that can change who may run them (issue 254).
+const COMMANDS_CHECKED_EVERY: Duration = Duration::from_secs(60);
 
 #[derive(Debug, thiserror::Error)]
 pub enum WorkspaceError {
@@ -102,6 +115,9 @@ pub struct WorkspaceManager {
     max_file_bytes: u64,
     /// Held by every write of a document, so that none is lost to another.
     writing: Mutex<()>,
+    /// The task that ends the commands nobody may run any longer; ends with
+    /// the manager.
+    checker: OnceLock<AbortOnDropHandle<()>>,
 }
 
 impl fmt::Debug for WorkspaceManager {
@@ -111,28 +127,40 @@ impl fmt::Debug for WorkspaceManager {
 }
 
 impl WorkspaceManager {
-    /// The manager of the storages `config` names.
+    /// The manager of the storages `config` names. Where one of them has a
+    /// shell, it starts the task that ends the commands nobody may run any
+    /// longer (issue 254).
     ///
     /// # Errors
     /// `ComponentError::InvalidConfig` for a storage whose provider cannot
-    /// be made, naming it.
-    pub(crate) fn new(entities: Arc<dyn EntityStore>, events: Arc<EventBus>, security: Arc<dyn SecurityManager>, secrets: &Arc<SecretManager>, config: &WorkspacesConfig) -> ComponentResult<Self> {
-        let storages = config.storage.iter()
+    /// be made, naming it, or for a storage with a shell outside a Tokio
+    /// runtime.
+    pub(crate) fn new(entities: Arc<dyn EntityStore>, events: Arc<EventBus>, security: Arc<dyn SecurityManager>, secrets: &Arc<SecretManager>, config: &WorkspacesConfig) -> ComponentResult<Arc<Self>> {
+        let storages: BTreeMap<String, Arc<dyn TerminalProvider>> = config.storage.iter()
             .map(|(name, storage)| {
                 let invalid = |e: TerminalError| ComponentError::InvalidConfig(format!("the storage '{name}' of workspaces: {e}"));
+                let max_run = storage.max_run();
                 let provider: Arc<dyn TerminalProvider> = match storage {
-                    StorageConfig::Local { root, shell, destination } => Arc::new(LocalProvider::new(root.clone(), *shell, destination.clone())),
-                    StorageConfig::OpenTerminalShared { endpoint, mount, destination } => Arc::new(
-                        SharedProvider::new(endpoint.clone(), mount, destination.clone(), Arc::clone(secrets)).map_err(invalid)?,
+                    StorageConfig::Local { root, shell, destination, .. } => Arc::new(LocalProvider::new(root.clone(), *shell, max_run, destination.clone())),
+                    StorageConfig::OpenTerminalShared { endpoint, mount, destination, .. } => Arc::new(
+                        SharedProvider::new(endpoint.clone(), mount, max_run, destination.clone(), Arc::clone(secrets)).map_err(invalid)?,
                     ),
-                    StorageConfig::OpenTerminalDocker { image, network, idle_stop_secs, destination } => Arc::new(
-                        DockerProvider::new(name, image, network, Duration::from_secs(*idle_stop_secs), destination.clone()).map_err(invalid)?,
+                    StorageConfig::OpenTerminalDocker { image, network, idle_stop_secs, destination, .. } => Arc::new(
+                        DockerProvider::new(name, image, network, Duration::from_secs(*idle_stop_secs), max_run, destination.clone()).map_err(invalid)?,
                     ),
                 };
                 Ok((name.clone(), provider))
             })
             .collect::<ComponentResult<_>>()?;
-        Ok(Self { entities, events, security, storages, max_file_bytes: config.max_file_bytes, writing: Mutex::new(()) })
+        let with_shell = storages.values().any(|provider| provider.has_shell());
+        let manager = Arc::new(Self { entities, events, security, storages, max_file_bytes: config.max_file_bytes, writing: Mutex::new(()), checker: OnceLock::new() });
+        if with_shell {
+            let runtime = tokio::runtime::Handle::try_current()
+                .map_err(|_| ComponentError::InvalidConfig("a storage of workspaces with a shell needs a running runtime".to_string()))?;
+            let subscription = manager.events.subscribe_all().into_receiver();
+            let _ = manager.checker.set(AbortOnDropHandle::new(runtime.spawn(check_commands(Arc::downgrade(&manager), subscription))));
+        }
+        Ok(manager)
     }
 
     /// The largest file a person may put into a workspace.
@@ -454,10 +482,7 @@ impl WorkspaceManager {
     /// they may not change its files where `need` asks to, `UnknownStorage`,
     /// a `TerminalError` of reaching its place, or what the store reports.
     pub async fn terminal_in(&self, ctx: &SecurityContext, session_id: SessionId, channel_id: ChannelId, need: Grant) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
-        let workspace = self.usable_in_channel(ctx, session_id, channel_id).await?;
-        if need == Grant::Write {
-            self.security.require(ctx, ActionType::WriteWorkspace(&workspace.security_attributes), || WorkspaceError::ReadOnly(workspace.id)).await?;
-        }
+        let workspace = self.usable_in_channel(ctx, session_id, channel_id, need).await?;
         let terminal = self.place(&workspace).await?;
         Ok((workspace, terminal))
     }
@@ -472,7 +497,7 @@ impl WorkspaceManager {
     /// What `terminal_in` reports.
     pub async fn shell_in(&self, ctx: &SecurityContext, session_id: SessionId, channel_id: ChannelId) -> WorkspaceResult<(Workspace, Option<Arc<dyn Shell>>)> {
         let (workspace, terminal) = self.terminal_in(ctx, session_id, channel_id, Grant::Write).await?;
-        let shell = terminal.shell(&channel_id.to_string());
+        let shell = terminal.shell(&scope_of(channel_id));
         Ok((workspace, shell))
     }
 
@@ -493,8 +518,9 @@ impl WorkspaceManager {
     }
 
     /// The workspace of session `session_id`, if whoever `ctx` acts for may
-    /// use it in its channel `channel_id`, as `terminal_in` asks.
-    async fn usable_in_channel(&self, ctx: &SecurityContext, session_id: SessionId, channel_id: ChannelId) -> WorkspaceResult<Workspace> {
+    /// use it in its channel `channel_id` for what `need` asks, as
+    /// `terminal_in` asks.
+    async fn usable_in_channel(&self, ctx: &SecurityContext, session_id: SessionId, channel_id: ChannelId, need: Grant) -> WorkspaceResult<Workspace> {
         let system = SecurityContext::system();
         let Some(session) = self.entities.get_session(&system, session_id).await.optional()? else { return Err(WorkspaceError::NotUsableInChannel) };
         let Some(channel) = self.entities.get_channel(&system, channel_id).await.optional()? else { return Err(WorkspaceError::NotUsableInChannel) };
@@ -513,7 +539,69 @@ impl WorkspaceManager {
         if self.security.channel_reading(ctx, &channel.security_attributes, &at, reader).await.is_none() {
             return Err(WorkspaceError::NotUsableInChannel);
         }
-        self.usable_in(ctx, &session, &channel).await?.ok_or(WorkspaceError::NotUsableInChannel)
+        let workspace = self.usable_in(ctx, &session, &channel).await?.ok_or(WorkspaceError::NotUsableInChannel)?;
+        if need == Grant::Write {
+            self.security.require(ctx, ActionType::WriteWorkspace(&workspace.security_attributes), || WorkspaceError::ReadOnly(workspace.id)).await?;
+        }
+        Ok(workspace)
+    }
+
+    /// Ends every command of the storages that nobody may run any longer
+    /// where it was started (issue 254). One whose question cannot be
+    /// answered now runs on until it can.
+    async fn end_unusable_commands(&self) {
+        for provider in self.storages.values() {
+            let mut ending = Vec::new();
+            for key in provider.commands() {
+                match self.may_run(&key).await {
+                    Ok(true) => {}
+                    Ok(false) => ending.push(key),
+                    Err(e) => warn!(workspace = %key.0, command = %key.2, "Whether a command may still run could not be asked: {e}"),
+                }
+            }
+            end_commands(provider.as_ref(), ending, "nobody may run it any longer where it was started").await;
+        }
+    }
+
+    /// Ends every command started in one of `channels`, with what it
+    /// started, without asking anything: what stops a session ends what
+    /// runs in its channels (issue 254).
+    pub(crate) async fn end_commands_in(&self, channels: &[ChannelId]) {
+        let scopes: Vec<String> = channels.iter().copied().map(scope_of).collect();
+        for provider in self.storages.values() {
+            let ending = provider.commands().into_iter().filter(|(_, scope, _)| scopes.contains(scope)).collect();
+            end_commands(provider.as_ref(), ending, "its session stopped").await;
+        }
+    }
+
+    /// Whether some current member of the channel command `key` was started
+    /// in - its scope - could start it there, as `shell_in` asks: a command
+    /// is its channel's, not its starter's (issue 254). Asked in each
+    /// member's name, with the runtime as initiator: it asks on its own.
+    ///
+    /// # Errors
+    /// What the store reports.
+    async fn may_run(&self, (workspace, scope, _): &CommandKey) -> WorkspaceResult<bool> {
+        let system = SecurityContext::system();
+        let Some(channel_id) = channel_of(scope) else { return Ok(false) };
+        let Some(channel) = self.entities.get_channel(&system, channel_id).await.optional()? else { return Ok(false) };
+        for participant in &channel.participants {
+            let member = match participant {
+                Participant::User(user) => SecurityContext::new(ActorId::User(*user), channel.session_id, channel.id),
+                Participant::Agent(agent) => match self.entities.get_agent(&system, *agent).await.optional()? {
+                    Some(agent) => agent.security_context(channel.session_id, channel.id),
+                    None => continue,
+                },
+                Participant::Approver(_) => continue,
+            };
+            let ctx = SecurityContext { initiator_id: ActorId::System, ..member };
+            match self.usable_in_channel(&ctx, channel.session_id, channel.id, Grant::Write).await {
+                Ok(usable) if usable.id == *workspace => return Ok(true),
+                Ok(_) | Err(WorkspaceError::NotUsableInChannel | WorkspaceError::ReadOnly(_)) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(false)
     }
 
     /// The terminal of `workspace`, which one of the ways of using it let
@@ -525,6 +613,60 @@ impl WorkspaceManager {
     async fn place(&self, workspace: &Workspace) -> WorkspaceResult<Arc<dyn Terminal>> {
         Ok(self.provider(workspace)?.terminal_for(workspace.id).await?)
     }
+}
+
+/// The scope of the shell a workspace has in channel `id`: a command is its
+/// channel's (issues 251, 296).
+fn scope_of(id: ChannelId) -> String {
+    id.to_string()
+}
+
+/// The channel scope `scope` is; `None` for one that is no channel's.
+fn channel_of(scope: &str) -> Option<ChannelId> {
+    scope.parse::<uuid::Uuid>().ok().map(ChannelId::from)
+}
+
+/// Ends the commands `keys` of `provider`, for the reason `why`; one that
+/// cannot be ended runs on, logged.
+async fn end_commands(provider: &dyn TerminalProvider, keys: Vec<CommandKey>, why: &str) {
+    for key in keys {
+        info!(workspace = %key.0, command = %key.2, "Ending a command: {why}");
+        if let Err(e) = provider.end_command(&key).await {
+            warn!(workspace = %key.0, command = %key.2, "A command to end could not be ended: {e}");
+        }
+    }
+}
+
+/// Ends, at every event that can change who may use a workspace in a
+/// channel and besides every `COMMANDS_CHECKED_EVERY`, the commands nobody
+/// may run any longer (issue 254), until `manager` or the bus is gone.
+/// Events it fell behind on are a reason to check, as any is.
+async fn check_commands(manager: Weak<WorkspaceManager>, mut events: broadcast::Receiver<GlobalEvent>) {
+    let mut every = tokio::time::interval(COMMANDS_CHECKED_EVERY);
+    loop {
+        tokio::select! {
+            received = events.recv() => match received {
+                Ok(event) if !changes_who_may_run(&event) => continue,
+                Ok(_) | Err(RecvError::Lagged(_)) => {}
+                Err(RecvError::Closed) => return,
+            },
+            _ = every.tick() => {}
+        }
+        let Some(manager) = manager.upgrade() else { return };
+        manager.end_unusable_commands().await;
+    }
+}
+
+/// Whether `event` can change who may run a command in a channel: the
+/// session, the channel, its members, the workspace or who someone is.
+fn changes_who_may_run(event: &GlobalEvent) -> bool {
+    matches!(event,
+        GlobalEvent::SessionUpdated(..) | GlobalEvent::SessionDeleted(_)
+        | GlobalEvent::ChannelUpdated(..) | GlobalEvent::ChannelDeleted(..)
+        | GlobalEvent::AgentChannelLeft(..) | GlobalEvent::UserChannelLeft(..)
+        | GlobalEvent::AgentUpdated(..) | GlobalEvent::AgentDeleted(_)
+        | GlobalEvent::UserUpdated(..) | GlobalEvent::UserDeleted(_)
+        | GlobalEvent::WorkspaceUpdated(..) | GlobalEvent::WorkspaceDeleted(_))
 }
 
 /// What the tests of the components that work on a workspace share: a
@@ -540,7 +682,7 @@ pub(crate) mod testing {
     use caelumora_model::actor::{ActorId, EventContext};
     use caelumora_model::agent::{Agent, AgentChannelState, AgentId, Personality, PersonalityId};
     use caelumora_model::channel::{Channel, Participant};
-    use caelumora_model::config::{ArtifactStorageConfig, ArtifactsConfig, StorageConfig, WorkspacesConfig};
+    use caelumora_model::config::{ArtifactStorageConfig, ArtifactsConfig, StorageConfig, WorkspacesConfig, DEFAULT_MAX_RUN_SECS};
     use caelumora_model::confidentiality::{Classification, Confidentiality, Visibility};
     use caelumora_model::scope::Scope;
     use caelumora_model::secret::SecretManager;
@@ -591,7 +733,7 @@ pub(crate) mod testing {
         let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&policy)));
         let files = tempfile::tempdir().unwrap();
         let internal = Classification::general(Confidentiality::Internal);
-        let storage = StorageConfig::Local { root: files.path().to_path_buf(), shell: true, destination: Some(internal.clone()) };
+        let storage = StorageConfig::Local { root: files.path().to_path_buf(), shell: true, destination: Some(internal.clone()), max_run_secs: DEFAULT_MAX_RUN_SECS };
         let workspaces = WorkspacesConfig { storage: [("dev".to_string(), storage)].into(), max_file_bytes: MAX_FILE_BYTES };
         let artifacts = tempfile::tempdir().unwrap();
         let kept = ArtifactsConfig { storage: [("kept".to_string(), ArtifactStorageConfig::Local { root: artifacts.path().to_path_buf(), destination: None })].into(), ..Default::default() };
@@ -626,5 +768,75 @@ pub(crate) mod testing {
         let session = SessionLoop::new(session, vec![channel], Arc::clone(&runtime)).await.unwrap();
         let context = SecurityContext::new(ActorId::User(owner), session_id, session.channels()[0].id()).next(ActorId::Agent(agent.id), ActorId::User(owner));
         WithWorkspace { files, artifacts, session, agent: agent.id, context, workspace, runtime }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::testing::{session_with_workspace, WithWorkspace};
+    use super::*;
+    use crate::terminal::CommandStatus;
+    use caelumora_model::channel::ChannelUpdateEvent;
+
+    /// A command started by the agent in the session's channel, still
+    /// running, with its shell.
+    async fn running(w: &WithWorkspace) -> (Arc<dyn Shell>, String) {
+        let channel = w.session.channels()[0].id();
+        let (_, shell) = w.runtime.workspace_manager().shell_in(&w.context, w.session.id(), channel).await.unwrap();
+        let shell = shell.expect("its storage gives a shell");
+        let id = shell.start("sleep 30").await.unwrap();
+        (shell, id)
+    }
+
+    /// Whether the channel uses the workspace.
+    async fn use_workspace(w: &WithWorkspace, uses: bool) -> Channel {
+        let store = w.runtime.entity_store();
+        let mut channel = store.get_channel(&SecurityContext::system(), w.session.channels()[0].id()).await.unwrap();
+        channel.uses_workspace = uses;
+        store.update_channel(&SecurityContext::system(), &channel).await.unwrap();
+        channel
+    }
+
+    #[tokio::test]
+    async fn a_command_runs_on_while_its_channel_may_use_the_workspace_and_ends_once_it_may_not() {
+        let w = session_with_workspace().await;
+        let workspaces = w.runtime.workspace_manager();
+        let (shell, id) = running(&w).await;
+
+        workspaces.end_unusable_commands().await;
+        assert_eq!(shell.output(&id, 0, Duration::ZERO).await.unwrap().status, CommandStatus::Running, "the channel may still use it");
+
+        use_workspace(&w, false).await;
+        workspaces.end_unusable_commands().await;
+        assert_eq!(shell.output(&id, 0, Duration::ZERO).await.unwrap().status, CommandStatus::Killed, "the channel no longer uses the workspace");
+    }
+
+    #[tokio::test]
+    async fn a_command_runs_on_as_long_as_some_member_could_start_it_there() {
+        let w = session_with_workspace().await;
+        let workspaces = w.runtime.workspace_manager();
+        let (shell, id) = running(&w).await;
+        let store = w.runtime.entity_store();
+        let mut channel = store.get_channel(&SecurityContext::system(), w.session.channels()[0].id()).await.unwrap();
+
+        channel.participants.retain(|participant| !matches!(participant, Participant::Agent(_)));
+        store.update_channel(&SecurityContext::system(), &channel).await.unwrap();
+        workspaces.end_unusable_commands().await;
+        assert_eq!(shell.output(&id, 0, Duration::ZERO).await.unwrap().status, CommandStatus::Running, "the agent that started it left, the owner may still start it there");
+
+        channel.participants.clear();
+        store.update_channel(&SecurityContext::system(), &channel).await.unwrap();
+        workspaces.end_unusable_commands().await;
+        assert_eq!(shell.output(&id, 0, Duration::ZERO).await.unwrap().status, CommandStatus::Killed, "nobody left who could");
+    }
+
+    #[tokio::test]
+    async fn a_change_announced_ends_a_command_at_once() {
+        let w = session_with_workspace().await;
+        let (shell, id) = running(&w).await;
+        let channel = use_workspace(&w, false).await;
+        w.runtime.event_bus().publish(GlobalEvent::ChannelUpdated(channel.session_id, channel.id, ChannelUpdateEvent::UsesWorkspaceChanged(false)), channel.security_attributes.clone());
+        let ended = shell.output(&id, 0, Duration::from_secs(10)).await.unwrap();
+        assert_eq!(ended.status, CommandStatus::Killed, "not only at the next round");
     }
 }

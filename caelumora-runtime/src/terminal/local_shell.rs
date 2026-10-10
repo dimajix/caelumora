@@ -8,42 +8,36 @@
 //!   `LANG`, `TERM=dumb`, `NO_COLOR` and `CAELUMORA_WORKSPACE`: nothing of
 //!   Caelumora's own environment - no secret - reaches a command.
 //! - What it prints is kept up to `KEPT_OUTPUT`, the oldest dropped first,
-//!   and the command for `KEPT_AFTER_END` after it ended, so that its
-//!   output can still be asked for - as Open Terminal keeps its processes.
+//!   and the command as long as its storage keeps commands
+//!   (`commands::KEPT_AFTER_END`).
 //! - Commands are kept by the provider, not by a call, so that one outlives
-//!   the call that started it; a command still running when Caelumora ends
-//!   is not killed by it.
+//!   the call that started it - for at most the storage's `max_run`, after
+//!   which it is killed (issue 254); a command still running when
+//!   Caelumora ends is not killed by it.
 
+use super::commands::{locked, Commands, Kept};
 use super::{CommandState, CommandStatus, Shell, TerminalError, TerminalResult};
 use async_trait::async_trait;
 use caelumora_model::workspace::WorkspaceId;
 use nix::sys::signal::{killpg, Signal};
 use nix::unistd::Pid;
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::sync::watch;
 use tokio_util::task::AbortOnDropHandle;
+use tracing::info;
 
 /// How much of a command's output is kept; older output is dropped.
 const KEPT_OUTPUT: usize = 1024 * 1024;
-/// How long a command is kept after it ended, for its output to be asked for.
-const KEPT_AFTER_END: Duration = Duration::from_secs(300);
 /// How long output is still read once the command ended - what it left
 /// running may hold its output open.
 const OUTPUT_AFTER_END: Duration = Duration::from_millis(500);
 /// How long a kill waits for the command to end.
 const KILL_WAIT: Duration = Duration::from_secs(2);
-
-/// A lock of these few, never held across an await, taken also if a holder
-/// panicked: nothing under it is left half changed.
-fn locked<T>(lock: &Mutex<T>) -> MutexGuard<'_, T> {
-    lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
-}
 
 #[derive(Debug, Clone, Copy)]
 struct End {
@@ -68,8 +62,22 @@ struct Running {
     killed: AtomicBool,
 }
 
+impl Running {
+    /// Kills the process group `group`, if the command still runs; marked
+    /// first, so that its task tells it killed.
+    fn kill(&self, group: Option<Pid>) {
+        if self.end.borrow().is_none() {
+            self.killed.store(true, Ordering::SeqCst);
+            if let Some(group) = group {
+                // Gone already is no error: it ended meanwhile.
+                let _ = killpg(group, Signal::SIGKILL);
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
-struct Command {
+pub(super) struct Command {
     running: Arc<Running>,
     /// Its process group, the command's own process id.
     group: Option<Pid>,
@@ -78,28 +86,14 @@ struct Command {
     _task: AbortOnDropHandle<()>,
 }
 
-/// Where a command is kept: its workspace, the scope it was started with,
-/// its id.
-type Key = (WorkspaceId, String, String);
-
-/// The commands of the workspaces of one storage.
-#[derive(Debug, Default)]
-pub(super) struct LocalCommands {
-    commands: Mutex<HashMap<Key, Arc<Command>>>,
-}
-
-impl LocalCommands {
-    /// The commands, those ended longer ago than `KEPT_AFTER_END` forgotten.
-    fn kept(&self) -> MutexGuard<'_, HashMap<Key, Arc<Command>>> {
-        let mut commands = locked(&self.commands);
-        commands.retain(|_, command| command.running.end.borrow().is_none_or(|end| end.at.elapsed() < KEPT_AFTER_END));
-        commands
-    }
-
-    fn get(&self, key: &Key) -> TerminalResult<Arc<Command>> {
-        self.kept().get(key).cloned().ok_or_else(|| TerminalError::UnknownCommand(key.2.clone()))
+impl Kept for Arc<Command> {
+    fn ended(&self) -> Option<Instant> {
+        self.running.end.borrow().map(|end| end.at)
     }
 }
+
+/// The commands of the workspaces of a `local` storage.
+pub(super) type LocalCommands = Commands<Arc<Command>>;
 
 /// The shell of one workspace, as one scope sees it.
 #[derive(Debug)]
@@ -108,10 +102,12 @@ pub(super) struct LocalShell {
     pub(super) workspace: WorkspaceId,
     pub(super) scope: String,
     pub(super) commands: Arc<LocalCommands>,
+    /// How long a command may run.
+    pub(super) max_run: Duration,
 }
 
 impl LocalShell {
-    fn key(&self, id: &str) -> Key {
+    fn key(&self, id: &str) -> super::CommandKey {
         (self.workspace, self.scope.clone(), id.to_string())
     }
 }
@@ -190,12 +186,20 @@ impl Shell for LocalShell {
 
         let (stdout, stderr) = (child.stdout.take(), child.stderr.take());
         let shared = Arc::clone(&running);
+        let (max_run, workspace) = (self.max_run, self.workspace);
         let task = tokio::spawn(async move {
             let reading = Arc::clone(&shared);
             let mut pumps = AbortOnDropHandle::new(tokio::spawn(async move {
                 tokio::join!(pump(stdout, &reading), pump(stderr, &reading));
             }));
-            let exit = child.wait().await;
+            let exit = match tokio::time::timeout(max_run, child.wait()).await {
+                Ok(exit) => exit,
+                Err(_) => {
+                    info!(%workspace, "A command ran as long as it may and is killed");
+                    shared.kill(group);
+                    child.wait().await
+                }
+            };
             let _ = tokio::time::timeout(OUTPUT_AFTER_END, &mut pumps).await;
             let killed = shared.killed.load(Ordering::SeqCst);
             let (status, exit_code) = match exit {
@@ -211,7 +215,7 @@ impl Shell for LocalShell {
 
         let id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
         let command = Arc::new(Command { running, group, _task: AbortOnDropHandle::new(task) });
-        self.commands.kept().insert(self.key(&id), command);
+        self.commands.insert(self.key(&id), command);
         Ok(id)
     }
 
@@ -224,15 +228,9 @@ impl Shell for LocalShell {
 
     async fn kill(&self, id: &str, offset: u64) -> TerminalResult<CommandState> {
         let command = self.commands.get(&self.key(id))?;
-        if command.running.end.borrow().is_none() {
-            command.running.killed.store(true, Ordering::SeqCst);
-            if let Some(group) = command.group {
-                // Gone already is no error: it ended meanwhile.
-                let _ = killpg(group, Signal::SIGKILL);
-            }
-            let mut end = command.running.end.subscribe();
-            let _ = tokio::time::timeout(KILL_WAIT, end.wait_for(Option::is_some)).await;
-        }
+        command.running.kill(command.group);
+        let mut end = command.running.end.subscribe();
+        let _ = tokio::time::timeout(KILL_WAIT, end.wait_for(Option::is_some)).await;
         Ok(state(id, &command.running, offset))
     }
 }
@@ -241,14 +239,25 @@ impl Shell for LocalShell {
 mod tests {
     use super::*;
 
-    /// The shell of a workspace in `dir`, as the scope "channel" sees it.
+    /// The shell of a workspace in `dir`, as the scope "channel" sees it,
+    /// whose commands may run for `max_run`.
+    fn bounded(dir: &std::path::Path, max_run: Duration) -> LocalShell {
+        LocalShell { dir: dir.to_path_buf(), workspace: WorkspaceId::new(), scope: "channel".to_string(), commands: Arc::default(), max_run }
+    }
+
     fn shell(dir: &std::path::Path) -> LocalShell {
-        LocalShell { dir: dir.to_path_buf(), workspace: WorkspaceId::new(), scope: "channel".to_string(), commands: Arc::default() }
+        bounded(dir, Duration::from_secs(3600))
     }
 
     /// The shell of the same workspace as `scope` sees it.
     fn seen_from(shell: &LocalShell, scope: &str) -> LocalShell {
-        LocalShell { dir: shell.dir.clone(), workspace: shell.workspace, scope: scope.to_string(), commands: Arc::clone(&shell.commands) }
+        LocalShell { dir: shell.dir.clone(), workspace: shell.workspace, scope: scope.to_string(), commands: Arc::clone(&shell.commands), max_run: shell.max_run }
+    }
+
+    /// Whether anything of the process group of command `id` still runs.
+    fn group_runs(shell: &LocalShell, id: &str) -> bool {
+        let group = shell.commands.get(&shell.key(id)).unwrap().group.unwrap();
+        !std::process::Command::new("pgrep").args(["-g", &group.to_string()]).output().unwrap().stdout.is_empty()
     }
 
     const LONG: Duration = Duration::from_secs(10);
@@ -293,10 +302,22 @@ mod tests {
         let running = shell.output(&id, 0, Duration::from_millis(300)).await.unwrap();
         assert_eq!(running.status, CommandStatus::Running);
         assert!(running.output.contains("started"), "{:?}", running.output);
+        assert_eq!(shell.commands.running(), [shell.key(&id)], "listed while it runs");
         let killed = shell.kill(&id, running.next_offset).await.unwrap();
         assert_eq!(killed.status, CommandStatus::Killed);
-        let after = std::process::Command::new("pgrep").args(["-g", &shell.commands.get(&shell.key(&id)).unwrap().group.unwrap().to_string()]).output().unwrap();
-        assert!(after.stdout.is_empty(), "nothing of its group runs on: {:?}", String::from_utf8_lossy(&after.stdout));
+        assert!(!group_runs(&shell, &id), "nothing of its group runs on");
+        assert!(shell.commands.running().is_empty(), "no longer listed");
+    }
+
+    #[tokio::test]
+    async fn a_command_that_runs_as_long_as_it_may_is_killed_with_what_it_started() {
+        let dir = tempfile::tempdir().unwrap();
+        let shell = bounded(dir.path(), Duration::from_millis(300));
+        let id = shell.start("echo started; sleep 30 & sleep 30").await.unwrap();
+        let ended = shell.output(&id, 0, LONG).await.unwrap();
+        assert_eq!((ended.status, ended.exit_code), (CommandStatus::Killed, None));
+        assert!(ended.output.contains("started"), "{:?}", ended.output);
+        assert!(!group_runs(&shell, &id), "nothing of its group runs on");
     }
 
     #[test]

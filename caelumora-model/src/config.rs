@@ -307,6 +307,10 @@ pub enum StorageConfig {
         /// where it has none, since nothing then leaves the process.
         #[serde(default)]
         destination: Option<Classification>,
+        /// How long a command may run (issue 254): killed, with what it
+        /// started, once it ran so long. Of use only with `shell`.
+        #[serde(default = "default_max_run_secs")]
+        max_run_secs: u64,
     },
     /// One Open Terminal instance, started outside Caelumora, at
     /// `endpoint`, that has the storage at `mount`: a workspace is the
@@ -320,6 +324,10 @@ pub enum StorageConfig {
         /// command may send anything anywhere.
         #[serde(default)]
         destination: Option<Classification>,
+        /// How long a command may run (issue 254), bounded by the instance
+        /// itself: one an earlier run of Caelumora left ends then too.
+        #[serde(default = "default_max_run_secs")]
+        max_run_secs: u64,
     },
     /// A volume and an Open Terminal container per workspace, started by
     /// Caelumora over the Docker daemon its environment names - which is
@@ -339,6 +347,10 @@ pub enum StorageConfig {
         /// command reaches whatever its network does.
         #[serde(default)]
         destination: Option<Classification>,
+        /// How long a command may run (issue 254), bounded by its container
+        /// itself.
+        #[serde(default = "default_max_run_secs")]
+        max_run_secs: u64,
     },
 }
 
@@ -411,13 +423,30 @@ fn default_idle_stop_secs() -> u64 {
     900
 }
 
+/// How long a command in a workspace may run unless its storage says
+/// otherwise (issue 254): an hour.
+pub const DEFAULT_MAX_RUN_SECS: u64 = 3600;
+
+fn default_max_run_secs() -> u64 {
+    DEFAULT_MAX_RUN_SECS
+}
+
 impl StorageConfig {
+    /// How long a command in one of its workspaces may run (issue 254).
+    pub fn max_run(&self) -> std::time::Duration {
+        let (Self::Local { max_run_secs, .. } | Self::OpenTerminalShared { max_run_secs, .. } | Self::OpenTerminalDocker { max_run_secs, .. }) = self;
+        std::time::Duration::from_secs(*max_run_secs)
+    }
+
     /// Whether its fields fit: a `mount` is absolute and stays where it
-    /// says.
+    /// says, and a command may run at all.
     ///
     /// # Errors
     /// What does not fit.
     pub fn check(&self) -> Result<(), String> {
+        if self.max_run().is_zero() {
+            return Err("max_run_secs must be more than 0".to_string());
+        }
         match self {
             Self::Local { .. } => Ok(()),
             Self::OpenTerminalShared { mount, .. } => {
@@ -677,12 +706,16 @@ persistence:
     fn workspaces_are_made_in_the_storages_configured() {
         let config = AppConfig::from_yaml("workspaces:\n  max_file_bytes: 1024\n  storage:\n    main:\n      provider: local\n      root: local/workspaces\n").expect("a local storage");
         assert_eq!(config.workspaces.max_file_bytes, 1024);
-        assert_eq!(config.workspaces.storage.get("main"), Some(&StorageConfig::Local { root: PathBuf::from("local/workspaces"), shell: false, destination: None }));
+        assert_eq!(config.workspaces.storage.get("main"), Some(&StorageConfig::Local { root: PathBuf::from("local/workspaces"), shell: false, destination: None, max_run_secs: DEFAULT_MAX_RUN_SECS }));
         let shell = AppConfig::from_yaml("workspaces:\n  storage:\n    dev:\n      provider: local\n      root: x\n      shell: true\n      destination: { level: internal }\n").expect("a local storage with a shell");
-        assert_eq!(shell.workspaces.storage.get("dev"), Some(&StorageConfig::Local { root: PathBuf::from("x"), shell: true, destination: Some(Classification::general(crate::confidentiality::Confidentiality::Internal)) }));
+        assert_eq!(shell.workspaces.storage.get("dev"), Some(&StorageConfig::Local { root: PathBuf::from("x"), shell: true, destination: Some(Classification::general(crate::confidentiality::Confidentiality::Internal)), max_run_secs: DEFAULT_MAX_RUN_SECS }));
         let none = AppConfig::from_yaml("{}\n").expect("nothing configured");
         assert!(none.workspaces.storage.is_empty(), "no storage unless configured");
         assert_eq!(none.workspaces.max_file_bytes, DEFAULT_MAX_FILE_BYTES);
+        let bounded = AppConfig::from_yaml("workspaces:\n  storage:\n    dev:\n      provider: local\n      root: x\n      shell: true\n      max_run_secs: 60\n").expect("a bound of its own");
+        assert_eq!(bounded.workspaces.storage.get("dev").map(StorageConfig::max_run), Some(std::time::Duration::from_secs(60)));
+        let unbounded = AppConfig::from_yaml("workspaces:\n  storage:\n    dev:\n      provider: local\n      root: x\n      max_run_secs: 0\n").map(|_| ()).unwrap_err().to_string();
+        assert!(unbounded.contains("dev") && unbounded.contains("max_run_secs"), "{unbounded}");
         for yaml in ["workspaces:\n  storage:\n    main:\n      provider: local\n      root: x\n      rot: y\n", "workspaces:\n  storage:\n    main:\n      provider: nfs\n"] {
             assert!(AppConfig::from_yaml(yaml).is_err(), "{yaml:?}");
         }
@@ -692,8 +725,8 @@ persistence:
     fn an_open_terminal_storage_names_its_instance_and_where_it_has_the_storage() {
         let yaml = "workspaces:\n  storage:\n    sandbox:\n      provider: open_terminal_shared\n      endpoint: { url: \"http://open-terminal:8000\", auth: { type: bearer, secret: OPEN_TERMINAL_API_KEY } }\n      mount: /workspaces\n";
         let config = AppConfig::from_yaml(yaml).expect("a shared Open Terminal");
-        let Some(StorageConfig::OpenTerminalShared { endpoint, mount, destination }) = config.workspaces.storage.get("sandbox") else { panic!("{:?}", config.workspaces.storage) };
-        assert_eq!((endpoint.url.as_str(), mount.as_str(), destination), ("http://open-terminal:8000", "/workspaces", &None));
+        let Some(StorageConfig::OpenTerminalShared { endpoint, mount, destination, max_run_secs }) = config.workspaces.storage.get("sandbox") else { panic!("{:?}", config.workspaces.storage) };
+        assert_eq!((endpoint.url.as_str(), mount.as_str(), destination, *max_run_secs), ("http://open-terminal:8000", "/workspaces", &None, DEFAULT_MAX_RUN_SECS));
         for mount in ["workspaces", "/a/../b"] {
             let refused = AppConfig::from_yaml(&yaml.replace("/workspaces", mount)).map(|_| ()).unwrap_err().to_string();
             assert!(refused.contains("sandbox") && refused.contains("mount"), "{refused}");
@@ -705,9 +738,9 @@ persistence:
     fn a_docker_storage_names_its_image_and_takes_the_rest_by_default() {
         let yaml = "workspaces:\n  storage:\n    isolated:\n      provider: open_terminal_docker\n      image: ghcr.io/open-webui/open-terminal:0.14.0\n";
         let config = AppConfig::from_yaml(yaml).expect("a container per workspace");
-        let Some(StorageConfig::OpenTerminalDocker { image, network, idle_stop_secs, destination }) = config.workspaces.storage.get("isolated") else { panic!() };
-        assert_eq!((image.as_str(), network.as_str(), *idle_stop_secs, destination), ("ghcr.io/open-webui/open-terminal:0.14.0", "bridge", 900, &None));
-        for (wrong, why) in [("      network: host\n", "network"), ("      idle_stop_secs: 0\n", "idle_stop_secs")] {
+        let Some(StorageConfig::OpenTerminalDocker { image, network, idle_stop_secs, destination, max_run_secs }) = config.workspaces.storage.get("isolated") else { panic!() };
+        assert_eq!((image.as_str(), network.as_str(), *idle_stop_secs, destination, *max_run_secs), ("ghcr.io/open-webui/open-terminal:0.14.0", "bridge", 900, &None, DEFAULT_MAX_RUN_SECS));
+        for (wrong, why) in [("      network: host\n", "network"), ("      idle_stop_secs: 0\n", "idle_stop_secs"), ("      max_run_secs: 0\n", "max_run_secs")] {
             let refused = AppConfig::from_yaml(&format!("{yaml}{wrong}")).map(|_| ()).unwrap_err().to_string();
             assert!(refused.contains("isolated") && refused.contains(why), "{refused}");
         }

@@ -52,6 +52,25 @@ command, an environment cleared but for `PATH`, `HOME` (the workspace), `LANG`, 
 minutes after it ended. Commands live with the provider, not with a call or a turn; one still
 running when Caelumora ends is not killed by it.
 
+A storage knows the commands it started (`terminal::commands`, issue
+[254](../issues/254-commands-run-unbounded.md)): its shells enter each by its workspace, scope and
+id as they start it, so that none is started past it, and its provider lists those that may still
+run (`TerminalProvider::commands`) and ends one when told (`end_command`), without asking anything
+and without starting a place that is not running. Removing a place ends the commands running in
+it first (`end_commands_of`). No command runs longer than the storage's `max_run_secs`, and
+stopping a session ends the commands of its channels (`WorkspaceManager::end_commands_in`). The
+`WorkspaceManager` ends every command nobody may run any longer where it was started: a task of it,
+woken by the events that can change who may use a workspace in a channel - the session, the
+channel, its members, the workspace, who someone is - and besides every minute, asks for each
+command listed whether some current member of its channel could start it there, as `shell_in`
+asks; the first who may suffices. It asks in each member's name with the runtime as initiator, and
+keeps a command whose question cannot be answered for now.
+
+The list lives in memory. What a restart leaves running is named, not closed: an
+`open_terminal_docker` storage stops at start what an earlier run left; a command of an earlier run
+in an `open_terminal_shared` instance is known to nothing and ends only at `max_run_secs`; one of
+the `local` shell is not bounded at all.
+
 The `open_terminal_shared` provider (`terminal::open_terminal`, issue
 [251](../issues/251-open-terminal.md)) keeps a storage in one Open Terminal instance, started
 outside Caelumora, at the `mount` it has the storage: a workspace is the directory `<mount>/<id>`
@@ -65,6 +84,12 @@ everything in it; a file is written in place, from memory, so a write that break
 half written; offsets count pieces of output, not bytes; no message of the instance is passed on,
 since they name paths inside it. Written against Open Terminal 0.14.0, whose API is 0.x: the
 requests and answers relied on are in `open_terminal/wire.rs`, pinned by tests against a stand-in.
+The instance lists its commands only by `X-Session-Id` and does not say in which workspace one runs,
+so the storage keeps the commands it started itself; and it bounds none, so a command is started as
+`exec timeout -s KILL <max_run_secs> bash -c "$CAELUMORA_COMMAND"`, the command in the environment:
+the instance kills its process group by itself once it ran so long, also when Caelumora no longer
+knows it. A command that leaves its process group (`setsid`) escapes the bound. The instance tells
+such an end as a signal the command was not sent; it is told as `killed`, as by the `local` shell.
 
 The `open_terminal_docker` provider (`open_terminal/docker.rs`) gives every workspace a volume
 `caelumora-ws-<id>` and an Open Terminal container of the same name, started by Caelumora over the
@@ -75,8 +100,8 @@ with a key made for it - and reached directly, without a proxy, at its address i
 it answers. The key lives in the container's configuration, which only who holds the daemon reads,
 so a container outlives Caelumora and is found again after a restart. A task stops a container
 unused for `idle_stop_secs`, and any running container of the storage that no workspace in use
-holds - one an earlier run left; stopping a container ends the commands in it. Removing a
-workspace removes its container and its volume.
+holds - one an earlier run left; stopping a container ends the commands in it, which the storage
+forgets then. Removing a workspace removes its container and its volume.
 
 The content of artifacts lies in the storages configured under `artifacts` (see
 [CONFIGURATION.md](CONFIGURATION.md)), each an `ArtifactStorage` (`caelumora_runtime::artifact`):

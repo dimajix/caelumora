@@ -6,7 +6,7 @@
 //! one gap, closed only by a provider that keeps commands elsewhere.
 
 use super::local_shell::{LocalCommands, LocalShell};
-use super::{ByteStream, FileEntry, Shell, Terminal, TerminalError, TerminalProvider, TerminalResult, WorkspacePath};
+use super::{ByteStream, CommandKey, FileEntry, Shell, Terminal, TerminalError, TerminalProvider, TerminalResult, WorkspacePath};
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::workspace::WorkspaceId;
@@ -14,6 +14,7 @@ use futures::StreamExt;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tokio_util::io::ReaderStream;
@@ -24,6 +25,8 @@ pub(crate) struct LocalProvider {
     root: PathBuf,
     /// The commands of its workspaces, if it has a shell.
     commands: Option<Arc<LocalCommands>>,
+    /// How long a command may run.
+    max_run: Duration,
     destination: Option<Classification>,
 }
 
@@ -31,9 +34,9 @@ impl LocalProvider {
     /// The provider of a storage whose workspaces lie under `root`, with a
     /// shell if `shell`; what may be put into it at most `destination`, or
     /// `public` with a shell and no bound without one.
-    pub(crate) fn new(root: PathBuf, shell: bool, destination: Option<Classification>) -> Self {
+    pub(crate) fn new(root: PathBuf, shell: bool, max_run: Duration, destination: Option<Classification>) -> Self {
         let destination = destination.or_else(|| shell.then_some(Classification::PUBLIC));
-        Self { root, commands: shell.then(Arc::default), destination }
+        Self { root, commands: shell.then(Arc::default), max_run, destination }
     }
 
     fn place(&self, id: WorkspaceId) -> PathBuf {
@@ -67,6 +70,8 @@ impl TerminalProvider for LocalProvider {
     }
 
     async fn remove(&self, id: WorkspaceId) -> TerminalResult<()> {
+        // Nothing of it goes on writing into what is being removed.
+        self.end_commands_of(id).await?;
         match fs::remove_dir_all(self.place(id)).await {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
@@ -77,7 +82,7 @@ impl TerminalProvider for LocalProvider {
     async fn terminal_for(&self, id: WorkspaceId) -> TerminalResult<Arc<dyn Terminal>> {
         let dir = self.place(id);
         match fs::metadata(&dir).await {
-            Ok(metadata) if metadata.is_dir() => Ok(Arc::new(LocalTerminal { dir, workspace: id, commands: self.commands.clone() })),
+            Ok(metadata) if metadata.is_dir() => Ok(Arc::new(LocalTerminal { dir, workspace: id, commands: self.commands.clone(), max_run: self.max_run })),
             Ok(_) => Err(TerminalError::Unavailable("its place is not a directory".to_string())),
             Err(e) if e.kind() == ErrorKind::NotFound => {
                 warn!(workspace = %id, "The place of a workspace is gone");
@@ -89,6 +94,16 @@ impl TerminalProvider for LocalProvider {
 
     fn has_shell(&self) -> bool {
         self.commands.is_some()
+    }
+
+    fn commands(&self) -> Vec<CommandKey> {
+        self.commands.as_ref().map(|commands| commands.running()).unwrap_or_default()
+    }
+
+    async fn end_command(&self, (workspace, scope, id): &CommandKey) -> TerminalResult<()> {
+        let Some(commands) = &self.commands else { return Ok(()) };
+        let shell = LocalShell { dir: self.place(*workspace), workspace: *workspace, scope: scope.clone(), commands: Arc::clone(commands), max_run: self.max_run };
+        super::commands::end(&shell, id).await
     }
 
     fn destination(&self) -> Option<&Classification> {
@@ -103,6 +118,7 @@ struct LocalTerminal {
     dir: PathBuf,
     workspace: WorkspaceId,
     commands: Option<Arc<LocalCommands>>,
+    max_run: Duration,
 }
 
 impl LocalTerminal {
@@ -272,13 +288,14 @@ impl Terminal for LocalTerminal {
 
     fn shell(&self, scope: &str) -> Option<Arc<dyn Shell>> {
         let commands = Arc::clone(self.commands.as_ref()?);
-        Some(Arc::new(LocalShell { dir: self.dir.clone(), workspace: self.workspace, scope: scope.to_string(), commands }))
+        Some(Arc::new(LocalShell { dir: self.dir.clone(), workspace: self.workspace, scope: scope.to_string(), commands, max_run: self.max_run }))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::terminal::CommandStatus;
     use bytes::Bytes;
 
     fn content(text: &'static str) -> ByteStream {
@@ -293,7 +310,7 @@ mod tests {
 
     async fn workspace() -> (tempfile::TempDir, LocalProvider, Arc<dyn Terminal>, WorkspaceId) {
         let root = tempfile::tempdir().unwrap();
-        let provider = LocalProvider::new(root.path().to_path_buf(), false, None);
+        let provider = LocalProvider::new(root.path().to_path_buf(), false, Duration::from_secs(3600), None);
         let id = WorkspaceId::new();
         provider.create(id).await.unwrap();
         let terminal = provider.terminal_for(id).await.unwrap();
@@ -369,6 +386,45 @@ mod tests {
         provider.remove(id).await.expect("nothing there is no error");
         let gone = provider.terminal_for(id).await;
         assert!(matches!(gone, Err(TerminalError::Unavailable(_))), "{:?}", gone.err());
+    }
+
+    #[tokio::test]
+    async fn the_commands_of_its_workspaces_are_listed_and_ended_when_told() {
+        let root = tempfile::tempdir().unwrap();
+        let provider = LocalProvider::new(root.path().to_path_buf(), true, Duration::from_secs(3600), None);
+        let id = WorkspaceId::new();
+        provider.create(id).await.unwrap();
+        let shell = provider.terminal_for(id).await.unwrap().shell("channel").expect("a shell");
+        let long = shell.start("sleep 30").await.unwrap();
+        let short = shell.start("true").await.unwrap();
+        shell.output(&short, 0, Duration::from_secs(10)).await.unwrap();
+
+        let key = (id, "channel".to_string(), long.clone());
+        assert_eq!(provider.commands(), std::slice::from_ref(&key), "what may still run");
+        provider.end_command(&key).await.unwrap();
+        assert_eq!(shell.output(&long, 0, Duration::ZERO).await.unwrap().status, CommandStatus::Killed);
+        assert!(provider.commands().is_empty());
+        provider.end_command(&key).await.expect("one that ended is no error");
+        provider.end_command(&(id, "channel".to_string(), "nonesuch".to_string())).await.expect("nor one not known");
+    }
+
+    #[tokio::test]
+    async fn what_runs_in_a_place_is_ended_before_it_is_removed() {
+        let root = tempfile::tempdir().unwrap();
+        let provider = LocalProvider::new(root.path().to_path_buf(), true, Duration::from_secs(3600), None);
+        let (id, other) = (WorkspaceId::new(), WorkspaceId::new());
+        provider.create(id).await.unwrap();
+        provider.create(other).await.unwrap();
+        let shell = provider.terminal_for(id).await.unwrap().shell("channel").unwrap();
+        let elsewhere = provider.terminal_for(other).await.unwrap().shell("channel").unwrap();
+        let writing = shell.start("while true; do date > out.txt; sleep 0.05; done").await.unwrap();
+        let untouched = elsewhere.start("sleep 30").await.unwrap();
+
+        provider.remove(id).await.expect("removed while a command writes into it");
+        assert_eq!(shell.output(&writing, 0, Duration::ZERO).await.unwrap().status, CommandStatus::Killed);
+        assert!(!root.path().join(id.to_string()).exists(), "and nothing written again");
+        assert_eq!(provider.commands(), [(other, "channel".to_string(), untouched.clone())], "those of another workspace run on");
+        provider.remove(other).await.unwrap();
     }
 
     #[test]

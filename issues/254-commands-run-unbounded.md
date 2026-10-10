@@ -1,6 +1,6 @@
 # 254 — A command handed back as running runs until the model ends it
 
-**Status:** open
+**Status:** done
 **Area:** Tools and approvals
 
 ## The problem
@@ -113,3 +113,32 @@ Taken with the maintainer on 2026-10-10. It comes after
 - **2026-10-10** — Looked at with the maintainer: the decisions above recorded, after Open
   Terminal's `GET /execute` was checked against 0.14.0. They replace a register of commands in the
   `WorkspaceManager`, fed by a `run_command` moved there, which was weighed first.
+- **2026-10-10** — Implemented as decided, all but the points not decided. `terminal::commands`
+  holds the generic `Commands<C>`, by workspace, scope and id, with `end` for a provider ending one
+  when told; the `local` shell keeps its processes in it, the Open Terminal shell what it started
+  (`Started`). `TerminalProvider` lists the commands that may still run (`commands`) and ends one
+  without asking (`end_command`); `open_terminal_docker` does not start a stopped container for it
+  and forgets a workspace's commands when its container stops or is removed. `max_run_secs` (3600)
+  is a field of every storage; the `local` shell kills a command's process group once it ran so
+  long, an Open Terminal shell starts it under `timeout`, which the real instance was checked to do
+  (`a_command_is_killed_by_its_container_once_it_ran_as_long_as_it_may`, Docker). The
+  `WorkspaceManager` starts, where a storage has a shell, a task that ends the commands nobody may
+  run any longer, woken by the events that can change the answer and every minute; whether a member
+  could start a command there is `terminal_in`'s question for writing, now kept once in
+  `usable_in_channel`. Besides the decisions: the runtime asks those questions in each member's
+  name with the system as initiator, so that the record tells them apart; the security suite's
+  `asked` leaves them out of an action's questions, and its own test records them (`recorded`,
+  `a_command_runs_on_only_while_some_member_could_start_it_in_its_channel`). A command an Open
+  Terminal instance ended by a signal after it ran as long as it may is told as `killed`, as the
+  `local` shell tells it. A storage with a shell needs a running Tokio runtime, as a Docker storage
+  did already. No stored data changes.
+- **2026-10-10** — Done. The points not decided, decided with the maintainer: stopping a session
+  ends the commands of its channels - `SessionManager::stop_running`, now async, has the
+  `WorkspaceManager` end them (`end_commands_in`), directly rather than through `SessionStopped`,
+  which the task may fall behind on and its round every minute could not make up for: whether a
+  session runs is the `SessionManager`'s. A channel is stopped only when it is deleted, which the
+  task covers already. Removing a place ends the commands running in it first
+  (`TerminalProvider::end_commands_of`, for `local` and `open_terminal_shared`; a Docker storage's
+  container goes with them). An orderly shutdown, which would end the `local` shell's commands when
+  Caelumora ends, is worth having for more than commands: issue
+  [297](297-orderly-shutdown.md).

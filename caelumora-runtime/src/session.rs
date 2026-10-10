@@ -24,6 +24,7 @@ use caelumora_model::template::{ScopeTemplate, SessionTemplateId, WorkspaceTempl
 use caelumora_model::workspace::{WorkspaceChoice, WorkspaceId};
 use crate::scoped::{delete_scoped_in, purge_scoped_in, restore_scoped_in};
 use crate::controller::SessionController;
+use crate::workspace::WorkspaceManager;
 use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
@@ -612,6 +613,7 @@ pub struct SessionManager {
     security: Arc<dyn SecurityManager>,
     entities: Arc<dyn EntityStore>,
     events: Arc<EventBus>,
+    workspaces: Arc<WorkspaceManager>,
 }
 
 /// Asks whether `context` may attach the workspace `id` to the session
@@ -663,6 +665,7 @@ impl SessionManager {
             security: Arc::clone(runtime_manager.security_manager()),
             entities: Arc::clone(runtime_manager.entity_store()),
             events: Arc::clone(runtime_manager.event_bus()),
+            workspaces: Arc::clone(runtime_manager.workspace_manager()),
             runtime_manager,
         }
     }
@@ -874,18 +877,20 @@ impl SessionManager {
         let attributes = found.session().security_attributes;
         self.security
             .require(context, ActionType::StopSession(&attributes), || StoreError::PermissionDenied).await?;
-        Ok(matches!(found, Found::Running(_)) && self.stop_running(id).is_some())
+        Ok(matches!(found, Found::Running(_)) && self.stop_running(id).await.is_some())
     }
 
-    /// Stops session `id` if it runs. Called with its start lock held.
-    fn stop_running(&self, id: SessionId) -> Option<Arc<SessionLoop>> {
+    /// Stops session `id` if it runs, and with it the commands started in
+    /// its channels (issue 254). Called with its start lock held.
+    async fn stop_running(&self, id: SessionId) -> Option<Arc<SessionLoop>> {
         if let Some((_, handle)) = self.handles.remove(&id) {
             handle.abort();
         }
         let removed = self.sessions.remove(&id).map(|(_, s)| s);
         if let Some(session_loop) = &removed {
-            let attributes = session_loop.session().security_attributes.clone();
-            self.events.publish(GlobalEvent::SessionStopped(id), attributes);
+            let session = Arc::clone(&session_loop.session());
+            self.workspaces.end_commands_in(&session.channels).await;
+            self.events.publish(GlobalEvent::SessionStopped(id), session.security_attributes.clone());
         }
         removed
     }
@@ -916,7 +921,7 @@ impl SessionManager {
             .map(|c| (c.id, c.security_attributes))
             .collect();
 
-        self.stop_running(id);
+        self.stop_running(id).await;
 
         let event_bus = &self.events;
         for (channel_id, attributes) in channels {
