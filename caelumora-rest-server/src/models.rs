@@ -663,6 +663,15 @@ pub struct ArtifactVersionResponse {
     pub channel_id: ChannelId,
     pub published_by: ActorId,
     pub published_at: DateTime<Utc>,
+    /// The names of where it was published and of who published it (issue
+    /// 291) - where one artifact is fetched, for whoever may read that
+    /// channel; `published_by_name` is absent too for a publisher gone.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channel_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub published_by_name: Option<String>,
     /// Who reads it besides whom the artifact is shared with - the members
     /// of the channel it was published in - only for its owner.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -673,11 +682,18 @@ impl From<snapshot::ArtifactSnapshot> for ArtifactResponse {
     fn from(view: snapshot::ArtifactSnapshot) -> Self {
         let artifact = view.artifact;
         let (scope, session_id) = ScopeKind::of(&artifact.name.scope);
-        let mut version_access = view.version_access;
-        let versions = artifact.versions.into_iter().map(|v| ArtifactVersionResponse {
-            access: version_access.remove(&v.number).unwrap_or_default().into_iter().filter_map(AccessEntry::of).collect(),
-            number: v.number, size: v.size, digest: v.digest, media_type: v.media_type, description: v.description,
-            session_id: v.session_id, channel_id: v.channel_id, published_by: v.published_by, published_at: v.published_at,
+        let (mut version_access, mut publications) = (view.version_access, view.publications);
+        let versions = artifact.versions.into_iter().map(|v| {
+            let (session_name, channel_name, published_by_name) = match publications.remove(&v.number) {
+                Some(p) => (Some(p.session_name), Some(p.channel_name), p.published_by),
+                None => (None, None, None),
+            };
+            ArtifactVersionResponse {
+                access: version_access.remove(&v.number).unwrap_or_default().into_iter().filter_map(AccessEntry::of).collect(),
+                number: v.number, size: v.size, digest: v.digest, media_type: v.media_type, description: v.description,
+                session_id: v.session_id, channel_id: v.channel_id, published_by: v.published_by, published_at: v.published_at,
+                session_name, channel_name, published_by_name,
+            }
         }).collect();
         let access = view.access.into_iter().filter_map(AccessEntry::of).collect();
         Self {

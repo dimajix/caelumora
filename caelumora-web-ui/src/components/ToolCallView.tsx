@@ -8,6 +8,7 @@ import React, {useEffect, useState} from 'react';
 import {BookOpen, CheckCircle2, Download, EyeOff, Package, PackageCheck, File, Square, FileDiff, FileDown, FileInput, FilePen, FileText, Folder, FolderOpen, TextSearch, Terminal, Wrench, XCircle} from 'lucide-react';
 import type {ArtifactResponse, Question, ToolCall, ToolPresentation, ToolResult, ToolResultStatus, ToolVisibility} from '../types';
 import {api, type ChannelArtifacts, type WorkspaceFiles} from '../api';
+import type {Page} from '../page';
 import {ApiRequestError, reportError} from '../errors';
 import {commandResult, formatArguments, formatSize, formatTimestamp, ownerOnly, type CommandResult} from '../messages';
 import {AnswersRecord, ChoiceRows, QuestionHeading} from './QuestionView';
@@ -69,8 +70,8 @@ export interface ToolCallContentProps {
   filesVersion?: number;
   /** The artifacts of the channel as the user reaches them; absent outside the chat. */
   artifacts?: ChannelArtifacts;
-  /** Opens a skill's page in the place of the channel; absent outside the chat. */
-  onSelectSkill?: (skillId: string) => void;
+  /** Opens a page in the place of the channel - a skill's; absent outside the chat. */
+  onSelectPage?: (page: Page) => void;
   /** Ends a command a call handed back as running (issue 294); absent where the user may not change the workspace's files. */
   onKillCommand?: (commandId: string) => void;
   /** The commands a result in the channel, or the user, ended: none is offered to be ended again. */
@@ -657,38 +658,43 @@ const DownloadCard: React.FC<{
   </div>
 );
 
-/** The user's own artifact `id` as they see it - `null` if it is not theirs, or not known yet - and keeping it. */
-function useOwnedArtifact(id: string | null): [ArtifactResponse | null, () => Promise<void>] {
-  const [owned, setOwned] = useState<ArtifactResponse | null>(null);
+/**
+ * Artifact `id` as the user sees it - `null` if they may read none of its versions, or it is not
+ * known yet - and keeping it, which is its owner's (`can_change`).
+ */
+function useArtifact(id: string | null): [ArtifactResponse | null, () => Promise<void>] {
+  const [artifact, setArtifact] = useState<ArtifactResponse | null>(null);
   useEffect(() => {
     if (id === null) return;
     let current = true;
-    // Refused for whoever is not its owner: then there is nothing to keep.
-    api.getArtifact(id).then(found => { if (current) setOwned(found); }).catch(() => { if (current) setOwned(null); });
+    // Refused for whoever may read none of its versions any more: then it has no page for them.
+    api.getArtifact(id).then(found => { if (current) setArtifact(found); }).catch(() => { if (current) setArtifact(null); });
     return () => { current = false; };
   }, [id]);
   const keep = async () => {
     if (id === null) return;
     try {
-      setOwned(await api.keepArtifact(id, 'user'));
+      setArtifact(await api.keepArtifact(id, 'user'));
     } catch (error) {
       reportError('Failed to keep the artifact', error);
     }
   };
-  return [owned, keep];
+  return [artifact, keep];
 }
 
 /**
  * A file published as a version of an artifact (issue 271): a card with its name, version and size,
- * a download of that version - fixed, whatever became of the file -, and for its owner "Keep" while
- * it lies in the session's scope, so that it outlives the session.
+ * a download of that version - fixed, whatever became of the file -, for its owner "Keep" while it
+ * lies in the session's scope, so that it outlives the session, and "Open" to its page (issue 291)
+ * for whoever reaches the artifact itself.
  */
-const ArtifactPublishToolCallContent: React.FC<ToolCallContentProps> = ({call, result, artifacts}) => {
+const ArtifactPublishToolCallContent: React.FC<ToolCallContentProps> = ({call, result, artifacts, onSelectPage}) => {
   const args = argumentsObject(call.arguments);
   const published = resultObject(result);
   const id = textOf(published, 'artifact');
   const version = numberOf(published, 'version');
-  const [owned, keep] = useOwnedArtifact(id);
+  const [artifact, keep] = useArtifact(id);
+  const owned = artifact?.can_change ? artifact : null;
   if (call.arguments === null) return <span className="text-[11px] italic opacity-60">File not shown</span>;
   const path = textOf(published, 'path') ?? textOf(args, 'path');
   if (!published) {
@@ -704,15 +710,29 @@ const ArtifactPublishToolCallContent: React.FC<ToolCallContentProps> = ({call, r
       description={textOf(published, 'description')}
       note={kept ?? (artifacts ? null : 'Download it from the chat.')}
       href={artifacts && id !== null && version !== null ? artifacts.url(id, version) : null}
-      actions={owned?.can_change && owned.scope === 'session' && (
-        <button
-          type="button"
-          onClick={() => void keep()}
-          title="Keep it beyond this session, among your artifacts"
-          className="flex items-center gap-1 rounded-md border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 text-xs px-2.5 py-1"
-        >
-          <PackageCheck size={12} /> Keep
-        </button>
+      actions={(
+        <>
+          {owned?.scope === 'session' && (
+            <button
+              type="button"
+              onClick={() => void keep()}
+              title="Keep it beyond this session, among your artifacts"
+              className="flex items-center gap-1 rounded-md border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 text-xs px-2.5 py-1"
+            >
+              <PackageCheck size={12} /> Keep
+            </button>
+          )}
+          {artifact && onSelectPage && (
+            <button
+              type="button"
+              onClick={() => onSelectPage({kind: 'artifact', id: artifact.id})}
+              title="Its versions, and whom it is shared with"
+              className="flex items-center gap-1 rounded-md border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 text-xs px-2.5 py-1"
+            >
+              <Package size={12} /> Open
+            </button>
+          )}
+        </>
       )}
     />
   );
@@ -724,7 +744,7 @@ const ArtifactPublishToolCallContent: React.FC<ToolCallContentProps> = ({call, r
  * where the arguments hold them. A loaded skill's text, the result, is never shown: it is the
  * agent's to follow.
  */
-const SkillToolCallContent: React.FC<ToolCallContentProps> = ({call, result, onSelectSkill}) => {
+const SkillToolCallContent: React.FC<ToolCallContentProps> = ({call, result, onSelectPage}) => {
   if (call.arguments === null) return <span className="text-[11px] italic opacity-60">Skill not shown</span>;
   const args = argumentsObject(call.arguments);
   const answered = resultObject(result);
@@ -738,8 +758,8 @@ const SkillToolCallContent: React.FC<ToolCallContentProps> = ({call, result, onS
       <div className="flex items-start gap-1.5 text-[11px]">
         <BookOpen size={12} className="mt-0.5 opacity-60 shrink-0" />
         <span className="min-w-0">
-          {skillId !== null && onSelectSkill ? (
-            <button type="button" onClick={() => onSelectSkill(skillId)} title="Open the skill" className="font-medium text-blue-600 dark:text-blue-400 hover:underline break-all">
+          {skillId !== null && onSelectPage ? (
+            <button type="button" onClick={() => onSelectPage({kind: 'skill', id: skillId})} title="Open the skill" className="font-medium text-blue-600 dark:text-blue-400 hover:underline break-all">
               {name ?? '?'}
             </button>
           ) : (
@@ -788,8 +808,8 @@ interface ToolCallViewProps {
   filesVersion?: number;
   /** The artifacts of the channel, for a call that published one (issue 271). */
   artifacts?: ChannelArtifacts;
-  /** Opens a skill's page, for a call that names one (issue 281). */
-  onSelectSkill?: (skillId: string) => void;
+  /** Opens a page in the place of the channel - a skill's, for a call that names one (issue 281). */
+  onSelectPage?: (page: Page) => void;
   /** Interrupts the call alone while it runs, for who may (issue 276); the turn goes on. */
   onInterrupt?: () => void;
   /** Ends a command the call handed back as running, for who may (issue 294). */
@@ -798,7 +818,7 @@ interface ToolCallViewProps {
   endedCommands?: ReadonlySet<string>;
 }
 
-export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, abandoned, files, filesVersion, artifacts, onSelectSkill, onInterrupt, onKillCommand, endedCommands}) => {
+export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, abandoned, files, filesVersion, artifacts, onSelectPage, onInterrupt, onKillCommand, endedCommands}) => {
   const Content = PRESENTATIONS[call.presentation ?? 'default'] ?? DefaultToolCallContent;
   return (
     <div className="bg-gray-50 dark:bg-gray-800 rounded-sm border border-gray-200 dark:border-gray-600 overflow-hidden">
@@ -854,7 +874,7 @@ export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, abandon
         </div>
       </div>
       <div className="p-2">
-        <Content call={call} result={result} files={files} filesVersion={filesVersion} artifacts={artifacts} onSelectSkill={onSelectSkill} onKillCommand={onKillCommand} endedCommands={endedCommands} />
+        <Content call={call} result={result} files={files} filesVersion={filesVersion} artifacts={artifacts} onSelectPage={onSelectPage} onKillCommand={onKillCommand} endedCommands={endedCommands} />
         {result?.answers && (
           // Set apart from what the presentation shows, where it shows anything.
           <div className="not-first:mt-2 not-first:pt-2 not-first:border-t border-gray-200 dark:border-gray-700">

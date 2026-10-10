@@ -8,6 +8,7 @@ import {
   HardDrive,
   LogOut,
   MessageSquare,
+  Package,
   Plus,
   Shield,
   ShieldAlert,
@@ -15,7 +16,7 @@ import {
   User,
   Users
 } from 'lucide-react';
-import type {ChannelResponse, SessionSnapshot, SkillResponse, UserResponse, WorkspaceResponse} from '../types';
+import type {ArtifactResponse, ChannelResponse, SessionSnapshot, SkillResponse, UserResponse, WorkspaceResponse} from '../types';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
 import {dispatchGlobalEvent, sessionChange} from '../globalEvents';
@@ -33,9 +34,11 @@ import {NewWorkspaceDialog} from './NewWorkspaceDialog';
 import {NewSkillDialog} from './NewSkillDialog';
 import {NewSessionDialog} from './NewSessionDialog';
 import {SessionWorkspaceDialog} from './SessionWorkspaceDialog';
-import {scopeLabel} from '../scope';
 import {privacyInfo} from '../privacy';
 import {cn} from '../classNames';
+import type {Page, PageKind} from '../page';
+import {PageList} from './PageList';
+import {usePageList} from '../pageList';
 
 /** How a session is named in the list: by its name, else by its id. */
 function sessionName(session: SessionSnapshot): string {
@@ -51,17 +54,13 @@ function channelName(channel: ChannelResponse): string {
 function trashChangedBy(event: Record<string, unknown>): boolean {
   const kind = Object.keys(event)[0];
   return kind === 'SessionDeleted' || kind === 'SessionRestored' || kind === 'ChannelDeleted' || kind === 'ChannelRestored'
-    || kind === 'WorkspaceDeleted' || kind === 'WorkspaceRestored' || kind === 'SkillDeleted' || kind === 'SkillRestored';
+    || kind === 'WorkspaceDeleted' || kind === 'WorkspaceRestored' || kind === 'SkillDeleted' || kind === 'SkillRestored'
+    || kind === 'ArtifactDeleted' || kind === 'ArtifactRestored';
 }
 
-/** Whether `event` is about one of the user's workspaces (issue 253). */
-function aboutWorkspace(event: Record<string, unknown>): boolean {
-  return Object.keys(event)[0]?.startsWith('Workspace') ?? false;
-}
-
-/** Whether `event` is about a skill the user may read (issue 22). */
-function aboutSkill(event: Record<string, unknown>): boolean {
-  return Object.keys(event)[0]?.startsWith('Skill') ?? false;
+/** Whether `event` is about something whose events are named `prefix…` - `Workspace`, `Skill`, `Artifact`. */
+function isAbout(event: Record<string, unknown>, prefix: string): boolean {
+  return Object.keys(event)[0]?.startsWith(prefix) ?? false;
 }
 
 /** `sessions` with `session` added, or replacing the one with its id. */
@@ -95,16 +94,11 @@ interface SidebarProps {
   onSessionDeleted: (sessionId: string) => void;
   /** The selected channel no longer exists - deleted here or elsewhere. */
   onChannelDeleted: (channelId: string) => void;
-  /** The workspace shown in the place of a channel (issue 253). */
-  selectedWorkspaceId: string | null;
-  onSelectWorkspace: (workspaceId: string) => void;
-  /** The selected workspace no longer exists. */
-  onWorkspaceDeleted: (workspaceId: string) => void;
-  /** The skill shown in the place of a channel (issue 22). */
-  selectedSkillId: string | null;
-  onSelectSkill: (skillId: string) => void;
-  /** The selected skill no longer exists, or may no longer be read. */
-  onSkillDeleted: (skillId: string) => void;
+  /** What is shown in the place of a channel - a workspace (issue 253), a skill (issue 22) or an artifact (issue 291). */
+  page: Page | null;
+  onSelectPage: (page: Page) => void;
+  /** What the page shows no longer exists, or may no longer be read. */
+  onPageGone: (kind: PageKind, id: string) => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -115,24 +109,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectChannel,
   onSessionDeleted,
   onChannelDeleted,
-  selectedWorkspaceId,
-  onSelectWorkspace,
-  onWorkspaceDeleted,
-  selectedSkillId,
-  onSelectSkill,
-  onSkillDeleted,
+  page,
+  onSelectPage,
+  onPageGone,
 }) => {
   const [sessions, setSessions] = useState<SessionSnapshot[]>([]);
-  // The user's own workspaces (issue 253), loaded again on every event
-  // about one of them.
-  const [workspaces, setWorkspaces] = useState<WorkspaceResponse[]>([]);
-  const [workspacesVersion, setWorkspacesVersion] = useState(0);
+  // The workspaces (issue 253), skills (issue 22) and artifacts (issue 291)
+  // the user may read, loaded again on every event about one of them.
+  const workspaces = usePageList<WorkspaceResponse>('workspace', 'workspaces', () => api.getWorkspaces(), page, onPageGone);
   const [isCreatingWorkspace, setIsCreatingWorkspace] = useState(false);
-  // The skills the user may read (issue 22), likewise loaded again on every
-  // event about one of them.
-  const [skills, setSkills] = useState<SkillResponse[]>([]);
-  const [skillsVersion, setSkillsVersion] = useState(0);
+  const skills = usePageList<SkillResponse>('skill', 'skills', () => api.getSkills(), page, onPageGone);
   const [isCreatingSkill, setIsCreatingSkill] = useState(false);
+  const artifacts = usePageList<ArtifactResponse>('artifact', 'artifacts', () => api.getArtifacts(), page, onPageGone);
   // The session whose workspace is shown, by id, so that the dialog follows it.
   const [workspaceOf, setWorkspaceOf] = useState<string | null>(null);
   const workspaceSession = sessions.find(s => s.id === workspaceOf) ?? null;
@@ -161,36 +149,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [trashVersion, setTrashVersion] = useState(0);
   const trashChanged = () => setTrashVersion(v => v + 1);
 
-  useEffect(() => {
-    let current = true;
-    api.getWorkspaces()
-      .then(found => { if (current) setWorkspaces(found); })
-      .catch(error => reportError('Failed to load the workspaces', error));
-    return () => { current = false; };
-  }, [workspacesVersion]);
-
-  // A selected workspace that the list no longer has was deleted.
-  useEffect(() => {
-    if (selectedWorkspaceId && workspacesVersion > 0 && !workspaces.some(w => w.id === selectedWorkspaceId)) {
-      onWorkspaceDeleted(selectedWorkspaceId);
-    }
-  }, [workspaces, selectedWorkspaceId, workspacesVersion, onWorkspaceDeleted]);
-
-  useEffect(() => {
-    let current = true;
-    api.getSkills()
-      .then(found => { if (current) setSkills(found); })
-      .catch(error => reportError('Failed to load the skills', error));
-    return () => { current = false; };
-  }, [skillsVersion]);
-
-  // A selected skill that the list no longer has was deleted.
-  useEffect(() => {
-    if (selectedSkillId && skillsVersion > 0 && !skills.some(s => s.id === selectedSkillId)) {
-      onSkillDeleted(selectedSkillId);
-    }
-  }, [skills, selectedSkillId, skillsVersion, onSkillDeleted]);
-
   /** Drops a session from the list - deleted here or elsewhere. */
   const removeSession = (sessionId: string) => {
     setSessions(prev => prev.filter(s => s.id !== sessionId));
@@ -210,8 +168,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // The stream outlives renders; these always see the current props.
   const removeSessionFromStream = useEffectEvent((sessionId: string) => removeSession(sessionId));
   const trashChangedFromStream = useEffectEvent(() => trashChanged());
-  const workspacesChangedFromStream = useEffectEvent(() => setWorkspacesVersion(v => v + 1));
-  const skillsChangedFromStream = useEffectEvent(() => setSkillsVersion(v => v + 1));
+  const workspacesChangedFromStream = useEffectEvent(() => workspaces.reload());
+  const skillsChangedFromStream = useEffectEvent(() => skills.reload());
+  const artifactsChangedFromStream = useEffectEvent(() => artifacts.reload());
   const refreshSessionFromStream = useEffectEvent((sessionId: string) => void refreshSession(sessionId));
 
   // The list is the global stream's: its snapshot, then its events (issue
@@ -236,8 +195,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
         }
         dispatchGlobalEvent(event);
         if (trashChangedBy(event)) trashChangedFromStream();
-        if (aboutWorkspace(event)) workspacesChangedFromStream();
-        if (aboutSkill(event)) skillsChangedFromStream();
+        if (isAbout(event, 'Workspace')) workspacesChangedFromStream();
+        if (isAbout(event, 'Skill')) skillsChangedFromStream();
+        if (isAbout(event, 'Artifact')) artifactsChangedFromStream();
         const change = sessionChange(event);
         if (change.kind === 'remove') {
           removeSessionFromStream(change.sessionId);
@@ -477,83 +437,45 @@ export const Sidebar: React.FC<SidebarProps> = ({
           />
         </div>
 
-        <div className="mt-4 space-y-1">
-          <div className="flex items-center px-2 text-xs uppercase tracking-wider text-gray-500">
-            <span className="flex-1">Workspaces</span>
-            <button
-              onClick={() => setIsCreatingWorkspace(true)}
-              className="p-1 hover:bg-gray-800 hover:text-white rounded-md transition-colors"
-              title="New workspace"
-              aria-label="New workspace"
-            >
-              <Plus size={14} />
-            </button>
-          </div>
-          {workspaces.map(workspace => (
-            <button
-              key={workspace.id}
-              onClick={() => onSelectWorkspace(workspace.id)}
-              className={cn(
-                "w-full flex items-center p-2 rounded-md hover:bg-gray-800 transition-colors text-sm text-gray-300",
-                selectedWorkspaceId === workspace.id && "bg-gray-800 text-white font-medium"
-              )}
-              title={workspace.description || `${workspace.name} (${scopeLabel(workspace)})`}
-            >
-              <HardDrive size={14} className="mr-2 shrink-0" />
-              <span className="truncate">{workspace.name}</span>
-              {workspace.scope !== 'user' && <span className="ml-1 shrink-0 text-xs text-gray-500">{scopeLabel(workspace)}</span>}
-            </button>
-          ))}
-          {workspaces.length === 0 && (
-            <div className="p-2 text-xs text-gray-500 italic">No workspaces</div>
-          )}
-          <DeletedList
-            title="Deleted workspaces"
-            load={() => api.getDeletedWorkspaces()}
-            version={trashVersion}
-            onRestore={async (workspaceId) => { await api.restoreWorkspace(workspaceId); setWorkspacesVersion(v => v + 1); }}
-            onPurge={(workspaceId) => api.purgeWorkspace(workspaceId)}
-          />
-        </div>
+        <PageList
+          list={workspaces}
+          title="Workspaces"
+          icon={HardDrive}
+          page={page}
+          onSelectPage={onSelectPage}
+          onNew={() => setIsCreatingWorkspace(true)}
+          newLabel="New workspace"
+          loadDeleted={() => api.getDeletedWorkspaces()}
+          trashVersion={trashVersion}
+          restore={(workspaceId) => api.restoreWorkspace(workspaceId)}
+          purge={(workspaceId) => api.purgeWorkspace(workspaceId)}
+        />
 
-        <div className="mt-4 space-y-1">
-          <div className="flex items-center px-2 text-xs uppercase tracking-wider text-gray-500">
-            <span className="flex-1">Skills</span>
-            <button
-              onClick={() => setIsCreatingSkill(true)}
-              className="p-1 hover:bg-gray-800 hover:text-white rounded-md transition-colors"
-              title="New skill"
-              aria-label="New skill"
-            >
-              <Plus size={14} />
-            </button>
-          </div>
-          {skills.map(skill => (
-            <button
-              key={skill.id}
-              onClick={() => onSelectSkill(skill.id)}
-              className={cn(
-                "w-full flex items-center p-2 rounded-md hover:bg-gray-800 transition-colors text-sm text-gray-300",
-                selectedSkillId === skill.id && "bg-gray-800 text-white font-medium"
-              )}
-              title={skill.description}
-            >
-              <BookOpen size={14} className="mr-2 shrink-0" />
-              <span className="truncate">{skill.name}</span>
-              {skill.scope !== 'user' && <span className="ml-1 shrink-0 text-xs text-gray-500">{scopeLabel(skill)}</span>}
-            </button>
-          ))}
-          {skills.length === 0 && (
-            <div className="p-2 text-xs text-gray-500 italic">No skills</div>
-          )}
-          <DeletedList
-            title="Deleted skills"
-            load={() => api.getDeletedSkills()}
-            version={trashVersion}
-            onRestore={async (skillId) => { await api.restoreSkill(skillId); setSkillsVersion(v => v + 1); }}
-            onPurge={(skillId) => api.purgeSkill(skillId)}
-          />
-        </div>
+        <PageList
+          list={skills}
+          title="Skills"
+          icon={BookOpen}
+          page={page}
+          onSelectPage={onSelectPage}
+          onNew={() => setIsCreatingSkill(true)}
+          newLabel="New skill"
+          loadDeleted={() => api.getDeletedSkills()}
+          trashVersion={trashVersion}
+          restore={(skillId) => api.restoreSkill(skillId)}
+          purge={(skillId) => api.purgeSkill(skillId)}
+        />
+
+        <PageList
+          list={artifacts}
+          title="Artifacts"
+          icon={Package}
+          page={page}
+          onSelectPage={onSelectPage}
+          loadDeleted={() => api.getDeletedArtifacts()}
+          trashVersion={trashVersion}
+          restore={(artifactId) => api.restoreArtifact(artifactId)}
+          purge={(artifactId) => api.purgeArtifact(artifactId)}
+        />
       </div>
 
       {privacySession && (
@@ -600,7 +522,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {isCreatingSession && (
         <NewSessionDialog
-          workspaces={workspaces}
+          workspaces={workspaces.items}
           onCreated={(session) => void handleSessionCreated(session.id)}
           onClose={() => setIsCreatingSession(false)}
         />
@@ -610,8 +532,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <NewWorkspaceDialog
           onCreated={(workspace) => {
             setIsCreatingWorkspace(false);
-            setWorkspaces(prev => (prev.some(w => w.id === workspace.id) ? prev : [...prev, workspace]));
-            onSelectWorkspace(workspace.id);
+            workspaces.add(workspace);
+            onSelectPage({kind: 'workspace', id: workspace.id});
           }}
           onClose={() => setIsCreatingWorkspace(false)}
         />
@@ -621,8 +543,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <NewSkillDialog
           onCreated={(skill) => {
             setIsCreatingSkill(false);
-            setSkills(prev => (prev.some(s => s.id === skill.id) ? prev : [...prev, skill]));
-            onSelectSkill(skill.id);
+            skills.add(skill);
+            onSelectPage({kind: 'skill', id: skill.id});
           }}
           onClose={() => setIsCreatingSkill(false)}
         />
@@ -631,7 +553,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {workspaceSession && (
         <SessionWorkspaceDialog
           session={workspaceSession}
-          workspaces={workspaces}
+          workspaces={workspaces.items}
           onSubmit={async (workspaceId, share) => {
             const updated = await api.setSessionWorkspace(workspaceSession.id, workspaceId, share);
             setSessions(prev => upsert(prev, updated));

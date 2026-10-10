@@ -68,6 +68,7 @@ import {ApprovalRulesDialog} from './ApprovalRulesDialog';
 import {languageLabel} from '../language';
 import {approvalRulesChangedChannel, changedChannel, descriptionChangedChannel, languageChangedChannel, membershipChangedChannel, onGlobalEvent, profileApprovalRules, reclassifiedChannel} from '../globalEvents';
 import {api} from '../api';
+import type {Page} from '../page';
 import {ApiRequestError, reportError} from '../errors';
 import {cn} from '../classNames';
 import {MarkdownMessage} from './MarkdownMessage';
@@ -218,11 +219,11 @@ interface ChatViewProps {
   channelId: string;
   /** Who is logged in: only a participant follows the channel live. */
   user: UserResponse;
-  /** Opens a skill's page in the place of the channel, for a call that names one (issue 281). */
-  onSelectSkill: (skillId: string) => void;
+  /** Opens a page in the place of the channel - a skill's, for a call that names one (issue 281). */
+  onSelectPage: (page: Page) => void;
 }
 
-export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, onSelectSkill }) => {
+export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, onSelectPage }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [channel, setChannel] = useState<ChannelResponse | null>(null);
   const [notes, setNotes] = useState<PublishedNotes[]>([]);
@@ -1309,7 +1310,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
       files={workspaceFiles ?? undefined}
       filesVersion={workspaceVersion}
       artifacts={channelArtifacts}
-      onSelectSkill={onSelectSkill}
+      onSelectPage={onSelectPage}
       onInterruptCall={mayInterruptCallsOf(msg) ? (call) => void interruptCall(msg, call) : undefined}
       onKillCommand={workspace?.can_write ? (commandId) => void killCommand(commandId) : undefined}
       endedCommands={ended}

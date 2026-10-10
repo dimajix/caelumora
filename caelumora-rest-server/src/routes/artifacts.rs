@@ -13,6 +13,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use caelumora_model::artifact::ArtifactId;
 use caelumora_model::session::{ChannelId, SessionId};
+use caelumora_model::snapshot::Detail;
 use caelumora_runtime::artifact::ArtifactError;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -35,7 +36,7 @@ pub async fn list_artifacts(State(state): State<Arc<AppState>>, Query(options): 
         .map_err(|e| ApiError::from_runtime(e.into(), Subject::Artifact, "listing the artifacts"))?;
     let mut listed = Vec::with_capacity(artifacts.len());
     for artifact in artifacts {
-        listed.push(ArtifactResponse::from(artifact.snapshot().await));
+        listed.push(ArtifactResponse::from(artifact.snapshot(Detail::empty()).await));
     }
     Ok(Json(listed).into_response())
 }
@@ -114,7 +115,7 @@ pub async fn channel_artifacts(State(state): State<Arc<AppState>>, Path((id, cid
         .map_err(|e| ApiError::from_runtime(e.into(), Subject::Artifact, "listing the channel's artifacts"))?;
     let mut listed = Vec::with_capacity(artifacts.len());
     for artifact in artifacts {
-        listed.push(ArtifactResponse::from(artifact.snapshot().await));
+        listed.push(ArtifactResponse::from(artifact.snapshot(Detail::empty()).await));
     }
     Ok(Json(listed))
 }
@@ -129,9 +130,10 @@ pub async fn set_access(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>
     Ok(Json(owned(&state, &user, id).await?))
 }
 
-/// Artifact `id`, as the user sees it.
+/// Artifact `id`, as the user sees it, with where its versions were
+/// published.
 async fn owned(state: &Arc<AppState>, user: &AuthenticatedUser, id: ArtifactId) -> Result<ArtifactResponse, ApiError> {
     let artifact = crate::routes::views(state, user).artifact(id).await
         .map_err(|e| ApiError::from_runtime(e.into(), Subject::Artifact, &format!("reading artifact {id}")))?;
-    Ok(ArtifactResponse::from(artifact.snapshot().await))
+    Ok(ArtifactResponse::from(artifact.snapshot(Detail::PUBLICATIONS).await))
 }

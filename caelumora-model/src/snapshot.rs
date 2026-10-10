@@ -52,6 +52,10 @@ bitflags::bitflags! {
         /// Of a session or channel: its briefing (issue 245), which may be
         /// long - not where they are listed.
         const BRIEFING = 1 << 6;
+        /// Of an artifact: where each version was published and by whom, by
+        /// name (issue 291) - not where artifacts are listed, since every
+        /// version's channel is reached for it.
+        const PUBLICATIONS = 1 << 7;
     }
 }
 
@@ -324,6 +328,19 @@ pub struct ArtifactSnapshot {
     pub access: Vec<AccessSnapshot>,
     /// The lists of its versions, by number, for whoever may change it.
     pub version_access: std::collections::BTreeMap<u32, Vec<AccessSnapshot>>,
+    /// Where its versions were published, by number (`Detail::PUBLICATIONS`,
+    /// issue 291): those whose channel the viewer may read alone.
+    pub publications: std::collections::BTreeMap<u32, PublicationSnapshot>,
+}
+
+/// Where a version of an artifact was published and by whom, by name (issue
+/// 291), as a reader of its channel knows them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PublicationSnapshot {
+    pub session_name: String,
+    pub channel_name: String,
+    /// `None` for a publisher that no longer exists.
+    pub published_by: Option<String>,
 }
 
 /// An agent as the viewer sees it in the list of agents (issue 164).
