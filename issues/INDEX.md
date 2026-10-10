@@ -252,6 +252,7 @@ published before anyone else can take it.
 | [278](278-nudge-command.md) | done | A user cannot ask an agent to respond to the conversation as it stands without writing a message, such as an empty `@sassy?`. |
 | [282](282-message-attachments.md) | open | A user cannot attach an image or a file to a message, so a model that can see, such as Gemma 4, is never shown one. |
 | [283](283-show-agent-components.md) | open | The web UI does not show what an agent was built from, so its owner cannot see which components it has or which came from an included list. |
+| [291](291-share-artifacts-in-the-web-ui.md) | open | The web UI has no page of an artifact: its owner can neither see nor change whom it and its versions are shared with. |
 
 ## Context and knowledge
 
