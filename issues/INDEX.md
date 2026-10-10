@@ -161,6 +161,7 @@ published before anyone else can take it.
 | [264](264-agent-reads-channels-its-owner-may-not.md) | done | An agent reads another channel of its session by the flow rule alone, so it reads channels its owner may not, and membership hides nothing from a session's agents. |
 | [286](286-groups-as-subjects.md) | open | A workspace or an artifact cannot be shared with a team that users make themselves, only with people one by one, a role, or the members of a session or channel. |
 | [287](287-memberships-cache.md) | open | Every check of a membership or a role in an access list reads the entity store, for every event of a session or channel and every subscriber. |
+| [289](289-attach-compares-access.md) | open | Attaching a workspace to a session shares it with that one session by an entry of its own, even where its access list already reaches everyone the session may take in. |
 
 ## Tools and approvals
 
