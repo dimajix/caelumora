@@ -129,3 +129,6 @@ personality the adder may not read.
   (`UpdateSession` admits a new rule only if every subject was in the old one), never widen it.
   Built here, since nobody is taken into a session after it was built before this issue: 23's
   step 4 would have had nothing to check. Added to *Done when*.
+- **2026-10-11** — Noted from [314](314-session-manager-handles-agents.md): a running session
+  subscribes to the events of the agents among its participants as it starts, to follow whether they
+  are deleted or restored. An agent added to the session later has to be added to that subscription.

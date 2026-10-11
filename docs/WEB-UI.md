@@ -321,7 +321,7 @@ What can be done with a member is in its menu, each entry only where the member 
 profile, its history, its private notes, its tools, removing it from the channel (where `can_change`
 is set, which also offers adding a participant of the session with how much of the history they
 may see), and deleting the agent - which asks once more, since the agent leaves every channel it
-takes part in, not only this one.
+takes part in, not only this one, until it is restored.
 
 *   **The profile** shows name and handle; of an agent its personality, whether it runs here or
     elsewhere - where what it is given leaves the system - and who owns it; and its introduction, a

@@ -21,7 +21,9 @@ these subscriptions are served directly with everything on their topics.
 
 Each subscription is a broadcast channel of its own, of bounded capacity. A subscriber that falls
 too far behind loses the oldest events, and it is the subscriber that learns so (`Lagged`), not only
-the log; one that cannot catch up logs the loss and goes on.
+the log; one that cannot catch up logs the loss and goes on. One that can takes the receiver itself:
+a running session that lost events looks at all its agents again (see
+[CHANNELS.md](CHANNELS.md)).
 
 ### Publishing with attributes
 

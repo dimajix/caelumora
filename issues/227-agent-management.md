@@ -62,3 +62,8 @@ notes of all channels, its usage as a whole.
 - **2026-10-05** — Opened at the maintainer's request after
   [164](164-soft-deletion-and-former-members.md), which made agents deletable but left their
   restoring to REST: the web UI has no place for agents outside of channels.
+- **2026-10-11** — [314](314-session-manager-handles-agents.md) gave agents an owner, the
+  `AgentManager` in the `RuntimeManager`, which deletes, restores and purges them; renaming and
+  making one from a personality belong there too. A deleted agent now rests in its channels and
+  comes back into them when it is restored, so a mistaken delete is no longer final - only the
+  trash in the web UI is missing.

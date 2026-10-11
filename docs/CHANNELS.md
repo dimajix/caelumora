@@ -289,14 +289,27 @@ A removed participant is kept as a former one, with who removed it and when, not
 take part now - so nothing that reads them changes. The views reach former members, so what an agent
 said and saw stays readable for whoever may read its context.
 
-Deleting an agent makes it leave every channel it takes part in, running or not, as a former
-participant - removed in the runtime's name, since deleting the agent was permitted. Channels of
-deleted sessions keep it, and leave it out if they are restored, as any participant that no longer
-exists. A deleted agent keeps its name in the views, so that what it said keeps its sender.
-Restoring it brings it back into no channel, and is refused if another agent took its name in its
-scope meanwhile. Purging it removes its document and its state, its own and in every channel. An
-agent of a session's or a channel's scope goes with that session or channel (see
-[Sessions](#sessions)).
+Deleting an agent (`AgentManager::delete`) marks it and changes no channel: it rests in every
+channel it takes part in until it is restored. The channels follow its mark instead:
+
+*   a running session, told of the deletion, stops the agent's actor in each of its channels, in the
+    runtime's name, and announces it as a leave (`AgentChannelLeft`);
+*   a channel that starts leaves it out, as any participant that no longer exists - `Member::of`
+    asks the store whether it exists, not the controllers, which keep an agent's controller while
+    an actor of it still runs;
+*   the views show it as a former member, removed as its mark says, and keep its name, so that what
+    it said keeps its sender.
+
+A running session subscribes to the events of its agents, and looks at all of them again as it
+starts and after it lost events, so that a deletion or a restore it did not hear of is not missed.
+
+Restoring the agent is refused if another agent took its name in its scope meanwhile. Otherwise it
+takes part again in every channel it rested in: a running session builds its actor anew, gives it
+the part of the history it may see, as when it joined, and announces it as a join. Removing a
+resting agent from a channel changes the document alone, and the agent does not come back there.
+Purging it removes its document and its state, its own and in every channel; in the channels it
+rested in it stays a former member, without when it left. An agent of a session's or a channel's
+scope goes with that session or channel (see [Sessions](#sessions)).
 
 ### How much history a newcomer sees
 

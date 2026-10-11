@@ -95,12 +95,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [284](284-automatic-context-compaction.md) | open | An agent's context is compacted only when somebody asks for it; nothing compacts it before a model call that would not fit, least of all within the turn that makes it. |
 | [305](305-skill-versions.md) | open | A skill keeps only its current text: every change overwrites what it said, nobody sees what changed, and an earlier version cannot be made current again. |
 
-## Code structure
-
-| No. | Status | Issue |
-|---|---|---|
-| [314](314-session-manager-handles-agents.md) | open | The `SessionManager` also deletes, restores and purges agents, though only deleting has to do with sessions, and agents have no owner of their own as groups do. |
-
 ## Open architecture questions
 
 | No. | Status | Issue |

@@ -147,9 +147,9 @@ themselves, an agent its owner (see [In whose name an agent acts](#in-whose-name
     actions so that another policy can decide them; what decides a call here is the tools offered
     and the rules of its place (see [APPROVALS.md](APPROVALS.md#rules-of-a-place)). A secret has no
     owner to decide by yet, see [Secrets](#secrets).
-*   Deleting an agent is its owner's. That it leaves channels owned by others is done in the
-    runtime's name: it is a consequence of the deletion, not a change of those channels by the
-    owner.
+*   Deleting an agent is its owner's. The channels it takes part in are not changed: it rests in
+    them, and that its actors stop there - and start again once it is restored - is done in the
+    runtime's name, a consequence of the deletion, not a change of channels owned by others.
 *   What lies in a session's or a channel's scope - personalities, session templates, agents - is
     deleted, restored and purged with it in the runtime's name: whoever may delete the session
     deletes an agent of its scope even if it is somebody else's, and is asked nothing more.
