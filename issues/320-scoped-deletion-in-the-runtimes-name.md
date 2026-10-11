@@ -1,6 +1,6 @@
 # 320 — What lies in a scope is deleted and restored with it in the runtime's name
 
-**Status:** open
+**Status:** done
 **Area:** Identity and access management
 
 ## The problem
@@ -77,3 +77,19 @@ session, and the views show it so.
   delete is deleted and the holder kept if something remains, with an error of its own; on
   restoring, the holder is restored even if not all of its scope can be. Whether a partial restore
   reports anything is not decided yet.
+- **2026-10-11** — Done. What lies in a scope is listed in the runtime's name and deleted and
+  restored in the caller's, through `ScopedEntities` and the managers' `…_lying_in`; the store
+  asks each item and marks it as deleted by the caller. A refusal counts as left on deleting and
+  as staying deleted on restoring. Deleting what is left fails with `SessionError::ScopeNotEmpty`
+  (kinds and counts), which the REST server answers with `409 scope_not_empty`; the groups of the
+  participants are deleted last, and only once nothing else is left, since the holder's access
+  depends on them. Decided with the maintainer: a partial restore reports nothing - what stays
+  deleted is logged, as a taken name is. Since `restore_lying_in` brings back what was deleted at
+  or after the holder's mark (issue 178), the holder is now marked before its scope is deleted, and
+  the mark taken away again in the runtime's name if something is left (option A, chosen over
+  recording in `Removal` what something was deleted with, which would change the store's API for
+  every kind): a deletion that succeeds comes back whole; what an attempt that failed deleted stays
+  deleted on a later restore, like something deleted by hand, and is restored by itself. A channel
+  put back that way is listed last in its session. Tests in the security suite with an artifact
+  another participant published in the session; `docs/SECURITY.md`, `CHANNELS.md`,
+  `REST-SERVER.md` and `PERMISSION-CHECKS.md` say what the rule now is.

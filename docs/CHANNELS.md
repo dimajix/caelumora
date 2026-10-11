@@ -20,11 +20,17 @@ What lies in a session's scope - its personalities, session templates and agents
 channels' scopes, its workspace if made for it, the artifacts published in it and not kept, the
 groups of its participants - goes with it (`ScopedEntities`, `caelumora-runtime/src/scoped.rs`):
 deleting the session deletes them, restoring it restores those deleted with it - not one deleted by
-hand before, nor one whose name was taken meanwhile -, purging it purges them. That is done in the
-runtime's name, as a consequence of what was permitted. What has a manager of its own - agents,
-workspaces, skills, artifacts, groups - is deleted, restored and purged by it (`…_lying_in`), and
-announced as it announces its own deletions: an artifact to whoever reads any of its versions, as
-when it is deleted alone (issue 319).
+hand before, nor one whose name was taken meanwhile -, purging it purges them. They are found in the
+runtime's name, but deleted and restored in the name of whoever deletes or restores the session
+(issue 320): if something is left they may not delete, the session is kept and the deletion fails
+with `SessionError::ScopeNotEmpty`, saying how much of which kind is left; what they may not restore
+stays deleted, and the session comes back all the same. The session is marked before its scope is
+deleted, so that what goes with it is deleted with it, not before it; if something is left, the
+mark is taken away again in the runtime's name, and what was deleted stays deleted - restored by
+hand, not with the session. Purging is done in the runtime's name. What has a manager of its own -
+agents, workspaces, skills, artifacts, groups - is deleted, restored and purged by it
+(`…_lying_in`), and announced as it announces its own deletions: an artifact to whoever reads any of
+its versions, as when it is deleted alone (issue 319).
 
 That holds because what lies in a session's or a channel's scope is used only within it
 (`Scope::admits`): an agent of it takes part only in that session's channels, or in that channel,
@@ -48,10 +54,11 @@ then is the running session changed and the change announced:
     `UpdateSession`, so that only the owner may. A channel's name is unique in its session: the
     store refuses one the session has, when a channel is created, renamed or restored.
 *   **Deleting** takes the channel out of the session and marks it deleted (`DeleteChannel`); the
-    channel and its state are kept. What lies in its scope is deleted with it.
+    channel and its state are kept. What lies in its scope is deleted with it, as with a session:
+    if something is left the caller may not delete, the channel is put back and runs on.
 *   **Restoring** asks `UpdateSession` and its participants' clearance, as creating does, lists the
     channel again and starts it from its stored state. What was deleted with it comes back, but for
-    one whose name was taken meanwhile.
+    one whose name was taken meanwhile or that the caller may not restore.
 *   **Purging** is not a channel's: a deleted channel is removed for good with its session.
 
 A deleted channel stops its actors before its task is aborted: every actor is told to `stop` and
