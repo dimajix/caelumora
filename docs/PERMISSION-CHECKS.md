@@ -84,7 +84,7 @@ SECURITY.md); "store" is the store layer, in the context the caller passes.
 | Open (`open_session`) | *Find*; channels loaded in S; per agent `GetPersonality` (A,1) - refused, the member is left out; components built in C or A (`GetComponents`, `ReadSecret`) | R1 | as creating | `NotFound` |
 | Stop (`stop_session`) | *Find*; `StopSession` (U,1) | R4 | - | `NotFound`, `PermissionDenied` |
 | Delete (`delete_session`) | *Find*; `DeleteSession` (U,1); stopped, channels in S; store `DeleteSession`; the scope in S | R2 + R1 | `DeleteSession` (pair) | `NotFound`, `PermissionDenied` |
-| Restore (`restore_session`) | store `ReadDeleted` (U,1), as whoever restores it; store `ReadDeleted` + `Restore`; store `GetSession` | R1 | `ReadDeleted` (both store) | `NotFound`, `PermissionDenied` |
+| Restore (`restore_session`) | store `ReadDeleted` (U,1), as whoever restores it; store `ReadDeleted` + `Restore` | R1 | `ReadDeleted` (both store) | `NotFound`, `PermissionDenied` |
 | Purge (`purge_session`) | store `ReadDeleted`; store `ReadDeleted` + `Purge`; channels and scope in S | R1 | - | `NotFound`, `PermissionDenied` |
 | Rename, privacy, approval rules, description (`SessionLoop::update_*`) | store `GetSession` + `UpdateSession` (U,1) | R1 | - | `PermissionDenied` |
 | Attach a workspace (`set_workspace`) | `UpdateSession` (U,1); `GetWorkspace`, `UpdateWorkspace` (U,1), scope; store `UpdateSession`; sharing it as *Share* of a workspace | R2 + R1 | `UpdateSession` (pair); `UpdateWorkspace` three times | `PermissionDenied`, `NotFound`, `WorkspaceOutOfScope` |

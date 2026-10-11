@@ -529,24 +529,24 @@ impl JsonFileStore {
         delete_if_exists(&path).await
     }
 
-    async fn restore_file<T: Deletable + Serialize + DeserializeOwned + Send + Sync>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf, id: String) -> StoreResult<()> {
+    async fn restore_file<T: Deletable + Serialize + DeserializeOwned + Send + Sync>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf, id: String) -> StoreResult<T> {
         self.restore_file_with::<T>(ctx, kind, path, id, async |_| Ok(())).await
     }
 
-    async fn restore_named_file<T: Deletable + Scoped + Serialize + DeserializeOwned + Send + Sync>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf, id: String) -> StoreResult<()> {
+    async fn restore_named_file<T: Deletable + Scoped + Serialize + DeserializeOwned + Send + Sync>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf, id: String) -> StoreResult<T> {
         let dir = dir_of(&path)?;
         let _names = self.names_lock(kind).await?;
         self.restore_file_with::<T>(ctx, kind, path, id, async |value| name_free_in(&dir, value, kind).await).await
     }
 
-    async fn restore_file_with<T: Deletable + Serialize + DeserializeOwned + Send + Sync>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf, id: String, others: impl AsyncFnOnce(&T) -> StoreResult<()>) -> StoreResult<()> {
+    async fn restore_file_with<T: Deletable + Serialize + DeserializeOwned + Send + Sync>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf, id: String, others: impl AsyncFnOnce(&T) -> StoreResult<()>) -> StoreResult<T> {
         let stored = read_json_opt::<T>(&path).await?;
-        self.access(ctx).restore(stored.as_ref(), kind, id).await?;
-        let Some(mut restored) = stored else { return Ok(()) };
+        let mut restored = self.access(ctx).restore(stored, kind, id).await?;
         restored.set_deleted(None);
         others(&restored).await?;
         debug!("Restoring {} at {}", kind.entity, path.display());
-        write_json_atomic(&path, &restored).await
+        write_json_atomic(&path, &restored).await?;
+        Ok(restored)
     }
 
     async fn purge_file<T: Deletable + DeserializeOwned + Send + Sync>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf) -> StoreResult<bool> {
@@ -609,7 +609,7 @@ impl EntityStore for JsonFileStore {
     async fn list_personalities(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Personality>> {
         self.list_dir(ctx, &PERSONALITIES, self.personality_dir(), query).await
     }
-    async fn restore_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<()> {
+    async fn restore_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
         self.restore_named_file::<Personality>(ctx, &PERSONALITIES, self.personality_path(id), id.to_string()).await
     }
     async fn purge_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool> {
@@ -641,7 +641,7 @@ impl EntityStore for JsonFileStore {
     async fn list_session_templates(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<SessionTemplate>> {
         self.list_dir(ctx, &SESSION_TEMPLATES, self.session_templates_dir(), query).await
     }
-    async fn restore_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<()> {
+    async fn restore_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<SessionTemplate> {
         self.restore_named_file::<SessionTemplate>(ctx, &SESSION_TEMPLATES, self.session_template_path(id), id.to_string()).await
     }
     async fn purge_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool> {
@@ -673,7 +673,7 @@ impl EntityStore for JsonFileStore {
     async fn list_agents(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Agent>> {
         self.list_dir(ctx, &AGENTS, self.agents_dir(), query).await
     }
-    async fn restore_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<()> {
+    async fn restore_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
         self.restore_named_file::<Agent>(ctx, &AGENTS, self.agent_path(id), id.to_string()).await
     }
     async fn purge_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<bool> {
@@ -706,7 +706,7 @@ impl EntityStore for JsonFileStore {
     async fn list_sessions(&self, ctx: &SecurityContext, query: &Query<SessionField>) -> StoreResult<Page<Session>> {
         self.list_dir(ctx, &SESSIONS, self.sessions_dir(), query).await
     }
-    async fn restore_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<()> {
+    async fn restore_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session> {
         self.restore_file::<Session>(ctx, &SESSIONS, self.session_path(id), id.to_string()).await
     }
     async fn purge_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool> {
@@ -735,7 +735,7 @@ impl EntityStore for JsonFileStore {
     async fn list_channels(&self, ctx: &SecurityContext, query: &Query<ChannelField>) -> StoreResult<Page<Channel>> {
         self.list_dir(ctx, &CHANNELS, self.channels_dir(), query).await
     }
-    async fn restore_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<()> {
+    async fn restore_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel> {
         self.restore_named_file::<Channel>(ctx, &CHANNELS, self.channel_path(id), id.to_string()).await
     }
     async fn purge_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool> {
@@ -765,7 +765,7 @@ impl EntityStore for JsonFileStore {
     async fn list_users(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<User>> {
         self.list_dir(ctx, &USERS, self.users_dir(), query).await
     }
-    async fn restore_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<()> {
+    async fn restore_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
         self.restore_named_file::<User>(ctx, &USERS, self.user_path(id), id.to_string()).await
     }
     async fn purge_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
@@ -798,7 +798,7 @@ impl EntityStore for JsonFileStore {
     async fn list_user_profiles(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<UserProfile>> {
         self.list_dir(ctx, &USER_PROFILES, self.user_profiles_dir(), query).await
     }
-    async fn restore_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<()> {
+    async fn restore_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<UserProfile> {
         self.restore_file::<UserProfile>(ctx, &USER_PROFILES, self.user_profile_path(id), id.to_string()).await
     }
     async fn purge_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
@@ -828,7 +828,7 @@ impl EntityStore for JsonFileStore {
     async fn list_workspaces(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Workspace>> {
         self.list_dir(ctx, &WORKSPACES, self.workspaces_dir(), query).await
     }
-    async fn restore_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<()> {
+    async fn restore_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace> {
         self.restore_named_file::<Workspace>(ctx, &WORKSPACES, self.workspace_path(id), id.to_string()).await
     }
     async fn purge_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<bool> {
@@ -860,7 +860,7 @@ impl EntityStore for JsonFileStore {
     async fn list_skills(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Skill>> {
         self.list_dir(ctx, &SKILLS, self.skills_dir(), query).await
     }
-    async fn restore_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<()> {
+    async fn restore_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<Skill> {
         self.restore_named_file::<Skill>(ctx, &SKILLS, self.skill_path(id), id.to_string()).await
     }
     async fn purge_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<bool> {
@@ -893,7 +893,7 @@ impl EntityStore for JsonFileStore {
     async fn list_artifacts(&self, ctx: &SecurityContext, query: &Query<ArtifactField>) -> StoreResult<Page<Artifact>> {
         self.list_dir(ctx, &ARTIFACTS, self.artifacts_dir(), query).await
     }
-    async fn restore_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<()> {
+    async fn restore_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<Artifact> {
         self.restore_named_file::<Artifact>(ctx, &ARTIFACTS, self.artifact_path(id), id.to_string()).await
     }
     async fn purge_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<bool> {
@@ -925,7 +925,7 @@ impl EntityStore for JsonFileStore {
     async fn list_groups(&self, ctx: &SecurityContext, query: &Query<GroupField>) -> StoreResult<Page<Group>> {
         self.list_dir(ctx, &GROUPS, self.groups_dir(), query).await
     }
-    async fn restore_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<()> {
+    async fn restore_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group> {
         self.restore_named_file::<Group>(ctx, &GROUPS, self.group_path(id), id.to_string()).await
     }
     async fn purge_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<bool> {

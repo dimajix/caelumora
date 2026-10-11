@@ -128,7 +128,7 @@ operations of its own, each with a permission of its own:
 | Operation | asks | does |
 |---|---|---|
 | `get_deleted_x`, `list_deleted_x` | `ReadDeleted` | read the marked documents; what is not marked is not found |
-| `restore_x` | `ReadDeleted`, then `Restore` | takes the mark away |
+| `restore_x` | `ReadDeleted`, then `Restore` | takes the mark away and returns the restored document |
 | `purge_x` | `ReadDeleted`, then `Purge` | removes the document for good - only if it is marked, also when it is removed |
 
 Purging only what is still marked keeps a purge from removing what was restored meanwhile. Restoring

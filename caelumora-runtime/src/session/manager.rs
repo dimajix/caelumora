@@ -380,8 +380,7 @@ impl SessionManager {
         // that whoever may not see it learns nothing more: what was deleted
         // with it comes back with it (issue 178).
         let deleted_at = store.get_deleted_session(context, id).await?.deleted.map(|removal| removal.at);
-        store.restore_session(context, id).await?;
-        let session = store.get_session(context, id).await?;
+        let session = store.restore_session(context, id).await?;
         if let Some(since) = deleted_at {
             if let Err(e) = restore_scoped_in(store.as_ref(), &self.events, &Scope::SessionScope { session_id: id }, since).await {
                 warn!("Session {} was restored, but not what lies in its scope: {}", id, e);

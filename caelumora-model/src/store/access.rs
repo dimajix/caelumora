@@ -149,14 +149,13 @@ impl<'a> Access<'a> {
         !present(value) && self.manager.check(self.ctx, ActionType::ReadDeleted(kind.entity, value.security_attributes())).await
     }
 
-    /// Whether the caller may take the mark of `stored` away: not found if
-    /// it is not marked or they may not read it as deleted, refused if they
-    /// may but not restore it.
-    pub(crate) async fn restore<T: Stored>(&self, stored: Option<&T>, kind: &Actions, id: String) -> StoreResult<()> {
-        let not_found = || StoreError::NotFound { entity: kind.entity.name(), id };
-        let Some(stored) = stored.filter(|s| !present(*s)) else { return Err(not_found()) };
-        self.require(ActionType::ReadDeleted(kind.entity, stored.security_attributes()), not_found).await?;
-        self.allow(ActionType::Restore(kind.entity, stored.security_attributes())).await
+    /// `stored`, if the caller may take its mark away: not found if it is
+    /// not marked or they may not read it as deleted, refused if they may
+    /// but not restore it.
+    pub(crate) async fn restore<T: Stored>(&self, stored: Option<T>, kind: &Actions, id: String) -> StoreResult<T> {
+        let stored = self.read_deleted(stored, kind, id).await?;
+        self.allow(ActionType::Restore(kind.entity, stored.security_attributes())).await?;
+        Ok(stored)
     }
 
     /// Whether to remove `stored` for good: `false` if it is not marked

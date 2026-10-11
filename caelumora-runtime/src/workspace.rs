@@ -349,18 +349,17 @@ impl WorkspaceManager {
     }
 
     /// Takes the deletion of workspace `id` back (`Restore`), with its
-    /// files.
+    /// files. Returns the workspace as it is restored.
     ///
     /// # Errors
     /// `NotFound` if it is not deleted or not the caller's to restore, or
     /// whatever else the store reports - `NameTaken` among it.
-    pub async fn restore(&self, ctx: &SecurityContext, id: WorkspaceId) -> WorkspaceResult<()> {
+    pub async fn restore(&self, ctx: &SecurityContext, id: WorkspaceId) -> WorkspaceResult<Workspace> {
         let _writing = self.writing.lock().await;
-        self.entities.restore_workspace(ctx, id).await.map_err(store_error(id))?;
-        let workspace = self.entities.get_workspace(ctx, id).await.map_err(store_error(id))?;
-        self.events.publish(GlobalEvent::WorkspaceRestored(id), workspace.security_attributes);
+        let workspace = self.entities.restore_workspace(ctx, id).await.map_err(store_error(id))?;
+        self.events.publish(GlobalEvent::WorkspaceRestored(id), workspace.security_attributes.clone());
         info!(workspace = %id, by = %ctx.caller_id, "Workspace restored");
-        Ok(())
+        Ok(workspace)
     }
 
     /// Removes the deleted workspace `id` for good, its files first

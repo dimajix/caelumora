@@ -197,26 +197,25 @@ impl MemoryStore {
         Ok(self.write_lock(map, |v| v.remove(key).is_some()))
     }
 
-    async fn restore_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, key: K) -> StoreResult<()>
+    async fn restore_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, key: K) -> StoreResult<T>
     where K: Eq + Hash + Display + Send + Sync, T: Deletable + Clone + Send + Sync {
         self.restore_with(ctx, map, kind, key, unnamed).await
     }
 
-    async fn restore_named_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, key: K) -> StoreResult<()>
+    async fn restore_named_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, key: K) -> StoreResult<T>
     where K: Eq + Hash + Display + Send + Sync, T: Deletable + Scoped + Clone + Send + Sync {
         self.restore_with(ctx, map, kind, key, |value, others| name_free(value, others, kind)).await
     }
 
-    async fn restore_with<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, key: K, others: impl FnOnce(&T, Others<'_, T>) -> StoreResult<()>) -> StoreResult<()>
+    async fn restore_with<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, key: K, others: impl FnOnce(&T, Others<'_, T>) -> StoreResult<()>) -> StoreResult<T>
     where K: Eq + Hash + Display + Send + Sync, T: Deletable + Clone + Send + Sync {
         let stored = self.read_lock(map, |v| v.get(&key).cloned());
-        self.access(ctx).restore(stored.as_ref(), kind, key.to_string()).await?;
-        let Some(mut restored) = stored else { return Ok(()) };
+        let mut restored = self.access(ctx).restore(stored, kind, key.to_string()).await?;
         restored.set_deleted(None);
         self.write_lock(map, |v| {
             others(&restored, &mut v.iter().filter(|(k, _)| **k != key).map(|(_, other)| other))?;
-            v.insert(key, restored);
-            Ok(())
+            v.insert(key, restored.clone());
+            Ok(restored)
         })
     }
 
@@ -305,7 +304,7 @@ impl EntityStore for MemoryStore {
     async fn list_personalities(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Personality>> {
         self.list_in(ctx, &self.personalities, &PERSONALITIES, query).await
     }
-    async fn restore_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<()> {
+    async fn restore_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
         self.restore_named_in(ctx, &self.personalities, &PERSONALITIES, id).await
     }
     async fn purge_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool> {
@@ -337,7 +336,7 @@ impl EntityStore for MemoryStore {
     async fn list_session_templates(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<SessionTemplate>> {
         self.list_in(ctx, &self.session_templates, &SESSION_TEMPLATES, query).await
     }
-    async fn restore_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<()> {
+    async fn restore_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<SessionTemplate> {
         self.restore_named_in(ctx, &self.session_templates, &SESSION_TEMPLATES, id).await
     }
     async fn purge_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool> {
@@ -369,7 +368,7 @@ impl EntityStore for MemoryStore {
     async fn list_agents(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Agent>> {
         self.list_in(ctx, &self.agents, &AGENTS, query).await
     }
-    async fn restore_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<()> {
+    async fn restore_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
         self.restore_named_in(ctx, &self.agents, &AGENTS, id).await
     }
     async fn purge_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<bool> {
@@ -402,7 +401,7 @@ impl EntityStore for MemoryStore {
     async fn list_sessions(&self, ctx: &SecurityContext, query: &Query<SessionField>) -> StoreResult<Page<Session>> {
         self.list_in(ctx, &self.sessions, &SESSIONS, query).await
     }
-    async fn restore_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<()> {
+    async fn restore_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session> {
         self.restore_in(ctx, &self.sessions, &SESSIONS, id).await
     }
     async fn purge_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool> {
@@ -431,7 +430,7 @@ impl EntityStore for MemoryStore {
     async fn list_channels(&self, ctx: &SecurityContext, query: &Query<ChannelField>) -> StoreResult<Page<Channel>> {
         self.list_in(ctx, &self.channels, &CHANNELS, query).await
     }
-    async fn restore_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<()> {
+    async fn restore_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel> {
         self.restore_named_in(ctx, &self.channels, &CHANNELS, id).await
     }
     async fn purge_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool> {
@@ -461,7 +460,7 @@ impl EntityStore for MemoryStore {
     async fn list_users(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<User>> {
         self.list_in(ctx, &self.users, &USERS, query).await
     }
-    async fn restore_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<()> {
+    async fn restore_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
         self.restore_named_in(ctx, &self.users, &USERS, id).await
     }
     async fn purge_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
@@ -494,7 +493,7 @@ impl EntityStore for MemoryStore {
     async fn list_user_profiles(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<UserProfile>> {
         self.list_in(ctx, &self.user_profiles, &USER_PROFILES, query).await
     }
-    async fn restore_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<()> {
+    async fn restore_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<UserProfile> {
         self.restore_in(ctx, &self.user_profiles, &USER_PROFILES, id).await
     }
     async fn purge_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
@@ -523,7 +522,7 @@ impl EntityStore for MemoryStore {
     async fn list_workspaces(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Workspace>> {
         self.list_in(ctx, &self.workspaces, &WORKSPACES, query).await
     }
-    async fn restore_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<()> {
+    async fn restore_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace> {
         self.restore_named_in(ctx, &self.workspaces, &WORKSPACES, id).await
     }
     async fn purge_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<bool> {
@@ -555,7 +554,7 @@ impl EntityStore for MemoryStore {
     async fn list_skills(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Skill>> {
         self.list_in(ctx, &self.skills, &SKILLS, query).await
     }
-    async fn restore_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<()> {
+    async fn restore_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<Skill> {
         self.restore_named_in(ctx, &self.skills, &SKILLS, id).await
     }
     async fn purge_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<bool> {
@@ -587,7 +586,7 @@ impl EntityStore for MemoryStore {
     async fn list_artifacts(&self, ctx: &SecurityContext, query: &Query<ArtifactField>) -> StoreResult<Page<Artifact>> {
         self.list_in(ctx, &self.artifacts, &ARTIFACTS, query).await
     }
-    async fn restore_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<()> {
+    async fn restore_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<Artifact> {
         self.restore_named_in(ctx, &self.artifacts, &ARTIFACTS, id).await
     }
     async fn purge_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<bool> {
@@ -619,7 +618,7 @@ impl EntityStore for MemoryStore {
     async fn list_groups(&self, ctx: &SecurityContext, query: &Query<GroupField>) -> StoreResult<Page<Group>> {
         self.list_in(ctx, &self.groups, &GROUPS, query).await
     }
-    async fn restore_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<()> {
+    async fn restore_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group> {
         self.restore_named_in(ctx, &self.groups, &GROUPS, id).await
     }
     async fn purge_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<bool> {

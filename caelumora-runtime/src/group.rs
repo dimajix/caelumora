@@ -189,23 +189,24 @@ impl GroupManager {
         Ok(true)
     }
 
-    /// Takes the deletion of team `id` back (`Restore`).
+    /// Takes the deletion of team `id` back (`Restore`). Returns the team
+    /// as it is restored.
     ///
     /// # Errors
     /// `NotFound` if it is not deleted or not the caller's to restore,
     /// `Participants` for the participants of a session or channel, which
     /// come back with it, or whatever else the store reports - `NameTaken`
     /// among it.
-    pub async fn restore(&self, ctx: &SecurityContext, id: GroupId) -> GroupResult<()> {
+    pub async fn restore(&self, ctx: &SecurityContext, id: GroupId) -> GroupResult<Group> {
         let _writing = self.writing.lock().await;
         let deleted = self.entities.get_deleted_group(ctx, id).await.map_err(store_error(id))?;
         if deleted.is_participants() {
             return Err(GroupError::Participants(id));
         }
-        self.entities.restore_group(ctx, id).await.map_err(store_error(id))?;
-        self.events.publish(GlobalEvent::GroupRestored(id), deleted.security_attributes);
+        let group = self.entities.restore_group(ctx, id).await.map_err(store_error(id))?;
+        self.events.publish(GlobalEvent::GroupRestored(id), group.security_attributes.clone());
         info!(group = %id, by = %ctx.caller_id, "Group restored");
-        Ok(())
+        Ok(group)
     }
 
     /// Removes the deleted team `id` for good (`Purge`, asked by the store).

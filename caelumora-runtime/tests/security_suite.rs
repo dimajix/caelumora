@@ -2214,7 +2214,8 @@ async fn deleting_a_channel_needs_owning_its_session() {
 /// its owner's alone, not a contributor's; for whoever may not read the
 /// trash, there is nothing to restore (issue 164). The manager reads it
 /// first, as whoever restores it (issue 304), and the store asks again as
-/// it restores it (rule 2).
+/// it restores it (rule 2) - and returns it, so that it is not read back
+/// (issue 318).
 #[tokio::test]
 async fn restoring_a_session_needs_owning_it() {
     let world = World::new().await;
@@ -2230,8 +2231,7 @@ async fn restoring_a_session_needs_owning_it() {
         "alice: ReadDeleted(alice's) yes",
         "alice: ReadDeleted(alice's) yes",
         "alice: Restore(alice's) yes",
-        "alice: GetSession(alice's) yes",
-    ]), "and reads it back, restored");
+    ]), "and does not read it back");
 }
 
 /// Purging a deleted session: the system's alone until there is an
@@ -2297,7 +2297,7 @@ async fn deleting_an_agent_needs_owning_it() {
 /// Deleting an agent through the agent manager (issues 164, 314): reading
 /// it and deleting it - its owner's alone - before anything happens; the
 /// channels it rests in are changed by nobody. Restoring it is its owner's
-/// too, purging it not.
+/// too, asked by the store alone (issue 318), purging it not.
 #[tokio::test]
 async fn deleting_restoring_and_purging_an_agent_is_its_owners_but_purging() {
     let world = World::new().await;
@@ -2321,11 +2321,7 @@ async fn deleting_restoring_and_purging_an_agent_is_its_owners_but_purging() {
     assert_eq!(asked, checks(&["alice: ReadDeleted(alice's) yes", "alice: Purge(alice's) no"]));
     let (restored, asked) = world.asked(agents.restore(&World::as_user(world.alice), helper)).await;
     assert!(restored.is_ok());
-    assert_eq!(asked, checks(&[
-        "alice: ReadDeleted(alice's) yes",
-        "alice: ReadDeleted(alice's) yes",
-        "alice: Restore(alice's) yes",
-    ]), "only what was deleted, asked by the agent manager and again by the store");
+    assert_eq!(asked, checks(&["alice: ReadDeleted(alice's) yes", "alice: Restore(alice's) yes"]), "only what was deleted, asked by the store");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
@@ -2449,7 +2445,9 @@ async fn a_workspace_is_its_owners_alone() {
     assert!(!workspaces.delete(&bob, docs.id).await.unwrap(), "nothing bob could see to delete");
     assert!(workspaces.delete(&alice, docs.id).await.unwrap());
     assert!(matches!(workspaces.restore(&bob, docs.id).await, Err(WorkspaceError::NotFound(_))), "nor restore");
-    workspaces.restore(&alice, docs.id).await.expect("alice restores it");
+    let (restored, asked) = world.asked(workspaces.restore(&alice, docs.id)).await;
+    assert_eq!(restored.expect("alice restores it").id, docs.id);
+    assert_eq!(asked, checks(&["alice: ReadDeleted(alice's) yes", "alice: Restore(alice's) yes"]), "and it is not read back (issue 318)");
     assert!(workspaces.delete(&alice, docs.id).await.unwrap());
     let (purged, asked) = world.asked(workspaces.purge(&alice, docs.id)).await;
     assert!(matches!(purged, Err(WorkspaceError::Store(StoreError::PermissionDenied))), "the owner does not purge: {purged:?}");

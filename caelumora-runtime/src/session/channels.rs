@@ -253,9 +253,8 @@ impl SessionLoop {
         // As when it was created: its participants' clearance may have
         // changed while it was deleted.
         crate::channel::require_admitted(&self.runtime_manager, context, &channel).await?;
-        store.restore_channel(context, channel_id).await?;
         let deleted_at = channel.deleted.as_ref().map(|removal| removal.at);
-        let channel = Channel { deleted: None, ..channel };
+        let channel = store.restore_channel(context, channel_id).await?;
         let listed = match self.session_controller.add_channel(context, channel_id).await {
             Ok(()) => self.add_channel_loop(&channel).await,
             Err(error) => Err(error.into()),
