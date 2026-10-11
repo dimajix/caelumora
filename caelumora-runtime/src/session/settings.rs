@@ -99,16 +99,16 @@ impl SessionLoop {
 
 #[cfg(test)]
 mod tests {
-    use caelumora_model::value::name::Name;
-    use crate::runtime::RuntimeManager;
+
+    
     use caelumora_model::event::GlobalEvent;
-    use caelumora_model::security::{SecurityAttributes, SecurityContext};
+    use caelumora_model::security::SecurityContext;
     use crate::view::Viewer;
     use caelumora_model::store::StoreError;
     use std::sync::Arc;
-    use caelumora_model::secret::SecretManager;
-    use caelumora_model::store::memory::MemoryStore;
-    use crate::session::SessionManager;
+
+    
+
     use crate::session::testing::*;
 
     #[tokio::test]
@@ -116,17 +116,14 @@ mod tests {
         use caelumora_model::actor::ActorId;
         use caelumora_model::privacy::PrivacyConfig;
         use caelumora_model::session::SessionUpdateEvent;
-        use caelumora_model::user::{User, UserId};
+        use caelumora_model::user::UserId;
 
-        let (policy, confidentiality, store) = crate::session::testing::owned_store(Default::default());
-        let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::clone(&confidentiality), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
-        let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
-        let user = |name: &str| User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: Vec::new(), deleted: None };
+        let (_, manager) = owned_runtime(Default::default());
+        let runtime = Arc::clone(runtime_of(&manager));
         let (alice, bob) = (user("alice"), user("bob"));
         let as_user = |id: UserId| SecurityContext::new(ActorId::User(id), Default::default(), Default::default());
-        let mut session = make_session("hers");
-        session.security_attributes = SecurityAttributes::owned_by(ActorId::User(alice.id)).granting(caelumora_model::security::Subject::Actor(ActorId::User(bob.id)), caelumora_model::security::Grant::Read);
+        let mut session = make_session("hers", ActorId::User(alice.id));
+        session.security_attributes = session.security_attributes.clone().granting(caelumora_model::security::Subject::Actor(ActorId::User(bob.id)), caelumora_model::security::Grant::Read);
         session.participants = record_users(&manager, &[&alice, &bob]).await;
         let session = create(&manager, &as_user(alice.id), session).await.unwrap();
         let mut events = runtime.event_bus().subscribe_all();

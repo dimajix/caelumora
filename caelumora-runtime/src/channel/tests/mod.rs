@@ -38,15 +38,7 @@ mod commands;
 mod external_agent;
 mod questions;
 
-pub(super) fn user(username: &str) -> User {
-    User {
-        id: UserId::new(),
-        username: Name::new(username).unwrap(),
-        email: String::new(),
-        roles: Vec::new(),
-        deleted: None,
-    }
-}
+pub(super) use crate::session::testing::user;
 
 /// A channel of `users`, who are recorded in the store its actors are
 /// read from.

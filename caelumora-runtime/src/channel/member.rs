@@ -135,17 +135,17 @@ pub(crate) async fn require_admitted(runtime: &RuntimeManager, context: &Securit
 #[cfg(test)]
 mod tests {
     use caelumora_model::value::name::Name;
-    use crate::runtime::RuntimeManager;
+
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::Agent;
     use caelumora_model::confidentiality::Classification;
-    use caelumora_model::security::{SecurityAttributes, SecurityContext};
+    use caelumora_model::security::SecurityContext;
     use caelumora_model::scope::Scope;
     use caelumora_model::session::{ChannelId, SessionId};
     use std::sync::Arc;
     use caelumora_model::value::name::ScopedName;
-    use caelumora_model::secret::SecretManager;
-    use caelumora_model::store::memory::MemoryStore;
+
+    
     use crate::session::{ChannelSpec, SessionManager};
     use crate::session::testing::*;
 
@@ -167,10 +167,8 @@ mod tests {
             (RoleId::new(), "hr".to_string(), vec![Clearance { level: Confidentiality::Confidential, compartment: Some(Compartment::new("hr")) }]),
         ]).unwrap();
         let ids = roles.clone();
-        let (policy, confidentiality, store) = crate::session::testing::owned_store(ConfidentialityRules::new(compartments).with_roles(roles));
-        let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::clone(&confidentiality), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
-        let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
+        let (store, manager) = owned_runtime(ConfidentialityRules::new(compartments).with_roles(roles));
+        let runtime = Arc::clone(runtime_of(&manager));
         let system = SecurityContext::system();
         let user = |name: &str, roles: &[&str]| User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: ids.ids_of(roles).unwrap(), deleted: None };
         let (alice, bob) = (user("alice", &["staff", "hr"]), user("bob", &["staff"]));
@@ -227,8 +225,8 @@ mod tests {
         assert!(!cleared(cleared_remote, &hr).await);
 
         // The same question when a channel is created and when one is joined.
-        let mut session = make_session("hers");
-        session.security_attributes = SecurityAttributes::owned_by(alice_id).granting(caelumora_model::security::Subject::Actor(bob_id), caelumora_model::security::Grant::Read);
+        let mut session = make_session("hers", alice_id);
+        session.security_attributes = session.security_attributes.clone().granting(caelumora_model::security::Subject::Actor(bob_id), caelumora_model::security::Grant::Read);
         session.participants = users;
         session.participants.extend([hers, limited].map(|a| match a { ActorId::Agent(id) => caelumora_model::channel::Participant::Agent(id), _ => unreachable!() }));
         let session = create(&manager, &alice_ctx, session).await.unwrap();
@@ -257,7 +255,7 @@ mod tests {
             security_attributes: Default::default(), reasoning_visibility: Default::default(), deleted: None,
         };
         store.create_personality(&system, &personality).await.unwrap();
-        let mut session = make_session("scoped");
+        let mut session = make_session("scoped", ActorId::None);
         let id = session.id;
         let elsewhere = [
             Agent::new(ScopedName::new("aside", Scope::ChannelScope { session_id: id, channel_id: ChannelId::new() }).unwrap(), &personality, ActorId::None),
@@ -267,7 +265,9 @@ mod tests {
             store.create_agent(&system, agent).await.unwrap();
             session.participants.push(Participant::Agent(agent.id));
         }
-        let running = create(&manager, &ctx, session).await.unwrap();
+        // In the session, not in its channel: adding them there is refused below.
+        let main = caelumora_model::channel::Channel { participants: Vec::new(), ..main_channel(&session) };
+        let running = manager.create_session(&ctx, session, vec![main]).await.unwrap();
         let main = running.channel_by_name("main").unwrap();
 
         for agent in &elsewhere {

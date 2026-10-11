@@ -1,6 +1,6 @@
 # 315 — The tests of the views and of sessions have fixtures of the same names
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -42,3 +42,24 @@ moved without rewriting its setup.
 
 - **2026-10-11** — Opened while splitting `session.rs`
   ([311](311-split-channel-and-session-loops.md)), which left these four tests in `session/mod.rs`.
+- **2026-10-11** — Done, in tests only. `session::testing` holds one fixture of each kind, and the
+  views', the sessions' and the channels' tests use it:
+  - `make_session(name, owner)` and `main_channel` in the shape of the views' fixtures, which was
+    the production one (`Template::build`, `Channel::build`): read by the group of the session's
+    or the channel's participants, and the main channel takes the session's participants. The
+    sessions' version had neither; two channel tests relied on that and now say what they need -
+    one makes its reader a participant instead of copying a grant of the session into the
+    channel, the other gives its main channel no participants.
+  - `user(name)`, which replaced the views' fixture, the one in `channel/tests` and the literal
+    `User { … }` in the tests of sessions, channels and views.
+  - `record_users` through the manager; the views' tests have one at hand.
+  - `owned_runtime(rules)`, which replaced the views' two fixtures and twelve copies of the same
+    four lines in the tests of sessions and channels; `runtime_of(manager)` for the tests that
+    ask the runtime directly.
+  - `views_in(session, channel, actor)`, which reads `SessionLoop`'s private fields from inside
+    `session`, so `SessionLoop` needs no method for tests.
+  - `bare_session`, moved from `runtime.rs`, so that every fixture building a session is here.
+
+  The four tests moved to `view/mod.rs`. Left as they were: the literal `User { … }` in tests
+  outside sessions, channels and views; `views_in` in the tests of `agent_memory`, which builds on
+  `ViewsFactory::in_session` and belongs to [309](309-options-none-only-in-tests.md).

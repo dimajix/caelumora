@@ -1,5 +1,6 @@
 //! What tests of the runtime need to build it as a binary does, and the fixtures the tests of
-//! sessions and channels share.
+//! sessions, channels and the views share: one of each, for building a runtime, a user, a session
+//! and its main channel, and the views an actor of a running session navigates (issue 315).
 
 use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
 use caelumora_model::security::{OwnershipSecurityManager, SecurityManager};
@@ -10,7 +11,13 @@ use std::sync::Arc;
 use crate::session::{ChannelSpec, SessionLoop, SessionManager};
 use caelumora_model::value::name::Name;
 use crate::channel::ChannelLoop;
-use crate::runtime::RuntimeManager;
+use crate::runtime::{ChannelRuntime, RuntimeManager};
+use crate::view::ViewsFactory;
+use caelumora_model::actor::ActorId;
+use caelumora_model::group::GroupId;
+use caelumora_model::session::Participant;
+use caelumora_model::user::{User, UserId};
+use caelumora_model::security::{Grant, Subject};
 use anyhow::Result;
 use caelumora_model::channel::Channel;
 use caelumora_model::event::GlobalEvent;
@@ -18,7 +25,6 @@ use caelumora_model::security::{SecurityAttributes, SecurityContext};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::DummySecurityManager;
-use uuid::Uuid;
 use caelumora_model::actor::{ActorEvent, Envelope, Rejection};
 use caelumora_model::message::MessageId;
 use tokio::sync::broadcast;
@@ -35,58 +41,101 @@ pub(crate) fn owned_store(rules: ConfidentialityRules) -> (Arc<dyn SecurityManag
     (policy, Arc::new(rules), store)
 }
 
+/// A user named `name`, not stored.
+pub(crate) fn user(name: &str) -> User {
+    User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: Vec::new(), deleted: None }
+}
+
 /// `users` as participants, recorded in the store the session reads
 /// them from (issue 120).
-pub(crate) async fn record_users(manager: &SessionManager, users: &[&caelumora_model::user::User]) -> Vec<caelumora_model::session::Participant> {
+pub(crate) async fn record_users(manager: &SessionManager, users: &[&User]) -> Vec<Participant> {
     let store = manager.runtime_manager.entity_store();
     let mut participants = Vec::new();
     for user in users {
         store.create_user(&SecurityContext::system(), user).await.unwrap();
-        participants.push(caelumora_model::session::Participant::User(user.id));
+        participants.push(Participant::User(user.id));
     }
     participants
 }
 
+/// A runtime under the ownership policy with `rules` (`owned_store`), and
+/// a manager on it.
+pub(crate) fn owned_runtime(rules: ConfidentialityRules) -> (Arc<MemoryStore>, Arc<SessionManager>) {
+    let (policy, confidentiality, store) = owned_store(rules);
+    let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
+    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, confidentiality, &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+    (store, Arc::new(SessionManager::new(runtime)))
+}
+
+/// A runtime under no policy: everything is allowed.
 pub(crate) fn test_runtime() -> Arc<RuntimeManager> {
     let store = Arc::new(MemoryStore::new());
     let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
     Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(DummySecurityManager::new()), Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap())
 }
 
-pub(crate) fn make_session(name: &str) -> Session {
+/// A session that holds nothing but its id `session_id`: what a channel
+/// outside a running session belongs to (`ChannelRuntime::outside_a_session`).
+pub(crate) fn bare_session(session_id: SessionId) -> Session {
+    let now = chrono::Utc::now();
+    Session {
+        summary: None, briefing: None,
+        id: session_id,
+        name: Name::new("s").unwrap(),
+        participants: Vec::new(),
+        channels: Vec::new(),
+        commands: Default::default(),
+        privacy: Default::default(),
+        approval_rules: Vec::new(),
+        workspace: None,
+        created_at: now,
+        updated_at: now,
+        security_attributes: Default::default(),
+        deleted: None,
+    }
+}
+
+/// A session of `owner` named `name`, as a template builds one
+/// (`Template::build`): read by its members, the group of its participants
+/// (issue 23), whom the test sets. It lists one channel, `main_channel`.
+pub(crate) fn make_session(name: &str, owner: ActorId) -> Session {
+    let id = SessionId::new();
+    let now = chrono::Utc::now();
     Session {
         summary: None, briefing: None,
         approval_rules: Vec::new(),
         workspace: None,
         commands: Default::default(),
         privacy: Default::default(),
-        id: SessionId(Uuid::new_v4()),
+        id,
         name: Name::new(name).unwrap(),
         participants: Vec::new(),
-        channels: vec![ChannelId(Uuid::new_v4())],
-        created_at: chrono::Utc::now(),
-        updated_at: chrono::Utc::now(),
-        security_attributes: SecurityAttributes::default(),
+        channels: vec![ChannelId::new()],
+        created_at: now,
+        updated_at: now,
+        security_attributes: SecurityAttributes::owned_by(owner).granting(Subject::Group(GroupId::of_session(id)), Grant::Read),
         deleted: None,
     }
 }
 
-/// The channel `session` lists, as a document of its own (issue 70):
-/// "main", belonging to whom the session belongs to.
+/// The channel `session` lists, as a document of its own (issue 70) and as
+/// `Channel::build` makes one: "main", belonging to whom the session belongs
+/// to, read by its members - the session's participants.
 pub(crate) fn main_channel(session: &Session) -> Channel {
+    let id = session.channels[0];
     Channel {
         summary: None, briefing: None,
         approval_rules: Vec::new(),
         uses_workspace: true,
-        id: session.channels[0],
+        id,
         session_id: session.id,
         name: Name::new("main").unwrap(),
         components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
         classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
         language: None,
         history_limits: Vec::new(),
-        participants: Vec::new(),
-        security_attributes: session.security_attributes.clone(),
+        participants: session.participants.clone(),
+        security_attributes: SecurityAttributes::owned_by(session.security_attributes.owner_id).granting(Subject::Group(GroupId::of_channel(id)), Grant::Read),
         deleted: None,
         former: Vec::new(),
     }
@@ -116,17 +165,21 @@ pub(crate) fn drain(rx: &mut crate::event::EventSubscription) -> Vec<GlobalEvent
 /// A running session owned by a user who takes part in it, with that
 /// user's context and a second user of the session.
 pub(crate) async fn running_session_of_a_user(manager: &SessionManager) -> (Arc<SessionLoop>, SecurityContext, caelumora_model::actor::ActorId) {
-    use caelumora_model::actor::ActorId;
-    use caelumora_model::user::{User, UserId};
-    let user = |name: &str| User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: Vec::new(), deleted: None };
     let (owner, other) = (user("owner"), user("other"));
     let (owner_id, other_id) = (ActorId::User(owner.id), ActorId::User(other.id));
-    let mut session = make_session("with-users");
+    let mut session = make_session("with-users", owner_id);
     session.participants = record_users(manager, &[&owner, &other]).await;
-    session.security_attributes = SecurityAttributes::owned_by(owner_id);
     let ctx = SecurityContext::new(owner_id, session.id, Default::default());
     let session_loop = create(manager, &ctx, session).await.expect("the session starts");
     (session_loop, ctx, other_id)
+}
+
+/// What `actor` navigates from `channel` of `session`, as its turns do
+/// (`ActorRuntime::views`).
+pub(crate) fn views_in(session: &SessionLoop, channel: &Arc<ChannelLoop>, actor: ActorId) -> ViewsFactory {
+    let channel_runtime = ChannelRuntime::new(Arc::clone(&session.runtime_manager), Arc::clone(&session.commands), Arc::clone(&session.session_controller));
+    channel_runtime.attach(channel);
+    channel_runtime.new_actor_runtime(actor, session.id(), channel.id()).views()
 }
 
 pub(crate) fn spec(name: &str, participants: Vec<caelumora_model::actor::ActorId>) -> ChannelSpec {
@@ -154,4 +207,9 @@ pub(crate) async fn history_of(channel: &ChannelLoop, count: usize) -> Vec<caelu
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     panic!("the channel's history never reached {count} messages");
+}
+
+/// The runtime `manager` works with, for tests that ask it directly.
+pub(crate) fn runtime_of(manager: &SessionManager) -> &Arc<RuntimeManager> {
+    &manager.runtime_manager
 }

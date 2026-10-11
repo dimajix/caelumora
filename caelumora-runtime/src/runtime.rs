@@ -267,34 +267,13 @@ impl ActorRuntime {
     }
 }
 
-/// A session that holds nothing but its id `session_id` - in tests.
-#[cfg(test)]
-pub(crate) fn bare_session(session_id: SessionId) -> Session {
-    let now = chrono::Utc::now();
-    Session {
-        summary: None, briefing: None,
-        id: session_id,
-        name: caelumora_model::value::name::Name::new("s").unwrap(),
-        participants: Vec::new(),
-        channels: Vec::new(),
-        commands: Default::default(),
-        privacy: Default::default(),
-        approval_rules: Vec::new(),
-        workspace: None,
-        created_at: now,
-        updated_at: now,
-        security_attributes: Default::default(),
-        deleted: None,
-    }
-}
-
 #[cfg(test)]
 impl ChannelRuntime {
     /// A runtime for a channel of the session `session_id` that is not
     /// running - in tests: its session holds nothing but its id, and no
     /// rules.
     pub(crate) fn outside_a_session(runtime_manager: Arc<RuntimeManager>, command_executor: Arc<CommandExecutor<dyn ChannelCommandProvider>>, session_id: SessionId) -> Self {
-        let session = runtime_manager.controller_manager().new_session_controller(bare_session(session_id));
+        let session = runtime_manager.controller_manager().new_session_controller(crate::session::testing::bare_session(session_id));
         Self::new(runtime_manager, command_executor, session)
     }
 }
