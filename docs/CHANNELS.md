@@ -56,9 +56,11 @@ then is the running session changed and the change announced:
 *   **Deleting** takes the channel out of the session and marks it deleted (`DeleteChannel`); the
     channel and its state are kept. What lies in its scope is deleted with it, as with a session:
     if something is left the caller may not delete, the channel is put back and runs on.
-*   **Restoring** asks `UpdateSession` and its participants' clearance, as creating does, lists the
-    channel again and starts it from its stored state. What was deleted with it comes back, but for
-    one whose name was taken meanwhile or that the caller may not restore.
+*   **Restoring** reads the channel as deleted (`ReadDeleted`), as the session's trash lists it,
+    asks to restore it (`Restore`) before its participants' clearance, as creating does (issue 312),
+    lists the channel again - the store asks `UpdateSession` - and starts it from its stored state.
+    What was deleted with it comes back, but for one whose name was taken meanwhile or that the
+    caller may not restore.
 *   **Purging** is not a channel's: a deleted channel is removed for good with its session.
 
 A deleted channel stops its actors before its task is aborted: every actor is told to `stop` and
