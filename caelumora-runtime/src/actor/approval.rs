@@ -88,7 +88,7 @@ impl ApproverActor {
         for participant in &channel.participants {
             let Participant::User(user) = participant else { continue };
             let Some(actor) = running.user_actor(*user) else { continue };
-            if self.security.may_approve(actor.security_context(), &attributes, &channel.security_attributes).await {
+            if self.security.may_approve(&actor.security_context(), &attributes, &channel.security_attributes).await {
                 approvers.push(ActorId::User(*user));
             }
         }

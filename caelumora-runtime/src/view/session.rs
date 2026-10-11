@@ -166,13 +166,9 @@ impl SessionView {
     /// (`GetChannel`).
     async fn readable(&self, channel: &Channel) -> Option<ChannelReading> {
         let at = Place { channel: channel.id, classification: channel.classification.clone(), session: self.privacy() };
-        let roles;
         let reader = match self.views.viewer().place() {
             Some(from) => ChannelReader::From(from),
-            None => {
-                roles = self.views.roles().await;
-                ChannelReader::Cleared(&roles)
-            }
+            None => ChannelReader::Cleared,
         };
         self.views.security().channel_reading(self.views.context(), &channel.security_attributes, &at, reader).await
     }

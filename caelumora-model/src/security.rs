@@ -257,11 +257,11 @@ pub enum ChannelReading {
 
 /// How someone reads a channel (issue 133): an agent from its own place -
 /// its channel, the classification it reads at, its session's privacy -,
-/// a user by what their roles clear them for.
+/// a user by what the roles of their context clear them for.
 #[derive(Debug, Clone, Copy)]
 pub enum ChannelReader<'a> {
     From(&'a Place),
-    Cleared(&'a [RoleId]),
+    Cleared,
 }
 
 impl ActionType<'_> {
@@ -483,7 +483,7 @@ impl Grant {
 
 /// What a policy needs to know of actors that the attributes it is handed
 /// do not say (issue 23): who belongs to a group an access list names
-/// (issue 286), and which roles count for someone. A fact, not a decision
+/// (issue 286). A fact, not a decision
 /// - the decision stays the policy's. Implemented over the stores, read in
 /// the system's name: one group at a time, never what an actor is a member
 /// of.
@@ -492,13 +492,9 @@ pub trait Memberships: Debug + Send + Sync {
     /// The members of `group` - also of one that was deleted, whose members
     /// are told of the deletion; none of one that does not exist.
     async fn members_of(&self, group: GroupId) -> Vec<ActorId>;
-
-    /// The roles that count for `actor`: a user's own; an agent's owner's,
-    /// narrowed by its personality's limiting roles (issue 179).
-    async fn roles_of(&self, actor: ActorId) -> Vec<RoleId>;
 }
 
-/// Knows of no membership and no roles: for a policy without access lists
+/// Knows of no membership: for a policy without access lists
 /// naming them - tests, and what is built before a store is.
 #[derive(Debug, Default)]
 pub struct NoMemberships;
@@ -506,10 +502,6 @@ pub struct NoMemberships;
 #[async_trait]
 impl Memberships for NoMemberships {
     async fn members_of(&self, _group: GroupId) -> Vec<ActorId> {
-        Vec::new()
-    }
-
-    async fn roles_of(&self, _actor: ActorId) -> Vec<RoleId> {
         Vec::new()
     }
 }
@@ -530,6 +522,13 @@ pub trait Secured {
 ///   when nobody did: for the record and for the questions of a call, never
 ///   for rights.
 ///
+/// - `roles` are the principal's roles, and `limiting_roles` those the
+///   caller is limited to - an agent's personality's (issue 179) -, set where
+///   the context is built (issue 304): what a decision needs to know of the
+///   subject is in the context, not looked up while it is made. A role
+///   counts if the principal holds it and the limit, if any, names it
+///   (`has_role`); a clearance holds if both clear (see CONFIDENTIALITY.md).
+///
 /// An empty context names nobody and has no rights.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecurityContext {
@@ -537,7 +536,9 @@ pub struct SecurityContext {
     pub caller_id: ActorId,
     pub principal_id: ActorId,
     pub session_id: SessionId,
-    pub channel_id: ChannelId
+    pub channel_id: ChannelId,
+    pub roles: Vec<RoleId>,
+    pub limiting_roles: Option<Vec<RoleId>>,
 }
 
 impl SecurityContext {
@@ -550,8 +551,22 @@ impl SecurityContext {
             caller_id: actor,
             principal_id: actor,
             session_id,
-            channel_id
+            channel_id,
+            roles: Vec::new(),
+            limiting_roles: None,
         }
+    }
+
+    /// This context with the principal's `roles`, and the `limiting_roles`
+    /// the caller is limited to, if any.
+    pub fn with_roles(self, roles: Vec<RoleId>, limiting_roles: Option<Vec<RoleId>>) -> Self {
+        Self { roles, limiting_roles, ..self }
+    }
+
+    /// Whether `role` counts for the context: the principal holds it, and
+    /// the caller's limit, if any, names it.
+    pub fn has_role(&self, role: RoleId) -> bool {
+        self.roles.contains(&role) && self.limiting_roles.as_ref().is_none_or(|limit| limit.contains(&role))
     }
     /// The context of the runtime acting on its own - for work that follows
     /// from an action already permitted, or that no user started (initial
@@ -563,14 +578,18 @@ impl SecurityContext {
 
     /// This context continued by `caller_id`, acting with the rights of
     /// `principal_id` - an agent taking up a request, with its owner's - for
-    /// the same initiator, in the same place.
+    /// the same initiator, in the same place. Without roles: whoever
+    /// continues it gives the new principal's (`with_roles`), so that the
+    /// initiator lends nothing.
     pub fn next(&self, caller_id: ActorId, principal_id: ActorId) -> Self {
         Self {
             initiator_id: self.initiator_id,
             caller_id,
             principal_id,
             session_id: self.session_id,
-            channel_id: self.channel_id
+            channel_id: self.channel_id,
+            roles: Vec::new(),
+            limiting_roles: None,
         }
     }
 }
@@ -723,10 +742,11 @@ pub trait AccessQuestions {
     /// 243) - asked by the channel as it cancels.
     async fn may_cancel_channel(&self, context: &SecurityContext, channel: &SecurityAttributes) -> bool;
 
-    /// Whether the user `context` acts for, with `roles`, is cleared for
-    /// `channel` (`JoinChannel`, issue 133) - what decides, besides
-    /// `GetChannel`, which channels they are shown.
-    async fn may_see_channel(&self, context: &SecurityContext, roles: &[RoleId], channel: &Classification) -> bool;
+    /// Whether `context` is cleared for `channel` (`JoinChannel`, issue 133)
+    /// by its roles - and, for a caller limited to roles, by those as well
+    /// (issue 179): what decides, besides `GetChannel`, which channels, and
+    /// what else classified, a viewer is shown.
+    async fn may_see_channel(&self, context: &SecurityContext, channel: &Classification) -> bool;
 
     /// Whether `context` may take back the deletion of an entity of `kind`
     /// with `attributes` (`Restore`, issue 164).
@@ -803,7 +823,7 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
                 true => ChannelReading::Whole,
                 false => ChannelReading::Released,
             }),
-            ChannelReader::Cleared(roles) => self.may_see_channel(context, roles, &at.classification).await.then_some(ChannelReading::Whole),
+            ChannelReader::Cleared => self.may_see_channel(context, &at.classification).await.then_some(ChannelReading::Whole),
         }
     }
 
@@ -855,8 +875,15 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
         self.check(context, ActionType::CancelChannel(channel)).await
     }
 
-    async fn may_see_channel(&self, context: &SecurityContext, roles: &[RoleId], channel: &Classification) -> bool {
-        self.check(context, ActionType::JoinChannel { participant: context.principal_id, roles, channel }).await
+    async fn may_see_channel(&self, context: &SecurityContext, channel: &Classification) -> bool {
+        let participant = context.principal_id;
+        if !self.check(context, ActionType::JoinChannel { participant, roles: &context.roles, channel }).await {
+            return false;
+        }
+        match &context.limiting_roles {
+            Some(limit) => self.check(context, ActionType::JoinChannel { participant, roles: limit, channel }).await,
+            None => true,
+        }
     }
 
     async fn may_restore(&self, context: &SecurityContext, kind: EntityKind, attributes: &SecurityAttributes) -> bool {
@@ -1046,7 +1073,6 @@ impl OwnershipSecurityManager {
         if Self::system_owned(attributes) || actors.contains(&attributes.owner_id) {
             return true;
         }
-        let mut roles: Option<Vec<RoleId>> = None;
         for entry in attributes.acl.iter().filter(|entry| entry.grant.covers(needed)) {
             let matches = match entry.subject {
                 Subject::Actor(actor) => actors.contains(&actor),
@@ -1054,15 +1080,7 @@ impl OwnershipSecurityManager {
                     let members = self.memberships.members_of(group).await;
                     actors.iter().any(|actor| members.contains(actor))
                 }
-                Subject::Role(role) => {
-                    if roles.is_none() {
-                        // The caller's: an agent its owner's, narrowed by
-                        // its personality - a user their own.
-                        let whose = if context.caller_id == ActorId::None { context.principal_id } else { context.caller_id };
-                        roles = Some(self.memberships.roles_of(whose).await);
-                    }
-                    roles.as_ref().is_some_and(|roles| roles.contains(&role))
-                }
+                Subject::Role(role) => context.has_role(role),
             };
             if matches {
                 return true;
@@ -1232,21 +1250,16 @@ mod tests {
         readers.iter().fold(SecurityAttributes::owned_by(owner), |attributes, reader| attributes.granting(Subject::Actor(*reader), Grant::Read))
     }
 
-    /// Memberships and roles as a test sets them.
+    /// Memberships as a test sets them.
     #[derive(Debug, Default)]
     struct Known {
         members: Vec<(ActorId, GroupId)>,
-        roles: Vec<(ActorId, RoleId)>,
     }
 
     #[async_trait]
     impl Memberships for Known {
         async fn members_of(&self, group: GroupId) -> Vec<ActorId> {
             self.members.iter().filter(|(_, g)| *g == group).map(|(actor, _)| *actor).collect()
-        }
-
-        async fn roles_of(&self, actor: ActorId) -> Vec<RoleId> {
-            self.roles.iter().filter(|(a, _)| *a == actor).map(|(_, role)| *role).collect()
         }
     }
 
@@ -1405,7 +1418,7 @@ mod tests {
         let (hers, his, member) = (ActorId::Agent(crate::agent::AgentId::new()), ActorId::Agent(crate::agent::AgentId::new()), ActorId::Agent(crate::agent::AgentId::new()));
         let place = GroupId::of_channel(ChannelId::new());
         let alices = SecurityAttributes::owned_by(alice).granting(Subject::Group(place), Grant::Read);
-        let policy = knowing(Known { members: vec![(member, place)], ..Known::default() });
+        let policy = knowing(Known { members: vec![(member, place)] });
         assert!(policy.check(&context(bob).next(hers, alice), ActionType::GetChannel(&alices)).await, "her agent, whoever asked");
         assert!(!policy.check(&context(bob).next(his, bob), ActionType::GetChannel(&alices)).await, "not his: he may not read it");
         assert!(policy.check(&context(bob).next(member, bob), ActionType::GetChannel(&alices)).await, "but an agent taking part in it");
@@ -1550,7 +1563,7 @@ mod tests {
         let (alice, bob, carol) = (user(), user(), user());
         let place = GroupId::new();
         let hers = SecurityAttributes::owned_by(alice).granting(Subject::Group(place), Grant::Read);
-        let policy = knowing(Known { members: vec![(bob, place)], ..Known::default() });
+        let policy = knowing(Known { members: vec![(bob, place)] });
         let elsewhere = SecurityContext::new(bob, SessionId::new(), ChannelId::new());
         assert!(policy.check(&elsewhere, ActionType::GetSession(&hers)).await, "a member, though he acts somewhere else");
         assert!(!policy.check(&context(carol), ActionType::GetSession(&hers)).await, "not who is no member");
@@ -1564,7 +1577,7 @@ mod tests {
         let (alice, bob, carol) = (user(), user(), user());
         let ActorId::User(alice_id) = alice else { unreachable!() };
         let team = Group::team(ScopedName::new("project", Scope::GlobalScope).unwrap(), alice_id);
-        let policy = knowing(Known { members: vec![(bob, team.id)], ..Known::default() });
+        let policy = knowing(Known { members: vec![(bob, team.id)] });
         let theirs = &team.security_attributes;
         assert!(policy.check(&context(alice), ActionType::GetGroup(theirs)).await, "its owner");
         assert!(policy.check(&context(bob), ActionType::GetGroup(theirs)).await, "a member, by the group's own list");
@@ -1579,13 +1592,16 @@ mod tests {
         let (hr, staff) = (RoleId::new(), RoleId::new());
         let agent = ActorId::Agent(crate::agent::AgentId::new());
         let hers = SecurityAttributes::owned_by(alice).granting(Subject::Role(hr), Grant::Read);
-        // Bob holds hr; his agent is limited to staff, so its roles are
-        // what remains of his - which the memberships answer for it.
-        let policy = knowing(Known { roles: vec![(bob, hr), (bob, staff), (agent, staff)], ..Known::default() });
-        assert!(policy.check(&context(bob), ActionType::GetSkill(&hers)).await, "who holds the role");
-        assert!(!policy.check(&context(bob).next(agent, bob), ActionType::GetSkill(&hers)).await, "not his agent, limited below it");
+        // Bob holds hr; his agent is limited to staff, so of his roles only
+        // that counts for it - as its context says (issue 304).
+        let policy = OwnershipSecurityManager::new();
+        let his_context = context(bob).with_roles(vec![hr, staff], None);
+        let his_agents = context(bob).next(agent, bob).with_roles(vec![hr, staff], Some(vec![staff]));
+        assert!(policy.check(&his_context, ActionType::GetSkill(&hers)).await, "who holds the role");
+        assert!(!policy.check(&his_agents, ActionType::GetSkill(&hers)).await, "not his agent, limited below it");
+        assert!(!policy.check(&context(bob).next(agent, bob), ActionType::GetSkill(&hers)).await, "nor a context continued without roles: the initiator lends none");
         let his = SecurityAttributes::owned_by(alice).granting(Subject::Actor(bob), Grant::Read);
-        assert!(policy.check(&context(bob).next(agent, bob), ActionType::GetSkill(&his)).await, "what he is granted as a person, his agent is too");
+        assert!(policy.check(&his_agents, ActionType::GetSkill(&his)).await, "what he is granted as a person, his agent is too");
     }
 
     #[tokio::test]

@@ -11,6 +11,7 @@ use crate::controller::AgentController;
 use crate::runtime::ActorRuntime;
 use crate::transport::EventSender;
 use crate::view::ViewsFactory;
+use caelumora_model::role::RoleId;
 use caelumora_model::actor::{ActorEvent, ActorId, Envelope};
 use caelumora_model::agent::AgentChannelState;
 use caelumora_model::command::{Command, CommandVisibility};
@@ -28,8 +29,10 @@ use tracing::{debug, info, warn};
 pub(super) struct AgentCommands {
     executor: CommandExecutor<dyn AgentCommandProvider>,
     agent: Arc<AgentController>,
-    /// Whose rights it acts with: its owner's (issue 255).
-    principal: ActorId,
+    /// The roles its personality limits it to (issues 179, 304); whose
+    /// rights it acts with - its owner's, issue 255 - the agent's controller
+    /// says.
+    limiting_roles: Option<Vec<RoleId>>,
     /// How its model is given its context, kept with every turn of it; the
     /// default for an agent that runs elsewhere.
     profile: ModelProfile,
@@ -40,7 +43,7 @@ pub(super) struct AgentCommands {
 
 impl AgentCommands {
     /// The commands the components of `components` provide, for the agent
-    /// `agent` acting for `principal`, with `profile` for its turns.
+    /// `agent`, limited to `limiting_roles`, with `profile` for its turns.
     ///
     /// # Errors
     /// `ComponentError::InvalidConfig` if two components provide the same
@@ -49,7 +52,7 @@ impl AgentCommands {
     pub(super) fn new(
         components: &ComponentContainer,
         agent: Arc<AgentController>,
-        principal: ActorId,
+        limiting_roles: Option<Vec<RoleId>>,
         profile: ModelProfile,
         runtime: ActorRuntime,
         agent_state: Arc<AgentStateHandle>,
@@ -65,7 +68,7 @@ impl AgentCommands {
         }
         let executor = CommandExecutor::new(Arc::clone(runtime.security_manager()), providers)?;
         let views = runtime.views();
-        Ok(Self { executor, agent, principal, profile, runtime, agent_state, views })
+        Ok(Self { executor, agent, limiting_roles, profile, runtime, agent_state, views })
     }
 
     /// The commands `issuer` may see of the agent in its channel, sorted by
@@ -107,7 +110,8 @@ impl AgentCommands {
         let ActorEvent::CommandRequested { command, args, .. } = &request.event else { return };
         let issuer = request.context.sender_id;
         let (agent_id, name) = (self.agent.id(), self.agent.name());
-        let answering = Answering::to(request, ActorId::Agent(agent_id), name.clone(), self.principal);
+        let own = self.agent.security_context(request.security.session_id, request.security.channel_id, self.limiting_roles.as_deref());
+        let answering = Answering::to(request, ActorId::Agent(agent_id), name.clone(), &own);
         let Some(channel) = self.runtime.channel_loop() else {
             warn!("Agent {} has no channel to carry out /{} in", agent_id, command);
             return;

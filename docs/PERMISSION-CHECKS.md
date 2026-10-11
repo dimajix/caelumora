@@ -209,7 +209,7 @@ channel, classified as its work is now - in the turn's context (concept 2 + 4), 
 | Operation | Questions (whose name, concept) | Refusal |
 |---|---|---|
 | Users, profiles (`UserManager`, the REST profile route, the stores) | the store's `Get*`/`Update*` (U, 1): a user record is the system's, a profile its user's | `NotFound`, `PermissionDenied` |
-| Roles (`user_roles`, `Member::clearances`) | no question: read from the store in S wherever a clearance is decided; a member's narrowed by its personality's limiting roles, a viewer's and a manager's not | - |
+| Roles (`SecurityContext::roles`, `limiting_roles`) | no question: carried by the context since issue 304, put there by the `UserController` and the `AgentController` from the roles as they are now (issue 306); a member's at the door from its controller; an agent's narrowed by its personality's limiting roles everywhere, a viewer's and a manager's included | - |
 
 ## Findings
 

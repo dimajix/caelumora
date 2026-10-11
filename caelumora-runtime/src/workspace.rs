@@ -29,12 +29,12 @@
 //! besides every `COMMANDS_CHECKED_EVERY`.
 
 use crate::component::{ComponentError, ComponentResult};
+use crate::controller::ControllerManager;
 use crate::event::EventBus;
 use crate::terminal::{CommandKey, CommandState, DockerProvider, LocalProvider, Shell, SharedProvider, Terminal, TerminalError, TerminalProvider};
 use caelumora_model::actor::ActorId;
 use caelumora_model::config::{StorageConfig, WorkspacesConfig};
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::role::user_roles;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::scope::Scope;
 use caelumora_model::secret::SecretManager;
@@ -111,6 +111,9 @@ pub struct WorkspaceManager {
     entities: Arc<dyn EntityStore>,
     events: Arc<EventBus>,
     security: Arc<dyn SecurityManager>,
+    /// Where the contexts of a channel's members are built, with their
+    /// roles as they are now (issue 304).
+    controllers: Arc<ControllerManager>,
     storages: BTreeMap<String, Arc<dyn TerminalProvider>>,
     max_file_bytes: u64,
     /// Held by every write of a document, so that none is lost to another.
@@ -135,7 +138,7 @@ impl WorkspaceManager {
     /// `ComponentError::InvalidConfig` for a storage whose provider cannot
     /// be made, naming it, or for a storage with a shell outside a Tokio
     /// runtime.
-    pub(crate) fn new(entities: Arc<dyn EntityStore>, events: Arc<EventBus>, security: Arc<dyn SecurityManager>, secrets: &Arc<SecretManager>, config: &WorkspacesConfig) -> ComponentResult<Arc<Self>> {
+    pub(crate) fn new(entities: Arc<dyn EntityStore>, events: Arc<EventBus>, security: Arc<dyn SecurityManager>, controllers: Arc<ControllerManager>, secrets: &Arc<SecretManager>, config: &WorkspacesConfig) -> ComponentResult<Arc<Self>> {
         let storages: BTreeMap<String, Arc<dyn TerminalProvider>> = config.storage.iter()
             .map(|(name, storage)| {
                 let invalid = |e: TerminalError| ComponentError::InvalidConfig(format!("the storage '{name}' of workspaces: {e}"));
@@ -153,7 +156,7 @@ impl WorkspaceManager {
             })
             .collect::<ComponentResult<_>>()?;
         let with_shell = storages.values().any(|provider| provider.has_shell());
-        let manager = Arc::new(Self { entities, events, security, storages, max_file_bytes: config.max_file_bytes, writing: Mutex::new(()), checker: OnceLock::new() });
+        let manager = Arc::new(Self { entities, events, security, controllers, storages, max_file_bytes: config.max_file_bytes, writing: Mutex::new(()), checker: OnceLock::new() });
         if with_shell {
             let runtime = tokio::runtime::Handle::try_current()
                 .map_err(|_| ComponentError::InvalidConfig("a storage of workspaces with a shell needs a running runtime".to_string()))?;
@@ -190,8 +193,7 @@ impl WorkspaceManager {
                 return Err(WorkspaceError::StorageNotCleared(storage.to_string()));
             }
         }
-        let roles = user_roles(self.entities.as_ref(), ctx.principal_id).await?;
-        match self.security.may_see_channel(ctx, &roles, classification).await {
+        match self.security.may_see_channel(ctx, classification).await {
             true => Ok(()),
             false => Err(WorkspaceError::NotCleared),
         }
@@ -394,8 +396,7 @@ impl WorkspaceManager {
         if need == Grant::Write {
             self.security.require(ctx, ActionType::WriteWorkspace(&workspace.security_attributes), || WorkspaceError::ReadOnly(id)).await?;
         }
-        let roles = user_roles(self.entities.as_ref(), ctx.principal_id).await?;
-        match self.security.may_see_channel(ctx, &roles, &workspace.classification).await {
+        match self.security.may_see_channel(ctx, &workspace.classification).await {
             true => Ok(workspace),
             false => Err(WorkspaceError::NotCleared),
         }
@@ -533,13 +534,9 @@ impl WorkspaceManager {
             return Err(WorkspaceError::NotUsableInChannel);
         }
         let at = Place { channel: channel.id, classification: channel.classification.clone(), session: SessionPrivacy::of(&session) };
-        let roles;
         let reader = match ctx.caller_id {
             ActorId::Agent(_) => ChannelReader::From(&at),
-            _ => {
-                roles = user_roles(self.entities.as_ref(), ctx.principal_id).await?;
-                ChannelReader::Cleared(&roles)
-            }
+            _ => ChannelReader::Cleared,
         };
         if self.security.channel_reading(ctx, &channel.security_attributes, &at, reader).await.is_none() {
             return Err(WorkspaceError::NotUsableInChannel);
@@ -592,9 +589,16 @@ impl WorkspaceManager {
         let Some(channel) = self.entities.get_channel(&system, channel_id).await.optional()? else { return Ok(false) };
         for participant in &channel.participants {
             let member = match participant {
-                Participant::User(user) => SecurityContext::new(ActorId::User(*user), channel.session_id, channel.id),
-                Participant::Agent(agent) => match self.entities.get_agent(&system, *agent).await.optional()? {
-                    Some(agent) => agent.security_context(channel.session_id, channel.id),
+                // One whose record is gone asks with no roles, as before.
+                Participant::User(user) => match self.controllers.user_controller(*user).await.optional()? {
+                    Some(controller) => controller.security_context(channel.session_id, channel.id),
+                    None => SecurityContext::new(ActorId::User(*user), channel.session_id, channel.id),
+                },
+                Participant::Agent(agent) => match self.controllers.agent_controller(*agent).await.optional()? {
+                    Some(agent) => {
+                        let limit = agent.personality().await.optional()?.and_then(|p| p.limiting_roles().map(<[_]>::to_vec));
+                        agent.security_context(channel.session_id, channel.id, limit.as_deref())
+                    }
                     None => continue,
                 },
                 Participant::Approver(_) => continue,

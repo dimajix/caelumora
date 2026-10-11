@@ -70,8 +70,7 @@ async fn require_classification(runtime_manager: &RuntimeManager, context: &Secu
 /// 133); `refusal` otherwise - reading a channel one is not cleared for is
 /// the same as reading one that does not exist.
 async fn require_seen<E: Into<anyhow::Error> + Send>(runtime_manager: &RuntimeManager, context: &SecurityContext, channel: &Classification, refusal: impl FnOnce() -> E + Send) -> Result<()> {
-    let roles = caelumora_model::role::user_roles(runtime_manager.entity_store().as_ref(), context.principal_id).await?;
-    if runtime_manager.security_manager().may_see_channel(context, &roles, channel).await {
+    if runtime_manager.security_manager().may_see_channel(context, channel).await {
         Ok(())
     } else {
         Err(refusal().into())
@@ -1877,7 +1876,8 @@ mod tests {
         let (alice, bob) = (user("alice"), user("bob"));
         let alice_id = ActorId::User(alice.id);
         let bob_id = ActorId::User(bob.id);
-        let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
+        // Her context carries her roles, as her controller gives it (issue 304).
+        let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default()).with_roles(alice.roles.clone(), None);
         let mut session = make_session("hers");
         session.security_attributes = SecurityAttributes::owned_by(alice_id).granting(caelumora_model::security::Subject::Actor(bob_id), caelumora_model::security::Grant::Read);
         session.participants = record_users(&manager, &[&alice, &bob]).await;
@@ -2063,7 +2063,6 @@ mod tests {
         use caelumora_model::actor::ActorId;
         use caelumora_model::confidentiality::{Clearance, Compartment, Compartments, ConfidentialityRules, Confidentiality};
         use caelumora_model::role::{RoleId, Roles};
-        use caelumora_model::store::EntityStore;
         use caelumora_model::user::{User, UserId};
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
@@ -2098,8 +2097,9 @@ mod tests {
         assert!(matches!(raising.downcast_ref::<ChannelError>(), Some(ChannelError::NotCleared { .. })), "{raising}");
         assert_eq!(team.classification(), Classification::general(Confidentiality::Internal), "unchanged");
 
-        // Alice, no longer in HR, no longer sees its channel - though she owns it.
-        store.update_user(&SecurityContext::system(), &User { roles: ids.ids_of(&["staff"]).unwrap(), ..alice.clone() }).await.unwrap();
+        // Alice, no longer in HR - as her context says from now on -, no
+        // longer sees its channel, though she owns it.
+        let alice_ctx = alice_ctx.with_roles(ids.ids_of(&["staff"]).unwrap(), None);
         assert!(matches!(session.channel_for(&alice_ctx, hr.id()).await.expect_err("not cleared").downcast_ref::<SessionError>(), Some(SessionError::ChannelNotFound { .. })));
         let listed: Vec<ChannelId> = manager.views(Viewer::new(alice_ctx.clone())).session(session.id()).await.unwrap().channels().await.iter().map(|c| c.id()).collect();
         assert!(!listed.contains(&hr.id()) && listed.contains(&team.id()), "listed without it");

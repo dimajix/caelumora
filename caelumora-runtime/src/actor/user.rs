@@ -35,7 +35,6 @@ pub struct UserActor {
     id: ActorId,
     session_id: SessionId,
     channel_id: ChannelId,
-    security_context: SecurityContext,
     user: Arc<UserController>,
     actor_runtime: ActorRuntime,
     /// What the user's rules answer with (issue 13): whether they may
@@ -76,8 +75,6 @@ impl UserActor {
     pub async fn new(channel_controller: Arc<ChannelController>, user: Arc<UserController>, actor_runtime: ActorRuntime) -> Result<Self> {
         let channel = Arc::clone(&channel_controller.load());
         let user_id = user.id();
-        // The user acts on their own behalf, in this channel (issue 87).
-        let security_context = SecurityContext::new(ActorId::User(user_id), channel.session_id, channel.id);
 
         let (utx,urx) = mpsc::channel(100);
 
@@ -85,7 +82,6 @@ impl UserActor {
             id: ActorId::User(user_id),
             session_id: channel.session_id,
             channel_id: channel.id,
-            security_context,
             user,
             security: Arc::clone(actor_runtime.security_manager()),
             controllers: Arc::clone(actor_runtime.runtime_manager().controller_manager()),
@@ -102,8 +98,8 @@ impl UserActor {
     /// The context this user acts in, here - what their answers carry, so
     /// that whoever decides on them asks about them in the same one (the
     /// approver, issue 14).
-    pub(crate) fn security_context(&self) -> &SecurityContext {
-        &self.security_context
+    pub(crate) fn security_context(&self) -> SecurityContext {
+        self.user.security_context(self.session_id, self.channel_id)
     }
 
     /// An envelope from this user. Envelopes are only ever built here, so the
@@ -112,7 +108,7 @@ impl UserActor {
     fn envelope(&self, event: ActorEvent, span_id: Uuid) -> Envelope {
         let mut context = EventContext::new(self.session_id, self.channel_id, self.id(), self.name());
         context.span_id = span_id;
-        Envelope::new(self.security_context.clone(), context, event)
+        Envelope::new(self.security_context(), context, event)
     }
 
     /// The questions put to this user that are open, forgotten: a message
@@ -141,7 +137,7 @@ impl UserActor {
             .ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))?;
         let attributes = channel_loop.security_attributes();
         self.actor_runtime.security_manager()
-            .require(&self.security_context, ActionType::AnswerQuestion(&attributes), || ChannelError::Forbidden { action: "answering questions in", channel: self.channel_id })
+            .require(&self.security_context(), ActionType::AnswerQuestion(&attributes), || ChannelError::Forbidden { action: "answering questions in", channel: self.channel_id })
             .await?;
         let refused = |reason| ChannelError::Question { question: id, channel: self.channel_id, reason };
         let agent_id = {
@@ -184,7 +180,7 @@ impl UserActor {
         let classification = classification.unwrap_or_else(|| channel.clone());
         let action = ActionType::Publish { classification: &classification, actor: self.id(), channel: &channel };
         self.actor_runtime.security_manager()
-            .require(&self.security_context, action, || crate::channel::ChannelError::ClassificationRefused { classification: classification.clone(), channel: self.channel_id })
+            .require(&self.security_context(), action, || crate::channel::ChannelError::ClassificationRefused { classification: classification.clone(), channel: self.channel_id })
             .await?;
         let msg = Message {
             role: MessageRole::User,
@@ -234,7 +230,7 @@ impl UserActor {
         let classification = classification.unwrap_or_else(|| original.classification.clone());
         let action = ActionType::Publish { classification: &classification, actor: self.id(), channel: &channel };
         self.actor_runtime.security_manager()
-            .require(&self.security_context, action, || crate::channel::ChannelError::ClassificationRefused { classification: classification.clone(), channel: self.channel_id })
+            .require(&self.security_context(), action, || crate::channel::ChannelError::ClassificationRefused { classification: classification.clone(), channel: self.channel_id })
             .await?;
         let modified = Message {
             mentions: channel_loop.mentions_in(&content),
@@ -293,7 +289,7 @@ impl UserActor {
             channel: &channel,
         };
         self.actor_runtime.security_manager()
-            .require(&self.security_context, action, || ChannelError::Forbidden { action: "reclassifying a message of", channel: self.channel_id })
+            .require(&self.security_context(), action, || ChannelError::Forbidden { action: "reclassifying a message of", channel: self.channel_id })
             .await?;
         if said.revoked.is_some() {
             return Err(ChannelError::MessageRevoked { message, channel: self.channel_id }.into());
@@ -404,7 +400,7 @@ impl UserActor {
     async fn require_retry(&self, channel: &crate::channel::ChannelLoop) -> anyhow::Result<()> {
         let attributes = channel.security_attributes();
         let refused = || crate::channel::ChannelError::Forbidden { action: "asking for another answer in", channel: self.channel_id };
-        Ok(self.actor_runtime.security_manager().require(&self.security_context, ActionType::RetryMessage(&attributes), refused).await?)
+        Ok(self.actor_runtime.security_manager().require(&self.security_context(), ActionType::RetryMessage(&attributes), refused).await?)
     }
 
     /// Sends the request to `author` to answer again instead of `target`,
@@ -432,7 +428,7 @@ impl UserActor {
             .ok_or(ChannelError::MessageNotFound { message: id, channel: self.channel_id })?;
         let attributes = channel.security_attributes();
         self.actor_runtime.security_manager()
-            .require(&self.security_context, action(message.sender_id, &attributes), || ChannelError::Forbidden { action: what, channel: self.channel_id })
+            .require(&self.security_context(), action(message.sender_id, &attributes), || ChannelError::Forbidden { action: what, channel: self.channel_id })
             .await?;
         if message.revoked.is_some() {
             return Err(ChannelError::MessageRevoked { message: id, channel: self.channel_id }.into());
@@ -494,7 +490,7 @@ impl UserActor {
             }
         };
         let channel = self.channel.load().security_attributes.clone();
-        if !self.security.may_approve(&self.security_context, &agent, &channel).await {
+        if !self.security.may_approve(&self.security_context(), &agent, &channel).await {
             debug!(rule = %rule.id, "UserActor {} may not approve the calls of agent {}; its rule does not answer", self.id(), request.agent_id);
             return None;
         }
@@ -551,7 +547,7 @@ impl UserActor {
     /// `Forbidden` if this user may ask none of those named; an error if a
     /// request cannot be sent.
     async fn request_command(&self, channel: &crate::channel::ChannelLoop, name: &str, args: &str) -> anyhow::Result<CommandReply> {
-        let understanding: Vec<_> = channel.agent_commands(&self.security_context).await.into_iter()
+        let understanding: Vec<_> = channel.agent_commands(&self.security_context()).await.into_iter()
             .filter(|(_, commands)| commands.iter().any(|c| c.name == name))
             .filter_map(|(member, _)| channel.actor_by_id(member.id).map(|actor| (member, actor)))
             .collect();
@@ -580,7 +576,7 @@ impl UserActor {
         let span_id = Uuid::new_v4();
         let (mut asked, mut refused) = (0, Vec::new());
         for (member, actor) in targets {
-            match actor.admit_command(name, &self.security_context).await {
+            match actor.admit_command(name, &self.security_context()).await {
                 Ok(_) => {
                     let event = ActorEvent::CommandRequested { command: name.to_string(), args: rest.trim().to_string(), agent: member.id };
                     self.send(self.envelope(event, span_id)).await?;
@@ -599,7 +595,7 @@ impl UserActor {
 
     /// The commands this user may see, e.g. for completion.
     pub async fn visible_commands(&self) -> Vec<Command> {
-        self.actor_runtime.command_executor().visible(&self.security_context).await
+        self.actor_runtime.command_executor().visible(&self.security_context()).await
     }
 
     /// Follows the channel as this user, from now on: see `ChannelWatch`.

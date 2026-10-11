@@ -25,11 +25,12 @@ use axum::routing::{get, post};
 use axum::Router;
 use crate::error::Json;
 use crate::error::ApiError;
-use caelumora_model::actor::ActorId;
 use caelumora_model::config::AuthConfig;
 use caelumora_model::security::SecurityContext;
+use caelumora_model::store::StoreError;
 use caelumora_model::user::UserId;
 use caelumora_model::user_provider::{AuthError, Credential, UserManager};
+use caelumora_runtime::controller::ControllerManager;
 use chrono::Utc;
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
@@ -171,18 +172,23 @@ impl TokenService {
     }
 }
 
-/// What the authentication layer needs: the token service and the chain of
-/// user providers.
+/// What the authentication layer needs: the token service, the chain of
+/// user providers, and the runtime's controllers, which give a user's
+/// context with their roles as they are now (issue 304).
 pub struct Auth {
     pub tokens: TokenService,
     pub users: Arc<UserManager>,
+    pub controllers: Arc<ControllerManager>,
 }
 
 /// The authenticated caller, put into the request by `require_auth`. Taking it
 /// as a handler argument makes the handler reject unauthenticated requests.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct AuthenticatedUser {
     pub id: UserId,
+    /// The context the user acts in for this request, with their roles as
+    /// their controller holds them when it began (issue 304).
+    pub context: SecurityContext,
     /// When the session token that authenticated this request expires, as a
     /// unix timestamp - the one this request was renewed to, if it was. A
     /// long-running response outlives no request of its own to be checked by,
@@ -191,14 +197,9 @@ pub struct AuthenticatedUser {
 }
 
 impl AuthenticatedUser {
-    /// The actor this user is.
-    pub fn actor_id(&self) -> ActorId {
-        ActorId::User(self.id)
-    }
-
     /// The security context for actions taken on behalf of this user.
     pub fn security_context(&self) -> SecurityContext {
-        SecurityContext::new(self.actor_id(), Default::default(), Default::default())
+        self.context.clone()
     }
 
     /// How much of the session token is left, from now. Zero once it has
@@ -212,7 +213,7 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthenticatedUser {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        parts.extensions.get::<AuthenticatedUser>().copied().ok_or_else(not_logged_in)
+        parts.extensions.get::<AuthenticatedUser>().cloned().ok_or_else(not_logged_in)
     }
 }
 
@@ -306,8 +307,21 @@ async fn authenticate(auth: Arc<Auth>, mut request: Request, next: Next, renew: 
         None
     };
 
+    // The user as this instance holds them, with their roles as they are
+    // now (issues 304, 306).
+    let context = match auth.controllers.user_controller(user).await {
+        Ok(controller) => controller.security_context(Default::default(), Default::default()),
+        Err(StoreError::NotFound { .. }) => {
+            tracing::info!("Session of {} ended: the user no longer exists", user);
+            return unauthorized(&auth, true);
+        }
+        Err(e) => {
+            tracing::error!("Cannot read user {} for a request: {}", user, e);
+            return ApiError::unavailable("user_unavailable", "The user cannot be read").into_response();
+        }
+    };
     tracing::Span::current().record("user_id", tracing::field::display(user));
-    request.extensions_mut().insert(AuthenticatedUser { id: user, expires_at });
+    request.extensions_mut().insert(AuthenticatedUser { id: user, context, expires_at });
     let mut response = next.run(request).await;
     if let Some(cookies) = renewed {
         set_cookies(&mut response, cookies);
@@ -412,7 +426,9 @@ pub fn router(auth: Arc<Auth>) -> Router {
 mod tests {
     use super::*;
     use axum::body::Body;
+    use caelumora_model::security::DummySecurityManager;
     use caelumora_model::store::EntityStore;
+    use caelumora_runtime::event::EventBus;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::user_provider::UserProvider;
     use caelumora_model::user_provider::accept_any::AcceptAnyUserProvider;
@@ -430,7 +446,9 @@ mod tests {
 
     /// Auth asking `providers`, the users recorded in `store` (issue 306).
     fn auth(store: Arc<dyn EntityStore>, providers: Vec<Arc<dyn UserProvider>>) -> Arc<Auth> {
-        Arc::new(Auth { tokens: tokens(), users: Arc::new(UserManager::new(providers, store, Arc::new(()))) })
+        let events = Arc::new(EventBus::new(Arc::new(DummySecurityManager::new())));
+        let controllers = Arc::new(ControllerManager::new(Arc::clone(&store), Arc::<EventBus>::clone(&events)));
+        Arc::new(Auth { tokens: tokens(), users: Arc::new(UserManager::new(providers, store, events)), controllers })
     }
 
     /// Auth that accepts anybody, finding and recording users in one store.

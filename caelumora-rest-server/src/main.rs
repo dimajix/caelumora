@@ -71,6 +71,7 @@ async fn main() -> anyhow::Result<()> {
     let auth = Arc::new(Auth {
         tokens: TokenService::new(&signing_key, &config.auth)?,
         users: user_manager,
+        controllers: Arc::clone(runtime_manager.controller_manager()),
     });
 
     caelumora_runtime::seed::load(entity_store.as_ref(), component_store.as_ref(), security_manager.as_ref(), &config.seed).await?;

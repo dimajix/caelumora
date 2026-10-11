@@ -563,3 +563,20 @@ where they test the door.
   the change of the participants, not before; and issue 289 is not resolved by it - attaching still
   writes an entry of its own, now naming the session's group. Issue 287 shrinks to reading groups
   and stays open.
+- **2026-10-11** — Step 2 split in two, each to be reviewed on its own. **2a**, on the branch
+  `issue-304-flow` (A1 of the plan): the `SecurityContext` carries `roles` and `limiting_roles`.
+  The `UserController` builds a user's context, the `AgentController` - which now holds its owner's
+  `UserController` - an agent's, each with the roles as they are now (issue 306); `next` carries
+  none, whoever continues a context gives them (`Answering::to` takes the actor's own context).
+  The agent actors and the `UserActor` build their context on every use; the REST server's
+  middleware takes it from the user's controller per request. The policy matches `Subject::Role`
+  by `SecurityContext::has_role`; `Memberships::roles_of`, `StoreMemberships::agent_roles` and
+  `role::user_roles` are gone, and so is every lookup of roles in the runtime. `may_see_channel`
+  judges by the context's roles and, for a limited caller, by the limit as well - which resolves
+  F10: an agent limited by its personality is now limited where it is shown a workspace, a skill
+  or an artifact, and where it writes one, not only at a channel's door. The door keeps asking
+  `JoinChannel` with the member's roles, from its controller. No decision changes otherwise; the
+  tests that built contexts by hand give them their roles. Stored data to delete: the state of
+  agents with a turn under way and of external agents with open tasks, whose `Work` stores a
+  `SecurityContext` without the new fields. **2b** - the flow out of the `SecurityManager` - is
+  next.

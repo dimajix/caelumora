@@ -20,8 +20,9 @@ pub async fn global_events(
     // Only the events about what this user may read (issue 39), decided by
     // the same policy as reading it through the store.
     let receiver = state.runtime_manager.event_bus().subscribe_as(user.security_context()).into_receiver();
+    let reader = user.clone();
     let snapshot = move || {
-        let (state, user) = (Arc::clone(&state), user);
+        let (state, user) = (Arc::clone(&state), reader.clone());
         async move { global_snapshot(&state, &user).await }
     };
     // Open until the token that authenticated it expires (issue 33).

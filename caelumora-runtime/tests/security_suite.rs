@@ -194,8 +194,10 @@ impl World {
     }
 
     /// What `user` does, in their name.
+    /// The context of `user` acting for themselves, as their controller
+    /// gives it (issue 304): with the role every user of the world holds.
     fn as_user(user: UserId) -> SecurityContext {
-        SecurityContext::new(ActorId::User(user), SessionId::default(), ChannelId::default())
+        SecurityContext::new(ActorId::User(user), SessionId::default(), ChannelId::default()).with_roles(vec![*STAFF], None)
     }
 
     async fn user(&self, name: &str) -> UserId {
@@ -574,7 +576,7 @@ async fn a_channel_is_read_by_its_members_wherever_they_act_and_no_more_once_rem
     let world = World::new().await;
     let session = world.session_of(&[world.bob, world.carol], &[], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
-    let elsewhere = SecurityContext::new(ActorId::User(world.carol), SessionId::new(), ChannelId::new());
+    let elsewhere = SecurityContext::new(ActorId::User(world.carol), SessionId::new(), ChannelId::new()).with_roles(vec![*STAFF], None);
     assert!(session.channel_for(&elsewhere, main.id()).await.is_ok(), "a member, though she acts elsewhere");
 
     let mut events = world.runtime.event_bus().subscribe_as(World::as_user(world.carol));
@@ -2591,7 +2593,7 @@ async fn a_workspace_is_reached_by_its_list_wherever_one_acts() {
     assert_eq!(asked, checks(&["alice: GetWorkspace(alice's) yes", "alice: UpdateWorkspace(alice's) yes", "alice: GetWorkspace(alice's) yes", "alice: UpdateWorkspace(alice's) yes"]),
         "read and changed - asked before a group it names is looked at (issue 286) -, then changed as stored");
 
-    let elsewhere = SecurityContext::new(ActorId::User(world.bob), SessionId::new(), ChannelId::new());
+    let elsewhere = SecurityContext::new(ActorId::User(world.bob), SessionId::new(), ChannelId::new()).with_roles(vec![*STAFF], None);
     let his = views(&elsewhere).workspace(docs.id).await.expect("he reads it, wherever he acts");
     workspaces.terminal(&elsewhere, docs.id, Grant::Read).await.expect("its files");
     assert!(matches!(workspaces.terminal(&elsewhere, docs.id, Grant::Write).await, Err(WorkspaceError::ReadOnly(_))), "not to change them");
@@ -2635,7 +2637,7 @@ async fn what_is_shared_with_a_team_is_read_by_its_members_while_they_are_member
 
     let docs = workspaces.create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
     workspaces.share(&alice, docs.id, Subject::Group(project.id), Grant::Read).await.expect("shared with the team");
-    let elsewhere = SecurityContext::new(ActorId::User(world.bob), SessionId::new(), ChannelId::new());
+    let elsewhere = SecurityContext::new(ActorId::User(world.bob), SessionId::new(), ChannelId::new()).with_roles(vec![*STAFF], None);
     views(&elsewhere).workspace(docs.id).await.expect("a member reads it, wherever he acts");
     assert!(matches!(views(&carol).workspace(docs.id).await, Err(ViewError::WorkspaceNotFound(_))), "a stranger does not");
     let named = views(&alice).workspace(docs.id).await.unwrap().snapshot().await;
@@ -2699,7 +2701,8 @@ async fn a_workspace_is_not_used_in_a_channel_by_who_is_not_in_it() {
     let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
     let session = world.shared_session(&[], &[waiting]).await;
     session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
-    let as_agent = alice.next(ActorId::Agent(waiting), ActorId::User(world.alice));
+    // Continued for the agent with its owner's roles, as its controller gives them (issue 304).
+    let as_agent = alice.next(ActorId::Agent(waiting), ActorId::User(world.alice)).with_roles(vec![*STAFF], None);
     let main = world.manager.views(Viewer::new(as_agent)).session(session.id()).await.unwrap().channel(session.channels()[0].id()).await.unwrap();
     assert!(main.workspace().await.unwrap().is_none());
     world.manager.stop_session(&alice, session.id()).await.unwrap();
@@ -2769,7 +2772,7 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
     assert!(asked.contains(&"alice: WriteArtifact(alice's) yes".to_string()), "added to as hers: {asked:?}");
 
     assert_eq!(read_version(&world, &alice, artifact.id, 1).await, Read::Content(3, "a,b".to_string()), "its owner reads every version, as it was then");
-    let elsewhere = SecurityContext::new(ActorId::User(world.bob), SessionId::new(), ChannelId::new());
+    let elsewhere = SecurityContext::new(ActorId::User(world.bob), SessionId::new(), ChannelId::new()).with_roles(vec![*STAFF], None);
     assert_eq!(read_version(&world, &elsewhere, artifact.id, 2).await, Read::Content(7, "a,b\n1,2".to_string()), "a member of the channel reads what was published there, wherever he acts");
     assert_eq!(read_version(&world, &bob, artifact.id, 3).await, Read::NoVersion);
     assert_eq!(read_version(&world, &World::as_user(world.carol), artifact.id, 1).await, Read::NoArtifact, "nobody else, who learns nothing");

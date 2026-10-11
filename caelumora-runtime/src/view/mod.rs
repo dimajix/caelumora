@@ -43,7 +43,6 @@ pub use skill::SkillView;
 pub use workspace::WorkspaceView;
 
 use caelumora_model::artifact::{ArtifactField, ArtifactId};
-use caelumora_model::role::user_roles;
 use caelumora_model::store::query::{Filter, Query};
 use crate::runtime::{ActorRuntime, RuntimeManager};
 use crate::session::{Found, SessionLoop, SessionManager};
@@ -441,9 +440,10 @@ impl Views {
     /// `Failed` if the store cannot list them.
     pub async fn artifacts(&self) -> ViewResult<Vec<ArtifactView>> {
         let failed = |e| ViewError::failed(e, "listing the artifacts");
-        let principal = self.viewer.context().principal_id;
-        let roles = user_roles(self.entities.as_ref(), principal).await.map_err(failed)?;
-        let subjects: Vec<Subject> = std::iter::once(Subject::Actor(principal)).chain(roles.into_iter().map(Subject::Role)).collect();
+        let context = self.viewer.context();
+        let principal = context.principal_id;
+        let roles = context.roles.iter().copied().filter(|role| context.has_role(*role));
+        let subjects: Vec<Subject> = std::iter::once(Subject::Actor(principal)).chain(roles.map(Subject::Role)).collect();
         let named = Filter::is_in(ArtifactField::Subject, subjects);
         let theirs = Filter::Or(vec![
             Filter::eq(ArtifactField::Owner, principal),
@@ -707,19 +707,12 @@ impl Views {
         Ok(session.as_ref().map(SessionPrivacy::of))
     }
 
-    /// The roles of the viewer's user, which decide what they are cleared
-    /// for (issue 133). Without them, only what is public: a failed lookup
-    /// shows less.
-    pub(super) async fn roles(&self) -> Vec<caelumora_model::role::RoleId> {
-        user_roles(self.entities.as_ref(), self.viewer.context().principal_id).await.unwrap_or_default()
-    }
-
     /// Whether the viewer is cleared for `classification` (issue 133), by
-    /// their user's roles: what one is not cleared for is the same as what
-    /// does not exist - a channel, a skill.
+    /// the roles of their context - an agent's narrowed by its personality
+    /// (issue 304): what one is not cleared for is the same as what does not
+    /// exist - a channel, a skill.
     pub(super) async fn cleared_for(&self, classification: &Classification) -> bool {
-        let roles = self.roles().await;
-        self.security.may_see_channel(self.viewer.context(), &roles, classification).await
+        self.security.may_see_channel(self.viewer.context(), classification).await
     }
 
     /// The skills the viewer may read (`GetSkill`) and is cleared for (issue

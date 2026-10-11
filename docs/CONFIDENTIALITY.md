@@ -219,8 +219,10 @@ A clearance follows from roles ([142](../issues/142-roles.md)). The `roles` sect
 configuration names the roles - each with an id, which is what is stored - and the clearances each
 grants (`Roles`, `caelumora_model::role`); the user provider gives users their roles - for now by
 its own configuration. A user's clearances are all their roles'; an agent's are its owner's, since
-it must not see more than the person responsible for it. A user whose roles grant nothing sees only
-what is public. Without a `roles` section, clearances are not checked.
+it must not see more than the person responsible for it. Both come with the `SecurityContext` (issue
+[304](../issues/304-review-of-the-permission-concept.md)): its roles, and the roles its caller is
+limited to, which have to clear as well (`AccessQuestions::may_see_channel`). A user whose roles
+grant nothing sees only what is public. Without a `roles` section, clearances are not checked.
 
 ### Personalities limit their agents
 
@@ -246,16 +248,17 @@ The question is `ActionType::JoinChannel { participant, roles, channel }`: the c
 roles of a participant from what it resolves the participant to (`Member::clearances` in
 `caelumora_runtime::channel`) - a user's own, an agent's owner's - and the policy maps them to
 clearances. For an agent whose personality limits it, it is asked once more with those roles, and
-both must allow (`Member::require_cleared`). A user's roles are read from the store each time: they
-change at a login, past the controllers. It is asked
+both must allow (`Member::require_cleared`). The roles are those the member's controller holds,
+as they are now (issue 306). It is asked
 
 *   when a participant is added to a channel (`ChannelError::NotCleared`),
 *   for every participant of a channel created on request or from a template
     (`SessionError::NotCleared`), before anything is stored,
 *   for every participant when a channel is reclassified - raised above someone in it, it is refused
     rather than anyone removed,
-*   and for a user reading a channel (`AccessQuestions::may_see_channel`): a channel they are not
-    cleared for is not found, and not listed - even for its owner.
+*   and for a user reading a channel (`AccessQuestions::may_see_channel`, by the roles of their
+    context, and an agent's limit besides): a channel they are not cleared for is not found, and
+    not listed - even for its owner.
 
 ## Workspaces
 

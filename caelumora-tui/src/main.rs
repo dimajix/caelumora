@@ -467,8 +467,6 @@ async fn main() -> anyhow::Result<()> {
     caelumora_runtime::seed::load(entity_store.as_ref(), component_store.as_ref(), security_manager.as_ref(), &config.seed).await?;
 
     let owner = UserId::default();
-    // The session is this terminal user's own.
-    let security = SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
     // Users belong to the system (issue 94), so the system records this one.
     let system = SecurityContext::system();
     if entity_store.get_user(&system, owner).await.is_err() {
@@ -482,6 +480,9 @@ async fn main() -> anyhow::Result<()> {
             deleted: None,
         }).await?;
     }
+    // The session is this terminal user's own; their context, with their
+    // roles, is their controller's (issue 304).
+    let security = runtime.controller_manager().user_controller(owner).await?.security_context(Default::default(), Default::default());
 
     // By name, among those this user may use.
     let template = entity_store.list_session_templates(&security, &Query::all()).await.map(|page| page.items)?.into_iter()

@@ -14,7 +14,6 @@
 use crate::event::EventBus;
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::role::user_roles;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityContext, SecurityManager};
@@ -83,8 +82,7 @@ impl SkillManager {
         if ctx.principal_id == ActorId::System {
             return Ok(());
         }
-        let roles = user_roles(self.entities.as_ref(), ctx.principal_id).await?;
-        match self.security.may_see_channel(ctx, &roles, classification).await {
+        match self.security.may_see_channel(ctx, classification).await {
             true => Ok(()),
             false => Err(SkillError::NotCleared),
         }

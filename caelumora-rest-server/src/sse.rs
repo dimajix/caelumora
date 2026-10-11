@@ -168,11 +168,15 @@ where
 mod tests {
     use super::*;
     use axum::response::{IntoResponse, Sse};
+    use caelumora_model::actor::ActorId;
+    use caelumora_model::security::SecurityContext;
     use caelumora_model::user::UserId;
     use chrono::Utc;
 
     fn user(expires_in: i64) -> AuthenticatedUser {
-        AuthenticatedUser { id: UserId::new(), expires_at: Utc::now().timestamp() + expires_in }
+        let id = UserId::new();
+        let context = SecurityContext::new(ActorId::User(id), Default::default(), Default::default());
+        AuthenticatedUser { id, context, expires_at: Utc::now().timestamp() + expires_in }
     }
 
     /// The stream as it goes over the wire, read to its end. Time is paused

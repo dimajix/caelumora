@@ -17,6 +17,14 @@ it.
     whoever asked an agent, or its owner when nobody did (issue
     [255](../issues/255-whose-name-agents-act-in.md), see
     [In whose name an agent acts](#in-whose-name-an-agent-acts)). There is no delegation chain.
+    It carries the *roles* of the principal, and the roles the caller is limited to - an agent's
+    personality's (issue 304): what a decision needs to know of the subject is in the context,
+    put there where the context is built and not looked up while the decision is made. A user's
+    context is built by their `UserController`, an agent's by its `AgentController` from its
+    owner's, each with the roles as they are now - the controllers follow the `UserManager`'s
+    announcements (issue [306](../issues/306-user-records-have-no-writer.md)). A context
+    continued for another principal (`SecurityContext::next`) carries no roles until whoever
+    continues it gives them: the initiator lends none.
 *   **`SecurityManager`** is the trait that authorizes actions: `check(context, action)`.
 *   **`ActionType`** enumerates every securable action (`GetAgent`, `UpdateSession`,
     `ListPersonalities`, `CancelChannel`, ...). An action on a stored entity carries the entity's
@@ -201,16 +209,17 @@ union of the entries, no denial, no precedence. The owner needs no entry and can
     *   `Actor` - a user. Never an agent, the system or nobody: an agent acts with its owner's
         rights (issue 255), and an entry for it would let it reach what the person responsible for
         it may not. The stores refuse such an entry (`SecurityAttributes::validate`).
-    *   `Role` - by its `RoleId`. The roles that count for a user are their own; for an agent its
-        owner's, narrowed by its personality's limiting roles wherever a role is matched - the one
-        way an agent may do less than its owner.
+    *   `Role` - by its `RoleId`, as the context carries it (`SecurityContext::has_role`). The
+        roles that count for a user are their own; for an agent its owner's, narrowed by its
+        personality's limiting roles wherever a role is matched - the one way an agent may do less
+        than its owner.
     *   `Group` - by its `GroupId` (issue 286): a team, or the participants of a session or a
         channel. A member counts wherever they act, not only in that place.
-*   **What the policy learns.** Who belongs to a group, and which roles count for someone, are
-    facts the attributes do not carry. The policy asks a `Memberships` source it is made with,
-    only where an entry names one: `StoreMemberships` reads the one group, user or agent asked
-    about from the entity store, in the system's name - never what an actor is a member of, which
-    may be thousands of places -, also a deleted group, whose members are told of the deletion of
+*   **What the policy learns.** Who belongs to a group is a fact neither the attributes nor the
+    context carry. The policy asks a `Memberships` source it is made with, only where an entry
+    names one: `StoreMemberships` reads the one group asked about from the entity store, in the
+    system's name - never what an actor is a member of, which may be thousands of places -, also a
+    deleted group, whose members are told of the deletion of
     the session or channel they took part in. The policy is made before the store, which takes it,
     so a binary binds the store to the memberships afterwards; until then nobody is a member of
     anything.

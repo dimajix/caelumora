@@ -225,7 +225,7 @@ impl CommandExecutor<dyn ChannelCommandProvider> {
     /// command or the issuer may not see it; `Forbidden` if they may see but
     /// not run it; otherwise whatever the command reports.
     pub async fn execute(&self, name: &str, args: &str, context: &CommandContext<'_>) -> CommandResult<CommandOutput> {
-        let entry = self.admit(name, context.issuer.security_context(), |c| ActionType::ShowCommand(&c.name), |c| ActionType::ExecuteCommand(&c.name)).await?;
+        let entry = self.admit(name, &context.issuer.security_context(), |c| ActionType::ShowCommand(&c.name), |c| ActionType::ExecuteCommand(&c.name)).await?;
         entry.provider.execute(name, args, context).await
     }
 }

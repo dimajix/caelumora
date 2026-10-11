@@ -19,7 +19,7 @@ use crate::controller::{AgentController, ChannelController, ControllerManager, U
 use caelumora_model::agent::{Personality, PersonalityKind};
 use caelumora_model::approval::{ApprovalRule, Approver};
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::role::{user_roles, RoleId};
+use caelumora_model::role::RoleId;
 use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::question::{QuestionError, QuestionId, Questions};
 use caelumora_model::message::{Message, MessageId};
@@ -28,7 +28,7 @@ use caelumora_model::work::TurnId;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Reclassified, SecurityAttributes, SecurityContext, SecurityManager};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::SessionId;
-use caelumora_model::store::{EntityStore, StateStore, StoreError, StoreResultExt};
+use caelumora_model::store::{StateStore, StoreError, StoreResultExt};
 use caelumora_model::user::UserId;
 use tracing::{debug, info, trace, warn, Instrument};
 use std::any::Any;
@@ -184,7 +184,7 @@ impl Member {
             },
         };
         let personality = agent.personality().await?;
-        let context = agent.load().security_context(channel.session_id, channel.id);
+        let context = agent.security_context(channel.session_id, channel.id, personality.limiting_roles());
         security.require(&context, ActionType::GetPersonality(&personality.security_attributes), || StoreError::PermissionDenied).await?;
         Ok(Some(match personality.kind {
             PersonalityKind::Internal => Member::Agent(agent, personality),
@@ -204,25 +204,15 @@ impl Member {
     /// (issues 133, 179): a user's own; an agent's owner's - it must not
     /// see more than the person responsible for it - and, if its
     /// personality limits it, those roles too, which narrow the owner's and
-    /// never widen them. None for an approver. The roles are read from the
-    /// store each time, not from the controllers: they are changed past
-    /// them, at a login.
-    ///
-    /// # Errors
-    /// Whatever reading a user reports, but that they are gone.
-    async fn clearances(&self, store: &dyn EntityStore) -> Result<Vec<Vec<RoleId>>> {
-        match self {
-            Member::User(user) => Ok(vec![user_roles(store, ActorId::User(user.id())).await?]),
-            Member::Agent(agent, personality) | Member::ExternalAgent(agent, personality) => {
-                let owner = agent.load().security_attributes.owner_id;
-                let mut clearances = vec![user_roles(store, owner).await?];
-                if let Some(limit) = personality.limiting_roles() {
-                    clearances.push(limit.to_vec());
-                }
-                Ok(clearances)
-            }
-            Member::Approver(_) => Ok(Vec::new()),
-        }
+    /// never widen them. None for an approver. As the controllers hold them
+    /// now (issues 304, 306), in `session` and `channel`.
+    fn clearances(&self, session: SessionId, channel: ChannelId) -> Vec<Vec<RoleId>> {
+        let context = match self {
+            Member::User(user) => user.security_context(session, channel),
+            Member::Agent(agent, personality) | Member::ExternalAgent(agent, personality) => agent.security_context(session, channel, personality.limiting_roles()),
+            Member::Approver(_) => return Vec::new(),
+        };
+        std::iter::once(context.roles).chain(context.limiting_roles).collect()
     }
 
     /// Nothing if the member may take part in channel `channel_id` of
@@ -246,11 +236,10 @@ impl Member {
     /// it would be reclassified to.
     ///
     /// # Errors
-    /// `ChannelError::NotCleared` if it is not; whatever reading its roles
-    /// reports.
-    async fn require_cleared(&self, store: &dyn EntityStore, security: &dyn SecurityManager, context: &SecurityContext, classification: &Classification, channel: ChannelId) -> Result<()> {
+    /// `ChannelError::NotCleared` if it is not.
+    async fn require_cleared(&self, security: &dyn SecurityManager, context: &SecurityContext, classification: &Classification, session: SessionId, channel: ChannelId) -> Result<()> {
         let participant = self.actor_id();
-        for roles in self.clearances(store).await? {
+        for roles in self.clearances(session, channel) {
             let action = ActionType::JoinChannel { participant, roles: &roles, channel: classification };
             security.require(context, action, || ChannelError::NotCleared { participant, channel }).await?;
         }
@@ -270,7 +259,7 @@ pub(crate) async fn require_admitted(runtime: &RuntimeManager, context: &Securit
     for participant in &channel.participants {
         if let Some(member) = Member::of(participant, channel, runtime.controller_manager(), runtime.security_manager().as_ref()).await? {
             member.require_in_scope(channel.session_id, channel.id)?;
-            member.require_cleared(runtime.entity_store().as_ref(), runtime.security_manager().as_ref(), context, &channel.classification, channel.id).await?;
+            member.require_cleared(runtime.security_manager().as_ref(), context, &channel.classification, channel.session_id, channel.id).await?;
         }
     }
     Ok(())
@@ -322,7 +311,6 @@ async fn stopped(tasks: &[TaskTracker]) -> bool {
 
 /// A change to the actors a running channel runs (issue 46), carried out by
 /// `run`, which owns their tasks.
-#[expect(clippy::large_enum_variant, reason = "a few changes in a channel's life, each taken apart at once")]
 enum ActorChange {
     Start(ChannelActor),
     /// The actor to stop, and on whose behalf it was removed - in whose name
@@ -340,7 +328,6 @@ pub struct ChannelLoop {
     runtime: ChannelRuntime,
     /// The services it works with, taken from `runtime` once (issue 229).
     security: Arc<dyn SecurityManager>,
-    entities: Arc<dyn EntityStore>,
     controllers: Arc<ControllerManager>,
     /// The actors of the participants, each with what it was built from -
     /// what a reclassification asks its clearances of; replaced as a whole
@@ -388,8 +375,15 @@ impl ChannelLoop {
         let session_id = channel.session_id;
         let state_store = Arc::clone(runtime.state_store());
         // Its components (issue 174) act on behalf of the channel's owner,
-        // as an agent's act on behalf of its owner.
-        let security_context = SecurityContext::new(channel.security_attributes.owner_id, session_id, id);
+        // as an agent's act on behalf of its owner - with the owner's roles
+        // as they are when it is built (issue 304).
+        let security_context = match channel.security_attributes.owner_id {
+            ActorId::User(owner) => match runtime.controller_manager().user_controller(owner).await.optional()? {
+                Some(owner) => owner.security_context(session_id, id),
+                None => SecurityContext::new(channel.security_attributes.owner_id, session_id, id),
+            },
+            other => SecurityContext::new(other, session_id, id),
+        };
         let components = ComponentContainer::from_config(
             &channel.components,
             runtime.component_registry(),
@@ -420,7 +414,6 @@ impl ChannelLoop {
             session_id,
             channel: channel_controller,
             security: Arc::clone(runtime.security_manager()),
-            entities: Arc::clone(runtime.entity_store()),
             controllers: Arc::clone(runtime.controller_manager()),
             runtime,
             actors: ArcSwap::from_pointee(HashMap::new()),
@@ -652,7 +645,7 @@ impl ChannelLoop {
         // Raised above a participant, the channel would show them what they
         // may not see: refused rather than anyone removed.
         for ChannelActor { member, .. } in self.actors.load().values() {
-            member.require_cleared(self.entities.as_ref(), self.security.as_ref(), context, &classification, self.id).await?;
+            member.require_cleared(self.security.as_ref(), context, &classification, self.session_id, self.id).await?;
         }
         self.channel.update_classification(context, classification.clone()).await?;
         let lowered = !self.security.may_publish(context, context.caller_id, &channel, &classification).await;
@@ -716,7 +709,7 @@ impl ChannelLoop {
         let member = self.member_of(&found).await?
             .ok_or(ChannelError::ParticipantGone { participant, channel: self.id })?;
         member.require_in_scope(self.session_id, self.id)?;
-        member.require_cleared(self.entities.as_ref(), self.security.as_ref(), context, &self.classification(), self.id).await?;
+        member.require_cleared(self.security.as_ref(), context, &self.classification(), self.session_id, self.id).await?;
 
         let messages = self.history().await;
         let start = history_start(history, &messages, chrono::Utc::now());
