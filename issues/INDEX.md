@@ -383,6 +383,7 @@ published before anyone else can take it.
 | [280](280-tool-executor-trait.md) | done | `ToolExecutor` is a replaceable facet whose only implementation is `DefaultToolExecutor`, and its shape cannot serve the variations it was made replaceable for. |
 | [285](285-set-context-with-knowledge.md) | done | A turn's prompt parts and the knowledge read for them are set in two calls, so every caller of the `ContextProvider` records the knowledge itself. |
 | [296](296-workspace-operations-on-the-view.md) | done | The view of a workspace, which is for reading, hands out its terminal for writing and publishes and ends commands with it, while the scope of a command is made by every caller of its shell. |
+| [309](309-options-none-only-in-tests.md) | open | Some fields are an `Option` that production code always sets - a turn's views only tests leave out, a component container's graph nobody does - so their readers handle a case that never occurs. |
 
 ## Integrations
 

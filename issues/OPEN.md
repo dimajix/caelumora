@@ -94,6 +94,12 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [284](284-automatic-context-compaction.md) | open | An agent's context is compacted only when somebody asks for it; nothing compacts it before a model call that would not fit, least of all within the turn that makes it. |
 | [305](305-skill-versions.md) | open | A skill keeps only its current text: every change overwrites what it said, nobody sees what changed, and an earlier version cannot be made current again. |
 
+## Code structure
+
+| No. | Status | Issue |
+|---|---|---|
+| [309](309-options-none-only-in-tests.md) | open | Some fields are an `Option` that production code always sets - a turn's views only tests leave out, a component container's graph nobody does - so their readers handle a case that never occurs. |
+
 ## Open architecture questions
 
 | No. | Status | Issue |
