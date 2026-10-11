@@ -78,3 +78,8 @@ To be reviewed, action by action (`ActionType` in `caelumora-model/src/security.
   [255](255-whose-name-agents-act-in.md): its owner's, as its principal, whoever asked it. The
   roles for a clearance are read for the context's principal (`principal_id`) everywhere they are
   looked up; a personality's limiting roles still narrow them.
+- **2026-10-11** — The roles that count are now carried by the `SecurityContext` (issue 304,
+  step 2a), put there by the `UserController` and the `AgentController` from the roles as they are
+  now (issue 306): a user's own, an agent's its owner's with its personality's limit. Nothing reads
+  roles from the store where it decides any more; the clearance of a viewer and of a manager that
+  writes something classified is limited by an agent's personality too.

@@ -120,10 +120,10 @@ classification to `internal` without compartments, as in a template (see
 
 A request that cannot be met is a `SessionError`, refused before anything is stored: no name, a name
 the session already has, someone who is not a participant of the session, or a classification the
-policy refuses (`ActionType::Classify`: a compartment that is not configured). The last is asked for
-channels from a template too. Components that make no moderator (`SessionError::InvalidModerator`)
-are found when the channel is built, after it was stored; it is then taken back out of the session
-and deleted.
+policy refuses (`ConfidentialityQuestions::require_classifiable`: a compartment that is not
+configured). The last is asked for channels from a template too. Components that make no moderator
+(`SessionError::InvalidModerator`) are found when the channel is built, after it was stored; it is
+then taken back out of the session and deleted.
 
 ### Its language
 
@@ -219,7 +219,7 @@ and says nothing of it otherwise - a view to read, which does nothing with it. U
 in a channel (`terminal_in`), its shell as the channel sees it (`shell_in`) and ending a command
 there (`kill_command`) read the session and the channel as they are stored then and ask as the
 views ask - `GetSession`, whether the caller may read the channel
-(`AccessQuestions::channel_reading`: an agent from the channel it acts in, a user by their roles),
+(`view::channel_reading`: an agent from the channel it acts in, a user by their roles),
 whether the workspace is usable there - and, for changing its files, `WriteWorkspace` (`ReadOnly`
 where the list grants reading). Where there is none to use, the answer is one case
 (`NotUsableInChannel`). A channel's
@@ -277,21 +277,44 @@ asked it - the initiator - may be someone else: an agent acts with its owner's r
 whoever asked it (see [SECURITY.md](SECURITY.md#in-whose-name-an-agent-acts)). What the channel
 says itself - a moderator's notice, `ParticipantRemoved` - does not come through an actor's sender.
 
-**Nothing said is unsaid** (issue 258). The channel keeps every message it admits in its history
-as it arrives - `CompleteMessageGenerated`, and the steps of a plan as
-`IntermediateMessageGenerated` - and records how each turn ended after its messages, from the
-event of that name: `TurnFinished`, or `TurnGivenUp` with its reason. Where a step of a plan
-begins it records before the step's messages, from `PlanStepStarted`, with the step's number and
-description (issue 263); a step ends where the next begins, at the final answer or at the turn's
-end. A turn given up
-keeps what it said; only a message still streaming when it ended is lost, never having been
-complete. A message is admitted as it arrives (`admits`), so one said after the channel was lowered
-below its turn is refused, and what was said before is fitted with the rest. How a turn ended is
-told by whoever had it, also by an agent removed while it answers: the channel takes what a removed
-actor sends until its task has ended - the step it was in, and its `TurnGivenUp` as `Stopped`, or
-the `TurnFinished` of a turn that was ending - and records no end in anyone's name (issue 262). A
-turn whose agent was aborted after the grace, saying nothing, stays without an end: nobody ended
-it.
+**Nothing said is unsaid** (issue 258). The channel keeps every message it admits in its history as
+it arrives - `CompleteMessageGenerated`, and the steps of a plan as `IntermediateMessageGenerated` -
+and records how each turn ended after its messages, from the event of that name: `TurnFinished`, or
+`TurnGivenUp` with its reason. Where a step of a plan begins it records before the step's messages,
+from `PlanStepStarted`, with the step's number and description (issue 263); a step ends where the
+next begins, at the final answer or at the turn's end. A turn given up keeps what it said; only a
+message still streaming when it ended is lost, never having been complete. A message is admitted as
+it arrives (`admission`, below), so one said after the channel was lowered below its turn is
+refused, and what was said before is fitted with the rest. How a turn ended is told by whoever had
+it, also by an agent removed while it answers: the channel takes what a removed actor sends until
+its task has ended - the step it was in, and its `TurnGivenUp` as `Stopped`, or the `TurnFinished`
+of a turn that was ending - and records no end in anyone's name (issue 262). A turn whose agent was
+aborted after the grace, saying nothing, stays without an end: nobody ended it.
+
+**The channel decides what enters it** (issue 304). Every event an actor sends is admitted or
+refused by the channel's loop, one after another, as it takes it in (`ChannelLoop::admission`) -
+against the channel as it is at that moment, so that nothing changes between a check and the
+entry. An actor asks nothing of the policy for what it sends; it looks only at what it can see at
+once, such as whether a message it changes is in the history. The channel asks, in the sender's
+name, first whether the sender may act so, then whether what it carries may flow in:
+
+| What enters | What the channel asks |
+|---|---|
+| a message (`CompleteMessageGenerated`, a turn's messages) | it speaks as the actor that acts; each part, the message and its tool results, may flow in as classified (`ConfidentialityPolicy::may_publish`) |
+| `MessageModified`, `MessageRevoked` | the message is in the history; `ModifyMessage`, `RevokeMessage` of its author; it can be changed so; a modification may flow in |
+| `MessageReclassified` | the message is in the history; `Reclassify` of its author; never above the channel; it can be reclassified |
+| `RetryRequested` | `RetryMessage` of the channel; a message an agent said, not taken back, or an agent taking part |
+| `QuestionAnswered`, `QuestionDeclined` | `AnswerQuestion` of the channel - whether the sender was asked is the agent's to check |
+| `CommandRequested`, `NudgeRequested` | sent by a user, naming an agent (or, for a nudge, anyone else) taking part |
+
+What is refused is written nowhere and delivered to nobody. The channel tells its sender alone why,
+in the system's name: `ActorEvent::MessageRejected { rejected, message, reason }` names the kind of
+event refused, the message it was about if any, and a `Rejection` - `Forbidden`,
+`ClassificationRefused`, `MessageNotFound`, `MessageUnchangeable` or `Invalid`. It is never written
+to the history. A user's actor shows what its user sends before it forwards it, so that the
+refusal always follows what it refuses; a client marks a message refused so, and undoes a change of
+one it showed (see [WEB-UI.md](WEB-UI.md)). The agents' filters do not take it in: what an agent
+said that the channel refused stays in its own transcript only, as before.
 
 Waking the channel for a message is the actor's job, too: it sends a `WakeupRequested` ahead of
 every message, in the message's span. Neither a frontend nor the channel decides that by itself
@@ -311,19 +334,19 @@ message, and what they said in reply stays.
 
 *   **A user** changes their message through their actor, as they write:
     `UserActor::modify_message(message, content, classification)` and `revoke_message(message)`. The
-    actor looks the message up in the channel's history and asks before it sends - whether the user
-    may change it (`ModifyMessage`, `RevokeMessage`; a message is its author's), then for a
-    modification whether it may enter the channel so classified (`Publish`) - so that the user
-    learns of a refusal: `ChannelError::MessageNotFound`, `Forbidden`, `MessageRevoked` for one
-    taken back already, `ClassificationRefused`. It then sends `ActorEvent::MessageModified`, the
-    message as it reads from now on, or `MessageRevoked { message, at }` through its transport, as
-    every actor's output.
-*   **The channel admits it** as it admits a message (`ChannelLoop::admits_change`), in the
-    sender's name: the message is in its history, its author may change it, and it can be changed
-    so as it stands - not taken back, and modified by its own sender in its own role. Anything else
-    is dropped and logged. It records the change in its history (`MessageHistory::modify`,
-    `revoke`), which then shows the message as it stands: modified, with when (`Message::modified`),
-    or without what it said (`Message::revoked`).
+    actor looks the message up in the channel's history, so that the user learns at once of one
+    that is not there or was taken back (`ChannelError::MessageNotFound`, `MessageRevoked`). A
+    modified message speaks as its author, and only the author's actor can send it (issue 228):
+    another's is refused there as `Forbidden`, without asking the policy. It then sends
+    `ActorEvent::MessageModified`, the message as it reads from now on, or `MessageRevoked {
+    message, at }` through its transport, as every actor's output.
+*   **The channel admits it** as it admits a message (`ChannelLoop::admission`, above), in the
+    sender's name: the message is in its history, its author may change it (`ModifyMessage`,
+    `RevokeMessage`), it can be changed so as it stands - not taken back, and modified by its own
+    sender in its own role - and a modification may flow in as classified. Anything else is refused
+    with `MessageRejected` to the sender. It records the change in its history
+    (`MessageHistory::modify`, `revoke`), which then shows the message as it stands: modified, with
+    when (`Message::modified`), or without what it said (`Message::revoked`).
 *   **Everyone who heard it follows.** The moderator routes the change to every user and agent but
     its sender (`route_to_participants`) and asks nobody to respond. An agent of either kind takes
     it in between turns, in order with what it hears (`actor::intake::take_in`): into its history if
@@ -339,9 +362,9 @@ message, and what they said in reply stays.
     whether the old version stops acting.
 *   **Reclassifying** a message goes the same way
     ([239](../issues/239-reclassified-message-not-in-agents-state.md)):
-    `UserActor::reclassify_message(message, classification)` asks `Reclassify` - its author, or the
-    channel's owner for someone else's, never above the channel - and sends
-    `ActorEvent::MessageReclassified`; the channel admits it as the policy says, records it, and it
+    `UserActor::reclassify_message(message, classification)` sends
+    `ActorEvent::MessageReclassified`; the channel admits it as the policy says - `Reclassify`: its
+    author, or the channel's owner for someone else's, never above the channel - records it, and it
     reaches everyone who heard the message, whose next turns are labelled by it as it stands (see
     [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reclassification)).
 *   **Taking back is not erasing.** The message stays in every participant's record, in the
@@ -363,18 +386,18 @@ agent, not an operation of the channel: `ActorEvent::RetryRequested { target, au
 announced and every message of the turn carries).
 
 *   **A user** asks through their actor: `UserActor::request_retry(message)` or
-    `request_retry_of_turn(author, turn)` asks `RetryMessage` of the channel first - as cancelling
-    and waking, whoever may read the channel - and sends a `WakeupRequested`, then the request.
-    `ChannelError::MessageNotFound`, `Forbidden`, `MessageRevoked` and `NotAnAgentsMessage` tell
-    the user why not for a message; for a turn, `NotAParticipant` if `author` is no agent of the
+    `request_retry_of_turn(author, turn)` sends a `WakeupRequested`, then the request.
+    `ChannelError::MessageNotFound`, `MessageRevoked` and `NotAnAgentsMessage` tell the user at once
+    why not for a message; for a turn, `NotAParticipant` if `author` is no agent of the
     channel and `TurnNotRetryable` if the turn is neither its turn under way nor its last turn
     given up that may be answered again (`ChannelLoop::retryable_turn`): it ended otherwise, was
     followed by something, or never was. So a request about an answer that is over is refused at
     once, without an event. Whether a turn given up may be answered again is the reason's
     (`GivenUpReason::may_be_answered_again`: failed or lowered), and whether it was the last is read
     from the channel's history (`MessageHistory::turn_given_up_last`).
-*   **The channel** admits it as it admits a change (`admits_change`): its sender may ask it, and
-    `author` is the agent that said the message, which was not taken back - or, for a turn, an agent
+*   **The channel** admits it as it admits a change (`admission`): its sender may ask it
+    (`RetryMessage` - as cancelling and waking, whoever may read the channel), and `author` is the
+    agent that said the message, which was not taken back - or, for a turn, an agent
     of the channel. The moderator routes it to `author` alone, whom the channel wakes first, as it
     wakes whom it asks to respond. A turn is ended as the request is delivered:
     `Actor::retry_turn(turn)` gives it up if it is still the agent's turn under way, decided in one
@@ -464,8 +487,9 @@ every channel. An agent of a session's or a channel's scope is also deleted, res
 with that session or channel (see [Sessions](#sessions)).
 
 Adding is asked first as `UpdateChannel`, before anything of the newcomer is looked at (issue 198),
-and additionally as `ActionType::JoinChannel` with the channel's classification, where a policy can
-hold the channel's level against the newcomer (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
+and additionally as `ConfidentialityPolicy::cleared` with the channel's classification, where a
+policy can hold the channel's level against the newcomer (see
+[CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
 
 ### How much history a newcomer sees
 
@@ -820,8 +844,9 @@ What a moderator decides is all a participant is told: `Moderator::route` return
 delivered to and as what - the event itself, or one of the moderator's own, such as a request to
 respond - and the channel delivers exactly that. A user sees what is routed to their actor (issue
 220); the channel has no broadcast of its own besides. Nothing goes back to the actor that sent an
-event: an agent takes its own messages into its history and transcript itself, and a user's actor
-shows what its user says to those who follow it itself (`UserActor::send`).
+event but why it was refused (`MessageRejected`, see above): an agent takes its own messages into
+its history and transcript itself, and a user's actor shows what its user says to those who follow
+it itself (`UserActor::send`).
 
 ### Chains between agents
 

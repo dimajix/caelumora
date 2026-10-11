@@ -22,12 +22,16 @@ use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{SecurityContext, SecurityManager};
 use caelumora_model::session::Session;
 use caelumora_model::store::{EntityStore, StateStore};
+use caelumora_model::confidentiality::ConfidentialityPolicy;
 use std::sync::{Arc, OnceLock, Weak};
 use crate::group::GroupManager;
 
 #[derive(Debug)]
 pub struct RuntimeManager {
     security_manager: Arc<dyn SecurityManager>,
+    /// What may flow where, and who is cleared for what (issue 304): asked
+    /// beside the `SecurityManager`, never by it.
+    confidentiality: Arc<dyn ConfidentialityPolicy>,
     state_store: Arc<dyn StateStore>,
     entity_store: Arc<dyn EntityStore>,
     secret_manager: Arc<SecretManager>,
@@ -107,6 +111,8 @@ impl ChannelRuntime {
 
     pub fn security_manager(&self) -> &Arc<dyn SecurityManager> { self.runtime_manager.security_manager() }
 
+    pub fn confidentiality(&self) -> &Arc<dyn ConfidentialityPolicy> { self.runtime_manager.confidentiality() }
+
     pub fn secret_manager(&self) -> &Arc<SecretManager> { self.runtime_manager.secret_manager() }
 
     pub fn component_services(&self) -> &ComponentServices { self.runtime_manager.component_services() }
@@ -153,6 +159,8 @@ impl ActorRuntime {
     }
 
     pub fn security_manager(&self) -> &Arc<dyn SecurityManager> { self.runtime.runtime_manager.security_manager() }
+
+    pub fn confidentiality(&self) -> &Arc<dyn ConfidentialityPolicy> { self.runtime.runtime_manager.confidentiality() }
 
     pub fn secret_manager(&self) -> &Arc<SecretManager> { self.runtime.runtime_manager.secret_manager() }
 
@@ -295,7 +303,8 @@ impl RuntimeManager {
     /// The runtime everything in a process shares. `security_manager` is the
     /// one the whole process was configured with: it decides tool calls and
     /// what may be done to a channel, so it must be the same instance the
-    /// stores were built with, not a second one made up here. Of `config`,
+    /// stores were built with, not a second one made up here; so is
+    /// `confidentiality`, which decides what may flow where (issue 304). Of `config`,
     /// the runtime takes what it runs by itself, so that a binary cannot
     /// drop a configured part for a default: the global user commands
     /// (`commands`), the components that replace built-in defaults of facets
@@ -318,6 +327,7 @@ impl RuntimeManager {
         entity_store: Arc<dyn EntityStore>,
         secret_manager: Arc<SecretManager>,
         security_manager: Arc<dyn SecurityManager>,
+        confidentiality: Arc<dyn ConfidentialityPolicy>,
         config: &AppConfig,
         mut component_registry: ComponentRegistry,
     ) -> ComponentResult<Self> {
@@ -326,18 +336,20 @@ impl RuntimeManager {
         let event_bus = Arc::new(EventBus::new(Arc::clone(&security_manager)));
         let controller_manager = Arc::new(ControllerManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus)));
         let agent_states = Arc::new(crate::agent::state::AgentStates::new(Arc::clone(&state_store), Arc::<EventBus>::clone(&event_bus)));
-        let workspaces = crate::workspace::WorkspaceManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus), Arc::clone(&security_manager), &secret_manager, &config.workspaces)?;
-        let skills = Arc::new(crate::skill::SkillManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus), Arc::clone(&security_manager)));
-        let artifacts = Arc::new(crate::artifact::ArtifactManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus), Arc::clone(&security_manager), &config.artifacts)?);
+        let workspaces = crate::workspace::WorkspaceManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus), Arc::clone(&security_manager), Arc::clone(&confidentiality), Arc::clone(&controller_manager), &secret_manager, &config.workspaces)?;
+        let skills = Arc::new(crate::skill::SkillManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus), Arc::clone(&confidentiality)));
+        let artifacts = Arc::new(crate::artifact::ArtifactManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus), Arc::clone(&security_manager), Arc::clone(&confidentiality), &config.artifacts)?);
         let groups = Arc::new(GroupManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus)));
 
         let component_services = ComponentServices::empty()
             .with(Arc::clone(&security_manager))
+            .with(Arc::clone(&confidentiality))
             .with(Arc::clone(&secret_manager))
             .with(Arc::clone(&workspaces))
             .with(Arc::clone(&artifacts));
         Ok(Self {
             security_manager,
+            confidentiality,
             state_store,
             entity_store,
             secret_manager,
@@ -381,6 +393,9 @@ impl RuntimeManager {
     }
 
     pub fn security_manager(&self) -> &Arc<dyn SecurityManager> { &self.security_manager }
+
+    /// What may flow where, and who is cleared for what (issue 304).
+    pub fn confidentiality(&self) -> &Arc<dyn ConfidentialityPolicy> { &self.confidentiality }
 
     pub fn state_store(&self) -> &Arc<dyn StateStore> { &self.state_store }
 
@@ -444,7 +459,7 @@ mod tests {
     fn channel_runtime() -> ChannelRuntime {
         let store = Arc::new(MemoryStore::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-        let manager = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(DummySecurityManager::new()), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let manager = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(DummySecurityManager::new()), Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let commands = Arc::new(CommandExecutor::empty(Arc::clone(manager.security_manager())));
         ChannelRuntime::outside_a_session(manager, commands, SessionId::new())
     }
@@ -468,7 +483,7 @@ mod tests {
             let store = Arc::new(MemoryStore::new());
             let secrets = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
             let defaults: ComponentConfig = serde_json::from_value(defaults).unwrap();
-            RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(DummySecurityManager::new()), &caelumora_model::config::AppConfig { component_defaults: defaults, ..Default::default() }, crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store)))
+            RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(DummySecurityManager::new()), Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig { component_defaults: defaults, ..Default::default() }, crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store)))
         };
         // As in `examples/config.yaml`.
         assert!(manager(serde_json::json!([{"id": "context", "kind": "turn_context_provider"}])).is_ok());

@@ -327,6 +327,18 @@ pub enum ActorEvent {
         target: RetryTarget,
         reason: RetryRefused,
     },
+    /// The channel did not let in an event of the receiver's own (issue
+    /// 304): `rejected` names its kind (`ActorEvent::kind`), `message` the
+    /// message it was or was about, if any, and `reason` is one of a known
+    /// few, which a user interface words itself - the channel's one decision
+    /// of what enters it, made in order as it takes the event in. Sent by the
+    /// channel to the event's sender alone, and never written to the
+    /// history: nothing entered it.
+    MessageRejected {
+        rejected: String,
+        message: Option<MessageId>,
+        reason: Rejection,
+    },
 }
 
 /// What a request to answer again is about (issue 235).
@@ -367,6 +379,22 @@ impl ActorEvent {
                 messages: messages.iter().filter_map(Message::published).collect(),
             }),
             other => Some(other),
+        }
+    }
+
+    /// The message the event is or is about, if any: a message said, or one
+    /// it changes, takes back, reclassifies or asks to be answered again -
+    /// what a rejection of it names (`MessageRejected`).
+    pub fn subject_message(&self) -> Option<MessageId> {
+        match self {
+            ActorEvent::PartialMessageGenerated(m)
+            | ActorEvent::CompleteMessageGenerated(m)
+            | ActorEvent::IntermediatePartialGenerated(m)
+            | ActorEvent::IntermediateMessageGenerated(m)
+            | ActorEvent::MessageModified(m) => Some(m.id),
+            ActorEvent::MessageRevoked { message, .. } | ActorEvent::MessageReclassified { message, .. } => Some(*message),
+            ActorEvent::RetryRequested { target: RetryTarget::Message(message), .. } => Some(*message),
+            _ => None,
         }
     }
 
@@ -422,6 +450,7 @@ impl ActorEvent {
             ActorEvent::RetryRequested { .. } => "RetryRequested",
             ActorEvent::RetryAccepted { .. } => "RetryAccepted",
             ActorEvent::RetryRejected { .. } => "RetryRejected",
+            ActorEvent::MessageRejected { .. } => "MessageRejected",
         }
     }
 }
@@ -474,6 +503,32 @@ impl EventContext {
     }
 }
 
+
+/// Why the channel did not let an event in (`ActorEvent::MessageRejected`,
+/// issue 304), worded for its sender, as the web UI and the TUI word it
+/// after "… was not let in:".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+#[serde(rename_all = "snake_case")]
+pub enum Rejection {
+    /// Its sender may not do this here - change another's message, ask for
+    /// another answer, answer questions in this channel.
+    #[error("you may not do this here")]
+    Forbidden,
+    /// Classified so, it may not enter the channel - above it, or with a
+    /// compartment it does not admit or that is not configured.
+    #[error("it is classified so that the channel does not admit it")]
+    ClassificationRefused,
+    /// The message it is about is not in the channel.
+    #[error("the message it is about is not in the channel")]
+    MessageNotFound,
+    /// The message it is about was taken back, or cannot be changed so.
+    #[error("the message it is about was taken back or cannot be changed so")]
+    MessageUnchangeable,
+    /// It does not fit the channel as it is: sent in another's name, about
+    /// someone who takes no part, or asking what cannot be asked.
+    #[error("it does not fit the channel as it is")]
+    Invalid,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Envelope {
@@ -575,6 +630,9 @@ impl Envelope {
             }
             ActorEvent::RetryRejected { target, reason } => {
                 format!("RetryRejected(sender_id={}, {}, reason={:?})", ctx.sender_id, target, reason)
+            }
+            ActorEvent::MessageRejected { rejected, message, .. } => {
+                format!("MessageRejected(sender_id={}, rejected={}, mid={:?})", ctx.sender_id, rejected, message)
             }
             _ => {
                 format!("{:?}", self.event)

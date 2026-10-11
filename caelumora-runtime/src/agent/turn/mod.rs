@@ -119,8 +119,8 @@ impl<'a> Turn<'a> {
 
     /// The agent's session as the turn reads it from its channel
     /// (`AgentWork::session`).
-    pub fn session(&self) -> Option<SessionView> {
-        self.work().session()
+    pub async fn session(&self) -> Option<SessionView> {
+        self.work().session().await
     }
 
     /// Which turn this is (issue 235).

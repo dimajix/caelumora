@@ -9,7 +9,7 @@
 //! other channels and sessions neither lose nor overwrite them. The prompt
 //! part shows the entries that may be recalled in the current channel: those
 //! written in a channel it may read, as the policy decides when the
-//! component asks in the agent's name (`AccessQuestions::may_copy_information`,
+//! component asks in the agent's name (`ConfidentialityQuestions::may_copy_information`,
 //! issue 131). Under the ownership policy that is the flow rule of issue
 //! 133 - the entry's channel's classification must flow into this one's -
 //! within the session, and beyond it only where the entry's session permits
@@ -28,7 +28,7 @@ use crate::tool::{classification_argument, id_argument, reclassify_parameters, t
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::question::Answers;
-use caelumora_model::confidentiality::Classification;
+use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy};
 use caelumora_model::memory::{Memory, MemoryId};
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::security::SecurityManager;
@@ -48,6 +48,8 @@ pub struct AgentMemoryComponent {
     /// of the work it serves - the agent's, with its owner's rights (issues
     /// 131, 255).
     security_manager: Arc<dyn SecurityManager>,
+    /// What may flow where (issue 304): what it recalls, how it reclassifies.
+    confidentiality: Arc<dyn ConfidentialityPolicy>,
 }
 
 impl std::fmt::Debug for AgentMemoryComponent {
@@ -124,7 +126,7 @@ impl ToolProvider for AgentMemoryComponent {
 
     async fn execute(&self, name: &str, params: &Value, _answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
         let value = match name {
-            REMEMBER_TOOL_NAME => self.execute_remember(params, turn),
+            REMEMBER_TOOL_NAME => self.execute_remember(params, turn).await,
             UPDATE_MEMORY_TOOL_NAME => self.execute_update(params, turn).await,
             FORGET_TOOL_NAME => self.execute_forget(params, turn).await,
             RECLASSIFY_MEMORY_TOOL_NAME => self.execute_reclassify(params, turn).await,
@@ -139,8 +141,8 @@ impl ToolProvider for AgentMemoryComponent {
 impl AgentMemoryComponent {
     /// `remember(text)`: remembers `text`, taken over when the turn
     /// completes.
-    fn execute_remember(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
-        let id = AgentMemory::remember(turn, text_argument(params)?);
+    async fn execute_remember(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
+        let id = AgentMemory::remember(turn, text_argument(params)?).await;
         Ok(serde_json::json!({ "status": "remembered", "id": id.0 }))
     }
 
@@ -149,7 +151,7 @@ impl AgentMemoryComponent {
     async fn execute_update(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
         let id: MemoryId = id_argument(params)?;
         let text = text_argument(params)?;
-        if AgentMemory::update(turn, id, text, self.security_manager.as_ref()).await {
+        if AgentMemory::update(turn, id, text, self.confidentiality.as_ref()).await {
             Ok(serde_json::json!({ "status": "updated", "id": id.0 }))
         } else {
             Err(ToolError::InvalidParameter(format!("you remember nothing numbered {id} here")))
@@ -161,14 +163,14 @@ impl AgentMemoryComponent {
     async fn execute_reclassify(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
         let id: MemoryId = id_argument(params)?;
         let classification = classification_argument(params)?;
-        AgentMemory::reclassify(turn, id, classification.clone(), self.security_manager.as_ref()).await?;
+        AgentMemory::reclassify(turn, id, classification.clone(), self.security_manager.as_ref(), self.confidentiality.as_ref()).await?;
         Ok(serde_json::json!({ "status": "reclassified", "id": id.0, "classification": classification.to_string() }))
     }
 
     /// `forget(id)`: forgets an entry that may be recalled here.
     async fn execute_forget(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
         let id: MemoryId = id_argument(params)?;
-        if AgentMemory::forget(turn, id, self.security_manager.as_ref()).await {
+        if AgentMemory::forget(turn, id, self.confidentiality.as_ref()).await {
             Ok(serde_json::json!({ "status": "forgotten", "id": id.0 }))
         } else {
             Err(ToolError::InvalidParameter(format!("you remember nothing numbered {id} here")))
@@ -183,7 +185,7 @@ impl PromptProvider for AgentMemoryComponent {
     }
 
     async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt> {
-        let recalled = AgentMemory::recalled(work, self.security_manager.as_ref()).await;
+        let recalled = AgentMemory::recalled(work, self.confidentiality.as_ref()).await;
         if recalled.is_empty() {
             return Ok(Prompt::default());
         }
@@ -213,10 +215,11 @@ fn render(recalled: &[Memory]) -> String {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(AGENT_MEMORY_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>().uses::<dyn SecurityManager>(),
+        ComponentKind::new(AGENT_MEMORY_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>().uses::<dyn SecurityManager>().uses::<dyn ConfidentialityPolicy>(),
         |_descriptor, context| {
             let component = Arc::new(AgentMemoryComponent {
                 security_manager: Arc::clone(context.service::<dyn SecurityManager>()?),
+                confidentiality: Arc::clone(context.service::<dyn ConfidentialityPolicy>()?),
             });
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::<AgentMemoryComponent>::clone(&component));
@@ -229,6 +232,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::confidentiality::ConfidentialityRules;
     use crate::transport::Discard;
     use crate::agent::state::{AgentStateHandle, AgentStates};
     use crate::runtime::RuntimeManager;
@@ -241,7 +245,7 @@ mod tests {
     use caelumora_model::confidentiality::{Classification, Confidentiality};
     use caelumora_model::privacy::{PrivacyConfig, SessionPrivacy};
     use caelumora_model::secret::SecretManager;
-    use caelumora_model::security::{ActionType, OwnershipSecurityManager, SecurityAttributes, SecurityContext};
+    use caelumora_model::security::{OwnershipSecurityManager, SecurityAttributes, SecurityContext};
     use caelumora_model::session::{ChannelId, Session, SessionId};
     use caelumora_model::store::StateStore;
     use caelumora_model::store::memory::MemoryStore;
@@ -284,9 +288,16 @@ mod tests {
         }
     }
 
-    /// The component of an agent owned by `owner`, asking `policy`.
+    /// The component of an agent owned by `owner`, asking `policy`, the
+    /// flow decided by the rules of no compartments.
     fn component(policy: Arc<dyn SecurityManager>, owner: ActorId) -> Memory {
-        Memory { component: AgentMemoryComponent { security_manager: policy }, owner }
+        Memory { component: AgentMemoryComponent { security_manager: policy, confidentiality: Arc::new(ConfidentialityRules::default()) }, owner }
+    }
+
+    /// The component of an agent owned by `owner`, the flow decided by
+    /// `confidentiality` (issue 304).
+    fn component_under(confidentiality: Arc<dyn ConfidentialityPolicy>, owner: ActorId) -> Memory {
+        Memory { component: AgentMemoryComponent { security_manager: Arc::new(OwnershipSecurityManager::new()), confidentiality }, owner }
     }
 
     async fn handle(agent: AgentId) -> Arc<AgentStateHandle> {
@@ -306,7 +317,7 @@ mod tests {
         async fn under(policy: Arc<dyn SecurityManager>) -> Self {
             let store = Arc::new(MemoryStore::new());
             let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-            let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(store)).unwrap());
+            let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(store)).unwrap());
             Self { runtime, loops: HashMap::new() }
         }
 
@@ -512,13 +523,16 @@ mod tests {
     /// Lets channels read each other only in the name of `owner` - and asks
     /// nothing else: what an agent remembered is its own, recalled whoever
     /// may read its channel now (issue 264).
-    #[derive(Debug)]
-    struct OnlyFor(ActorId);
-    #[async_trait]
-    impl SecurityManager for OnlyFor {
-        async fn check(&self, context: &SecurityContext, action: ActionType<'_>) -> bool {
-            matches!(action, ActionType::CopyInformation { .. }) && context.principal_id == self.0
+    #[derive(Debug, Default)]
+    struct OnlyFor(Option<ActorId>, caelumora_model::confidentiality::Compartments);
+    impl ConfidentialityPolicy for OnlyFor {
+        fn may_publish(&self, _: &SecurityContext, _: &Classification, _: &Classification) -> bool { true }
+        fn may_copy(&self, context: &SecurityContext, _: &caelumora_model::confidentiality::Place, _: &caelumora_model::confidentiality::Place) -> bool {
+            Some(context.principal_id) == self.0
         }
+        fn cleared(&self, _: &SecurityContext, _: ActorId, _: &[caelumora_model::role::RoleId], _: &Classification) -> bool { true }
+        fn compartments(&self) -> &caelumora_model::confidentiality::Compartments { &self.1 }
+        fn roles(&self) -> Option<&caelumora_model::role::Roles> { None }
     }
 
     #[tokio::test]
@@ -526,19 +540,19 @@ mod tests {
         let agent = AgentId::new();
         let handle = handle(agent).await;
         let (owner, stranger) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
-        let policy: Arc<dyn SecurityManager> = Arc::new(OnlyFor(owner));
+        let policy: Arc<dyn ConfidentialityPolicy> = Arc::new(OnlyFor(Some(owner), Default::default()));
         let session = SessionId::new();
-        let mut sessions = Sessions::under(Arc::clone(&policy)).await;
+        let mut sessions = Sessions::under(Arc::new(OwnershipSecurityManager::new())).await;
         sessions.add(session, SessionPrivacy::default()).await;
         // Public, so that the built-in rule would let every channel read it.
         let (origin, reader) = (channel(session, Confidentiality::Public), channel(session, Confidentiality::Internal));
-        remember(&component(Arc::clone(&policy), owner), &sessions, &handle, agent, origin.clone(), "Kaya likes tea.").await;
+        remember(&component_under(Arc::clone(&policy), owner), &sessions, &handle, agent, origin.clone(), "Kaya likes tea.").await;
 
-        let asked_by_owner = recall(&component(Arc::clone(&policy), owner), &sessions, &handle, agent, reader.clone()).await;
+        let asked_by_owner = recall(&component_under(Arc::clone(&policy), owner), &sessions, &handle, agent, reader.clone()).await;
         assert!(asked_by_owner.text.contains("Kaya likes tea."), "{}", asked_by_owner.text);
-        let asked_by_stranger = recall(&component(Arc::clone(&policy), stranger), &sessions, &handle, agent, reader).await;
+        let asked_by_stranger = recall(&component_under(Arc::clone(&policy), stranger), &sessions, &handle, agent, reader).await;
         assert!(asked_by_stranger.text.is_empty(), "the policy refuses, whatever the levels say: {}", asked_by_stranger.text);
-        let in_its_own_channel = recall(&component(policy, stranger), &sessions, &handle, agent, origin).await;
+        let in_its_own_channel = recall(&component_under(policy, stranger), &sessions, &handle, agent, origin).await;
         assert!(in_its_own_channel.text.contains("Kaya likes tea."), "a channel always reads itself");
     }
 
@@ -580,14 +594,13 @@ mod tests {
 
     #[tokio::test]
     async fn an_entry_released_to_another_compartment_is_recalled_there() {
-        use caelumora_model::confidentiality::{Compartment, Compartments, ConfidentialityRules};
+        use caelumora_model::confidentiality::{Compartment, Compartments};
         let agent = AgentId::new();
         let handle = handle(agent).await;
         let compartments = Compartments::new([(Compartment::new("hr"), vec![]), (Compartment::new("finance"), vec![])]).unwrap();
-        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_rules(ConfidentialityRules::new(compartments), Arc::new(caelumora_model::security::NoMemberships)));
-        let memory = component(Arc::clone(&policy), ActorId::User(UserId::new()));
+        let memory = component_under(Arc::new(ConfidentialityRules::new(compartments)), ActorId::User(UserId::new()));
         let session = SessionId::new();
-        let mut sessions = Sessions::under(policy).await;
+        let mut sessions = Sessions::under(Arc::new(OwnershipSecurityManager::new())).await;
         sessions.add(session, SessionPrivacy::default()).await;
         let in_compartments = |names: &[&str]| -> At {
             ((session, ChannelId::new()), Classification::new(Confidentiality::Internal, names.iter().map(|n| Compartment::new(*n))).unwrap())
@@ -657,7 +670,7 @@ mod tests {
 
     #[test]
     fn every_entry_acted_on_is_shown_as_a_note_to_the_owner_alone() {
-        let tools = AgentMemoryComponent { security_manager: Arc::new(OwnershipSecurityManager::new()) }.tools();
+        let tools = AgentMemoryComponent { security_manager: Arc::new(OwnershipSecurityManager::new()), confidentiality: Arc::new(ConfidentialityRules::default()) }.tools();
         assert!(tools.iter().all(|t| (t.presentation, t.visibility) == (ToolPresentation::Note, ToolVisibility::HIDDEN)));
     }
 }

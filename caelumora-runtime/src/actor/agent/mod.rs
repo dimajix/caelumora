@@ -13,7 +13,6 @@ use crate::context::ContextProvider;
 use crate::llm::LLMClient;
 use crate::message::{EmitOutProcessor, PerceiveInProcessor};
 use crate::runtime::ActorRuntime;
-use crate::command::CommandResult;
 use crate::tool::{ToolExecutor, ToolProvider};
 use crate::transport::{EventReceiver, EventSender};
 use anyhow::{anyhow, Context, Result};
@@ -31,7 +30,7 @@ use caelumora_model::confidentiality::{Classification, Visibility};
 use caelumora_model::message::{Message, MessageEvent};
 use caelumora_model::turn::GivenUpReason;
 use caelumora_model::plan::PlanProgress;
-use caelumora_model::security::{AccessQuestions, SecurityContext};
+use caelumora_model::security::SecurityContext;
 use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState, ToolCallStatus, ToolResultStatus, ToolSet};
 use caelumora_model::value::name::Name;
 use tracing::{debug, info, warn, Instrument};
@@ -45,7 +44,9 @@ pub struct AgentActor {
     actor_runtime: ActorRuntime,
     /// Where it is, and in whose name it acts (issue 87): what its
     /// processors are given (issue 196).
-    security_context: SecurityContext,
+    /// Where it acts and what it is limited to, as it was built; its roles
+    /// are taken anew by `security_context` (issue 304).
+    context: SecurityContext,
 
     // Components
     /// Assembles the model's context: exactly one (issue 98).
@@ -82,6 +83,12 @@ pub struct AgentActor {
 }
 
 impl AgentActor {
+    /// The context it acts in, here: its owner's delegate, with its owner's
+    /// roles as they are now and limited as it was built (issue 304).
+    fn security_context(&self) -> SecurityContext {
+        self.agent_controller.security_context(self.context.session_id, self.context.channel_id, self.context.limiting_roles.as_deref())
+    }
+
     /// The actor of the agent `agent_controller` holds - the session's
     /// controller of it, shared with its actors in the session's other
     /// channels (issue 120) - built from its `personality`, as the channel
@@ -94,11 +101,13 @@ impl AgentActor {
     ) -> Result<Self> {
         let channel = Arc::clone(&channel_controller.load());
         let agent = agent_controller.load();
-        // The agent acts on behalf of its owner, in this channel (issue 87).
-        let security_context = agent.security_context(channel.session_id, channel.id);
         let agent_id = agent.id;
         let attributes = agent.security_attributes.clone();
         drop(agent);
+        // It acts on behalf of its owner, in this channel (issue 87), with
+        // its owner's roles as they are when it is built, limited by its
+        // personality (issue 304); `security_context` takes them anew.
+        let security_context = agent_controller.security_context(channel.session_id, channel.id, personality.limiting_roles());
 
         let components = ComponentContainer::from_config(
             &personality.components,
@@ -114,6 +123,7 @@ impl AgentActor {
         let emit_out_processors = components.get_all::<dyn EmitOutProcessor>(None);
         let tool_executor = ToolExecutor::new(
             Arc::clone(actor_runtime.security_manager()),
+            Arc::clone(actor_runtime.confidentiality()),
             components.get_all::<dyn ToolProvider>(None),
             Arc::clone(actor_runtime.approval_rules()),
             Arc::clone(actor_runtime.session_controller()),
@@ -129,13 +139,13 @@ impl AgentActor {
         let agent_state = actor_runtime.agent_state(attributes).await?;
         let control = RunControl::new(agent_channel_state.processing_state, agent_channel_state.turn.as_ref().map(|t| t.work.turn_id));
         let views = actor_runtime.views();
-        let commands = AgentCommands::new(&components, Arc::clone(&agent_controller), security_context.principal_id, llm_client.profile(), actor_runtime.clone(), Arc::clone(&agent_state))?;
+        let commands = AgentCommands::new(&components, Arc::clone(&agent_controller), security_context.limiting_roles.clone(), llm_client.profile(), actor_runtime.clone(), Arc::clone(&agent_state))?;
 
         Ok(AgentActor {
             agent_id,
             agent_controller,
             actor_runtime,
-            security_context,
+            context: security_context,
             context_provider,
             llm_client,
             perceive_in_processors,
@@ -196,7 +206,7 @@ impl AgentActor {
     ) -> Result<()> {
         let classification = self.actor_runtime.channel_loop().map(|c| c.classification())
             .ok_or_else(|| anyhow!("Agent {} has no channel to take a turn in", self.id()))?;
-        let Answering { event_context, security_context } = Answering::to(request, self.id(), self.agent_controller.name(), self.security_context.principal_id);
+        let Answering { event_context, security_context } = Answering::to(request, self.id(), self.agent_controller.name(), &self.security_context());
         // Judged for whoever asked, in the channel as the turn begins.
         let tool_sets = self.tool_executor.tool_sets(&security_context, &classification).await;
         let turn_id = state.begin_turn(
@@ -243,7 +253,7 @@ impl AgentActor {
     /// its own contexts: the state is the agent's, not a turn's. Not sent is
     /// only logged.
     async fn announce(&self, state: ActorState, output: &dyn EventSender) {
-        let own = Answering::own(self.id(), self.name(), &self.security_context);
+        let own = Answering::own(self.id(), self.name(), &self.security_context());
         if let Err(e) = own.send(ActorEvent::StateChanged(state), output).await {
             warn!("{:#}", e);
         }
@@ -322,12 +332,12 @@ impl AgentActor {
         let Some(received) = received else { return Ok(None) };
         // It gives its transcript nowhere else: of a change it does not hold on
         // its path there is nobody to tell.
-        let mut taken = take_in(state, received, rx, &self.perceive_in_processors, &self.security_context, |_, _| {}).await;
+        let mut taken = take_in(state, received, rx, &self.perceive_in_processors, &self.security_context(), |_, _| {}).await;
         // A command where it came (issue 269), then the rest of the batch.
         while let Some(command) = taken.command.take() {
             self.carry_out(state, &command, output).await;
             let Some(next) = rx.try_recv() else { break };
-            taken = taken.then(take_in(state, next, rx, &self.perceive_in_processors, &self.security_context, |_, _| {}).await);
+            taken = taken.then(take_in(state, next, rx, &self.perceive_in_processors, &self.security_context(), |_, _| {}).await);
         }
         let (request, mut retries) = (taken.request, taken.retries);
         // Read once taken in, not before waiting: the channel wakes an agent
@@ -339,7 +349,7 @@ impl AgentActor {
         let of_given_up = given_up_for.map(RetryTarget::Turn);
         let judged = retries.iter().rposition(|retry| retry_target(retry) == of_given_up).or(retries.len().checked_sub(1));
         let judged = judged.map(|at| retries.remove(at));
-        reject_retries(retries, RetryRefused::AskedAgain, self.id(), &self.agent_controller.name(), self.security_context.principal_id, output).await;
+        reject_retries(retries, RetryRefused::AskedAgain, self.id(), &self.agent_controller.name(), &self.security_context(), output).await;
         let mut accepted = None;
         if let Some(retry) = judged {
             let span = crate::logging::envelope_span(&retry.context, retry.event.kind());
@@ -402,7 +412,7 @@ impl AgentActor {
     /// Otherwise it says why with `RetryRejected`.
     async fn retry(&self, state: &mut AgentChannelState, request: &Envelope, given_up_for: Option<TurnId>, output: &dyn EventSender) -> Result<bool> {
         let Some(target) = retry_target(request) else { return Ok(false) };
-        let answering = Answering::to(request, self.id(), self.agent_controller.name(), self.security_context.principal_id);
+        let answering = Answering::to(request, self.id(), self.agent_controller.name(), &self.security_context());
         let can = match target {
             RetryTarget::Turn(turn) if Some(turn) == given_up_for => Ok(Vec::new()),
             // Its last turn given up: answered anew after it, nothing taken
@@ -477,7 +487,7 @@ impl AgentActor {
     }
 
     /// Whether what the turn `under_way` saw may still flow into the channel
-    /// as it is now (`AccessQuestions::may_publish`, in the agent's name, as
+    /// as it is now (`ConfidentialityPolicy::may_publish`, in the agent's name, as
     /// its tools' results are admitted) - which it may not once the channel
     /// was lowered below the classification the turn began with (issue 141).
     async fn turn_flow(&self, under_way: &TurnState) -> TurnFlow {
@@ -485,7 +495,7 @@ impl AgentActor {
             return TurnFlow::NoChannel;
         };
         let context = &under_way.work.security_context;
-        if self.actor_runtime.security_manager().may_publish(context, context.caller_id, &under_way.work.classification, &channel).await {
+        if self.actor_runtime.confidentiality().may_publish(context, &under_way.work.classification, &channel) {
             TurnFlow::Flows
         } else {
             TurnFlow::Lowered(channel)
@@ -920,16 +930,12 @@ impl Actor for AgentActor {
         self.commands.visible(issuer).await
     }
 
-    async fn admit_command(&self, name: &str, issuer: &SecurityContext) -> CommandResult<Command> {
-        self.commands.admit(name, issuer).await
-    }
-
     /// Takes in what it missed as what it hears (issues 190, 196): all of
     /// it into its history, what passes its perceive processors into its
     /// transcript.
     async fn catch_up(&self, visible: Vec<Message>) -> Result<()> {
         let mut state = self.state.lock().await;
-        catch_up(&mut state, visible, self.id(), &self.perceive_in_processors, &self.security_context, &self.actor_runtime).await
+        catch_up(&mut state, visible, self.id(), &self.perceive_in_processors, &self.security_context(), &self.actor_runtime).await
     }
 
     async fn run(
@@ -1067,7 +1073,7 @@ impl Actor for AgentActor {
         // As a turn would be offered them now, in the agent's own name:
         // who will ask is not known yet.
         let Some(channel) = self.actor_runtime.channel_loop().map(|c| c.classification()) else { return Vec::new() };
-        self.tool_executor.tool_sets(&self.security_context, &channel).await
+        self.tool_executor.tool_sets(&self.security_context(), &channel).await
     }
 
     fn wakeup(&self) {

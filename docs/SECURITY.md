@@ -17,10 +17,39 @@ it.
     whoever asked an agent, or its owner when nobody did (issue
     [255](../issues/255-whose-name-agents-act-in.md), see
     [In whose name an agent acts](#in-whose-name-an-agent-acts)). There is no delegation chain.
+    It carries the *roles* of the principal, and the roles the caller is limited to - an agent's
+    personality's (issue 304): what a decision needs to know of the subject is in the context,
+    put there where the context is built and not looked up while the decision is made. A user's
+    context is built by their `UserController`, an agent's by its `AgentController` from its
+    owner's, each with the roles as they are now - the controllers follow the `UserManager`'s
+    announcements (issue [306](../issues/306-user-records-have-no-writer.md)). A context
+    continued for another principal (`SecurityContext::next`) carries no roles until whoever
+    continues it gives them: the initiator lends none.
 *   **`SecurityManager`** is the trait that authorizes actions: `check(context, action)`.
 *   **`ActionType`** enumerates every securable action (`GetAgent`, `UpdateSession`,
     `ListPersonalities`, `CancelChannel`, ...). An action on a stored entity carries the entity's
     `SecurityAttributes`, not the entity itself.
+
+### Three decisions
+
+Every decision is made from the acting entity's `SecurityContext`, the verb, the object's
+`SecurityAttributes`, the acting entity's clearances - its roles, in the context - and the
+object's classification, and from nothing else (issue
+[304](../issues/304-review-of-the-permission-concept.md)). Nothing is looked up while a decision
+is made but the groups an access list names. Three decisions are made apart, each by a function of
+its own, and an act passes only where every one it needs says yes:
+
+1.  **Security** - who may do what with the object: the `SecurityManager`, from the context, the
+    verb and the attributes. Access lists name actors, roles and groups (see
+    [Access lists](#access-lists)).
+2.  **Flow** - whether information may go where the act takes it, and who is cleared for it: the
+    `ConfidentialityPolicy`, from the clearances, the object's classification and the
+    destination's (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
+3.  **Visibility** - what a client or an agent is shown: the views reach each thing by reading it
+    (security) and, where it is classified, by the clearance for it (flow); what may not be reached
+    is not found (see [Views](#views)). Reaching decides what is visible in a context, never
+    whether something is permitted: an operation that reaches an object by its id has exactly the
+    rights of one that navigated to it.
 
 ### One manager per process
 
@@ -34,8 +63,16 @@ policy cannot be silently replaced by a default in one corner of the runtime.
 The configuration's `security` section chooses the policy:
 
 *   `ownership` - the default, `OwnershipSecurityManager` (see below);
-*   `allow_all` - `DummySecurityManager`, which allows everything to everybody; for tests and
-    development only.
+*   `allow_all` - `DummySecurityManager`, which allows every action to everybody; for tests and
+    development only. What may flow where is not its to decide: the confidentiality rules apply
+    beside it all the same (issue 304).
+
+What may flow where, and who is cleared for what, is decided apart from it, by one
+`ConfidentialityPolicy` per process, built from the `compartments` and `roles` sections and
+handed to the runtime beside the `SecurityManager` (issue
+[304](../issues/304-review-of-the-permission-concept.md), see
+[CONFIDENTIALITY.md](CONFIDENTIALITY.md#who-applies-the-rules)). The two are orthogonal: an act
+that moves information asks both, its own permission first.
 
 A policy defined outside the binary is [24](../issues/24-opa-security-manager.md).
 
@@ -133,6 +170,16 @@ themselves, an agent its owner (see [In whose name an agent acts](#in-whose-name
     channel's attributes) by whoever may write in the channel - its members -, unless the
     command says it is for the agent's owners alone (`Command::owners_only`): then by whoever
     answers for the agent, as `ApproveToolCall` is granted. Who may not run one does not see it.
+*   A command of the session (issue [28](../issues/28-user-commands.md)) is decided alike, by the
+    channel it is run in (`ShowCommand`, `ExecuteCommand`, each with the command and the channel's
+    attributes, issue 304): by whoever reads the channel, or for a command for the owners alone
+    by the channel's owner.
+*   Calling a tool (`CallTool`) and reading a secret (`ReadSecret`) are always allowed. They stay
+    actions so that another policy can decide them (issue
+    [24](../issues/24-opa-security-manager.md)); what decides a call here is the tools offered and
+    the rules of its place (see [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md)). A secret has no
+    owner to decide by yet (issue [310](../issues/310-secrets-have-no-owner.md)), see
+    [Secrets](#secrets).
 *   Deleting an agent is its owner's (`DeleteAgent`). That it leaves channels owned by others is
     done in the runtime's name: it is a consequence of the deletion, not a change of those channels
     by the owner.
@@ -144,14 +191,13 @@ themselves, an agent its owner (see [In whose name an agent acts](#in-whose-name
 *   The runtime acting on its own uses `SecurityContext::system()` (`ActorId::System`), which may do
     everything. This is deliberate and never a default: an empty context has no rights.
 
-The confidentiality actions (`CopyInformation`, `Classify`, `Reclassify`, `Publish`,
-`JoinChannel`) are decided by classifications, not by ownership: the ownership policy applies the
-`ConfidentialityRules` of the configured compartments and roles to them, and adds only what is about
-ownership - the actor putting a message into a channel is the one acting, a channel is reclassified
-by its owner. `CopyInformation` is decided by the rules alone: whether an agent may reach the
-channel it copies from at all is asked before, as `GetChannel` (issue 264). Another policy may apply
-other rules (issue
-[138](../issues/138-confidentiality-policy-in-ownership.md)); see
+What may flow where is not the ownership policy's to decide (issue 304, reversing issue
+[138](../issues/138-confidentiality-policy-in-ownership.md)): copying, publishing and the clearance
+at a channel's door are asked of the `ConfidentialityPolicy`. Of a reclassification the policy
+decides who may - a channel its owner, a message its author or the channel's owner, a note or
+memory entry its author (`Reclassify`) -, the `ConfidentialityPolicy` whether the new
+classification may be given there. Whether an agent may reach the channel it copies from at all is
+the policy's, asked before, as `GetChannel` (issue 264); see
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md#who-applies-the-rules).
 
 ### How stores check
@@ -201,16 +247,17 @@ union of the entries, no denial, no precedence. The owner needs no entry and can
     *   `Actor` - a user. Never an agent, the system or nobody: an agent acts with its owner's
         rights (issue 255), and an entry for it would let it reach what the person responsible for
         it may not. The stores refuse such an entry (`SecurityAttributes::validate`).
-    *   `Role` - by its `RoleId`. The roles that count for a user are their own; for an agent its
-        owner's, narrowed by its personality's limiting roles wherever a role is matched - the one
-        way an agent may do less than its owner.
+    *   `Role` - by its `RoleId`, as the context carries it (`SecurityContext::has_role`). The
+        roles that count for a user are their own; for an agent its owner's, narrowed by its
+        personality's limiting roles wherever a role is matched - the one way an agent may do less
+        than its owner.
     *   `Group` - by its `GroupId` (issue 286): a team, or the participants of a session or a
         channel. A member counts wherever they act, not only in that place.
-*   **What the policy learns.** Who belongs to a group, and which roles count for someone, are
-    facts the attributes do not carry. The policy asks a `Memberships` source it is made with,
-    only where an entry names one: `StoreMemberships` reads the one group, user or agent asked
-    about from the entity store, in the system's name - never what an actor is a member of, which
-    may be thousands of places -, also a deleted group, whose members are told of the deletion of
+*   **What the policy learns.** Who belongs to a group is a fact neither the attributes nor the
+    context carry. The policy asks a `Memberships` source it is made with, only where an entry
+    names one: `StoreMemberships` reads the one group asked about from the entity store, in the
+    system's name - never what an actor is a member of, which may be thousands of places -, also a
+    deleted group, whose members are told of the deletion of
     the session or channel they took part in. The policy is made before the store, which takes it,
     so a binary binds the store to the memberships afterwards; until then nobody is a member of
     anything.
@@ -275,7 +322,7 @@ something - they check the request, and carry it out with their own rights. In t
     server's token in `mcp_tool`, an external agent's through its endpoint) and the clearance it is
     judged by are its owner's, whoever asked - within its session too: it reaches another channel
     if its owner may read it or it takes part in it itself (`GetChannel`), and copies from it what
-    the flow rule lets into its own (`CopyInformation`); what it knows itself - its memory, its
+    the flow rule lets into its own (`may_copy`); what it knows itself - its memory, its
     private notes - it reaches through itself, by the flow rule alone (issue
     [264](../issues/264-agent-reads-channels-its-owner-may-not.md)). An agent must not see more than
     the person responsible for it (issue [142](../issues/142-roles.md)), and it passes on whatever
@@ -316,9 +363,40 @@ asked, `an_agent_asked_by_an_agent_acts_for_its_own_owner` and
 
 ## Where permission checks go
 
-There are three ways code asks the `SecurityManager`, and each has its place. Which operation asks
-what, in whose name and where the same question is asked again is mapped, check by check, in
-[PERMISSION-CHECKS.md](PERMISSION-CHECKS.md) (issue 304).
+Every question has one of five reasons to be asked (issue 304); a question with none is removed.
+Which operation asks what, in whose name and by which reason is mapped, check by check, in
+[PERMISSION-CHECKS.md](PERMISSION-CHECKS.md).
+
+1.  **The entity layer always asks.** The store asks `Read` on every read and the verb on every
+    write, answering "not found" and "denied" (see [How stores check](#how-stores-check)). It is
+    the last line, whether or not an operation asked before.
+2.  **An operation asks before it stores only if it does something first** - looks at others,
+    stops actors, deletes files, sends something. Then it asks in the order (see
+    [Operations that check themselves](#operations-that-check-themselves)), and the store asks
+    again when it stores. That pair is the rule, not a double; no token tells the store it was
+    asked already.
+3.  **The channel decides what enters it**, once, as it takes it in (see
+    [What enters a channel](#what-enters-a-channel)). Actors ask nothing for what they send.
+4.  **Every act has one owner, and only the owner asks, once**: a tool call the `ToolExecutor` as it
+    admits it, a command of an agent the agent as it carries it out, a command of the session the
+    `CommandExecutor`, an approval the approver as it counts the answer, a secret the
+    `SecretManager`, a skill the `SkillManager`. A component owns the acts on what it keeps -
+    reclassifying a note, forgetting a memory entry - and asks for those itself, in the turn's
+    context; reading beyond its channel it leaves to the views.
+5.  **Offering is not permitting.** The views, a snapshot's flags, the filters of lists, the
+    approver's `approvers_of`, the visible commands and the event bus ask to decide what to show or
+    whom to wait for, never to permit; the act asks again when it is done, and that is no double.
+    The form tells them apart: enforcing asks with `Enforcement::require` and
+    `ConfidentialityQuestions::require_*`, offering with `AccessQuestions::may_*` and
+    `ConfidentialityQuestions::may_*`.
+
+Two enforcing sites turn a refusal into an outcome of their own rather than an error, and ask
+`require` with a refusal of `()`: the `ToolExecutor`, which answers a call refused by the policy as
+forbidden, and the approver, which leaves out the answer of someone who may not approve. They ask
+as every act does, so that the refusal is logged alike. `ChannelLoop::reclassify` asks
+`may_publish` of the old classification into the new one to learn whether the channel was lowered:
+a question, not a permission, and the same one an agent asks at its next step, so that both agree
+on what was lowered.
 
 ### Access questions
 
@@ -337,10 +415,15 @@ asked:
     the operation it counts for, with `Enforcement::require`.
 
 The questions are `may_read_channel`, `may_change_channel`, `may_change_session`,
-`may_copy_information`, `may_read_agent_context`, `may_read_agent_tools`, `may_approve`,
-`may_delete_agent`, `may_call_tool`, `may_publish`, `may_modify_message`, `may_revoke_message`,
-`may_reclassify`, `may_retry_message`, `may_cancel_channel`, `may_see_channel`, `may_restore` and
-`may_purge`.
+`may_read_agent_context`, `may_read_agent_tools`, `may_approve`, `may_delete_agent`,
+`may_retry_message`, `may_cancel_channel`, `may_restore`, `may_purge` and the rest of the trait. An
+act has no question of its own: calling a tool, changing a message, reclassifying it are asked with
+`Enforcement::require` where they are decided (issue 304).
+
+The flow is asked alike of the `ConfidentialityPolicy`, through `ConfidentialityQuestions`: the
+`may_*` to decide what to offer - `may_copy_information`, `cleared_for` - and the `require_*` for
+an act - `require_publish`, `require_cleared`, `require_cleared_for`, `require_classifiable` -,
+answering a refusal with the act's own error and logging it alike (issue 304).
 
 `AccessQuestions` is an extension trait on every `SecurityManager`, by blanket implementation. Each
 question gets a name and one place, but only translates into an `ActionType`. The decision stays
@@ -359,11 +442,23 @@ extension trait on every `SecurityManager`. It answers a refusal with the operat
 `ActionType::describe`, which names the action and what identifies its object, never content such as
 a tool call's arguments.
 
-**The actor's own permission first.** An operation asks whether the actor may do it at all before
-it asks anything of others - a participant's clearance, an agent's personality (issue 198). Who may
-not do it is refused before the rest is looked at, and learns nothing of the others on the way:
-`create_channel` asks `UpdateSession` first, as `delete_channel` does; `add_participant` asks
-`UpdateChannel` first, as `remove_participant` does when the change is stored.
+**The order** (issue 304). An operation reaches its object first, then asks its own verb, then the
+flow, then anything about others:
+
+1.  **Reaching** is reading the object (`Get…`) and, where the object is classified, being cleared
+    for it - what the views ask (`channel_reading` for a channel). Who may not reach it is answered
+    "not found", so that nothing can be probed: `SessionLoop::channel_for` and `delete_channel`
+    answer `ChannelNotFound`, `WorkspaceManager::reached` `NotFound` for a workspace one is not
+    cleared for, `SessionManager::restore_session` reads the deleted session as whoever restores
+    it, and a channel deleted is "gone" only to whom a live one would be there.
+2.  **The actor's own permission** comes next, before anything of others (issue 198): who may not
+    do it is refused before the rest is looked at, and learns nothing of the others on the way.
+    `delete_channel` asks `DeleteChannel` before the session is changed, `create_channel` asks
+    `UpdateSession` first, `add_participant` asks `UpdateChannel` first, as `remove_participant`
+    does when the change is stored. Every refusal from here on is "forbidden".
+3.  **The flow**, then **the others** - a participant's clearance, an agent's personality.
+
+The store asks again as it stores (rule 2): that pair is the rule, not a double.
 
 **Actors are controlled only through such operations.** `Actor::cancel`, `retry_turn`,
 `interrupt_tool_call`, `wakeup` and `stop` check nothing: they are the consequence of an act that
@@ -373,6 +468,17 @@ the channel admitted under `RetryMessage` (issue 235) - and know no caller. So t
 structure rather than by discipline, the `Actor` trait, the `Moderator` trait that is handed actors,
 and `ChannelLoop::actor_by_id` are crate-internal (issue 147): a frontend reaches its user's actor
 through `ChannelLoop::user_actor`, but none of the control methods.
+
+### What enters a channel
+
+The channel decides what enters it (issue 304): every event an actor sends is admitted or refused
+by the channel's loop, in order, as it takes it in (`ChannelLoop::admission`, see
+[CHANNELS.md](CHANNELS.md)) - against the channel as it is then, so that nothing changes between
+the check and the entry. The actor that sends asks nothing of the policy; it looks only at what it
+can see at once. So a message, a change of one, a reclassification, a request to answer again and
+an answer to questions are each asked once, in the sender's name - first whether it may act so,
+then the flow of what it carries -, and what is refused is answered to its sender alone with
+`ActorEvent::MessageRejected` and a `Rejection`, never written to the history.
 
 ## The security suite
 
@@ -467,8 +573,9 @@ A node is data the viewer was allowed to reach; it decides nothing, and it does 
 read, and offers nothing that changes something or acts in someone's name - not a terminal, not a
 command - which is its owner's, the manager's (issue 296). An operation never relies on a node: it
 checks its own permission when it acts. Where it acts in a channel, it asks first whether the
-caller may read the channel, as the views reach one: `AccessQuestions::channel_reading`, the one
-place that decides how a channel is read - an agent from its place, a user by their roles.
+caller may read the channel, as the views reach one: `view::channel_reading`, the one place that
+decides how a channel is read - `GetChannel`, then an agent from its place, a user by the roles of
+their context.
 
 ## Users
 
@@ -539,4 +646,9 @@ the environment.
 
 Every `SecretManager::resolve` is checked with the `SecurityManager` (`ActionType::ReadSecret`)
 before any provider is consulted, as the `EntityStore` and `StateStore` check access on a
-`SecurityContext`.
+`SecurityContext`. The ownership policy allows every one: a secret is a key and a value, with no
+owner and no access list to decide by. So whoever writes a component that names a secret decides
+which credential it uses and where it is sent. Until secrets have an owner
+([310](../issues/310-secrets-have-no-owner.md)), only the seed and the configuration - whoever
+runs the server - may write personalities and components that name secrets; nothing may let users
+write them.

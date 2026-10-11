@@ -567,6 +567,12 @@ export interface Message {
   // UI only: the sender would not answer again instead of a message (issue
   // 234), a notice that is gone on reload.
   retryRejected?: RetryRefused;
+  // UI only: the channel did not let this message of the user's in, for
+  // `rejected` (issue 304) - it is in no history, and gone on reload.
+  rejected?: Rejection;
+  // UI only: the channel did not let in what the user sent (issue 304), a
+  // notice that is gone on reload.
+  messageRejected?: {rejected: string; reason: Rejection};
   // UI only: a step of the plan of the turn `turn_id` began here (issue
   // 263) - not shown itself, but heading the messages of the step.
   planStep?: PlanStep;
@@ -680,7 +686,19 @@ export interface ActorEvent {
   RetryAccepted?: { target: RetryTarget };
   /** The sender does not answer again instead of `target`, for `reason` (issues 234, 235). */
   RetryRejected?: { target: RetryTarget; reason: RetryRefused };
+  /**
+   * The channel did not let in the user's own event of the kind `rejected`
+   * (issue 304), about the message `message` if it was one, for `reason`.
+   * Sent by the channel to its sender alone, never part of the history.
+   */
+  MessageRejected?: { rejected: string; message: string | null; reason: Rejection };
 }
+
+/**
+ * Why the channel did not let in what a user sent (issue 304): a known few,
+ * which the UI words itself; one it does not know is shown as such.
+ */
+export type Rejection = 'forbidden' | 'classification_refused' | 'message_not_found' | 'message_unchangeable' | 'invalid';
 
 /**
  * What a request to answer again is about (issue 235): a message of the

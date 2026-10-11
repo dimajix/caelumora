@@ -373,6 +373,12 @@ else who may read it - the session's owner, say - is shown its history and no in
     applied to the message in place as the server reads them, so a reload shows the same. The
     classification of a modified message stays as it is; it is changed as before, with the shield
     icon.
+*   **What the channel did not let in** (issue 304). What the user sends is shown as they sent it,
+    and the channel decides whether it enters; a refusal arrives as `MessageRejected`. A message of
+    theirs refused so is marked "Not let into the channel", with why in this page's words for each
+    `reason`; a refused change of a message - modified, taken back, reclassified - is undone by
+    reading the message back from the history, and a notice "Not let in" says what was refused and
+    why. Both are gone on reload, as nothing refused is in the history.
 *   **Asking for another answer** (issue 234). The last message of the chat, if an agent's, has a
     retry icon while nothing is being generated and its member's `can_retry` allows it (`POST
     …/messages/{mid}/retry`) - not of an external agent, which never answers again (issue 242). The

@@ -1,6 +1,6 @@
 use crate::approval::ApprovalRule;
 use crate::command::default_commands;
-use crate::confidentiality::{Classification, Compartments, ConfidentialityRules};
+use crate::confidentiality::{Classification, Compartments, ConfidentialityPolicy, ConfidentialityRules};
 use crate::role::{RoleError, RoleId, Roles};
 use std::collections::BTreeMap;
 use crate::component::ComponentConfig;
@@ -578,25 +578,27 @@ impl AppConfig {
         }
     }
 
-    /// The one `SecurityManager` of the process, as configured, with the
-    /// confidentiality rules of the configured compartments and roles where
-    /// the policy applies them, learning memberships and roles from
-    /// `memberships` (issue 23).
+    /// The one `SecurityManager` of the process, as configured, learning
+    /// who belongs to a group from `memberships` (issues 23, 286).
     pub fn create_security_manager(&self, memberships: Arc<dyn Memberships>) -> Arc<dyn SecurityManager> {
         match self.security {
-            SecurityConfig::Ownership => {
-                let rules = ConfidentialityRules::new(self.compartments.clone());
-                let rules = match &self.roles {
-                    Some(roles) => rules.with_roles(roles.clone()),
-                    None => rules,
-                };
-                Arc::new(OwnershipSecurityManager::with_rules(rules, memberships))
-            }
+            SecurityConfig::Ownership => Arc::new(OwnershipSecurityManager::with_memberships(memberships)),
             SecurityConfig::AllowAll => {
                 tracing::warn!("Security policy 'allow_all' is configured: every user may do everything. Development only.");
-                Arc::new(DummySecurityManager::with_roles(self.roles.clone()))
+                Arc::new(DummySecurityManager::new())
             }
         }
+    }
+
+    /// The one `ConfidentialityPolicy` of the process (issue 304): the rules
+    /// of the configured compartments and roles - also under `allow_all`,
+    /// which allows every action but no flow the rules refuse.
+    pub fn create_confidentiality_policy(&self) -> Arc<dyn ConfidentialityPolicy> {
+        let rules = ConfidentialityRules::new(self.compartments.clone());
+        Arc::new(match &self.roles {
+            Some(roles) => rules.with_roles(roles.clone()),
+            None => rules,
+        })
     }
 
     /// The entity store, as configured under `persistence.entity_store`.

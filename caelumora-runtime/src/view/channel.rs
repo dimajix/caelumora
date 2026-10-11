@@ -22,7 +22,9 @@ use caelumora_model::value::name::Name;
 use caelumora_model::note::Note;
 use caelumora_model::removal::Removal;
 use caelumora_model::work::TurnId;
-use caelumora_model::security::{AccessQuestions, ActionType, ChannelReading, Enforcement, Place, SecurityContext};
+use caelumora_model::confidentiality::Place;
+use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityContext};
+use super::ChannelReading;
 use caelumora_model::session::ChannelId;
 use caelumora_model::snapshot::{ChannelSnapshot, Detail, MemberSnapshot, PublishedNotes};
 use caelumora_model::store::StoreError;
@@ -161,7 +163,7 @@ impl ChannelView {
     pub(super) async fn may_read_entry(&self, classification: &Classification) -> bool {
         match self.readable {
             ChannelReading::Whole => true,
-            ChannelReading::Released => self.views().may_copy_from(&self.place(classification)).await,
+            ChannelReading::Released => self.views().may_copy_from(&self.place(classification)),
         }
     }
 

@@ -40,7 +40,7 @@ impl ChannelCommandProvider for WakeupCommandProvider {
     async fn execute(&self, _name: &str, args: &str, context: &CommandContext<'_>) -> CommandResult<CommandOutput> {
         let wanted = args.trim();
         if wanted.is_empty() {
-            let mut woken = context.channel.wakeup(context.issuer.security_context()).await.map_err(channel_error)?;
+            let mut woken = context.channel.wakeup(&context.issuer.security_context()).await.map_err(channel_error)?;
             woken.sort();
             let text = if woken.is_empty() {
                 "No agent was asleep.".to_string()
@@ -52,7 +52,7 @@ impl ChannelCommandProvider for WakeupCommandProvider {
 
         // Anyone taking part, as `/nudge` takes them; only an agent sleeps.
         let participant = named_participant(WAKEUP_COMMAND_NAME, wanted, context.channel)?;
-        let was_asleep = context.channel.wakeup_actor(context.issuer.security_context(), participant.id).await.map_err(channel_error)?;
+        let was_asleep = context.channel.wakeup_actor(&context.issuer.security_context(), participant.id).await.map_err(channel_error)?;
         let text = if was_asleep {
             format!("Woke {}.", participant.name)
         } else {

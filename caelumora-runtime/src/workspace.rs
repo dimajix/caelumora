@@ -29,17 +29,19 @@
 //! besides every `COMMANDS_CHECKED_EVERY`.
 
 use crate::component::{ComponentError, ComponentResult};
+use crate::controller::ControllerManager;
 use crate::event::EventBus;
 use crate::terminal::{CommandKey, CommandState, DockerProvider, LocalProvider, Shell, SharedProvider, Terminal, TerminalError, TerminalProvider};
 use caelumora_model::actor::ActorId;
 use caelumora_model::config::{StorageConfig, WorkspacesConfig};
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::role::user_roles;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::scope::Scope;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::privacy::SessionPrivacy;
-use caelumora_model::security::{AccessQuestions, AclEntry, ActionType, ChannelReader, Enforcement, Grant, Place, SecurityContext, SecurityManager, Subject};
+use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions, Place};
+use caelumora_model::security::{AccessQuestions, AclEntry, ActionType, Enforcement, Grant, SecurityContext, SecurityManager, Subject};
+use crate::view::{channel_reading, ChannelReader};
 use caelumora_model::channel::Participant;
 use caelumora_model::session::{Channel, ChannelId, Session, SessionId};
 use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResultExt};
@@ -111,6 +113,11 @@ pub struct WorkspaceManager {
     entities: Arc<dyn EntityStore>,
     events: Arc<EventBus>,
     security: Arc<dyn SecurityManager>,
+    /// What may flow where, and who is cleared for what (issue 304).
+    confidentiality: Arc<dyn ConfidentialityPolicy>,
+    /// Where the contexts of a channel's members are built, with their
+    /// roles as they are now (issue 304).
+    controllers: Arc<ControllerManager>,
     storages: BTreeMap<String, Arc<dyn TerminalProvider>>,
     max_file_bytes: u64,
     /// Held by every write of a document, so that none is lost to another.
@@ -135,7 +142,7 @@ impl WorkspaceManager {
     /// `ComponentError::InvalidConfig` for a storage whose provider cannot
     /// be made, naming it, or for a storage with a shell outside a Tokio
     /// runtime.
-    pub(crate) fn new(entities: Arc<dyn EntityStore>, events: Arc<EventBus>, security: Arc<dyn SecurityManager>, secrets: &Arc<SecretManager>, config: &WorkspacesConfig) -> ComponentResult<Arc<Self>> {
+    pub(crate) fn new(entities: Arc<dyn EntityStore>, events: Arc<EventBus>, security: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>, controllers: Arc<ControllerManager>, secrets: &Arc<SecretManager>, config: &WorkspacesConfig) -> ComponentResult<Arc<Self>> {
         let storages: BTreeMap<String, Arc<dyn TerminalProvider>> = config.storage.iter()
             .map(|(name, storage)| {
                 let invalid = |e: TerminalError| ComponentError::InvalidConfig(format!("the storage '{name}' of workspaces: {e}"));
@@ -153,7 +160,7 @@ impl WorkspaceManager {
             })
             .collect::<ComponentResult<_>>()?;
         let with_shell = storages.values().any(|provider| provider.has_shell());
-        let manager = Arc::new(Self { entities, events, security, storages, max_file_bytes: config.max_file_bytes, writing: Mutex::new(()), checker: OnceLock::new() });
+        let manager = Arc::new(Self { entities, events, security, confidentiality, controllers, storages, max_file_bytes: config.max_file_bytes, writing: Mutex::new(()), checker: OnceLock::new() });
         if with_shell {
             let runtime = tokio::runtime::Handle::try_current()
                 .map_err(|_| ComponentError::InvalidConfig("a storage of workspaces with a shell needs a running runtime".to_string()))?;
@@ -182,19 +189,15 @@ impl WorkspaceManager {
     /// workspace in `storage`, and is cleared for it - as they would have
     /// to be to read a channel so classified -, and whether the storage may
     /// hold it: what is so classified flows into its destination, asked as
-    /// putting it there (`Publish`, issue 251).
+    /// putting it there (issue 251) - all of it the `ConfidentialityPolicy`'s
+    /// (issue 304).
     async fn require_classification(&self, ctx: &SecurityContext, storage: &str, provider: &dyn TerminalProvider, classification: &Classification) -> WorkspaceResult<()> {
-        self.security.require(ctx, ActionType::Classify(classification), || WorkspaceError::ClassificationRefused).await?;
+        let policy = &self.confidentiality;
+        policy.require_classifiable(classification, || WorkspaceError::ClassificationRefused)?;
         if let Some(destination) = provider.destination() {
-            if !self.security.may_publish(ctx, ctx.caller_id, classification, destination).await {
-                return Err(WorkspaceError::StorageNotCleared(storage.to_string()));
-            }
+            policy.require_publish(ctx, classification, destination, || WorkspaceError::StorageNotCleared(storage.to_string()))?;
         }
-        let roles = user_roles(self.entities.as_ref(), ctx.principal_id).await?;
-        match self.security.may_see_channel(ctx, &roles, classification).await {
-            true => Ok(()),
-            false => Err(WorkspaceError::NotCleared),
-        }
+        policy.require_cleared_for(ctx, classification, || WorkspaceError::NotCleared)
     }
 
     /// Makes a workspace of the user `ctx` acts for, of `name` in `scope`,
@@ -381,24 +384,24 @@ impl WorkspaceManager {
     }
 
     /// Workspace `id`, used directly by whoever `ctx` acts for, wherever the
-    /// caller acts (issue 23): if its access list grants them what `need`
-    /// asks for (`GetWorkspace`, `WriteWorkspace`) and they are cleared for
-    /// its classification.
+    /// caller acts (issue 23): reached as the views reach it (issue 304) - its
+    /// access list lets them read it (`GetWorkspace`) and they are cleared
+    /// for its classification -, then if it grants them what `need` asks
+    /// for (`WriteWorkspace`).
     ///
     /// # Errors
-    /// `NotFound` if there is none they may read, `ReadOnly` if they may
-    /// not change its files where `need` asks to, `NotCleared`, or whatever
-    /// else the store reports.
+    /// `NotFound` if there is none they may read or are cleared for, so
+    /// that nothing can be probed; `ReadOnly` if they may not change its
+    /// files where `need` asks to; or whatever else the store reports.
     pub(crate) async fn reached(&self, ctx: &SecurityContext, id: WorkspaceId, need: Grant) -> WorkspaceResult<Workspace> {
         let workspace = self.entities.get_workspace(ctx, id).await.map_err(store_error(id))?;
+        if !self.confidentiality.cleared_for(ctx, &workspace.classification) {
+            return Err(WorkspaceError::NotFound(id));
+        }
         if need == Grant::Write {
             self.security.require(ctx, ActionType::WriteWorkspace(&workspace.security_attributes), || WorkspaceError::ReadOnly(id)).await?;
         }
-        let roles = user_roles(self.entities.as_ref(), ctx.principal_id).await?;
-        match self.security.may_see_channel(ctx, &roles, &workspace.classification).await {
-            true => Ok(workspace),
-            false => Err(WorkspaceError::NotCleared),
-        }
+        Ok(workspace)
     }
 
     /// The workspace of `session`, if the caller of `ctx` may use it in
@@ -406,7 +409,7 @@ impl WorkspaceManager {
     /// uses the workspace, the caller is one of its current members, its
     /// access list lets `ctx` read it (`GetWorkspace`, issue 23) and the
     /// workspace and the channel flow both ways - asked as the policy asks
-    /// what an actor puts into a channel (`Publish`). `None` otherwise, also
+    /// what an actor puts into a channel (`ConfidentialityPolicy::may_publish`). `None` otherwise, also
     /// when the workspace is gone, without saying which of them failed.
     /// Whether its files may be changed there is asked as they are
     /// (`terminal_in`).
@@ -427,12 +430,11 @@ impl WorkspaceManager {
             warn!(session = %session.id, workspace = %id, "A workspace of another session's scope is attached to a session");
             return Ok(None);
         }
-        if !self.security.check(ctx, ActionType::GetWorkspace(&workspace.security_attributes)).await {
+        if !self.security.may_read_workspace(ctx, &workspace.security_attributes).await {
             return Ok(None);
         }
         let (inside, outside) = (&workspace.classification, &channel.classification);
-        let flows = self.security.may_publish(ctx, ctx.caller_id, inside, outside).await
-            && self.security.may_publish(ctx, ctx.caller_id, outside, inside).await;
+        let flows = self.confidentiality.may_publish(ctx, inside, outside) && self.confidentiality.may_publish(ctx, outside, inside);
         Ok(flows.then_some(workspace))
     }
 
@@ -475,7 +477,7 @@ impl WorkspaceManager {
     /// The workspace of session `session_id` and its terminal, for what
     /// `need` asks, if whoever `ctx` acts for may use it in its channel
     /// `channel_id` (issue 296): if they may read the session (`GetSession`)
-    /// and the channel (`AccessQuestions::channel_reading` - an agent from
+    /// and the channel (`view::channel_reading` - an agent from
     /// the channel it acts in, a user by their roles), it is usable there
     /// (`usable_in`), and - to change its files - its list lets them
     /// (`WriteWorkspace`, issue 23). Session and channel are read as they
@@ -533,15 +535,11 @@ impl WorkspaceManager {
             return Err(WorkspaceError::NotUsableInChannel);
         }
         let at = Place { channel: channel.id, classification: channel.classification.clone(), session: SessionPrivacy::of(&session) };
-        let roles;
         let reader = match ctx.caller_id {
             ActorId::Agent(_) => ChannelReader::From(&at),
-            _ => {
-                roles = user_roles(self.entities.as_ref(), ctx.principal_id).await?;
-                ChannelReader::Cleared(&roles)
-            }
+            _ => ChannelReader::Cleared,
         };
-        if self.security.channel_reading(ctx, &channel.security_attributes, &at, reader).await.is_none() {
+        if channel_reading(self.security.as_ref(), self.confidentiality.as_ref(), ctx, &channel.security_attributes, &at, reader).await.is_none() {
             return Err(WorkspaceError::NotUsableInChannel);
         }
         let workspace = self.usable_in(ctx, &session, &channel).await?.ok_or(WorkspaceError::NotUsableInChannel)?;
@@ -592,9 +590,16 @@ impl WorkspaceManager {
         let Some(channel) = self.entities.get_channel(&system, channel_id).await.optional()? else { return Ok(false) };
         for participant in &channel.participants {
             let member = match participant {
-                Participant::User(user) => SecurityContext::new(ActorId::User(*user), channel.session_id, channel.id),
-                Participant::Agent(agent) => match self.entities.get_agent(&system, *agent).await.optional()? {
-                    Some(agent) => agent.security_context(channel.session_id, channel.id),
+                // One whose record is gone asks with no roles, as before.
+                Participant::User(user) => match self.controllers.user_controller(*user).await.optional()? {
+                    Some(controller) => controller.security_context(channel.session_id, channel.id),
+                    None => SecurityContext::new(ActorId::User(*user), channel.session_id, channel.id),
+                },
+                Participant::Agent(agent) => match self.controllers.agent_controller(*agent).await.optional()? {
+                    Some(agent) => {
+                        let limit = agent.personality().await.optional()?.and_then(|p| p.limiting_roles().map(<[_]>::to_vec));
+                        agent.security_context(channel.session_id, channel.id, limit.as_deref())
+                    }
                     None => continue,
                 },
                 Participant::Approver(_) => continue,
@@ -742,7 +747,7 @@ pub(crate) mod testing {
         let workspaces = WorkspacesConfig { storage: [("dev".to_string(), storage)].into(), max_file_bytes: MAX_FILE_BYTES };
         let artifacts = tempfile::tempdir().unwrap();
         let kept = ArtifactsConfig { storage: [("kept".to_string(), ArtifactStorageConfig::Local { root: artifacts.path().to_path_buf(), destination: None })].into(), ..Default::default() };
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig { workspaces, artifacts: kept, ..Default::default() }, crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig { workspaces, artifacts: kept, ..Default::default() }, crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let system = SecurityContext::system();
 
         let owner = UserId::new();

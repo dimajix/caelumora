@@ -1,5 +1,7 @@
 use arc_swap::ArcSwap;
+use caelumora_model::actor::ActorId;
 use caelumora_model::approval::{ApprovalRule, ApprovalRuleId};
+use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::value::language::Language;
 use caelumora_model::value::name::Name;
@@ -58,6 +60,13 @@ impl UserController {
 
     pub fn username(&self) -> String {
         self.user.load().username.to_string()
+    }
+
+    /// The context of the user acting for themselves in `channel` of
+    /// `session`, with their roles as they are now (issue 304): what the
+    /// `UserManager` stored and announced last (issue 306).
+    pub fn security_context(&self, session: SessionId, channel: ChannelId) -> SecurityContext {
+        SecurityContext::new(ActorId::User(self.id), session, channel).with_roles(self.user.load().roles.clone(), None)
     }
 
     /// Sets how the user introduces themselves and the language they prefer

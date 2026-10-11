@@ -18,14 +18,14 @@ use std::time::Duration;
 use anyhow::Error;
 use async_trait::async_trait;
 use futures::StreamExt;
-use caelumora_model::actor::ActorId;
+use caelumora_model::actor::{ActorId, Rejection};
 use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId, PersonalityKind};
 use caelumora_model::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
 use caelumora_model::channel::{moderation_components, Channel, HistoryAccess, Participant};
 use caelumora_model::config::{ArtifactStorageConfig, ArtifactsConfig, StorageConfig, WorkspacesConfig, DEFAULT_MAX_RUN_SECS};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, StoredComponents};
 use caelumora_model::external_agent::{ConversationId, TaskId};
-use caelumora_model::confidentiality::{Classification, Clearance, Compartments, ConfidentialityRules, Confidentiality};
+use caelumora_model::confidentiality::{Classification, Clearance, Compartments, ConfidentialityPolicy, ConfidentialityRules, Confidentiality, Place};
 use caelumora_model::role::{RoleId, Roles};
 use caelumora_model::store::memberships::StoreMemberships;
 use caelumora_model::value::name::{Name, ScopedName};
@@ -62,6 +62,9 @@ use caelumora_model::workspace::{WorkspaceChoice, WorkspaceId};
 #[derive(Debug)]
 struct Recorder {
     policy: OwnershipSecurityManager,
+    /// The flow decisions (issue 304), recorded in the same list, so that
+    /// the order of an action's questions shows both.
+    rules: ConfidentialityRules,
     asked: Mutex<Vec<String>>,
     /// The names actors are recorded by.
     names: Mutex<HashMap<ActorId, String>>,
@@ -79,21 +82,17 @@ impl Recorder {
     fn label(&self, action: &ActionType<'_>) -> String {
         let kind = action.describe().split('(').next().unwrap_or_default().to_string();
         match action {
-            ActionType::JoinChannel { participant, .. } => format!("{kind}({})", self.name(*participant)),
             ActionType::ModifyMessage { author, .. } | ActionType::RevokeMessage { author, .. } => format!("{kind}({}'s)", self.name(*author)),
-            ActionType::Reclassify { target: Reclassified::Message { author, .. }, .. } => format!("{kind}({}'s message)", self.name(*author)),
+            ActionType::Reclassify(Reclassified::Message { author, .. }) => format!("{kind}({}'s message)", self.name(*author)),
             _ => match attributes_of(action) {
                 Some(attributes) => format!("{kind}({}'s)", self.name(attributes.owner_id)),
                 None => kind,
             },
         }
     }
-}
 
-#[async_trait]
-impl SecurityManager for Recorder {
-    async fn check(&self, context: &SecurityContext, action: ActionType<'_>) -> bool {
-        let allowed = self.policy.check(context, action).await;
+    /// Records `what` was asked in `context`, and the answer.
+    fn record(&self, context: &SecurityContext, what: String, allowed: bool) {
         let acting = match (context.principal_id, context.caller_id) {
             (principal, caller) if caller == principal || caller == ActorId::None => self.name(principal),
             (principal, caller) => format!("{} as {}", self.name(principal), self.name(caller)),
@@ -103,16 +102,47 @@ impl SecurityManager for Recorder {
             initiator => format!("{acting}, asked by {}", self.name(initiator)),
         };
         let answer = if allowed { "yes" } else { "no" };
-        self.asked.lock().unwrap().push(format!("{who}: {} {answer}", self.label(&action)));
+        self.asked.lock().unwrap().push(format!("{who}: {what} {answer}"));
+    }
+}
+
+#[async_trait]
+impl SecurityManager for Recorder {
+    async fn check(&self, context: &SecurityContext, action: ActionType<'_>) -> bool {
+        let allowed = self.policy.check(context, action).await;
+        self.record(context, self.label(&action), allowed);
+        allowed
+    }
+}
+
+/// The flow decisions, recorded by the names the actions had before they
+/// left the `SecurityManager` (issue 304): `Publish`, `CopyInformation`,
+/// and `JoinChannel` with whom it clears.
+impl ConfidentialityPolicy for Recorder {
+    fn may_publish(&self, context: &SecurityContext, classification: &Classification, into: &Classification) -> bool {
+        let allowed = self.rules.may_publish(context, classification, into);
+        self.record(context, "Publish".to_string(), allowed);
         allowed
     }
 
-    fn role_id(&self, name: &str) -> Option<RoleId> {
-        self.policy.role_id(name)
+    fn may_copy(&self, context: &SecurityContext, from: &Place, into: &Place) -> bool {
+        let allowed = self.rules.may_copy(context, from, into);
+        self.record(context, "CopyInformation".to_string(), allowed);
+        allowed
     }
 
-    fn role_name(&self, id: RoleId) -> Option<String> {
-        self.policy.role_name(id)
+    fn cleared(&self, context: &SecurityContext, participant: ActorId, roles: &[RoleId], classification: &Classification) -> bool {
+        let allowed = self.rules.cleared(context, participant, roles, classification);
+        self.record(context, format!("JoinChannel({})", self.name(participant)), allowed);
+        allowed
+    }
+
+    fn compartments(&self) -> &Compartments {
+        self.rules.compartments()
+    }
+
+    fn roles(&self) -> Option<&Roles> {
+        self.rules.roles()
     }
 }
 
@@ -127,7 +157,7 @@ fn attributes_of<'a>(action: &ActionType<'a>) -> Option<&'a SecurityAttributes> 
         | GetChannel(a) | CreateChannel(a) | UpdateChannel(a) | DeleteChannel(a)
         | GetUser(a) | CreateUser(a) | UpdateUser(a) | DeleteUser(a)
         | GetUserProfile(a) | CreateUserProfile(a) | UpdateUserProfile(a) | DeleteUserProfile(a)
-        | CancelChannel(a) | WakeChannel(a) | RetryMessage(a) | AnswerQuestion(a)
+        | CancelChannel(a) | WakeChannel(a) | RetryMessage(a) | AnswerQuestion(a) | ShowCommand { channel: a, .. } | ExecuteCommand { channel: a, .. }
         | GetWorkspace(a) | WriteWorkspace(a) | CreateWorkspace(a) | UpdateWorkspace(a) | DeleteWorkspace(a)
         | GetSkill(a) | CreateSkill(a) | UpdateSkill(a) | DeleteSkill(a) | UseSkill(a)
         | GetArtifact(a) | WriteArtifact(a) | CreateArtifact(a) | UpdateArtifact(a) | DeleteArtifact(a)
@@ -168,7 +198,7 @@ impl World {
         // The policy learns who takes part where from the store it guards
         // (issue 23), bound once the store is made.
         let memberships = Arc::new(StoreMemberships::new());
-        let recorder = Arc::new(Recorder { policy: OwnershipSecurityManager::with_rules(rules, Arc::<StoreMemberships>::clone(&memberships)), asked: Mutex::new(Vec::new()), names: Mutex::new(HashMap::new()) });
+        let recorder = Arc::new(Recorder { policy: OwnershipSecurityManager::with_memberships(Arc::<StoreMemberships>::clone(&memberships)), rules, asked: Mutex::new(Vec::new()), names: Mutex::new(HashMap::new()) });
         let policy: Arc<dyn SecurityManager> = Arc::<Recorder>::clone(&recorder);
         let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
         let entities: Arc<dyn EntityStore> = Arc::<MemoryStore>::clone(&store);
@@ -180,7 +210,7 @@ impl World {
         let shell = StorageConfig::Local { root: files.path().join("shell"), shell: true, destination: Some(Classification::general(Confidentiality::Internal)), max_run_secs: DEFAULT_MAX_RUN_SECS };
         let workspaces = WorkspacesConfig { storage: [("main".to_string(), StorageConfig::Local { root: files.path().to_path_buf(), shell: false, destination: None, max_run_secs: DEFAULT_MAX_RUN_SECS }), ("shell".to_string(), shell)].into(), ..Default::default() };
         let artifacts = ArtifactsConfig { storage: [("kept".to_string(), ArtifactStorageConfig::Local { root: files.path().join("artifacts"), destination: None })].into(), ..Default::default() };
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig { workspaces, artifacts, ..Default::default() }, registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::<Recorder>::clone(&recorder), &caelumora_model::config::AppConfig { workspaces, artifacts, ..Default::default() }, registry).unwrap());
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let mut world = Self { policy: recorder, store, runtime, manager, alice: UserId::new(), bob: UserId::new(), carol: UserId::new(), files };
         world.alice = world.user("alice").await;
@@ -194,8 +224,10 @@ impl World {
     }
 
     /// What `user` does, in their name.
+    /// The context of `user` acting for themselves, as their controller
+    /// gives it (issue 304): with the role every user of the world holds.
     fn as_user(user: UserId) -> SecurityContext {
-        SecurityContext::new(ActorId::User(user), SessionId::default(), ChannelId::default())
+        SecurityContext::new(ActorId::User(user), SessionId::default(), ChannelId::default()).with_roles(vec![*STAFF], None)
     }
 
     async fn user(&self, name: &str) -> UserId {
@@ -574,7 +606,7 @@ async fn a_channel_is_read_by_its_members_wherever_they_act_and_no_more_once_rem
     let world = World::new().await;
     let session = world.session_of(&[world.bob, world.carol], &[], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
-    let elsewhere = SecurityContext::new(ActorId::User(world.carol), SessionId::new(), ChannelId::new());
+    let elsewhere = SecurityContext::new(ActorId::User(world.carol), SessionId::new(), ChannelId::new()).with_roles(vec![*STAFF], None);
     assert!(session.channel_for(&elsewhere, main.id()).await.is_ok(), "a member, though she acts elsewhere");
 
     let mut events = world.runtime.event_bus().subscribe_as(World::as_user(world.carol));
@@ -717,10 +749,46 @@ async fn interrupting_one_tool_call_is_for_whoever_may_cancel_the_channel() {
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
+/// M0: a message enters the channel as its sender classified it, if the
+/// flow lets it in (issue 133) - decided by the channel alone, in order, as
+/// it admits the message (issue 304): her actor asks nothing. What is not
+/// let in, its sender is told, and why (`MessageRejected`); nobody else
+/// hears of it.
+#[tokio::test]
+async fn a_message_is_let_in_by_the_channel_and_its_sender_told_if_not() {
+    use caelumora_model::actor::ActorEvent;
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
+    let (mut hers, mut his) = (alice.watch(), bob.watch());
+
+    let (refused, asked) = world.asked(async {
+        alice.send_message("secret".to_string(), Some(Classification::general(Confidentiality::Confidential))).await.expect("sent: the channel decides");
+        shown(&mut hers, "MessageRejected").await
+    }).await;
+    let ActorEvent::MessageRejected { rejected, message, reason } = refused else { unreachable!() };
+    assert_eq!((rejected.as_str(), reason), ("CompleteMessageGenerated", Rejection::ClassificationRefused), "above the channel");
+    assert!(message.is_some(), "naming the message");
+    assert_eq!(asked, checks(&["alice: Publish no"]), "asked by the channel alone");
+
+    alice.send_message("hello".to_string(), None).await.expect("sent");
+    let ActorEvent::CompleteMessageGenerated(said) = shown(&mut his, "CompleteMessageGenerated").await else { unreachable!() };
+    assert_eq!((said.content.as_deref(), Some(said.id) != message), (Some("hello"), true), "he hears what was let in, and nothing of what was not");
+    while let Ok(envelope) = his.events.try_recv() {
+        assert_ne!(envelope.event.kind(), "MessageRejected", "nor of the refusal");
+    }
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
 /// M1: a message is its author's to modify and to take back (issue 234) -
-/// not another participant's. Asked by the author's actor before it sends
-/// the change, and again by the channel as it admits it, with whether the
-/// modified message may enter the channel as classified.
+/// not another participant's. Asked by the channel alone, as it admits the
+/// change (issue 304), with whether the modified message may enter the
+/// channel as classified; who is refused is told why (`MessageRejected`).
+/// Another's message modified would speak as its author, which nobody's
+/// actor can send (issue 228): it is refused by his actor, which asks
+/// nothing.
 #[tokio::test]
 async fn a_message_is_modified_and_taken_back_by_its_author_alone() {
     use caelumora_model::actor::ActorEvent;
@@ -736,34 +804,33 @@ async fn a_message_is_modified_and_taken_back_by_its_author_alone() {
 
     let (refused, asked) = world.asked(bob.modify_message(said, "bob's".to_string(), None)).await;
     assert!(denied(&refused.expect_err("not his")));
-    assert_eq!(asked, checks(&["bob: ModifyMessage(alice's) no"]), "refused before anything else is asked");
-    let (refused, asked) = world.asked(bob.revoke_message(said)).await;
-    assert!(denied(&refused.expect_err("not his to take back")));
-    assert_eq!(asked, checks(&["bob: RevokeMessage(alice's) no"]));
+    assert!(asked.is_empty(), "it cannot be sent in his name: {asked:?}");
+    let (refused, asked) = world.asked(async {
+        bob.revoke_message(said).await.expect("sent: the channel decides");
+        shown(&mut watch, "MessageRejected").await
+    }).await;
+    assert!(matches!(refused, ActorEvent::MessageRejected { reason: Rejection::Forbidden, message: Some(m), .. } if m == said), "not his to take back, and he is told");
+    assert_eq!(asked, checks(&["bob: RevokeMessage(alice's) no"]), "asked by the channel alone");
 
     let (_, asked) = world.asked(async {
         alice.modify_message(said, "hello".to_string(), None).await.expect("hers");
         shown(&mut watch, "MessageModified").await;
     }).await;
-    assert_eq!(asked, checks(&[
-        // Her actor, before it sends.
-        "alice: ModifyMessage(alice's) yes", "alice: Publish yes",
-        // The channel, as it admits it.
-        "alice: Publish yes", "alice: ModifyMessage(alice's) yes",
-    ]));
+    assert_eq!(asked, checks(&["alice: ModifyMessage(alice's) yes", "alice: Publish yes"]), "the channel, as it admits it: her permission, then the flow");
     let (_, asked) = world.asked(async {
         alice.revoke_message(said).await.expect("hers");
         shown(&mut watch, "MessageRevoked").await;
     }).await;
-    assert_eq!(asked, checks(&["alice: RevokeMessage(alice's) yes", "alice: RevokeMessage(alice's) yes"]));
+    assert_eq!(asked, checks(&["alice: RevokeMessage(alice's) yes"]));
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// M3: a message is reclassified (issues 133, 239) by its author, or by the
 /// channel's owner - not by another participant. Asked as `Reclassify` of
-/// the message's author by the actor that sends it, and again by the
-/// channel as it admits it; nothing else, since nothing of the message's
-/// content enters the channel again.
+/// the message's author, then the flow of the new classification, by the
+/// channel alone as it admits it (issue 304); nothing else, since nothing of
+/// the message's content enters the channel again. Who is refused is told
+/// why (`MessageRejected`).
 #[tokio::test]
 async fn a_message_is_reclassified_by_its_author_or_the_channels_owner() {
     use caelumora_model::actor::ActorEvent;
@@ -787,15 +854,18 @@ async fn a_message_is_reclassified_by_its_author_or_the_channels_owner() {
     };
     let public = Classification::general(Confidentiality::Public);
 
-    let (refused, asked) = world.asked(bob.reclassify_message(alices, public.clone())).await;
-    assert!(denied(&refused.expect_err("not his")));
-    assert_eq!(asked, checks(&["bob: Reclassify(alice's message) no"]), "refused before anything else is asked");
+    let (refused, asked) = world.asked(async {
+        bob.reclassify_message(alices, public.clone()).await.expect("sent: the channel decides");
+        shown(&mut his, "MessageRejected").await
+    }).await;
+    assert!(matches!(refused, ActorEvent::MessageRejected { reason: Rejection::Forbidden, message: Some(m), .. } if m == alices), "not his, and he is told");
+    assert_eq!(asked, checks(&["bob: Reclassify(alice's message) no"]), "refused before the flow is asked");
 
     let (_, asked) = world.asked(async {
         bob.reclassify_message(bobs, public.clone()).await.expect("his own");
         shown(&mut hers, "MessageReclassified").await;
     }).await;
-    assert_eq!(asked, checks(&["bob: Reclassify(bob's message) yes", "bob: Reclassify(bob's message) yes"]), "his actor, then the channel");
+    assert_eq!(asked, checks(&["bob: Reclassify(bob's message) yes", "bob: Publish yes"]), "the channel: his permission, then the flow (issue 304)");
 
     let internal = Classification::general(Confidentiality::Internal);
     let (_, asked) = world.asked(async {
@@ -803,42 +873,58 @@ async fn a_message_is_reclassified_by_its_author_or_the_channels_owner() {
         // His actor showed him his own before.
         while !matches!(shown(&mut his, "MessageReclassified").await, ActorEvent::MessageReclassified { classification, .. } if classification == internal) {}
     }).await;
-    assert_eq!(asked, checks(&["alice: Reclassify(bob's message) yes", "alice: Reclassify(bob's message) yes"]), "the owner, another's");
+    assert_eq!(asked, checks(&["alice: Reclassify(bob's message) yes", "alice: Publish yes"]), "the owner, another's");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// M2: asking an agent to answer again (issue 234) is an act on the
 /// conversation, like cancelling it: whoever takes part may - bob as well
-/// as alice - asked as `RetryMessage` of the channel before anything of the
-/// message is looked at but that it is there. Whether the agent answers
-/// again is its own to decide; a message no agent said is refused after
-/// the question. An answer under way (issue 235), or the agent's last turn
-/// given up (issue 259), is asked for again under the same question, asked
-/// before anything of the agent or the history is looked at.
+/// as alice - asked as `RetryMessage` of the channel by the channel alone,
+/// as it admits the request (issue 304). His actor looks at what it can
+/// see at once - a message no agent said, an answer under way (issue 235)
+/// or the agent's last turn given up (issue 259) that is neither - and asks
+/// nothing. Whether the agent answers again is its own to decide.
 /// It is offered of an agent by the same question (issue 242).
 #[tokio::test]
 async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
     use caelumora_model::actor::ActorEvent;
-    let world = World::new().await;
-    let global = world.personality("global", None, &[]).await;
-    let helper = world.agent("helper", world.alice, &global).await;
+    use caelumora_model::message::{Message, MessageRole};
+    let answer = Message { role: MessageRole::Assistant, content: Some("an answer".to_string()), ..Message::new(Classification::PUBLIC) };
+    let world = World::with_kinds(|registry| register_once(registry, "answering", answer)).await;
+    let answering = Personality {
+        components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("model", "answering")] },
+        ..world.personality("answering", None, &[]).await
+    };
+    world.store.update_personality(&World::system(), &answering).await.unwrap();
+    let helper = world.agent("helper", world.alice, &answering).await;
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
     world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
     let mut watch = bob.watch();
-    alice.send_message("hello".to_string(), None).await.expect("sent");
+    alice.send_message("@helper hello".to_string(), None).await.expect("sent");
     let ActorEvent::CompleteMessageGenerated(said) = shown(&mut watch, "CompleteMessageGenerated").await else { unreachable!() };
+    let answered = loop {
+        let ActorEvent::CompleteMessageGenerated(answered) = shown(&mut watch, "CompleteMessageGenerated").await else { unreachable!() };
+        if answered.sender_id == ActorId::Agent(helper) {
+            break answered;
+        }
+    };
 
     let (refused, asked) = world.asked(bob.request_retry(said.id)).await;
     assert!(matches!(refused.expect_err("no agent said it").downcast_ref::<ChannelError>(), Some(ChannelError::NotAnAgentsMessage { .. })));
-    assert_eq!(asked, checks(&["bob: RetryMessage(alice's) yes"]), "his to ask, as a participant");
+    assert!(asked.is_empty(), "his actor asks nothing: {asked:?}");
     let (refused, asked) = world.asked(bob.request_retry_of_turn(ActorId::User(world.alice), TurnId::new())).await;
     assert!(matches!(refused.expect_err("no agent answers").downcast_ref::<ChannelError>(), Some(ChannelError::NotAParticipant { .. })));
-    assert_eq!(asked, checks(&["bob: RetryMessage(alice's) yes"]), "an answer under way by the same question");
+    assert!(asked.is_empty(), "nor of an answer under way: {asked:?}");
     let (refused, asked) = world.asked(bob.request_retry_of_turn(ActorId::Agent(helper), TurnId::new())).await;
     assert!(matches!(refused.expect_err("neither under way nor given up").downcast_ref::<ChannelError>(), Some(ChannelError::TurnNotRetryable { .. })));
-    assert_eq!(asked, checks(&["bob: RetryMessage(alice's) yes"]), "a turn given up by the same question, before the history is looked at (issue 259)");
+    assert!(asked.is_empty(), "nor of a turn given up (issue 259): {asked:?}");
+    let (_, asked) = world.asked(async {
+        bob.request_retry(answered.id).await.expect("sent: the channel decides");
+        asked_for(&world, "bob: RetryMessage(alice's) yes").await;
+    }).await;
+    assert_eq!(asked.first().map(String::as_str), Some(checks(&["bob: RetryMessage(alice's) yes"])[0].as_str()), "his to ask, as a participant - asked by the channel as it admits it");
     let view = world.manager.views(Viewer::new(World::as_user(world.bob))).session(session.id()).await.unwrap().channel(main.id()).await.unwrap();
     let member = view.member(ActorId::Agent(helper)).await.expect("the agent is a member");
     let (offered, asked) = world.asked(member.may_retry()).await;
@@ -1172,9 +1258,10 @@ async fn questions_shown(world: &World, session: SessionId, main: ChannelId, use
 }
 
 /// Answering the questions of an agent's call (issue 165) is asked as
-/// `AnswerQuestion` of the channel, of whoever answers - bob may, as a
-/// participant - and counts only of those the questions were put to: bob,
-/// shown alice's questions, is refused, alice answers.
+/// `AnswerQuestion` of the channel, of whoever answers, by the channel as it
+/// admits the answer (issue 304) - bob may, as a participant - and counts
+/// only of those the questions were put to: bob, shown alice's questions,
+/// is refused by his actor, which asks nothing; alice answers.
 #[tokio::test]
 async fn questions_are_answered_by_whom_they_are_put_to() {
     use caelumora_model::question::{QuestionError, Response};
@@ -1186,11 +1273,13 @@ async fn questions_are_answered_by_whom_they_are_put_to() {
     let (refused, asked) = world.asked(main.user_actor(world.bob).unwrap().answer_questions(request.id, name())).await;
     let refused = refused.expect_err("not put to him");
     assert!(matches!(refused.downcast_ref::<ChannelError>(), Some(ChannelError::Question { reason: QuestionError::NotAsked, .. })), "{refused}");
-    assert_eq!(asked, checks(&["bob: AnswerQuestion(alice's) yes"]), "his to answer as a participant, were he asked");
+    assert!(asked.is_empty(), "his actor asks nothing: {asked:?}");
 
-    let (answered, asked) = world.asked(main.user_actor(world.alice).unwrap().answer_questions(request.id, name())).await;
-    answered.expect("put to her");
-    assert_eq!(asked, checks(&["alice: AnswerQuestion(alice's) yes"]));
+    let (_, asked) = world.asked(async {
+        main.user_actor(world.alice).unwrap().answer_questions(request.id, name()).await.expect("put to her");
+        asked_for(&world, "alice: AnswerQuestion(alice's) yes").await;
+    }).await;
+    assert_eq!(asked.first().map(String::as_str), Some(checks(&["alice: AnswerQuestion(alice's) yes"])[0].as_str()), "asked by the channel as it admits it");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
@@ -1970,7 +2059,6 @@ async fn making_a_session_needs_the_template_the_personalities_and_creating_what
         "alice: ListAgents yes",
         "alice: GetPersonality(bob's) yes",
         "alice: CreateAgent(alice's) yes",
-        "alice: Classify yes",
         "alice: JoinChannel(alice) yes",
         "alice as helper: GetPersonality(bob's) yes",
         "alice: JoinChannel(helper) yes",
@@ -2074,7 +2162,6 @@ async fn creating_a_channel_needs_owning_its_session() {
     assert!(created.is_ok());
     assert_eq!(asked, checks(&[
         "alice: UpdateSession(alice's) yes",
-        "alice: Classify yes",
         "alice: JoinChannel(alice) yes",
         "alice: JoinChannel(bob) yes",
         "alice: CreateChannel(alice's) yes",
@@ -2097,18 +2184,24 @@ async fn who_may_not_create_a_channel_is_refused_before_the_others_are_looked_at
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
-/// Deleting a channel: changing its session - its owner's alone - and
-/// deleting the channel.
+/// Deleting a channel, in the order of issue 304: reading the channel,
+/// deleting it - its owner's alone -, then, as the store takes it out of
+/// its session and marks it, changing the session and deleting it again
+/// (rule 2: the operation asks before it acts, the store as it stores).
 #[tokio::test]
 async fn deleting_a_channel_needs_owning_its_session() {
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
     let main = session.channels()[0].id();
-    let (_, asked) = world.asked(session.delete_channel(&World::as_user(world.bob), main)).await;
-    assert_eq!(asked, checks(&["bob: GetSession(alice's) yes", "bob: UpdateSession(alice's) no"]));
+    let (refused, asked) = world.asked(session.delete_channel(&World::as_user(world.bob), main)).await;
+    assert!(denied(&refused.expect_err("not his")));
+    assert_eq!(asked, checks(&["bob: GetChannel(alice's) yes", "bob: DeleteChannel(alice's) no"]), "refused before the session is touched");
+    assert!(session.channel_by_id(main).is_some(), "and the channel runs on");
     let (deleted, asked) = world.asked(session.delete_channel(&World::as_user(world.alice), main)).await;
     assert!(deleted.is_ok());
     assert_eq!(asked, checks(&[
+        "alice: GetChannel(alice's) yes",
+        "alice: DeleteChannel(alice's) yes",
         "alice: GetSession(alice's) yes",
         "alice: UpdateSession(alice's) yes",
         "alice: GetChannel(alice's) yes",
@@ -2119,7 +2212,9 @@ async fn deleting_a_channel_needs_owning_its_session() {
 
 /// Restoring a deleted session: reading it as deleted and restoring it -
 /// its owner's alone, not a contributor's; for whoever may not read the
-/// trash, there is nothing to restore (issue 164).
+/// trash, there is nothing to restore (issue 164). The manager reads it
+/// first, as whoever restores it (issue 304), and the store asks again as
+/// it restores it (rule 2).
 #[tokio::test]
 async fn restoring_a_session_needs_owning_it() {
     let world = World::new().await;
@@ -2132,6 +2227,7 @@ async fn restoring_a_session_needs_owning_it() {
     let (restored, asked) = world.asked(world.manager.restore_session(&World::as_user(world.alice), session.id())).await;
     assert!(restored.is_ok());
     assert_eq!(asked, checks(&[
+        "alice: ReadDeleted(alice's) yes",
         "alice: ReadDeleted(alice's) yes",
         "alice: Restore(alice's) yes",
         "alice: GetSession(alice's) yes",
@@ -2328,7 +2424,7 @@ async fn a_workspace_is_its_owners_alone() {
 
     let (made, asked) = world.asked(workspaces.create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", Some("Drafts"), internal.clone())).await;
     let docs = made.expect("alice makes one");
-    assert_eq!(asked, checks(&["alice: Classify yes", "alice: JoinChannel(alice) yes", "alice: CreateWorkspace(alice's) yes"]));
+    assert_eq!(asked, checks(&["alice: JoinChannel(alice) yes", "alice: CreateWorkspace(alice's) yes"]));
     assert!(world.files.path().join(docs.id.to_string()).is_dir(), "with its place");
     let above = workspaces.create(&alice, "secrets", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Confidential)).await;
     assert!(matches!(above, Err(WorkspaceError::NotCleared)), "not above what she is cleared for: {above:?}");
@@ -2361,6 +2457,27 @@ async fn a_workspace_is_its_owners_alone() {
     assert!(!world.files.path().join(docs.id.to_string()).exists(), "with the files");
 }
 
+/// A workspace is reached as the views reach it (issue 304): read and
+/// cleared for, else it is not found - before anything else is asked, so
+/// that whoever is not cleared for it learns nothing of it, not even that
+/// they may not change its files.
+#[tokio::test]
+async fn a_workspace_one_is_not_cleared_for_is_not_found() {
+    let world = World::new().await;
+    let workspaces = world.runtime.workspace_manager();
+    let alice = World::as_user(world.alice);
+    let docs = workspaces.create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.expect("hers");
+
+    // Alice without the role that clears her for internal.
+    let uncleared = SecurityContext::new(ActorId::User(world.alice), Default::default(), Default::default());
+    let (reached, asked) = world.asked(workspaces.terminal(&uncleared, docs.id, Grant::Write)).await;
+    assert!(matches!(reached, Err(WorkspaceError::NotFound(id)) if id == docs.id), "not found, not refused: {:?}", reached.map(|(w, _)| w.id));
+    assert_eq!(asked, checks(&["alice: GetWorkspace(alice's) yes", "alice: JoinChannel(alice) no"]), "read, not cleared - and not asked whether she may change it");
+    let (reached, asked) = world.asked(workspaces.terminal(&alice, docs.id, Grant::Write)).await;
+    assert!(reached.is_ok(), "cleared, she reaches it");
+    assert_eq!(asked, checks(&["alice: GetWorkspace(alice's) yes", "alice: JoinChannel(alice) yes", "alice: WriteWorkspace(alice's) yes"]), "read, cleared, then the verb");
+}
+
 /// A storage takes what may flow to where it puts it (issue 251, part B2):
 /// a workspace classified above its destination is not made there, nor
 /// reclassified above it - asked as publishing there, before the
@@ -2374,11 +2491,11 @@ async fn a_storage_holds_no_workspace_above_its_destination() {
 
     let (above, asked) = world.asked(workspaces.create(&alice, "secrets", mine.clone(), "shell", None, Classification::general(Confidentiality::Confidential))).await;
     assert!(matches!(&above, Err(WorkspaceError::StorageNotCleared(storage)) if storage == "shell"), "{above:?}");
-    assert_eq!(asked, checks(&["alice: Classify yes", "alice: Publish no"]));
+    assert_eq!(asked, checks(&["alice: Publish no"]));
 
     let (made, asked) = world.asked(workspaces.create(&alice, "docs", mine, "shell", None, Classification::general(Confidentiality::Internal))).await;
     let docs = made.expect("up to it");
-    assert_eq!(asked, checks(&["alice: Classify yes", "alice: Publish yes", "alice: JoinChannel(alice) yes", "alice: CreateWorkspace(alice's) yes"]));
+    assert_eq!(asked, checks(&["alice: Publish yes", "alice: JoinChannel(alice) yes", "alice: CreateWorkspace(alice's) yes"]));
     let raised = workspaces.reclassify(&alice, docs.id, Classification::general(Confidentiality::Confidential)).await;
     assert!(matches!(raised, Err(WorkspaceError::StorageNotCleared(_))), "{raised:?}");
 }
@@ -2591,7 +2708,7 @@ async fn a_workspace_is_reached_by_its_list_wherever_one_acts() {
     assert_eq!(asked, checks(&["alice: GetWorkspace(alice's) yes", "alice: UpdateWorkspace(alice's) yes", "alice: GetWorkspace(alice's) yes", "alice: UpdateWorkspace(alice's) yes"]),
         "read and changed - asked before a group it names is looked at (issue 286) -, then changed as stored");
 
-    let elsewhere = SecurityContext::new(ActorId::User(world.bob), SessionId::new(), ChannelId::new());
+    let elsewhere = SecurityContext::new(ActorId::User(world.bob), SessionId::new(), ChannelId::new()).with_roles(vec![*STAFF], None);
     let his = views(&elsewhere).workspace(docs.id).await.expect("he reads it, wherever he acts");
     workspaces.terminal(&elsewhere, docs.id, Grant::Read).await.expect("its files");
     assert!(matches!(workspaces.terminal(&elsewhere, docs.id, Grant::Write).await, Err(WorkspaceError::ReadOnly(_))), "not to change them");
@@ -2635,7 +2752,7 @@ async fn what_is_shared_with_a_team_is_read_by_its_members_while_they_are_member
 
     let docs = workspaces.create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
     workspaces.share(&alice, docs.id, Subject::Group(project.id), Grant::Read).await.expect("shared with the team");
-    let elsewhere = SecurityContext::new(ActorId::User(world.bob), SessionId::new(), ChannelId::new());
+    let elsewhere = SecurityContext::new(ActorId::User(world.bob), SessionId::new(), ChannelId::new()).with_roles(vec![*STAFF], None);
     views(&elsewhere).workspace(docs.id).await.expect("a member reads it, wherever he acts");
     assert!(matches!(views(&carol).workspace(docs.id).await, Err(ViewError::WorkspaceNotFound(_))), "a stranger does not");
     let named = views(&alice).workspace(docs.id).await.unwrap().snapshot().await;
@@ -2699,7 +2816,8 @@ async fn a_workspace_is_not_used_in_a_channel_by_who_is_not_in_it() {
     let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
     let session = world.shared_session(&[], &[waiting]).await;
     session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
-    let as_agent = alice.next(ActorId::Agent(waiting), ActorId::User(world.alice));
+    // Continued for the agent with its owner's roles, as its controller gives them (issue 304).
+    let as_agent = alice.next(ActorId::Agent(waiting), ActorId::User(world.alice)).with_roles(vec![*STAFF], None);
     let main = world.manager.views(Viewer::new(as_agent)).session(session.id()).await.unwrap().channel(session.channels()[0].id()).await.unwrap();
     assert!(main.workspace().await.unwrap().is_none());
     world.manager.stop_session(&alice, session.id()).await.unwrap();
@@ -2769,7 +2887,7 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
     assert!(asked.contains(&"alice: WriteArtifact(alice's) yes".to_string()), "added to as hers: {asked:?}");
 
     assert_eq!(read_version(&world, &alice, artifact.id, 1).await, Read::Content(3, "a,b".to_string()), "its owner reads every version, as it was then");
-    let elsewhere = SecurityContext::new(ActorId::User(world.bob), SessionId::new(), ChannelId::new());
+    let elsewhere = SecurityContext::new(ActorId::User(world.bob), SessionId::new(), ChannelId::new()).with_roles(vec![*STAFF], None);
     assert_eq!(read_version(&world, &elsewhere, artifact.id, 2).await, Read::Content(7, "a,b\n1,2".to_string()), "a member of the channel reads what was published there, wherever he acts");
     assert_eq!(read_version(&world, &bob, artifact.id, 3).await, Read::NoVersion);
     assert_eq!(read_version(&world, &World::as_user(world.carol), artifact.id, 1).await, Read::NoArtifact, "nobody else, who learns nothing");
@@ -3161,11 +3279,39 @@ fn about_agent_commands(asked: &[String]) -> Vec<&str> {
     asked.iter().filter(|line| line.contains("AgentCommand")).map(String::as_str).collect()
 }
 
+/// A command of the session (issue 28) is seen and run by whoever reads the
+/// channel it is run in - bob, taking part -, asked of the channel's
+/// attributes as a command of an agent is of the agent's (issue 304): first
+/// whether he sees it, then whether he may run it, then, for `/help`, what
+/// else he sees.
+#[tokio::test]
+async fn a_command_of_the_session_is_seen_and_run_by_whoever_reads_the_channel() {
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    let bob = main.user_actor(world.bob).unwrap();
+
+    let (reply, asked) = world.asked(bob.execute_command("help", "")).await;
+    let text = reply.expect("his to run").output.expect("answered to him");
+    assert!(text.contains("/wakeup") && text.contains("/nudge"), "{text}");
+    let about: Vec<&str> = asked.iter().filter(|line| line.contains("Command(")).map(String::as_str).collect();
+    assert_eq!(about, [
+        "bob: ShowCommand(alice's) yes",
+        "bob: ExecuteCommand(alice's) yes",
+        "bob: ShowCommand(alice's) yes",
+        "bob: ShowCommand(alice's) yes",
+        "bob: ShowCommand(alice's) yes",
+    ], "by the channel's attributes: the command, then what /help lists");
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
 /// A command of an agent (issue 269) is seen and asked for by whoever may
 /// write in the channel - bob, taking part -, unless it is for the agent's
 /// owners alone: `/seal` bob neither sees nor asks for, alice, the agent's
-/// owner, does. Bob's actor asks before it sends, and the agent asks again,
-/// in the context the request came with, before it carries it out.
+/// owner, does. Bob's actor finds whom he names among the agents by what he
+/// sees, and asks nothing more; the agent asks, once, in the context the
+/// request came with, as it carries it out (issue 304).
 #[tokio::test]
 async fn a_bystander_asks_an_agent_for_its_command_but_not_for_one_of_its_owners() {
     let (world, session, main, _, mut his) = with_a_commanded_agent().await;
@@ -3182,9 +3328,7 @@ async fn a_bystander_asks_an_agent_for_its_command_but_not_for_one_of_its_owners
         "bob: ShowAgentCommand(alice's) no",
         "bob: ShowAgentCommand(alice's) yes",
         "bob: ExecuteAgentCommand(alice's) yes",
-        "bob: ShowAgentCommand(alice's) yes",
-        "bob: ExecuteAgentCommand(alice's) yes",
-    ], "what he sees, what he may ask for, and the agent asking again");
+    ], "what he sees, then the agent asking whether he may ask for it");
 
     let refused = bob.execute_command("seal", "@helper").await.expect_err("not his");
     assert!(matches!(refused.downcast_ref::<caelumora_runtime::command::CommandError>(), Some(caelumora_runtime::command::CommandError::Unknown(name)) if name == "seal"), "unknown to him: {refused}");

@@ -214,10 +214,10 @@ reads nothing.
     leaves anyway.
 
 Before every step of a turn, the agent asks whether the turn still flows into its channel as it is
-now (`ActionType::Publish` of the turn's classification, in the agent's name). Once the channel was
-lowered below it, the turn is given up as `Lowered`, whatever it was about to do - run a tool, take
-the turn over after a cancel - and the users are told with `TurnGivenUp` (issue 141, see
-[CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
+now (`ConfidentialityPolicy::may_publish` of the turn's classification, in the agent's name). Once
+the channel was lowered below it, the turn is given up as `Lowered`, whatever it was about to do -
+run a tool, take the turn over after a cancel - and the users are told with `TurnGivenUp` (issue
+141, see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
 
 **A message given** to the agent to read in a turn - a skill a member loaded for it with `/skill`
 (issue [22](../issues/22-skill-management.md)) - is recorded by `Turn::give`

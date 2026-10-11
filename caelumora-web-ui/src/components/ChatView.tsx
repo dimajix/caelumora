@@ -32,6 +32,7 @@ import {
 import type {
   ActorId,
   ActorState,
+  Rejection,
   RetryRefused,
   ApprovalRequest,
   ApprovalRule,
@@ -112,6 +113,33 @@ function retryRefusedText(reason: RetryRefused): string {
     case 'elsewhere': return 'it runs elsewhere and cannot take back what it was given';
     case 'ended': return 'its answer had already ended';
     default: return 'for a reason this page does not know';
+  }
+}
+
+/** Why the channel did not let in what the user sent (issue 304), in words. */
+function rejectionText(reason: Rejection): string {
+  switch (reason) {
+    case 'forbidden': return 'you may not do this here';
+    case 'classification_refused': return 'it is classified so that the channel does not admit it';
+    case 'message_not_found': return 'the message it is about is not in the channel';
+    case 'message_unchangeable': return 'the message was taken back or cannot be changed so';
+    case 'invalid': return 'it does not fit the channel as it is';
+    default: return 'for a reason this page does not know';
+  }
+}
+
+/** What the user sent that the channel did not let in (issue 304), by its kind. */
+function rejectedText(kind: string): string {
+  switch (kind) {
+    case 'CompleteMessageGenerated': return 'Your message';
+    case 'MessageModified': return 'Your change to a message';
+    case 'MessageRevoked': return 'Taking a message back';
+    case 'MessageReclassified': return 'The new classification of a message';
+    case 'RetryRequested': return 'Your request for another answer';
+    case 'QuestionAnswered': case 'QuestionDeclined': return 'Your answer to the questions';
+    case 'CommandRequested': return 'Your command';
+    case 'NudgeRequested': return 'Your request to respond';
+    default: return 'What you sent';
   }
 }
 
@@ -765,6 +793,32 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
             timestamp: envelope.timestamp,
           };
           setMessages(prev => [...prev, notice]);
+        } else if (actorEvent.MessageRejected) {
+          // What the user sent, which the channel did not let in (issue
+          // 304). A message of theirs, shown as they sent it, is marked as
+          // not let in. Anything else is told in a notice, not part of the
+          // history; a change of a message, shown as they made it, is
+          // undone by what the channel holds.
+          const {rejected, message, reason} = actorEvent.MessageRejected;
+          if (message && rejected === 'CompleteMessageGenerated') {
+            setMessages(prev => prev.map(m => m.id === message ? {...m, rejected: reason} : m));
+          } else {
+            if (message && ['MessageModified', 'MessageRevoked', 'MessageReclassified'].includes(rejected)) {
+              api.getHistory(sessionId, channelId)
+                .then(history => {
+                  const standing = history.flatMap(item => 'said' in item && item.said.id === message ? [item.said] : [])[0];
+                  if (standing) setMessages(prev => prev.map(m => m.id === message ? standing : m));
+                })
+                .catch(error => reportError('Failed to read the message back', error));
+            }
+            const notice: Message = {
+              role: 'System',
+              content: null,
+              messageRejected: {rejected, reason},
+              timestamp: envelope.timestamp,
+            };
+            setMessages(prev => [...prev, notice]);
+          }
         } else if (actorEvent.ApprovalRequested) {
           // Asked again by an agent that resumed its turn (issue 172), or
           // already in the snapshot: shown once.
@@ -1289,6 +1343,18 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
       <div className="wrap-break-word">{msg.content}</div>
       <MessageFooter message={msg} actions={retryGivenUpAction(msg)} />
     </div>
+  ) : msg.messageRejected ? (
+    <div
+      key={key}
+      className="max-w-[80%] p-3 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-900/60 text-gray-800 dark:text-gray-200 text-sm"
+    >
+      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider mb-1 opacity-70">
+        <Ban size={14} />
+        <span>Not let in</span>
+      </div>
+      <div className="wrap-break-word">{rejectedText(msg.messageRejected.rejected)} was not let into the channel: {rejectionText(msg.messageRejected.reason)}.</div>
+      <MessageFooter message={msg} />
+    </div>
   ) : msg.retryRejected ? (
     <div
       key={key}
@@ -1300,6 +1366,21 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
       </div>
       <div className="wrap-break-word">{msg.sender_name || 'The agent'} did not answer again: {retryRefusedText(msg.retryRejected)}.</div>
       <MessageFooter message={msg} />
+    </div>
+  ) : msg.rejected ? (
+    <div
+      key={key}
+      className={cn(
+        "max-w-[80%] p-3 rounded-lg border border-dashed border-red-300 dark:border-red-800 text-gray-600 dark:text-gray-300 text-sm",
+        msg.role === 'User' && "ml-auto",
+      )}
+    >
+      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider mb-1 opacity-70">
+        <Ban size={14} />
+        <span>Not let into the channel</span>
+      </div>
+      <div className="wrap-break-word whitespace-pre-wrap">{msg.content}</div>
+      <div className="mt-1 text-[11px] opacity-70">{rejectionText(msg.rejected)}.</div>
     </div>
   ) : msg.revoked ? (
     <div

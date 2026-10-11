@@ -95,7 +95,7 @@ and `revoke_private_note`.
     and - through the turn's views, `SessionView::own_private_notes`, which reaches them through
     the agent itself, not through the channels (issue 264) - of every other channel of the session
     it takes or took part in, as far as they may be copied into this one
-    (`AccessQuestions::may_copy_information`, see [reading another
+    (`ConfidentialityQuestions::may_copy_information`, see [reading another
     channel](#reading-other-channels)). A note carries [the turn's
     label](CONFIDENTIALITY.md#what-a-turn-writes-as) - the classification of what the turn had seen,
     at most its channel's - stamped when it is written, and is read note by note;
@@ -124,24 +124,24 @@ notes, chosen per personality ([68](../issues/68-notes-in-agent-state.md)).
     classification of what the turn had seen, at most its channel's
     ([CONFIDENTIALITY.md](CONFIDENTIALITY.md#what-a-turn-writes-as), issue 168) - and is recalled
     only where that may be read. The component asks the policy in the context of the turn it is
-    called in - the agent's, with its owner's rights (`AccessQuestions::may_copy_information`
-    through the `SecurityManager` of its `ComponentContext`, issues 131, 255) -, once per channel
-    the entries come from. Under the ownership policy an entry is
-    recalled where its own classification - the turn's label when it was written, unless it was
-    reclassified - flows into the current channel's (the flow rule of issue
-    133) - within the session, and beyond it only where the entry's session permits it
-         ([134](../issues/134-session-privacy.md)). An entry keeps the privacy its session had when
-         it was written (`MemoryOrigin::session`); in another session it is recalled only where both
-         that and the privacy the session has now permit it, so that what was said under a private
-         policy stays private and a session made private again takes back what it let go. The
-         current one is looked up through the turn's views (`Views::privacy_of`), in the runtime's
-         name - not an edge the agent could follow; of a session that is gone, the one kept decides,
-         and one that cannot be looked up recalls nothing. A turn in no session - in tests - recalls
-         nothing. Only entries recalled in a channel, or remembered in the turn, can be updated,
-         forgotten there, or reclassified (`reclassify_memory`, see
-         [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reclassification)): `AgentMemory::find` looks the
-         entry up in the memory as it stands with the turn's changes (`AgentMemory::effective`,
-         issue 156) and asks the policy about that one entry.
+    called in - the agent's, with its owner's rights
+    (`ConfidentialityQuestions::may_copy_information` through the `SecurityManager` of its
+    `ComponentContext`, issues 131, 255) -, once per channel the entries come from. Under the
+    ownership policy an entry is recalled where its own classification - the turn's label when it
+    was written, unless it was reclassified - flows into the current channel's (the flow rule of
+    issue 133) - within the session, and beyond it only where the entry's session permits it
+    ([134](../issues/134-session-privacy.md)). An entry keeps the privacy its session had when it
+    was written (`MemoryOrigin::session`); in another session it is recalled only where both that
+    and the privacy the session has now permit it, so that what was said under a private policy
+    stays private and a session made private again takes back what it let go. The current one is
+    looked up through the turn's views (`Views::privacy_of`), in the runtime's name - not an edge
+    the agent could follow; of a session that is gone, the one kept decides, and one that cannot be
+    looked up recalls nothing. A turn in no session - in tests - recalls nothing. Only entries
+    recalled in a channel, or remembered in the turn, can be updated, forgotten there, or
+    reclassified (`reclassify_memory`, see
+    [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reclassification)): `AgentMemory::find` looks the entry
+    up in the memory as it stands with the turn's changes (`AgentMemory::effective`, issue 156) and
+    asks the policy about that one entry.
 *   **Prompt part.** A `BeforeTurnInput` part lists what may be recalled in the channel, as the
     memory is now.
 *   **Staging.** A change is staged as a `MemoryChange` with where it is made
@@ -173,8 +173,8 @@ reads nothing.
     agent takes part in it itself (`GetChannel`, issue
     [264](../issues/264-agent-reads-channels-its-owner-may-not.md)), as a user reaches a channel
     they may read. Of a channel reached, the agent reads it as a whole if it may be copied into its
-    own by their classifications (`AccessQuestions::may_copy_information`,
-    `ActionType::CopyInformation`) - those are what `SessionView::channels` lists -, the rest
+    own by their classifications (`ConfidentialityQuestions::may_copy_information`,
+    `ConfidentialityPolicy::may_copy`) - those are what `SessionView::channels` lists -, the rest
     (`all_channels`, `channel_named`) entry by entry - message, note - as each entry's
     classification may be copied. An entry released below its channel is read where the channel as
     a whole is not (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reading-another-channel)), but no

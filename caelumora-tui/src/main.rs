@@ -198,6 +198,11 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                     Some(ActorEvent::RetryRejected { reason, .. }) => {
                         println!("\r{} cannot answer again: {}", sender, reason);
                     }
+                    // What this user sent that the channel did not let in
+                    // (issue 304), told to them alone.
+                    Some(ActorEvent::MessageRejected { rejected, reason, .. }) => {
+                        println!("\r[refused] the channel did not let in your {}: {}", rejected, reason);
+                    }
                     Some(ActorEvent::TurnGivenUp { turn_id, reason }) => {
                         if under_way.is_some_and(|(agent, _)| Some(agent) == sender_id) {
                             under_way = None;
@@ -450,6 +455,8 @@ async fn main() -> anyhow::Result<()> {
     // (issue 23): made before the store, bound to it once it exists.
     let memberships = Arc::new(StoreMemberships::new());
     let security_manager = config.create_security_manager(Arc::<StoreMemberships>::clone(&memberships));
+    // What may flow where, decided apart from who may do what (issue 304).
+    let confidentiality = config.create_confidentiality_policy();
     let state_store = config.create_state_store(Arc::clone(&security_manager))?;
     let entity_store = config.create_entity_store(Arc::clone(&security_manager))?;
     memberships.bind(&entity_store);
@@ -461,14 +468,13 @@ async fn main() -> anyhow::Result<()> {
         Arc::clone(&entity_store),
         secret_manager,
         Arc::clone(&security_manager),
+        Arc::clone(&confidentiality),
         &config,
         ComponentRegistry::built_in(Arc::clone(&component_store)),
     )?);
-    caelumora_runtime::seed::load(entity_store.as_ref(), component_store.as_ref(), security_manager.as_ref(), &config.seed).await?;
+    caelumora_runtime::seed::load(entity_store.as_ref(), component_store.as_ref(), confidentiality.as_ref(), &config.seed).await?;
 
     let owner = UserId::default();
-    // The session is this terminal user's own.
-    let security = SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
     // Users belong to the system (issue 94), so the system records this one.
     let system = SecurityContext::system();
     if entity_store.get_user(&system, owner).await.is_err() {
@@ -482,6 +488,9 @@ async fn main() -> anyhow::Result<()> {
             deleted: None,
         }).await?;
     }
+    // The session is this terminal user's own; their context, with their
+    // roles, is their controller's (issue 304).
+    let security = runtime.controller_manager().user_controller(owner).await?.security_context(Default::default(), Default::default());
 
     // By name, among those this user may use.
     let template = entity_store.list_session_templates(&security, &Query::all()).await.map(|page| page.items)?.into_iter()

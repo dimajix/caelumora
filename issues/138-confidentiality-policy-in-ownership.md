@@ -63,3 +63,8 @@ ownership and classification separate axes; the policy mixes them.
   binary, such as OPA, states its own rules; `allow_all` stays without any. So the first point of
   *Done when* is met only in substance: the ownership policy still applies the rules, but no longer
   holds them itself; the second is met by this decision.
+- **2026-10-11** — Reversed by step 2b of issue [304](304-review-of-the-permission-concept.md):
+  the flow decisions left the `SecurityManager` for a `ConfidentialityPolicy` of their own, asked
+  beside it, and the ownership policy no longer applies the rules. A superuser who may act against
+  both needs a hook in both, which was accepted. The text above stays as the record of what was
+  decided then.

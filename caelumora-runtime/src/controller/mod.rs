@@ -106,7 +106,13 @@ impl ControllerManager {
             return Ok(controller);
         }
         let agent = self.entity_store.get_agent(&SecurityContext::system(), id).await?;
-        let controller = Arc::new(AgentController::new(agent, Arc::<EventBus>::clone(&self.event_bus), Arc::clone(&self.entity_store)));
+        // Its owner's roles are what it acts with (issue 304): an owner who
+        // is gone leaves it none.
+        let owner = match agent.security_attributes.owner_id {
+            ActorId::User(owner) => self.user_controller(owner).await.optional()?,
+            _ => None,
+        };
+        let controller = Arc::new(AgentController::new(agent, owner, Arc::<EventBus>::clone(&self.event_bus), Arc::clone(&self.entity_store)));
         remember(&mut agents, id, &controller);
         Ok(controller)
     }

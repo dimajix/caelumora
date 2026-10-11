@@ -13,22 +13,22 @@ use crate::transport::{EventSender, TransportError};
 use crate::transport::{FilteringEventSender, InMemoryEventReceiver, InMemoryEventSender, OriginEventSender};
 use anyhow::{anyhow, Result};
 use arc_swap::ArcSwap;
-use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, RetryTarget};
+use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, Rejection, RetryTarget};
 use caelumora_model::channel::{Channel, ChannelId, ChannelState, HistoryAccess, HistoryStart, Participant};
 use crate::controller::{AgentController, ChannelController, ControllerManager, UserController};
 use caelumora_model::agent::{Personality, PersonalityKind};
 use caelumora_model::approval::{ApprovalRule, Approver};
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::role::{user_roles, RoleId};
+use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
+use caelumora_model::role::RoleId;
 use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::question::{QuestionError, QuestionId, Questions};
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::message_history::HistoryEntry;
 use caelumora_model::work::TurnId;
-use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Reclassified, SecurityAttributes, SecurityContext, SecurityManager};
+use caelumora_model::security::{ActionType, Enforcement, Reclassified, SecurityAttributes, SecurityContext, SecurityManager};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::SessionId;
-use caelumora_model::store::{EntityStore, StateStore, StoreError, StoreResultExt};
+use caelumora_model::store::{StateStore, StoreError, StoreResultExt};
 use caelumora_model::user::UserId;
 use tracing::{debug, info, trace, warn, Instrument};
 use std::any::Any;
@@ -184,7 +184,7 @@ impl Member {
             },
         };
         let personality = agent.personality().await?;
-        let context = agent.load().security_context(channel.session_id, channel.id);
+        let context = agent.security_context(channel.session_id, channel.id, personality.limiting_roles());
         security.require(&context, ActionType::GetPersonality(&personality.security_attributes), || StoreError::PermissionDenied).await?;
         Ok(Some(match personality.kind {
             PersonalityKind::Internal => Member::Agent(agent, personality),
@@ -204,25 +204,15 @@ impl Member {
     /// (issues 133, 179): a user's own; an agent's owner's - it must not
     /// see more than the person responsible for it - and, if its
     /// personality limits it, those roles too, which narrow the owner's and
-    /// never widen them. None for an approver. The roles are read from the
-    /// store each time, not from the controllers: they are changed past
-    /// them, at a login.
-    ///
-    /// # Errors
-    /// Whatever reading a user reports, but that they are gone.
-    async fn clearances(&self, store: &dyn EntityStore) -> Result<Vec<Vec<RoleId>>> {
-        match self {
-            Member::User(user) => Ok(vec![user_roles(store, ActorId::User(user.id())).await?]),
-            Member::Agent(agent, personality) | Member::ExternalAgent(agent, personality) => {
-                let owner = agent.load().security_attributes.owner_id;
-                let mut clearances = vec![user_roles(store, owner).await?];
-                if let Some(limit) = personality.limiting_roles() {
-                    clearances.push(limit.to_vec());
-                }
-                Ok(clearances)
-            }
-            Member::Approver(_) => Ok(Vec::new()),
-        }
+    /// never widen them. None for an approver. As the controllers hold them
+    /// now (issues 304, 306), in `session` and `channel`.
+    fn clearances(&self, session: SessionId, channel: ChannelId) -> Vec<Vec<RoleId>> {
+        let context = match self {
+            Member::User(user) => user.security_context(session, channel),
+            Member::Agent(agent, personality) | Member::ExternalAgent(agent, personality) => agent.security_context(session, channel, personality.limiting_roles()),
+            Member::Approver(_) => return Vec::new(),
+        };
+        std::iter::once(context.roles).chain(context.limiting_roles).collect()
     }
 
     /// Nothing if the member may take part in channel `channel_id` of
@@ -241,18 +231,17 @@ impl Member {
     }
 
     /// Nothing if the member is cleared for channel `channel`, classified
-    /// `classification` (`JoinChannel`), by every set of roles that binds
-    /// it - to join it, to take part in it when it is created, or for what
-    /// it would be reclassified to.
+    /// `classification`, by every set of roles that binds it - to join it,
+    /// to take part in it when it is created, or for what it would be
+    /// reclassified to - as `confidentiality` decides, asked in `context`,
+    /// the context of whoever admits it (issue 304).
     ///
     /// # Errors
-    /// `ChannelError::NotCleared` if it is not; whatever reading its roles
-    /// reports.
-    async fn require_cleared(&self, store: &dyn EntityStore, security: &dyn SecurityManager, context: &SecurityContext, classification: &Classification, channel: ChannelId) -> Result<()> {
+    /// `ChannelError::NotCleared` if it is not.
+    fn require_cleared(&self, confidentiality: &dyn ConfidentialityPolicy, context: &SecurityContext, classification: &Classification, session: SessionId, channel: ChannelId) -> Result<()> {
         let participant = self.actor_id();
-        for roles in self.clearances(store).await? {
-            let action = ActionType::JoinChannel { participant, roles: &roles, channel: classification };
-            security.require(context, action, || ChannelError::NotCleared { participant, channel }).await?;
+        for roles in self.clearances(session, channel) {
+            confidentiality.require_cleared(context, participant, &roles, classification, || ChannelError::NotCleared { participant, channel })?;
         }
         Ok(())
     }
@@ -270,7 +259,7 @@ pub(crate) async fn require_admitted(runtime: &RuntimeManager, context: &Securit
     for participant in &channel.participants {
         if let Some(member) = Member::of(participant, channel, runtime.controller_manager(), runtime.security_manager().as_ref()).await? {
             member.require_in_scope(channel.session_id, channel.id)?;
-            member.require_cleared(runtime.entity_store().as_ref(), runtime.security_manager().as_ref(), context, &channel.classification, channel.id).await?;
+            member.require_cleared(runtime.confidentiality().as_ref(), context, &channel.classification, channel.session_id, channel.id)?;
         }
     }
     Ok(())
@@ -322,7 +311,6 @@ async fn stopped(tasks: &[TaskTracker]) -> bool {
 
 /// A change to the actors a running channel runs (issue 46), carried out by
 /// `run`, which owns their tasks.
-#[expect(clippy::large_enum_variant, reason = "a few changes in a channel's life, each taken apart at once")]
 enum ActorChange {
     Start(ChannelActor),
     /// The actor to stop, and on whose behalf it was removed - in whose name
@@ -340,7 +328,7 @@ pub struct ChannelLoop {
     runtime: ChannelRuntime,
     /// The services it works with, taken from `runtime` once (issue 229).
     security: Arc<dyn SecurityManager>,
-    entities: Arc<dyn EntityStore>,
+    confidentiality: Arc<dyn ConfidentialityPolicy>,
     controllers: Arc<ControllerManager>,
     /// The actors of the participants, each with what it was built from -
     /// what a reclassification asks its clearances of; replaced as a whole
@@ -388,8 +376,15 @@ impl ChannelLoop {
         let session_id = channel.session_id;
         let state_store = Arc::clone(runtime.state_store());
         // Its components (issue 174) act on behalf of the channel's owner,
-        // as an agent's act on behalf of its owner.
-        let security_context = SecurityContext::new(channel.security_attributes.owner_id, session_id, id);
+        // as an agent's act on behalf of its owner - with the owner's roles
+        // as they are when it is built (issue 304).
+        let security_context = match channel.security_attributes.owner_id {
+            ActorId::User(owner) => match runtime.controller_manager().user_controller(owner).await.optional()? {
+                Some(owner) => owner.security_context(session_id, id),
+                None => SecurityContext::new(channel.security_attributes.owner_id, session_id, id),
+            },
+            other => SecurityContext::new(other, session_id, id),
+        };
         let components = ComponentContainer::from_config(
             &channel.components,
             runtime.component_registry(),
@@ -420,7 +415,7 @@ impl ChannelLoop {
             session_id,
             channel: channel_controller,
             security: Arc::clone(runtime.security_manager()),
-            entities: Arc::clone(runtime.entity_store()),
+            confidentiality: Arc::clone(runtime.confidentiality()),
             controllers: Arc::clone(runtime.controller_manager()),
             runtime,
             actors: ArcSwap::from_pointee(HashMap::new()),
@@ -620,7 +615,8 @@ impl ChannelLoop {
     }
 
     /// Reclassifies the channel as `classification` on behalf of `context`
-    /// (issue 133): asked as `ActionType::Reclassify`, then stored
+    /// (issue 133): asked as `ActionType::Reclassify` - its owner's -, the
+    /// classification checked as one that can be given at all, then stored
     /// (`UpdateChannel`) and announced. Lowering it releases what is in it:
     /// every message is fitted into the new classification
     /// (`MessageHistory::fit_into`), since the agents in the channel carry
@@ -634,28 +630,26 @@ impl ChannelLoop {
     /// that its turn does not flow into the channel any more and gives it
     /// up (`GivenUpReason::Lowered`) instead of taking it over. Lowered
     /// means: what the channel held, classified as it was, may not be put
-    /// into it as it is now (`AccessQuestions::may_publish`, in `context`'s name).
+    /// into it as it is now (`ConfidentialityPolicy::may_publish`, in
+    /// `context`'s name) - a question, not a permission.
     ///
     /// # Errors
     /// `ChannelError::Forbidden` if `context` may not reclassify the
-    /// channel as asked; whatever storing it reports.
+    /// channel, `ClassificationRefused` if `classification` names
+    /// compartments that are not configured, `NotCleared` if it is raised
+    /// above a participant; whatever storing it reports.
     pub async fn reclassify(&self, context: &SecurityContext, classification: Classification) -> Result<()> {
         let channel = self.classification();
         let attributes = self.security_attributes();
-        let action = ActionType::Reclassify {
-            target: Reclassified::Channel { attributes: &attributes },
-            current: &channel,
-            new: &classification,
-            channel: &channel,
-        };
-        self.require(context, action, "reclassifying").await?;
+        self.require(context, ActionType::Reclassify(Reclassified::Channel { attributes: &attributes }), "reclassifying").await?;
+        self.confidentiality.require_classifiable(&classification, || ChannelError::ClassificationRefused { classification: classification.clone(), channel: self.id })?;
         // Raised above a participant, the channel would show them what they
         // may not see: refused rather than anyone removed.
         for ChannelActor { member, .. } in self.actors.load().values() {
-            member.require_cleared(self.entities.as_ref(), self.security.as_ref(), context, &classification, self.id).await?;
+            member.require_cleared(self.confidentiality.as_ref(), context, &classification, self.session_id, self.id)?;
         }
         self.channel.update_classification(context, classification.clone()).await?;
-        let lowered = !self.security.may_publish(context, context.caller_id, &channel, &classification).await;
+        let lowered = !self.confidentiality.may_publish(context, &channel, &classification);
         if lowered {
             self.cancel_actors();
         }
@@ -690,7 +684,7 @@ impl ChannelLoop {
     /// Adds `participant` - a participant of the session - to the channel on
     /// behalf of `context` (issue 46), seeing as much of the history as
     /// `history` grants. Stored first (`UpdateChannel`, also asked as
-    /// `JoinChannel`), then its actor built and given the part of the
+    /// `ConfidentialityPolicy::cleared`), then its actor built and given the part of the
     /// history it may see (`Actor::catch_up`, issue 190), then started, the
     /// moderator and the mention directory told, and the join announced.
     /// A participant removed shortly before is added only once its old
@@ -716,7 +710,7 @@ impl ChannelLoop {
         let member = self.member_of(&found).await?
             .ok_or(ChannelError::ParticipantGone { participant, channel: self.id })?;
         member.require_in_scope(self.session_id, self.id)?;
-        member.require_cleared(self.entities.as_ref(), self.security.as_ref(), context, &self.classification(), self.id).await?;
+        member.require_cleared(self.confidentiality.as_ref(), context, &self.classification(), self.session_id, self.id)?;
 
         let messages = self.history().await;
         let start = history_start(history, &messages, chrono::Utc::now());
@@ -1242,7 +1236,8 @@ impl ChannelLoop {
         }
         // The full envelope carries message content: trace level only.
         trace!("Envelope: {:?}", event);
-        if !self.admits(&event).await || !self.admits_change(&event).await {
+        if let Err(reason) = self.admission(&event).await {
+            self.reject(&event, reason, running);
             return;
         }
         let event = self.resolve_mentions(event);
@@ -1287,89 +1282,112 @@ impl ChannelLoop {
         RunningActor { id, abort_handle, task, sender: Some(filtered_sender), leaving: None }
     }
 
-    /// Whether every message `event` carries may enter the channel as its
-    /// sender classified it, and every tool result in them as it is
-    /// classified (`AccessQuestions::may_publish`, issue 133): the gate for every
-    /// actor, whatever it checked itself. An event with a part that may not
-    /// is dropped whole, and logged: its sender misclassified it.
-    async fn admits(&self, event: &Envelope) -> bool {
-        let channel = self.classification();
-        for message in event.event.messages() {
-            let parts = std::iter::once(&message.classification).chain(message.tool_results.iter().map(|r| &r.classification));
-            for classification in parts {
-                if !self.security.may_publish(&event.security, event.context.sender_id, classification, &channel).await {
-                    warn!("Dropped {}: a part of its message {} is classified {}, which channel {} does not admit", event.describe(), message.id, classification, self.id);
-                    return false;
-                }
-            }
+    /// Nothing if `event` may enter the channel; why not otherwise (issue
+    /// 304) - the channel's one decision of what enters it, made here, in
+    /// order, against the channel as it is when the event is taken in, so
+    /// that nothing changed between a check and the entry. Actors ask
+    /// nothing for what they send; who sent what is not let in is told
+    /// (`MessageRejected`). Whether whoever sends it may act so is asked
+    /// before the flow of what it carries. Decided:
+    ///
+    /// - a message, by the actor that is acting - only who acts puts
+    ///   something into the channel -, each part of it, the message and its
+    ///   tool results, as it is classified (`ConfidentialityPolicy::
+    ///   may_publish`, issue 133): its sender misclassified what does not
+    ///   flow in;
+    /// - a change of a message (issue 234): the message is in its history,
+    ///   its author - the sender the history names - may change it, and it
+    ///   can be changed so as it stands (`Message::modify`,
+    ///   `Message::revoke`); a reclassification (issue 239) by its author or
+    ///   the channel's owner (`Reclassify`), never above the channel;
+    /// - a request to answer again (`RetryMessage`): of a message an agent
+    ///   said, not taken back, or of an agent taking part;
+    /// - an answer to an agent's questions (`AnswerQuestion`, issue 165) -
+    ///   whether its sender was asked is the agent's to check;
+    /// - a command for an agent (issue 269) comes from a user and names an
+    ///   agent taking part - whether the issuer may ask for it, its actor
+    ///   asked of the agent's commands, and the agent asks again; a nudge
+    ///   (issue 278) comes from a user and names someone else taking part.
+    async fn admission(&self, event: &Envelope) -> Result<(), Rejection> {
+        let context = &event.security;
+        let messages = event.event.messages();
+        if !messages.is_empty() && context.caller_id != event.context.sender_id {
+            return Err(Rejection::Invalid);
         }
-        true
-    }
-
-    /// Whether the change to a message that `event` carries, if any, may
-    /// enter the channel (issue 234): the message is in its history, its
-    /// author - the sender the history names - may change it, as the policy
-    /// says in the envelope's context, and it can be changed so as it stands
-    /// (`Message::modify`, `Message::revoke`): not taken back, and modified
-    /// by its own sender in its own role. A reclassification (issue 239)
-    /// likewise, but by its author or the channel's owner, as the policy
-    /// says (`may_reclassify`), never above the channel. A request to
-    /// answer again, too:
-    /// its sender may ask it (`may_retry_message`), and it names the agent
-    /// that said the message, not taken back, as its author. A command for
-    /// an agent (issue 269) comes from a user and names an agent taking part;
-    /// a nudge (issue 278) from a user, and names someone else taking part.
-    /// The gate for every actor, whatever it checked
-    /// itself; anything else is dropped, and logged.
-    async fn admits_change(&self, event: &Envelope) -> bool {
+        let classification = self.classification();
         let channel = self.security_attributes();
-        let admitted = match &event.event {
-            ActorEvent::MessageModified(modified) => match self.message(modified.id).await {
-                Some(mut message) => self.security.may_modify_message(&event.security, message.sender_id, &channel).await && message.modify(modified),
-                None => false,
-            },
-            ActorEvent::MessageRevoked { message, at } => match self.message(*message).await {
-                Some(mut message) => self.security.may_revoke_message(&event.security, message.sender_id, &channel).await && message.revoke(*at),
-                None => false,
-            },
-            ActorEvent::MessageReclassified { message, classification } => match self.message(*message).await {
-                Some(mut said) => {
-                    let current = said.classification.clone();
-                    let target = Reclassified::Message { author: said.sender_id, attributes: &channel };
-                    self.security.may_reclassify(&event.security, target, &current, classification, &self.classification()).await
-                        && said.reclassify(classification)
+        let forbidden = || Rejection::Forbidden;
+        match &event.event {
+            ActorEvent::MessageModified(modified) => {
+                let mut message = self.message(modified.id).await.ok_or(Rejection::MessageNotFound)?;
+                self.security.require(context, ActionType::ModifyMessage { author: message.sender_id, channel: &channel }, forbidden).await?;
+                message.modify(modified).then_some(()).ok_or(Rejection::MessageUnchangeable)
+            }
+            ActorEvent::MessageRevoked { message, at } => {
+                let mut message = self.message(*message).await.ok_or(Rejection::MessageNotFound)?;
+                self.security.require(context, ActionType::RevokeMessage { author: message.sender_id, channel: &channel }, forbidden).await?;
+                message.revoke(*at).then_some(()).ok_or(Rejection::MessageUnchangeable)
+            }
+            ActorEvent::MessageReclassified { message, classification: new } => {
+                let mut said = self.message(*message).await.ok_or(Rejection::MessageNotFound)?;
+                let target = Reclassified::Message { author: said.sender_id, attributes: &channel };
+                self.security.require(context, ActionType::Reclassify(target), forbidden).await?;
+                self.confidentiality.require_publish(context, new, &classification, || Rejection::ClassificationRefused)?;
+                said.reclassify(new).then_some(()).ok_or(Rejection::MessageUnchangeable)
+            }
+            ActorEvent::RetryRequested { target: RetryTarget::Message(message), author } => {
+                let message = self.message(*message).await.ok_or(Rejection::MessageNotFound)?;
+                self.security.require(context, ActionType::RetryMessage(&channel), forbidden).await?;
+                if message.revoked.is_some() {
+                    return Err(Rejection::MessageUnchangeable);
                 }
-                None => false,
-            },
-            ActorEvent::RetryRequested { target: RetryTarget::Message(message), author } => match self.message(*message).await {
-                Some(message) => self.security.may_retry_message(&event.security, &channel).await
-                    && message.sender_id == *author && author.as_agent_id().is_some() && message.revoked.is_none(),
-                None => false,
-            },
+                (message.sender_id == *author && author.as_agent_id().is_some()).then_some(()).ok_or(Rejection::Invalid)
+            }
             // Whether the turn is still under way is decided as the request
             // is delivered, where the turn is ended (`route_event_impl`).
             ActorEvent::RetryRequested { target: RetryTarget::Turn(_), author } => {
-                self.security.may_retry_message(&event.security, &channel).await
-                    && author.as_agent_id().is_some() && self.actor_by_id(*author).is_some()
+                self.security.require(context, ActionType::RetryMessage(&channel), forbidden).await?;
+                (author.as_agent_id().is_some() && self.actor_by_id(*author).is_some()).then_some(()).ok_or(Rejection::Invalid)
             }
-            // A command for an agent (issue 269): from a user, to an agent
-            // taking part. Whether the issuer may ask for it was asked by
-            // their actor and is asked again by the agent.
+            ActorEvent::QuestionAnswered { .. } | ActorEvent::QuestionDeclined { .. } => {
+                self.security.require(context, ActionType::AnswerQuestion(&channel), forbidden).await
+            }
             ActorEvent::CommandRequested { agent, .. } => {
-                event.context.sender_id.as_user_id().is_some() && agent.as_agent_id().is_some() && self.actor_by_id(*agent).is_some()
+                (event.context.sender_id.as_user_id().is_some() && agent.as_agent_id().is_some() && self.actor_by_id(*agent).is_some())
+                    .then_some(()).ok_or(Rejection::Invalid)
             }
-            // A nudge (issue 278): from a user, to someone else taking part.
             // It asks nothing of the policy beyond what a message does - an
             // `@`-mention asks the same.
             ActorEvent::NudgeRequested { participant } => {
-                event.context.sender_id.as_user_id().is_some() && *participant != event.context.sender_id && self.actor_by_id(*participant).is_some()
+                (event.context.sender_id.as_user_id().is_some() && *participant != event.context.sender_id && self.actor_by_id(*participant).is_some())
+                    .then_some(()).ok_or(Rejection::Invalid)
             }
-            _ => return true,
-        };
-        if !admitted {
-            warn!("Dropped {}: the message is not one of channel {} its sender may change so", event.describe(), self.id);
+            _ => Ok(()),
+        }?;
+        for message in messages {
+            let parts = std::iter::once(&message.classification).chain(message.tool_results.iter().map(|r| &r.classification));
+            for part in parts {
+                self.confidentiality.require_publish(context, part, &classification, || Rejection::ClassificationRefused)?;
+            }
         }
-        admitted
+        Ok(())
+    }
+
+    /// Tells the sender of `event`, which the channel did not let in, why
+    /// (`MessageRejected`, issue 304) - it alone, in the channel's name; not
+    /// one that left, whose inbox is closed.
+    fn reject(&self, event: &Envelope, reason: Rejection, running: &HashMap<ActorId, RunningActor>) {
+        warn!("Dropped {}: {}", event.describe(), reason);
+        let sender = event.context.sender_id;
+        let Some(inbox) = running.get(&sender).and_then(|actor| actor.sender.as_ref()) else { return };
+        let mut context = EventContext::new(self.session_id, self.id, ActorId::System, ActorId::System.to_string());
+        context.span_id = event.context.span_id;
+        context.correlation_id = event.context.event_id;
+        let rejected = ActorEvent::MessageRejected { rejected: event.event.kind().to_string(), message: event.event.subject_message(), reason };
+        let envelope = Envelope::new(SecurityContext::system(), context, rejected);
+        if let Err(e) = inbox.try_send(envelope) {
+            warn!("Could not tell {} that channel {} did not let in what it sent: {:?}", sender, self.id, e);
+        }
     }
 
     /// The participants `text` mentions by their `@`-handles, as the channel
@@ -1541,7 +1559,7 @@ impl ChannelLoop {
                 });
                 true
             }
-            // Admitted, so they apply (`admits_change`, issue 234).
+            // Admitted, so they apply (`admission`, issues 234, 304).
             ActorEvent::MessageModified(modified) => state.history.modify(modified.clone()),
             ActorEvent::MessageRevoked { message, at } => state.history.revoke(*message, *at),
             ActorEvent::MessageReclassified { message, classification } => state.history.reclassify(*message, classification.clone()),
@@ -1706,7 +1724,7 @@ mod tests {
     /// A channel of `participants` with `components`, built by `registry`.
     async fn channel_built(store: Arc<MemoryStore>, participants: Vec<Participant>, security: Arc<dyn SecurityManager>, registry: crate::component::ComponentRegistry, components: caelumora_model::component::ComponentConfig) -> Arc<ChannelLoop> {
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&security)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, security, &caelumora_model::config::AppConfig::default(), registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, security, Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig::default(), registry).unwrap());
         let channel = Channel {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
@@ -1861,7 +1879,7 @@ mod tests {
     async fn help_answers_the_issuer_alone_and_lists_what_they_may_see() {
         let alice = user("alice");
         // `/wakeup` is hidden from everybody.
-        let policy = Policy(|action| !matches!(action, ActionType::ShowCommand("wakeup")));
+        let policy = Policy(|action| !matches!(action, ActionType::ShowCommand { command, .. } if command.name == "wakeup"));
         let channel = channel_with(&[&alice], Arc::new(policy)).await;
         let actor = channel.user_actor(alice.id).unwrap();
         let mut events = channel.observe();
@@ -1926,7 +1944,7 @@ mod tests {
         assert!(matches!(command_error(&error), crate::command::CommandError::Forbidden(_)), "{error}");
         assert!(crate::error::is_forbidden(&error), "{error}");
 
-        let refuse_running = Policy(|action| !matches!(action, ActionType::ExecuteCommand("wakeup")));
+        let refuse_running = Policy(|action| !matches!(action, ActionType::ExecuteCommand { command, .. } if command.name == "wakeup"));
         let channel = channel_with(&[&alice], Arc::new(refuse_running)).await;
         let actor = channel.user_actor(alice.id).unwrap();
         let error = actor.execute_command("wakeup", "").await.expect_err("running it is refused");
@@ -2404,31 +2422,64 @@ mod tests {
         use caelumora_model::security::OwnershipSecurityManager;
         let (alice, bob) = (user("alice"), user("bob"));
         let channel = channel_with(&[&alice, &bob], Arc::new(OwnershipSecurityManager::new())).await;
-        let alice_id = ActorId::User(alice.id);
+        let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(bob.id));
         let said = Message { id: MessageId::new(), sender_id: alice_id, role: caelumora_model::message::MessageRole::User, content: Some("helo".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
-        let from_alice = |event| Envelope::new(SecurityContext::new(alice_id, Default::default(), Default::default()), EventContext { sender_id: alice_id, ..EventContext::default() }, event);
-        channel.process_envelope(from_alice(ActorEvent::CompleteMessageGenerated(said.clone())), &HashMap::new()).await;
+        let from = |sender: ActorId, event| Envelope::new(SecurityContext::new(sender, Default::default(), Default::default()), EventContext { sender_id: sender, ..EventContext::default() }, event);
+        let (to_alice, mut alices) = mpsc::channel(16);
+        let (to_bob, mut bobs) = mpsc::channel(16);
+        let running = |id: ActorId, tx| (id, RunningActor { id, abort_handle: tokio::spawn(async {}).abort_handle(), task: TaskTracker::new(), sender: Some(Box::new(InMemoryEventSender::new(tx))), leaving: None });
+        let actors = HashMap::from([running(alice_id, to_alice), running(bob_id, to_bob)]);
+        let rejected = |rx: &mut mpsc::Receiver<Envelope>| {
+            let mut rejections = Vec::new();
+            while let Ok(envelope) = rx.try_recv() {
+                if let ActorEvent::MessageRejected { rejected, message, reason } = envelope.event {
+                    assert_eq!(envelope.context.sender_id, ActorId::System, "in the channel's name");
+                    rejections.push((rejected, message, reason));
+                }
+            }
+            rejections
+        };
+        channel.process_envelope(from(alice_id, ActorEvent::CompleteMessageGenerated(said.clone())), &actors).await;
+
+        // What the channel does not let in, it tells its sender alone, and
+        // why (issue 304).
+        let above = Classification::general(caelumora_model::confidentiality::Confidentiality::Confidential);
+        let modified = |content: &str, classification: &Classification| ActorEvent::MessageModified(Message { content: Some(content.to_string()), classification: classification.clone(), ..said.clone() });
+        let reclassified = |classification: &Classification| ActorEvent::MessageReclassified { message: said.id, classification: classification.clone() };
+        let revoked = |message| ActorEvent::MessageRevoked { message, at: chrono::Utc::now() };
+        channel.process_envelope(from(bob_id, modified("bob's", &Classification::CHANNEL_DEFAULT)), &actors).await;
+        channel.process_envelope(from(bob_id, revoked(said.id)), &actors).await;
+        channel.process_envelope(from(bob_id, reclassified(&Classification::PUBLIC)), &actors).await;
+        let kind = |rejected: &str, reason| (rejected.to_string(), Some(said.id), reason);
+        assert_eq!(rejected(&mut bobs), [kind("MessageModified", Rejection::Forbidden), kind("MessageRevoked", Rejection::Forbidden), kind("MessageReclassified", Rejection::Forbidden)], "not his");
+        let never = MessageId::new();
+        channel.process_envelope(from(alice_id, revoked(never)), &actors).await;
+        channel.process_envelope(from(alice_id, modified("hello", &above)), &actors).await;
+        channel.process_envelope(from(alice_id, reclassified(&above)), &actors).await;
+        let secret = Message { id: MessageId::new(), ..Message::new(above.clone()) };
+        channel.process_envelope(from(alice_id, ActorEvent::CompleteMessageGenerated(secret.clone())), &actors).await;
+        assert_eq!(rejected(&mut alices), [
+            ("MessageRevoked".to_string(), Some(never), Rejection::MessageNotFound),
+            kind("MessageModified", Rejection::ClassificationRefused),
+            kind("MessageReclassified", Rejection::ClassificationRefused),
+            ("CompleteMessageGenerated".to_string(), Some(secret.id), Rejection::ClassificationRefused),
+        ], "never said, and never above the channel - the flow, not her permission");
+        assert!(rejected(&mut bobs).is_empty(), "nor is anyone else told");
+        channel.process_envelope(from(alice_id, revoked(said.id)), &actors).await;
+        channel.process_envelope(from(alice_id, modified("hello", &Classification::CHANNEL_DEFAULT)), &actors).await;
+        assert_eq!(rejected(&mut alices), [kind("MessageModified", Rejection::MessageUnchangeable)], "taken back, it stays so");
+
+        // Her actor looks at what it can see at once, and asks nothing of the
+        // policy: that is the channel's.
         let (hers, his) = (channel.user_actor(alice.id).unwrap(), channel.user_actor(bob.id).unwrap());
         let error = |result: anyhow::Result<uuid::Uuid>| result.expect_err("refused").downcast::<ChannelError>().expect("a channel's error");
-
-        assert!(matches!(error(his.modify_message(said.id, "bob's".to_string(), None).await), ChannelError::Forbidden { .. }), "not his");
-        assert!(matches!(error(his.revoke_message(said.id).await), ChannelError::Forbidden { .. }), "not his to take back");
+        his.reclassify_message(MessageId::new(), Classification::PUBLIC).await.expect_err("never said");
         assert!(matches!(error(hers.revoke_message(MessageId::new()).await), ChannelError::MessageNotFound { .. }), "never said");
-        let above = Classification::general(caelumora_model::confidentiality::Confidentiality::Confidential);
-        assert!(matches!(error(hers.modify_message(said.id, "hello".to_string(), Some(above.clone())).await), ChannelError::ClassificationRefused { .. }), "not above the channel");
-        assert!(matches!(error(hers.request_retry(said.id).await), ChannelError::NotAnAgentsMessage { .. }), "no agent said it");
+        assert!(matches!(error(hers.modify_message(said.id, "hello".to_string(), None).await), ChannelError::MessageRevoked { .. }), "taken back");
+        assert!(matches!(error(hers.reclassify_message(said.id, Classification::PUBLIC).await), ChannelError::MessageRevoked { .. }), "with nothing left to release");
+        assert!(matches!(error(his.request_retry(said.id).await), ChannelError::MessageRevoked { .. }));
         assert!(matches!(error(his.request_retry(MessageId::new()).await), ChannelError::MessageNotFound { .. }));
         assert!(matches!(error(his.request_retry_of_turn(alice_id, TurnId::new()).await), ChannelError::NotAParticipant { .. }), "no agent answers here");
-        assert!(matches!(error(his.reclassify_message(said.id, Classification::PUBLIC).await), ChannelError::Forbidden { .. }), "not his to release");
-        assert!(matches!(error(hers.reclassify_message(said.id, above.clone()).await), ChannelError::Forbidden { .. }), "never above the channel");
-        assert!(matches!(error(hers.reclassify_message(MessageId::new(), Classification::PUBLIC).await), ChannelError::MessageNotFound { .. }));
-        hers.modify_message(said.id, "hello".to_string(), None).await.expect("hers to modify");
-        hers.reclassify_message(said.id, Classification::PUBLIC).await.expect("and to release");
-        hers.revoke_message(said.id).await.expect("and to take back");
-
-        channel.process_envelope(from_alice(ActorEvent::MessageRevoked { message: said.id, at: chrono::Utc::now() }), &HashMap::new()).await;
-        assert!(matches!(error(hers.modify_message(said.id, "hello".to_string(), None).await), ChannelError::MessageRevoked { .. }), "taken back, it stays so");
-        assert!(matches!(error(hers.reclassify_message(said.id, Classification::PUBLIC).await), ChannelError::MessageRevoked { .. }), "with nothing left to release");
     }
 
     #[tokio::test]
@@ -2780,7 +2831,7 @@ mod tests {
                 fail_policy: Default::default(),
             }],
         };
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store, secrets, security, &caelumora_model::config::AppConfig { component_defaults: defaults, ..Default::default() }, registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store, secrets, security, Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig { component_defaults: defaults, ..Default::default() }, registry).unwrap());
         let channel = Channel {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
@@ -3441,22 +3492,6 @@ mod tests {
         running.abort();
     }
 
-    /// A policy that permits everything, but puts into a channel only what
-    /// flows into it (`ActionType::Publish`) - what lowering a channel is
-    /// judged by.
-    #[derive(Debug)]
-    struct FlowRule;
-
-    #[async_trait::async_trait]
-    impl SecurityManager for FlowRule {
-        async fn check(&self, _context: &SecurityContext, action: ActionType<'_>) -> bool {
-            match action {
-                ActionType::Publish { classification, channel, .. } => classification.flows_to(channel, &Default::default()),
-                _ => true,
-            }
-        }
-    }
-
     /// What the model of the agent whose state is `stored` is given next:
     /// its transcript as it stands, resolved as a turn's context is.
     fn given_next(stored: &caelumora_model::agent::AgentChannelState, agent: caelumora_model::agent::AgentId) -> Vec<Message> {
@@ -3520,7 +3555,7 @@ mod tests {
         // ever.
         let (calculate, components) = calculator();
         let Stuck { channel, context, agent, helper, mut events, running } =
-            with_an_agent_under(Arc::new(FlowRule), Arc::new(Scripted(std::sync::Mutex::new([calculate.clone()].into()))), components).await;
+            with_an_agent_under(Arc::new(caelumora_model::security::DummySecurityManager::new()), Arc::new(Scripted(std::sync::Mutex::new([calculate.clone()].into()))), components).await;
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
@@ -3566,7 +3601,7 @@ mod tests {
         // Nobody approves the call.
         let (call, components) = a_call_needing_approval();
         let Stuck { channel, context, agent, helper, mut events, running } =
-            with_an_agent_under(Arc::new(FlowRule), Arc::new(Scripted(std::sync::Mutex::new([call].into()))), components).await;
+            with_an_agent_under(Arc::new(caelumora_model::security::DummySecurityManager::new()), Arc::new(Scripted(std::sync::Mutex::new([call].into()))), components).await;
         settled(&helper, ActorState::WaitingForUser).await;
 
         channel.reclassify(&context, Classification::general(Confidentiality::Public)).await.expect("permitted");
@@ -3579,7 +3614,7 @@ mod tests {
     #[tokio::test]
     async fn raising_the_channel_lets_a_running_turn_go_on() {
         use caelumora_model::confidentiality::Confidentiality;
-        let stuck = with_an_agent_under(Arc::new(FlowRule), Arc::new(NeverAnswers), Default::default()).await;
+        let stuck = with_an_agent_under(Arc::new(caelumora_model::security::DummySecurityManager::new()), Arc::new(NeverAnswers), Default::default()).await;
         settled(&stuck.helper, ActorState::Planning).await;
 
         stuck.channel.reclassify(&stuck.context, Classification::general(Confidentiality::Confidential)).await.expect("permitted");
@@ -4204,7 +4239,7 @@ mod tests {
         store.create_user(&SecurityContext::system(), &alice).await.unwrap();
         store.create_agent(&SecurityContext::system(), &agent).await.unwrap();
 
-        let security: Arc<dyn SecurityManager> = Arc::new(FlowRule);
+        let security: Arc<dyn SecurityManager> = Arc::new(caelumora_model::security::DummySecurityManager::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&security)));
         let mut registry = crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
         registry.register(
@@ -4218,7 +4253,7 @@ mod tests {
         register_no_secrets(&mut registry);
         register_heard(&mut registry);
         register_marking_command(&mut registry);
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store, secrets, security, &caelumora_model::config::AppConfig::default(), registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store, secrets, security, Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig::default(), registry).unwrap());
         let channel = Channel {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
@@ -4362,6 +4397,11 @@ mod tests {
     /// out `/mark`, idle after it answered alice's "hello" - or asleep, if
     /// it said good-bye.
     async fn with_a_marking_agent(asleep: bool) -> Stuck {
+        with_a_marking_agent_under(Arc::new(DummySecurityManager::new()), asleep).await
+    }
+
+    /// `with_a_marking_agent`, under `security`.
+    async fn with_a_marking_agent_under(security: Arc<dyn SecurityManager>, asleep: bool) -> Stuck {
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         use caelumora_model::message::MessageRole;
         use caelumora_model::tool::{ToolCall, ToolVisibility};
@@ -4376,7 +4416,7 @@ mod tests {
             ComponentDescriptor::new("marking", "test_marking"),
             ComponentDescriptor::new("stop", crate::tool::stop_tool::STOP_TOOL_KIND),
         ] };
-        let mut stuck = with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([hi].into()))), components).await;
+        let mut stuck = with_an_agent_under(security, Arc::new(Scripted(std::sync::Mutex::new([hi].into()))), components).await;
         answered(&mut stuck.events, stuck.agent).await;
         settled(&stuck.helper, if asleep { ActorState::Sleeping } else { ActorState::Idle }).await;
         stuck
@@ -4436,6 +4476,29 @@ mod tests {
         assert!(recorded, "the channel's history records what was carried out, and on whose word");
         assert_eq!(told_states(&mut watch.events, agent, ActorState::Idle).await, [ActorState::Idle], "idle again after, and no answer begun");
         assert_eq!(helper.state(), ActorState::Idle);
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn a_command_its_issuer_may_see_but_not_ask_for_is_refused_by_the_agent_alone() {
+        let seen_not_asked = Policy(|action| !matches!(action, ActionType::ExecuteAgentCommand { .. }));
+        let Stuck { channel, context, agent, running, .. } = with_a_marking_agent_under(Arc::new(seen_not_asked), false).await;
+        let alice = alice_of(&context);
+        let actor = channel.user_actor(alice).unwrap();
+        let mut watch = actor.watch();
+        let before = channel.state.lock().await.history.items().len();
+
+        // Her actor finds the agent by what she sees and asks nothing more:
+        // the agent decides, once, as it carries it out (issue 304).
+        let reply = actor.execute_command("mark", "@helper twice").await.expect("sent: the agent decides");
+        assert!(reply.output.is_none() && reply.span_id.is_some(), "{reply:?}");
+        let (started, _, answer) = command_events(&mut watch).await;
+        assert!(started.is_none(), "never begun");
+        let ActorEvent::CommandFailed { command, to, turn_id, .. } = answer.event else { panic!("refused, not {:?}", answer.event) };
+        assert_eq!((command.as_str(), to, turn_id), ("mark", ActorId::User(alice), None), "to her alone");
+        let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+        assert!(state.notes.current().is_empty() && state.turn.is_none(), "nothing staged, no turn left");
+        assert_eq!(channel.state.lock().await.history.items().len(), before, "nothing in the channel's history");
         running.abort();
     }
 

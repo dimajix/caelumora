@@ -7,14 +7,18 @@
 //! by the one flow rule, `Classification::flows_to`, from the
 //! classifications involved alone - not by who takes part in a channel at
 //! the moment, so that a decision stays the same when someone joins or
-//! leaves. The `SecurityManager` makes the decisions; the rule is here, and
-//! `ConfidentialityRules` applies it for a policy that uses it.
+//! leaves. The decisions are a `ConfidentialityPolicy`'s, apart from who may
+//! do what (`SecurityManager`) and asked beside it (issue 304);
+//! `ConfidentialityRules` is the one Caelumora applies.
 //!
 //! Whether anyone but an actor's owner sees something at all is a separate
 //! axis, `Visibility`: ownership, not sensitivity.
 
+use crate::actor::ActorId;
+use crate::privacy::SessionPrivacy;
 use crate::role::{RoleId, Roles};
-use crate::security::Place;
+use crate::security::SecurityContext;
+use crate::session::ChannelId;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -380,14 +384,142 @@ impl Clearances {
     }
 }
 
+/// One side of a copy (`ConfidentialityPolicy::may_copy`): a channel, the
+/// classification of what is read there or of the channel that reads, and
+/// the session it belongs to as privacy sees it (issue 134). Whether two
+/// places are one channel, or in one session, is told by their ids.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Place {
+    pub channel: ChannelId,
+    pub classification: Classification,
+    pub session: SessionPrivacy,
+}
+
+/// The flow decisions (issues 133, 304): whether information may go where
+/// an act takes it, and whether someone is cleared for it - apart from who
+/// may do what, which is the `SecurityManager`'s, and asked beside it, after
+/// the act's own permission. Each is decided from the context, the
+/// classifications and the places it is given alone; nothing is looked up
+/// while it is made. `ConfidentialityRules` is the policy Caelumora applies;
+/// one defined outside the binary (issue 24) states its own.
+pub trait ConfidentialityPolicy: fmt::Debug + Send + Sync {
+    /// Whether what is classified `classification` may be put, in
+    /// `context`, into a destination classified `into` - a channel's
+    /// history, an agent's context, a storage that keeps it.
+    fn may_publish(&self, context: &SecurityContext, classification: &Classification, into: &Classification) -> bool;
+
+    /// Whether what lies at `from` may be copied, in `context`, to `into`,
+    /// where an agent reads it (issues 17, 134, 264).
+    fn may_copy(&self, context: &SecurityContext, from: &Place, into: &Place) -> bool;
+
+    /// Whether `participant`, by `roles`, is cleared for what is classified
+    /// `classification` - asked in `context`, which may be another's: whoever
+    /// admits the participant.
+    fn cleared(&self, context: &SecurityContext, participant: ActorId, roles: &[RoleId], classification: &Classification) -> bool;
+
+    /// The configured compartments: what a classification may name. Giving
+    /// one that names others is invalid, not refused (`require_classifiable`).
+    fn compartments(&self) -> &Compartments;
+
+    /// The configured roles, by which ids and names are translated; `None`
+    /// where clearances are not checked.
+    fn roles(&self) -> Option<&Roles>;
+}
+
+/// The questions asked of a `ConfidentialityPolicy`, each with its name and
+/// in one place, as `AccessQuestions` and `Enforcement` are of a
+/// `SecurityManager`: the `may_*` to decide what to offer, the `require_*`
+/// for an act, answering a refusal with the act's own error and logging it
+/// alike (issue 304).
+pub trait ConfidentialityQuestions {
+    /// Whether what is at `from` may be copied to `into` in `context`: a
+    /// channel into itself always, without asking.
+    fn may_copy_information(&self, context: &SecurityContext, from: &Place, into: &Place) -> bool;
+
+    /// Whether `context` is cleared for `classification` by its roles - and,
+    /// for a caller limited to roles, by those as well (issue 179): what
+    /// decides which channels, and what else classified, a viewer is shown.
+    fn cleared_for(&self, context: &SecurityContext, classification: &Classification) -> bool;
+
+    /// Nothing if what is classified `classification` may be put into a
+    /// destination classified `into`; `refusal` otherwise.
+    ///
+    /// # Errors
+    /// `refusal()` if it may not.
+    fn require_publish<E>(&self, context: &SecurityContext, classification: &Classification, into: &Classification, refusal: impl FnOnce() -> E) -> Result<(), E>;
+
+    /// Nothing if `participant`, by `roles`, is cleared for `classification`;
+    /// `refusal` otherwise.
+    ///
+    /// # Errors
+    /// `refusal()` if they are not.
+    fn require_cleared<E>(&self, context: &SecurityContext, participant: ActorId, roles: &[RoleId], classification: &Classification, refusal: impl FnOnce() -> E) -> Result<(), E>;
+
+    /// Nothing if `context` is cleared for `classification` (`cleared_for`);
+    /// `refusal` otherwise.
+    ///
+    /// # Errors
+    /// `refusal()` if it is not.
+    fn require_cleared_for<E>(&self, context: &SecurityContext, classification: &Classification, refusal: impl FnOnce() -> E) -> Result<(), E>;
+
+    /// Nothing if `classification` names only configured compartments;
+    /// `invalid` otherwise - a classification that cannot be given at all,
+    /// which no permission changes.
+    ///
+    /// # Errors
+    /// `invalid()` if it is not.
+    fn require_classifiable<E>(&self, classification: &Classification, invalid: impl FnOnce() -> E) -> Result<(), E>;
+}
+
+impl<T: ConfidentialityPolicy + ?Sized> ConfidentialityQuestions for T {
+    fn may_copy_information(&self, context: &SecurityContext, from: &Place, into: &Place) -> bool {
+        from.channel == into.channel || self.may_copy(context, from, into)
+    }
+
+    fn cleared_for(&self, context: &SecurityContext, classification: &Classification) -> bool {
+        let participant = context.principal_id;
+        self.cleared(context, participant, &context.roles, classification)
+            && context.limiting_roles.as_ref().is_none_or(|limit| self.cleared(context, participant, limit, classification))
+    }
+
+    fn require_publish<E>(&self, context: &SecurityContext, classification: &Classification, into: &Classification, refusal: impl FnOnce() -> E) -> Result<(), E> {
+        refused(self.may_publish(context, classification, into), context, || format!("publishing {classification} into {into}"), refusal)
+    }
+
+    fn require_cleared<E>(&self, context: &SecurityContext, participant: ActorId, roles: &[RoleId], classification: &Classification, refusal: impl FnOnce() -> E) -> Result<(), E> {
+        refused(self.cleared(context, participant, roles, classification), context, || format!("{participant} not cleared for {classification}"), refusal)
+    }
+
+    fn require_cleared_for<E>(&self, context: &SecurityContext, classification: &Classification, refusal: impl FnOnce() -> E) -> Result<(), E> {
+        refused(self.cleared_for(context, classification), context, || format!("not cleared for {classification}"), refusal)
+    }
+
+    fn require_classifiable<E>(&self, classification: &Classification, invalid: impl FnOnce() -> E) -> Result<(), E> {
+        match self.compartments().check(classification) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                tracing::debug!("Refused to classify as {classification}: {e}");
+                Err(invalid())
+            }
+        }
+    }
+}
+
+/// `Ok` if `allowed`, else `refusal()`, logged at `debug!` by what
+/// `describe` names - never content.
+fn refused<E>(allowed: bool, context: &SecurityContext, describe: impl FnOnce() -> String, refusal: impl FnOnce() -> E) -> Result<(), E> {
+    if allowed {
+        return Ok(());
+    }
+    tracing::debug!("Refused {} for {} as {}", describe(), context.principal_id, context.caller_id);
+    Err(refusal())
+}
+
 /// The confidentiality rules as Caelumora applies them (issue 133): the
 /// flow rule with the configured compartments, the session's consent to
 /// being read from beyond it (issue 134), and the clearances of the
-/// configured roles. A building block for a policy, not a policy of its
-/// own: where confidentiality and ownership meet - who may release what
-/// they write, who may act against the rules - is the policy's to decide,
-/// so a policy uses these rules, replaces them, or overrides them (issue
-/// 138).
+/// configured roles - the `ConfidentialityPolicy` of every configuration
+/// (issue 304).
 #[derive(Debug, Clone, Default)]
 pub struct ConfidentialityRules {
     compartments: Compartments,
@@ -406,17 +538,19 @@ impl ConfidentialityRules {
     pub fn with_roles(self, roles: Roles) -> Self {
         Self { roles: Some(roles), ..self }
     }
+}
 
-    /// The configured roles; `None` where clearances are not checked.
-    pub fn roles(&self) -> Option<&Roles> {
-        self.roles.as_ref()
+impl ConfidentialityPolicy for ConfidentialityRules {
+    /// If it names only configured compartments and flows into `into`.
+    fn may_publish(&self, _context: &SecurityContext, classification: &Classification, into: &Classification) -> bool {
+        self.compartments.check(classification).is_ok() && classification.flows_to(into, &self.compartments)
     }
 
-    /// Whether what is at `from` may be copied into `into` (issue 264): a
-    /// channel into itself always; within a session as the classifications
-    /// decide; beyond it only where the session of `from` permits it as
-    /// well (issue 134) - whatever the classification, `public` included.
-    pub fn may_copy(&self, from: &Place, into: &Place) -> bool {
+    /// A channel into itself always; within a session as the
+    /// classifications decide; beyond it only where the session of `from`
+    /// permits it as well (issue 134) - whatever the classification,
+    /// `public` included.
+    fn may_copy(&self, _context: &SecurityContext, from: &Place, into: &Place) -> bool {
         if from.channel == into.channel {
             return true;
         }
@@ -424,26 +558,21 @@ impl ConfidentialityRules {
         consented && from.classification.flows_to(&into.classification, &self.compartments)
     }
 
-    /// Whether `classification` may be given at all: if its compartments
-    /// are configured.
-    pub fn may_classify(&self, classification: &Classification) -> bool {
-        self.compartments.check(classification).is_ok()
-    }
-
-    /// Whether what is classified `classification` may be put into a
-    /// channel classified `channel`: if it may be given and flows into the
-    /// channel.
-    pub fn may_publish(&self, classification: &Classification, channel: &Classification) -> bool {
-        self.may_classify(classification) && classification.flows_to(channel, &self.compartments)
-    }
-
-    /// Whether someone with `roles` is cleared for what is classified
-    /// `classification`. Without roles configured, everybody is.
-    pub fn cleared(&self, roles: &[RoleId], classification: &Classification) -> bool {
+    /// By the clearances the configured roles grant. Without roles
+    /// configured, everybody is.
+    fn cleared(&self, _context: &SecurityContext, _participant: ActorId, roles: &[RoleId], classification: &Classification) -> bool {
         match &self.roles {
             Some(configured) => configured.clearances_of(roles).admits(classification, &self.compartments),
             None => true,
         }
+    }
+
+    fn compartments(&self) -> &Compartments {
+        &self.compartments
+    }
+
+    fn roles(&self) -> Option<&Roles> {
+        self.roles.as_ref()
     }
 }
 
@@ -652,18 +781,140 @@ mod tests {
     #[test]
     fn the_rules_give_only_configured_compartments_and_check_clearances_only_with_roles() {
         let rules = ConfidentialityRules::new(organisation());
-        assert!(rules.may_classify(&classified(Internal, &["hr"])) && !rules.may_classify(&classified(Internal, &["hrr"])));
-        assert!(rules.may_publish(&classified(Internal, &["hr"]), &classified(Confidential, &["hr_management"])));
-        assert!(!rules.may_publish(&classified(Internal, &["hrr"]), &classified(Internal, &["hrr"])), "not configured, though it would flow");
-        assert!(!rules.may_publish(&classified(Confidential, &["hr"]), &classified(Internal, &["hr"])), "it would not flow");
+        let anyone = SecurityContext::default();
+        let classifiable = |c: &Classification| rules.require_classifiable(c, || ()).is_ok();
+        assert!(classifiable(&classified(Internal, &["hr"])) && !classifiable(&classified(Internal, &["hrr"])));
+        assert!(rules.may_publish(&anyone, &classified(Internal, &["hr"]), &classified(Confidential, &["hr_management"])));
+        assert!(!rules.may_publish(&anyone, &classified(Internal, &["hrr"]), &classified(Internal, &["hrr"])), "not configured, though it would flow");
+        assert!(!rules.may_publish(&anyone, &classified(Confidential, &["hr"]), &classified(Internal, &["hr"])), "it would not flow");
 
         let secret = classified(Confidential, &["hr"]);
-        assert!(rules.cleared(&[], &secret), "without roles, clearances are not checked");
+        let nobody = ActorId::None;
+        assert!(rules.cleared(&anyone, nobody, &[], &secret), "without roles, clearances are not checked");
         let hr = RoleId::new();
         let roles = Roles::new([(hr, "hr".to_string(), vec![Clearance { level: Confidential, compartment: Some(compartment("hr")) }])]).unwrap();
         let rules = rules.with_roles(roles);
         assert_eq!(rules.roles().and_then(|r| r.name_of(hr)), Some("hr"));
-        assert!(rules.cleared(&[hr], &secret));
-        assert!(!rules.cleared(&[], &secret) && rules.cleared(&[], &Classification::general(Public)), "with roles, nobody else but for what is public");
+        assert!(rules.cleared(&anyone, nobody, &[hr], &secret));
+        assert!(!rules.cleared(&anyone, nobody, &[], &secret) && rules.cleared(&anyone, nobody, &[], &Classification::general(Public)), "with roles, nobody else but for what is public");
+    }
+
+    /// Issue 304: a viewer is cleared by the roles of their context, and a
+    /// caller limited to roles by those as well.
+    #[test]
+    fn a_context_is_cleared_by_its_roles_and_its_limit() {
+        let hr = RoleId::new();
+        let roles = Roles::new([(hr, "hr".to_string(), vec![Clearance { level: Confidential, compartment: Some(compartment("hr")) }])]).unwrap();
+        let rules = ConfidentialityRules::new(organisation()).with_roles(roles);
+        let secret = classified(Confidential, &["hr"]);
+        let alice = SecurityContext::new(ActorId::User(crate::user::UserId::new()), Default::default(), Default::default());
+        assert!(!rules.cleared_for(&alice, &secret), "without roles");
+        let hers = alice.clone().with_roles(vec![hr], None);
+        assert!(rules.cleared_for(&hers, &secret));
+        assert!(!rules.cleared_for(&alice.with_roles(vec![hr], Some(vec![])), &secret), "limited below it");
+        assert!(rules.require_cleared_for(&hers, &secret, || ()).is_ok());
+    }
+
+    /// A channel of the session `session_id`, a private one of nobody.
+    fn place(session_id: crate::session::SessionId, level: Confidentiality, compartments: &[&str]) -> Place {
+        in_session(SessionPrivacy { id: session_id, ..SessionPrivacy::default() }, level, compartments)
+    }
+
+    fn in_session(session: SessionPrivacy, level: Confidentiality, compartments: &[&str]) -> Place {
+        Place { channel: ChannelId::new(), classification: classified(level, compartments), session }
+    }
+
+    fn hr_reads_finance() -> ConfidentialityRules {
+        ConfidentialityRules::new(Compartments::new([(compartment("hr"), vec![compartment("finance")]), (compartment("finance"), vec![])]).unwrap())
+    }
+
+    fn someone() -> SecurityContext {
+        SecurityContext::new(ActorId::User(crate::user::UserId::new()), Default::default(), Default::default())
+    }
+
+    #[test]
+    fn reading_a_channel_depends_on_the_channels_not_on_the_reader() {
+        let (rules, session) = (ConfidentialityRules::default(), crate::session::SessionId::new());
+        let (team, secret) = (place(session, Internal, &[]), place(session, Confidential, &[]));
+        for reader in [someone(), someone()] {
+            assert!(rules.may_copy(&reader, &team, &secret));
+            assert!(!rules.may_copy(&reader, &secret, &team));
+        }
+    }
+
+    #[test]
+    fn reading_a_channel_follows_the_flow_rule_with_the_configured_compartments() {
+        let (rules, session, alice) = (hr_reads_finance(), crate::session::SessionId::new(), someone());
+        let (hr, finance, general) = (place(session, Internal, &["hr"]), place(session, Internal, &["finance"]), place(session, Internal, &[]));
+        assert!(rules.may_copy(&alice, &finance, &hr), "HR reads finance");
+        assert!(!rules.may_copy(&alice, &hr, &finance), "not the other way round");
+        assert!(!rules.may_copy(&alice, &hr, &general), "nor a general channel");
+        assert!(rules.may_copy(&alice, &general, &hr), "what is general flows anywhere");
+    }
+
+    #[test]
+    fn a_channel_reads_another_session_only_where_that_session_permits_it() {
+        use crate::privacy::PrivacyConfig;
+        use crate::user::UserId;
+        let (alice, bob) = (UserId::new(), UserId::new());
+        let hers = |policy, others: &[UserId]| SessionPrivacy {
+            id: crate::session::SessionId::new(),
+            policy,
+            owner: ActorId::User(alice),
+            people: others.iter().copied().chain([alice]).collect(),
+        };
+        let rules = ConfidentialityRules::default();
+        let reader = in_session(hers(PrivacyConfig::Private, &[]), Internal, &[]);
+        let elsewhere = |policy, level| in_session(hers(policy, &[bob]), level, &[]);
+        let agent = SecurityContext::new(ActorId::Agent(crate::agent::AgentId::new()), Default::default(), Default::default());
+        assert!(!rules.may_copy(&agent, &elsewhere(PrivacyConfig::Private, Internal), &reader), "a private session is read by no other");
+        assert!(!rules.may_copy(&agent, &elsewhere(PrivacyConfig::Private, Public), &reader), "not even what is public");
+        assert!(rules.may_copy(&agent, &elsewhere(PrivacyConfig::SameOwner, Internal), &reader), "her other sessions, where she lets them");
+        assert!(rules.may_copy(&agent, &elsewhere(PrivacyConfig::SharedAudience, Internal), &reader), "she took part there");
+        assert!(!rules.may_copy(&agent, &elsewhere(PrivacyConfig::SameOwner, Confidential), &reader), "and still only what flows into the reader");
+    }
+
+    #[test]
+    fn what_is_released_below_its_channel_is_read_where_the_channel_is_not() {
+        let (rules, session, alice) = (hr_reads_finance(), crate::session::SessionId::new(), someone());
+        let (hr, finance) = (place(session, Confidential, &["hr"]), place(session, Confidential, &["finance"]));
+        assert!(!rules.may_copy(&alice, &hr, &finance), "finance does not read HR");
+        let released = Place { classification: classified(Confidential, &["hr", "finance"]), ..hr.clone() };
+        assert!(rules.may_copy(&alice, &released, &finance), "but what HR released to it");
+        let elsewhere = place(crate::session::SessionId::new(), Confidential, &["finance"]);
+        assert!(!rules.may_copy(&alice, &released, &elsewhere), "not from another session");
+    }
+
+    #[test]
+    fn what_is_published_into_a_channel_has_to_flow_into_it() {
+        let (rules, alice) = (hr_reads_finance(), someone());
+        let hr = classified(Confidential, &["hr"]);
+        assert!(rules.may_publish(&alice, &hr, &hr), "the channel's own");
+        assert!(rules.may_publish(&alice, &classified(Internal, &["hr", "finance"]), &hr), "released to finance, at a lower level");
+        assert!(!rules.may_publish(&alice, &classified(StrictlyConfidential, &["hr"]), &hr), "above the channel - never reclassified there either");
+        assert!(rules.may_publish(&alice, &classified(Confidential, &["finance"]), &hr), "HR may read what is finance's");
+        assert!(rules.may_publish(&alice, &Classification::general(Confidential), &hr), "what is general flows into any channel");
+        assert!(!rules.may_publish(&alice, &classified(Confidential, &["hr", "payroll"]), &hr), "not configured");
+    }
+
+    #[test]
+    fn a_channel_is_copied_into_itself_whatever_the_policy() {
+        /// Refuses every flow.
+        #[derive(Debug)]
+        struct DenyAll(Compartments);
+        impl ConfidentialityPolicy for DenyAll {
+            fn may_publish(&self, _: &SecurityContext, _: &Classification, _: &Classification) -> bool { false }
+            fn may_copy(&self, _: &SecurityContext, _: &Place, _: &Place) -> bool { false }
+            fn cleared(&self, _: &SecurityContext, _: ActorId, _: &[RoleId], _: &Classification) -> bool { false }
+            fn compartments(&self) -> &Compartments { &self.0 }
+            fn roles(&self) -> Option<&Roles> { None }
+        }
+        let session = crate::session::SessionId::new();
+        let (own, other) = (place(session, Confidential, &[]), place(session, Public, &[]));
+        let policy = DenyAll(Compartments::default());
+        assert!(policy.may_copy_information(&someone(), &own, &own), "a channel into itself, without asking");
+        assert!(!policy.may_copy_information(&someone(), &other, &own), "another channel as the policy decides");
     }
 }
+
+

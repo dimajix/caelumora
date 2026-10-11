@@ -5,12 +5,13 @@
 use super::Answering;
 use crate::agent::state::AgentStateHandle;
 use crate::agent::turn::Turn;
-use crate::command::{AgentCommandProvider, CommandError, CommandExecutor, CommandResult};
+use crate::command::{AgentCommandProvider, CommandError, CommandExecutor};
 use crate::component::{ComponentContainer, ComponentError, ComponentResult};
 use crate::controller::AgentController;
 use crate::runtime::ActorRuntime;
 use crate::transport::EventSender;
 use crate::view::ViewsFactory;
+use caelumora_model::role::RoleId;
 use caelumora_model::actor::{ActorEvent, ActorId, Envelope};
 use caelumora_model::agent::AgentChannelState;
 use caelumora_model::command::{Command, CommandVisibility};
@@ -28,8 +29,10 @@ use tracing::{debug, info, warn};
 pub(super) struct AgentCommands {
     executor: CommandExecutor<dyn AgentCommandProvider>,
     agent: Arc<AgentController>,
-    /// Whose rights it acts with: its owner's (issue 255).
-    principal: ActorId,
+    /// The roles its personality limits it to (issues 179, 304); whose
+    /// rights it acts with - its owner's, issue 255 - the agent's controller
+    /// says.
+    limiting_roles: Option<Vec<RoleId>>,
     /// How its model is given its context, kept with every turn of it; the
     /// default for an agent that runs elsewhere.
     profile: ModelProfile,
@@ -40,7 +43,7 @@ pub(super) struct AgentCommands {
 
 impl AgentCommands {
     /// The commands the components of `components` provide, for the agent
-    /// `agent` acting for `principal`, with `profile` for its turns.
+    /// `agent`, limited to `limiting_roles`, with `profile` for its turns.
     ///
     /// # Errors
     /// `ComponentError::InvalidConfig` if two components provide the same
@@ -49,7 +52,7 @@ impl AgentCommands {
     pub(super) fn new(
         components: &ComponentContainer,
         agent: Arc<AgentController>,
-        principal: ActorId,
+        limiting_roles: Option<Vec<RoleId>>,
         profile: ModelProfile,
         runtime: ActorRuntime,
         agent_state: Arc<AgentStateHandle>,
@@ -65,7 +68,7 @@ impl AgentCommands {
         }
         let executor = CommandExecutor::new(Arc::clone(runtime.security_manager()), providers)?;
         let views = runtime.views();
-        Ok(Self { executor, agent, principal, profile, runtime, agent_state, views })
+        Ok(Self { executor, agent, limiting_roles, profile, runtime, agent_state, views })
     }
 
     /// The commands `issuer` may see of the agent in its channel, sorted by
@@ -76,23 +79,13 @@ impl AgentCommands {
         self.executor.visible(issuer, &agent, &channel.security_attributes()).await
     }
 
-    /// The command `name`, if `issuer` may ask the agent for it in its
-    /// channel.
-    ///
-    /// # Errors
-    /// As `CommandExecutor::admitted`; `Unknown` without a channel.
-    pub(super) async fn admit(&self, name: &str, issuer: &SecurityContext) -> CommandResult<Command> {
-        let Some(channel) = self.runtime.channel_loop() else { return Err(CommandError::Unknown(name.to_string())) };
-        let agent = self.agent.load().security_attributes.clone();
-        self.executor.admitted(name, issuer, &agent, &channel.security_attributes()).await.map(|admitted| admitted.command().clone())
-    }
-
     /// Carries out the `CommandRequested` in `request` in a turn of its own,
     /// begun on `state` in the request's contexts continued in the agent's
     /// name (`Answering::to`): its owner's rights, whoever asked its
-    /// initiator. The executor asks again, in the context the request came
-    /// with, whether the issuer may ask for it; admitted, the agent tells the
-    /// issuer alone that it began (`CommandStarted`, issue 299).
+    /// initiator. The executor asks, in the context the request came with,
+    /// whether the issuer may ask for it - the one place that is asked
+    /// (issue 304); admitted, the agent tells the issuer alone that it began
+    /// (`CommandStarted`, issue 299), refused it answers `CommandFailed`.
     ///
     /// Carried out, the turn is taken over - what the command staged applied,
     /// the command recorded before the turn's end - and stored, and the
@@ -107,7 +100,8 @@ impl AgentCommands {
         let ActorEvent::CommandRequested { command, args, .. } = &request.event else { return };
         let issuer = request.context.sender_id;
         let (agent_id, name) = (self.agent.id(), self.agent.name());
-        let answering = Answering::to(request, ActorId::Agent(agent_id), name.clone(), self.principal);
+        let own = self.agent.security_context(request.security.session_id, request.security.channel_id, self.limiting_roles.as_deref());
+        let answering = Answering::to(request, ActorId::Agent(agent_id), name.clone(), &own);
         let Some(channel) = self.runtime.channel_loop() else {
             warn!("Agent {} has no channel to carry out /{} in", agent_id, command);
             return;

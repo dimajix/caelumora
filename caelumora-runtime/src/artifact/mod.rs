@@ -27,11 +27,11 @@ use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::artifact::{Artifact, ArtifactId, ArtifactVersion};
 use caelumora_model::config::{ArtifactStorageConfig, ArtifactsConfig};
-use caelumora_model::confidentiality::Classification;
+use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
 use caelumora_model::digest::ContentDigest;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{AccessQuestions, AclEntry, ActionType, Enforcement, Grant, SecurityAttributes, SecurityContext, SecurityManager, Subject};
+use caelumora_model::security::{AclEntry, ActionType, Enforcement, Grant, SecurityAttributes, SecurityContext, SecurityManager, Subject};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::group::GroupId;
 use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResultExt};
@@ -113,6 +113,8 @@ pub struct ArtifactManager {
     entities: Arc<dyn EntityStore>,
     events: Arc<EventBus>,
     security: Arc<dyn SecurityManager>,
+    /// What may flow where (issue 304): into a storage that keeps it.
+    confidentiality: Arc<dyn ConfidentialityPolicy>,
     storages: BTreeMap<String, Arc<dyn ArtifactStorage>>,
     /// The storage new artifacts are made in.
     publish_to: Option<String>,
@@ -129,7 +131,7 @@ impl fmt::Debug for ArtifactManager {
 }
 
 impl ArtifactManager {
-    pub(crate) fn new(entities: Arc<dyn EntityStore>, events: Arc<EventBus>, security: Arc<dyn SecurityManager>, config: &ArtifactsConfig) -> ComponentResult<Self> {
+    pub(crate) fn new(entities: Arc<dyn EntityStore>, events: Arc<EventBus>, security: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>, config: &ArtifactsConfig) -> ComponentResult<Self> {
         config.check().map_err(|why| ComponentError::InvalidConfig(format!("artifacts: {why}")))?;
         let storages = config.storage.iter()
             .map(|(name, storage)| {
@@ -139,7 +141,7 @@ impl ArtifactManager {
                 (name.clone(), storage)
             })
             .collect();
-        Ok(Self { entities, events, security, storages, publish_to: config.publish_to().map(String::from), max_bytes: config.max_bytes, writing: Mutex::new(()) })
+        Ok(Self { entities, events, security, confidentiality, storages, publish_to: config.publish_to().map(String::from), max_bytes: config.max_bytes, writing: Mutex::new(()) })
     }
 
     /// Whether artifacts can be published: a storage is configured.
@@ -198,9 +200,7 @@ impl ArtifactManager {
         };
         let storage = self.storage(&storage_name)?;
         if let Some(destination) = storage.destination() {
-            if !self.security.may_publish(ctx, ctx.caller_id, classification, destination).await {
-                return Err(ArtifactError::StorageNotCleared(storage_name));
-            }
+            self.confidentiality.require_publish(ctx, classification, destination, || ArtifactError::StorageNotCleared(storage_name.clone()))?;
         }
 
         if size > self.max_bytes {
@@ -302,7 +302,9 @@ impl ArtifactManager {
 
     /// Keeps artifact `id` in `scope` - its owner's or the global one -,
     /// beyond the session it was published in (`UpdateArtifact`, its
-    /// owner's act).
+    /// owner's act). Asked before the scope is looked at, which compares it
+    /// with the artifact's owner - the actor's own permission first (issue
+    /// 304) -, and by the store again as it stores.
     ///
     /// # Errors
     /// `NotFound`, `InvalidScope` for another scope, or whatever the store
@@ -325,7 +327,7 @@ impl ArtifactManager {
     }
 
     /// Says what artifact `id` is; `None` or empty takes it away
-    /// (`UpdateArtifact`, its owner's act).
+    /// (`UpdateArtifact`, its owner's act, asked by the store).
     ///
     /// # Errors
     /// `NotFound`, `Invalid` for a description that does not fit, or
@@ -333,7 +335,6 @@ impl ArtifactManager {
     pub async fn describe(&self, ctx: &SecurityContext, id: ArtifactId, description: Option<&str>) -> ArtifactResult<Artifact> {
         let _writing = self.writing.lock().await;
         let mut artifact = self.entities.get_artifact(ctx, id).await.map_err(store_error(id))?;
-        self.security.require(ctx, ActionType::UpdateArtifact(&artifact.security_attributes), || StoreError::PermissionDenied).await?;
         artifact.description = Description::optional(description)?;
         artifact.updated_at = Utc::now();
         self.entities.update_artifact(ctx, &artifact).await?;

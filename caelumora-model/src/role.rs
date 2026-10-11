@@ -6,10 +6,7 @@
 //! configuration, a seed - names it by its name, resolved when it is
 //! loaded; the `SecurityManager` translates both ways.
 
-use crate::actor::ActorId;
 use crate::confidentiality::{Clearance, Clearances, Compartment, Compartments};
-use crate::security::SecurityContext;
-use crate::store::{EntityStore, StoreResult, StoreResultExt};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use thiserror::Error;
@@ -114,19 +111,6 @@ impl Roles {
     pub fn clearances_of(&self, roles: &[RoleId]) -> Clearances {
         Clearances::new(roles.iter().filter_map(|r| self.grants.get(r)).flatten().cloned().collect())
     }
-}
-
-/// The roles of `actor` if it is a user (issues 133, 142), read in the
-/// runtime's name: what someone is cleared for decides, it is not shown.
-/// None for anyone else - an agent's are its owner's, which its caller
-/// asks for - and none for a user that no longer exists. Read from the
-/// store each time: roles change at a login, past any copy of the user.
-///
-/// # Errors
-/// Whatever else reading the user reports.
-pub async fn user_roles(store: &dyn EntityStore, actor: ActorId) -> StoreResult<Vec<RoleId>> {
-    let ActorId::User(id) = actor else { return Ok(Vec::new()) };
-    Ok(store.get_user(&SecurityContext::system(), id).await.optional()?.map(|user| user.roles).unwrap_or_default())
 }
 
 #[cfg(test)]

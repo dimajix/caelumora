@@ -161,7 +161,7 @@ impl PromptProvider for WorkspacePromptProvider {
 
     async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt> {
         // Work outside of a channel, in tests, has no workspace to tell of.
-        let Some(session) = work.session() else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
+        let Some(session) = work.session().await else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
         let channel = session.channel(work.channel_id()).await?;
         Ok(match channel.workspace().await? {
             Some(workspace) => {

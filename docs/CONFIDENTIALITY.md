@@ -66,9 +66,9 @@ configuration error.
 
 Every channel has a classification (`Channel::classification`), set by its owner when creating it,
 in the session template or the request; the default is `internal` without compartments
-(`Classification::CHANNEL_DEFAULT`). Giving a channel a classification is asked as
-`ActionType::Classify`, before anything is stored; the ownership policy refuses a compartment that
-is not configured, so that a typo does not go unnoticed. Which session a channel is in decides
+(`Classification::CHANNEL_DEFAULT`). A classification that names a compartment not configured is
+invalid (`ConfidentialityQuestions::require_classifiable`, issue 304), checked before anything is
+stored, so that a typo does not go unnoticed. Which session a channel is in decides
 whether one channel reaches another at all, not how anything is classified (see [Reading another
 channel](#reading-another-channel)).
 
@@ -83,25 +83,29 @@ code path can leave a message classified by accident.
     everything its model produces; until then an `LLMClient` builds on `llm::unlabelled_message`,
     the strictest general classification). A user's message carries the channel's, unless the user
     classifies it otherwise.
-*   **The channel admits it.** Putting a message into a channel is `ActionType::Publish {
-    classification, actor, channel }`, asked by the `ChannelLoop` for every message of every event
-    that enters it (`ChannelLoop::admits`) - the gate for every actor. Wherever it is only a
-    question, it is asked as `AccessQuestions::may_publish` (issue 158); `UserActor::send_message`
-    requires it as part of sending. An event with a message it may not admit is dropped and logged.
-    The ownership policy allows it if the actor is the one acting (the context's caller), every
-    compartment is configured, and the classification flows into the channel.
+*   **The channel admits it.** Putting a message into a channel is
+    `ConfidentialityPolicy::may_publish`, asked by the `ChannelLoop` for every message of every
+    event that enters it, as it takes the event in (`ChannelLoop::admission`, issue 304) - the one
+    gate for every actor, which asks nothing itself for what it sends. Wherever it is only a
+    question, it is asked as `ConfidentialityPolicy::may_publish` (issue 158). An event with a
+    message it may not admit is written nowhere, and its sender is told why
+    (`ActorEvent::MessageRejected` with `Rejection::ClassificationRefused`, see
+    [CHANNELS.md](CHANNELS.md)). The rules allow it if every compartment is configured and the
+    classification flows into the channel; that only the actor acting puts something into a
+    channel - the context's caller is the event's sender - is the channel's own check of the
+    event, not a question of the flow.
 *   **Released when written.** By the flow rule a message is never classified above its channel. One
     classified otherwise is released: at a lower level, or to further compartments besides those the
     channel's are covered by - an `{hr, finance}` message in an `{hr}` channel is readable from
-    finance from the start. A user may release what they write (`UserActor::send_message` asks
-    `Publish` before it sends, so that a refusal reaches the user as
-    `ChannelError::ClassificationRefused`). Changing a classification afterwards is
+    finance from the start. A user may release what they write (`UserActor::send_message`); the
+    channel admits it as it admits any message, and tells the user of a refusal with
+    `MessageRejected`. Changing a classification afterwards is
     [reclassifying](#reclassification) it.
 *   **Modified, admitted again.** A message its author modifies
     ([234](../issues/234-modify-revoke-and-retry-messages.md)) carries a classification of its own,
     the one it had unless the author chooses another, and enters the channel as a message does:
-    `ActorEvent::MessageModified` carries the message, so `ChannelLoop::admits` asks `Publish` for
-    it, and `UserActor::modify_message` asks before it sends.
+    `ActorEvent::MessageModified` carries the message, so `ChannelLoop::admission` asks
+    `may_publish` for it, after whether its author may modify it.
 *   **Taken back, not erased.** A message its author takes back keeps its place without what it
     said, and the agents are no longer given it. What it said is still recorded: in the chains of
     every participant that heard it, in the contexts of the answers produced from it - readable by
@@ -117,10 +121,10 @@ added to the audience, or none left - *releases* what it holds to a wider circle
 retracts nothing already read. The circle is one of classification: a release adds no readers to the
 channel it is in - an agent reads a released entry of another channel only where it may read that
 channel (see [Reading another channel](#reading-another-channel), issue
-[264](../issues/264-agent-reads-channels-its-owner-may-not.md)). The ownership policy allows a
-channel's owner to reclassify the channel and every message in it, and a message's author to
-reclassify their own message - a message never above its channel, and only with configured
-compartments.
+[264](../issues/264-agent-reads-channels-its-owner-may-not.md)). Who may reclassify is the
+`SecurityManager`'s (`Reclassify`): the ownership policy allows a channel's owner to reclassify the
+channel and every message in it, and a message's author to reclassify their own message. To what is
+the flow's: a message never above its channel, and only with configured compartments.
 
 *   **A channel** (`ChannelLoop::reclassify`, REST `PUT …/channels/{cid}/classification`) is stored
     (`UpdateChannel`) and announced as `GlobalEvent::ChannelUpdated` with
@@ -135,8 +139,8 @@ compartments.
     lowering a channel ends its turns (issue 141):
     *   once stored, the channel cancels its turns and stays quiet, as `ChannelLoop::cancel` does.
         Lowered means that what the channel held, classified as it was, may not be put into it as it
-        is now (`ActionType::Publish`, in the name of whoever reclassifies); raising it ends
-        nothing;
+        is now (`ConfidentialityPolicy::may_publish`, in the name of whoever reclassifies); raising
+        it ends nothing;
     *   every agent asks before each step of a turn whether the turn still flows into the channel as
         it is now. One that does not is given up (`GivenUpReason::Lowered`, with the new
         classification) rather than taken over - also when it was cancelled, also when it began just
@@ -157,14 +161,15 @@ compartments.
         web UI warns of.
 
     The web UI says so when a change releases the channel.
-*   **A message** (`UserActor::reclassify_message`, REST `PUT …/messages/{mid}/classification`) is
-    a change to what was said, made by a participant, and goes as a modification goes (see
+*   **A message** (`UserActor::reclassify_message`, REST `PUT …/messages/{mid}/classification`) is a
+    change to what was said, made by a participant, and goes as a modification goes (see
     [CHANNELS.md](CHANNELS.md#changing-what-was-said), issue
     [239](../issues/239-reclassified-message-not-in-agents-state.md)): the actor of whoever
-    reclassifies - its author, or the channel's owner for someone else's - asks `Reclassify` and
-    sends `ActorEvent::MessageReclassified`, without content; the channel asks again as it admits
-    it. The owner reclassifies as a participant: one who is not has no actor in the channel and is
-    refused. A message taken back is not reclassified - it says nothing that could be released.
+    reclassifies sends `ActorEvent::MessageReclassified`, without content, and the channel asks as
+    it admits it: `Reclassify` - its author, or the channel's owner for someone else's - then
+    whether the new classification may flow into the channel. The owner reclassifies as a
+    participant: one who is not has no actor in the channel and is refused. A message taken back is
+    not reclassified - it says nothing that could be released.
 
     It is recorded as an entry of its own, `Reclassified` (issue 197), in the channel's history and
     in the history and transcript of every agent that holds the message: the message stays what it
@@ -179,10 +184,10 @@ compartments.
 
 *   **A note or a memory entry** is reclassified by its agent, through a tool that asks for approval
     (`reclassify_note`, `reclassify_private_note`, `reclassify_memory`): a change of its chain
-    (`NoteChange::Reclassify`, `MemoryChange::Reclassify`), taken over with the turn. The policy
-    allows it to the author - the agent calling - never above the turn's channel; a memory entry
-    only where it may be recalled. A reclassified memory entry is recalled where its new
-    classification may be read. Agents do not reclassify channels or messages: people do.
+    (`NoteChange::Reclassify`, `MemoryChange::Reclassify`), taken over with the turn. The ownership
+    policy allows it to the author - the agent calling -, the flow never above the turn's channel; a
+    memory entry only where it may be recalled. A reclassified memory entry is recalled where its
+    new classification may be read. Agents do not reclassify channels or messages: people do.
 
 Who reclassified what is not recorded: that is an audit log ([140](../issues/140-audit-log.md));
 the chains of the history, of notes and of memory keep the change and its place in what happened,
@@ -219,8 +224,10 @@ A clearance follows from roles ([142](../issues/142-roles.md)). The `roles` sect
 configuration names the roles - each with an id, which is what is stored - and the clearances each
 grants (`Roles`, `caelumora_model::role`); the user provider gives users their roles - for now by
 its own configuration. A user's clearances are all their roles'; an agent's are its owner's, since
-it must not see more than the person responsible for it. A user whose roles grant nothing sees only
-what is public. Without a `roles` section, clearances are not checked.
+it must not see more than the person responsible for it. Both come with the `SecurityContext` (issue
+[304](../issues/304-review-of-the-permission-concept.md)): its roles, and the roles its caller is
+limited to, which have to clear as well (`ConfidentialityQuestions::cleared_for`). A user whose
+roles grant nothing sees only what is public. Without a `roles` section, clearances are not checked.
 
 ### Personalities limit their agents
 
@@ -242,20 +249,22 @@ enter the channel is asked when it joins and again with every request; a request
 in the channel as it is now - lowered since - is answered with `TurnGivenUp`, and the remote agent
 is not called.
 
-The question is `ActionType::JoinChannel { participant, roles, channel }`: the channel knows the
-roles of a participant from what it resolves the participant to (`Member::clearances` in
+The question is `ConfidentialityPolicy::cleared(context, participant, roles, classification)`,
+asked in the context of whoever admits the participant: the channel knows the roles of a
+participant from what it resolves the participant to (`Member::clearances` in
 `caelumora_runtime::channel`) - a user's own, an agent's owner's - and the policy maps them to
 clearances. For an agent whose personality limits it, it is asked once more with those roles, and
-both must allow (`Member::require_cleared`). A user's roles are read from the store each time: they
-change at a login, past the controllers. It is asked
+both must allow (`Member::require_cleared`). The roles are those the member's controller holds,
+as they are now (issue 306). It is asked
 
 *   when a participant is added to a channel (`ChannelError::NotCleared`),
 *   for every participant of a channel created on request or from a template
     (`SessionError::NotCleared`), before anything is stored,
 *   for every participant when a channel is reclassified - raised above someone in it, it is refused
     rather than anyone removed,
-*   and for a user reading a channel (`AccessQuestions::may_see_channel`): a channel they are not
-    cleared for is not found, and not listed - even for its owner.
+*   and for a user reading a channel (`ConfidentialityQuestions::cleared_for`, by the roles of their
+    context, and an agent's limit besides): a channel they are not cleared for is not found, and
+    not listed - even for its owner.
 
 ## Workspaces
 
@@ -266,22 +275,22 @@ reader of a channel so classified would be:
 
 *   A person, by the workspace - its owner, or whom its access list lets (issue
     [23](../issues/23-acls-in-security-attributes.md)), wherever they act: cleared for it
-    (`JoinChannel` with the workspace in the channel's place) when they make it, raise it and use
+    (`cleared` with the workspace in the channel's place) when they make it, raise it and use
     it. Where they act decides nothing: what they read reaches only them.
 *   An agent, in a channel classified L of a session it is attached to, where the workspace,
     classified W, and the channel flow both ways - W into L, since what is read there reaches the
     channel; L into W, since what was seen in the channel may be written there. Asked as an actor
-    putting something into a place is (`Publish` of W into L and of L into W, in the agent's name,
-    as it reads every other place, its owner's), at every use, besides the access list. With
+    putting something into a place is (`may_publish` of W into L and of L into W, in the agent's
+    name, as it reads every other place, its owner's), at every use, besides the access list. With
     compartments and a read relation that is not symmetric this is stricter than equality. A member
     is cleared for L, so nothing else is asked.
 
-A storage bounds what may be put into it (issue [251](../issues/251-open-terminal.md), part B2):
-its `destination`, the classification a workspace in it may have at most - where its files go, and
-for a storage with a shell where what a command reads can go, since a command reaches whatever its
-host or container reaches. Making or raising a workspace there asks `Publish` of its classification
-into the destination, before the clearance (`WorkspaceError::StorageNotCleared`). A `local` storage
-with a shell is bounded to public unless it names its own; one without a shell, and without a
+A storage bounds what may be put into it (issue [251](../issues/251-open-terminal.md), part B2): its
+`destination`, the classification a workspace in it may have at most - where its files go, and for a
+storage with a shell where what a command reads can go, since a command reaches whatever its host or
+container reaches. Making or raising a workspace there asks `may_publish` of its classification into
+the destination, before the clearance (`WorkspaceError::StorageNotCleared`). A `local` storage with
+a shell is bounded to public unless it names its own; one without a shell, and without a
 `destination`, is not bounded.
 
 The isolation between workspaces is the storage's, not the classification's: a `local` shell runs
@@ -295,20 +304,20 @@ several. An `open_terminal_docker` storage gives every workspace a container of 
 command reaches its workspace and the container's network, and its key opens that container alone.
 A classification says who may read a workspace; it does not keep a command in it.
 
-Reclassifying a workspace is its owner's (`UpdateWorkspace`, `Classify`): lowering releases every
-file in it; which channels may use it follows at their next use. Nothing in it is fitted - there is
-nothing inside to fit.
+Reclassifying a workspace is its owner's (`UpdateWorkspace`, `require_classifiable`): lowering
+releases every file in it; which channels may use it follows at their next use. Nothing in it is
+fitted - there is nothing inside to fit.
 
 ## Reading another channel
 
 Reading from another channel is decided per entry: per message of its history, per note, per memory
-entry. It is asked as copying the entry into the reading channel, `ActionType::CopyInformation {
-from, into }` (issue 264) - each side a `Place`: the channel's id, how the entry - or the reading
-channel - is classified, and the channel's session as privacy sees it (`SessionPrivacy` - its id,
-policy, owner and people, issue 134) -, with `AccessQuestions::may_copy_information`. It is asked
-in the name of the agent that reads - the security context it acts in, its owner's - because the
-agent passes on what it reads (issue 131). A channel may always be copied into itself. Otherwise
-the ownership policy allows it if
+entry. It is asked as copying the entry into the reading channel, `ConfidentialityPolicy::may_copy`
+(issue 264) - each side a `Place`: the channel's id, how the entry - or the reading channel - is
+classified, and the channel's session as privacy sees it (`SessionPrivacy` - its id, policy, owner
+and people, issue 134) -, with `ConfidentialityQuestions::may_copy_information`. It is asked in the
+name of the agent that reads - the security context it acts in, its owner's - because the agent
+passes on what it reads (issue 131). A channel may always be copied into itself. Otherwise the
+rules allow it if
 
 *   the entry's classification flows into the reader's, and
 *   both channels belong to the same session, or the source's session lets the reader's read it
@@ -386,25 +395,26 @@ of an `mcp_tool`), and otherwise a result is the channel's. The `ToolExecutor` a
 in this order.
 
 **Before the model, not after it.** A result that may not flow into the channel - asked as
-`ActionType::Publish`, in the agent's name, since the result enters its context in the channel - is
-withheld from the agent: the model is given the status `withheld` and a message that names the
-classification instead, and the value is kept nowhere. So the answer text, which carries no label,
-cannot quote it. A result that may flow keeps its classification: below the channel's, it is
-released.
+`ConfidentialityPolicy::may_publish`, in the agent's name, since the result enters its context in
+the channel - is withheld from the agent: the model is given the status `withheld` and a message
+that names the classification instead, and the value is kept nowhere. So the answer text, which
+carries no label, cannot quote it. A result that may flow keeps its classification: below the
+channel's, it is released.
 
-The channel admits a message only if its tool results may enter it too (`ChannelLoop::admits`).
+The channel admits a message only if its tool results may enter it too
+(`ChannelLoop::admission`).
 Another channel reads a message by the message's classification; a released result in a message it
 may not read stays unread.
 
 ### What leaves through tools
 
-What an agent writes into the arguments of a call leaves the system where the tool has a remote
-side (issue [180](../issues/180-outbound-flow-unchecked.md)). A tool set says where they go - the
+What an agent writes into the arguments of a call leaves the system where the tool has a remote side
+(issue [180](../issues/180-outbound-flow-unchecked.md)). A tool set says where they go - the
 classification its remote side is cleared for (`ToolSet::destination`, from
-`ToolProvider::destination`) - and the `ToolExecutor` judges it when it assembles the tools
-of a turn, with the channel the turn begins in: a set whose destination the channel may not flow
-to - asked as `ActionType::Publish` of the channel's classification into the destination, with the
-agent's owner's rights - is offered as unavailable, without its tools, so that the model
+`ToolProvider::destination`) - and the `ToolExecutor` judges it when it assembles the tools of a
+turn, with the channel the turn begins in: a set whose destination the channel may not flow to -
+asked as `ConfidentialityPolicy::may_publish` of the channel's classification into the destination,
+with the agent's owner's rights - is offered as unavailable, without its tools, so that the model
 and the web UI say why (issue 32), and a call of a tool the turn was not offered is answered as
 unknown, also by name. As for an external agent (179), the remote side is judged at the door, not
 per call: nothing in the channel is classified above it. An `mcp_tool` is cleared for what its
@@ -512,12 +522,12 @@ In detail:
 *   **Notes** (issue 17) and **private notes** (issue 51) carry their classification
     (`NoteChange::Add`, `Note::classification`). Other channels read them note by note; the agent is
     shown the private notes of every other channel of the session that its current channel may read
-    (`AccessQuestions::may_copy_information`).
+    (`ConfidentialityQuestions::may_copy_information`).
 *   **Agent memory** (issue 62) entries carry the label they were written with, and are recalled
     only in channels that may read it (`AgentMemory::recalled`, which asks
-    `AccessQuestions::may_copy_information` like the private notes, issue 131). The reading channel
-    is judged by the classification the turn began with: what the turn may read is bounded by its
-    channel, not by its label.
+    `ConfidentialityQuestions::may_copy_information` like the private notes, issue 131). The reading
+    channel is judged by the classification the turn began with: what the turn may read is bounded
+    by its channel, not by its label.
 
 This is sound because an agent never sees anything that may not flow into its channel, and what it
 writes is classified at least as everything it has seen: everything it wrote may be read wherever
@@ -529,20 +539,26 @@ sees private notes in the context panel, which is theirs alone (issue 54).
 ## Who applies the rules
 
 The rules of this document - the flow rule, a session's consent to being read from beyond it, which
-compartments may be given, the clearances of the configured roles - are `ConfidentialityRules`
-(`caelumora_model::confidentiality`), built from the `compartments` and `roles` sections of the
-configuration. They are a building block, not a policy: the `SecurityManager` decides every
-confidentiality action, and the ownership policy decides them by these rules, together with what is
-its own
-- who acts, who may reclassify what - and with the system overriding them as it overrides
-  everything.
+compartments may be given, the clearances of the configured roles - are decided by a
+`ConfidentialityPolicy` (`caelumora_model::confidentiality`, issue
+[304](../issues/304-review-of-the-permission-concept.md)), apart from who may do what, which is the
+`SecurityManager`'s. `ConfidentialityRules`, built from the `compartments` and `roles` sections of
+the configuration, is the one Caelumora applies (`AppConfig::create_confidentiality_policy`). It
+decides from the context, the classifications and the places alone:
 
-Confidentiality and ownership are not always cleanly separable - a superuser who may act against the
-rules is a decision about both - so a policy is not handed a fixed confidentiality part it can only
-add to; it applies these rules, other rules, or none
-([138](../issues/138-confidentiality-policy-in-ownership.md)). A policy outside the binary, such as
-Open Policy Agent ([24](../issues/24-opa-security-manager.md)), states its rules itself, with the
-compartments and roles as its data. `allow_all` applies none: it allows every flow.
+*   `may_publish` - what is so classified may be put into a destination so classified;
+*   `may_copy` - what is at one place may be copied to another, by the flow rule and the source
+    session's privacy;
+*   `cleared` - someone, by their roles, is cleared for what is so classified;
+*   and it names the configured compartments, by which a classification is valid at all
+    (`require_classifiable`) - validation, not a permission.
+
+An act that moves information asks its own permission of the `SecurityManager` first, then the
+flow. The two are orthogonal, so the ownership policy no longer applies these rules, as issue
+[138](../issues/138-confidentiality-policy-in-ownership.md) had decided: a superuser who may act
+against both would need a hook in both, which is accepted. A policy outside the binary, such as Open
+Policy Agent ([24](../issues/24-opa-security-manager.md)), states both. `allow_all` allows every
+action, but no flow the rules refuse.
 
 ## Open questions
 
@@ -552,7 +568,7 @@ is complete. What is still open:
 *   **Sources that classify.** No built-in tool classifies its results, and an MCP server cannot yet
     say how its results are classified, only be configured with one classification for all of them
     ([139](../issues/139-mcp-result-classification.md)). Configuring a tool with a classification is
-    trusted: it is not asked as `Classify`.
+    trusted: it is not checked as one that can be given (`require_classifiable`).
 *   **Roles from directories.** Roles come from the configuration of the user provider; mapping
     directory groups to roles, and roles of real user providers, is [142](../issues/142-roles.md).
     Events about a channel without content - a reclassification, say - still reach whoever may read
@@ -570,9 +586,6 @@ is complete. What is still open:
 *   **The answer text.** It carries no label and is always published; the model is only told what
     not to quote ([66](../issues/66-channel-level-in-prompt.md)). Keeping private knowledge out of
     it relies on the model.
-*   **Whose rights.** Reading is asked in the name of the agent's owner. How an agent's rights
-    combine with those of the user it acts for is open
-    ([12](../issues/12-user-and-agent-permissions.md)).
 *   **Knowledge beyond the session.** Knowledge kept across sessions or shared between agents
     ([18](../issues/18-knowledge-sharing.md)) and retrieval of notes
     ([59](../issues/59-retrieval-of-notes.md)) will have to carry and respect the classification of
@@ -580,4 +593,4 @@ is complete. What is still open:
 *   **One enforcement for component state.** When the state of notes becomes generic component state
     ([65](../issues/65-generic-component-state.md)), the rules are to be applied by the core, not
     re-implemented per component. Today every component that reads across channels asks
-    `AccessQuestions::may_copy_information` itself (issue 131).
+    `ConfidentialityQuestions::may_copy_information` itself (issue 131).

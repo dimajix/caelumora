@@ -16,7 +16,6 @@ use std::any::Any;
 use std::fmt::Debug;
 use tracing::warn;
 
-use crate::command::{CommandError, CommandResult};
 use crate::transport::{EventReceiver, EventSender};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, RetryTarget};
 use caelumora_model::agent::RetryRefused;
@@ -83,17 +82,6 @@ pub(crate) trait Actor: Any + Debug + Send + Sync {
         Vec::new()
     }
 
-    /// The command `name`, if `issuer` may ask it to carry it out (issue
-    /// 269) - asked before the request is sent, so that the issuer learns
-    /// of a refusal at once; the actor asks again as it carries it out.
-    ///
-    /// # Errors
-    /// `CommandError::Unknown` if it has no such command or the issuer may
-    /// not see it, `Forbidden` if they may see but not ask for it.
-    async fn admit_command(&self, name: &str, _issuer: &SecurityContext) -> CommandResult<Command> {
-        Err(CommandError::Unknown(name.to_string()))
-    }
-
     /// Wakes the actor from `Sleeping`. Synchronous and infallible on
     /// purpose: it is called from other tasks and must take effect at once.
     fn wakeup(&self) {}
@@ -156,10 +144,13 @@ pub(crate) struct Answering {
 
 impl Answering {
     /// The contexts of `request`, continued in the name of the actor `id`,
-    /// called `name`, with the rights of `principal` - an agent's owner's
-    /// (issue 255). Whoever sent the request stays its initiator.
-    pub(crate) fn to(request: &Envelope, id: ActorId, name: impl Into<String>, principal: ActorId) -> Self {
-        Self { event_context: request.context.next(id, name), security_context: request.security.next(id, principal) }
+    /// called `name`, with the rights its `own` context gives it - an
+    /// agent's owner's, with their roles as they are now and its limit
+    /// (issues 255, 304). Whoever sent the request stays its initiator and
+    /// lends nothing.
+    pub(crate) fn to(request: &Envelope, id: ActorId, name: impl Into<String>, own: &SecurityContext) -> Self {
+        let security_context = request.security.next(id, own.principal_id).with_roles(own.roles.clone(), own.limiting_roles.clone());
+        Self { event_context: request.context.next(id, name), security_context }
     }
 
     /// The contexts of the actor `id`, called `name`, speaking of itself
@@ -190,14 +181,14 @@ impl Answering {
 }
 
 /// Tells whoever asked each of `retries` that the agent `own`, called
-/// `name` and acting with the rights of `principal`, does not answer again,
-/// for `reason` (issue 234) - in the contexts of each request, as an answer
-/// to it. One that cannot be sent is logged.
-async fn reject_retries(retries: Vec<Envelope>, reason: RetryRefused, own: ActorId, name: &str, principal: ActorId, output: &dyn EventSender) {
+/// `name` and acting with the rights of its context `acting`, does not
+/// answer again, for `reason` (issue 234) - in the contexts of each request,
+/// as an answer to it. One that cannot be sent is logged.
+async fn reject_retries(retries: Vec<Envelope>, reason: RetryRefused, own: ActorId, name: &str, acting: &SecurityContext, output: &dyn EventSender) {
     for retry in retries {
         let Some(target) = retry_target(&retry) else { continue };
         let rejected = ActorEvent::RetryRejected { target, reason };
-        if let Err(e) = Answering::to(&retry, own, name.to_string(), principal).send(rejected, output).await {
+        if let Err(e) = Answering::to(&retry, own, name.to_string(), acting).send(rejected, output).await {
             warn!("Agent {} cannot reject a request to answer again: {:#}", own, e);
         }
     }

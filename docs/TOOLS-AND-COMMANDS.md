@@ -81,16 +81,16 @@ told about results it must not quote is described in [CONFIDENTIALITY.md](CONFID
 
 ### Classified results
 
-How sensitive a result is, is its classification (issue 133). The `ToolExecutor` gives every
-result one: as the tool classified it, else as the tool is configured (`Tool::classification`, as
-the turn began with its tools), else as the channel. A result that may not flow into the channel
-(`ActionType::Publish`, in the agent's name) never reaches the model: it is replaced by the status
-`withheld` and a message that names the classification and asks the model not to obtain it another
-way. The value is not kept anywhere. Results that did not come from the tool - refused, denied,
-timed out - are the runtime's fixed texts and classified as the turn's label; a failed one, whose
-error may come from the tool, is the channel's. Built-in tools whose answer is derived from the
-arguments alone classify it as the turn's label too (issue 168): the model sees every result, and
-what it has seen classifies what the turn writes (see
+How sensitive a result is, is its classification (issue 133). The `ToolExecutor` gives every result
+one: as the tool classified it, else as the tool is configured (`Tool::classification`, as the turn
+began with its tools), else as the channel. A result that may not flow into the channel
+(`ConfidentialityPolicy::may_publish`, in the agent's name) never reaches the model: it is replaced
+by the status `withheld` and a message that names the classification and asks the model not to
+obtain it another way. The value is not kept anywhere. Results that did not come from the tool -
+refused, denied, timed out - are the runtime's fixed texts and classified as the turn's label; a
+failed one, whose error may come from the tool, is the channel's. Built-in tools whose answer is
+derived from the arguments alone classify it as the turn's label too (issue 168): the model sees
+every result, and what it has seen classifies what the turn writes (see
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md#what-a-turn-writes-as)). See
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md#tool-results).
 
@@ -105,11 +105,13 @@ and what the model is told is never the choice of whoever may write a personalit
 call to its tool, it checks:
 
 *   that the caller is an agent - only agents call tools;
-*   that the policy permits the call (`ActionType::CallTool`);
+*   that the call was offered to it, and the place's rules still let it run;
 
-and makes the result for the model afterwards: it times the call, turns an error into a status and a
-next step (issue 15), classifies the result and withholds what may not flow into the channel (issue
-133), and marks what only the owner sees (`successful_result`).
+Whether the policy permits the call (`ActionType::CallTool`) is asked once, as the call is admitted
+(below, issue 304), not again as it runs. The executor makes the result for the model afterwards: it
+times the call, turns an error into a status and a next step (issue 15), classifies the result and
+withholds what may not flow into the channel (issue 133), and marks what only the owner sees
+(`successful_result`).
 
 A call is not waited for longer than its turn lasts (issue 161). The executor runs it next to the
 turn's `CancellationToken`, which a cancel and a stop cancel; then the tool's future is dropped
@@ -365,7 +367,8 @@ or run as it is. The actor only records what the executor decided.
 
 *   **Policy.** A call the `SecurityManager` does not permit (`ActionType::CallTool`) is refused
     before any approval is requested, so users are not asked about calls that would be refused
-    anyway. `execute` checks again.
+    anyway. It is the one place the policy is asked about the call (issue 304): `execute` runs what
+    was admitted.
 *   **Validity.** A call that cannot run - arguments its tool's `describe` rejects, a tool that does
     not exist - is answered at once instead of being put up for approval (issue 118).
 
@@ -425,13 +428,15 @@ raw.
     sensitive - never to the approver or other agents. Everybody it reaches sees what the agent
     waits for; only those asked answer.
 3.  **Answers.** A user answers over REST (`POST …/questions/{qid}`) or in the TUI - which shows the
-    questions as text, asks them one by one after `/answer [id]` and declines them with
-    `/decline [id]` - through `UserActor::answer_questions`, which asks `AnswerQuestion` of the
-    channel and refuses what cannot count - questions not open or not put to them, responses not as
-    the questions ask (`Questions::check_responses`) - before anything is sent. `QuestionAnswered`
-    goes to the asking agent alone. The agent takes it only if its sender was asked and the
-    questions are still open, and checks the responses again; who answered it takes from the
-    envelope, never from what was said. The first answer that counts settles the call.
+    questions as text, asks them one by one after `/answer [id]` and declines them with `/decline
+    [id]` - through `UserActor::answer_questions`, which refuses what cannot count - questions not
+    open or not put to them, responses not as the questions ask (`Questions::check_responses`) -
+    before anything is sent. Whether the user may answer in the channel at all (`AnswerQuestion`) is
+    the channel's to decide as it admits the answer, which it refuses with `MessageRejected` (issue
+    304). `QuestionAnswered` goes to the asking agent alone. The agent takes it only if its sender
+    was asked and the questions are still open, and checks the responses again; who answered it
+    takes from the envelope, never from what was said. The first answer that counts settles the
+    call.
 4.  **Declining.** The user may decline - `QuestionDeclined` - and a message of theirs written
     while questions put to them are open declines them all: their actor sends the declines before
     the message, so that the turn goes on and the message is heard after it. A declined call is
@@ -531,9 +536,13 @@ and there is nothing about running commands to try out.
 
 Seeing and running a command are separate permissions:
 
-*   `ActionType::ShowCommand(name)` decides whether a command appears in `/help` and in completion
-    (`GET .../commands`).
-*   `ActionType::ExecuteCommand(name)` decides whether it runs.
+*   `ActionType::ShowCommand { command, channel }` decides whether a command appears in `/help`
+    and in completion (`GET .../commands`).
+*   `ActionType::ExecuteCommand { command, channel }` decides whether it runs.
+
+Both carry the command and the attributes of the channel it is run in, as the commands of an agent
+carry the agent's besides (issue 304). The ownership policy grants them whoever reads the channel,
+and a command for the owners alone (`Command::owners_only`) the channel's owner.
 
 A command the user may not see is answered exactly like an unknown one, so hidden commands cannot be
 found by trying names. Whatever the command does is checked on its own as well: `/wakeup` asks for
@@ -595,10 +604,12 @@ agent alike.
     unknown.
 *   **Sent, then carried out.** `UserActor::execute_command` asks the session's commands first; a
     command they do not know it looks for among the agents of the channel
-    (`ChannelLoop::agent_commands`, what each agent carries out as the issuer may see it). It asks
-    each agent named whether the issuer may ask it (`Actor::admit_command`) - so that a refusal is
-    told at once - and sends `ActorEvent::CommandRequested { command, args, agent }` through its
-    own transport, one per agent under one span, with no wakeup ahead of it. The channel admits it
+    (`ChannelLoop::agent_commands`, what each agent carries out as the issuer may see it). That is
+    offering: it asks the policy through the agent's executor directly, not through the agent's
+    queue, so it answers at once while the agent is busy. It asks nothing more - whether the issuer
+    may ask for the command is the agent's to decide (below, issue 304) - and sends
+    `ActorEvent::CommandRequested { command, args, agent }` through its own transport, one per
+    agent named under one span, with no wakeup ahead of it. The channel admits it
     only from a user to an agent taking part; the moderator routes it to that agent alone. A quiet
     channel delivers it as well.
 *   **Where it came.** The agent takes in what it was told up to the command (`take_in` ends the
@@ -608,13 +619,15 @@ agent alike.
     is under way waits for it.
 *   **In a turn of its own.** The agent begins a command turn
     (`AgentChannelState::begin_command_turn`) in the request's contexts continued in its name - its
-    owner's rights, the issuer as initiator
-    ([SECURITY.md](SECURITY.md#in-whose-name-an-agent-acts)) - and its executor asks again, in the
-    context the request came with, whether the issuer may ask for it. The component stages what
-    the command changes, as a tool does. Carried out, the turn is taken over and stored; not carried
-    out, it is dropped as if it had never begun. A command turn is no answer: it announces no
-    answer's start nor end, asks nobody to respond, can be neither cancelled nor asked for again,
-    and is never stored under way - one found after a restart is dropped, unanswered.
+    owner's rights, the issuer as initiator ([SECURITY.md](SECURITY.md#in-whose-name-an-agent-acts))
+    - and its executor asks, in the context the request came with, whether the issuer may ask for
+    it: the one place it is asked (issue 304). Refused, the agent answers `CommandFailed` to the
+    issuer, the turn dropped; the refusal comes when the agent takes the request in, as its answer
+    would. The component stages what the command changes, as a tool does. Carried out, the turn is
+    taken over and stored; not carried out, it is dropped as if it had never begun. A command turn
+    is no answer: it announces no answer's start nor end, asks nobody to respond, can be neither
+    cancelled nor asked for again, and is never stored under way - one found after a restart is
+    dropped, unanswered.
 *   **Begun** (issue 299). Admitted, the agent tells the issuer alone that it began -
     `ActorEvent::CommandStarted` with the turn's id, which its answer carries too -, whatever its
     answer's visibility: for `/compact`, the issuer sees it begin and everybody sees it done. An

@@ -44,7 +44,7 @@ fn agent_signature(command: &Command) -> String {
 /// see (issue 269), by name, each with the handles of the agents that do.
 async fn agents_commands(context: &CommandContext<'_>) -> BTreeMap<String, (Command, Vec<String>)> {
     let mut by_name: BTreeMap<String, (Command, Vec<String>)> = BTreeMap::new();
-    for (member, commands) in context.channel.agent_commands(context.issuer.security_context()).await {
+    for (member, commands) in context.channel.agent_commands(&context.issuer.security_context()).await {
         let Some(handle) = member.handle else { continue };
         for command in commands {
             by_name.entry(command.name.clone()).or_insert_with(|| (command, Vec::new())).1.push(format!("@{handle}"));
@@ -56,7 +56,7 @@ async fn agents_commands(context: &CommandContext<'_>) -> BTreeMap<String, (Comm
 #[async_trait]
 impl ChannelCommandProvider for HelpCommandProvider {
     async fn execute(&self, _name: &str, args: &str, context: &CommandContext<'_>) -> CommandResult<CommandOutput> {
-        let visible = context.executor.visible(context.issuer.security_context()).await;
+        let visible = context.executor.visible(&context.issuer.security_context(), &context.channel.security_attributes()).await;
         let of_agents = agents_commands(context).await;
         let wanted = args.trim().trim_start_matches('/');
         if !wanted.is_empty() {

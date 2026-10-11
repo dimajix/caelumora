@@ -1,6 +1,6 @@
 # 304 — Four kinds of permission are checked in many places, and nobody has reviewed how they fit
 
-**Status:** in progress
+**Status:** done
 **Area:** Identity and access management
 
 ## The problem
@@ -563,3 +563,153 @@ where they test the door.
   the change of the participants, not before; and issue 289 is not resolved by it - attaching still
   writes an entry of its own, now naming the session's group. Issue 287 shrinks to reading groups
   and stays open.
+- **2026-10-11** — Step 2 split in two, each to be reviewed on its own. **2a**, on the branch
+  `issue-304-flow` (A1 of the plan): the `SecurityContext` carries `roles` and `limiting_roles`.
+  The `UserController` builds a user's context, the `AgentController` - which now holds its owner's
+  `UserController` - an agent's, each with the roles as they are now (issue 306); `next` carries
+  none, whoever continues a context gives them (`Answering::to` takes the actor's own context).
+  The agent actors and the `UserActor` build their context on every use; the REST server's
+  middleware takes it from the user's controller per request. The policy matches `Subject::Role`
+  by `SecurityContext::has_role`; `Memberships::roles_of`, `StoreMemberships::agent_roles` and
+  `role::user_roles` are gone, and so is every lookup of roles in the runtime. `may_see_channel`
+  judges by the context's roles and, for a limited caller, by the limit as well - which resolves
+  F10: an agent limited by its personality is now limited where it is shown a workspace, a skill
+  or an artifact, and where it writes one, not only at a channel's door. The door keeps asking
+  `JoinChannel` with the member's roles, from its controller. No decision changes otherwise; the
+  tests that built contexts by hand give them their roles. Stored data to delete: the state of
+  agents with a turn under way and of external agents with open tasks, whose `Work` stores a
+  `SecurityContext` without the new fields. **2b** - the flow out of the `SecurityManager` - is
+  next.
+- **2026-10-11** — **2b** done on the branch `issue-304-flow` (A5, A6 of the plan): the flow leaves
+  the `SecurityManager`. `ConfidentialityPolicy` (`caelumora_model::confidentiality`) decides
+  `may_publish`, `may_copy` and `cleared`, and names the configured compartments and roles;
+  `ConfidentialityRules` implements it. `ConfidentialityQuestions`, by blanket implementation, gives
+  the questions their names - `may_copy_information`, `cleared_for` - and the `require_*` that
+  answer a refusal with the act's own error and log it alike. `ActionType` loses `Publish`,
+  `CopyInformation`, `Classify` and `JoinChannel`; `Reclassify` keeps its security half;
+  `AccessQuestions` loses the flow questions, `channel_reading` moves with `ChannelReader` and
+  `ChannelReading` to the runtime's views, `Place` to `confidentiality`. The ownership policy holds
+  no rules (issue 138 reversed), the `SecurityManager` translates no role names (the policy's
+  `roles` do), `DummySecurityManager` carries nothing. The `RuntimeManager` takes the policy as a
+  constructor argument beside the `SecurityManager`, `AppConfig::create_confidentiality_policy`
+  builds it, and it is handed at construction to the `ChannelLoop`, the views, the `ToolExecutor`,
+  the workspace, skill and artifact managers and, as a declared service, to the components of notes
+  and memory. Where an act enforced a flow by asking `may_*`, it now asks `require_*`. Deviations
+  from the plan: the flow is a trait, not a function of the rules, so that a policy outside the
+  binary (issue 24) states it and the security suite records it - in the same list as the security
+  questions, under the old names, so that the order of an action's questions shows both; that only
+  who acts puts something into a channel, which `Publish` checked, is the channel's own check now
+  (`ChannelLoop::admits`). Changes of behaviour: `allow_all` no longer allows every flow; a
+  reclassification above the channel answers `ClassificationRefused` (400), not `Forbidden` (403),
+  as a modification above it already did; classifying is validation and no longer recorded as a
+  question. No stored data changes.
+- **2026-10-11** — Step 3 begun on the branch `issue-304-admission`, built on `issue-304-flow`.
+  Done of C4: `CallTool` is asked once, as the call is admitted, in the enforcing form
+  (`require`), not again when it runs; `may_call_tool` is gone. Corrected on the way: the
+  `UserActor`'s question whether its person may approve before a rule of theirs answers
+  (`answer_by_rule`) stays - it is offering in the sense of rule 5, as a client asks it to show its
+  buttons; the approver asks it again as it counts the answer, which is the act. Without it, a rule
+  of someone who may not approve would put an answer into the channel that does not count. Found
+  when C3 was to begin: the risk of step 6 does not exist - the loop routes to actors with
+  `try_send` and holds its state only to store it - but checking in the actor's task opens a gap
+  between the check and the entry: a channel lowered meanwhile would let in a message admitted for
+  its classification before, and a revocation could overtake a modification. Admission at
+  submission is to be decided by the loop, in order, with the verdict sent back to the sender;
+  together with where agent commands are admitted and F12, laid before the maintainer.
+- **2026-10-11** — Step 3, C3 decided by the maintainer and done: the channel decides what enters
+  it, in its loop, in order, as it takes an event in (`ChannelLoop::admission`, the former `admits`
+  and `admits_change` in one), first whether the sender may act so, then the flow of what it
+  carries. What it refuses it answers to the sender alone with a new event,
+  `ActorEvent::MessageRejected { rejected, message, reason }` with a `Rejection` (`Forbidden`,
+  `ClassificationRefused`, `MessageNotFound`, `MessageUnchangeable`, `Invalid`), in the system's
+  name and never in the history - after the pattern of `RetryRejected`. The `UserActor` asks
+  nothing of the policy or the flow for what it sends any more (a message, a change, a
+  reclassification, a request to answer again, an answer to questions - `AnswerQuestion` moved into
+  the admission); it looks only at what it can see at once (the message is there, not taken back,
+  an agent's). It shows what it sends before it forwards it, so that a refusal always follows what
+  it refuses. `may_modify_message`, `may_revoke_message` and `may_reclassify` are gone; the REST
+  routes answer such refusals no longer with `403`/`400`, but on the channel's stream. The web UI
+  marks a message not let in and undoes a refused change by reading the message back; the TUI
+  prints the refusal. Found on the way: modifying another's message never reaches the channel - the
+  modified message speaks as its author, which only the author's actor can send (issue 228) - so
+  the `UserActor` refuses it at once as `Forbidden`, structurally, without asking the policy. Not
+  done: an agent is not told when the channel refuses what it said - its filter does not take
+  `MessageRejected` in, and its transcript keeps the message, as before. Still open for the
+  maintainer: where agent commands are admitted, F12, and whether a user's actor strikes a refused
+  message from what it shows by a history entry of its own. The map (`docs/PERMISSION-CHECKS.md`)
+  is redone in step 5. No stored data changes.
+
+- **2026-10-11** — Step 3, where agent commands are admitted, decided by the maintainer (option A)
+  and done: a command of an agent is the agent's act, so the agent alone asks whether the issuer
+  may ask for it (`ExecuteAgentCommand`), once, as it carries it out (`carry_out`), and answers a
+  refusal with `CommandFailed`, which existed already. The issuer's actor finds whom they name by
+  what they see of the agents' commands (`ShowAgentCommand`, offering in the sense of rule 5) and
+  asks nothing more; `Actor::admit_command` is gone, and so is the reply naming agents not asked
+  of `@all`. The channel keeps to the form of the request, as before. Option B - the channel
+  asking the agent's executor as it admits the request - was rejected: it would make the channel
+  answer for the agent's components, and the gap between admission and carrying out would make
+  the agent ask again. Checked on the way, at the maintainer's question: the list of an agent's
+  commands is no event and does not wait in its queue - `Actor::commands` asks the policy through
+  its executor directly, uncached, for the member snapshot, `/help` and finding whom a command
+  names. Only the refusal of a command one may see but not ask for comes as late as the agent
+  takes the request in; under the ownership policy both are decided by one rule.
+- **2026-10-11** — Step 3, F12 decided by the maintainer per action (option C), revising the plan
+  that all four leave `ActionType`. `ShowCommand` and `ExecuteCommand` take the shape of the
+  commands of an agent: the command and the attributes of the channel it is run in, decided by the
+  ownership policy alike - whoever reads the channel, or for a command for the owners alone the
+  channel's owner. Before, they carried a name and were always allowed, so a command of the
+  session marked `owners_only` was not decided by it. `CallTool` stays an action the policy
+  allows, a documented hook for another policy (issue 24): the call is an object one can decide
+  by, and what decides it here - the tools offered, the place's rules - is enforced where it is.
+  `ReadSecret` stays as it is, with the gap it hides opened as issue
+  [310](310-secrets-have-no-owner.md): a secret has no owner, so whoever writes a component that
+  names one decides which credential is sent where. SECURITY.md says that until 310 only the seed
+  and the configuration may write such components. No stored data changes.
+- **2026-10-11** — Step 4 on the branch `issue-304-order`, built on `issue-304-admission`: C2 and
+  C6, the order and the one reach.
+  - C2: `SessionLoop::delete_channel` reaches the channel (`GetChannel`, else `ChannelNotFound`)
+    and asks `DeleteChannel` before it takes the channel out of its session; a refusal leaves the
+    channel running and listed. `SessionManager::restore_session` reads the deleted session as
+    whoever restores it, no longer in the runtime's name, so that who may not see it learns
+    nothing; the store asks `ReadDeleted` again as it restores (rule 2).
+  - The one reach for channels: `SessionLoop::channel_for` - the REST server's way to a channel -
+    reaches it through `channel_reading`, as the views do; `require_seen` is gone. A deleted channel
+    is "gone" only to whom a live one would be there (`Views::gone_channel` asks
+    `SessionView::readable`, the clearance included). `WorkspaceManager::usable_in_channel`
+    already asked `channel_reading`.
+  - The agent's own session: `ViewsFactory::session` asks `GetSession` as `Views::session` does,
+    and is async with `AgentWork::session` and `Turn::session`; the agent passes by the group of
+    the session's participants.
+  - Entries: `Views::may_copy_from` answers no for a viewer without a place - a user reads whole
+    channels only.
+  - Skills: `Views::usable_skills` asks the agent's clearance too, as a user's skills are asked.
+  - Events: the events of a channel, of its members and of an agent's state in it are asked as
+    `GetChannel`, `AgentStateChanged` as `GetAgent`.
+  - Refusals: `WorkspaceManager::reached` asks the clearance before `WriteWorkspace`, and answers a
+    workspace one is not cleared for as `NotFound`, as the views do.
+  - Not done, laid before the maintainer: the REST context with its place (F20). No decision reads
+    the place from the context - the flow is given its places as arguments -, so it would serve the
+    log alone. Left over of C5, outside this step's scope: `ApproverActor` using `require(.., ||
+    ())` as a flag, `ChannelLoop::reclassify` learning whether it lowered by asking `may_publish`,
+    and `WorkspaceManager::usable_in` asking `check` and `may_publish` where it enforces. No stored
+    data changes.
+- **2026-10-11** — Step 5 on the branch `issue-304-docs`, and done. The map
+  (`docs/PERMISSION-CHECKS.md`) is redone from the code: every operation with its questions in
+  order, in whose name, the concept, the reason it is asked (the five rules), what is asked again
+  and the refusal; the findings split into what was decided to stay, with the reason, and what is
+  open. SECURITY.md states the three decisions, the five rules and the order; CONFIDENTIALITY.md no
+  longer gives the ownership policy the flow. Left over of C5, decided on the way: the approver's
+  and the `ToolExecutor`'s `require` with a refusal of `()` stay - a refusal that is no error of
+  theirs, logged as every act's -; `ChannelLoop::reclassify` keeps asking `may_publish` to learn
+  whether it lowered, since an agent asks the same at its next step and both have to agree (the
+  plan's `flows_to` would have bypassed the policy); `WorkspaceManager::usable_in` asks
+  `may_read_workspace`, new beside `may_read_artifact`. Found by the map and fixed:
+  `SkillManager::purge` asked `Purge` with nothing done before the store, and the `SkillManager`
+  no longer takes the `SecurityManager` at all; `ArtifactManager::describe` left `UpdateArtifact`
+  to the store, while `keep` asks it first since it compares the scope with the artifact's owner.
+  F20 (the place in a REST context) dropped at the maintainer's agreement: no decision reads it.
+  What the review found and did not fix has issues of its own: secrets without an owner
+  ([310](310-secrets-have-no-owner.md)), and the order and the reach where the code does not follow
+  them yet ([312](312-order-and-reach-not-everywhere.md)). Every point of *Done when* holds: the
+  map, the concept per action, the order as a rule with the suite asserting it where it changed,
+  and an issue for what is open. No stored data changes.

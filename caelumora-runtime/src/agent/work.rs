@@ -81,8 +81,8 @@ impl<'a> AgentWork<'a> {
     /// notes and histories, its own private notes there - at the
     /// classification the work began with (issue 67). `None` for work
     /// outside of a channel, which reads nothing elsewhere.
-    pub fn session(&self) -> Option<SessionView> {
-        self.views?.session(&self.work.security_context, self.channel_id(), self.work.classification.clone())
+    pub async fn session(&self) -> Option<SessionView> {
+        self.views?.session(&self.work.security_context, self.channel_id(), self.work.classification.clone()).await
     }
 
     /// The agent's state in this channel as it stands: what components read
