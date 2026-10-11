@@ -104,6 +104,10 @@ impl crate::removal::Stored for Skill {
             _ => Err("a skill belongs to a user or to the system".to_string()),
         }
     }
+
+    fn readers_cleared_for(&self) -> Option<&Classification> {
+        Some(&self.classification)
+    }
 }
 
 impl crate::removal::Deletable for Skill {

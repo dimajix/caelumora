@@ -201,7 +201,7 @@ impl World {
         let memberships = Arc::new(StoreMemberships::new());
         let recorder = Arc::new(Recorder { policy: OwnershipSecurityManager::with_memberships(Arc::<StoreMemberships>::clone(&memberships)), rules, asked: Mutex::new(Vec::new()), names: Mutex::new(HashMap::new()) });
         let policy: Arc<dyn SecurityManager> = Arc::<Recorder>::clone(&recorder);
-        let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
+        let store = Arc::new(MemoryStore::with_policies(Arc::clone(&policy), Arc::<Recorder>::clone(&recorder)));
         let entities: Arc<dyn EntityStore> = Arc::<MemoryStore>::clone(&store);
         memberships.bind(&entities);
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
@@ -2458,18 +2458,19 @@ async fn a_workspace_is_its_owners_alone() {
     assert!(matches!(renamed, Err(WorkspaceError::NotFound(_))), "bob does not rename it: {renamed:?}");
     let (renamed, asked) = world.asked(workspaces.rename(&alice, docs.id, "notes")).await;
     assert_eq!(renamed.expect("alice does").name.name, "notes");
-    assert_eq!(asked, checks(&["alice: GetWorkspace(alice's) yes", "alice: JoinChannel(alice) yes", "alice: GetWorkspace(alice's) yes", "alice: UpdateWorkspace(alice's) yes"]));
+    assert_eq!(asked, checks(&["alice: GetWorkspace(alice's) yes", "alice: JoinChannel(alice) yes", "alice: GetWorkspace(alice's) yes", "alice: JoinChannel(alice) yes", "alice: UpdateWorkspace(alice's) yes"]),
+        "reached, then reached again and changed by the store (issue 322)");
 
     assert!(!workspaces.delete(&bob, docs.id).await.unwrap(), "nothing bob could see to delete");
     assert!(workspaces.delete(&alice, docs.id).await.unwrap());
     assert!(matches!(workspaces.restore(&bob, docs.id).await, Err(WorkspaceError::NotFound(_))), "nor restore");
     let (restored, asked) = world.asked(workspaces.restore(&alice, docs.id)).await;
     assert_eq!(restored.expect("alice restores it").id, docs.id);
-    assert_eq!(asked, checks(&["alice: ReadDeleted(alice's) yes", "alice: Restore(alice's) yes"]), "and it is not read back (issue 318)");
+    assert_eq!(asked, checks(&["alice: ReadDeleted(alice's) yes", "alice: JoinChannel(alice) yes", "alice: Restore(alice's) yes"]), "reached by the store (issue 322), and not read back (issue 318)");
     assert!(workspaces.delete(&alice, docs.id).await.unwrap());
     let (purged, asked) = world.asked(workspaces.purge(&alice, docs.id)).await;
     assert!(matches!(purged, Err(WorkspaceError::Store(StoreError::PermissionDenied))), "the owner does not purge: {purged:?}");
-    assert_eq!(asked, checks(&["alice: ReadDeleted(alice's) yes", "alice: Purge(alice's) no"]));
+    assert_eq!(asked, checks(&["alice: ReadDeleted(alice's) yes", "alice: JoinChannel(alice) yes", "alice: Purge(alice's) no"]));
     assert!(world.files.path().join(docs.id.to_string()).is_dir(), "and the files stay");
     assert!(workspaces.purge(&World::system(), docs.id).await.unwrap(), "the system does");
     assert!(!world.files.path().join(docs.id.to_string()).exists(), "with the files");
@@ -2479,7 +2480,7 @@ async fn a_workspace_is_its_owners_alone() {
 /// cleared for, else it is not found - before anything else is asked, so
 /// that whoever is not cleared for it learns nothing of it, not even that
 /// they may not change its files; by its id as by navigating to it (issue
-/// 312).
+/// 312), and in the trash - all of it decided by the store (issue 322).
 #[tokio::test]
 async fn a_workspace_one_is_not_cleared_for_is_not_found() {
     let world = World::new().await;
@@ -2504,6 +2505,16 @@ async fn a_workspace_one_is_not_cleared_for_is_not_found() {
     let shared = workspaces.share(&uncleared, docs.id, Subject::Actor(ActorId::User(world.bob)), Grant::Read).await;
     assert!(matches!(shared, Err(WorkspaceError::NotFound(_))), "{shared:?}");
     assert!(!workspaces.delete(&uncleared, docs.id).await.unwrap(), "nothing she reaches to delete");
+
+    // Deleted, it is reached by the store alike (issue 322): the trash and
+    // restoring agree.
+    workspaces.delete(&alice, docs.id).await.unwrap();
+    let trash = world.manager.views(Viewer::new(uncleared.clone())).deleted_workspaces().await.unwrap();
+    assert!(trash.is_empty(), "not in her trash");
+    let (restored, asked) = world.asked(workspaces.restore(&uncleared, docs.id)).await;
+    assert!(matches!(restored, Err(WorkspaceError::NotFound(_))), "nor to restore");
+    assert_eq!(asked, checks(&["alice: ReadDeleted(alice's) yes", "alice: JoinChannel(alice) no"]));
+    assert_eq!(world.manager.views(Viewer::new(alice.clone())).deleted_workspaces().await.unwrap().len(), 1, "where it is, cleared");
 }
 
 /// A storage takes what may flow to where it puts it (issue 251, part B2):
@@ -2733,8 +2744,8 @@ async fn a_workspace_is_reached_by_its_list_wherever_one_acts() {
     assert_eq!(asked, checks(&["bob: GetWorkspace(alice's) no"]));
     let (shared, asked) = world.asked(workspaces.set_access(&alice, docs.id, bobs.clone())).await;
     shared.expect("its owner shares it");
-    assert_eq!(asked, checks(&["alice: GetWorkspace(alice's) yes", "alice: JoinChannel(alice) yes", "alice: GetWorkspace(alice's) yes", "alice: UpdateWorkspace(alice's) yes"]),
-        "reached, then changed as stored: whether she reads a group it names tells her nothing of others (issue 312)");
+    assert_eq!(asked, checks(&["alice: GetWorkspace(alice's) yes", "alice: JoinChannel(alice) yes", "alice: GetWorkspace(alice's) yes", "alice: JoinChannel(alice) yes", "alice: UpdateWorkspace(alice's) yes"]),
+        "reached, then reached again and changed as stored: whether she reads a group it names tells her nothing of others (issue 312)");
 
     let elsewhere = SecurityContext::new(ActorId::User(world.bob), SessionId::new(), ChannelId::new()).with_roles(vec![*STAFF], None);
     let his = views(&elsewhere).workspace(docs.id).await.expect("he reads it, wherever he acts");

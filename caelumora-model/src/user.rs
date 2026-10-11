@@ -247,7 +247,7 @@ mod tests {
         use crate::store::memory::MemoryStore;
         use std::sync::Arc;
 
-        let store = MemoryStore::with_security_manager(Arc::new(OwnershipSecurityManager::new()));
+        let store = MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(crate::confidentiality::ConfidentialityRules::default()));
         let (alice, bob) = (UserId::new(), UserId::new());
         let as_user = |id| SecurityContext::new(ActorId::User(id), SessionId::default(), ChannelId::default());
 

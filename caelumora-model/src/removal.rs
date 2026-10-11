@@ -5,6 +5,7 @@
 //! participant that leaves a channel is marked the same way.
 
 use crate::actor::ActorId;
+use crate::confidentiality::Classification;
 use crate::security::Secured;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -41,6 +42,16 @@ pub trait Stored: Secured {
     /// changed.
     fn validate(&self) -> Result<(), String> {
         Ok(())
+    }
+
+    /// What whoever reads it through the store must be cleared for (issue
+    /// 322): its classification, where reaching it is reading it and being
+    /// cleared for it - a workspace, a skill. `None` for a kind that is not
+    /// classified, and for one whose reach is not the store's alone: a
+    /// channel, read from the reader's place (`view::channel_reading`), and
+    /// an artifact, read by the access lists of its versions (issue 316).
+    fn readers_cleared_for(&self) -> Option<&Classification> {
+        None
     }
 }
 

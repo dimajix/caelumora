@@ -219,7 +219,7 @@ mod tests {
         assert_eq!(agent.security_attributes.owner_id, ActorId::User(owner));
 
         // A lookup that fails is an error, not a reason to make another.
-        let (store, personality) = store_with_personality(MemoryStore::with_security_manager(Arc::new(NoAgentLookup))).await;
+        let (store, personality) = store_with_personality(MemoryStore::with_policies(Arc::new(NoAgentLookup), Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()))).await;
         let refused = resolve_participants(store.as_ref(), &as_user(owner), &self::template(vec![helper(personality)]), SessionId::new(), owner).await
             .expect_err("the lookup is refused");
         assert!(matches!(refused.downcast_ref::<StoreError>(), Some(StoreError::PermissionDenied)), "{refused}");
@@ -285,7 +285,7 @@ mod tests {
     async fn an_agent_made_meanwhile_is_looked_up_again() {
         let owner = UserId::new();
         let manager = Arc::new(MadeMeanwhile::default());
-        let (store, personality) = store_with_personality(MemoryStore::with_security_manager(Arc::<MadeMeanwhile>::clone(&manager))).await;
+        let (store, personality) = store_with_personality(MemoryStore::with_policies(Arc::<MadeMeanwhile>::clone(&manager), Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()))).await;
         let system = SecurityContext::system();
         manager.store.set(Arc::downgrade(&store)).unwrap();
         manager.personality.set(store.get_personality(&system, personality).await.unwrap()).unwrap();
@@ -301,7 +301,7 @@ mod tests {
     async fn an_agent_the_caller_may_not_read_keeps_its_name() {
         use caelumora_model::security::OwnershipSecurityManager;
         let (owner, other) = (UserId::new(), UserId::new());
-        let (store, personality) = store_with_personality(MemoryStore::with_security_manager(Arc::new(OwnershipSecurityManager::new()))).await;
+        let (store, personality) = store_with_personality(MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()))).await;
         let system = SecurityContext::system();
         let plain = store.get_personality(&system, personality).await.unwrap();
         store.create_agent(&system, &Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), &plain, ActorId::User(other))).await.unwrap();

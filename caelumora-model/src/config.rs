@@ -56,11 +56,11 @@ pub enum PersistenceBackend {
 impl PersistenceBackend {
     /// Opens the store this backend describes. Both kinds of store serve
     /// as entity and as state store; the caller picks the face it needs.
-    fn open(&self, security_manager: Arc<dyn SecurityManager>) -> ConfigResult<Arc<dyn Store>> {
+    fn open(&self, security_manager: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> ConfigResult<Arc<dyn Store>> {
         Ok(match self {
-            Self::Memory => Arc::new(MemoryStore::with_security_manager(security_manager)),
+            Self::Memory => Arc::new(MemoryStore::with_policies(security_manager, confidentiality)),
             Self::Json { path, journal_floor } => {
-                let store = JsonFileStore::new(path, security_manager)?;
+                let store = JsonFileStore::new(path, security_manager, confidentiality)?;
                 Arc::new(match journal_floor {
                     Some(bytes) => store.with_journal_floor(*bytes),
                     None => store,
@@ -605,8 +605,8 @@ impl AppConfig {
     ///
     /// # Errors
     /// `ConfigError::Store` if the store cannot be opened.
-    pub fn create_entity_store(&self, security_manager: Arc<dyn SecurityManager>) -> ConfigResult<Arc<dyn EntityStore>> {
-        Ok(self.persistence.entity_store.open(security_manager)?)
+    pub fn create_entity_store(&self, security_manager: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> ConfigResult<Arc<dyn EntityStore>> {
+        Ok(self.persistence.entity_store.open(security_manager, confidentiality)?)
     }
 
     /// The component store: kept where the entity store is, under
@@ -615,16 +615,16 @@ impl AppConfig {
     ///
     /// # Errors
     /// `ConfigError::Store` if the store cannot be opened.
-    pub fn create_component_store(&self, security_manager: Arc<dyn SecurityManager>) -> ConfigResult<Arc<dyn ComponentStore>> {
-        Ok(self.persistence.entity_store.open(security_manager)?)
+    pub fn create_component_store(&self, security_manager: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> ConfigResult<Arc<dyn ComponentStore>> {
+        Ok(self.persistence.entity_store.open(security_manager, confidentiality)?)
     }
 
     /// The state store, as configured under `persistence.state_store`.
     ///
     /// # Errors
     /// `ConfigError::Store` if the store cannot be opened.
-    pub fn create_state_store(&self, security_manager: Arc<dyn SecurityManager>) -> ConfigResult<Arc<dyn StateStore>> {
-        Ok(self.persistence.state_store.open(security_manager)?)
+    pub fn create_state_store(&self, security_manager: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> ConfigResult<Arc<dyn StateStore>> {
+        Ok(self.persistence.state_store.open(security_manager, confidentiality)?)
     }
 
     /// The chain of secret providers from the `secrets` section.

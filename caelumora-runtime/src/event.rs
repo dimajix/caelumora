@@ -1,6 +1,6 @@
 use caelumora_model::agent::AgentId;
 use caelumora_model::channel::ChannelId;
-use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
+use caelumora_model::confidentiality::{may_reach, Classification, ConfidentialityPolicy};
 use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::security::{ActionType, Secured, SecurityAttributes, SecurityContext, SecurityManager};
 use caelumora_model::session::SessionId;
@@ -189,13 +189,9 @@ impl EventBus {
                 };
                 let mut gone = Vec::new();
                 for (context, tx) in current {
-                    if !security_manager.check(&context, published.read_action()).await {
-                        continue;
-                    }
-                    // Reached as the views reach it: cleared for what it is,
-                    // or was (issue 312).
-                    let classifications = &published.classifications;
-                    if !classifications.is_empty() && !classifications.iter().any(|c| confidentiality.cleared_for(&context, c)) {
+                    // Reached as the store reaches it: read, and cleared for
+                    // what it is, or was (issues 312, 322).
+                    if !may_reach(security_manager.as_ref(), confidentiality.as_ref(), &context, published.read_action(), &published.classifications).await {
                         continue;
                     }
                     // A send fails only when the subscription is gone.

@@ -217,7 +217,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_profile_is_stored_first_then_taken_over_and_announced() {
-        let store = Arc::new(MemoryStore::with_security_manager(Arc::new(OwnershipSecurityManager::new())));
+        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default())));
         let announced = Arc::new(Announced::default());
         let user = alice();
         let controller = UserController::new(user.clone(), None, Arc::<Announced>::clone(&announced), Arc::<MemoryStore>::clone(&store));
@@ -249,7 +249,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_refused_profile_changes_nothing() {
-        let store = Arc::new(MemoryStore::with_security_manager(Arc::new(OwnershipSecurityManager::new())));
+        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default())));
         let announced = Arc::new(Announced::default());
         let user = alice();
         let controller = UserController::new(user.clone(), None, Arc::<Announced>::clone(&announced), Arc::<MemoryStore>::clone(&store));
@@ -269,7 +269,7 @@ mod tests {
     #[tokio::test]
     async fn a_rule_is_added_and_taken_back_by_the_user_alone() {
         use caelumora_model::approval::{Reach, RuleDecision, ToolMatcher};
-        let store = Arc::new(MemoryStore::with_security_manager(Arc::new(OwnershipSecurityManager::new())));
+        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default())));
         let user = alice();
         let controller = UserController::new(user.clone(), None, Arc::new(()), Arc::<MemoryStore>::clone(&store));
         let hers = as_user(user.id);

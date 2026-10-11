@@ -17,7 +17,7 @@
 use crate::actor::ActorId;
 use crate::privacy::SessionPrivacy;
 use crate::role::{RoleId, Roles};
-use crate::security::SecurityContext;
+use crate::security::{ActionType, SecurityContext, SecurityManager};
 use crate::session::ChannelId;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -508,6 +508,19 @@ impl<T: ConfidentialityPolicy + ?Sized> ConfidentialityQuestions for T {
             }
         }
     }
+}
+
+/// Whether `context` reaches what `read` is asked of and is classified as
+/// `classifications` says (concept 4 of the permission checks, issue 322):
+/// it may read it (`security`), and, where it is classified, is cleared
+/// for one of them (`confidentiality`) - one, the entity's; two as it is
+/// reclassified, the one it had and the one it has. The question the store
+/// asks of what it lists and the event bus of whom an event reaches, so
+/// that both reach alike. A question, for filtering: an operation reads
+/// through the store, which enforces it.
+pub async fn may_reach(security: &dyn SecurityManager, confidentiality: &dyn ConfidentialityPolicy, context: &SecurityContext, read: ActionType<'_>, classifications: &[Classification]) -> bool {
+    security.check(context, read).await
+        && (classifications.is_empty() || classifications.iter().any(|classification| confidentiality.cleared_for(context, classification)))
 }
 
 /// `Ok` if `allowed`, else `refusal()`, logged at `debug!` by what

@@ -5,7 +5,11 @@
 //!
 //! - **Reading** asks with the stored attributes. An entity the caller may
 //!   not read is reported as not found, so that ids cannot be probed for
-//!   existence.
+//!   existence. Where reaching it also means being cleared for it - a
+//!   workspace, a skill (`Stored::readers_cleared_for`, issue 322) -, the
+//!   `ConfidentialityPolicy` is asked that next, and who is not cleared
+//!   does not find it either: for every operation below, the deleted
+//!   included, as for reading.
 //! - **Listing** asks whether the caller may list at all, then filters the
 //!   result by what they may read.
 //! - **Creating** asks with the attributes of the new entity.
@@ -35,6 +39,7 @@ use crate::removal::Stored;
 use std::future::Future;
 use crate::scope::Scoped;
 use crate::store::query::{self, Cursor, Field, Page, Query};
+use crate::confidentiality::{may_reach, ConfidentialityPolicy, ConfidentialityQuestions};
 use crate::security::{ActionType, Enforcement, SecurityAttributes, SecurityContext, SecurityManager};
 use crate::store::{EntityKind, StoreError, StoreResult};
 
@@ -44,18 +49,29 @@ use crate::store::{EntityKind, StoreError, StoreResult};
 
 pub(crate) struct Access<'a> {
     manager: &'a dyn SecurityManager,
+    confidentiality: &'a dyn ConfidentialityPolicy,
     ctx: &'a SecurityContext,
 }
 
 impl<'a> Access<'a> {
-    pub(crate) fn new(manager: &'a dyn SecurityManager, ctx: &'a SecurityContext) -> Self {
-        Self { manager, ctx }
+    pub(crate) fn new(manager: &'a dyn SecurityManager, confidentiality: &'a dyn ConfidentialityPolicy, ctx: &'a SecurityContext) -> Self {
+        Self { manager, confidentiality, ctx }
     }
 
     /// `action`, or `refusal()` if the caller may not.
     async fn require<E: Send>(&self, action: ActionType<'_>, refusal: impl FnOnce() -> E + Send) -> Result<(), E> {
         self.manager.require(self.ctx, action, refusal).await
     }
+
+    /// Nothing if the caller is cleared for what `value` asks of whoever
+    /// reaches it (`Stored::readers_cleared_for`), `refusal()` otherwise.
+    fn require_cleared<T: Stored, E>(&self, value: &T, refusal: impl FnOnce() -> E) -> Result<(), E> {
+        match value.readers_cleared_for() {
+            Some(classification) => self.confidentiality.require_cleared_for(self.ctx, classification, refusal),
+            None => Ok(()),
+        }
+    }
+
 
     /// An action that concerns no single entity, such as listing.
     pub(crate) async fn allow(&self, action: ActionType<'_>) -> StoreResult<()> {
@@ -66,7 +82,8 @@ impl<'a> Access<'a> {
     pub(crate) async fn read<T: Stored>(&self, found: Option<T>, kind: &Actions, id: String) -> StoreResult<T> {
         let not_found = || StoreError::NotFound { entity: kind.entity.name(), id };
         let Some(value) = found.filter(present) else { return Err(not_found()) };
-        self.require((kind.get)(value.security_attributes()), not_found).await?;
+        self.require((kind.get)(value.security_attributes()), not_found.clone()).await?;
+        self.require_cleared(&value, not_found)?;
         Ok(value)
     }
 
@@ -99,10 +116,17 @@ impl<'a> Access<'a> {
         Ok(Page { items, next: None })
     }
 
-    /// Whether the caller may read `value` among a list: it is present
-    /// and they may read it (`kind.get`).
+    /// Whether the caller may read `value` among a list: it is present,
+    /// they may read it (`kind.get`) and are cleared for it.
     pub(crate) async fn readable<T: Stored>(&self, value: &T, kind: &Actions) -> bool {
-        present(value) && self.manager.check(self.ctx, (kind.get)(value.security_attributes())).await
+        present(value) && self.reachable(value, (kind.get)(value.security_attributes())).await
+    }
+
+    /// Whether the caller reaches `value`, asked as `read`: `may_reach`,
+    /// with what it asks of whoever reaches it.
+    async fn reachable<T: Stored>(&self, value: &T, read: ActionType<'_>) -> bool {
+        let classifications = value.readers_cleared_for().map_or(&[][..], std::slice::from_ref);
+        may_reach(self.manager, self.confidentiality, self.ctx, read, classifications).await
     }
 
     /// Whether the caller may create `value`.
@@ -117,7 +141,8 @@ impl<'a> Access<'a> {
     pub(crate) async fn change<T: Stored>(&self, stored: Option<&T>, value: &T, kind: &Actions, id: String) -> StoreResult<()> {
         let not_found = || StoreError::NotFound { entity: kind.entity.name(), id };
         let Some(stored) = stored.filter(|s| present(*s)) else { return Err(not_found()) };
-        self.require((kind.get)(stored.security_attributes()), not_found).await?;
+        self.require((kind.get)(stored.security_attributes()), not_found.clone()).await?;
+        self.require_cleared(stored, not_found)?;
         self.allow((kind.update)(stored.security_attributes())).await?;
         unmarked(value, kind)?;
         valid(value)
@@ -127,7 +152,7 @@ impl<'a> Access<'a> {
     /// could see to delete, an error if they may see but not delete it.
     pub(crate) async fn delete<T: Stored>(&self, stored: Option<&T>, kind: &Actions) -> StoreResult<bool> {
         let Some(stored) = stored.filter(|s| present(*s)) else { return Ok(false) };
-        if self.require((kind.get)(stored.security_attributes()), || ()).await.is_err() {
+        if self.require((kind.get)(stored.security_attributes()), || ()).await.is_err() || self.require_cleared(stored, || ()).is_err() {
             return Ok(false);
         }
         self.allow((kind.delete)(stored.security_attributes())).await.map(|_| true)
@@ -138,15 +163,16 @@ impl<'a> Access<'a> {
     pub(crate) async fn read_deleted<T: Stored>(&self, found: Option<T>, kind: &Actions, id: String) -> StoreResult<T> {
         let not_found = || StoreError::NotFound { entity: kind.entity.name(), id };
         let Some(value) = found.filter(|v| !present(v)) else { return Err(not_found()) };
-        self.require(ActionType::ReadDeleted(kind.entity, value.security_attributes()), not_found).await?;
+        self.require(ActionType::ReadDeleted(kind.entity, value.security_attributes()), not_found.clone()).await?;
+        self.require_cleared(&value, not_found)?;
         Ok(value)
     }
 
     /// Whether the caller may read `value` among a list of what was
-    /// deleted: it is marked deleted and they may read it as such
-    /// (`ReadDeleted`).
+    /// deleted: it is marked deleted, they may read it as such
+    /// (`ReadDeleted`) and are cleared for it.
     pub(crate) async fn readable_deleted<T: Stored>(&self, value: &T, kind: &Actions) -> bool {
-        !present(value) && self.manager.check(self.ctx, ActionType::ReadDeleted(kind.entity, value.security_attributes())).await
+        !present(value) && self.reachable(value, ActionType::ReadDeleted(kind.entity, value.security_attributes())).await
     }
 
     /// `stored`, if the caller may take its mark away: not found if it is
@@ -165,7 +191,7 @@ impl<'a> Access<'a> {
     pub(crate) async fn purge<T: Stored>(&self, stored: Option<&T>, kind: &Actions) -> StoreResult<bool> {
         let Some(stored) = stored.filter(|s| !present(*s)) else { return Ok(false) };
         let attributes = stored.security_attributes();
-        if self.require(ActionType::ReadDeleted(kind.entity, attributes), || ()).await.is_err() {
+        if self.require(ActionType::ReadDeleted(kind.entity, attributes), || ()).await.is_err() || self.require_cleared(stored, || ()).is_err() {
             return Ok(false);
         }
         self.allow(ActionType::Purge(kind.entity, attributes)).await.map(|_| true)
@@ -387,7 +413,7 @@ mod tests {
         let sessions = [session(carol, Vec::new()), session(alice, Vec::new()), session(alice, Vec::new()), session(alice, Vec::new())];
         let keys: Vec<(String, usize)> = ["a", "b", "c", "d"].into_iter().map(String::from).zip(0..).collect();
         let mut loaded = Vec::new();
-        let page = super::Access::new(&OwnersAndContributors, &alice_ctx)
+        let page = super::Access::new(&OwnersAndContributors, &crate::confidentiality::ConfidentialityRules::default(), &alice_ctx)
             .page(keys, &Query::<NoField>::all().limited(2), &super::SESSIONS, false, |n: usize| {
                 loaded.push(n);
                 std::future::ready(Ok(Some(sessions[n].clone())))
@@ -399,9 +425,44 @@ mod tests {
         assert_eq!(loaded, [0, 1, 2], "carol's is loaded and passed over, the last is never loaded");
     }
 
+    /// Who may read a workspace but is not cleared for it does not find it
+    /// (issue 322): not by its id, not in a list, not to change, delete,
+    /// restore or purge - the deleted alike, so that the trash and the
+    /// list agree.
+    #[tokio::test]
+    async fn what_the_caller_is_not_cleared_for_does_not_exist_for_them() {
+        use crate::confidentiality::{Classification, Clearance, Compartments, Confidentiality, ConfidentialityRules};
+        use crate::role::{RoleId, Roles};
+        use crate::scope::Scope;
+        use crate::security::DummySecurityManager;
+        use crate::value::name::ScopedName;
+        use crate::workspace::Workspace;
+        let staff = RoleId::new();
+        let roles = Roles::new([(staff, "staff".to_string(), vec![Clearance { level: Confidentiality::Internal, compartment: None }])]).unwrap();
+        let rules = ConfidentialityRules::new(Compartments::new([]).unwrap()).with_roles(roles);
+        let store = MemoryStore::with_policies(Arc::new(DummySecurityManager::new()), Arc::new(rules));
+        let owner = UserId::new();
+        let cleared = SecurityContext::new(ActorId::User(owner), Default::default(), Default::default()).with_roles(vec![staff], None);
+        let uncleared = SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
+        let workspace = Workspace::new(ScopedName::new("docs", Scope::UserScope { user_id: owner }).unwrap(), "main", Classification::general(Confidentiality::Internal), owner);
+        store.create_workspace(&cleared, &workspace).await.unwrap();
+
+        assert!(matches!(store.get_workspace(&uncleared, workspace.id).await, Err(StoreError::NotFound { .. })), "not by its id");
+        assert!(store.list_workspaces(&uncleared, &Query::all()).await.unwrap().items.is_empty(), "not in a list");
+        assert!(matches!(store.update_workspace(&uncleared, &workspace).await, Err(StoreError::NotFound { .. })), "not to change");
+        assert!(!store.delete_workspace(&uncleared, workspace.id).await.unwrap(), "not to delete");
+        assert!(store.get_workspace(&cleared, workspace.id).await.is_ok(), "who is cleared finds it");
+
+        assert!(store.delete_workspace(&cleared, workspace.id).await.unwrap());
+        assert!(store.list_deleted_workspaces(&uncleared, &Query::all()).await.unwrap().items.is_empty(), "nor in the trash");
+        assert!(matches!(store.restore_workspace(&uncleared, workspace.id).await, Err(StoreError::NotFound { .. })), "nor to restore");
+        assert!(!store.purge_workspace(&uncleared, workspace.id).await.unwrap(), "nor to purge");
+        assert_eq!(store.list_deleted_workspaces(&cleared, &Query::all()).await.unwrap().items.len(), 1, "where it is, for who is cleared");
+    }
+
     #[tokio::test]
     async fn what_the_caller_may_not_read_does_not_exist_for_them() {
-        let store = MemoryStore::with_security_manager(Arc::new(OwnersAndContributors));
+        let store = MemoryStore::with_policies(Arc::new(OwnersAndContributors), Arc::new(crate::confidentiality::ConfidentialityRules::default()));
         let (alice, alice_ctx) = user();
         let (bob, bob_ctx) = user();
         let (_, carol_ctx) = user();
@@ -416,7 +477,7 @@ mod tests {
 
     #[tokio::test]
     async fn changes_are_checked_against_what_is_stored() {
-        let store = MemoryStore::with_security_manager(Arc::new(OwnersAndContributors));
+        let store = MemoryStore::with_policies(Arc::new(OwnersAndContributors), Arc::new(crate::confidentiality::ConfidentialityRules::default()));
         let (alice, alice_ctx) = user();
         let (bob, bob_ctx) = user();
         let (carol, carol_ctx) = user();
@@ -440,7 +501,7 @@ mod tests {
     #[tokio::test]
     async fn what_was_deleted_is_the_owners_to_read_and_restore_and_the_systems_to_purge() {
         use crate::security::OwnershipSecurityManager;
-        let store = MemoryStore::with_security_manager(Arc::new(OwnershipSecurityManager::new()));
+        let store = MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(crate::confidentiality::ConfidentialityRules::default()));
         let (alice, alice_ctx) = user();
         let (bob, bob_ctx) = user();
         let hers = session(alice, vec![bob]);
@@ -465,7 +526,7 @@ mod tests {
 
     #[tokio::test]
     async fn nobody_creates_in_someone_elses_name() {
-        let store = MemoryStore::with_security_manager(Arc::new(OwnersAndContributors));
+        let store = MemoryStore::with_policies(Arc::new(OwnersAndContributors), Arc::new(crate::confidentiality::ConfidentialityRules::default()));
         let (alice, _) = user();
         let (_, bob_ctx) = user();
         assert!(matches!(store.create_session(&bob_ctx, &session(alice, Vec::new())).await, Err(StoreError::PermissionDenied)));
@@ -476,7 +537,7 @@ mod tests {
         use crate::security::OwnershipSecurityManager;
         use crate::user::User;
 
-        let store = MemoryStore::with_security_manager(Arc::new(OwnershipSecurityManager::new()));
+        let store = MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(crate::confidentiality::ConfidentialityRules::default()));
         let system = SecurityContext::system();
         let alice_id = UserId::new();
         let alice_ctx = SecurityContext::new(ActorId::User(alice_id), Default::default(), Default::default());

@@ -3,6 +3,7 @@ use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::StoredComponents;
 use crate::removal::{Deletable, Removal, Stored};
 use crate::scope::Scoped;
+use crate::confidentiality::ConfidentialityPolicy;
 use crate::security::SecurityManager;
 use crate::value::name::ScopedName;
 use crate::store::access::{name_free, Access, Actions, AGENTS, ARTIFACTS, CHANNELS, COMPONENTS, GROUPS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, SKILLS, USERS, USER_PROFILES, WORKSPACES};
@@ -50,6 +51,8 @@ pub const DEFAULT_JOURNAL_FLOOR: u64 = 64 * 1024;
 pub struct JsonFileStore {
     root: PathBuf,
     security_manager: Arc<dyn SecurityManager>,
+    /// Who is cleared for what is reached by clearance (issue 322).
+    confidentiality: Arc<dyn ConfidentialityPolicy>,
     journal_floor: u64,
     /// One per kind whose names are unique (issue 250), held by its writes:
     /// within this process, which is the only one that writes the files.
@@ -57,12 +60,16 @@ pub struct JsonFileStore {
 }
 
 impl JsonFileStore {
-    pub fn new(root: impl Into<PathBuf>, security_manager: Arc<dyn SecurityManager>) -> StoreResult<Self> {
+    /// A store of the files under `root` that asks `security_manager` about
+    /// every access to an entity, and `confidentiality` whether the caller
+    /// is cleared for what is reached by clearance.
+    pub fn new(root: impl Into<PathBuf>, security_manager: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> StoreResult<Self> {
         let root = root.into();
         info!("Creating JSON file store at {:?}", root);
         let store = Self {
             root,
             security_manager,
+            confidentiality,
             journal_floor: DEFAULT_JOURNAL_FLOOR,
             name_locks: [EntityKind::Personality, EntityKind::SessionTemplate, EntityKind::Agent, EntityKind::Channel, EntityKind::User, EntityKind::Workspace, EntityKind::Skill, EntityKind::Artifact, EntityKind::Group]
                 .into_iter().map(|kind| (kind, Mutex::new(()))).collect(),
@@ -79,7 +86,7 @@ impl JsonFileStore {
     }
 
     fn access<'a>(&'a self, ctx: &'a SecurityContext) -> Access<'a> {
-        Access::new(self.security_manager.as_ref(), ctx)
+        Access::new(self.security_manager.as_ref(), self.confidentiality.as_ref(), ctx)
     }
 
     fn ensure_layout(&self) -> StoreResult<()> {
@@ -1063,7 +1070,7 @@ mod tests {
     use uuid::Uuid;
 
     fn store(dir: &std::path::Path) -> JsonFileStore {
-        JsonFileStore::new(dir, Arc::new(crate::security::DummySecurityManager::new())).unwrap()
+        JsonFileStore::new(dir, Arc::new(crate::security::DummySecurityManager::new()), Arc::new(crate::confidentiality::ConfidentialityRules::default())).unwrap()
     }
 
     #[tokio::test]
@@ -1101,7 +1108,7 @@ mod tests {
         let dir = tempdir().unwrap();
         suite::names_are_unique(&store(dir.path())).await;
         let dir = tempdir().unwrap();
-        let owners = JsonFileStore::new(dir.path(), Arc::new(crate::security::OwnershipSecurityManager::new())).unwrap();
+        let owners = JsonFileStore::new(dir.path(), Arc::new(crate::security::OwnershipSecurityManager::new()), Arc::new(crate::confidentiality::ConfidentialityRules::default())).unwrap();
         suite::names_are_unique_beyond_what_is_read(&owners).await;
     }
 
@@ -1198,7 +1205,7 @@ mod tests {
 
         let dir = tempdir().unwrap();
         let security_manager = Arc::new(crate::security::DummySecurityManager::new());
-        let store = JsonFileStore::new(dir.path(), security_manager).unwrap();
+        let store = JsonFileStore::new(dir.path(), security_manager, Arc::new(crate::confidentiality::ConfidentialityRules::default())).unwrap();
         let ctx = SecurityContext::default();
 
         let session_id = SessionId(Uuid::new_v4());
@@ -1269,7 +1276,7 @@ mod tests {
     async fn list_sessions_skips_corrupted_files() {
         let dir = tempdir().unwrap();
         let security_manager = Arc::new(crate::security::DummySecurityManager::new());
-        let store = JsonFileStore::new(dir.path(), security_manager).unwrap();
+        let store = JsonFileStore::new(dir.path(), security_manager, Arc::new(crate::confidentiality::ConfidentialityRules::default())).unwrap();
         let ctx = SecurityContext::default();
 
         let s1 = Session {
@@ -1414,7 +1421,7 @@ mod tests {
         let lines = std::fs::read_to_string(&journal).unwrap();
 
         // As if the crash came after the snapshot and before the journal was emptied.
-        let folding = JsonFileStore::new(dir.path(), Arc::new(crate::security::DummySecurityManager::new())).unwrap().with_journal_floor(0);
+        let folding = JsonFileStore::new(dir.path(), Arc::new(crate::security::DummySecurityManager::new()), Arc::new(crate::confidentiality::ConfidentialityRules::default())).unwrap().with_journal_floor(0);
         folding.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
         assert!(!journal.exists());
         std::fs::write(&journal, &lines).unwrap();
