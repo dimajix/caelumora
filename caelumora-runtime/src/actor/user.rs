@@ -11,8 +11,8 @@ use caelumora_model::channel::ChannelId;
 use caelumora_model::command::{Command, CommandVisibility};
 use caelumora_model::message::{Message, MessageId, MessageRole};
 use caelumora_model::question::{QuestionError, QuestionId, QuestionRequest, Response};
-use caelumora_model::confidentiality::{Classification, ConfidentialityQuestions};
-use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Reclassified, SecurityAttributes, SecurityContext, SecurityManager};
+use caelumora_model::confidentiality::Classification;
+use caelumora_model::security::{AccessQuestions, SecurityContext, SecurityManager};
 use caelumora_model::session::SessionId;
 use caelumora_model::value::name::Name;
 use crate::controller::{ChannelController, ControllerManager, UserController};
@@ -120,25 +120,23 @@ impl UserActor {
     }
 
     /// Answers the questions `id` put to this user with `responses`, one per
-    /// question (issue 165) - or, with `None`, declines them. Asked here, so
-    /// that the user learns of a refusal: whether they may answer in the
-    /// channel at all (`AnswerQuestion`), then whether the questions are
-    /// open and put to them, and whether `responses` answer them as asked.
-    /// The agent asking checks again what it takes. Returns the `span_id`,
-    /// as `send_message` does.
+    /// question (issue 165) - or, with `None`, declines them. Looked at
+    /// here, so that the user learns at once if the answer cannot be given:
+    /// whether the questions are open and put to them, and whether
+    /// `responses` answer them as asked. Whether they may answer in the
+    /// channel at all (`AnswerQuestion`) is the channel's to decide as it
+    /// admits the answer, which tells them of a refusal (`MessageRejected`,
+    /// issue 304); the agent asking checks again what it takes. Returns the
+    /// `span_id`, as `send_message` does.
     ///
     /// # Errors
-    /// `ChannelError::Forbidden` if they may not answer here,
     /// `ChannelError::Question` with why the answer cannot be given; an
     /// error if the channel is gone.
     pub async fn answer_questions(&self, id: QuestionId, responses: Option<Vec<Response>>) -> anyhow::Result<Uuid> {
         use crate::channel::ChannelError;
-        let channel_loop = self.actor_runtime.channel_loop()
-            .ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))?;
-        let attributes = channel_loop.security_attributes();
-        self.actor_runtime.security_manager()
-            .require(&self.security_context(), ActionType::AnswerQuestion(&attributes), || ChannelError::Forbidden { action: "answering questions in", channel: self.channel_id })
-            .await?;
+        if self.actor_runtime.channel_loop().is_none() {
+            return Err(anyhow!("Channel {} is gone", self.channel_id));
+        }
         let refused = |reason| ChannelError::Question { question: id, channel: self.channel_id, reason };
         let agent_id = {
             let open = self.open_questions.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -164,22 +162,19 @@ impl UserActor {
     /// `classification` - the channel's if `None` (issue 133). A user may
     /// release what they write: classify it for a wider audience or a
     /// lower level than the channel, as long as it may flow into the
-    /// channel. Asked here, so that the user learns of a refusal; the
-    /// channel asks again as it admits the message.
+    /// channel. Whether it may is the channel's to decide as it admits the
+    /// message, which tells the user of a refusal (`MessageRejected`, issue
+    /// 304) - the user asks nothing of the policy for what they send.
     ///
     /// Returns the `span_id` of the envelopes it starts, which every envelope
     /// caused by the message carries as well (see `crate::logging`).
     ///
     /// # Errors
-    /// `ChannelError::ClassificationRefused` if the message may not enter
-    /// the channel as classified; an error if the channel is gone.
+    /// An error if the channel is gone.
     pub async fn send_message(&self, message: String, classification: Option<Classification>) -> anyhow::Result<Uuid> {
         let channel_loop = self.actor_runtime.channel_loop()
             .ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))?;
-        let channel = channel_loop.classification();
-        let classification = classification.unwrap_or_else(|| channel.clone());
-        self.actor_runtime.confidentiality()
-            .require_publish(&self.security_context(), &classification, &channel, || crate::channel::ChannelError::ClassificationRefused { classification: classification.clone(), channel: self.channel_id })?;
+        let classification = classification.unwrap_or_else(|| channel_loop.classification());
         let msg = Message {
             role: MessageRole::User,
             mentions: channel_loop.mentions_in(&message),
@@ -207,27 +202,28 @@ impl UserActor {
 
     /// Modifies this user's message `message` to read `content` from now on
     /// (issue 234), classified `classification` - as it is classified now
-    /// if `None`. Asked here, so that the user learns of a refusal - whether
-    /// they may modify it (`ModifyMessage`), then whether it may enter the
-    /// channel so classified (`may_publish`) - and asked again by the channel as
-    /// it admits the modification. The message keeps its place; nobody is
-    /// asked to respond to it.
+    /// if `None`. The modified message speaks as its author, as every
+    /// message does, and only its author's actor can send it (issue 228):
+    /// another's is refused here, without asking the policy. Whether they
+    /// may modify it (`ModifyMessage`) and whether it may enter the channel
+    /// so classified is the channel's to decide as it admits the
+    /// modification, as for `send_message`. The message keeps its place;
+    /// nobody is asked to respond to it.
     ///
     /// Returns the `span_id` of the envelope, as `send_message` does.
     ///
     /// # Errors
     /// `ChannelError::MessageNotFound` if the channel has no such message,
-    /// `Forbidden` if it is not this user's to modify, `MessageRevoked` if
-    /// it was taken back, `ClassificationRefused` as for `send_message`; an
-    /// error if the channel is gone.
+    /// `Forbidden` if it is not this user's, `MessageRevoked` if it was
+    /// taken back; an error if the channel is gone.
     pub async fn modify_message(&self, message: MessageId, content: String, classification: Option<Classification>) -> anyhow::Result<Uuid> {
         let channel_loop = self.actor_runtime.channel_loop()
             .ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))?;
-        let original = self.message_to_change(&channel_loop, message, |author, channel| ActionType::ModifyMessage { author, channel }, "modifying a message of").await?;
-        let channel = channel_loop.classification();
+        let original = self.message_to_change(&channel_loop, message).await?;
+        if original.sender_id != self.id {
+            return Err(crate::channel::ChannelError::Forbidden { action: "modifying a message of", channel: self.channel_id }.into());
+        }
         let classification = classification.unwrap_or_else(|| original.classification.clone());
-        self.actor_runtime.confidentiality()
-            .require_publish(&self.security_context(), &classification, &channel, || crate::channel::ChannelError::ClassificationRefused { classification: classification.clone(), channel: self.channel_id })?;
         let modified = Message {
             mentions: channel_loop.mentions_in(&content),
             content: Some(content),
@@ -242,7 +238,7 @@ impl UserActor {
 
     /// Takes this user's message `message` back (issue 234): it keeps its
     /// place, without what it said, and the agents are no longer given it.
-    /// Asked here (`RevokeMessage`) and again by the channel, as
+    /// Whether they may (`RevokeMessage`) is the channel's to decide, as for
     /// `modify_message`. Not a deletion: what was said stays in the record
     /// of every participant that heard it.
     ///
@@ -251,7 +247,7 @@ impl UserActor {
     pub async fn revoke_message(&self, message: MessageId) -> anyhow::Result<Uuid> {
         let channel_loop = self.actor_runtime.channel_loop()
             .ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))?;
-        self.message_to_change(&channel_loop, message, |author, channel| ActionType::RevokeMessage { author, channel }, "taking back a message of").await?;
+        self.message_to_change(&channel_loop, message).await?;
         let span_id = Uuid::new_v4();
         self.send(self.envelope(ActorEvent::MessageRevoked { message, at: Utc::now() }, span_id)).await?;
         Ok(span_id)
@@ -259,45 +255,30 @@ impl UserActor {
 
     /// Reclassifies the message `message` as `classification` (issues 133,
     /// 239): its author's own, or any in a channel this user owns, never
-    /// above the channel. Asked here (`Reclassify`), so that the user learns
-    /// of a refusal, and again by the channel as it admits the
-    /// reclassification; recorded wherever the message is held, so that the
-    /// agents' next turns are labelled by it as it stands. Nobody is asked to
-    /// respond.
+    /// above the channel - the channel's to decide as it admits the
+    /// reclassification (`Reclassify`, the flow), as for `send_message`.
+    /// Recorded wherever the message is held, so that the agents' next turns
+    /// are labelled by it as it stands. Nobody is asked to respond.
     ///
     /// Returns the `span_id` of the envelope, as `send_message` does.
     ///
     /// # Errors
     /// `ChannelError::MessageNotFound` if the channel has no such message,
-    /// `Forbidden` if this user may not reclassify it so, `MessageRevoked`
-    /// if it was taken back; an error if the channel is gone.
+    /// `MessageRevoked` if it was taken back; an error if the channel is
+    /// gone.
     pub async fn reclassify_message(&self, message: MessageId, classification: Classification) -> anyhow::Result<Uuid> {
-        use crate::channel::ChannelError;
         let channel_loop = self.actor_runtime.channel_loop()
             .ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))?;
-        let said = channel_loop.message(message).await
-            .ok_or(ChannelError::MessageNotFound { message, channel: self.channel_id })?;
-        let (attributes, channel) = (channel_loop.security_attributes(), channel_loop.classification());
-        let context = self.security_context();
-        let action = ActionType::Reclassify(Reclassified::Message { author: said.sender_id, attributes: &attributes });
-        self.actor_runtime.security_manager()
-            .require(&context, action, || ChannelError::Forbidden { action: "reclassifying a message of", channel: self.channel_id })
-            .await?;
-        // Never above the channel (issue 304: the policy's flow, beside it).
-        self.actor_runtime.confidentiality()
-            .require_publish(&context, &classification, &channel, || ChannelError::ClassificationRefused { classification: classification.clone(), channel: self.channel_id })?;
-        if said.revoked.is_some() {
-            return Err(ChannelError::MessageRevoked { message, channel: self.channel_id }.into());
-        }
+        self.message_to_change(&channel_loop, message).await?;
         let span_id = Uuid::new_v4();
         self.send(self.envelope(ActorEvent::MessageReclassified { message, classification }, span_id)).await?;
         Ok(span_id)
     }
 
     /// Asks the agent that said `message` to answer again instead of it
-    /// (issue 234). Asked here (`RetryMessage`, whoever may read the
-    /// channel), and again by the channel as it admits the request, which
-    /// goes to that agent alone: whether it can answer again is the agent's
+    /// (issue 234). Whether this user may ask it (`RetryMessage`, whoever
+    /// may read the channel) is the channel's to decide as it admits the
+    /// request, as for `send_message`; it goes to that agent alone: whether it can answer again is the agent's
     /// to decide, by its own transcript, and it says so with `RetryAccepted`
     /// or `RetryRejected` - this returns once the request is on its way. A
     /// `WakeupRequested` goes ahead of it, as of a message, so that a quiet
@@ -307,20 +288,13 @@ impl UserActor {
     ///
     /// # Errors
     /// `ChannelError::MessageNotFound` if the channel has no such message,
-    /// `Forbidden` if this user may not ask it, `MessageRevoked` if it was
-    /// taken back, `NotAnAgentsMessage` if no agent of the channel said it;
+    /// `MessageRevoked` if it was taken back, `NotAnAgentsMessage` if no agent of the channel said it;
     /// an error if the channel is gone.
     pub async fn request_retry(&self, message: MessageId) -> anyhow::Result<Uuid> {
         use crate::channel::ChannelError;
         let channel_loop = self.actor_runtime.channel_loop()
             .ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))?;
-        let said = channel_loop.message(message).await
-            .ok_or(ChannelError::MessageNotFound { message, channel: self.channel_id })?;
-        self.require_retry(&channel_loop).await?;
-        if said.revoked.is_some() {
-            return Err(ChannelError::MessageRevoked { message, channel: self.channel_id }.into());
-        }
-        let author = said.sender_id;
+        let author = self.message_to_change(&channel_loop, message).await?.sender_id;
         if author.as_agent_id().is_none() || !channel_loop.actor_ids().contains(&author) {
             return Err(ChannelError::NotAnAgentsMessage { message, channel: self.channel_id }.into());
         }
@@ -328,8 +302,9 @@ impl UserActor {
     }
 
     /// Asks the agent `author` to answer again instead of its answer under
-    /// way, its turn `turn` (issue 235). Asked here (`RetryMessage`, as for
-    /// a message), and the turn looked at: the turn under way, or the
+    /// way, its turn `turn` (issue 235). Whether this user may ask it
+    /// (`RetryMessage`) is the channel's to decide, as for a message; the
+    /// turn is looked at here: the turn under way, or the
     /// agent's last turn given up for a failure or a lowering, with nothing
     /// after it (issue 259) - the user learns at once if it is neither. The
     /// channel ends a turn under way as it delivers the request - if it is
@@ -338,16 +313,14 @@ impl UserActor {
     /// way, with a `WakeupRequested` ahead of it, as `request_retry` sends.
     ///
     /// # Errors
-    /// `ChannelError::Forbidden` if this user may not ask it, before
-    /// anything else is looked at; `NotAParticipant` if `author` is no agent
-    /// of the channel; `TurnNotRetryable` if `turn` can be asked for again
+    /// `ChannelError::NotAParticipant` if `author` is no agent of the
+    /// channel; `TurnNotRetryable` if `turn` can be asked for again
     /// neither so;
     /// an error if the channel is gone.
     pub async fn request_retry_of_turn(&self, author: ActorId, turn: TurnId) -> anyhow::Result<Uuid> {
         use crate::channel::ChannelError;
         let channel_loop = self.actor_runtime.channel_loop()
             .ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))?;
-        self.require_retry(&channel_loop).await?;
         if author.as_agent_id().is_none() || !channel_loop.actor_ids().contains(&author) {
             return Err(ChannelError::NotAParticipant { participant: author, channel: self.channel_id }.into());
         }
@@ -390,14 +363,6 @@ impl UserActor {
         Ok(span_id)
     }
 
-    /// Whether this user may ask for another answer in `channel`
-    /// (`RetryMessage`), refused as `ChannelError::Forbidden`.
-    async fn require_retry(&self, channel: &crate::channel::ChannelLoop) -> anyhow::Result<()> {
-        let attributes = channel.security_attributes();
-        let refused = || crate::channel::ChannelError::Forbidden { action: "asking for another answer in", channel: self.channel_id };
-        Ok(self.actor_runtime.security_manager().require(&self.security_context(), ActionType::RetryMessage(&attributes), refused).await?)
-    }
-
     /// Sends the request to `author` to answer again instead of `target`,
     /// with a `WakeupRequested` ahead of it, as of a message, so that a
     /// quiet channel does not swallow it. Returns the envelopes' `span_id`.
@@ -408,23 +373,13 @@ impl UserActor {
         Ok(span_id)
     }
 
-    /// The message `id` of `channel` as it stands, if this user may change
-    /// it - `action`, asked as `what` - and it can still be changed: not
-    /// taken back.
-    async fn message_to_change(
-        &self,
-        channel: &crate::channel::ChannelLoop,
-        id: MessageId,
-        action: for<'a> fn(caelumora_model::actor::ActorId, &'a SecurityAttributes) -> ActionType<'a>,
-        what: &'static str,
-    ) -> anyhow::Result<Message> {
+    /// The message `id` of `channel` as it stands, if it can still be
+    /// changed: not taken back. Whether this user may change it is the
+    /// channel's to decide as it admits the change (issue 304).
+    async fn message_to_change(&self, channel: &crate::channel::ChannelLoop, id: MessageId) -> anyhow::Result<Message> {
         use crate::channel::ChannelError;
         let message = channel.message(id).await
             .ok_or(ChannelError::MessageNotFound { message: id, channel: self.channel_id })?;
-        let attributes = channel.security_attributes();
-        self.actor_runtime.security_manager()
-            .require(&self.security_context(), action(message.sender_id, &attributes), || ChannelError::Forbidden { action: what, channel: self.channel_id })
-            .await?;
         if message.revoked.is_some() {
             return Err(ChannelError::MessageRevoked { message: id, channel: self.channel_id }.into());
         }
@@ -433,19 +388,21 @@ impl UserActor {
 
     /// Hands `envelope` to `run`, which forwards it into the channel, and
     /// shows it to those who follow this actor: the channel sends nothing
-    /// back to its sender, so as an agent takes its own messages in itself,
+    /// back to its sender - but why it did not let something in
+    /// (`MessageRejected`, issue 304) -, so as an agent takes its own messages in itself,
     /// this actor shows what its user says itself (issue 220) - all but the
     /// requests to wake the channel and to nudge an agent (issue 278),
     /// which are not said to anyone, and answers
     /// to questions, which are for the tool asking alone (issue 165): their
     /// closing tells the user's frontends that they were answered.
     async fn send(&self, envelope: Envelope) -> anyhow::Result<()> {
-        let shown = (!matches!(envelope.event, ActorEvent::WakeupRequested | ActorEvent::NudgeRequested { .. } | ActorEvent::QuestionAnswered { .. })).then(|| envelope.clone());
-        self.user_tx.send(envelope).await?;
-        if let Some(envelope) = shown {
-            // An error only says that nobody listens.
-            let _ = self.received.send(envelope);
+        // Shown first, so that why the channel did not let it in
+        // (`MessageRejected`) always follows it. An error only says that
+        // nobody listens.
+        if !matches!(envelope.event, ActorEvent::WakeupRequested | ActorEvent::NudgeRequested { .. } | ActorEvent::QuestionAnswered { .. }) {
+            let _ = self.received.send(envelope.clone());
         }
+        self.user_tx.send(envelope).await?;
         Ok(())
     }
 
@@ -468,7 +425,9 @@ impl UserActor {
     /// would be sent, carrying the rule. `None` if the approver did not ask,
     /// a rule of a place asked for the user's own decision (`explicit`), no
     /// rule of theirs applies, or they may not approve the agent's calls
-    /// here - the approver would leave their answer out.
+    /// here - the approver would leave their answer out. That is offering,
+    /// as a client asks it to show its buttons, not permitting: the approver
+    /// asks it again as it counts the answer (issue 304, rule 5).
     async fn answer_by_rule(&self, envelope: &Envelope, request: &ApprovalRequest) -> Option<Envelope> {
         if request.explicit || !matches!(envelope.context.sender_id, ActorId::Approver(_)) {
             return None;

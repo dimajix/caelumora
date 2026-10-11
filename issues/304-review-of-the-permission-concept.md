@@ -603,3 +603,39 @@ where they test the door.
   reclassification above the channel answers `ClassificationRefused` (400), not `Forbidden` (403),
   as a modification above it already did; classifying is validation and no longer recorded as a
   question. No stored data changes.
+- **2026-10-11** — Step 3 begun on the branch `issue-304-admission`, built on `issue-304-flow`.
+  Done of C4: `CallTool` is asked once, as the call is admitted, in the enforcing form
+  (`require`), not again when it runs; `may_call_tool` is gone. Corrected on the way: the
+  `UserActor`'s question whether its person may approve before a rule of theirs answers
+  (`answer_by_rule`) stays - it is offering in the sense of rule 5, as a client asks it to show its
+  buttons; the approver asks it again as it counts the answer, which is the act. Without it, a rule
+  of someone who may not approve would put an answer into the channel that does not count. Found
+  when C3 was to begin: the risk of step 6 does not exist - the loop routes to actors with
+  `try_send` and holds its state only to store it - but checking in the actor's task opens a gap
+  between the check and the entry: a channel lowered meanwhile would let in a message admitted for
+  its classification before, and a revocation could overtake a modification. Admission at
+  submission is to be decided by the loop, in order, with the verdict sent back to the sender;
+  together with where agent commands are admitted and F12, laid before the maintainer.
+- **2026-10-11** — Step 3, C3 decided by the maintainer and done: the channel decides what enters
+  it, in its loop, in order, as it takes an event in (`ChannelLoop::admission`, the former `admits`
+  and `admits_change` in one), first whether the sender may act so, then the flow of what it
+  carries. What it refuses it answers to the sender alone with a new event,
+  `ActorEvent::MessageRejected { rejected, message, reason }` with a `Rejection` (`Forbidden`,
+  `ClassificationRefused`, `MessageNotFound`, `MessageUnchangeable`, `Invalid`), in the system's
+  name and never in the history - after the pattern of `RetryRejected`. The `UserActor` asks
+  nothing of the policy or the flow for what it sends any more (a message, a change, a
+  reclassification, a request to answer again, an answer to questions - `AnswerQuestion` moved into
+  the admission); it looks only at what it can see at once (the message is there, not taken back,
+  an agent's). It shows what it sends before it forwards it, so that a refusal always follows what
+  it refuses. `may_modify_message`, `may_revoke_message` and `may_reclassify` are gone; the REST
+  routes answer such refusals no longer with `403`/`400`, but on the channel's stream. The web UI
+  marks a message not let in and undoes a refused change by reading the message back; the TUI
+  prints the refusal. Found on the way: modifying another's message never reaches the channel - the
+  modified message speaks as its author, which only the author's actor can send (issue 228) - so
+  the `UserActor` refuses it at once as `Forbidden`, structurally, without asking the policy. Not
+  done: an agent is not told when the channel refuses what it said - its filter does not take
+  `MessageRejected` in, and its transcript keeps the message, as before. Still open for the
+  maintainer: where agent commands are admitted, F12, and whether a user's actor strikes a refused
+  message from what it shows by a history entry of its own. The map (`docs/PERMISSION-CHECKS.md`)
+  is redone in step 5. No stored data changes.
+

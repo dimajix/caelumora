@@ -13,7 +13,7 @@ use crate::transport::{EventSender, TransportError};
 use crate::transport::{FilteringEventSender, InMemoryEventReceiver, InMemoryEventSender, OriginEventSender};
 use anyhow::{anyhow, Result};
 use arc_swap::ArcSwap;
-use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, RetryTarget};
+use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, Rejection, RetryTarget};
 use caelumora_model::channel::{Channel, ChannelId, ChannelState, HistoryAccess, HistoryStart, Participant};
 use crate::controller::{AgentController, ChannelController, ControllerManager, UserController};
 use caelumora_model::agent::{Personality, PersonalityKind};
@@ -25,7 +25,7 @@ use caelumora_model::question::{QuestionError, QuestionId, Questions};
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::message_history::HistoryEntry;
 use caelumora_model::work::TurnId;
-use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Reclassified, SecurityAttributes, SecurityContext, SecurityManager};
+use caelumora_model::security::{ActionType, Enforcement, Reclassified, SecurityAttributes, SecurityContext, SecurityManager};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::{StateStore, StoreError, StoreResultExt};
@@ -1236,7 +1236,8 @@ impl ChannelLoop {
         }
         // The full envelope carries message content: trace level only.
         trace!("Envelope: {:?}", event);
-        if !self.admits(&event).await || !self.admits_change(&event).await {
+        if let Err(reason) = self.admission(&event).await {
+            self.reject(&event, reason, running);
             return;
         }
         let event = self.resolve_mentions(event);
@@ -1281,98 +1282,112 @@ impl ChannelLoop {
         RunningActor { id, abort_handle, task, sender: Some(filtered_sender), leaving: None }
     }
 
-    /// Whether every message `event` carries may enter the channel as its
-    /// sender classified it, and every tool result in them as it is
-    /// classified (`ConfidentialityPolicy::may_publish`, issues 133, 304):
-    /// the gate for every actor, whatever it checked itself. Only who acts
-    /// may put something into the channel: an envelope whose context names
-    /// another caller than its sender is not admitted. An event with a part
-    /// that may not is dropped whole, and logged: its sender misclassified
-    /// it.
-    async fn admits(&self, event: &Envelope) -> bool {
-        let channel = self.classification();
+    /// Nothing if `event` may enter the channel; why not otherwise (issue
+    /// 304) - the channel's one decision of what enters it, made here, in
+    /// order, against the channel as it is when the event is taken in, so
+    /// that nothing changed between a check and the entry. Actors ask
+    /// nothing for what they send; who sent what is not let in is told
+    /// (`MessageRejected`). Whether whoever sends it may act so is asked
+    /// before the flow of what it carries. Decided:
+    ///
+    /// - a message, by the actor that is acting - only who acts puts
+    ///   something into the channel -, each part of it, the message and its
+    ///   tool results, as it is classified (`ConfidentialityPolicy::
+    ///   may_publish`, issue 133): its sender misclassified what does not
+    ///   flow in;
+    /// - a change of a message (issue 234): the message is in its history,
+    ///   its author - the sender the history names - may change it, and it
+    ///   can be changed so as it stands (`Message::modify`,
+    ///   `Message::revoke`); a reclassification (issue 239) by its author or
+    ///   the channel's owner (`Reclassify`), never above the channel;
+    /// - a request to answer again (`RetryMessage`): of a message an agent
+    ///   said, not taken back, or of an agent taking part;
+    /// - an answer to an agent's questions (`AnswerQuestion`, issue 165) -
+    ///   whether its sender was asked is the agent's to check;
+    /// - a command for an agent (issue 269) comes from a user and names an
+    ///   agent taking part - whether the issuer may ask for it, its actor
+    ///   asked of the agent's commands, and the agent asks again; a nudge
+    ///   (issue 278) comes from a user and names someone else taking part.
+    async fn admission(&self, event: &Envelope) -> Result<(), Rejection> {
+        let context = &event.security;
         let messages = event.event.messages();
-        if !messages.is_empty() && event.security.caller_id != event.context.sender_id {
-            warn!("Dropped {}: it was sent by {} in the name of {}", event.describe(), event.context.sender_id, event.security.caller_id);
-            return false;
+        if !messages.is_empty() && context.caller_id != event.context.sender_id {
+            return Err(Rejection::Invalid);
         }
-        for message in messages {
-            let parts = std::iter::once(&message.classification).chain(message.tool_results.iter().map(|r| &r.classification));
-            for classification in parts {
-                if !self.confidentiality.may_publish(&event.security, classification, &channel) {
-                    warn!("Dropped {}: a part of its message {} is classified {}, which channel {} does not admit", event.describe(), message.id, classification, self.id);
-                    return false;
-                }
-            }
-        }
-        true
-    }
-
-    /// Whether the change to a message that `event` carries, if any, may
-    /// enter the channel (issue 234): the message is in its history, its
-    /// author - the sender the history names - may change it, as the policy
-    /// says in the envelope's context, and it can be changed so as it stands
-    /// (`Message::modify`, `Message::revoke`): not taken back, and modified
-    /// by its own sender in its own role. A reclassification (issue 239)
-    /// likewise, but by its author or the channel's owner, as the policy
-    /// says (`may_reclassify`), and never above the channel, as the
-    /// `ConfidentialityPolicy` says (`may_publish`, issue 304). A request to
-    /// answer again, too:
-    /// its sender may ask it (`may_retry_message`), and it names the agent
-    /// that said the message, not taken back, as its author. A command for
-    /// an agent (issue 269) comes from a user and names an agent taking part;
-    /// a nudge (issue 278) from a user, and names someone else taking part.
-    /// The gate for every actor, whatever it checked
-    /// itself; anything else is dropped, and logged.
-    async fn admits_change(&self, event: &Envelope) -> bool {
+        let classification = self.classification();
         let channel = self.security_attributes();
-        let admitted = match &event.event {
-            ActorEvent::MessageModified(modified) => match self.message(modified.id).await {
-                Some(mut message) => self.security.may_modify_message(&event.security, message.sender_id, &channel).await && message.modify(modified),
-                None => false,
-            },
-            ActorEvent::MessageRevoked { message, at } => match self.message(*message).await {
-                Some(mut message) => self.security.may_revoke_message(&event.security, message.sender_id, &channel).await && message.revoke(*at),
-                None => false,
-            },
-            ActorEvent::MessageReclassified { message, classification } => match self.message(*message).await {
-                Some(mut said) => {
-                    let target = Reclassified::Message { author: said.sender_id, attributes: &channel };
-                    self.security.may_reclassify(&event.security, target).await
-                        && self.confidentiality.may_publish(&event.security, classification, &self.classification())
-                        && said.reclassify(classification)
+        let forbidden = || Rejection::Forbidden;
+        match &event.event {
+            ActorEvent::MessageModified(modified) => {
+                let mut message = self.message(modified.id).await.ok_or(Rejection::MessageNotFound)?;
+                self.security.require(context, ActionType::ModifyMessage { author: message.sender_id, channel: &channel }, forbidden).await?;
+                message.modify(modified).then_some(()).ok_or(Rejection::MessageUnchangeable)
+            }
+            ActorEvent::MessageRevoked { message, at } => {
+                let mut message = self.message(*message).await.ok_or(Rejection::MessageNotFound)?;
+                self.security.require(context, ActionType::RevokeMessage { author: message.sender_id, channel: &channel }, forbidden).await?;
+                message.revoke(*at).then_some(()).ok_or(Rejection::MessageUnchangeable)
+            }
+            ActorEvent::MessageReclassified { message, classification: new } => {
+                let mut said = self.message(*message).await.ok_or(Rejection::MessageNotFound)?;
+                let target = Reclassified::Message { author: said.sender_id, attributes: &channel };
+                self.security.require(context, ActionType::Reclassify(target), forbidden).await?;
+                self.confidentiality.require_publish(context, new, &classification, || Rejection::ClassificationRefused)?;
+                said.reclassify(new).then_some(()).ok_or(Rejection::MessageUnchangeable)
+            }
+            ActorEvent::RetryRequested { target: RetryTarget::Message(message), author } => {
+                let message = self.message(*message).await.ok_or(Rejection::MessageNotFound)?;
+                self.security.require(context, ActionType::RetryMessage(&channel), forbidden).await?;
+                if message.revoked.is_some() {
+                    return Err(Rejection::MessageUnchangeable);
                 }
-                None => false,
-            },
-            ActorEvent::RetryRequested { target: RetryTarget::Message(message), author } => match self.message(*message).await {
-                Some(message) => self.security.may_retry_message(&event.security, &channel).await
-                    && message.sender_id == *author && author.as_agent_id().is_some() && message.revoked.is_none(),
-                None => false,
-            },
+                (message.sender_id == *author && author.as_agent_id().is_some()).then_some(()).ok_or(Rejection::Invalid)
+            }
             // Whether the turn is still under way is decided as the request
             // is delivered, where the turn is ended (`route_event_impl`).
             ActorEvent::RetryRequested { target: RetryTarget::Turn(_), author } => {
-                self.security.may_retry_message(&event.security, &channel).await
-                    && author.as_agent_id().is_some() && self.actor_by_id(*author).is_some()
+                self.security.require(context, ActionType::RetryMessage(&channel), forbidden).await?;
+                (author.as_agent_id().is_some() && self.actor_by_id(*author).is_some()).then_some(()).ok_or(Rejection::Invalid)
             }
-            // A command for an agent (issue 269): from a user, to an agent
-            // taking part. Whether the issuer may ask for it was asked by
-            // their actor and is asked again by the agent.
+            ActorEvent::QuestionAnswered { .. } | ActorEvent::QuestionDeclined { .. } => {
+                self.security.require(context, ActionType::AnswerQuestion(&channel), forbidden).await
+            }
             ActorEvent::CommandRequested { agent, .. } => {
-                event.context.sender_id.as_user_id().is_some() && agent.as_agent_id().is_some() && self.actor_by_id(*agent).is_some()
+                (event.context.sender_id.as_user_id().is_some() && agent.as_agent_id().is_some() && self.actor_by_id(*agent).is_some())
+                    .then_some(()).ok_or(Rejection::Invalid)
             }
-            // A nudge (issue 278): from a user, to someone else taking part.
             // It asks nothing of the policy beyond what a message does - an
             // `@`-mention asks the same.
             ActorEvent::NudgeRequested { participant } => {
-                event.context.sender_id.as_user_id().is_some() && *participant != event.context.sender_id && self.actor_by_id(*participant).is_some()
+                (event.context.sender_id.as_user_id().is_some() && *participant != event.context.sender_id && self.actor_by_id(*participant).is_some())
+                    .then_some(()).ok_or(Rejection::Invalid)
             }
-            _ => return true,
-        };
-        if !admitted {
-            warn!("Dropped {}: the message is not one of channel {} its sender may change so", event.describe(), self.id);
+            _ => Ok(()),
+        }?;
+        for message in messages {
+            let parts = std::iter::once(&message.classification).chain(message.tool_results.iter().map(|r| &r.classification));
+            for part in parts {
+                self.confidentiality.require_publish(context, part, &classification, || Rejection::ClassificationRefused)?;
+            }
         }
-        admitted
+        Ok(())
+    }
+
+    /// Tells the sender of `event`, which the channel did not let in, why
+    /// (`MessageRejected`, issue 304) - it alone, in the channel's name; not
+    /// one that left, whose inbox is closed.
+    fn reject(&self, event: &Envelope, reason: Rejection, running: &HashMap<ActorId, RunningActor>) {
+        warn!("Dropped {}: {}", event.describe(), reason);
+        let sender = event.context.sender_id;
+        let Some(inbox) = running.get(&sender).and_then(|actor| actor.sender.as_ref()) else { return };
+        let mut context = EventContext::new(self.session_id, self.id, ActorId::System, ActorId::System.to_string());
+        context.span_id = event.context.span_id;
+        context.correlation_id = event.context.event_id;
+        let rejected = ActorEvent::MessageRejected { rejected: event.event.kind().to_string(), message: event.event.subject_message(), reason };
+        let envelope = Envelope::new(SecurityContext::system(), context, rejected);
+        if let Err(e) = inbox.try_send(envelope) {
+            warn!("Could not tell {} that channel {} did not let in what it sent: {:?}", sender, self.id, e);
+        }
     }
 
     /// The participants `text` mentions by their `@`-handles, as the channel
@@ -1544,7 +1559,7 @@ impl ChannelLoop {
                 });
                 true
             }
-            // Admitted, so they apply (`admits_change`, issue 234).
+            // Admitted, so they apply (`admission`, issues 234, 304).
             ActorEvent::MessageModified(modified) => state.history.modify(modified.clone()),
             ActorEvent::MessageRevoked { message, at } => state.history.revoke(*message, *at),
             ActorEvent::MessageReclassified { message, classification } => state.history.reclassify(*message, classification.clone()),
@@ -2407,31 +2422,64 @@ mod tests {
         use caelumora_model::security::OwnershipSecurityManager;
         let (alice, bob) = (user("alice"), user("bob"));
         let channel = channel_with(&[&alice, &bob], Arc::new(OwnershipSecurityManager::new())).await;
-        let alice_id = ActorId::User(alice.id);
+        let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(bob.id));
         let said = Message { id: MessageId::new(), sender_id: alice_id, role: caelumora_model::message::MessageRole::User, content: Some("helo".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
-        let from_alice = |event| Envelope::new(SecurityContext::new(alice_id, Default::default(), Default::default()), EventContext { sender_id: alice_id, ..EventContext::default() }, event);
-        channel.process_envelope(from_alice(ActorEvent::CompleteMessageGenerated(said.clone())), &HashMap::new()).await;
+        let from = |sender: ActorId, event| Envelope::new(SecurityContext::new(sender, Default::default(), Default::default()), EventContext { sender_id: sender, ..EventContext::default() }, event);
+        let (to_alice, mut alices) = mpsc::channel(16);
+        let (to_bob, mut bobs) = mpsc::channel(16);
+        let running = |id: ActorId, tx| (id, RunningActor { id, abort_handle: tokio::spawn(async {}).abort_handle(), task: TaskTracker::new(), sender: Some(Box::new(InMemoryEventSender::new(tx))), leaving: None });
+        let actors = HashMap::from([running(alice_id, to_alice), running(bob_id, to_bob)]);
+        let rejected = |rx: &mut mpsc::Receiver<Envelope>| {
+            let mut rejections = Vec::new();
+            while let Ok(envelope) = rx.try_recv() {
+                if let ActorEvent::MessageRejected { rejected, message, reason } = envelope.event {
+                    assert_eq!(envelope.context.sender_id, ActorId::System, "in the channel's name");
+                    rejections.push((rejected, message, reason));
+                }
+            }
+            rejections
+        };
+        channel.process_envelope(from(alice_id, ActorEvent::CompleteMessageGenerated(said.clone())), &actors).await;
+
+        // What the channel does not let in, it tells its sender alone, and
+        // why (issue 304).
+        let above = Classification::general(caelumora_model::confidentiality::Confidentiality::Confidential);
+        let modified = |content: &str, classification: &Classification| ActorEvent::MessageModified(Message { content: Some(content.to_string()), classification: classification.clone(), ..said.clone() });
+        let reclassified = |classification: &Classification| ActorEvent::MessageReclassified { message: said.id, classification: classification.clone() };
+        let revoked = |message| ActorEvent::MessageRevoked { message, at: chrono::Utc::now() };
+        channel.process_envelope(from(bob_id, modified("bob's", &Classification::CHANNEL_DEFAULT)), &actors).await;
+        channel.process_envelope(from(bob_id, revoked(said.id)), &actors).await;
+        channel.process_envelope(from(bob_id, reclassified(&Classification::PUBLIC)), &actors).await;
+        let kind = |rejected: &str, reason| (rejected.to_string(), Some(said.id), reason);
+        assert_eq!(rejected(&mut bobs), [kind("MessageModified", Rejection::Forbidden), kind("MessageRevoked", Rejection::Forbidden), kind("MessageReclassified", Rejection::Forbidden)], "not his");
+        let never = MessageId::new();
+        channel.process_envelope(from(alice_id, revoked(never)), &actors).await;
+        channel.process_envelope(from(alice_id, modified("hello", &above)), &actors).await;
+        channel.process_envelope(from(alice_id, reclassified(&above)), &actors).await;
+        let secret = Message { id: MessageId::new(), ..Message::new(above.clone()) };
+        channel.process_envelope(from(alice_id, ActorEvent::CompleteMessageGenerated(secret.clone())), &actors).await;
+        assert_eq!(rejected(&mut alices), [
+            ("MessageRevoked".to_string(), Some(never), Rejection::MessageNotFound),
+            kind("MessageModified", Rejection::ClassificationRefused),
+            kind("MessageReclassified", Rejection::ClassificationRefused),
+            ("CompleteMessageGenerated".to_string(), Some(secret.id), Rejection::ClassificationRefused),
+        ], "never said, and never above the channel - the flow, not her permission");
+        assert!(rejected(&mut bobs).is_empty(), "nor is anyone else told");
+        channel.process_envelope(from(alice_id, revoked(said.id)), &actors).await;
+        channel.process_envelope(from(alice_id, modified("hello", &Classification::CHANNEL_DEFAULT)), &actors).await;
+        assert_eq!(rejected(&mut alices), [kind("MessageModified", Rejection::MessageUnchangeable)], "taken back, it stays so");
+
+        // Her actor looks at what it can see at once, and asks nothing of the
+        // policy: that is the channel's.
         let (hers, his) = (channel.user_actor(alice.id).unwrap(), channel.user_actor(bob.id).unwrap());
         let error = |result: anyhow::Result<uuid::Uuid>| result.expect_err("refused").downcast::<ChannelError>().expect("a channel's error");
-
-        assert!(matches!(error(his.modify_message(said.id, "bob's".to_string(), None).await), ChannelError::Forbidden { .. }), "not his");
-        assert!(matches!(error(his.revoke_message(said.id).await), ChannelError::Forbidden { .. }), "not his to take back");
+        his.reclassify_message(MessageId::new(), Classification::PUBLIC).await.expect_err("never said");
         assert!(matches!(error(hers.revoke_message(MessageId::new()).await), ChannelError::MessageNotFound { .. }), "never said");
-        let above = Classification::general(caelumora_model::confidentiality::Confidentiality::Confidential);
-        assert!(matches!(error(hers.modify_message(said.id, "hello".to_string(), Some(above.clone())).await), ChannelError::ClassificationRefused { .. }), "not above the channel");
-        assert!(matches!(error(hers.request_retry(said.id).await), ChannelError::NotAnAgentsMessage { .. }), "no agent said it");
+        assert!(matches!(error(hers.modify_message(said.id, "hello".to_string(), None).await), ChannelError::MessageRevoked { .. }), "taken back");
+        assert!(matches!(error(hers.reclassify_message(said.id, Classification::PUBLIC).await), ChannelError::MessageRevoked { .. }), "with nothing left to release");
+        assert!(matches!(error(his.request_retry(said.id).await), ChannelError::MessageRevoked { .. }));
         assert!(matches!(error(his.request_retry(MessageId::new()).await), ChannelError::MessageNotFound { .. }));
         assert!(matches!(error(his.request_retry_of_turn(alice_id, TurnId::new()).await), ChannelError::NotAParticipant { .. }), "no agent answers here");
-        assert!(matches!(error(his.reclassify_message(said.id, Classification::PUBLIC).await), ChannelError::Forbidden { .. }), "not his to release");
-        assert!(matches!(error(hers.reclassify_message(said.id, above.clone()).await), ChannelError::ClassificationRefused { .. }), "never above the channel - the flow, not her permission (issue 304)");
-        assert!(matches!(error(hers.reclassify_message(MessageId::new(), Classification::PUBLIC).await), ChannelError::MessageNotFound { .. }));
-        hers.modify_message(said.id, "hello".to_string(), None).await.expect("hers to modify");
-        hers.reclassify_message(said.id, Classification::PUBLIC).await.expect("and to release");
-        hers.revoke_message(said.id).await.expect("and to take back");
-
-        channel.process_envelope(from_alice(ActorEvent::MessageRevoked { message: said.id, at: chrono::Utc::now() }), &HashMap::new()).await;
-        assert!(matches!(error(hers.modify_message(said.id, "hello".to_string(), None).await), ChannelError::MessageRevoked { .. }), "taken back, it stays so");
-        assert!(matches!(error(hers.reclassify_message(said.id, Classification::PUBLIC).await), ChannelError::MessageRevoked { .. }), "with nothing left to release");
     }
 
     #[tokio::test]

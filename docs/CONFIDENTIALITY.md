@@ -85,24 +85,26 @@ code path can leave a message classified by accident.
     classifies it otherwise.
 *   **The channel admits it.** Putting a message into a channel is
     `ConfidentialityPolicy::may_publish`, asked by the `ChannelLoop` for every message of every
-    event that enters it (`ChannelLoop::admits`) - the gate for every actor. Wherever it is only a
-    question, it is asked as `ConfidentialityPolicy::may_publish` (issue 158);
-    `UserActor::send_message` requires it as part of sending. An event with a message it may not
-    admit is dropped and logged. The ownership policy allows it if the actor is the one acting (the
+    event that enters it, as it takes the event in (`ChannelLoop::admission`, issue 304) - the one
+    gate for every actor, which asks nothing itself for what it sends. Wherever it is only a
+    question, it is asked as `ConfidentialityPolicy::may_publish` (issue 158). An event with a
+    message it may not admit is written nowhere, and its sender is told why
+    (`ActorEvent::MessageRejected` with `Rejection::ClassificationRefused`, see
+    [CHANNELS.md](CHANNELS.md)). The ownership policy allows it if the actor is the one acting (the
     context's caller), every compartment is configured, and the classification flows into the
     channel.
 *   **Released when written.** By the flow rule a message is never classified above its channel. One
     classified otherwise is released: at a lower level, or to further compartments besides those the
     channel's are covered by - an `{hr, finance}` message in an `{hr}` channel is readable from
-    finance from the start. A user may release what they write (`UserActor::send_message` asks
-    `may_publish` before it sends, so that a refusal reaches the user as
-    `ChannelError::ClassificationRefused`). Changing a classification afterwards is
+    finance from the start. A user may release what they write (`UserActor::send_message`); the
+    channel admits it as it admits any message, and tells the user of a refusal with
+    `MessageRejected`. Changing a classification afterwards is
     [reclassifying](#reclassification) it.
 *   **Modified, admitted again.** A message its author modifies
     ([234](../issues/234-modify-revoke-and-retry-messages.md)) carries a classification of its own,
     the one it had unless the author chooses another, and enters the channel as a message does:
-    `ActorEvent::MessageModified` carries the message, so `ChannelLoop::admits` asks `may_publish`
-    for it, and `UserActor::modify_message` asks before it sends.
+    `ActorEvent::MessageModified` carries the message, so `ChannelLoop::admission` asks
+    `may_publish` for it, after whether its author may modify it.
 *   **Taken back, not erased.** A message its author takes back keeps its place without what it
     said, and the agents are no longer given it. What it said is still recorded: in the chains of
     every participant that heard it, in the contexts of the answers produced from it - readable by
@@ -158,14 +160,15 @@ compartments.
         web UI warns of.
 
     The web UI says so when a change releases the channel.
-*   **A message** (`UserActor::reclassify_message`, REST `PUT …/messages/{mid}/classification`) is
-    a change to what was said, made by a participant, and goes as a modification goes (see
+*   **A message** (`UserActor::reclassify_message`, REST `PUT …/messages/{mid}/classification`) is a
+    change to what was said, made by a participant, and goes as a modification goes (see
     [CHANNELS.md](CHANNELS.md#changing-what-was-said), issue
     [239](../issues/239-reclassified-message-not-in-agents-state.md)): the actor of whoever
-    reclassifies - its author, or the channel's owner for someone else's - asks `Reclassify` and
-    sends `ActorEvent::MessageReclassified`, without content; the channel asks again as it admits
-    it. The owner reclassifies as a participant: one who is not has no actor in the channel and is
-    refused. A message taken back is not reclassified - it says nothing that could be released.
+    reclassifies sends `ActorEvent::MessageReclassified`, without content, and the channel asks as
+    it admits it: `Reclassify` - its author, or the channel's owner for someone else's - then
+    whether the new classification may flow into the channel. The owner reclassifies as a
+    participant: one who is not has no actor in the channel and is refused. A message taken back is
+    not reclassified - it says nothing that could be released.
 
     It is recorded as an entry of its own, `Reclassified` (issue 197), in the channel's history and
     in the history and transcript of every agent that holds the message: the message stays what it
@@ -397,7 +400,8 @@ that names the classification instead, and the value is kept nowhere. So the ans
 carries no label, cannot quote it. A result that may flow keeps its classification: below the
 channel's, it is released.
 
-The channel admits a message only if its tool results may enter it too (`ChannelLoop::admits`).
+The channel admits a message only if its tool results may enter it too
+(`ChannelLoop::admission`).
 Another channel reads a message by the message's classification; a released result in a message it
 may not read stays unread.
 

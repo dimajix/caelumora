@@ -608,29 +608,10 @@ pub trait AccessQuestions {
     /// (`DeleteAgent`, issue 164).
     async fn may_delete_agent(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool;
 
-    /// Whether `context` may make the tool call `call` (`CallTool`) - asked
-    /// before a call is put up for approval.
-    async fn may_call_tool(&self, context: &SecurityContext, call: &ToolCall) -> bool;
-
-    /// Whether `context` may modify a message of `author` in the channel
-    /// with `channel` attributes (`ModifyMessage`, issue 234) - asked by the
-    /// channel as it admits the modification.
-    async fn may_modify_message(&self, context: &SecurityContext, author: ActorId, channel: &SecurityAttributes) -> bool;
-
-    /// Whether `context` may take a message of `author` back in the channel
-    /// with `channel` attributes (`RevokeMessage`, issue 234) - asked by the
-    /// channel as it admits the revocation.
-    async fn may_revoke_message(&self, context: &SecurityContext, author: ActorId, channel: &SecurityAttributes) -> bool;
-
-    /// Whether `context` may reclassify `target` (`Reclassify`, issue 133):
-    /// its owner, its author. Whether the new classification may be given
-    /// there is asked of the `ConfidentialityPolicy` besides (issue 304).
-    async fn may_reclassify(&self, context: &SecurityContext, target: Reclassified<'_>) -> bool;
-
     /// Whether `context` may ask an agent of the channel with `channel`
     /// attributes to answer again instead of one of its messages, or of its
-    /// answer under way (`RetryMessage`, issues 234, 235) - asked by the
-    /// channel as it admits the request.
+    /// answer under way (`RetryMessage`, issues 234, 235) - asked to offer
+    /// it; the channel asks again as it admits the request (issue 304).
     async fn may_retry_message(&self, context: &SecurityContext, channel: &SecurityAttributes) -> bool;
 
     /// Whether `context` may end the answers under way in the channel with
@@ -715,22 +696,6 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
 
     async fn may_delete_agent(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool {
         self.check(context, ActionType::DeleteAgent(agent)).await
-    }
-
-    async fn may_call_tool(&self, context: &SecurityContext, call: &ToolCall) -> bool {
-        self.check(context, ActionType::CallTool(call)).await
-    }
-
-    async fn may_modify_message(&self, context: &SecurityContext, author: ActorId, channel: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::ModifyMessage { author, channel }).await
-    }
-
-    async fn may_revoke_message(&self, context: &SecurityContext, author: ActorId, channel: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::RevokeMessage { author, channel }).await
-    }
-
-    async fn may_reclassify(&self, context: &SecurityContext, target: Reclassified<'_>) -> bool {
-        self.check(context, ActionType::Reclassify(target)).await
     }
 
     async fn may_retry_message(&self, context: &SecurityContext, channel: &SecurityAttributes) -> bool {
@@ -1095,8 +1060,8 @@ mod tests {
         let agent = ActorId::Agent(crate::agent::AgentId::new());
         let for_alice = context(alice).next(agent, alice);
         let policy = OwnershipSecurityManager::new();
-        assert!(policy.may_revoke_message(&for_alice, agent, &bobs).await, "an agent its own, acting for alice");
-        assert!(!policy.may_revoke_message(&for_alice, alice, &bobs).await, "but not alice's: who said it, not whom it acts for");
+        assert!(policy.check(&for_alice, ActionType::RevokeMessage { author: agent, channel: &bobs }).await, "an agent its own, acting for alice");
+        assert!(!policy.check(&for_alice, ActionType::RevokeMessage { author: alice, channel: &bobs }).await, "but not alice's: who said it, not whom it acts for");
     }
 
     #[tokio::test]

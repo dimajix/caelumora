@@ -21,7 +21,7 @@ use crate::controller::{ChannelController, SessionController};
 use async_trait::async_trait;
 use caelumora_model::approval::{ApprovalRule, RuleDecision, ToolMatcher};
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy};
-use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityContext, SecurityManager};
+use caelumora_model::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
 use caelumora_model::question::{Answers, Questions};
 use crate::runtime::ChannelHandle;
 use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolCallState, ToolSet, ToolVisibility, ToolResultStatus};
@@ -574,7 +574,9 @@ impl ToolExecutor {
             info!("Tool call '{}' by agent {} names a tool it was not offered", call.function_name, agent);
             return Admission::Answered(self.failed(call, ToolError::UnknownTool(call.function_name.clone()), turn));
         }
-        if !self.security_manager.may_call_tool(turn.security_context(), call).await {
+        // The one question of the call's permission (issue 304, rule 4):
+        // asked as it is admitted, not again when it runs.
+        if self.security_manager.require(turn.security_context(), ActionType::CallTool(call), || ()).await.is_err() {
             info!("Tool call '{}' by agent {} forbidden by the security manager", call.function_name, agent);
             return Admission::Answered(ToolCallResult::of(call, ToolResultStatus::Forbidden, forbidden_result(), turn.label()));
         }
@@ -630,8 +632,10 @@ impl ToolExecutor {
         offered
     }
 
-    /// Nothing if `call` may be run now: the caller is an agent, the policy
-    /// permits the call and no rule of a place denies it.
+    /// Nothing if `call` may be run now: it was offered, the caller is an
+    /// agent and no rule of a place denies it - one may have been set while
+    /// the call waited. Whether the policy permits it was asked as it was
+    /// admitted (`admit`), once (issue 304).
     async fn check(&self, call: &ToolCall, turn: &Turn<'_>) -> ToolResult<()> {
         if !offered(call, turn) {
             return Err(ToolError::UnknownTool(call.function_name.clone()));
@@ -640,7 +644,6 @@ impl ToolExecutor {
         if security.caller_id.as_agent_id().is_none() {
             return Err(ToolError::PermissionDenied(format!("tools can only be called by agents, not by {}", security.caller_id)));
         }
-        self.security_manager.require(security, ActionType::CallTool(call), || ToolError::PermissionDenied(call.function_name.clone())).await?;
         // A rule that denies may have been set while the call waited.
         match self.place_rule(call) {
             Some(rule) if rule.decision == RuleDecision::Deny => Err(ToolError::PermissionDenied(format!("rule {}", rule.id))),
@@ -875,8 +878,11 @@ mod tests {
         assert!(result.started_at.is_none(), "it never ran");
     }
 
+    /// Issue 304, rule 4: the call's permission is asked once, as the call
+    /// is admitted - before anyone is asked to approve it -, not again when
+    /// it runs.
     #[tokio::test]
-    async fn the_policy_is_checked_before_approval_and_again_on_execution() {
+    async fn the_policy_is_checked_once_as_the_call_is_admitted() {
         let executor = executor(Arc::new(DenyAllSecurityManager));
 
         let mut agent_channel_state = AgentChannelState::default();
@@ -885,11 +891,9 @@ mod tests {
         let mut context = Turn::of(agent_id, "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached()).expect("a turn is under way");
 
         let admitted = executor.admit(&call("test_tool"), &context).await;
-        assert!(matches!(admitted, Admission::Answered(ref r) if r.status == ToolResultStatus::Forbidden), "refused before anyone is asked: {admitted:?}");
+        assert!(matches!(admitted, Admission::Answered(ref r) if r.status == ToolResultStatus::Forbidden && r.content == forbidden_result()), "refused before anyone is asked: {admitted:?}");
         let result = executor.execute(&call("test_tool"), None, &mut context, std::future::pending()).await;
-        assert_eq!(result.status, ToolResultStatus::Forbidden);
-        assert_eq!(result.content, forbidden_result());
-        assert!(result.started_at.is_none() && result.finished_at.is_none(), "a refused call never ran");
+        assert_eq!(result.status, ToolResultStatus::Ok, "running asks the policy nothing more: only an admitted call is run");
     }
 
     #[tokio::test]

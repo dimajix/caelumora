@@ -198,6 +198,11 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                     Some(ActorEvent::RetryRejected { reason, .. }) => {
                         println!("\r{} cannot answer again: {}", sender, reason);
                     }
+                    // What this user sent that the channel did not let in
+                    // (issue 304), told to them alone.
+                    Some(ActorEvent::MessageRejected { rejected, reason, .. }) => {
+                        println!("\r[refused] the channel did not let in your {}: {}", rejected, reason);
+                    }
                     Some(ActorEvent::TurnGivenUp { turn_id, reason }) => {
                         if under_way.is_some_and(|(agent, _)| Some(agent) == sender_id) {
                             under_way = None;

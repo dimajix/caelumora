@@ -354,8 +354,9 @@ asked:
 
 The questions are `may_read_channel`, `may_change_channel`, `may_change_session`,
 `may_read_agent_context`, `may_read_agent_tools`, `may_approve`, `may_delete_agent`,
-`may_call_tool`, `may_modify_message`, `may_revoke_message`, `may_reclassify`, `may_retry_message`,
-`may_cancel_channel`, `may_restore`, `may_purge` and the rest of the trait.
+`may_retry_message`, `may_cancel_channel`, `may_restore`, `may_purge` and the rest of the trait. An
+act has no question of its own: calling a tool, changing a message, reclassifying it are asked with
+`Enforcement::require` where they are decided (issue 304).
 
 The flow is asked alike of the `ConfidentialityPolicy`, through `ConfidentialityQuestions`: the
 `may_*` to decide what to offer - `may_copy_information`, `cleared_for` - and the `require_*` for
@@ -393,6 +394,17 @@ the channel admitted under `RetryMessage` (issue 235) - and know no caller. So t
 structure rather than by discipline, the `Actor` trait, the `Moderator` trait that is handed actors,
 and `ChannelLoop::actor_by_id` are crate-internal (issue 147): a frontend reaches its user's actor
 through `ChannelLoop::user_actor`, but none of the control methods.
+
+### What enters a channel
+
+The channel decides what enters it (issue 304): every event an actor sends is admitted or refused
+by the channel's loop, in order, as it takes it in (`ChannelLoop::admission`, see
+[CHANNELS.md](CHANNELS.md)) - against the channel as it is then, so that nothing changes between
+the check and the entry. The actor that sends asks nothing of the policy; it looks only at what it
+can see at once. So a message, a change of one, a reclassification, a request to answer again and
+an answer to questions are each asked once, in the sender's name - first whether it may act so,
+then the flow of what it carries -, and what is refused is answered to its sender alone with
+`ActorEvent::MessageRejected` and a `Rejection`, never written to the history.
 
 ## The security suite
 

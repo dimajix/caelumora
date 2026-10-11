@@ -18,7 +18,7 @@ use std::time::Duration;
 use anyhow::Error;
 use async_trait::async_trait;
 use futures::StreamExt;
-use caelumora_model::actor::ActorId;
+use caelumora_model::actor::{ActorId, Rejection};
 use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId, PersonalityKind};
 use caelumora_model::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
 use caelumora_model::channel::{moderation_components, Channel, HistoryAccess, Participant};
@@ -749,10 +749,46 @@ async fn interrupting_one_tool_call_is_for_whoever_may_cancel_the_channel() {
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
+/// M0: a message enters the channel as its sender classified it, if the
+/// flow lets it in (issue 133) - decided by the channel alone, in order, as
+/// it admits the message (issue 304): her actor asks nothing. What is not
+/// let in, its sender is told, and why (`MessageRejected`); nobody else
+/// hears of it.
+#[tokio::test]
+async fn a_message_is_let_in_by_the_channel_and_its_sender_told_if_not() {
+    use caelumora_model::actor::ActorEvent;
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
+    let (mut hers, mut his) = (alice.watch(), bob.watch());
+
+    let (refused, asked) = world.asked(async {
+        alice.send_message("secret".to_string(), Some(Classification::general(Confidentiality::Confidential))).await.expect("sent: the channel decides");
+        shown(&mut hers, "MessageRejected").await
+    }).await;
+    let ActorEvent::MessageRejected { rejected, message, reason } = refused else { unreachable!() };
+    assert_eq!((rejected.as_str(), reason), ("CompleteMessageGenerated", Rejection::ClassificationRefused), "above the channel");
+    assert!(message.is_some(), "naming the message");
+    assert_eq!(asked, checks(&["alice: Publish no"]), "asked by the channel alone");
+
+    alice.send_message("hello".to_string(), None).await.expect("sent");
+    let ActorEvent::CompleteMessageGenerated(said) = shown(&mut his, "CompleteMessageGenerated").await else { unreachable!() };
+    assert_eq!((said.content.as_deref(), Some(said.id) != message), (Some("hello"), true), "he hears what was let in, and nothing of what was not");
+    while let Ok(envelope) = his.events.try_recv() {
+        assert_ne!(envelope.event.kind(), "MessageRejected", "nor of the refusal");
+    }
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
 /// M1: a message is its author's to modify and to take back (issue 234) -
-/// not another participant's. Asked by the author's actor before it sends
-/// the change, and again by the channel as it admits it, with whether the
-/// modified message may enter the channel as classified.
+/// not another participant's. Asked by the channel alone, as it admits the
+/// change (issue 304), with whether the modified message may enter the
+/// channel as classified; who is refused is told why (`MessageRejected`).
+/// Another's message modified would speak as its author, which nobody's
+/// actor can send (issue 228): it is refused by his actor, which asks
+/// nothing.
 #[tokio::test]
 async fn a_message_is_modified_and_taken_back_by_its_author_alone() {
     use caelumora_model::actor::ActorEvent;
@@ -768,34 +804,33 @@ async fn a_message_is_modified_and_taken_back_by_its_author_alone() {
 
     let (refused, asked) = world.asked(bob.modify_message(said, "bob's".to_string(), None)).await;
     assert!(denied(&refused.expect_err("not his")));
-    assert_eq!(asked, checks(&["bob: ModifyMessage(alice's) no"]), "refused before anything else is asked");
-    let (refused, asked) = world.asked(bob.revoke_message(said)).await;
-    assert!(denied(&refused.expect_err("not his to take back")));
-    assert_eq!(asked, checks(&["bob: RevokeMessage(alice's) no"]));
+    assert!(asked.is_empty(), "it cannot be sent in his name: {asked:?}");
+    let (refused, asked) = world.asked(async {
+        bob.revoke_message(said).await.expect("sent: the channel decides");
+        shown(&mut watch, "MessageRejected").await
+    }).await;
+    assert!(matches!(refused, ActorEvent::MessageRejected { reason: Rejection::Forbidden, message: Some(m), .. } if m == said), "not his to take back, and he is told");
+    assert_eq!(asked, checks(&["bob: RevokeMessage(alice's) no"]), "asked by the channel alone");
 
     let (_, asked) = world.asked(async {
         alice.modify_message(said, "hello".to_string(), None).await.expect("hers");
         shown(&mut watch, "MessageModified").await;
     }).await;
-    assert_eq!(asked, checks(&[
-        // Her actor, before it sends.
-        "alice: ModifyMessage(alice's) yes", "alice: Publish yes",
-        // The channel, as it admits it.
-        "alice: Publish yes", "alice: ModifyMessage(alice's) yes",
-    ]));
+    assert_eq!(asked, checks(&["alice: ModifyMessage(alice's) yes", "alice: Publish yes"]), "the channel, as it admits it: her permission, then the flow");
     let (_, asked) = world.asked(async {
         alice.revoke_message(said).await.expect("hers");
         shown(&mut watch, "MessageRevoked").await;
     }).await;
-    assert_eq!(asked, checks(&["alice: RevokeMessage(alice's) yes", "alice: RevokeMessage(alice's) yes"]));
+    assert_eq!(asked, checks(&["alice: RevokeMessage(alice's) yes"]));
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// M3: a message is reclassified (issues 133, 239) by its author, or by the
 /// channel's owner - not by another participant. Asked as `Reclassify` of
-/// the message's author by the actor that sends it, and again by the
-/// channel as it admits it; nothing else, since nothing of the message's
-/// content enters the channel again.
+/// the message's author, then the flow of the new classification, by the
+/// channel alone as it admits it (issue 304); nothing else, since nothing of
+/// the message's content enters the channel again. Who is refused is told
+/// why (`MessageRejected`).
 #[tokio::test]
 async fn a_message_is_reclassified_by_its_author_or_the_channels_owner() {
     use caelumora_model::actor::ActorEvent;
@@ -819,16 +854,18 @@ async fn a_message_is_reclassified_by_its_author_or_the_channels_owner() {
     };
     let public = Classification::general(Confidentiality::Public);
 
-    let (refused, asked) = world.asked(bob.reclassify_message(alices, public.clone())).await;
-    assert!(denied(&refused.expect_err("not his")));
-    assert_eq!(asked, checks(&["bob: Reclassify(alice's message) no"]), "refused before anything else is asked");
+    let (refused, asked) = world.asked(async {
+        bob.reclassify_message(alices, public.clone()).await.expect("sent: the channel decides");
+        shown(&mut his, "MessageRejected").await
+    }).await;
+    assert!(matches!(refused, ActorEvent::MessageRejected { reason: Rejection::Forbidden, message: Some(m), .. } if m == alices), "not his, and he is told");
+    assert_eq!(asked, checks(&["bob: Reclassify(alice's message) no"]), "refused before the flow is asked");
 
     let (_, asked) = world.asked(async {
         bob.reclassify_message(bobs, public.clone()).await.expect("his own");
         shown(&mut hers, "MessageReclassified").await;
     }).await;
-    assert_eq!(asked, checks(&["bob: Reclassify(bob's message) yes", "bob: Publish yes", "bob: Reclassify(bob's message) yes", "bob: Publish yes"]),
-        "his actor, then the channel - each his permission, then the flow (issue 304)");
+    assert_eq!(asked, checks(&["bob: Reclassify(bob's message) yes", "bob: Publish yes"]), "the channel: his permission, then the flow (issue 304)");
 
     let internal = Classification::general(Confidentiality::Internal);
     let (_, asked) = world.asked(async {
@@ -836,42 +873,58 @@ async fn a_message_is_reclassified_by_its_author_or_the_channels_owner() {
         // His actor showed him his own before.
         while !matches!(shown(&mut his, "MessageReclassified").await, ActorEvent::MessageReclassified { classification, .. } if classification == internal) {}
     }).await;
-    assert_eq!(asked, checks(&["alice: Reclassify(bob's message) yes", "alice: Publish yes", "alice: Reclassify(bob's message) yes", "alice: Publish yes"]), "the owner, another's");
+    assert_eq!(asked, checks(&["alice: Reclassify(bob's message) yes", "alice: Publish yes"]), "the owner, another's");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// M2: asking an agent to answer again (issue 234) is an act on the
 /// conversation, like cancelling it: whoever takes part may - bob as well
-/// as alice - asked as `RetryMessage` of the channel before anything of the
-/// message is looked at but that it is there. Whether the agent answers
-/// again is its own to decide; a message no agent said is refused after
-/// the question. An answer under way (issue 235), or the agent's last turn
-/// given up (issue 259), is asked for again under the same question, asked
-/// before anything of the agent or the history is looked at.
+/// as alice - asked as `RetryMessage` of the channel by the channel alone,
+/// as it admits the request (issue 304). His actor looks at what it can
+/// see at once - a message no agent said, an answer under way (issue 235)
+/// or the agent's last turn given up (issue 259) that is neither - and asks
+/// nothing. Whether the agent answers again is its own to decide.
 /// It is offered of an agent by the same question (issue 242).
 #[tokio::test]
 async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
     use caelumora_model::actor::ActorEvent;
-    let world = World::new().await;
-    let global = world.personality("global", None, &[]).await;
-    let helper = world.agent("helper", world.alice, &global).await;
+    use caelumora_model::message::{Message, MessageRole};
+    let answer = Message { role: MessageRole::Assistant, content: Some("an answer".to_string()), ..Message::new(Classification::PUBLIC) };
+    let world = World::with_kinds(|registry| register_once(registry, "answering", answer)).await;
+    let answering = Personality {
+        components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("model", "answering")] },
+        ..world.personality("answering", None, &[]).await
+    };
+    world.store.update_personality(&World::system(), &answering).await.unwrap();
+    let helper = world.agent("helper", world.alice, &answering).await;
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
     world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
     let mut watch = bob.watch();
-    alice.send_message("hello".to_string(), None).await.expect("sent");
+    alice.send_message("@helper hello".to_string(), None).await.expect("sent");
     let ActorEvent::CompleteMessageGenerated(said) = shown(&mut watch, "CompleteMessageGenerated").await else { unreachable!() };
+    let answered = loop {
+        let ActorEvent::CompleteMessageGenerated(answered) = shown(&mut watch, "CompleteMessageGenerated").await else { unreachable!() };
+        if answered.sender_id == ActorId::Agent(helper) {
+            break answered;
+        }
+    };
 
     let (refused, asked) = world.asked(bob.request_retry(said.id)).await;
     assert!(matches!(refused.expect_err("no agent said it").downcast_ref::<ChannelError>(), Some(ChannelError::NotAnAgentsMessage { .. })));
-    assert_eq!(asked, checks(&["bob: RetryMessage(alice's) yes"]), "his to ask, as a participant");
+    assert!(asked.is_empty(), "his actor asks nothing: {asked:?}");
     let (refused, asked) = world.asked(bob.request_retry_of_turn(ActorId::User(world.alice), TurnId::new())).await;
     assert!(matches!(refused.expect_err("no agent answers").downcast_ref::<ChannelError>(), Some(ChannelError::NotAParticipant { .. })));
-    assert_eq!(asked, checks(&["bob: RetryMessage(alice's) yes"]), "an answer under way by the same question");
+    assert!(asked.is_empty(), "nor of an answer under way: {asked:?}");
     let (refused, asked) = world.asked(bob.request_retry_of_turn(ActorId::Agent(helper), TurnId::new())).await;
     assert!(matches!(refused.expect_err("neither under way nor given up").downcast_ref::<ChannelError>(), Some(ChannelError::TurnNotRetryable { .. })));
-    assert_eq!(asked, checks(&["bob: RetryMessage(alice's) yes"]), "a turn given up by the same question, before the history is looked at (issue 259)");
+    assert!(asked.is_empty(), "nor of a turn given up (issue 259): {asked:?}");
+    let (_, asked) = world.asked(async {
+        bob.request_retry(answered.id).await.expect("sent: the channel decides");
+        asked_for(&world, "bob: RetryMessage(alice's) yes").await;
+    }).await;
+    assert_eq!(asked.first().map(String::as_str), Some(checks(&["bob: RetryMessage(alice's) yes"])[0].as_str()), "his to ask, as a participant - asked by the channel as it admits it");
     let view = world.manager.views(Viewer::new(World::as_user(world.bob))).session(session.id()).await.unwrap().channel(main.id()).await.unwrap();
     let member = view.member(ActorId::Agent(helper)).await.expect("the agent is a member");
     let (offered, asked) = world.asked(member.may_retry()).await;
@@ -1205,9 +1258,10 @@ async fn questions_shown(world: &World, session: SessionId, main: ChannelId, use
 }
 
 /// Answering the questions of an agent's call (issue 165) is asked as
-/// `AnswerQuestion` of the channel, of whoever answers - bob may, as a
-/// participant - and counts only of those the questions were put to: bob,
-/// shown alice's questions, is refused, alice answers.
+/// `AnswerQuestion` of the channel, of whoever answers, by the channel as it
+/// admits the answer (issue 304) - bob may, as a participant - and counts
+/// only of those the questions were put to: bob, shown alice's questions,
+/// is refused by his actor, which asks nothing; alice answers.
 #[tokio::test]
 async fn questions_are_answered_by_whom_they_are_put_to() {
     use caelumora_model::question::{QuestionError, Response};
@@ -1219,11 +1273,13 @@ async fn questions_are_answered_by_whom_they_are_put_to() {
     let (refused, asked) = world.asked(main.user_actor(world.bob).unwrap().answer_questions(request.id, name())).await;
     let refused = refused.expect_err("not put to him");
     assert!(matches!(refused.downcast_ref::<ChannelError>(), Some(ChannelError::Question { reason: QuestionError::NotAsked, .. })), "{refused}");
-    assert_eq!(asked, checks(&["bob: AnswerQuestion(alice's) yes"]), "his to answer as a participant, were he asked");
+    assert!(asked.is_empty(), "his actor asks nothing: {asked:?}");
 
-    let (answered, asked) = world.asked(main.user_actor(world.alice).unwrap().answer_questions(request.id, name())).await;
-    answered.expect("put to her");
-    assert_eq!(asked, checks(&["alice: AnswerQuestion(alice's) yes"]));
+    let (_, asked) = world.asked(async {
+        main.user_actor(world.alice).unwrap().answer_questions(request.id, name()).await.expect("put to her");
+        asked_for(&world, "alice: AnswerQuestion(alice's) yes").await;
+    }).await;
+    assert_eq!(asked.first().map(String::as_str), Some(checks(&["alice: AnswerQuestion(alice's) yes"])[0].as_str()), "asked by the channel as it admits it");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

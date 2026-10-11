@@ -1168,6 +1168,9 @@ mod tests {
     use caelumora_model::security::{DummySecurityManager, SecurityAttributes};
     use caelumora_model::store::memory::MemoryStore;
     use uuid::Uuid;
+    use caelumora_model::actor::{ActorEvent, Envelope, Rejection};
+    use caelumora_model::message::MessageId;
+    use tokio::sync::broadcast;
 
     /// `users` as participants, recorded in the store the session reads
     /// them from (issue 120).
@@ -1954,7 +1957,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_released_message_is_read_where_its_channel_is_not() {
-        use crate::channel::ChannelError;
         use crate::view::ViewError;
         use caelumora_model::actor::ActorId;
         use caelumora_model::confidentiality::{Compartment, Compartments, ConfidentialityRules, Confidentiality};
@@ -1980,10 +1982,11 @@ mod tests {
         let team = session.create_channel(&alice_ctx, with("team", classified(Confidentiality::Internal, &[]))).await.unwrap();
 
         let writer = hr.user_actor(alice.id).expect("the creator takes part");
+        let mut events = writer.watch().events;
         writer.send_message("for HR".to_string(), None).await.unwrap();
         writer.send_message("for finance too".to_string(), Some(classified(Confidentiality::Internal, &["hr", "finance"]))).await.unwrap();
-        let above = writer.send_message("too secret".to_string(), Some(classified(Confidentiality::Confidential, &["hr"]))).await.expect_err("above the channel");
-        assert!(matches!(above.downcast_ref::<ChannelError>(), Some(ChannelError::ClassificationRefused { .. })), "{above}");
+        writer.send_message("too secret".to_string(), Some(classified(Confidentiality::Confidential, &["hr"]))).await.expect("sent: the channel decides");
+        assert_eq!(rejection(&mut events).await.1, Rejection::ClassificationRefused, "above the channel, and its writer is told (issue 304)");
         let history = history_of(&hr, 2).await;
         assert_eq!(history[0].classification, classified(Confidentiality::Internal, &["hr"]), "the channel's, unless classified otherwise");
 
@@ -2039,8 +2042,9 @@ mod tests {
         let (as_alice, as_bob) = (hr.user_actor(alice.id).unwrap(), hr.user_actor(bob.id).unwrap());
         let released = classified(Confidentiality::Internal, &["hr", "finance"]);
         as_bob.reclassify_message(bobs, released.clone()).await.expect("the author releases their message");
-        let refused = as_bob.reclassify_message(alices, released.clone()).await.expect_err("not another's");
-        assert!(matches!(refused.downcast_ref::<ChannelError>(), Some(ChannelError::Forbidden { .. })), "{refused}");
+        let mut bobs_events = as_bob.watch().events;
+        as_bob.reclassify_message(alices, released.clone()).await.expect("sent: the channel decides");
+        assert_eq!(rejection(&mut bobs_events).await, (Some(alices), Rejection::Forbidden), "not another's, and he is told (issue 304)");
         let missing = as_alice.reclassify_message(caelumora_model::message::MessageId::new(), released.clone()).await.expect_err("no such message");
         assert!(matches!(missing.downcast_ref::<ChannelError>(), Some(ChannelError::MessageNotFound { .. })), "{missing}");
         classified_as(&hr, bobs, &released).await;
@@ -2555,6 +2559,18 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
         panic!("message {id} was never classified {classification}");
+    }
+
+    /// The message and the reason of the next `MessageRejected` `events`
+    /// show: why the channel did not let in what their user sent (issue 304).
+    async fn rejection(events: &mut broadcast::Receiver<Envelope>) -> (Option<MessageId>, Rejection) {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if let ActorEvent::MessageRejected { message, reason, .. } = events.recv().await.expect("the channel is running").event {
+                    return (message, reason);
+                }
+            }
+        }).await.expect("the channel tells why it did not let it in")
     }
 
     async fn history_of(channel: &ChannelLoop, count: usize) -> Vec<caelumora_model::message::Message> {

@@ -105,11 +105,13 @@ and what the model is told is never the choice of whoever may write a personalit
 call to its tool, it checks:
 
 *   that the caller is an agent - only agents call tools;
-*   that the policy permits the call (`ActionType::CallTool`);
+*   that the call was offered to it, and the place's rules still let it run;
 
-and makes the result for the model afterwards: it times the call, turns an error into a status and a
-next step (issue 15), classifies the result and withholds what may not flow into the channel (issue
-133), and marks what only the owner sees (`successful_result`).
+Whether the policy permits the call (`ActionType::CallTool`) is asked once, as the call is admitted
+(below, issue 304), not again as it runs. The executor makes the result for the model afterwards: it
+times the call, turns an error into a status and a next step (issue 15), classifies the result and
+withholds what may not flow into the channel (issue 133), and marks what only the owner sees
+(`successful_result`).
 
 A call is not waited for longer than its turn lasts (issue 161). The executor runs it next to the
 turn's `CancellationToken`, which a cancel and a stop cancel; then the tool's future is dropped
@@ -365,7 +367,8 @@ or run as it is. The actor only records what the executor decided.
 
 *   **Policy.** A call the `SecurityManager` does not permit (`ActionType::CallTool`) is refused
     before any approval is requested, so users are not asked about calls that would be refused
-    anyway. `execute` checks again.
+    anyway. It is the one place the policy is asked about the call (issue 304): `execute` runs what
+    was admitted.
 *   **Validity.** A call that cannot run - arguments its tool's `describe` rejects, a tool that does
     not exist - is answered at once instead of being put up for approval (issue 118).
 
@@ -425,13 +428,15 @@ raw.
     sensitive - never to the approver or other agents. Everybody it reaches sees what the agent
     waits for; only those asked answer.
 3.  **Answers.** A user answers over REST (`POST …/questions/{qid}`) or in the TUI - which shows the
-    questions as text, asks them one by one after `/answer [id]` and declines them with
-    `/decline [id]` - through `UserActor::answer_questions`, which asks `AnswerQuestion` of the
-    channel and refuses what cannot count - questions not open or not put to them, responses not as
-    the questions ask (`Questions::check_responses`) - before anything is sent. `QuestionAnswered`
-    goes to the asking agent alone. The agent takes it only if its sender was asked and the
-    questions are still open, and checks the responses again; who answered it takes from the
-    envelope, never from what was said. The first answer that counts settles the call.
+    questions as text, asks them one by one after `/answer [id]` and declines them with `/decline
+    [id]` - through `UserActor::answer_questions`, which refuses what cannot count - questions not
+    open or not put to them, responses not as the questions ask (`Questions::check_responses`) -
+    before anything is sent. Whether the user may answer in the channel at all (`AnswerQuestion`) is
+    the channel's to decide as it admits the answer, which it refuses with `MessageRejected` (issue
+    304). `QuestionAnswered` goes to the asking agent alone. The agent takes it only if its sender
+    was asked and the questions are still open, and checks the responses again; who answered it
+    takes from the envelope, never from what was said. The first answer that counts settles the
+    call.
 4.  **Declining.** The user may decline - `QuestionDeclined` - and a message of theirs written
     while questions put to them are open declines them all: their actor sends the declines before
     the message, so that the turn goes on and the message is heard after it. A declined call is
