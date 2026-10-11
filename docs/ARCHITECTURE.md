@@ -62,8 +62,10 @@ where it was published. Details: [WORKSPACE.md](WORKSPACE.md).
 
 Sessions and channels hold their users and agents by reference - `Participant::User(UserId)`,
 `Participant::Agent(AgentId)` - not as copies. The records live in the `EntityStore`; a channel
-leaves out, with a warning, a participant whose record no longer exists, and runs without it. An
-approver has no record of its own and is held whole.
+leaves out a participant whose record no longer exists, and runs without it. A deleted agent rests
+in its channels so: they keep it, show it as a former member and run it again once it is restored.
+Deleting, restoring and purging an agent are the `AgentManager`'s; what lies in a session's or a
+channel's scope goes with it. An approver has no record of its own and is held whole.
 
 Details: [CHANNELS.md](CHANNELS.md).
 

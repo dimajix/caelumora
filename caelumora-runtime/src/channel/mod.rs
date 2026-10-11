@@ -23,9 +23,9 @@ use caelumora_model::message::{Message, MessageId};
 use caelumora_model::work::TurnId;
 use caelumora_model::security::{ActionType, Enforcement, SecurityAttributes, SecurityContext, SecurityManager};
 use caelumora_model::session::SessionId;
-use caelumora_model::store::{StateStore, StoreError, StoreResultExt};
+use caelumora_model::store::{EntityStore, StateStore, StoreError, StoreResultExt};
 use caelumora_model::user::UserId;
-use tracing::warn;
+use tracing::{info, warn};
 use std::any::Any;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
@@ -204,6 +204,7 @@ pub struct ChannelLoop {
     /// The services it works with, taken from `runtime` once (issue 229).
     security: Arc<dyn SecurityManager>,
     confidentiality: Arc<dyn ConfidentialityPolicy>,
+    entities: Arc<dyn EntityStore>,
     controllers: Arc<ControllerManager>,
     /// The actors of the participants, each with what it was built from -
     /// what a reclassification asks its clearances of; replaced as a whole
@@ -290,6 +291,7 @@ impl ChannelLoop {
             channel: channel_controller,
             security: Arc::clone(runtime.security_manager()),
             confidentiality: Arc::clone(runtime.confidentiality()),
+            entities: Arc::clone(runtime.entity_store()),
             controllers: Arc::clone(runtime.controller_manager()),
             runtime,
             actors: ArcSwap::from_pointee(HashMap::new()),
@@ -312,17 +314,19 @@ impl ChannelLoop {
         // The participants the channel has; `run` starts their tasks.
         let participants = channel_loop.channel.load().participants.clone();
         for participant in &participants {
-            // A user or agent deleted since it joined, or an agent that may
-            // not run - its personality, or what it includes (issue 270),
-            // withdrawn or gone: the channel runs without it rather than not
-            // at all (issues 120, 198). Its owner's loss must not keep
-            // everyone else out, nor can a third party - the personality's
-            // owner, or the components' - stop someone's channel so.
+            // A user or agent deleted since it joined - an agent rests in
+            // the channel until it is restored (issue 314) -, or an agent
+            // that may not run - its personality, or what it includes (issue
+            // 270), withdrawn or gone: the channel runs without it rather
+            // than not at all (issues 120, 198). Its owner's loss must not
+            // keep everyone else out, nor can a third party - the
+            // personality's owner, or the components' - stop someone's
+            // channel so.
             let found = channel_loop.member_of(participant).await;
             let member = match found {
                 Ok(Some(member)) => member,
                 Ok(None) => {
-                    warn!("{} of channel {} no longer exists and is left out", participant.actor_id(), channel_loop.id);
+                    info!("{} of channel {} no longer exists and is left out", participant.actor_id(), channel_loop.id);
                     continue;
                 }
                 Err(e) if cannot_run(&e) => {
@@ -346,7 +350,7 @@ impl ChannelLoop {
 
     /// `participant` with what its actor is built from (`Member::of`).
     async fn member_of(&self, participant: &Participant) -> Result<Option<Member>> {
-        Member::of(participant, &self.channel.load(), &self.controllers, self.security.as_ref()).await
+        Member::of(participant, &self.channel.load(), self.entities.as_ref(), &self.controllers, self.security.as_ref()).await
     }
 
     /// Makes `session` the session of this channel. Called once by the

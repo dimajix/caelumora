@@ -1,6 +1,6 @@
 # 314 — The `SessionManager` deletes, restores and purges agents
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -46,3 +46,33 @@ and whether one owner of "taking someone out of every session" would serve all o
 
 - **2026-10-11** — Opened while splitting `session.rs`
   ([311](311-split-channel-and-session-loops.md)), which left the question open.
+- **2026-10-11** — Done, as decided with the maintainer, on a different line than the
+  considerations above: an `AgentManager` in the `RuntimeManager`, beside the other managers, owns
+  deleting, restoring and purging agents, and the REST server calls it for all three; the
+  `SessionManager` has no operation on agents left.
+  - **Why not an `AgentManager` that calls the `SessionManager`:** making the agent leave the
+    running sessions' channels would have needed it, and so a manager outside the `RuntimeManager`
+    or one making the other act on its behalf. Instead, deleting changes no channel: a deleted agent
+    rests in the channels it takes part in, and they follow its mark. A running session, subscribed
+    to its agents' events, stops the agent's actor and announces it as a leave, and looks at all its
+    agents again as it starts and after it lost events; a channel that starts leaves it out, since
+    `Member::of` asks the store whether an agent exists, not the controllers, which keep the
+    controller of one that still runs; the views show it as a former member, removed as its mark
+    says, and without when once it was purged.
+  - **Restoring brings it back** into every channel it rested in - the maintainer's decision; a
+    running session rebuilds its actor and announces it as a join. That answers
+    [227](227-agent-management.md)'s concern that a mistaken delete is final. Removing a resting
+    agent from a channel changes the document alone, so that it does not come back there.
+  - **What lies in a scope** stays with `scoped`, which deletes, restores and purges an agent of a
+    session's or a channel's scope with it; such an agent takes part nowhere else and leaves
+    nothing.
+  - **The question asked before deciding** - whether deleting a user or a personality needs the
+    same - is moot: nothing in the runtime deletes a user, a personality is not a participant, and
+    an agent no longer leaves anything either.
+  - `AgentManager::delete` and `purge` answer `false` for nothing the caller can see, as the
+    `GroupManager`'s do; making an agent from a personality, without a template, is left to 227 and
+    [221](221-adding-session-participants.md), and would be the `AgentManager`'s as well. A running
+    session subscribes to the agents among its participants as it starts; once 221 lets participants
+    be added, the subscription has to grow with them.
+  - Stored data: agents deleted before this change are kept in their channels as former
+    participants, and are not brought back by restoring them.

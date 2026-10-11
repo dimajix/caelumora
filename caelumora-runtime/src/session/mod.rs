@@ -4,10 +4,10 @@ use caelumora_model::value::name::Name;
 use crate::channel::ChannelLoop;
 use crate::command::{CommandExecutor, ChannelCommandProvider};
 use crate::runtime::{ChannelRuntime, RuntimeManager};
-use crate::event::EventBus;
+use crate::event::{EventBus, SubscriptionTopic};
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
-use caelumora_model::channel::Channel;
+use caelumora_model::channel::{Channel, Participant};
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
 use caelumora_model::value::language::Language;
 use caelumora_model::event::GlobalEvent;
@@ -23,6 +23,7 @@ use caelumora_model::workspace::WorkspaceId;
 use crate::controller::SessionController;
 use dashmap::DashMap;
 use std::sync::Arc;
+use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::{AbortHandle, JoinSet};
 
@@ -217,14 +218,27 @@ impl SessionLoop {
     /// Runs the session's channels, those it has and those created while it
     /// runs, until the session is stopped - which aborts this, and with it
     /// every channel.
+    ///
+    /// Its channels follow whether its agents exist (issue 314): told of an
+    /// agent deleted or restored, and of every agent as it starts and after
+    /// it lost events - so that nothing that happened meanwhile is missed.
     pub async fn run(&self) -> Result<()> {
         let mut start_rx = self.start_rx.try_lock()
             .map_err(|_| anyhow!("Already running"))?;
 
         let mut join_set = JoinSet::new();
-        // The session's own events; those about its users and agents are the
-        // `ControllerManager`'s to take in (issue 121).
-        let mut global_rx = self.events.subscribe_session(self.id());
+        // The session's own events, and those about its agents' lifecycle;
+        // the rest about its users and agents is the `ControllerManager`'s to
+        // take in (issue 121). Its participants are fixed once it is made
+        // (issue 221).
+        let mut topics = vec![SubscriptionTopic::Session(self.id())];
+        topics.extend(self.session().participants.iter().filter_map(|p| match p {
+            Participant::Agent(id) => Some(SubscriptionTopic::Agent(*id)),
+            _ => None,
+        }));
+        let mut global_rx = self.events.subscribe(topics).into_receiver();
+        let mut following = true;
+        self.follow_agents(None).await;
 
         loop {
             tokio::select! {
@@ -250,16 +264,25 @@ impl SessionLoop {
                         Err(e) => return Err(e.into()),
                     }
                 }
-                maybe_global = global_rx.recv() => {
-                    self.handle_global_event(maybe_global).await;
+                received = global_rx.recv(), if following => {
+                    match received {
+                        Ok(global_event) => self.handle_global_event(&global_event).await,
+                        Err(RecvError::Lagged(lost)) => {
+                            tracing::warn!("Session {} lost {} events and looks at its agents again", self.id, lost);
+                            self.follow_agents(None).await;
+                        }
+                        // Not while the session holds the bus.
+                        Err(RecvError::Closed) => following = false,
+                    }
                 }
             }
         }
     }
 
-    async fn handle_global_event(&self, maybe_global: Option<GlobalEvent>) {
-        if let Some(global_event) = maybe_global {
-            self.session_controller.process_global_event(&global_event);
+    async fn handle_global_event(&self, global_event: &GlobalEvent) {
+        match global_event {
+            GlobalEvent::AgentDeleted(id) | GlobalEvent::AgentRestored(id) => self.follow_agents(Some(*id)).await,
+            _ => self.session_controller.process_global_event(global_event),
         }
     }
 

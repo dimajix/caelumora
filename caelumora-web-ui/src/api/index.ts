@@ -471,8 +471,8 @@ export const api = {
   },
 
   /**
-   * Deletes an agent (issue 164): it leaves every channel it takes part in
-   * and is kept, marked, until it is purged.
+   * Deletes an agent (issues 164, 314): it rests in every channel it takes
+   * part in, as a former member, and is kept, marked, until it is purged.
    */
   async deleteAgent(agentUuid: string): Promise<void> {
     const res = await request(`/agents/${agentUuid}`, {method: 'DELETE'});
