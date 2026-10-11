@@ -9,7 +9,10 @@
 
 pub mod accept_any;
 
-use crate::user::{User, UserId};
+use crate::event::{EventPublisher, GlobalEvent};
+use crate::security::{Secured, SecurityContext};
+use crate::store::{EntityStore, StoreResultExt};
+use crate::user::{User, UserId, UserUpdateEvent};
 use async_trait::async_trait;
 use std::fmt;
 use std::fmt::Debug;
@@ -57,6 +60,9 @@ pub type AuthResult<T> = Result<T, AuthError>;
 
 /// A single source of users, consulted in order by a `UserManager`.
 ///
+/// A provider says who a user is by its source - id, name, roles - and
+/// writes nothing: the `UserManager` keeps the records (issue 306).
+///
 /// Looking a user up and verifying a credential are separate operations, and
 /// verification never hands out the stored credential: a file backend compares
 /// a hash, a directory verifies by binding as the user and has nothing to hand
@@ -94,14 +100,23 @@ pub trait UserProvider: Debug + Send + Sync {
 /// Unlike `SecretManager`, lookups are not gated through the
 /// `SecurityManager`: authentication is what produces the `SecurityContext`
 /// such a check would need.
+///
+/// It is the one writer of user records (issue 306), which belong to the
+/// system (issue 94): what a provider answers at a login or on a renewal is
+/// compared with the record stored, stored in the system's name where it
+/// differs, and announced - a new user as `UserCreated`, a changed name or
+/// changed roles as `UserUpdated` -, so that every `UserController`, in every
+/// instance, holds them as they are.
 #[derive(Debug)]
 pub struct UserManager {
     providers: Vec<Arc<dyn UserProvider>>,
+    store: Arc<dyn EntityStore>,
+    events: Arc<dyn EventPublisher>,
 }
 
 impl UserManager {
-    pub fn new(providers: Vec<Arc<dyn UserProvider>>) -> Self {
-        Self { providers }
+    pub fn new(providers: Vec<Arc<dyn UserProvider>>, store: Arc<dyn EntityStore>, events: Arc<dyn EventPublisher>) -> Self {
+        Self { providers, store, events }
     }
 
     /// Whether the chain has no providers, i.e. nobody can authenticate.
@@ -117,7 +132,7 @@ impl UserManager {
     pub async fn authenticate(&self, username: &str, credential: &Credential<'_>) -> AuthResult<User> {
         for provider in &self.providers {
             match provider.authenticate(username, credential).await {
-                Ok(Some(user)) => return Ok(user),
+                Ok(Some(user)) => return self.record(user).await,
                 Ok(None) => continue,
                 Err(AuthError::InvalidCredentials) => {
                     tracing::info!("Authentication of '{}' failed: invalid {}", username, credential.kind());
@@ -143,22 +158,80 @@ impl UserManager {
         Ok(None)
     }
 
-    /// Looks up a user by id. `Ok(None)` if no provider knows it.
+    /// Looks up a user by id, as when a token is renewed, and keeps their
+    /// record as the provider answers it - so that roles given or taken
+    /// meanwhile take effect. `Ok(None)` if no provider knows it.
+    ///
+    /// # Errors
+    /// `AuthError::Backend` if a provider or the store failed.
     pub async fn get_user(&self, id: UserId) -> AuthResult<Option<User>> {
         for provider in &self.providers {
             if let Some(user) = provider.get_user(id).await? {
-                return Ok(Some(user));
+                return self.record(user).await.map(Some);
             }
         }
         Ok(None)
+    }
+
+    /// Keeps `found`, a user as a provider answers them, as their record:
+    /// made if there is none, changed where it differs - its deletion
+    /// kept -, and announced. Answers the record as it now stands.
+    async fn record(&self, found: User) -> AuthResult<User> {
+        let system = SecurityContext::system();
+        let backend = |e: crate::store::StoreError| AuthError::Backend(e.to_string());
+        let Some(stored) = self.store.get_user(&system, found.id).await.optional().map_err(backend)? else {
+            self.store.create_user(&system, &found).await.map_err(backend)?;
+            self.events.publish(GlobalEvent::UserCreated(found.id), found.security_attributes().clone());
+            return Ok(found);
+        };
+        let user = User { deleted: stored.deleted.clone(), ..found };
+        let renamed = user.username != stored.username;
+        let roles_changed = user.roles != stored.roles;
+        if !renamed && !roles_changed && user.email == stored.email {
+            return Ok(stored);
+        }
+        self.store.update_user(&system, &user).await.map_err(backend)?;
+        if renamed {
+            self.events.publish(GlobalEvent::UserUpdated(user.id, UserUpdateEvent::NameChanged(user.username.to_string())), user.security_attributes().clone());
+        }
+        if roles_changed {
+            tracing::info!(user = %user.id, "The roles of the user changed");
+            self.events.publish(GlobalEvent::UserUpdated(user.id, UserUpdateEvent::RolesChanged(user.roles.clone())), user.security_attributes().clone());
+        }
+        Ok(user)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::role::RoleId;
+    use crate::security::SecurityAttributes;
+    use crate::store::memory::MemoryStore;
     use crate::value::name::Name;
     use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    /// What was announced.
+    #[derive(Debug, Default)]
+    struct Announced(Mutex<Vec<GlobalEvent>>);
+
+    impl EventPublisher for Announced {
+        fn publish(&self, event: GlobalEvent, _attributes: SecurityAttributes) {
+            self.0.lock().unwrap().push(event);
+        }
+    }
+
+    impl Announced {
+        fn taken(&self) -> Vec<GlobalEvent> {
+            std::mem::take(&mut *self.0.lock().unwrap())
+        }
+    }
+
+    /// A manager of `providers`, keeping records in a store of its own.
+    fn chain(providers: Vec<Arc<dyn UserProvider>>) -> UserManager {
+        UserManager::new(providers, Arc::new(MemoryStore::new()), Arc::new(Announced::default()))
+    }
 
     fn user(name: &str) -> User {
         User {
@@ -223,7 +296,7 @@ mod tests {
     async fn authenticate_falls_through_to_the_provider_that_knows_the_user() {
         let alice = user("alice");
         let bob = user("bob");
-        let manager = UserManager::new(vec![
+        let manager = chain(vec![
             Arc::new(MapUserProvider::new(&[(&alice, "a")])),
             Arc::new(MapUserProvider::new(&[(&bob, "b")])),
         ]);
@@ -236,7 +309,7 @@ mod tests {
     async fn wrong_credential_ends_the_chain() {
         let first = user("alice");
         let second = user("alice");
-        let manager = UserManager::new(vec![
+        let manager = chain(vec![
             Arc::new(MapUserProvider::new(&[(&first, "a")])),
             Arc::new(MapUserProvider::new(&[(&second, "other")])),
         ]);
@@ -248,7 +321,7 @@ mod tests {
     #[tokio::test]
     async fn unknown_user_is_indistinguishable_from_a_wrong_password() {
         let alice = user("alice");
-        let manager = UserManager::new(vec![Arc::new(MapUserProvider::new(&[(&alice, "a")]))]);
+        let manager = chain(vec![Arc::new(MapUserProvider::new(&[(&alice, "a")]))]);
 
         let result = manager.authenticate("mallory", &Credential::Password("x")).await;
         assert!(matches!(result, Err(AuthError::InvalidCredentials)));
@@ -257,7 +330,7 @@ mod tests {
     #[tokio::test]
     async fn failing_provider_denies_instead_of_falling_through() {
         let alice = user("alice");
-        let manager = UserManager::new(vec![
+        let manager = chain(vec![
             Arc::new(FailingUserProvider),
             Arc::new(MapUserProvider::new(&[(&alice, "a")])),
         ]);
@@ -270,7 +343,7 @@ mod tests {
     #[tokio::test]
     async fn lookups_return_the_first_match_or_none() {
         let alice = user("alice");
-        let manager = UserManager::new(vec![
+        let manager = chain(vec![
             Arc::new(MapUserProvider::new(&[])),
             Arc::new(MapUserProvider::new(&[(&alice, "a")])),
         ]);
@@ -278,7 +351,33 @@ mod tests {
         assert_eq!(manager.find_user("alice").await.unwrap().map(|u| u.id), Some(alice.id));
         assert_eq!(manager.get_user(alice.id).await.unwrap().map(|u| u.username), Some(Name::new("alice").unwrap()));
         assert!(manager.find_user("bob").await.unwrap().is_none());
-        assert!(UserManager::new(vec![]).get_user(alice.id).await.unwrap().is_none());
+        assert!(chain(vec![]).get_user(alice.id).await.unwrap().is_none());
+    }
+
+    /// Issue 306: the manager keeps the records - a new user made and
+    /// announced, roles given or taken at a login or on a renewal stored and
+    /// announced, nothing written where nothing changed.
+    #[tokio::test]
+    async fn the_manager_keeps_and_announces_the_records_the_providers_answer() {
+        let store: Arc<dyn EntityStore> = Arc::new(MemoryStore::new());
+        let announced = Arc::new(Announced::default());
+        // A manager whose one provider knows `user` with the password "a".
+        let answering = |user: &User| UserManager::new(vec![Arc::new(MapUserProvider::new(&[(user, "a")]))], Arc::clone(&store), Arc::<Announced>::clone(&announced));
+        let staff = RoleId::new();
+        let alice = user("alice");
+        answering(&alice).authenticate("alice", &Credential::Password("a")).await.unwrap();
+        assert!(matches!(announced.taken()[..], [GlobalEvent::UserCreated(id)] if id == alice.id), "a new user is made");
+        answering(&alice).authenticate("alice", &Credential::Password("a")).await.unwrap();
+        assert!(announced.taken().is_empty(), "nothing changed, nothing announced");
+
+        let found = answering(&User { roles: vec![staff], ..alice.clone() }).get_user(alice.id).await.unwrap().unwrap();
+        assert_eq!(found.roles, [staff], "on a renewal, as the provider answers");
+        assert!(matches!(&announced.taken()[..], [GlobalEvent::UserUpdated(id, UserUpdateEvent::RolesChanged(roles))] if *id == alice.id && *roles == [staff]));
+        let stored = store.get_user(&SecurityContext::system(), alice.id).await.unwrap();
+        assert_eq!(stored.roles, [staff], "and stored");
+
+        answering(&alice).authenticate("alice", &Credential::Password("a")).await.unwrap();
+        assert!(matches!(&announced.taken()[..], [GlobalEvent::UserUpdated(_, UserUpdateEvent::RolesChanged(roles))] if roles.is_empty()), "taken at a login");
     }
 
     #[test]

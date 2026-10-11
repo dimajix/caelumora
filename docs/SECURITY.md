@@ -486,6 +486,15 @@ operations. Verification never hands out the stored credential, so backends that
 How a provider assigns `UserId`s is its own business. The only contract is that the same user keeps
 the same id, across restarts included.
 
+**The `UserManager` is the one writer of user records** (issue
+[306](../issues/306-user-records-have-no-writer.md)). A provider says who a user is by its source -
+id, name, roles - and writes nothing. What it answers at a login, and when the REST server asks
+about the user on renewing a token, the manager compares with the record stored: a new user is
+stored and announced as `UserCreated`; a changed name or changed roles are stored and announced as
+`UserUpdated` (`NameChanged`, `RolesChanged`), all in the system's name. Every `UserController`
+follows these events, in every instance, so that it holds the roles as they are stored - a role
+given or taken takes effect at the next login or renewal, within half a token's lifetime.
+
 ### How the chain fails
 
 The user chain fails differently from the secret chain:
@@ -496,10 +505,10 @@ The user chain fails differently from the secret chain:
 *   An unknown user is reported exactly like a wrong password.
 
 There is no default provider. The only built-in one so far, `accept_any`, is a development stand-in:
-it accepts any username and password and keeps users in the `EntityStore`. It must be enabled
-explicitly and warns at startup (issues 10, 25). It gives users the roles its configuration names
-for them, updated at every login; what roles grant - clearances - is described in
-[CONFIDENTIALITY.md](CONFIDENTIALITY.md#clearances) (issue 142).
+it accepts any username and password and finds users in the `EntityStore`, where the `UserManager`
+keeps them. It must be enabled explicitly and warns at startup (issues 10, 25). It gives users the
+roles its configuration names for them, compared at every login and renewal; what roles grant -
+clearances - is described in [CONFIDENTIALITY.md](CONFIDENTIALITY.md#clearances) (issue 142).
 
 ## Authentication
 

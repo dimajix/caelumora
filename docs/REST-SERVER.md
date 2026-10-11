@@ -148,7 +148,9 @@ A cookie rather than an `Authorization` header, because `EventSource` cannot sen
 
 ### Renewal
 
-Sessions are renewed by use: any request past half a token's lifetime gets fresh cookies.
+Sessions are renewed by use: any request past half a token's lifetime gets fresh cookies. A renewal
+asks the `UserManager` about the user, which keeps their record as the provider answers it - roles
+given or taken meanwhile take effect then (issue 306, see [SECURITY.md](SECURITY.md#users)).
 
 Server-sent events cannot do that. One long response cannot set headers again, and their reconnects
 deliberately do not renew either (see [Streams and the token](#streams-and-the-token)). So a client

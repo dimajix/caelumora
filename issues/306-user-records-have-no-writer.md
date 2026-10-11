@@ -1,6 +1,6 @@
 # 306 — A user's record is written by whichever provider authenticates, and nobody hears of a change
 
-**Status:** open
+**Status:** done
 **Area:** Identity and access management
 
 ## The problem
@@ -65,3 +65,13 @@ Decided with the maintainer on 2026-10-11:
 - **2026-10-11** — Opened at the maintainer's request, before step 2 of issue 304: the roles in a
   `SecurityContext` are to come from the `UserController`, which does not follow role changes
   today. The `UserManager` as the one writer was decided with it.
+- **2026-10-11** — Done, on the branch `issue-306-user-records`: `UserManager::new` takes the entity
+  store and an `EventPublisher`; `authenticate` and `get_user` keep the record as the provider
+  answers it (`UserManager::record`) - made and announced as `UserCreated`, or changed and announced
+  as `UserUpdated` with `NameChanged` or the new `RolesChanged`, its deletion kept. Only `find_user`
+  stays a lookup. `AcceptAnyUserProvider` writes nothing: it answers the user stored under a name,
+  or a new one, with the configured roles. The `UserController` follows `RolesChanged`. The REST
+  server builds the user manager after the runtime, on its event bus. Tests: the manager's records
+  and announcements at a login and a renewal, the provider writing nothing, the controller
+  following a change. Nothing that decides a permission reads the controller's roles yet - that is
+  step 2 of issue 304. No stored data changes.

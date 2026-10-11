@@ -149,6 +149,12 @@ impl UserController {
                 }
                 Err(e) => tracing::warn!(user = %self.id, error = %e, "A change of the user's name made elsewhere does not fit it"),
             },
+            // As the `UserManager` stored them (issue 306).
+            UserUpdateEvent::RolesChanged(roles) => {
+                let mut user = (**self.user.load()).clone();
+                user.roles = roles.clone();
+                self.user.store(Arc::new(user));
+            }
         }
     }
 
@@ -173,6 +179,7 @@ mod tests {
     use super::*;
     use caelumora_model::value::text::Introduction;
     use caelumora_model::actor::ActorId;
+    use caelumora_model::role::RoleId;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::security::OwnershipSecurityManager;
     use std::sync::Mutex;
@@ -210,6 +217,21 @@ mod tests {
             assert_eq!(store.get_user_profile(&hers, user.id).await.unwrap().introduction.as_ref().map(Introduction::as_str), Some(text), "stored");
         }
         assert!(matches!(announced.0.lock().unwrap().as_slice(), [GlobalEvent::UserProfileUpdated(..), GlobalEvent::UserProfileUpdated(id, p)] if *id == user.id && p.introduction.as_ref().map(Introduction::as_str) == Some("I run the budget and the team.")));
+    }
+
+    /// Issue 306: the roles the `UserManager` stored and announced are the
+    /// controller's, too; another user's change is not.
+    #[test]
+    fn the_roles_follow_their_announcement() {
+        let user = alice();
+        let controller = UserController::new(user.clone(), None, Arc::new(Announced::default()), Arc::new(MemoryStore::new()));
+        let staff = RoleId::new();
+        controller.process_global_event(&GlobalEvent::UserUpdated(UserId::new(), UserUpdateEvent::RolesChanged(vec![staff])));
+        assert!(controller.load().roles.is_empty(), "not someone else's");
+        controller.process_global_event(&GlobalEvent::UserUpdated(user.id, UserUpdateEvent::RolesChanged(vec![staff])));
+        assert_eq!(controller.load().roles, [staff], "given");
+        controller.process_global_event(&GlobalEvent::UserUpdated(user.id, UserUpdateEvent::RolesChanged(Vec::new())));
+        assert!(controller.load().roles.is_empty(), "and taken");
     }
 
     #[tokio::test]

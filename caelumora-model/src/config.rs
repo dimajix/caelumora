@@ -14,6 +14,7 @@ use crate::store::json::JsonFileStore;
 use crate::store::memory::MemoryStore;
 use crate::user_provider::{UserManager, UserProvider};
 use crate::user_provider::accept_any::AcceptAnyUserProvider;
+use crate::event::EventPublisher;
 use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -636,8 +637,10 @@ impl AppConfig {
         Ok(Arc::new(SecretManager::new(providers, security_manager)))
     }
 
-    /// The chain of user providers from the `users` section.
-    pub fn create_user_manager(&self, entity_store: Arc<dyn EntityStore>) -> ConfigResult<Arc<UserManager>> {
+    /// The chain of user providers from the `users` section, keeping the
+    /// user records in `entity_store` and announcing their changes through
+    /// `events` (issue 306).
+    pub fn create_user_manager(&self, entity_store: Arc<dyn EntityStore>, events: Arc<dyn EventPublisher>) -> ConfigResult<Arc<UserManager>> {
         let providers = self.users.providers.iter()
             .map(|config| match config {
                 UserProviderConfig::AcceptAny { roles, default_roles } => {
@@ -652,7 +655,7 @@ impl AppConfig {
             })
             .collect::<ConfigResult<Vec<_>>>()?;
 
-        Ok(Arc::new(UserManager::new(providers)))
+        Ok(Arc::new(UserManager::new(providers, entity_store, events)))
     }
 }
 
@@ -834,7 +837,7 @@ auth:
     #[tokio::test]
     async fn test_create_user_manager_without_config_accepts_nobody() {
         let store: Arc<dyn EntityStore> = Arc::new(MemoryStore::new());
-        let manager = AppConfig::default().create_user_manager(store).unwrap();
+        let manager = AppConfig::default().create_user_manager(store, Arc::new(())).unwrap();
 
         let result = manager.authenticate("user", &crate::user_provider::Credential::Password("x")).await;
         assert!(result.is_err(), "no provider must be enabled by default");
@@ -849,7 +852,7 @@ users:
 "#;
         let config = AppConfig::from_yaml(yaml).unwrap();
         let store: Arc<dyn EntityStore> = Arc::new(MemoryStore::new());
-        let manager = config.create_user_manager(store).unwrap();
+        let manager = config.create_user_manager(store, Arc::new(())).unwrap();
 
         let user = manager.authenticate("alice", &crate::user_provider::Credential::Password("x")).await
             .expect("accept_any accepts everybody");

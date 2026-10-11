@@ -15,10 +15,11 @@ use std::sync::Arc;
 /// be enabled explicitly in the configuration and is never part of a default
 /// chain; `AppConfig::create_user_manager` warns loudly when it is.
 ///
-/// Users are kept in the `EntityStore`: the first login under a name creates
-/// the user with a random id, later ones find it again. Ids are therefore as
-/// stable as the store — across restarts with `JsonFileStore`, only for the
-/// lifetime of the process with `MemoryStore`.
+/// Its source is the `EntityStore` itself and the configured roles: a name it
+/// finds there is that user, any other a new one with a random id, which the
+/// `UserManager` stores (issue 306) - later logins find it again. Ids are
+/// therefore as stable as the store — across restarts with `JsonFileStore`,
+/// only for the lifetime of the process with `MemoryStore`.
 ///
 /// Find-or-create is not atomic: of two concurrent *first* logins under the
 /// same name, the store lets one create the user and refuses the other its
@@ -58,6 +59,13 @@ impl AcceptAnyUserProvider {
         SecurityContext::system()
     }
 
+    /// `user` with the roles the configuration gives them: it decides, also
+    /// for a user already stored.
+    fn configured(&self, user: User) -> User {
+        let roles = self.roles_of(&user.username);
+        User { roles, ..user }
+    }
+
     /// The user `result` found, `None` if there is none.
     fn found(result: Result<User, StoreError>) -> AuthResult<Option<User>> {
         result.optional().map_err(|e| AuthError::Backend(e.to_string()))
@@ -70,40 +78,26 @@ impl UserProvider for AcceptAnyUserProvider {
         Self::found(self.store.find_user_by_name(&Self::context(), username).await)
     }
 
+    /// The user as stored, with the roles the configuration gives them now -
+    /// what the `UserManager` compares with the record when a token is
+    /// renewed.
     async fn get_user(&self, id: UserId) -> AuthResult<Option<User>> {
-        Self::found(self.store.get_user(&Self::context(), id).await)
+        Ok(Self::found(self.store.get_user(&Self::context(), id).await)?.map(|user| self.configured(user)))
     }
 
+    /// Whoever `username` is, without any credential: the user stored under
+    /// it, or a new one, with the roles the configuration gives them. Stored
+    /// - or changed - by the `UserManager` (issue 306), not here.
     async fn authenticate(&self, username: &str, _credential: &Credential<'_>) -> AuthResult<Option<User>> {
         let Ok(username) = Name::new(username.trim()) else {
             return Err(AuthError::InvalidCredentials);
         };
-
-        let roles = self.roles_of(&username);
         if let Some(user) = self.find_user(username.as_str()).await? {
-            // The configuration decides the roles; a changed one takes effect
-            // at the next login.
-            if user.roles == roles {
-                return Ok(Some(user));
-            }
-            let user = User { roles, ..user };
-            self.store.update_user(&Self::context(), &user).await
-                .map_err(|e| AuthError::Backend(e.to_string()))?;
-            return Ok(Some(user));
+            return Ok(Some(self.configured(user)));
         }
-
-        let id = UserId::new();
-        let user = User {
-            id,
-            username,
-            email: String::new(),
-            roles,
-            deleted: None,
-        };
-        self.store.create_user(&Self::context(), &user).await
-            .map_err(|e| AuthError::Backend(e.to_string()))?;
-        tracing::warn!("AcceptAnyUserProvider created user '{}' ({}) without verifying any credential", user.username, user.id);
-        Ok(Some(user))
+        let user = User { id: UserId::new(), username, email: String::new(), roles: Vec::new(), deleted: None };
+        tracing::warn!("AcceptAnyUserProvider accepted the new user '{}' ({}) without verifying any credential", user.username, user.id);
+        Ok(Some(self.configured(user)))
     }
 }
 
@@ -111,29 +105,47 @@ impl UserProvider for AcceptAnyUserProvider {
 mod tests {
     use super::*;
     use crate::store::memory::MemoryStore;
+    use crate::user_provider::UserManager;
 
-    fn provider() -> AcceptAnyUserProvider {
-        AcceptAnyUserProvider::new(Arc::new(MemoryStore::new()))
+    /// The provider in a chain of its own, whose manager keeps the records
+    /// in `store`.
+    fn chain(store: &Arc<dyn EntityStore>, provider: AcceptAnyUserProvider) -> UserManager {
+        UserManager::new(vec![Arc::new(provider)], Arc::clone(store), Arc::new(()))
+    }
+
+    fn store() -> Arc<dyn EntityStore> {
+        Arc::new(MemoryStore::new())
     }
 
     #[tokio::test]
     async fn accepts_any_password_and_keeps_the_id_stable() {
-        let provider = provider();
+        let store = store();
+        let users = chain(&store, AcceptAnyUserProvider::new(Arc::clone(&store)));
 
-        let first = provider.authenticate("alice", &Credential::Password("one")).await.unwrap().expect("accepted");
-        let second = provider.authenticate("alice", &Credential::Password("two")).await.unwrap().expect("accepted");
-        let bob = provider.authenticate("bob", &Credential::Password("")).await.unwrap().expect("accepted");
+        let first = users.authenticate("alice", &Credential::Password("one")).await.expect("accepted");
+        let second = users.authenticate("alice", &Credential::Password("two")).await.expect("accepted");
+        let bob = users.authenticate("bob", &Credential::Password("")).await.expect("accepted");
 
         assert_eq!(first.id, second.id, "the same name must map to the same id");
         assert_ne!(first.id, bob.id, "different names must map to different ids");
     }
 
     #[tokio::test]
+    async fn writes_nothing_itself() {
+        let store = store();
+        let provider = AcceptAnyUserProvider::new(Arc::clone(&store));
+        let alice = provider.authenticate("alice", &Credential::Password("x")).await.unwrap().expect("accepted");
+        assert!(provider.find_user("alice").await.unwrap().is_none(), "the manager stores her, not the provider");
+        assert!(provider.get_user(alice.id).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
     async fn lookups_only_know_users_that_logged_in() {
-        let provider = provider();
+        let store = store();
+        let provider = AcceptAnyUserProvider::new(Arc::clone(&store));
         assert!(provider.find_user("alice").await.unwrap().is_none());
 
-        let alice = provider.authenticate("alice", &Credential::Password("x")).await.unwrap().expect("accepted");
+        let alice = chain(&store, AcceptAnyUserProvider::new(Arc::clone(&store))).authenticate("alice", &Credential::Password("x")).await.expect("accepted");
 
         assert_eq!(provider.find_user("alice").await.unwrap().map(|u| u.id), Some(alice.id));
         assert_eq!(provider.get_user(alice.id).await.unwrap().map(|u| u.username), Some(Name::new("alice").unwrap()));
@@ -142,31 +154,31 @@ mod tests {
 
     #[tokio::test]
     async fn gives_the_configured_roles_and_follows_a_change() {
-        let store: Arc<dyn EntityStore> = Arc::new(MemoryStore::new());
+        let store = store();
         let (hr, staff) = (RoleId::new(), RoleId::new());
         let roles = BTreeMap::from([("alice".to_string(), vec![hr])]);
-        let provider = AcceptAnyUserProvider::with_roles(Arc::clone(&store), roles, vec![staff]);
-        let alice = provider.authenticate("alice", &Credential::Password("x")).await.unwrap().unwrap();
-        let bob = provider.authenticate("bob", &Credential::Password("x")).await.unwrap().unwrap();
+        let users = chain(&store, AcceptAnyUserProvider::with_roles(Arc::clone(&store), roles, vec![staff]));
+        let alice = users.authenticate("alice", &Credential::Password("x")).await.unwrap();
+        let bob = users.authenticate("bob", &Credential::Password("x")).await.unwrap();
         assert_eq!((alice.roles, bob.roles), (vec![hr], vec![staff]));
-        let shouted = provider.authenticate("ALICE", &Credential::Password("x")).await.unwrap().unwrap();
+        let shouted = users.authenticate("ALICE", &Credential::Password("x")).await.unwrap();
         assert_eq!((shouted.id, shouted.roles), (alice.id, vec![hr]), "a username is compared as a name");
 
-        let changed = AcceptAnyUserProvider::with_roles(store, BTreeMap::new(), Vec::new());
-        let again = changed.authenticate("alice", &Credential::Password("x")).await.unwrap().unwrap();
-        assert!(again.roles.is_empty(), "the configuration decides, also for a user already stored");
-        assert_eq!(changed.get_user(again.id).await.unwrap().unwrap().roles, Vec::<RoleId>::new(), "and it is stored");
+        let changed = chain(&store, AcceptAnyUserProvider::with_roles(Arc::clone(&store), BTreeMap::new(), Vec::new()));
+        let again = changed.get_user(alice.id).await.unwrap().unwrap();
+        assert!(again.roles.is_empty(), "the configuration decides, also for a user already stored, on a renewal too");
+        assert_eq!(store.get_user(&SecurityContext::system(), alice.id).await.unwrap().roles, Vec::<RoleId>::new(), "and it is stored");
     }
 
     #[tokio::test]
     async fn rejects_an_empty_username() {
-        let result = provider().authenticate("  ", &Credential::Password("x")).await;
+        let result = AcceptAnyUserProvider::new(store()).authenticate("  ", &Credential::Password("x")).await;
         assert!(matches!(result, Err(AuthError::InvalidCredentials)));
     }
 
     #[tokio::test]
     async fn finds_users_created_before_it_existed() {
-        let store: Arc<dyn EntityStore> = Arc::new(MemoryStore::new());
+        let store = store();
         let existing = User {
             id: UserId::new(),
             username: Name::new("user").unwrap(),

@@ -428,13 +428,15 @@ mod tests {
         TokenService::new(KEY, &config()).unwrap()
     }
 
-    fn auth(providers: Vec<Arc<dyn UserProvider>>) -> Arc<Auth> {
-        Arc::new(Auth { tokens: tokens(), users: Arc::new(UserManager::new(providers)) })
+    /// Auth asking `providers`, the users recorded in `store` (issue 306).
+    fn auth(store: Arc<dyn EntityStore>, providers: Vec<Arc<dyn UserProvider>>) -> Arc<Auth> {
+        Arc::new(Auth { tokens: tokens(), users: Arc::new(UserManager::new(providers, store, Arc::new(()))) })
     }
 
-    fn accept_any() -> Vec<Arc<dyn UserProvider>> {
+    /// Auth that accepts anybody, finding and recording users in one store.
+    fn accepting_any() -> Arc<Auth> {
         let store: Arc<dyn EntityStore> = Arc::new(MemoryStore::new());
-        vec![Arc::new(AcceptAnyUserProvider::new(store))]
+        auth(Arc::clone(&store), vec![Arc::new(AcceptAnyUserProvider::new(store))])
     }
 
     fn set_cookie(response: &Response, name: &str) -> Option<String> {
@@ -529,9 +531,8 @@ mod tests {
 
     #[tokio::test]
     async fn refresh_renews_a_session_that_is_past_half_its_lifetime() {
-        let providers = accept_any();
-        let auth = auth(providers.clone());
-        let alice = providers[0].authenticate("alice", &Credential::Password("x")).await.unwrap().unwrap();
+        let auth = accepting_any();
+        let alice = auth.users.authenticate("alice", &Credential::Password("x")).await.unwrap();
         let app = router(Arc::clone(&auth));
         let post = |token: &str| Request::post("/auth/refresh")
             .header(COOKIE, format!("{SESSION_COOKIE}={token}"))
@@ -560,7 +561,7 @@ mod tests {
 
     #[tokio::test]
     async fn login_sets_a_cookie_that_me_accepts() {
-        let app = router(auth(accept_any()));
+        let app = router(accepting_any());
 
         let response = app.clone().oneshot(post_json("/auth/login", r#"{"username":"alice","password":"x"}"#)).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
@@ -574,7 +575,7 @@ mod tests {
 
     #[tokio::test]
     async fn requests_without_a_valid_cookie_are_unauthorized() {
-        let app = router(auth(accept_any()));
+        let app = router(accepting_any());
 
         let response = app.clone().oneshot(Request::get("/auth/me").body(Body::empty()).unwrap()).await.unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
@@ -586,7 +587,7 @@ mod tests {
 
     #[tokio::test]
     async fn me_for_a_user_no_provider_knows_ends_the_session() {
-        let auth = auth(accept_any());
+        let auth = accepting_any();
         let now = Utc::now().timestamp();
         // A fresh token, so that no renewal asks about the user first.
         let token = auth.tokens.issue(UserId::new(), now, now).unwrap();
@@ -598,7 +599,7 @@ mod tests {
 
     #[tokio::test]
     async fn login_fails_without_providers() {
-        let app = router(auth(vec![]));
+        let app = router(auth(Arc::new(MemoryStore::new()), vec![]));
         let response = app.oneshot(post_json("/auth/login", r#"{"username":"alice","password":"x"}"#)).await.unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
         assert!(cookie_value(&response).is_none());
@@ -606,9 +607,8 @@ mod tests {
 
     #[tokio::test]
     async fn renewal_issues_a_new_cookie_for_known_users_only() {
-        let providers = accept_any();
-        let auth = auth(providers.clone());
-        let alice = providers[0].authenticate("alice", &Credential::Password("x")).await.unwrap().unwrap();
+        let auth = accepting_any();
+        let alice = auth.users.authenticate("alice", &Credential::Password("x")).await.unwrap();
         let app = router(Arc::clone(&auth));
         let old = Utc::now().timestamp() - 400;
 
@@ -630,9 +630,8 @@ mod tests {
     async fn a_renewed_request_carries_the_new_expiry_into_the_handler() {
         // What a stream ends at: the expiry of the token the request leaves
         // with, not of the one it arrived with (issue 33).
-        let providers = accept_any();
-        let auth = auth(providers.clone());
-        let alice = providers[0].authenticate("alice", &Credential::Password("x")).await.unwrap().unwrap();
+        let auth = accepting_any();
+        let alice = auth.users.authenticate("alice", &Credential::Password("x")).await.unwrap();
         let app = Router::new()
             .route("/expires", get(|user: AuthenticatedUser| async move { user.expires_at.to_string() }))
             .route_layer(axum::middleware::from_fn_with_state(Arc::clone(&auth), require_auth))
@@ -658,9 +657,8 @@ mod tests {
     async fn a_stream_request_consumes_the_session_instead_of_renewing_it() {
         // Otherwise anything holding a stream open would keep its own session
         // alive - including a tab nobody is looking at (issues 31, 33).
-        let providers = accept_any();
-        let auth = auth(providers.clone());
-        let alice = providers[0].authenticate("alice", &Credential::Password("x")).await.unwrap().unwrap();
+        let auth = accepting_any();
+        let alice = auth.users.authenticate("alice", &Credential::Password("x")).await.unwrap();
         let app = Router::new()
             .route("/stream", get(|user: AuthenticatedUser| async move { user.expires_at.to_string() }))
             .route_layer(axum::middleware::from_fn_with_state(Arc::clone(&auth), require_stream_auth))
@@ -678,7 +676,7 @@ mod tests {
 
     #[tokio::test]
     async fn logout_clears_the_cookie() {
-        let response = router(auth(accept_any())).oneshot(Request::post("/auth/logout").body(Body::empty()).unwrap()).await.unwrap();
+        let response = router(accepting_any()).oneshot(Request::post("/auth/logout").body(Body::empty()).unwrap()).await.unwrap();
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
         assert_eq!(cookie_value(&response).as_deref(), Some(""));
     }

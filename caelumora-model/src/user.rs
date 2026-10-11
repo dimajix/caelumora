@@ -54,6 +54,9 @@ impl Secured for User {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum UserUpdateEvent {
     NameChanged(String),
+    /// The roles the user's provider gives them now (issue 306), as the
+    /// `UserManager` stored them.
+    RolesChanged(Vec<RoleId>),
 }
 
 
