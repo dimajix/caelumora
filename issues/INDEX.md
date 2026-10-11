@@ -166,6 +166,7 @@ published before anyone else can take it.
 | [286](286-groups-as-subjects.md) | open | A workspace or an artifact cannot be shared with a team that users make themselves, only with people one by one, a role, or the members of a session or channel. |
 | [287](287-memberships-cache.md) | open | Every check of a membership or a role in an access list reads the entity store, for every event of a session or channel and every subscriber. |
 | [289](289-attach-compares-access.md) | open | Attaching a workspace to a session shares it with that one session by an entry of its own, even where its access list already reaches everyone the session may take in. |
+| [304](304-review-of-the-permission-concept.md) | open | Four kinds of permission - ownership, flow rules, actions, reachability - are checked in many places and several layers, and nobody has reviewed where each is asked, in which order, and whether the checks that mix two of them do so on purpose. |
 
 ## Tools and approvals
 
