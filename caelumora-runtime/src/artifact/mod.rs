@@ -358,18 +358,18 @@ impl ArtifactManager {
         Ok(true)
     }
 
-    /// Takes the deletion of artifact `id` back (`Restore`).
+    /// Takes the deletion of artifact `id` back (`Restore`). Returns the
+    /// artifact as it is restored.
     ///
     /// # Errors
     /// `NotFound` if it is not deleted or not the caller's to restore, or
     /// whatever else the store reports - `NameTaken` among it.
-    pub async fn restore(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<()> {
+    pub async fn restore(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<Artifact> {
         let _writing = self.writing.lock().await;
-        self.entities.restore_artifact(ctx, id).await.map_err(store_error(id))?;
-        let artifact = self.entities.get_artifact(ctx, id).await.map_err(store_error(id))?;
+        let artifact = self.entities.restore_artifact(ctx, id).await.map_err(store_error(id))?;
         self.events.publish(GlobalEvent::ArtifactRestored(id), artifact.reader_attributes());
         info!(artifact = %id, by = %ctx.caller_id, "Artifact restored");
-        Ok(())
+        Ok(artifact)
     }
 
     /// Removes the deleted artifact `id` for good, its content first

@@ -1,6 +1,6 @@
 # 318 — A restore returns nothing, so every caller reads what it restored again
 
-**Status:** open
+**Status:** done
 **Area:** Persistence
 
 ## The problem
@@ -80,3 +80,12 @@ The first two together are the answer.
 - **2026-10-11** — [314](314-session-manager-handles-agents.md) moved
   `SessionManager::restore_agent` to `AgentManager::restore`, which still rebuilds the agent and
   returns it; the table above names it by its old place.
+- **2026-10-11** — Done as the first two considerations say. Every `restore_…` of `EntityStore`
+  returns the restored entity; `StoreAccess::restore` takes the stored value and hands it back once
+  `ReadDeleted` and `Restore` allow it, as `read_deleted` does. `WorkspaceManager`, `SkillManager`,
+  `ArtifactManager` and `GroupManager` return what they restored, as `AgentManager::restore` and
+  `SessionManager::restore_session` do. Nobody reads or rebuilds a restored entity any more:
+  `AgentManager::restore` no longer reads the agent as deleted beforehand either, so the store's
+  check is the only one; `restore_scoped_in` announces with the attributes of what was restored.
+  The security suite records the changed questions: no `GetSession` after restoring a session, one
+  `ReadDeleted` instead of two for an agent, and `ReadDeleted`, `Restore` alone for a workspace.

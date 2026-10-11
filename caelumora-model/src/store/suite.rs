@@ -468,7 +468,7 @@ macro_rules! unique_by_name {
 
         store.$delete(&ctx, first.id).await.expect(concat!($entity, ": delete"));
         store.$create(&ctx, &second).await.expect(concat!($entity, ": what is deleted holds no name"));
-        assert!(taken(store.$restore(&ctx, first.id).await), concat!($entity, ": and is not restored under one taken meanwhile"));
+        assert!(taken(store.$restore(&ctx, first.id).await.map(drop)), concat!($entity, ": and is not restored under one taken meanwhile"));
         store.$update(&ctx, &($rename)(second.clone(), "Helper 2")).await.expect(concat!($entity, ": rename"));
         store.$restore(&ctx, first.id).await.expect(concat!($entity, ": once it is free again, it is"));
     }};
@@ -642,7 +642,8 @@ pub(crate) async fn deleting_marks(store: &dyn EntityStore) {
     assert!(matches!(not_deleted, Err(StoreError::NotFound { .. })), "what is there is not in the trash: {not_deleted:?}");
 
     // Restored: there again, as it was.
-    store.restore_session(&system, gone.id).await.expect("restore");
+    let restored = store.restore_session(&system, gone.id).await.expect("restore");
+    assert!(restored.deleted.is_none(), "returned without the mark");
     assert!(store.get_session(&system, gone.id).await.expect("there again").deleted.is_none());
     let again = store.restore_session(&system, gone.id).await;
     assert!(matches!(again, Err(StoreError::NotFound { .. })), "only what was deleted is restored: {again:?}");

@@ -189,18 +189,18 @@ impl SkillManager {
         Ok(true)
     }
 
-    /// Takes the deletion of skill `id` back (`Restore`).
+    /// Takes the deletion of skill `id` back (`Restore`). Returns the skill
+    /// as it is restored.
     ///
     /// # Errors
     /// `NotFound` if it is not deleted or not the caller's to restore, or
     /// whatever else the store reports - `NameTaken` among it.
-    pub async fn restore(&self, ctx: &SecurityContext, id: SkillId) -> SkillResult<()> {
+    pub async fn restore(&self, ctx: &SecurityContext, id: SkillId) -> SkillResult<Skill> {
         let _writing = self.writing.lock().await;
-        self.entities.restore_skill(ctx, id).await.map_err(store_error(id))?;
-        let skill = self.entities.get_skill(ctx, id).await.map_err(store_error(id))?;
-        self.events.publish(GlobalEvent::SkillRestored(id), skill.security_attributes);
+        let skill = self.entities.restore_skill(ctx, id).await.map_err(store_error(id))?;
+        self.events.publish(GlobalEvent::SkillRestored(id), skill.security_attributes.clone());
         info!(skill = %id, by = %ctx.caller_id, "Skill restored");
-        Ok(())
+        Ok(skill)
     }
 
     /// Removes the deleted skill `id` for good (`Purge`, asked by the store:

@@ -76,9 +76,7 @@ impl AgentManager {
     /// but not restore it, `StoreError::NameTaken` if another agent took its
     /// name in its scope meanwhile (issue 250).
     pub async fn restore(&self, context: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
-        let deleted = self.entities.get_deleted_agent(context, id).await?;
-        self.entities.restore_agent(context, id).await?;
-        let agent = Agent { deleted: None, ..deleted };
+        let agent = self.entities.restore_agent(context, id).await?;
         self.events.publish(GlobalEvent::AgentRestored(id), agent.security_attributes.clone());
         info!("Agent {} restored by {}", id, context.caller_id);
         Ok(agent)

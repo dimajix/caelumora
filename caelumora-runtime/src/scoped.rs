@@ -81,23 +81,23 @@ pub(crate) async fn restore_scoped_in(store: &dyn EntityStore, events: &EventBus
         unless_taken(store.restore_session_template(&system, template.id).await, "session template", &template.name)?;
     }
     for agent in deleted_since(store.list_deleted_agents(&system, &within(holder)).await?.items, since) {
-        if unless_taken(store.restore_agent(&system, agent.id).await, "agent", &agent.name)? {
-            events.publish(GlobalEvent::AgentRestored(agent.id), agent.security_attributes.clone());
+        if let Some(restored) = unless_taken(store.restore_agent(&system, agent.id).await, "agent", &agent.name)? {
+            events.publish(GlobalEvent::AgentRestored(restored.id), restored.security_attributes);
         }
     }
     for workspace in deleted_since(store.list_deleted_workspaces(&system, &within(holder)).await?.items, since) {
-        if unless_taken(store.restore_workspace(&system, workspace.id).await, "workspace", &workspace.name)? {
-            events.publish(GlobalEvent::WorkspaceRestored(workspace.id), workspace.security_attributes.clone());
+        if let Some(restored) = unless_taken(store.restore_workspace(&system, workspace.id).await, "workspace", &workspace.name)? {
+            events.publish(GlobalEvent::WorkspaceRestored(restored.id), restored.security_attributes);
         }
     }
     for skill in deleted_since(store.list_deleted_skills(&system, &within(holder)).await?.items, since) {
-        if unless_taken(store.restore_skill(&system, skill.id).await, "skill", &skill.name)? {
-            events.publish(GlobalEvent::SkillRestored(skill.id), skill.security_attributes.clone());
+        if let Some(restored) = unless_taken(store.restore_skill(&system, skill.id).await, "skill", &skill.name)? {
+            events.publish(GlobalEvent::SkillRestored(restored.id), restored.security_attributes);
         }
     }
     for artifact in deleted_since(store.list_deleted_artifacts(&system, &within(holder)).await?.items, since) {
-        if unless_taken(store.restore_artifact(&system, artifact.id).await, "artifact", &artifact.name)? {
-            events.publish(GlobalEvent::ArtifactRestored(artifact.id), artifact.security_attributes.clone());
+        if let Some(restored) = unless_taken(store.restore_artifact(&system, artifact.id).await, "artifact", &artifact.name)? {
+            events.publish(GlobalEvent::ArtifactRestored(restored.id), restored.security_attributes);
         }
     }
     for group in deleted_since(store.list_deleted_groups(&system, &within(holder)).await?.items, since) {
@@ -106,14 +106,14 @@ pub(crate) async fn restore_scoped_in(store: &dyn EntityStore, events: &EventBus
     Ok(())
 }
 
-/// Whether what `restored` says was restored; `false` if its name was
-/// taken meanwhile, which leaves it deleted.
-fn unless_taken(restored: StoreResult<()>, kind: &str, name: &ScopedName) -> StoreResult<bool> {
+/// What `restored` says was restored; `None` if its name was taken
+/// meanwhile, which leaves it deleted.
+fn unless_taken<T>(restored: StoreResult<T>, kind: &str, name: &ScopedName) -> StoreResult<Option<T>> {
     match restored {
-        Ok(()) => Ok(true),
+        Ok(value) => Ok(Some(value)),
         Err(StoreError::NameTaken { .. }) => {
             warn!("The {} {} stays deleted: its name was taken while what holds its scope was deleted", kind, name);
-            Ok(false)
+            Ok(None)
         }
         Err(e) => Err(e),
     }
