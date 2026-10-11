@@ -172,7 +172,7 @@ let a turn-time error escape `AgentActor::run`.
 Moderators forward `TurnGivenUp` to the users, whose actors pass it on to the UI. The failure's
 message is not given to a model: what it is told of a turn given up is a fixed text of the
 runtime's, with the reason. What a model is told of a failed tool call is the `ToolExecutor`'s (see
-[TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md)).
+[TOOLS.md](TOOLS.md#results)).
 
 ### REST errors
 

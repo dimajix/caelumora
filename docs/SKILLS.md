@@ -4,7 +4,7 @@ A skill is a named, self-contained piece of procedural knowledge - "how we write
 "how this schema is migrated" - that exists apart from any personality and is loaded into a turn
 when a task calls for it. This document describes what a skill is and is not, where it lives, who
 may use and write one, and how it reaches the model. How a command of an agent is carried out is in
-[TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md#commands-of-an-agent); how far information may travel
+[COMMANDS.md](COMMANDS.md#commands-of-an-agent); how far information may travel
 in [CONFIDENTIALITY.md](CONFIDENTIALITY.md).
 
 ## What a skill is

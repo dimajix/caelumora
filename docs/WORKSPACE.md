@@ -6,7 +6,7 @@ document describes what a workspace is, how a session and its channels come to u
 its files lie in and how far they keep workspaces apart, and the commands run there. Who may read
 and change it is in [SECURITY.md](SECURITY.md#ownership), who is cleared for it in
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md#workspaces), the tools agents use on it in
-[TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md#the-workspace), and its storages are configured in
+[TOOLS.md](TOOLS.md#the-workspace), and its storages are configured in
 [CONFIGURATION.md](CONFIGURATION.md#workspace-storages).
 
 ## What a workspace is

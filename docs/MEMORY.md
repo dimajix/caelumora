@@ -30,7 +30,7 @@ All three kinds of memory work alike:
     read](#recording-what-was-read)).
 *   **Written without approval.** What an entry says may rest on a claim the model did not verify -
     a participant's message posing as another's - and stands in the agent's name from then on; see
-    [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md#what-needs-approval).
+    [APPROVALS.md](APPROVALS.md#what-needs-approval).
 *   **Shown alike.** The web UI shows a tool call on one entry as the entry's number, what was done
     to it and its new text where there is one - not the text of an entry revoked, forgotten or
     reclassified.

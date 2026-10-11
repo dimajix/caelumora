@@ -203,7 +203,7 @@ every message. Neither a frontend nor the channel decides that by itself.
 
 User commands (`/help`, `/wakeup`, `/nudge`) are run by the user's actor in the same way; a command
 an agent carries out itself is sent to that agent, which carries it out in a turn of its own. See
-[TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md).
+[COMMANDS.md](COMMANDS.md).
 
 ## Changing what was said
 
@@ -362,7 +362,7 @@ It is not a kill. The agent takes its turn over, so that observers stop waiting 
 said nothing, and returns to a normal state with its history intact. But nothing under way is waited
 for: a model call in flight is dropped at once, a turn waiting for an approval ends without one and
 withdraws its requests, and a running tool call is answered as interrupted, no further call of the
-step started (see [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md#running-tool-calls)). A stop works
+step started (see [TOOLS.md](TOOLS.md#running-tool-calls)). A stop works
 the same way, and wins over a cancel.
 
 Lowering a channel's classification cancels its turns in the same way; each agent then gives its
@@ -379,7 +379,7 @@ on, and the answer the cancelled turn is taken over with reaches everyone as any
 `ChannelLoop::interrupt_tool_call` ends less: one tool call of an actor's turn, while it runs or
 waits to run. The call is answered as interrupted, and the turn goes on with its next step, so that
 the model can deal with it. It is cancelling a part of a turn, under the same permission, asked
-first. See [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md#running-tool-calls).
+first. See [TOOLS.md](TOOLS.md#running-tool-calls).
 
 ### Waking
 

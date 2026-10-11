@@ -145,7 +145,7 @@ themselves, an agent its owner (see [In whose name an agent acts](#in-whose-name
     channel's owner.
 *   Calling a tool (`CallTool`) and reading a secret (`ReadSecret`) are always allowed. They stay
     actions so that another policy can decide them; what decides a call here is the tools offered
-    and the rules of its place (see [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md)). A secret has no
+    and the rules of its place (see [APPROVALS.md](APPROVALS.md#rules-of-a-place)). A secret has no
     owner to decide by yet, see [Secrets](#secrets).
 *   Deleting an agent is its owner's. That it leaves channels owned by others is done in the
     runtime's name: it is a consequence of the deletion, not a change of those channels by the
@@ -265,7 +265,7 @@ rights. In three parts:
 2.  **The owner checks the request**, where a call is admitted (`ToolExecutor::admit`): the policy,
     the owner's rules for the place - evaluated in their name, as their own answer - and the
     approval of the owner or whom the agent's list lets read it, for an agent of the system the
-    channel's owner (see [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md#who-may-approve)). A
+    channel's owner (see [APPROVALS.md](APPROVALS.md#who-may-approve)). A
     personality's limiting roles narrow the agent further. A tool that needs no approval is the
     owner's approval given in advance.
 3.  **Whoever asks may ask** - today by taking part in the channel the owner put the agent into.

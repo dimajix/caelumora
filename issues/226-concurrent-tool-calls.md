@@ -21,7 +21,7 @@ cannot hold it at once. The tools write into the turn while they run:
 
 The other tools only read `label`, `session` and `security_context`.
 
-[TOOLS-AND-COMMANDS.md](../docs/TOOLS-AND-COMMANDS.md#running-tool-calls) says another way of
+[TOOLS.md](../docs/TOOLS.md#running-tool-calls) says another way of
 running tools "in parallel" can be tried by configuring a different `ToolExecutor`. It cannot:
 `ToolExecutor::execute` is called once per call, and the loop over the calls is the agent's.
 

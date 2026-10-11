@@ -145,3 +145,11 @@ point to it, so the documents do not grow back while they are reworked.
   `AGENT-TURN.md` the section on control tokens, an implementation detail, and the note on the one
   `ContextProvider`, which `COMPONENTS.md` holds, are dropped, and the runtime's prompt parts are
   shortened to their rules.
+- **2026-10-11** — The built-in tools are listed once, with the components that offer them in
+  `COMPONENTS.md`, not again as a table of tools; what the table alone said - which tools are
+  hidden, which ask for approval, how `stop`, `bye` and `silence` end a turn - went into the
+  components' rows and a short section of `TOOLS.md`. `TOOLS-AND-COMMANDS.md`, the largest
+  document, is split by subject: `TOOLS.md` (tools, how their calls run, the built-in tools of the
+  workspace and artifacts), `APPROVALS.md` (approvals and the questions a tool asks a person, both a
+  turn waiting for someone) and `COMMANDS.md` (user commands and commands of an agent). Links into
+  it, also those of the issues, point to the new documents.

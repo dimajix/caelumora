@@ -3,8 +3,8 @@
 How an agent answers: the cycle its `AgentActor` runs, the `Turn` it works on, how a turn survives a
 crash, and how it can be told afterwards what the model saw. What an agent remembers beyond a turn -
 notes, private notes, memory - is described in [MEMORY.md](MEMORY.md); the components that take part
-in a turn in [COMPONENTS.md](COMPONENTS.md); tools and approvals in
-[TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md).
+in a turn in [COMPONENTS.md](COMPONENTS.md); tools in
+[TOOLS.md](TOOLS.md), approvals in [APPROVALS.md](APPROVALS.md).
 
 ## The cognitive cycle
 
@@ -159,7 +159,7 @@ carried out and by whom it was asked; not carried out, it is dropped without a t
 no answer, is not the turn a cancel or a retry reaches, and is never stored under way. Admitted, it
 tells the issuer alone that it began. An awake agent stands at `CarryingOutCommand` meanwhile, which
 no cancel ends; a sleeping one carries the command out asleep and stays `Sleeping`. See
-[TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md#commands-of-an-agent).
+[COMMANDS.md](COMMANDS.md#commands-of-an-agent).
 
 ### Storing and resuming
 

@@ -46,10 +46,10 @@ A handler translates; it does not decide. Every handler derives its `SecurityCon
 Everything except `POST /auth/login` and `POST /auth/logout` requires a logged-in user. `…` stands
 for `/sessions/{id}/channels/{cid}` (or `/sessions/{id}` for the list of channels). What each
 operation does in the runtime is described with it - channels and participants in
-[CHANNELS.md](CHANNELS.md), approvals, questions and commands in
-[TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md), notes in [MEMORY.md](MEMORY.md), the context of a
-message in [AGENT-TURN.md](AGENT-TURN.md#asking-what-an-agent-saw) - and the request and response of
-each in its handler's doc comment.
+[CHANNELS.md](CHANNELS.md), approvals and questions in [APPROVALS.md](APPROVALS.md), commands in
+[COMMANDS.md](COMMANDS.md), notes in [MEMORY.md](MEMORY.md), the context of a message in
+[AGENT-TURN.md](AGENT-TURN.md#asking-what-an-agent-saw) - and the request and response of each in
+its handler's doc comment.
 
 | Endpoint | Does |
 |---|---|

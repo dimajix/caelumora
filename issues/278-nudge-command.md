@@ -101,7 +101,7 @@ refusal for an agent that is working already.
   does not swallow it.
 - Nudging an agent that is working is answered with that, not with a second turn.
 - The security suite covers whose authority the turn has; the command is documented in
-  [TOOLS-AND-COMMANDS.md](../docs/TOOLS-AND-COMMANDS.md) and enabled by default next to `/wakeup`.
+  [COMMANDS.md](../docs/COMMANDS.md) and enabled by default next to `/wakeup`.
 
 ## History
 

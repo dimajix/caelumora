@@ -13,7 +13,9 @@ change something, read the document on its subject:
 |---|---|
 | any code | [CODING-GUIDELINES.md](docs/CODING-GUIDELINES.md) |
 | components, facets, `ComponentRegistry` | [COMPONENTS.md](docs/COMPONENTS.md) |
-| tools, tool execution, approvals, user commands | [TOOLS-AND-COMMANDS.md](docs/TOOLS-AND-COMMANDS.md) |
+| tools, tool execution | [TOOLS.md](docs/TOOLS.md) |
+| approvals, questions a tool asks a person | [APPROVALS.md](docs/APPROVALS.md) |
+| user commands, commands of an agent | [COMMANDS.md](docs/COMMANDS.md) |
 | the agent's cognitive cycle, `Turn`, transcript, prompt parts | [AGENT-TURN.md](docs/AGENT-TURN.md) |
 | notes, private notes, agent memory, reading other channels | [MEMORY.md](docs/MEMORY.md) |
 | skills: the catalogue, loading and writing them | [SKILLS.md](docs/SKILLS.md) |

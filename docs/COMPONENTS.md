@@ -4,8 +4,8 @@ An agent's behaviour is assembled from components: what tools it has, what its p
 its context is built and how its tool calls run. A session's user commands and a channel's moderator
 are components too. This document describes how components are declared, registered, wired and
 built, and lists the built-in ones. The tools and commands that components contribute are described
-in [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md); how the agent uses its components during a turn
-is in [AGENT-TURN.md](AGENT-TURN.md).
+in [TOOLS.md](TOOLS.md) and [COMMANDS.md](COMMANDS.md); how the agent uses its components during a
+turn is in [AGENT-TURN.md](AGENT-TURN.md).
 
 ## Configuration, registry and container
 
@@ -224,25 +224,25 @@ unknown field is refused. In messages the endpoint is shown without credentials,
 | Kind | Facets | Params | What it does |
 |---|---|---|---|
 | `echo_tool` | `ToolProvider` | - | The tool `echo`, for testing. |
-| `sleep_tool` | `ToolProvider` | `seconds` (5), `requires_approval` (`false`) | The tool `sleep`, which waits, for testing what happens while a tool runs. |
+| `sleep_tool` | `ToolProvider` | `seconds` (5), `requires_approval` (`false`) | The tool `sleep`, which waits - the model may ask for at most 60 s -, for testing what happens while a tool runs. |
 | `calculator_tool` | `ToolProvider` | - | The tool `calculate`. |
-| `stop_tool` | `ToolProvider` | - | The tools `stop`, `bye` and `silence`, with which the agent ends its turn. |
+| `stop_tool` | `ToolProvider` | - | The tools `stop`, `bye` and `silence`, with which the agent ends its turn: asleep after `stop` and `bye`, idle and without an answer after `silence` ([TOOLS.md](TOOLS.md#built-in-tools)). |
 | `ask_user_tool` | `ToolProvider` | - | The tool `ask_user`, with which the agent asks users of its channel and waits for their answers. |
 | `create_plan_tool` | `ToolProvider`, `PromptProvider` | - | The tool `create_plan` and a system prompt part telling the model when to plan. |
 | `mcp_tool` | `ToolProvider` | `endpoint` (timeout 10 s, per call or discovery), `requires_approval` (`true`; `false`, or `"unless_read_only"` for all but the tools the server marks read-only), `classification` (the channel's), `description` (the server's `instructions`), `destination` (`public`) | The tools of a remote MCP server. `classification` is how their results are classified, `description` what they are for, as their tool set tells it, `destination` what the server is cleared for - its tools are not offered in a channel that may not flow there. |
-| `notes` | `ToolProvider`, `PromptProvider` | - | Public notes of the agents in a channel: `write_note`, `update_note`, `revoke_note`, `read_notes` and a prompt part ([MEMORY.md](MEMORY.md)). |
-| `private_notes` | `ToolProvider`, `PromptProvider` | - | The agent's private notes: `write_private_note`, `update_private_note`, `revoke_private_note` and a prompt part ([MEMORY.md](MEMORY.md)). |
-| `agent_memory` | `ToolProvider`, `PromptProvider` | - | What the agent remembers across channels and sessions: `remember`, `update_memory`, `forget` and a prompt part ([MEMORY.md](MEMORY.md)). |
-| `skills` | `PromptProvider`, `ToolProvider`, `AgentCommandProvider` | `position` (`start`), `requires_approval` (`true`, for writing) | Skills: the catalogue of those the agent may load, `list_skills`, `load_skill`, `create_skill`, `update_skill`, and the commands `/skill` and `/skills` ([SKILLS.md](SKILLS.md)). |
+| `notes` | `ToolProvider`, `PromptProvider` | - | Public notes of the agents in a channel: `write_note`, `update_note`, `revoke_note`, `read_notes`, `reclassify_note` (asks for approval) and a prompt part ([MEMORY.md](MEMORY.md)). |
+| `private_notes` | `ToolProvider`, `PromptProvider` | - | The agent's private notes: `write_private_note`, `update_private_note`, `revoke_private_note`, `reclassify_private_note` (asks for approval), all `HIDDEN`, and a prompt part ([MEMORY.md](MEMORY.md)). |
+| `agent_memory` | `ToolProvider`, `PromptProvider` | - | What the agent remembers across channels and sessions: `remember`, `update_memory`, `forget`, `reclassify_memory` (asks for approval), all `HIDDEN`, and a prompt part ([MEMORY.md](MEMORY.md)). |
+| `skills` | `PromptProvider`, `ToolProvider`, `AgentCommandProvider` | `position` (`start`), `requires_approval` (`true`, for writing) | Skills: the catalogue of those the agent may load, `list_skills`, `load_skill` (`WITHOUT_RESULT`), `create_skill`, `update_skill`, and the commands `/skill` and `/skills` ([SKILLS.md](SKILLS.md)). |
 | `channel_history` | `ToolProvider` | - | The tool `read_history` for other channels of the session ([MEMORY.md](MEMORY.md)). |
-| `terminal_tool` | `ToolProvider` | `max_wait_secs` (60, at most 300), `max_output_bytes` (64 KiB, of a command's output or a file), `requires_approval` (`true`; `false`, or `"unless_read_only"` for all but `list_files`, `read_file` and `grep_files`; `command_output`, `kill_command` and `publish_file` never ask), `description` (built in) | The session's workspace, where the agent's channel may use it: its files - `list_files`, `read_file`, `grep_files`, `write_file`, `replace_in_file`, `move_file`, `delete_file`, `publish_file` - and a shell in it - `run_command`, `command_output`, `kill_command` ([TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md#the-workspace)). What it can do is what the workspace's terminal can. |
-| `artifact_tool` | `ToolProvider` | `requires_approval` (`true`; `false` - `"unless_read_only"` asks too, since publishing changes what is kept), `description` (built in) | `publish_artifact`: a file of the session's workspace published as a version of an artifact, kept beyond the workspace ([TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md#artifacts)). Without an artifact storage configured, its calls fail and say so. |
+| `terminal_tool` | `ToolProvider` | `max_wait_secs` (60, at most 300), `max_output_bytes` (64 KiB, of a command's output or a file), `requires_approval` (`true`; `false`, or `"unless_read_only"` for all but `list_files`, `read_file` and `grep_files`; `command_output`, `kill_command` and `publish_file` never ask), `description` (built in) | The session's workspace, where the agent's channel may use it: its files - `list_files`, `read_file`, `grep_files`, `write_file`, `replace_in_file`, `move_file`, `delete_file`, `publish_file` - and a shell in it - `run_command`, `command_output`, `kill_command` ([TOOLS.md](TOOLS.md#the-workspace)). What it can do is what the workspace's terminal can. |
+| `artifact_tool` | `ToolProvider` | `requires_approval` (`true`; `false` - `"unless_read_only"` asks too, since publishing changes what is kept), `description` (built in) | `publish_artifact`: a file of the session's workspace published as a version of an artifact, kept beyond the workspace ([TOOLS.md](TOOLS.md#artifacts)). Without an artifact storage configured, its calls fail and say so. |
 | `static_system_prompt_provider` | `PromptProvider` | `prompt` (required), `title` (none), `position` (`start`), `classification` (public) | A fixed prompt part, under `[title]` if one is named. |
 | `channel_briefing_prompt_provider` | `PromptProvider` | `position` (`start`), `changes_only` (`false`; for external agents) | Tells the agent what its session and channel are for, as their owners wrote it ([AGENT-TURN.md](AGENT-TURN.md#what-the-session-and-channel-are-for)). |
 | `channel_language_prompt_provider` | `PromptProvider` | `position` (`start`), `changes_only` (`false`; for external agents) | Tells the agent the language its channel's conversation is held in ([AGENT-TURN.md](AGENT-TURN.md#the-channels-language)). |
 | `channel_members_prompt_provider` | `PromptProvider` | `position` (`start`), `changes_only` (`false`; for external agents) | Tells the agent its own name and handle and who else is in its channel, with their introductions ([AGENT-TURN.md](AGENT-TURN.md#who-is-in-the-channel)). |
 | `workspace_prompt_provider` | `PromptProvider` | `position` (`start`), `instruction_files` (`["AGENTS.md", "CLAUDE.md"]`) | Tells the agent the workspace it may use in its channel, and which instruction files lie at its root, to be read first - or that there is none ([AGENT-TURN.md](AGENT-TURN.md#its-workspace)). |
-| `tool_sets_prompt_provider` | `PromptProvider` | `position` (`start`) | Tells the model which of its tool sets are unavailable and why, nothing while all are available ([TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md#tool-sets)). |
+| `tool_sets_prompt_provider` | `PromptProvider` | `position` (`start`) | Tells the model which of its tool sets are unavailable and why, nothing while all are available ([TOOLS.md](TOOLS.md#tool-sets)). |
 | `turn_context_provider` | `ContextProvider` | - | The default context provider of an agent run here: joins the prompt parts by position around the transcript ([AGENT-TURN.md](AGENT-TURN.md)). |
 | `external_context_provider` | `ContextProvider` | - | The default context provider of an external agent: each prompt part on its own, for its actor to give the remote agent when it changed ([CHANNELS.md](CHANNELS.md)). |
 | `a2a_agent` | `ExternalAgent` | `endpoint` (the agent's base URL, or its card's own; timeout 30 s per request, a streamed one until its stream begins), `classification` (the channel's), `sender_format` (`prefix`), `sender_style` (`handle`) | An external agent reached over A2A 1.x by JSON-RPC: streams where its agent card offers it, otherwise asks for the task until it ends or asks back. A card it cannot read, or one without JSON-RPC of A2A 1.x, fails when the agent is asked, not when it is built. A2A has no sender, so who said what is told in the content ([AGENT-TURN.md](AGENT-TURN.md#who-said-what)). |
@@ -254,10 +254,11 @@ unknown field is refused. In messages the endpoint is shown without credentials,
 | `mentions_only_policy` | `ResponderPolicy` | - | Asks nobody: agents answer only when mentioned. |
 | `compaction` | `AgentCommandProvider` | - | The command `/compact`, for the agent's owners: asks the agent's `CompactionStrategy` to compact its context and tells the channel what it did ([AGENT-TURN.md](AGENT-TURN.md#compaction)). |
 | `summary_compaction` | `CompactionStrategy` | `keep_last` (10, the messages kept as they stand) | The default strategy: the agent's own model summarises the older part of its transcript ([AGENT-TURN.md](AGENT-TURN.md#compaction)). For agents run here only: it takes the agent's `LLMClient`. |
-| `help_command` | `ChannelCommandProvider` | - | The user command `/help`. |
+| `help_command` | `ChannelCommandProvider` | - | The user command `/help` ([COMMANDS.md](COMMANDS.md#built-in-commands)). |
 | `wakeup_command` | `ChannelCommandProvider` | - | The user command `/wakeup`. |
 | `nudge_command` | `ChannelCommandProvider` | - | The user command `/nudge`. |
 
-`position` is `start` or `before_turn_input`; the default is given in parentheses. The tools and
-commands themselves are listed with their parameters in
-[TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md#built-in-tools-and-commands).
+`position` is `start` or `before_turn_input`; the default is given in parentheses. Every tool is
+`SHOWN` unless its row says otherwise. This table is the one list of what comes with Caelumora; the
+commands are described with their arguments and answers in
+[COMMANDS.md](COMMANDS.md#built-in-commands).

@@ -119,7 +119,8 @@ built once per session; a command that acts on an agent - `/compact` - is a comp
 personality, which the user's actor sends to the agent and the agent carries out in a turn of its
 own.
 
-Details: [COMPONENTS.md](COMPONENTS.md), [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md).
+Details: [COMPONENTS.md](COMPONENTS.md), [TOOLS.md](TOOLS.md), [APPROVALS.md](APPROVALS.md),
+[COMMANDS.md](COMMANDS.md).
 
 ## Agents that run elsewhere
 
@@ -240,8 +241,9 @@ The design repeats a few decisions; new code follows them.
 
 *   [COMPONENTS.md](COMPONENTS.md) - components, facets, how they are wired, the built-in
     components.
-*   [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md) - tools, their execution and approval, user
-    commands, the built-in tools and commands.
+*   [TOOLS.md](TOOLS.md) - tools and how their calls run.
+*   [APPROVALS.md](APPROVALS.md) - approvals of tool calls, and questions a tool asks a person.
+*   [COMMANDS.md](COMMANDS.md) - user commands and the commands an agent carries out.
 *   [AGENT-TURN.md](AGENT-TURN.md) - the agent's cognitive cycle, the turn, what an agent saw,
     prompt parts.
 *   [MEMORY.md](MEMORY.md) - notes, private notes, agent memory, reading other channels, the terms

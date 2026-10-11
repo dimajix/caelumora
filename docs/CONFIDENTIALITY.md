@@ -315,7 +315,7 @@ it returned is. Neither the arguments nor the result are seen by more than the c
 
 Every call is stamped with the flags its tool declares at that moment, the result takes them over,
 and both are stored with what applied then. Which built-in tools use which flags is listed in
-[TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md).
+[COMPONENTS.md](COMPONENTS.md#the-components).
 
 ### Tool results
 
