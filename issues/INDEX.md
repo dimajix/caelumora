@@ -153,6 +153,7 @@ published before anyone else can take it.
 | [140](140-audit-log.md) | open | Acts that change who may see what - releases, participants, approvals, deletions - leave no record of who did them and when. |
 | [142](142-roles.md) | in progress | Users carry roles as strings, but nothing says which roles exist or what they grant - clearances among them. |
 | [181](181-where-roles-decide.md) | open | Nobody has reviewed where a user's roles - and soon an agent's - enter a permission check; today only the clearance at a channel's door asks for them. |
+| [306](306-user-records-have-no-writer.md) | open | A user's record is written by whichever provider authenticates, without an event, so the `UserController` never learns that roles changed and every check reads them from the store. |
 | [149](149-special-tokens-in-content.md) | done | Special tokens typed into a message, or contained in a tool result, reach an Ollama model as real control tokens, so the content can open a fake system or agent turn. |
 | [150](150-impersonation-towards-the-agent.md) | done | A participant can write another participant's sender marker into their own message, and models believe it, so the agent may act on a consent nobody gave. |
 | [228](228-envelope-sender-not-enforced.md) | done | Each actor sets the sender and security context of its own envelopes, and the channel takes them as given, so an actor could act in someone else's name. |
