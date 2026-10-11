@@ -93,7 +93,7 @@ mod tests {
     async fn told(sets: Vec<ToolSet>) -> Prompt {
         let mut state = AgentChannelState::default();
         state.begin_turn(Default::default(), Default::default(), Classification::CHANNEL_DEFAULT, sets, Default::default());
-        let turn = Turn::of(AgentId::new(), "agent".to_string(), &mut state, AgentStateHandle::detached()).expect("a turn was begun");
+        let turn = Turn::of(AgentId::new(), "agent".to_string(), &mut state, AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn was begun");
         let provider = ToolSetsPromptProvider { position: PromptPosition::Start };
         provider.get_prompt(&turn.work()).await.unwrap()
     }

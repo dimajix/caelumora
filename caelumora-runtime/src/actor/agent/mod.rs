@@ -182,8 +182,7 @@ impl AgentActor {
     /// The turn under way in `state`, as its steps work with it; `None`
     /// between turns.
     fn turn<'s>(&self, state: &'s mut AgentChannelState) -> Option<Turn<'s>> {
-        Turn::of(self.agent_id, self.agent_controller.name(), state, Arc::clone(&self.agent_state))
-            .map(|turn| turn.with_views(self.views.clone()))
+        Turn::of(self.agent_id, self.agent_controller.name(), state, Arc::clone(&self.agent_state), self.views.clone())
     }
 
     /// The turn under way in `state`, for a step of a turn. Without one -
@@ -1165,7 +1164,7 @@ mod tests {
         let channel = Classification::general(Confidentiality::Confidential);
         let mut agent_channel_state = AgentChannelState::default();
         agent_channel_state.begin_turn(Default::default(), Default::default(), channel.clone(), vec![ToolSet::new("tools", "some tools", vec![tool("shown", ToolVisibility::SHOWN), tool("call_only", ToolVisibility::CALL_ONLY)])], Default::default());
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached()).expect("a turn was begun");
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn was begun");
 
         let mut partial = answer(&[]);
         stamp(&mut partial, &turn, Visibility::Channel, false);
@@ -1195,7 +1194,7 @@ mod tests {
         let reasoning = |tools: Vec<Tool>, personality: Visibility, private_knowledge: bool, calls: &[&str], complete: bool| {
             let mut agent_channel_state = AgentChannelState::default();
             agent_channel_state.begin_turn(Default::default(), Default::default(), Classification::CHANNEL_DEFAULT, vec![ToolSet::new("tools", "some tools", tools)], Default::default());
-            let mut turn = Turn::of(agent, "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached()).expect("a turn was begun");
+            let mut turn = Turn::of(agent, "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn was begun");
             if private_knowledge {
                 turn.record_knowledge(KnowledgeRef { channel: turn.channel_id(), session: turn.session_id(), source: KnowledgeSource::PrivateNotes { agent, digest: None }, classification: None });
             }

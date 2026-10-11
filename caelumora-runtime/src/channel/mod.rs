@@ -238,8 +238,7 @@ pub struct ChannelLoop {
     max_route_decisions: i32,
     run_lock: Mutex<()>,
     /// The session the channel belongs to (issue 123), set by `attach` once
-    /// the session exists; unset outside of one, e.g. in tests. Weak, since
-    /// the session owns its channels.
+    /// the session exists. Weak, since the session owns its channels.
     session: OnceLock<Weak<SessionLoop>>,
 }
 
@@ -356,8 +355,8 @@ impl ChannelLoop {
         let _ = self.session.set(Arc::downgrade(session));
     }
 
-    /// The session the channel belongs to, or `None` outside of one (e.g. in
-    /// tests) or once it is gone.
+    /// The session the channel belongs to, or `None` until the channel is
+    /// attached to it, or once it is gone.
     pub(crate) fn session_loop(&self) -> Option<Arc<SessionLoop>> {
         self.session.get().and_then(Weak::upgrade)
     }

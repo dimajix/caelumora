@@ -237,6 +237,7 @@ mod tests {
     use crate::agent::state::{AgentStateHandle, AgentStates};
     use crate::runtime::RuntimeManager;
     use crate::session::SessionLoop;
+    use crate::session::testing::{main_channel, views_in};
     use crate::tool::ToolError;
     use crate::view::ViewsFactory;
     use caelumora_model::actor::ActorId;
@@ -306,8 +307,9 @@ mod tests {
     }
 
     /// The sessions of a test, as a turn's views reach them: stored in the
-    /// runtime's store, and running - without channels - so that a turn
-    /// in one of them reads its privacy from its loop.
+    /// runtime's store, and running with their main channel, through which
+    /// a turn in any channel of one reaches it and reads its privacy from
+    /// its loop.
     struct Sessions {
         runtime: Arc<RuntimeManager>,
         loops: HashMap<SessionId, Arc<SessionLoop>>,
@@ -325,7 +327,7 @@ mod tests {
         async fn add(&mut self, id: SessionId, privacy: SessionPrivacy) -> &mut Self {
             let session = session_with(id, &privacy);
             self.runtime.entity_store().create_session(&SecurityContext::system(), &session).await.unwrap();
-            self.loops.insert(id, SessionLoop::new(session, vec![], Arc::clone(&self.runtime)).await.unwrap());
+            self.loops.insert(id, SessionLoop::new(session.clone(), vec![main_channel(&session)], Arc::clone(&self.runtime)).await.unwrap());
             self
         }
 
@@ -341,7 +343,7 @@ mod tests {
                         // Gone meanwhile: back again.
                         store.create_session(&SecurityContext::system(), &session).await.unwrap();
                     }
-                    self.loops.insert(id, SessionLoop::new(session, vec![], Arc::clone(&self.runtime)).await.unwrap());
+                    self.loops.insert(id, SessionLoop::new(session.clone(), vec![main_channel(&session)], Arc::clone(&self.runtime)).await.unwrap());
                 }
                 None => {
                     store.delete_session(&SecurityContext::system(), id).await.unwrap();
@@ -351,10 +353,11 @@ mod tests {
             }
         }
 
-        /// What a turn in channel `at` navigates.
+        /// What a turn in channel `at` navigates: its session, reached
+        /// through the session's main channel.
         fn views_in(&self, at: &At) -> ViewsFactory {
-            let session = Arc::clone(self.loops.get(&at.0.0).expect("a session of the test"));
-            ViewsFactory::in_session(session)
+            let session = self.loops.get(&at.0.0).expect("a session of the test");
+            views_in(session, &session.channels()[0], ActorId::None)
         }
     }
 
@@ -368,7 +371,7 @@ mod tests {
             id,
             name: caelumora_model::value::name::Name::new("s").unwrap(),
             participants: privacy.people.iter().map(|user| Participant::User(*user)).collect(),
-            channels: Vec::new(),
+            channels: vec![ChannelId::new()],
             commands: Default::default(),
             privacy: privacy.policy,
             created_at: now,
@@ -388,7 +391,7 @@ mod tests {
     async fn remember(memory: &Memory, sessions: &Sessions, handle: &Arc<AgentStateHandle>, agent: AgentId, at: At, text: &str) {
         let mut state = AgentChannelState::default();
         memory.begin(&mut state, &at, agent);
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(handle)).expect("a turn was begun").with_views(sessions.views_in(&at));
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(handle), sessions.views_in(&at)).expect("a turn was begun");
         turn.see(&at.1);
         memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": text }), None, &mut turn).await.unwrap();
         turn.commit(false, &Discard).await;
@@ -398,7 +401,7 @@ mod tests {
     async fn recall(memory: &Memory, sessions: &Sessions, handle: &Arc<AgentStateHandle>, agent: AgentId, at: At) -> Prompt {
         let mut state = AgentChannelState::default();
         memory.begin(&mut state, &at, agent);
-        let turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(handle)).expect("a turn was begun").with_views(sessions.views_in(&at));
+        let turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(handle), sessions.views_in(&at)).expect("a turn was begun");
         memory.get_prompt(&turn.work()).await.unwrap()
     }
 
@@ -418,7 +421,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         {
             memory.begin(&mut state, &team, agent);
-            let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun").with_views(sessions.views_in(&team));
+            let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle), sessions.views_in(&team)).expect("a turn was begun");
             turn.see(&team.1);
             let result = memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "Kaya likes tea." }), None, &mut turn).await.unwrap();
             assert_eq!(result.value["id"], 1);
@@ -437,10 +440,10 @@ mod tests {
         // Forgotten only where it may be recalled.
         let mut state = AgentChannelState::default();
         memory.begin(&mut state, &elsewhere, agent);
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun").with_views(sessions.views_in(&elsewhere));
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle), sessions.views_in(&elsewhere)).expect("a turn was begun");
         assert!(memory.execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn).await.is_err());
         memory.begin(&mut state, &team, agent);
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun").with_views(sessions.views_in(&team));
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle), sessions.views_in(&team)).expect("a turn was begun");
         memory.execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn).await.unwrap();
         turn.commit(false, &Discard).await;
         assert!(handle.current().memory.current().is_empty());
@@ -460,13 +463,13 @@ mod tests {
 
         let mut state = AgentChannelState::default();
         memory.begin(&mut state, &elsewhere, agent);
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun").with_views(sessions.views_in(&elsewhere));
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle), sessions.views_in(&elsewhere)).expect("a turn was begun");
         let there = memory.execute(UPDATE_MEMORY_TOOL_NAME, &serde_json::json!({ "id": 1, "text": "Kaya likes coffee." }), None, &mut turn).await;
         assert!(matches!(there, Err(ToolError::InvalidParameter(_))), "not where it is not recalled");
 
         // Updated in a turn that has seen what is confidential ...
         memory.begin(&mut state, &confidential, agent);
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun").with_views(sessions.views_in(&confidential));
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle), sessions.views_in(&confidential)).expect("a turn was begun");
         turn.see(&confidential.1);
         let updated = memory.execute(UPDATE_MEMORY_TOOL_NAME, &serde_json::json!({ "id": 1, "text": "Kaya likes coffee." }), None, &mut turn).await.unwrap();
         assert_eq!(updated.value, serde_json::json!({ "status": "updated", "id": 1 }));
@@ -493,7 +496,7 @@ mod tests {
 
         let mut state = AgentChannelState::default();
         memory.begin(&mut state, &team, agent);
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun").with_views(sessions.views_in(&team));
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle), sessions.views_in(&team)).expect("a turn was begun");
         memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "draft" }), None, &mut turn).await.unwrap();
         memory.execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn).await.expect("remembered in this turn");
         assert!(memory.execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn).await.is_err(), "forgotten already");
@@ -511,12 +514,12 @@ mod tests {
         let at = channel(SessionId::new(), Confidentiality::Internal);
         let mut state = AgentChannelState::default();
         memory.begin(&mut state, &at, agent);
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun");
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle), crate::view::ViewsFactory::detached()).expect("a turn was begun");
         memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "alone" }), None, &mut turn).await.unwrap();
         turn.commit(false, &Discard).await;
         assert_eq!(handle.current().memory.current()[0].origin.session, SessionPrivacy { id: at.0.0, ..SessionPrivacy::default() }, "its session, private: nobody agreed to anything");
         memory.begin(&mut state, &at, agent);
-        let turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun");
+        let turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle), crate::view::ViewsFactory::detached()).expect("a turn was begun");
         assert!(memory.get_prompt(&turn.work()).await.unwrap().text.is_empty(), "no session to recall in");
     }
 
@@ -572,7 +575,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         {
             memory.begin(&mut state, &confidential, agent);
-            let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun").with_views(sessions.views_in(&confidential));
+            let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle), sessions.views_in(&confidential)).expect("a turn was begun");
             turn.see(&Classification::general(Confidentiality::Internal));
             let result = memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "Kaya likes tea." }), None, &mut turn).await.unwrap();
             assert_eq!(result.classification, Some(Classification::general(Confidentiality::Internal)), "its answer as the turn");
@@ -611,7 +614,7 @@ mod tests {
 
         let mut state = AgentChannelState::default();
         memory.begin(&mut state, &hr, agent);
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun").with_views(sessions.views_in(&hr));
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle), sessions.views_in(&hr)).expect("a turn was begun");
         let above = serde_json::json!({ "id": 1, "level": "confidential", "compartments": ["hr"] });
         assert!(memory.execute(RECLASSIFY_MEMORY_TOOL_NAME, &above, None, &mut turn).await.is_err(), "never above the channel");
         let unknown = serde_json::json!({ "id": 7, "level": "internal", "compartments": ["hr"] });

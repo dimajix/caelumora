@@ -7,7 +7,13 @@ use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{DummySecurityManager, SecurityContext};
 use caelumora_model::store::ComponentStore;
 use caelumora_model::store::memory::MemoryStore;
+use caelumora_model::actor::ActorId;
+use caelumora_model::session::{ChannelId, Session, SessionId};
+use caelumora_model::value::name::Name;
 use caelumora_runtime::agent::state::AgentStates;
+use caelumora_runtime::command::CommandExecutor;
+use caelumora_runtime::runtime::ChannelRuntime;
+use caelumora_runtime::view::ViewsFactory;
 use caelumora_runtime::component::{ComponentContainer, ComponentContext};
 use caelumora_runtime::tool::mcp_tool;
 use caelumora_runtime::runtime::RuntimeManager;
@@ -87,6 +93,35 @@ async fn build_container(params: serde_json::Value) -> ComponentContainer {
     ComponentContainer::from_config(&config, registry, &context).await.unwrap()
 }
 
+/// What a turn outside of a running session navigates: the views of an
+/// actor in a channel that is attached to no session, so they reach none.
+fn detached_views() -> ViewsFactory {
+    let store = Arc::new(MemoryStore::new());
+    let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
+    let runtime_manager = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(DummySecurityManager::new()), Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig::default(), caelumora_runtime::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+    let now = chrono::Utc::now();
+    let session = Session {
+        summary: None, briefing: None,
+        approval_rules: Vec::new(),
+        workspace: None,
+        id: SessionId::new(),
+        name: Name::new("detached").unwrap(),
+        commands: Default::default(),
+        privacy: Default::default(),
+        participants: Vec::new(),
+        channels: Vec::new(),
+        created_at: now,
+        updated_at: now,
+        security_attributes: Default::default(),
+        deleted: None,
+    };
+    let session_id = session.id;
+    let commands = Arc::new(CommandExecutor::empty(Arc::clone(runtime_manager.security_manager())));
+    let session = runtime_manager.controller_manager().new_session_controller(session);
+    let channel = ChannelRuntime::new(runtime_manager, commands, session);
+    channel.new_actor_runtime(ActorId::None, session_id, ChannelId::new()).views()
+}
+
 #[tokio::test]
 async fn discovers_and_calls_echo_tool_over_streamable_http() {
     let (addr, _server) = start_test_server().await;
@@ -110,7 +145,7 @@ async fn discovers_and_calls_echo_tool_over_streamable_http() {
     let states = AgentStates::new(Arc::new(MemoryStore::new()), Arc::new(()));
     let agent_id = AgentId::default();
     let agent_state = states.get(agent_id, Default::default()).await.expect("the state of the agent was loaded");
-    let mut turn = caelumora_runtime::agent::turn::Turn::of(agent_id, "test-agent".to_string(), &mut agent_channel_state, agent_state).expect("a turn was begun");
+    let mut turn = caelumora_runtime::agent::turn::Turn::of(agent_id, "test-agent".to_string(), &mut agent_channel_state, agent_state, detached_views()).expect("a turn was begun");
 
     let result = provider
         .execute("test-echo__echo", &json!({ "message": "hello mcp" }), None, &mut turn)

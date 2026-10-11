@@ -89,7 +89,7 @@ mod tests {
             fixed("rules", "Answer in German.", PromptPosition::Start),
         ] };
         let (state, agent_state, work) = (AgentChannelState::default(), AgentStateHandle::detached(), Work::default());
-        let (parts, knowledge) = provider.current_context(&AgentWork::new(AgentId::new(), &work, &state, &agent_state, None)).await.unwrap();
+        let (parts, knowledge) = provider.current_context(&AgentWork::new(AgentId::new(), &work, &state, &agent_state, &crate::view::ViewsFactory::detached())).await.unwrap();
 
         let given: Vec<_> = parts.iter().map(|p| (p.source.as_deref(), p.text.as_str(), p.role, p.after)).collect();
         assert_eq!(given, [(Some("frame"), "Be brief.", MessageRole::User, None), (Some("rules"), "Answer in German.", MessageRole::User, None)]);

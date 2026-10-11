@@ -894,34 +894,30 @@ impl std::fmt::Debug for Views {
 }
 
 /// What an agent's views are built from, once per turn (`Turn::session`):
-/// where its session is reached. Who reads, from which channel and at which
-/// classification is the work's, given when the views are built - one
-/// context per piece of work (issue 255).
+/// the actor's runtime, which reaches its channel and session once they are
+/// attached. Who reads, from which channel and at which classification is
+/// the work's, given when the views are built - one context per piece of
+/// work (issue 255).
 #[derive(Clone)]
 pub struct ViewsFactory {
-    root: FactoryRoot,
-}
-
-/// Where a factory reaches the agent's session.
-#[derive(Clone)]
-enum FactoryRoot {
-    /// Through the actor's runtime, which reaches its channel and session
-    /// once they are attached.
-    Actor(ActorRuntime),
-    /// A session loop held directly: for turns outside of an actor, in
-    /// tests.
-    #[cfg(test)]
-    Session(Arc<SessionLoop>),
+    actor: ActorRuntime,
 }
 
 impl ViewsFactory {
-    pub(crate) fn of_actor(runtime: ActorRuntime) -> Self {
-        Self { root: FactoryRoot::Actor(runtime) }
+    pub(crate) fn of_actor(actor: ActorRuntime) -> Self {
+        Self { actor }
     }
 
+    /// The views of an actor in a channel of no running session - for turns
+    /// in tests that read nothing elsewhere: their `session` is `None`, as
+    /// for a channel not attached to its session yet.
     #[cfg(test)]
-    pub(crate) fn in_session(session: Arc<SessionLoop>) -> Self {
-        Self { root: FactoryRoot::Session(session) }
+    pub(crate) fn detached() -> Self {
+        let runtime = crate::session::testing::test_runtime();
+        let commands = Arc::new(crate::command::CommandExecutor::empty(Arc::clone(runtime.security_manager())));
+        let session_id = SessionId::new();
+        let channel = crate::runtime::ChannelRuntime::outside_a_session(runtime, commands, session_id);
+        Self::of_actor(channel.new_actor_runtime(ActorId::None, session_id, ChannelId::new()))
     }
 
     /// The agent's own session, as it reads in `context` from `channel` at
@@ -930,11 +926,7 @@ impl ViewsFactory {
     /// participants; `None` while the channel is not attached to its session
     /// yet, once it is gone, or if it may not.
     pub(crate) async fn session(&self, context: &SecurityContext, channel: ChannelId, classification: Classification) -> Option<SessionView> {
-        let session_loop = match &self.root {
-            FactoryRoot::Actor(actor) => actor.channel_loop()?.session_loop()?,
-            #[cfg(test)]
-            FactoryRoot::Session(session) => Arc::clone(session),
-        };
+        let session_loop = self.actor.channel_loop()?.session_loop()?;
         let from = Place { channel, classification, session: session_loop.privacy() };
         let views = session_loop.views(Viewer::from_place(context.clone(), from));
         let attributes = session_loop.session().security_attributes.clone();

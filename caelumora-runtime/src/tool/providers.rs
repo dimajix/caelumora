@@ -136,7 +136,7 @@ mod tests {
     async fn a_call_runs_with_the_tool_that_provides_it_and_an_unknown_one_is_reported() {
         let providers = ToolProviders::new(vec![component("tools")]).unwrap();
         let mut agent_channel_state = agent_state();
-        let mut context = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached()).expect("a turn is under way");
+        let mut context = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn is under way");
 
         let output = providers.execute(&call("test_tool"), None, &mut context).await.unwrap();
         assert_eq!(output.value, json!({"result": "ok"}));
@@ -177,7 +177,7 @@ mod tests {
         assert!(matches!(providers.questions(&call("does_not_exist")), Err(ToolError::UnknownTool(_))));
 
         let mut agent_channel_state = agent_state();
-        let mut context = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached()).expect("a turn is under way");
+        let mut context = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn is under way");
         let questions = providers.questions(&call("asking_tool")).unwrap().expect("it asks");
         let answers = Answers::declined(questions, ActorId::None, "alice".to_string());
         let output = providers.execute(&call("asking_tool"), Some(&answers), &mut context).await.unwrap();
