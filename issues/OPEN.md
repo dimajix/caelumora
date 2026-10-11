@@ -101,6 +101,8 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 |---|---|---|
 | [309](309-options-none-only-in-tests.md) | open | Some fields are an `Option` that production code always sets - a turn's views only tests leave out, a component container's graph nobody does - so their readers handle a case that never occurs. |
 | [311](311-split-channel-and-session-loops.md) | open | `channel.rs` and `session.rs` have about 5900 and 2750 lines, each holding several subjects in one file, and most of the channel's tests are about the actors that run in it. |
+| [314](314-session-manager-handles-agents.md) | open | The `SessionManager` also deletes, restores and purges agents, though only deleting has to do with sessions, and agents have no owner of their own as groups do. |
+| [315](315-view-and-session-test-fixtures.md) | open | The tests of the views and of sessions have fixtures of the same names and different signatures, so four tests of the views live with the sessions. |
 
 ## Open architecture questions
 
