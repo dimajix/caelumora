@@ -2,7 +2,10 @@ pub use crate::channel::{Channel, ChannelId, ChannelState, Participant};
 use crate::approval::ApprovalRule;
 use crate::component::ComponentConfig;
 use crate::privacy::PrivacyConfig;
-use crate::security::{Secured, SecurityAttributes};
+use crate::actor::ActorId;
+use crate::group::GroupId;
+use crate::security::{Grant, Secured, SecurityAttributes, Subject};
+use crate::user::UserId;
 use crate::store::query::Field;
 use chrono::{DateTime, Utc};
 use crate::value::name::Name;
@@ -76,6 +79,13 @@ pub struct Session {
 crate::impl_deletable!(Session);
 
 impl Session {
+    /// The attributes of a new session `id` of `owner`: read by its
+    /// members, whoever they are at the time (issue 23) - the group of its
+    /// participants, stored with it (`Group::of_session`).
+    pub fn attributes_of(id: SessionId, owner: UserId) -> SecurityAttributes {
+        SecurityAttributes::owned_by(ActorId::User(owner)).granting(Subject::Group(GroupId::of_session(id)), Grant::Read)
+    }
+
     /// Says what the session is for (issue 245): `summary` and `briefing`
     /// replace what it said - a missing or empty one removes it.
     ///

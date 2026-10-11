@@ -20,7 +20,9 @@ use caelumora_model::scope::Scope;
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::group::GroupId;
 use crate::group::purge_participants;
+use caelumora_model::security::Grant;
 use caelumora_model::workspace::WorkspaceId;
+use crate::workspace::WorkspaceManager;
 use crate::controller::SessionController;
 use dashmap::DashMap;
 use std::sync::Arc;
@@ -136,22 +138,22 @@ async fn purge_channel_document(store: &dyn EntityStore, channel_id: ChannelId) 
 }
 
 /// Asks whether `context` may attach the workspace `id` to the session
-/// `session_id` (issue 253): it must be theirs to share (`GetWorkspace`,
-/// `UpdateWorkspace` - its owner, issue 251, decision 12) and lie where the
-/// session may use it, not in another session's scope. Whether they may
-/// change the session is the caller's to ask - or not, for a session they
-/// are making (issue 266).
+/// `session_id` (issue 253): reached as the views reach it (issue 312), it
+/// must lie where the session may use it, not in another session's scope,
+/// and be theirs to share (`UpdateWorkspace` - its owner, issue 251,
+/// decision 12). Whether they may change the session is the caller's to
+/// ask - or not, for a session they are making (issue 266).
 ///
 /// # Errors
-/// `StoreError::NotFound` if there is no workspace they may read,
-/// `StoreError::PermissionDenied` if they may not share it,
-/// `SessionError::WorkspaceOutOfScope`.
-async fn require_attachable(security: &dyn SecurityManager, entities: &dyn EntityStore, context: &SecurityContext, id: WorkspaceId, session_id: SessionId) -> Result<()> {
-    let shared = entities.get_workspace(context, id).await?;
-    security.require(context, ActionType::UpdateWorkspace(&shared.security_attributes), || StoreError::PermissionDenied).await?;
+/// `WorkspaceError::NotFound` if there is no workspace they may read or
+/// are cleared for, `SessionError::WorkspaceOutOfScope`,
+/// `StoreError::PermissionDenied` if they may not share it.
+async fn require_attachable(workspaces: &WorkspaceManager, security: &dyn SecurityManager, context: &SecurityContext, id: WorkspaceId, session_id: SessionId) -> Result<()> {
+    let shared = workspaces.reached(context, id, Grant::Read).await?;
     if !shared.name.scope.admits(&Scope::SessionScope { session_id }) {
         return Err(SessionError::WorkspaceOutOfScope(id).into());
     }
+    security.require(context, ActionType::UpdateWorkspace(&shared.security_attributes), || StoreError::PermissionDenied).await?;
     Ok(())
 }
 
@@ -252,15 +254,15 @@ impl SessionLoop {
                 Some(res) = join_set.join_next(), if !join_set.is_empty() => {
                     match res {
                         Ok(channel_id) => {
-                            let attributes = self.channels.get_mut(&channel_id)
+                            let reach = self.channels.get_mut(&channel_id)
                                 .map(|mut entry| {
                                     entry.task = None;
-                                    entry.channel.security_attributes()
+                                    (entry.channel.security_attributes(), entry.channel.classification())
                                 });
                             // Gone: a deleted channel, whose actors all
                             // stopped in time; `delete_channel` announces it.
-                            if let Some(attributes) = attributes {
-                                self.events.publish(GlobalEvent::ChannelStopped(self.id, channel_id), attributes);
+                            if let Some((attributes, classification)) = reach {
+                                self.events.publish_classified(GlobalEvent::ChannelStopped(self.id, channel_id), attributes, &[classification]);
                             }
                         }
                         // A deleted channel; `delete_channel` announces it.
@@ -296,7 +298,7 @@ impl SessionLoop {
     fn start_channel(&self, id: ChannelId, join_set: &mut JoinSet<ChannelId>) {
         let Some(mut entry) = self.channels.get_mut(&id) else { return };
         let channel = Arc::clone(&entry.channel);
-        self.events.publish(GlobalEvent::ChannelStarted(self.id, id), channel.security_attributes());
+        self.events.publish_classified(GlobalEvent::ChannelStarted(self.id, id), channel.security_attributes(), &[channel.classification()]);
         entry.task = Some(join_set.spawn(async move {
             let _ = channel.run().await;
             channel.id()

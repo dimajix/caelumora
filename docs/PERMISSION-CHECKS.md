@@ -4,7 +4,7 @@ This document is the map of every place where the runtime asks a permission ques
 operation asks, in whose name, what, which concept decides it, by which of the five reasons it is
 asked, and where the same question is asked again on the way. It records what the code does at the
 end of issue [304](../issues/304-review-of-the-permission-concept.md) (2026-10-11), redone from the
-code. The rules it is measured against - the three decisions, the order, the five reasons to ask -
+code, and brought up to date by issue [312](../issues/312-order-and-reach-not-everywhere.md). The rules it is measured against - the three decisions, the order, the five reasons to ask -
 are in [SECURITY.md](SECURITY.md#where-permission-checks-go) and
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md); what each action is expected to ask is asserted by the
 security suite (`caelumora-runtime/tests/security_suite.rs`, issue 198). A new action, or a change
@@ -79,15 +79,15 @@ SECURITY.md); "store" is the store layer, in the context the caller passes.
 | Operation | Questions in order | Rule | Again | Refusal |
 |---|---|---|---|---|
 | Find (`SessionManager::find`, behind open, stop, delete) | running: `GetSession` (U,1) by hand; stored: store `GetSession` | R1 | by the views, if the client navigated first (R5) | `NotFound` |
-| Make from a template (`create_from_template`) | store `GetSessionTemplate`; a chosen workspace: `GetWorkspace`, `UpdateWorkspace` (U,1); participants resolved: store `GetUser`, `GetPersonality`, `CreateAgent` (U,1); store `GetUserProfile`; the template's workspace made (flow, then `CreateWorkspace`); then *Create*; then the workspace shared | R1; `UpdateWorkspace` R2 | `UpdateWorkspace` three times (attach, share, store) | `NotFound`, `PermissionDenied`, `WorkspaceOutOfScope`, `ClassificationRefused`, `StorageNotCleared`, `NotCleared`, `OutOfScope`; undone in S |
-| Create (`create_session`) | per channel `require_classifiable`; `require_admitted`: per agent `GetPersonality` (A,1), scope, per member `require_cleared` with its roles (U,2); store `CreateSession`, per channel `CreateChannel` (U,1); groups in S | R1; the members: others | `GetPersonality` again as the channels are built | `ClassificationRefused`, `NotCleared`, `OutOfScope`, `PermissionDenied` |
+| Make from a template (`create_from_template`) | store `GetSessionTemplate`; `CreateSession` (U,1), before anything is found or made (issue 312); a chosen workspace: reached - `GetWorkspace` (U,1), `cleared_for` (U,2) -, scope, `UpdateWorkspace` (U,1); participants resolved: store `GetUser`, `GetPersonality`, `CreateAgent` (U,1); store `GetUserProfile`; the template's workspace made (flow, then `CreateWorkspace`); then *Create* without its own `CreateSession`; then the workspace shared | R2 + R1 | `CreateSession` (pair); `UpdateWorkspace` twice (attach, store as it is shared) | `NotFound`, `PermissionDenied`, `WorkspaceOutOfScope`, `ClassificationRefused`, `StorageNotCleared`, `NotCleared`, `OutOfScope`; undone in S |
+| Create (`establish`, behind a template; `create_session` in tests asks `CreateSession` first) | per channel `require_classifiable`; `require_admitted`: per agent `GetPersonality` (A,1), scope, per member `require_cleared` with its roles (U,2); store `CreateSession`, per channel `CreateChannel` (U,1); groups in S | R2 + R1; the members: others | `CreateSession` (pair); `GetPersonality` again as the channels are built | `ClassificationRefused`, `NotCleared`, `OutOfScope`, `PermissionDenied` |
 | Open (`open_session`) | *Find*; channels loaded in S; per agent `GetPersonality` (A,1) - refused, the member is left out; components built in C or A (`GetComponents`, `ReadSecret`) | R1 | as creating | `NotFound` |
 | Stop (`stop_session`) | *Find*; `StopSession` (U,1) | R4 | - | `NotFound`, `PermissionDenied` |
 | Delete (`delete_session`) | *Find*; `DeleteSession` (U,1); stopped, channels in S; store `DeleteSession`; the scope in S | R2 + R1 | `DeleteSession` (pair) | `NotFound`, `PermissionDenied` |
 | Restore (`restore_session`) | store `ReadDeleted` (U,1), as whoever restores it; store `ReadDeleted` + `Restore` | R1 | `ReadDeleted` (both store) | `NotFound`, `PermissionDenied` |
 | Purge (`purge_session`) | store `ReadDeleted`; store `ReadDeleted` + `Purge`; channels and scope in S | R1 | - | `NotFound`, `PermissionDenied` |
 | Rename, privacy, approval rules, description (`SessionLoop::update_*`) | store `GetSession` + `UpdateSession` (U,1) | R1 | - | `PermissionDenied` |
-| Attach a workspace (`set_workspace`) | `UpdateSession` (U,1); `GetWorkspace`, `UpdateWorkspace` (U,1), scope; store `UpdateSession`; sharing it as *Share* of a workspace | R2 + R1 | `UpdateSession` (pair); `UpdateWorkspace` three times | `PermissionDenied`, `NotFound`, `WorkspaceOutOfScope` |
+| Attach a workspace (`set_workspace`) | `UpdateSession` (U,1); reached: `GetWorkspace` (U,1), `cleared_for` (U,2), else `NotFound`; scope; `UpdateWorkspace` (U,1); store `UpdateSession`; sharing it as *Share* of a workspace | R2 + R1 | `UpdateSession` (pair); `UpdateWorkspace` twice | `PermissionDenied`, `NotFound`, `WorkspaceOutOfScope` |
 | Delete an agent (`AgentManager::delete`) | store `GetAgent`; `DeleteAgent` (U,1); store `DeleteAgent`; it rests in its channels, which follow it in S | R2 + R1 | `DeleteAgent` (pair) | `NotFound`, `PermissionDenied` |
 | Restore, purge an agent (`AgentManager::restore`, `purge`) | store only | R1 | - | `NotFound`, `PermissionDenied` |
 
@@ -96,9 +96,9 @@ SECURITY.md); "store" is the store layer, in the context the caller passes.
 | Operation | Questions in order | Rule | Again | Refusal |
 |---|---|---|---|---|
 | Reach a channel to act in it (`SessionLoop::channel_for`, the REST server's way) | `channel_reading`: `GetChannel` (U,1), `cleared_for` (U,2) | reach | by the views if the client navigated | `ChannelNotFound` for absent, refused and not cleared alike |
-| Create (`SessionLoop::create_channel`) | `UpdateSession` (U,1); `require_classifiable`; store `GetUserProfile`; members of the session; `require_admitted` (A `GetPersonality`, scope, U cleared with the member's roles); store `CreateChannel` (U,1); group in S; store `UpdateSession` | R2 + R1 | `UpdateSession` (pair); `GetPersonality` as built | `PermissionDenied`, `ClassificationRefused`, `NotCleared`, `OutOfScope`, `NameTaken` |
-| Delete (`SessionLoop::delete_channel`) | `GetChannel` (U,1); `DeleteChannel` (U,1); store `UpdateSession` as the session drops it; store `GetChannel` + `DeleteChannel`; actors stopped; the scope in S | R2 + R1 | `GetChannel`, `DeleteChannel` (pair) | `ChannelNotFound`, `PermissionDenied` |
-| Restore (`SessionLoop::restore_channel`) | `UpdateSession` (U,1); store `ReadDeleted`; `require_admitted` as creating; store `ReadDeleted` + `Restore`; store `UpdateSession` | R2 + R1 | `UpdateSession` (pair), `ReadDeleted` (store) | `PermissionDenied`, `ChannelNotFound`, `NotCleared`, `NameTaken` |
+| Create (`SessionLoop::create_channel`) | `require_classifiable`; store `GetUserProfile`; members of the session (structural); `CreateChannel` (U,1), before the others (issue 312); `require_admitted` (A `GetPersonality`, scope, U cleared with the member's roles); store `CreateChannel` (U,1); group in S; store `GetSession` + `UpdateSession` | R2 + R1 | `CreateChannel` (pair); `GetPersonality` as built | `PermissionDenied`, `ClassificationRefused`, `NotCleared`, `OutOfScope`, `NameTaken` |
+| Delete (`SessionLoop::delete_channel`) | `channel_for`: `GetChannel` (U,1), `cleared_for` (U,2); `DeleteChannel` (U,1); store `UpdateSession` as the session drops it; store `GetChannel` + `DeleteChannel`; actors stopped; the scope in S | R2 + R1 | `GetChannel`, `DeleteChannel` (pair) | `ChannelNotFound`, `PermissionDenied` |
+| Restore (`SessionLoop::restore_channel`) | store `ReadDeleted` (U,1), as the session's trash lists it; `Restore` (U,1), before the others (issue 312); `require_admitted` as creating; store `ReadDeleted` + `Restore`; store `GetSession` + `UpdateSession` | R2 + R1 | `ReadDeleted` (store), `Restore` (pair) | `ChannelNotFound`, `PermissionDenied`, `NotCleared`, `NameTaken` |
 | Rename, language, description, workspace switch, approval rules (`ChannelLoop::update_*`) | store `GetChannel` + `UpdateChannel` (U,1) | R1 | - | `PermissionDenied` |
 | Reclassify (`ChannelLoop::reclassify`) | `Reclassify` of the channel (U,1); `require_classifiable`; per member `require_cleared` (U,2); store `UpdateChannel`; `may_publish` of the old into the new to learn whether it was lowered | R2 + R1; the last a question | - | `Forbidden`, `ClassificationRefused`, `NotCleared` |
 | Add a participant (`add_participant`) | `UpdateChannel` (U,1); structural; `GetPersonality` (A,1); scope; `require_cleared` with the member's roles (U,2); store `UpdateChannel`; the actor's components (A) | R2 + R1 | `UpdateChannel` (pair) | `Forbidden`, `PermissionDenied`, `OutOfScope`, `NotCleared` |
@@ -123,7 +123,9 @@ permission first, then the flow of what it carries.
 | `RetryRequested` | `RetryMessage` (E,1); a message an agent said, not taken back, or an agent taking part | `MessageNotFound`, `Forbidden`, `MessageUnchangeable`, `Invalid` |
 | `QuestionAnswered`, `QuestionDeclined` | `AnswerQuestion` (E,1); whether its sender was asked is the agent's | `Forbidden` |
 | `CommandRequested`, `NudgeRequested` | form only: from a user, naming someone taking part; a command is the agent's to admit | `Invalid` |
-| everything else | nothing; an approval is the approver's | - |
+| `ApprovalGranted`, `ApprovalDenied` from a user | the agent it names read in S; `ApproveToolCall` (E,3); whether that agent asked is the approver's (issue 312) | `Invalid`, `Forbidden` |
+| `ApprovalGranted`, `ApprovalDenied`, `ApprovalTimedOut` from anyone else | from an approver alone (structural) | `Invalid` |
+| everything else | nothing | - |
 
 Before sending, the `UserActor` refuses only what it can see at once: a message not there or taken
 back, another's message to modify - a modification speaks as its author, which only the author's
@@ -137,8 +139,8 @@ actor can send (issue 228).
 | A tool's result (`ToolExecutor::admitted`) | `may_publish` of the result into the turn (T,2) | R4: the agent's context is a destination of its own | the channel as the result enters it (R3) | the result withheld |
 | Tool sets offered (`ToolExecutor::tool_sets`) | per set with a destination `may_publish` of the channel into it (T,2) | R5 | - | the set not offered |
 | Who may approve (`ApproverActor::approvers_of`) | per user `may_approve` (their own context, 3) | R5 | - | left out; nobody, denied at once |
-| An approval by click (`ApproverActor::handle_response`) | `ApproveToolCall` (E,3) | R4 | `approvers_of` for the strategy (R5) | the answer left out |
-| An approval by a person's rule (`UserActor::answer_by_rule`) | `may_approve` (U,3), then as a click | R5 | up to three times per answer | the rule does not answer |
+| An approval by click (`ApproverActor::handle_response`) | admitted by the channel (*What enters a channel*); the approver checks only that it names the agent that asked | R3 | `approvers_of` for the strategy (R5) | `MessageRejected` to its sender; an answer for another agent left out |
+| An approval by a person's rule (`UserActor::answer_by_rule`) | `may_approve` (U,3), then as a click | R5 | three times per answer: whether the rule answers, the admission, whom to wait for | the rule does not answer |
 | A command of the session (`CommandExecutor::execute`) | `ShowCommand`, `ExecuteCommand` with the channel (U,3) | R4 | `/wakeup` asks `WakeChannel` itself | `Unknown`, `Forbidden` |
 | Commands shown (`visible_by`, `/help`, completion) | per command `ShowCommand` (U,3) | R5 | - | left out |
 | A command of an agent asked for (`UserActor::request_command`) | whom it names: the agents' commands as the issuer sees them (`ShowAgentCommand`, U,3) | R5 | by the agent | `Unknown`, `InvalidArguments` |
@@ -156,8 +158,8 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 | All channels (`channels`, `all_channels`) | as above per channel | reach | left out |
 | Its own private notes of other channels (`own_private_notes`) | no `GetChannel` - its own knowledge -; per note `may_copy_from` (T,2) | reach | left out |
 | Its memory (`AgentMemory::recalled`, `find`, `update`, `forget`) | per entry `may_copy_information` of its origin, by the origin's privacy then and now | R4: the agent's own knowledge, as its private notes | left out |
-| Reclassify a note (`AgentNotes::reclassify`) | the note is there; `Reclassify` of the note (T,3); `require_publish` of the new classification (T,2) | R4 | `InvalidParameter`, `PermissionDenied` |
-| Reclassify a memory entry (`AgentMemory::reclassify`) | the entry recalled; `Reclassify` (T,3); `require_publish` (T,2) | R4 | as above |
+| Reclassify a note (`AgentNotes::reclassify`) | the note is there; `Reclassify` of the note with its channel's attributes (T,3); `require_publish` of the new classification (T,2) | R4 | `InvalidParameter`, `PermissionDenied` |
+| Reclassify a memory entry (`AgentMemory::reclassify`) | the entry recalled; `Reclassify` with the channel's attributes (T,3); `require_publish` (T,2) | R4 | as above |
 
 ### Skills
 
@@ -166,8 +168,8 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 | A user lists or reads skills (`Views::skills`, `skill`) | store `GetSkill` (V,1); `cleared_for` (V,2) | R1 + reach | - | left out; `SkillNotFound` |
 | An agent's catalogue, `list_skills`, `load_skill`, `/skills`, `/skill`, compaction (`Views::usable_skills`, `usable_skill_named`) | store `GetSkill` of what is seen from the place (T,1); `UseSkill` (T,1); `cleared_for` (T,2); `may_publish` into the place (T,2) | reach | - | left out; `NoSkillNamed` |
 | Create (`SkillManager::create`) | `require_classifiable`; `require_cleared_for` (U or T,2); store `CreateSkill` (1) | R4 (flow) + R1 | - | `ClassificationRefused`, `NotCleared`, `PermissionDenied`, `NameTaken` |
-| Change, reclassify (`SkillManager::update`) | store `GetSkill`; for a classification as creating; store `GetSkill` + `UpdateSkill` | R1 (+ flow) | `GetSkill` (store) | `NotFound`, `ClassificationRefused`, `NotCleared`, `PermissionDenied` |
-| Delete, restore, purge | store only | R1 | - | `PermissionDenied`, `NotFound` |
+| Change, reclassify (`SkillManager::update`) | reached: store `GetSkill`, `cleared_for` (2), else `NotFound`; for a classification `require_classifiable`, `require_cleared_for`; store `GetSkill` + `UpdateSkill` | reach + R1 (+ flow) | `GetSkill` (store) | `NotFound`, `ClassificationRefused`, `NotCleared`, `PermissionDenied` |
+| Delete, restore, purge (`SkillManager`) | delete: reached - `GetSkill`, `cleared_for` (2) -, else `false`; restore, purge: the store alone, as the trash lists them (issue [322](../issues/322-clearance-decided-outside-the-store.md)) | reach + R1 | `GetSkill` (store) | `PermissionDenied`, `NotFound` |
 
 ### Workspaces
 
@@ -179,9 +181,9 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 | A running command goes on (`may_run`, as the channel's members or the workspace change) | the chain of *In a channel* per current member | an act that lasts, asked again as what permitted it changes | per member and event | the command ended |
 | The channel's workspace offered (`ChannelView::workspace`) | `usable_in` (V) | R5 | - | none |
 | Create (`WorkspaceManager::create`) | `require_classifiable`; `require_publish` into the storage's destination (U,2); `require_cleared_for` (U,2); store `CreateWorkspace` (U,1) | R4 (flow) + R1 | - | `ClassificationRefused`, `StorageNotCleared`, `NotCleared`, `PermissionDenied`, `NameTaken` |
-| Change, reclassify (`update`) | store `GetWorkspace`; a classification as creating; store `GetWorkspace` + `UpdateWorkspace` | R1 (+ flow) | `GetWorkspace` (store) | `NotFound`, `ClassificationRefused`, `StorageNotCleared`, `NotCleared`, `PermissionDenied` |
-| Share (`set_access`, `share`) | store `GetWorkspace`; `UpdateWorkspace` (U,1); `require_nameable`: store `GetGroup` per newly named group; store `UpdateWorkspace` | R2 + R1 | `UpdateWorkspace` (pair) | `NotFound`, `PermissionDenied`, `Validation` |
-| Delete, restore | store only | R1 | - | `PermissionDenied`, `NotFound` |
+| Change, reclassify (`update`) | reached (`GetWorkspace` U,1, `cleared_for` U,2); a classification as creating; store `GetWorkspace` + `UpdateWorkspace` | reach + R1 (+ flow) | `GetWorkspace` (store) | `NotFound`, `ClassificationRefused`, `StorageNotCleared`, `NotCleared`, `PermissionDenied` |
+| Share (`set_access`, `share`) | reached; `require_nameable`: store `GetGroup` per newly named group - the caller's own question (issue 312); store `GetWorkspace` + `UpdateWorkspace` | reach + R1 | - | `NotFound`, `PermissionDenied`, `Validation` |
+| Delete, restore (`WorkspaceManager`) | delete: reached - `GetWorkspace`, `cleared_for` -, else `false`; restore: the store alone, as the trash lists it (issue [322](../issues/322-clearance-decided-outside-the-store.md)) | reach + R1 | `GetWorkspace` (store) | `PermissionDenied`, `NotFound` |
 | Purge (`purge`) | store `ReadDeleted`; `Purge` (U,3); files removed; store `ReadDeleted` + `Purge` | R2 + R1 | `Purge` (pair) | `PermissionDenied` |
 
 ### Artifacts
@@ -191,10 +193,10 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 | List, reach (`Views::artifacts`, `artifact`, `ChannelView::artifacts`) | listing: the teams the viewer belongs to found in S, named besides them and their roles; read in S; `may_read_artifact` with the artifact's list, else per version with the version's (V,1); `cleared_for` (V,2) | reach | - | left out; `ArtifactNotFound` |
 | Where a version was published (`ArtifactView::publication`) | `Views::channel_of`: the session, then `channel_reading`; gone, as a live one would be reached | reach | - | not named |
 | Publish (`ArtifactManager::publish`, the artifact tool) | the workspace's reach (*In a channel*); an existing artifact found in S: `WriteArtifact` (T,1) - one not the caller's to add to is refused as such, not taken for a name to make anew; or `CreateArtifact` (T,1); `require_publish` into the storage's destination (T,2); content kept; store `CreateArtifact` for a new one | R2 + R1 | `CreateArtifact` (pair) | `PermissionDenied`, `ClassifiedOtherwise`, `StorageNotCleared` |
-| Share (`set_access`) | store `GetArtifact`; `UpdateArtifact` (U,1); `require_nameable`; store `UpdateArtifact` | R2 + R1 | `UpdateArtifact` (pair) | `NotFound`, `PermissionDenied`, `Validation` |
-| Keep in a scope (`keep`) | store `GetArtifact`; `UpdateArtifact` (U,1), before the scope is compared with the owner; store `UpdateArtifact` | R2 (it looks at the owner first) + R1 | `UpdateArtifact` (pair) | `NotFound`, `PermissionDenied`, `InvalidScope` |
-| Describe (`describe`) | store `GetArtifact`; store `GetArtifact` + `UpdateArtifact` | R1 | - | `NotFound`, `PermissionDenied`, `Invalid` |
-| Delete, restore | store only | R1 | - | `PermissionDenied`, `NotFound` |
+| Share (`set_access`) | reached (`GetArtifact` U,1, `cleared_for` U,2); `require_nameable`; store `GetArtifact` + `UpdateArtifact` | reach + R1 | `GetArtifact` (store) | `NotFound`, `PermissionDenied`, `Validation` |
+| Keep in a scope (`keep`) | reached; the scope compared with the owner (structural); store `GetArtifact` + `UpdateArtifact` | reach + R1 | `GetArtifact` (store) | `NotFound`, `InvalidScope`, `PermissionDenied` |
+| Describe (`describe`) | reached; store `GetArtifact` + `UpdateArtifact` | reach + R1 | `GetArtifact` (store) | `NotFound`, `PermissionDenied`, `Invalid` |
+| Delete, restore (`ArtifactManager`) | delete: reached - `GetArtifact`, `cleared_for` -, else `false`; restore: the store alone, as the trash lists it (issue [322](../issues/322-clearance-decided-outside-the-store.md)) | reach + R1 | `GetArtifact` (store) | `PermissionDenied`, `NotFound` |
 | Purge (`purge`) | store `ReadDeleted`; `Purge` (U,3); content removed; store `ReadDeleted` + `Purge` | R2 + R1 | `Purge` (pair) | `PermissionDenied` |
 
 ### Groups
@@ -203,7 +205,7 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 |---|---|---|---|
 | List, reach (`Views::groups`, `group`) | store `GetGroup` (V,1); the participants' groups left out of the list | R1 | left out; `GroupNotFound` |
 | Make a team (`GroupManager::create`) | store `CreateGroup` (U,1) | R1 | `PermissionDenied`, `NameTaken` |
-| Set members (`set_members`) | the users read in S (`UnknownMember`); then as renaming | R1 | `UnknownMember`, then as below |
+| Set members (`set_members`) | store `GetGroup`; a participants' group refused (structural); `UpdateGroup` (U,1), before whether the users exist is asked (issue 312); the users read in S; store `GetGroup` + `UpdateGroup` | R2 + R1 | `NotFound`, `Participants`, `PermissionDenied`, `UnknownMember` |
 | Rename (`update`) | store `GetGroup`; a participants' group refused (structural); store `UpdateGroup` | R1 | `NotFound`, `Participants`, `PermissionDenied` |
 | Delete, restore, purge | store; a participants' group refused | R1 | `NotFound`, `Participants`, `PermissionDenied` |
 | Name a group in an access list (`require_nameable`) | store `GetGroup` (U,1) per newly named group | R1 | `Validation` |
@@ -219,7 +221,7 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 | Flags of a session, channel, member, workspace, skill, group, artifact | `may_change_session`, `may_change_channel`, `may_read_agent_context`, `may_read_agent_tools`, `may_read_agent_components`, `may_approve`, `may_retry_message`, `may_cancel_channel`, `may_delete_agent`, the member's commands, `may_change_workspace`, `may_write_workspace`, `may_change_skill`, `may_change_group`, `may_change_artifact`, `may_write_artifact` | R5 | a flag false |
 | A member's tools, components, context, private notes (`tool_sets`, `components`, `context`) | `ReadAgentTools`, `ReadAgentComponents`, `ReadAgentContext` (V,1), the context also only of a channel read whole | R4: reading them is the views' act | `Forbidden` |
 | What was deleted (`deleted_*`) | store `ReadDeleted` per item; flags `may_restore`, `may_purge` | R1 + R5 | - |
-| An event reaching a subscriber (`EventBus`, `subscribe_as`) | per event and party the read question: `GetChannel` for a channel's events, its members' and an agent's state in it; `GetAgent`, `GetUser`, `GetUserProfile`, `GetWorkspace`, `GetSkill`, `GetGroup`, `GetArtifact` by kind; `GetSession` for a session's | R5 | not delivered |
+| An event reaching a subscriber (`EventBus`, `subscribe_as`) | per event and party the read question: `GetChannel` for a channel's events, its members' and an agent's state in it; `GetAgent`, `GetUser`, `GetUserProfile`, `GetWorkspace`, `GetSkill`, `GetGroup`, `GetArtifact` by kind; `GetSession` for a session's; for what is classified also `cleared_for` the classification it has, or had as it is reclassified (issue 312) | R5 + reach | not delivered |
 
 ### Users
 
@@ -250,9 +252,9 @@ An agent's views are built per piece of work, with the agent's place; all in **T
   `WorkspaceManager::usable_in` are built from `may_*` and answer with an option: the views turn
   `None` into "not there", an operation into "not found". It is neither enforcing nor offering, but
   the one way to reach a thing, so that both see the same.
-- **A refusal that is no error.** The `ToolExecutor` and the approver ask `require` with a refusal
-  of `()` and turn it into their own outcome - a forbidden result, an answer left out -, so that the
-  refusal is logged as every act's is.
+- **A refusal that is no error.** The `ToolExecutor` asks `require` with a refusal of `()` and
+  turns it into its own outcome, a forbidden result, so that the refusal is logged as every act's
+  is.
 - **Filters with `check`.** The event bus, the command lists and the store's list filter ask the raw
   question, since they take any action.
 - **Lowered.** `ChannelLoop::reclassify` asks `may_publish` of the old classification into the new
@@ -269,18 +271,26 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 - **`CallTool` and `ReadSecret`** stay hooks for another policy (issue 24); secrets get an owner in
   issue [310](../issues/310-secrets-have-no-owner.md).
 
+### Decided in issue 312
+
+- **Validation and the actor's own flow before the verb.** What tells the actor only about their
+  own request - its form, the structure of the reached object, the flow of what they ask for,
+  whether they may read a group they name - may come before their permission, which the store
+  then asks alone: the workspace, skill and artifact managers, `require_nameable`, `keep`. The
+  group manager's `Participants` and `remove_participant`'s `ApproverStays` and `NotAParticipant`
+  are structure, seen by whoever reached the object.
+- **Three `ApproveToolCall` for an answer by a rule.** Whether the person's rule answers at all
+  (offering, so that no refusal is sent in their name), whether the channel admits the answer,
+  and whom the approver waits for: three reasons, one each.
+- **`UpdateWorkspace` twice for attaching and sharing.** Attaching asks before the session is
+  changed, sharing is stored by the store's question alone.
+- **A channel's components in its owner's name** are issue
+  [321](../issues/321-channel-components-in-the-owners-name.md).
+- **What is listed is the store's to decide.** A view does not filter a store's list again: the
+  trashes show what `ReadDeleted` lets through, and restoring and purging reach it alike. That the
+  live lists, the managers and the event bus add the clearance themselves is issue
+  [322](../issues/322-clearance-decided-outside-the-store.md).
+
 ### Open
 
-In issue [312](../issues/312-order-and-reach-not-everywhere.md):
-
-- creating a session or a channel, and restoring one, asks the others before its own verb;
-- the workspace and skill managers ask the flow and validation before the store asks the verb;
-  the group manager answers structural refusals before the group is read;
-- the managers reach workspaces, skills and artifacts by id without the clearance the views ask;
-  deleting and restoring a channel reach it without the clearance;
-- the event bus delivers without the clearance;
-- a refused approval is not told to its sender;
-- a note's or memory entry's reclassification carries no attributes; a channel's components are
-  built in its owner's name;
-- attaching and sharing a workspace asks `UpdateWorkspace` three times, an approval by a rule
-  `ApproveToolCall` up to three times.
+None from the map.

@@ -13,7 +13,7 @@ use crate::view::{SessionView, ViewsFactory};
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::ModelProfile;
-use caelumora_model::security::SecurityContext;
+use caelumora_model::security::{SecurityAttributes, SecurityContext};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::tool::ToolSet;
 use caelumora_model::work::Work;
@@ -67,6 +67,13 @@ impl<'a> AgentWork<'a> {
     /// began: the most it may read, and the most it writes as.
     pub fn classification(&self) -> Classification {
         self.work.classification.clone()
+    }
+
+    /// The attributes of the agent's channel as it stands - the system's
+    /// while it is attached to none -, by which an act on what the agent
+    /// keeps there is asked (issue 312).
+    pub fn channel_attributes(&self) -> SecurityAttributes {
+        self.views.channel_attributes().unwrap_or_default()
     }
 
     /// The classification of what the work writes (issue 168): the join of

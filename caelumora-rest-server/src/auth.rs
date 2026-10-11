@@ -446,7 +446,7 @@ mod tests {
 
     /// Auth asking `providers`, the users recorded in `store` (issue 306).
     fn auth(store: Arc<dyn EntityStore>, providers: Vec<Arc<dyn UserProvider>>) -> Arc<Auth> {
-        let events = Arc::new(EventBus::new(Arc::new(DummySecurityManager::new())));
+        let events = Arc::new(EventBus::new(Arc::new(DummySecurityManager::new()), Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default())));
         let controllers = Arc::new(ControllerManager::new(Arc::clone(&store), Arc::<EventBus>::clone(&events)));
         Arc::new(Auth { tokens: tokens(), users: Arc::new(UserManager::new(providers, store, events)), controllers })
     }

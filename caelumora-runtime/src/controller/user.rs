@@ -201,6 +201,10 @@ mod tests {
         fn publish(&self, event: GlobalEvent, _attributes: caelumora_model::security::SecurityAttributes) {
             self.0.lock().unwrap().push(event);
         }
+
+        fn publish_classified(&self, event: GlobalEvent, attributes: caelumora_model::security::SecurityAttributes, _classifications: &[caelumora_model::confidentiality::Classification]) {
+            self.publish(event, attributes);
+        }
     }
 
     fn alice() -> User {

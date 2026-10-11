@@ -249,7 +249,7 @@ impl ArtifactManager {
             }
         };
         let readers = artifact.version(number).map_or_else(|| artifact.security_attributes.clone(), |version| artifact.version_attributes(version));
-        self.events.publish(GlobalEvent::ArtifactPublished(id, number), readers);
+        self.events.publish_classified(GlobalEvent::ArtifactPublished(id, number), readers, std::slice::from_ref(&artifact.classification));
         info!(artifact = %id, version = number, by = %ctx.caller_id, "Artifact published");
         Ok((artifact, number))
     }
@@ -278,42 +278,54 @@ impl ArtifactManager {
         self.storage(&artifact.storage)?.get(artifact.id, number).await
     }
 
-    /// Gives artifact `id` the access list `acl` for the whole of it (issue
-    /// 23) on behalf of `ctx`: its owner's act (`UpdateArtifact`), asked
-    /// before a group the list names newly is looked at - who names one must
-    /// read it (issue 286) - and again as it is stored. The lists of its
-    /// versions stay as they are.
+    /// Artifact `id`, reached for an act of its owner's by its own access
+    /// list (`GetArtifact`) and the clearance for its classification
+    /// (issue 312); a version's list reaches its content, not the artifact.
     ///
     /// # Errors
-    /// `NotFound` if there is none the caller may read, or what the store
+    /// `NotFound` if there is none the caller may read or is cleared for;
+    /// whatever else the store reports.
+    async fn reached(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<Artifact> {
+        let artifact = self.entities.get_artifact(ctx, id).await.map_err(store_error(id))?;
+        self.confidentiality.require_cleared_for(ctx, &artifact.classification, || ArtifactError::NotFound(id))?;
+        Ok(artifact)
+    }
+
+    /// Gives artifact `id` the access list `acl` for the whole of it (issue
+    /// 23) on behalf of `ctx`: reached, each group the list names newly read,
+    /// since who names one must read it (issue 286), then stored, which is
+    /// where its owner's act is asked (`UpdateArtifact`): whether the caller
+    /// reads a group tells them nothing of others (issue 312). The lists of
+    /// its versions stay as they are.
+    ///
+    /// # Errors
+    /// `NotFound` if there is none the caller may reach, or what the store
     /// reports - `PermissionDenied`, `Validation` for an entry that names
     /// an agent, the system or nobody, or a group the caller cannot read.
     pub async fn set_access(&self, ctx: &SecurityContext, id: ArtifactId, acl: Vec<AclEntry>) -> ArtifactResult<Artifact> {
         let _writing = self.writing.lock().await;
-        let mut artifact = self.entities.get_artifact(ctx, id).await.map_err(store_error(id))?;
-        self.security.require(ctx, ActionType::UpdateArtifact(&artifact.security_attributes), || StoreError::PermissionDenied).await?;
+        let mut artifact = self.reached(ctx, id).await?;
         crate::group::require_nameable(self.entities.as_ref(), ctx, &artifact.security_attributes.acl, &acl).await?;
         artifact.security_attributes.acl = acl;
         artifact.updated_at = Utc::now();
         self.entities.update_artifact(ctx, &artifact).await?;
-        self.events.publish(GlobalEvent::ArtifactUpdated(id), artifact.reader_attributes());
+        self.events.publish_classified(GlobalEvent::ArtifactUpdated(id), artifact.reader_attributes(), std::slice::from_ref(&artifact.classification));
         info!(artifact = %id, by = %ctx.caller_id, "Artifact's access changed");
         Ok(artifact)
     }
 
     /// Keeps artifact `id` in `scope` - its owner's or the global one -,
     /// beyond the session it was published in (`UpdateArtifact`, its
-    /// owner's act). Asked before the scope is looked at, which compares it
-    /// with the artifact's owner - the actor's own permission first (issue
-    /// 304) -, and by the store again as it stores.
+    /// owner's act, asked by the store). The scope is compared with the
+    /// artifact's owner before: that tells the caller nothing of others
+    /// (issue 312).
     ///
     /// # Errors
     /// `NotFound`, `InvalidScope` for another scope, or whatever the store
     /// reports - `PermissionDenied` and `NameTaken` among it.
     pub async fn keep(&self, ctx: &SecurityContext, id: ArtifactId, scope: Scope) -> ArtifactResult<Artifact> {
         let _writing = self.writing.lock().await;
-        let mut artifact = self.entities.get_artifact(ctx, id).await.map_err(store_error(id))?;
-        self.security.require(ctx, ActionType::UpdateArtifact(&artifact.security_attributes), || StoreError::PermissionDenied).await?;
+        let mut artifact = self.reached(ctx, id).await?;
         match (&scope, artifact.owner()) {
             (Scope::GlobalScope, _) => {}
             (Scope::UserScope { user_id }, Some(owner)) if *user_id == owner => {}
@@ -322,7 +334,7 @@ impl ArtifactManager {
         artifact.name.scope = scope;
         artifact.updated_at = Utc::now();
         self.entities.update_artifact(ctx, &artifact).await?;
-        self.events.publish(GlobalEvent::ArtifactUpdated(id), artifact.reader_attributes());
+        self.events.publish_classified(GlobalEvent::ArtifactUpdated(id), artifact.reader_attributes(), std::slice::from_ref(&artifact.classification));
         info!(artifact = %id, by = %ctx.caller_id, "Artifact kept");
         Ok(artifact)
     }
@@ -335,26 +347,30 @@ impl ArtifactManager {
     /// whatever the store reports - `PermissionDenied` among it.
     pub async fn describe(&self, ctx: &SecurityContext, id: ArtifactId, description: Option<&str>) -> ArtifactResult<Artifact> {
         let _writing = self.writing.lock().await;
-        let mut artifact = self.entities.get_artifact(ctx, id).await.map_err(store_error(id))?;
+        let mut artifact = self.reached(ctx, id).await?;
         artifact.description = Description::optional(description)?;
         artifact.updated_at = Utc::now();
         self.entities.update_artifact(ctx, &artifact).await?;
-        self.events.publish(GlobalEvent::ArtifactUpdated(id), artifact.reader_attributes());
+        self.events.publish_classified(GlobalEvent::ArtifactUpdated(id), artifact.reader_attributes(), std::slice::from_ref(&artifact.classification));
         Ok(artifact)
     }
 
     /// Deletes artifact `id` (`DeleteArtifact`), its content kept until it
-    /// is purged; `false` if there was none the caller could see.
+    /// is purged; `false` if there was none the caller could reach.
     ///
     /// # Errors
     /// Whatever the store reports, `PermissionDenied` included.
     pub async fn delete(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<bool> {
         let _writing = self.writing.lock().await;
-        let Some(artifact) = self.entities.get_artifact(ctx, id).await.optional()? else { return Ok(false) };
+        let artifact = match self.reached(ctx, id).await {
+            Ok(artifact) => artifact,
+            Err(ArtifactError::NotFound(_)) => return Ok(false),
+            Err(e) => return Err(e),
+        };
         if !self.entities.delete_artifact(ctx, id).await? {
             return Ok(false);
         }
-        self.events.publish(GlobalEvent::ArtifactDeleted(id), artifact.reader_attributes());
+        self.events.publish_classified(GlobalEvent::ArtifactDeleted(id), artifact.reader_attributes(), std::slice::from_ref(&artifact.classification));
         info!(artifact = %id, by = %ctx.caller_id, "Artifact deleted");
         Ok(true)
     }
@@ -368,7 +384,7 @@ impl ArtifactManager {
     pub async fn restore(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<Artifact> {
         let _writing = self.writing.lock().await;
         let artifact = self.entities.restore_artifact(ctx, id).await.map_err(store_error(id))?;
-        self.events.publish(GlobalEvent::ArtifactRestored(id), artifact.reader_attributes());
+        self.events.publish_classified(GlobalEvent::ArtifactRestored(id), artifact.reader_attributes(), std::slice::from_ref(&artifact.classification));
         info!(artifact = %id, by = %ctx.caller_id, "Artifact restored");
         Ok(artifact)
     }
@@ -402,7 +418,7 @@ impl ArtifactManager {
         let _writing = self.writing.lock().await;
         for artifact in self.entities.list_artifacts(&system, &within(holder)).await?.items {
             self.entities.delete_artifact(&system, artifact.id).await?;
-            self.events.publish(GlobalEvent::ArtifactDeleted(artifact.id), artifact.reader_attributes());
+            self.events.publish_classified(GlobalEvent::ArtifactDeleted(artifact.id), artifact.reader_attributes(), std::slice::from_ref(&artifact.classification));
         }
         Ok(())
     }
@@ -420,7 +436,7 @@ impl ArtifactManager {
         let _writing = self.writing.lock().await;
         for artifact in deleted_since(self.entities.list_deleted_artifacts(&system, &within(holder)).await?.items, since) {
             if let Some(restored) = unless_taken(self.entities.restore_artifact(&system, artifact.id).await, "artifact", &artifact.name)? {
-                self.events.publish(GlobalEvent::ArtifactRestored(restored.id), restored.reader_attributes());
+                self.events.publish_classified(GlobalEvent::ArtifactRestored(restored.id), restored.reader_attributes(), std::slice::from_ref(&restored.classification));
             }
         }
         Ok(())

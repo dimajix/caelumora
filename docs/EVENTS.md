@@ -32,6 +32,10 @@ entity it is about: the session's, the channel's, the agent's, or, for user even
 by that user. The bus keeps both together internally; subscribers only ever receive the
 `GlobalEvent`, and the attributes never leave the process.
 
+What is classified - a channel and what happens in it, a workspace, a skill, an artifact - is
+published with `publish_classified(event, attributes, classifications)`: its classification as
+well, or, as it is reclassified, the one it had and the one it has (issue 312).
+
 ### Subscribing as someone
 
 `subscribe_as(context)` receives the events about the entities `context` may read. It asks the
@@ -41,6 +45,11 @@ by the channel's attributes and are asked as reading the channel. A user's recor
 read, their profile only theirs, so `UserProfileUpdated`, which carries the profile, reaches nobody
 else. A deletion is decided by the attributes it was published with, since the entity is gone by
 then.
+
+An event published with classifications reaches only who is also cleared for one of them, as the
+views reach a classified entity: a reader of a channel they are not cleared for does not hear of
+it, as they do not find it. A reclassification reaches who was cleared for it before or is now, so
+that whoever no longer reaches it learns so.
 
 These subscriptions are served by one dispatcher task. The policy is asked asynchronously, and
 `publish` must not wait for it; a single task keeps every party's events in the order they were

@@ -252,6 +252,10 @@ impl ChannelLoop {
     ///   said, not taken back, or of an agent taking part;
     /// - an answer to an agent's questions (`AnswerQuestion`, issue 165) -
     ///   whether its sender was asked is the agent's to check;
+    /// - a user's answer to an approval request, by whoever may approve the
+    ///   calls of the agent it names (`ApproveToolCall`, issues 14, 312) -
+    ///   whether that agent asked is the approver's to check; a decision
+    ///   comes from an approver alone;
     /// - a command for an agent (issue 269) comes from a user and names an
     ///   agent taking part - whether the issuer may ask for it, its actor
     ///   asked of the agent's commands, and the agent asks again; a nudge
@@ -299,6 +303,15 @@ impl ChannelLoop {
             }
             ActorEvent::QuestionAnswered { .. } | ActorEvent::QuestionDeclined { .. } => {
                 self.security.require(context, ActionType::AnswerQuestion(&channel), forbidden).await
+            }
+            ActorEvent::ApprovalGranted(response) | ActorEvent::ApprovalDenied(response) if event.context.sender_id.as_user_id().is_some() => {
+                // As stored - never as the answer says.
+                let agent = self.controllers.agent_controller(response.agent_id).await.map_err(|_| Rejection::Invalid)?;
+                let agent = agent.load().security_attributes.clone();
+                self.security.require(context, ActionType::ApproveToolCall { agent: &agent, channel: &channel }, forbidden).await
+            }
+            ActorEvent::ApprovalGranted(_) | ActorEvent::ApprovalDenied(_) | ActorEvent::ApprovalTimedOut(_) => {
+                matches!(event.context.sender_id, ActorId::Approver(_)).then_some(()).ok_or(Rejection::Invalid)
             }
             ActorEvent::CommandRequested { agent, .. } => {
                 (event.context.sender_id.as_user_id().is_some() && agent.as_agent_id().is_some() && self.actor_by_id(*agent).is_some())

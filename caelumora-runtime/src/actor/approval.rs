@@ -9,7 +9,7 @@ use caelumora_model::approval::{ApprovalId, ApprovalRequest, ApprovalResponse, A
 use caelumora_model::channel::Participant;
 use crate::controller::{ChannelController, ControllerManager};
 use caelumora_model::event::GlobalEvent;
-use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityAttributes, SecurityContext, SecurityManager};
+use caelumora_model::security::{AccessQuestions, SecurityAttributes, SecurityContext, SecurityManager};
 use caelumora_model::value::name::Name;
 use chrono::{DateTime, Duration, Utc};
 use tracing::{info, warn};
@@ -139,10 +139,10 @@ impl ApproverActor {
                 self.handle_request(req, env.context, env.security, output).await
             }
             ActorEvent::ApprovalGranted(res) => {
-                self.handle_response(env.context.sender_id, &env.security, res, ApprovalStatus::Approved, output).await
+                self.handle_response(env.context.sender_id, res, ApprovalStatus::Approved, output).await
             }
             ActorEvent::ApprovalDenied(res) => {
-                self.handle_response(env.context.sender_id, &env.security, res, ApprovalStatus::Denied, output).await
+                self.handle_response(env.context.sender_id, res, ApprovalStatus::Denied, output).await
             }
             ActorEvent::ApprovalRequestWithdrawn { id } => {
                 self.handle_withdrawal(env.context.sender_id, id, output).await
@@ -189,19 +189,16 @@ impl ApproverActor {
         Ok(())
     }
 
-    /// Counts the answer of `user_id`, given in `security`, if they may
-    /// approve the calls of the agent that asked (`ApproveToolCall`, issue
-    /// 14); an answer of anyone else is left out. Only who may approve is
-    /// asked, so such an answer comes from a client going round what it was
-    /// shown, and is not told.
-    async fn handle_response(&self, user_id: ActorId, security: &SecurityContext, response: ApprovalResponse, status: ApprovalStatus, output: &dyn EventSender) -> Result<()> {
+    /// Counts the answer of `user_id` to the request it names. Whether they
+    /// may approve the calls of the agent it names was asked as the channel
+    /// admitted it (`ApproveToolCall`, issue 312), and a refusal told them
+    /// (`MessageRejected`); an answer naming another agent than the one that
+    /// asked is left out.
+    async fn handle_response(&self, user_id: ActorId, response: ApprovalResponse, status: ApprovalStatus, output: &dyn EventSender) -> Result<()> {
         let mut pending = self.pending.lock().await;
         let Some(p) = pending.get_mut(&response.id) else { return Ok(()) };
-        let Some(attributes) = self.attributes_of(p.agent_id).await else { return Ok(()) };
-        let channel = self.channel.load();
-        let action = ActionType::ApproveToolCall { agent: &attributes, channel: &channel.security_attributes };
-        if self.security.require(security, action, || ()).await.is_err() {
-            warn!("ApproverActor: {} may not approve the calls of agent {}; its answer is left out", user_id, p.agent_id);
+        if response.agent_id != p.agent_id {
+            warn!("ApproverActor: {} answered approval {} for agent {}, not for agent {} that asked; its answer is left out", user_id, response.id, response.agent_id, p.agent_id);
             return Ok(());
         }
         p.responses.insert(user_id, status);

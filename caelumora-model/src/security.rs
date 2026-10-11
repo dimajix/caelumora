@@ -309,11 +309,14 @@ pub enum Reclassified<'a> {
     /// A message of the channel, written by `author`; with the channel's
     /// attributes, since its owner owns what is in it.
     Message { author: ActorId, attributes: &'a SecurityAttributes },
-    /// A note, public or private, of the agent `author` in the channel.
-    Note { author: ActorId },
+    /// A note, public or private, of the agent `author` in the channel;
+    /// with the channel's attributes, as a message, for a policy that
+    /// decides by them (issue 312) - the ownership policy decides by
+    /// authorship alone.
+    Note { author: ActorId, attributes: &'a SecurityAttributes },
     /// An entry of the memory of the agent `author`, reclassified in the
-    /// channel.
-    Memory { author: ActorId },
+    /// channel with these attributes, as a note.
+    Memory { author: ActorId, attributes: &'a SecurityAttributes },
 }
 
 /// Who an entity belongs to and who else may reach it - what a policy
@@ -954,7 +957,7 @@ impl SecurityManager for OwnershipSecurityManager {
                 match target {
                     Reclassified::Channel { attributes } => owns(attributes),
                     Reclassified::Message { author, attributes } => owns(attributes) || author == context.caller_id,
-                    Reclassified::Note { author } | Reclassified::Memory { author } => author == context.caller_id,
+                    Reclassified::Note { author, .. } | Reclassified::Memory { author, .. } => author == context.caller_id,
                 }
             }
             // A message is its author's to change: who said it, not whom
@@ -1202,7 +1205,7 @@ mod tests {
         assert!(!may(stranger, message).await, "nobody else");
 
         let agent = ActorId::Agent(crate::agent::AgentId::new());
-        for own in [Reclassified::Note { author: agent }, Reclassified::Memory { author: agent }] {
+        for own in [Reclassified::Note { author: agent, attributes: &attributes }, Reclassified::Memory { author: agent, attributes: &attributes }] {
             assert!(may(agent, own).await, "an agent what it wrote");
             assert!(!may(owner, own).await, "not even the channel's owner another's");
         }

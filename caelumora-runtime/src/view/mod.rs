@@ -932,6 +932,13 @@ impl ViewsFactory {
         Self::of_actor(channel.new_actor_runtime(ActorId::None, session_id, ChannelId::new()))
     }
 
+    /// The attributes of the agent's own channel as it stands, by which an
+    /// act on what the agent keeps there is asked (`Reclassified::Note`,
+    /// issue 312); `None` while the actor is not attached to a channel.
+    pub(crate) fn channel_attributes(&self) -> Option<SecurityAttributes> {
+        self.actor.channel_loop().map(|channel| channel.security_attributes())
+    }
+
     /// The agent's own session, as it reads in `context` from `channel` at
     /// `classification`, if it may read it (`GetSession`, as `Views::session`
     /// asks, issue 304) - the agent by the group of the session's

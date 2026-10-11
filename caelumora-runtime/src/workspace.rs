@@ -186,15 +186,15 @@ impl WorkspaceManager {
         self.storages.get(&workspace.storage).ok_or_else(|| WorkspaceError::UnknownStorage(workspace.storage.clone()))
     }
 
-    /// Whether whoever `ctx` acts for may give `classification` to a
-    /// workspace in `storage`, and is cleared for it - as they would have
-    /// to be to read a channel so classified -, and whether the storage may
-    /// hold it: what is so classified flows into its destination, asked as
-    /// putting it there (issue 251) - all of it the `ConfidentialityPolicy`'s
-    /// (issue 304).
-    async fn require_classification(&self, ctx: &SecurityContext, storage: &str, provider: &dyn TerminalProvider, classification: &Classification) -> WorkspaceResult<()> {
+    /// Whether the storage `storage` may hold what is classified
+    /// `classification` - what is so classified flows into its destination,
+    /// asked as putting it there (issue 251) -, and whoever `ctx` acts for
+    /// is cleared for it, as they would have to be to read a channel so
+    /// classified: the flow, the `ConfidentialityPolicy`'s (issue 304).
+    /// Whether the classification may be given at all is validation, asked
+    /// before.
+    fn require_flow(&self, ctx: &SecurityContext, storage: &str, provider: &dyn TerminalProvider, classification: &Classification) -> WorkspaceResult<()> {
         let policy = &self.confidentiality;
-        policy.require_classifiable(classification, || WorkspaceError::ClassificationRefused)?;
         if let Some(destination) = provider.destination() {
             policy.require_publish(ctx, classification, destination, || WorkspaceError::StorageNotCleared(storage.to_string()))?;
         }
@@ -203,7 +203,10 @@ impl WorkspaceManager {
 
     /// Makes a workspace of the user `ctx` acts for, of `name` in `scope`,
     /// in `storage`: the document, then its place there. A place that
-    /// cannot be made leaves no document.
+    /// cannot be made leaves no document. What was asked for is validated,
+    /// then its flow asked; creating it (`CreateWorkspace`) is the store's
+    /// to ask, since nothing is changed and nothing of others asked before
+    /// (issue 312).
     ///
     /// # Errors
     /// `OwnerNotAUser`, `UnknownStorage`, `Invalid` for a name or
@@ -216,7 +219,8 @@ impl WorkspaceManager {
         let provider = self.storages.get(storage).ok_or_else(|| WorkspaceError::UnknownStorage(storage.to_string()))?;
         let mut workspace = Workspace::new(ScopedName::new(name, scope)?, storage, classification, owner);
         workspace.description = Description::optional(description)?;
-        self.require_classification(ctx, storage, provider.as_ref(), &workspace.classification).await?;
+        self.confidentiality.require_classifiable(&workspace.classification, || WorkspaceError::ClassificationRefused)?;
+        self.require_flow(ctx, storage, provider.as_ref(), &workspace.classification)?;
 
         let _writing = self.writing.lock().await;
         self.entities.create_workspace(ctx, &workspace).await?;
@@ -231,7 +235,7 @@ impl WorkspaceManager {
             }
             return Err(e.into());
         }
-        self.events.publish(GlobalEvent::WorkspaceCreated(workspace.id), workspace.security_attributes.clone());
+        self.events.publish_classified(GlobalEvent::WorkspaceCreated(workspace.id), workspace.security_attributes.clone(), std::slice::from_ref(&workspace.classification));
         info!(workspace = %workspace.id, storage, by = %ctx.caller_id, "Workspace created");
         Ok(workspace)
     }
@@ -263,25 +267,32 @@ impl WorkspaceManager {
     }
 
     /// Gives workspace `id` the access list `acl` (issue 23) on behalf of
-    /// `ctx`: its owner's act (`UpdateWorkspace`), asked before a group the
-    /// list names newly is looked at - who names one must read it (issue
-    /// 286) - and again as it is stored. Announced without the list, which
-    /// only its owner sees.
+    /// `ctx`: reached as the views reach it, each group the list names newly
+    /// read - who names one must read it (issue 286) -, then stored, which
+    /// is where its owner's act is asked (`UpdateWorkspace`): whether the
+    /// caller reads a group tells them nothing of others (issue 312).
+    /// Announced without the list, which only its owner sees.
     ///
     /// # Errors
-    /// `NotFound` if there is none the caller may read, a `StoreError` -
-    /// `PermissionDenied` for anyone but its owner, `Validation` for an
-    /// entry that names an agent, the system or nobody, or a group the
-    /// caller cannot read.
+    /// `NotFound` if there is none the caller may read or is cleared for, a
+    /// `StoreError` - `PermissionDenied` for anyone but its owner,
+    /// `Validation` for an entry that names an agent, the system or nobody,
+    /// or a group the caller cannot read.
     pub async fn set_access(&self, ctx: &SecurityContext, id: WorkspaceId, acl: Vec<AclEntry>) -> WorkspaceResult<Workspace> {
         let _writing = self.writing.lock().await;
-        let mut workspace = self.entities.get_workspace(ctx, id).await.map_err(store_error(id))?;
-        self.security.require(ctx, ActionType::UpdateWorkspace(&workspace.security_attributes), || StoreError::PermissionDenied).await?;
+        let workspace = self.reached(ctx, id, Grant::Read).await?;
+        self.store_access(ctx, workspace, acl).await
+    }
+
+    /// Gives the reached `workspace` the access list `acl`, as `set_access`
+    /// says, under the lock of writing.
+    async fn store_access(&self, ctx: &SecurityContext, mut workspace: Workspace, acl: Vec<AclEntry>) -> WorkspaceResult<Workspace> {
+        let id = workspace.id;
         crate::group::require_nameable(self.entities.as_ref(), ctx, &workspace.security_attributes.acl, &acl).await?;
         workspace.security_attributes.acl = acl;
         workspace.updated_at = chrono::Utc::now();
         self.entities.update_workspace(ctx, &workspace).await.map_err(store_error(id))?;
-        self.events.publish(GlobalEvent::WorkspaceUpdated(id, WorkspaceUpdateEvent::AccessChanged), workspace.security_attributes.clone());
+        self.events.publish_classified(GlobalEvent::WorkspaceUpdated(id, WorkspaceUpdateEvent::AccessChanged), workspace.security_attributes.clone(), std::slice::from_ref(&workspace.classification));
         info!(workspace = %id, by = %ctx.caller_id, "Workspace's access changed");
         Ok(workspace)
     }
@@ -293,33 +304,41 @@ impl WorkspaceManager {
     /// # Errors
     /// As [`Self::set_access`].
     pub async fn share(&self, ctx: &SecurityContext, id: WorkspaceId, subject: Subject, grant: Grant) -> WorkspaceResult<Workspace> {
-        let workspace = self.entities.get_workspace(ctx, id).await.map_err(store_error(id))?;
+        let _writing = self.writing.lock().await;
+        let workspace = self.reached(ctx, id, Grant::Read).await?;
         let mut acl = workspace.security_attributes.acl.clone();
         if acl.iter().any(|entry| entry.subject == subject && entry.grant.covers(grant)) {
             return Ok(workspace);
         }
         acl.retain(|entry| entry.subject != subject);
         acl.push(AclEntry { subject, grant });
-        self.set_access(ctx, id, acl).await
+        self.store_access(ctx, workspace, acl).await
     }
 
-    /// Applies `event` to workspace `id` on behalf of `ctx`: stored first,
-    /// which is where the permission is checked (`UpdateWorkspace`), then
-    /// announced.
+    /// Applies `event` to workspace `id` on behalf of `ctx`: reached as the
+    /// views reach it, stored, which is where the permission is checked
+    /// (`UpdateWorkspace`), then announced. A new classification is
+    /// validated and its flow asked before: it tells the caller nothing of
+    /// others (issue 312).
     ///
     /// # Errors
-    /// `NotFound` if there is none the caller may read, `Invalid` if what
-    /// `event` says does not fit, `ClassificationRefused` or `NotCleared`
-    /// for a classification, or whatever the store reports.
+    /// `NotFound` if there is none the caller may read or is cleared for,
+    /// `Invalid` if what `event` says does not fit,
+    /// `ClassificationRefused`, `StorageNotCleared` or `NotCleared` for a
+    /// classification, or whatever the store reports.
     async fn update(&self, ctx: &SecurityContext, id: WorkspaceId, event: WorkspaceUpdateEvent) -> WorkspaceResult<Workspace> {
         let _writing = self.writing.lock().await;
-        let mut workspace = self.entities.get_workspace(ctx, id).await.map_err(store_error(id))?;
+        let mut workspace = self.reached(ctx, id, Grant::Read).await?;
+        // Announced to who reaches it as it was, too: who no longer does
+        // learns so (issue 312).
+        let had = workspace.classification.clone();
         match &event {
             WorkspaceUpdateEvent::NameChanged(name) => workspace.name = ScopedName::new(name, workspace.name.scope.clone())?,
             WorkspaceUpdateEvent::DescriptionChanged(description) => workspace.description = Description::optional(description.as_deref())?,
             WorkspaceUpdateEvent::ClassificationChanged(classification) => {
                 let provider = Arc::clone(self.provider(&workspace)?);
-                self.require_classification(ctx, &workspace.storage, provider.as_ref(), classification).await?;
+                self.confidentiality.require_classifiable(classification, || WorkspaceError::ClassificationRefused)?;
+                self.require_flow(ctx, &workspace.storage, provider.as_ref(), classification)?;
                 workspace.classification = classification.clone();
             }
             // Changed by `set_access`, which announces it without the list.
@@ -327,24 +346,28 @@ impl WorkspaceManager {
         }
         workspace.updated_at = chrono::Utc::now();
         self.entities.update_workspace(ctx, &workspace).await.map_err(store_error(id))?;
-        self.events.publish(GlobalEvent::WorkspaceUpdated(id, event), workspace.security_attributes.clone());
+        self.events.publish_classified(GlobalEvent::WorkspaceUpdated(id, event), workspace.security_attributes.clone(), &[had, workspace.classification.clone()]);
         info!(workspace = %id, by = %ctx.caller_id, "Workspace changed");
         Ok(workspace)
     }
 
     /// Deletes workspace `id` (`DeleteWorkspace`): marked, its files kept.
     /// A session it is attached to reads it as absent. `false` if there was
-    /// none the caller could see.
+    /// none the caller could reach, as the views reach it.
     ///
     /// # Errors
     /// Whatever the store reports, `PermissionDenied` included.
     pub async fn delete(&self, ctx: &SecurityContext, id: WorkspaceId) -> WorkspaceResult<bool> {
         let _writing = self.writing.lock().await;
-        let Some(workspace) = self.entities.get_workspace(ctx, id).await.optional()? else { return Ok(false) };
+        let workspace = match self.reached(ctx, id, Grant::Read).await {
+            Ok(workspace) => workspace,
+            Err(WorkspaceError::NotFound(_)) => return Ok(false),
+            Err(e) => return Err(e),
+        };
         if !self.entities.delete_workspace(ctx, id).await? {
             return Ok(false);
         }
-        self.events.publish(GlobalEvent::WorkspaceDeleted(id), workspace.security_attributes);
+        self.events.publish_classified(GlobalEvent::WorkspaceDeleted(id), workspace.security_attributes, std::slice::from_ref(&workspace.classification));
         info!(workspace = %id, by = %ctx.caller_id, "Workspace deleted");
         Ok(true)
     }
@@ -358,7 +381,7 @@ impl WorkspaceManager {
     pub async fn restore(&self, ctx: &SecurityContext, id: WorkspaceId) -> WorkspaceResult<Workspace> {
         let _writing = self.writing.lock().await;
         let workspace = self.entities.restore_workspace(ctx, id).await.map_err(store_error(id))?;
-        self.events.publish(GlobalEvent::WorkspaceRestored(id), workspace.security_attributes.clone());
+        self.events.publish_classified(GlobalEvent::WorkspaceRestored(id), workspace.security_attributes.clone(), std::slice::from_ref(&workspace.classification));
         info!(workspace = %id, by = %ctx.caller_id, "Workspace restored");
         Ok(workspace)
     }
@@ -395,9 +418,7 @@ impl WorkspaceManager {
     /// files where `need` asks to; or whatever else the store reports.
     pub(crate) async fn reached(&self, ctx: &SecurityContext, id: WorkspaceId, need: Grant) -> WorkspaceResult<Workspace> {
         let workspace = self.entities.get_workspace(ctx, id).await.map_err(store_error(id))?;
-        if !self.confidentiality.cleared_for(ctx, &workspace.classification) {
-            return Err(WorkspaceError::NotFound(id));
-        }
+        self.confidentiality.require_cleared_for(ctx, &workspace.classification, || WorkspaceError::NotFound(id))?;
         if need == Grant::Write {
             self.security.require(ctx, ActionType::WriteWorkspace(&workspace.security_attributes), || WorkspaceError::ReadOnly(id)).await?;
         }
@@ -449,7 +470,7 @@ impl WorkspaceManager {
         let _writing = self.writing.lock().await;
         for workspace in self.entities.list_workspaces(&system, &within(holder)).await?.items {
             self.entities.delete_workspace(&system, workspace.id).await?;
-            self.events.publish(GlobalEvent::WorkspaceDeleted(workspace.id), workspace.security_attributes);
+            self.events.publish_classified(GlobalEvent::WorkspaceDeleted(workspace.id), workspace.security_attributes, std::slice::from_ref(&workspace.classification));
         }
         Ok(())
     }
@@ -467,7 +488,7 @@ impl WorkspaceManager {
         let _writing = self.writing.lock().await;
         for workspace in deleted_since(self.entities.list_deleted_workspaces(&system, &within(holder)).await?.items, since) {
             if let Some(restored) = unless_taken(self.entities.restore_workspace(&system, workspace.id).await, "workspace", &workspace.name)? {
-                self.events.publish(GlobalEvent::WorkspaceRestored(restored.id), restored.security_attributes);
+                self.events.publish_classified(GlobalEvent::WorkspaceRestored(restored.id), restored.security_attributes, std::slice::from_ref(&restored.classification));
             }
         }
         Ok(())

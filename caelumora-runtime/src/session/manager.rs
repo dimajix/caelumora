@@ -6,6 +6,7 @@ use crate::runtime::RuntimeManager;
 use crate::event::EventBus;
 use anyhow::Result;
 use caelumora_model::channel::{Channel, ChannelField};
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{ActionType, Enforcement, SecurityAttributes, SecurityContext, SecurityManager, Subject};
 use crate::view::{Viewer, Views};
@@ -147,10 +148,14 @@ impl SessionManager {
         let store = &self.entities;
         let template = store.get_session_template(context, template_id).await?;
         let id = SessionId::new();
+        // Its own verb before anything of others is asked or anything is
+        // found or made for it (issue 312): who may not create the session
+        // learns nothing of the agents, the workspace or anyone's clearance.
+        self.security.require(context, ActionType::CreateSession(&Session::attributes_of(id, owner)), || StoreError::PermissionDenied).await?;
         // One of the user's chosen is asked about before anything is made.
         let existing = match &workspace {
             Some(WorkspaceChoice::Existing { id: chosen, share }) => {
-                require_attachable(self.security.as_ref(), store.as_ref(), context, *chosen, id).await?;
+                require_attachable(self.runtime_manager.workspace_manager(), self.security.as_ref(), context, *chosen, id).await?;
                 Some((*chosen, *share))
             }
             _ => None,
@@ -172,7 +177,7 @@ impl SessionManager {
             None => existing.map(|(chosen, _)| (chosen, false)),
         };
         session.workspace = workspace.as_ref().map(|(found, _)| *found);
-        match self.create_session(context, session, channels).await {
+        match self.establish(context, session, channels).await {
             Ok(session_loop) => {
                 // Shared once the session it is shared with exists (issue 23).
                 if let Some((chosen, Some(grant))) = existing {
@@ -193,16 +198,30 @@ impl SessionManager {
         }
     }
 
-    /// Create a brand-new session with its `channels`: persist them - the
-    /// channels as documents of their own (issue 70) - announce their
-    /// existence, then start the session.
+    /// Creates a brand-new session with its `channels`, as a template
+    /// would: asks to create it (`CreateSession`) before anything else.
+    #[cfg(test)]
     pub(crate) async fn create_session(&self, context: &SecurityContext, session: Session, channels: Vec<Channel>) -> Result<Arc<SessionLoop>> {
+        self.security.require(context, ActionType::CreateSession(&session.security_attributes), || StoreError::PermissionDenied).await?;
+        self.establish(context, session, channels).await
+    }
+
+    /// Establishes the brand-new `session` with its `channels`, whose
+    /// creation `context` was asked for (`CreateSession`) before anything
+    /// was found or made for it: persists them - the channels as documents
+    /// of their own (issue 70) -, announces their existence, then starts
+    /// the session. The classifications are validated and every
+    /// participant's admission asked first; the store asks to create the
+    /// session again and each channel as it stores them.
+    async fn establish(&self, context: &SecurityContext, session: Session, channels: Vec<Channel>) -> Result<Arc<SessionLoop>> {
         let id = session.id;
         let start = self.start_lock(id);
         let _starting = start.lock().await;
 
         for channel in &channels {
             require_classification(&self.runtime_manager, &channel.classification)?;
+        }
+        for channel in &channels {
             crate::channel::require_admitted(&self.runtime_manager, context, channel).await?;
         }
         let store = &self.entities;
@@ -235,7 +254,7 @@ impl SessionManager {
         let event_bus = &self.events;
         event_bus.publish(GlobalEvent::SessionCreated(id), session.security_attributes.clone());
         for channel in &channels {
-            event_bus.publish(GlobalEvent::ChannelCreated(id, channel.id), channel.security_attributes.clone());
+            event_bus.publish_classified(GlobalEvent::ChannelCreated(id, channel.id), channel.security_attributes.clone(), std::slice::from_ref(&channel.classification));
         }
 
         self.spawn_session(session, channels).await
@@ -336,15 +355,15 @@ impl SessionManager {
         // Captured before the runtime loop is torn down.
         // The events carry the attributes as they were: once deleted, the
         // session is nowhere to look them up (issue 39).
-        let channels: Vec<(ChannelId, SecurityAttributes)> = self.load_channels(&session).await?.into_iter()
-            .map(|c| (c.id, c.security_attributes))
+        let channels: Vec<(ChannelId, SecurityAttributes, Classification)> = self.load_channels(&session).await?.into_iter()
+            .map(|c| (c.id, c.security_attributes, c.classification))
             .collect();
 
         self.stop_running(id).await;
 
         let event_bus = &self.events;
-        for (channel_id, attributes) in channels {
-            event_bus.publish(GlobalEvent::ChannelDeleted(id, channel_id), attributes);
+        for (channel_id, attributes, classification) in channels {
+            event_bus.publish_classified(GlobalEvent::ChannelDeleted(id, channel_id), attributes, &[classification]);
         }
 
         // Marked, not removed (issue 164): its channels and their state stay

@@ -79,14 +79,15 @@ impl SessionLoop {
     ///
     /// # Errors
     /// `StoreError::PermissionDenied` if `context` may not change the
-    /// session or share the workspace, `StoreError::NotFound` if there is
-    /// no workspace they may read, `SessionError::WorkspaceOutOfScope`, or
+    /// session or share the workspace, `WorkspaceError::NotFound` if there
+    /// is no workspace they may read or are cleared for,
+    /// `SessionError::WorkspaceOutOfScope`, or
     /// whatever else storing reports.
     pub async fn set_workspace(&self, context: &SecurityContext, workspace: Option<WorkspaceId>, share: Option<Grant>) -> Result<()> {
         let session = self.session();
         self.security.require(context, ActionType::UpdateSession(&session.security_attributes), || StoreError::PermissionDenied).await?;
         if let Some(id) = workspace {
-            require_attachable(self.security.as_ref(), self.entities.as_ref(), context, id, self.id).await?;
+            require_attachable(self.runtime_manager.workspace_manager(), self.security.as_ref(), context, id, self.id).await?;
         }
         self.session_controller.update_workspace(context, workspace).await?;
         if let (Some(id), Some(grant)) = (workspace, share) {

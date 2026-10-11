@@ -190,7 +190,9 @@ clearances each grants; the user provider gives users their roles. A user's clea
 their roles'; an agent's are its owner's, since it must not see more than the person responsible for
 it. Both come with the `SecurityContext`: its roles, and the roles its caller is limited to, which
 have to clear as well. A user whose roles grant nothing sees only what is public. Without a `roles`
-section, clearances are not checked.
+section, clearances are not checked. The system is cleared for everything, as it may do everything
+(`ConfidentialityQuestions::cleared_for`, issue 312): what the runtime does in its own name -
+cleaning up, deleting with a scope - reaches what it acts on.
 
 ### Personalities limit their agents
 
@@ -462,11 +464,12 @@ the one Caelumora applies. It decides from the context, the classifications and 
 *   and it names the configured compartments, by which a classification is valid at all
     (`require_classifiable`) - validation, not a permission.
 
-An act that moves information asks its own permission of the `SecurityManager` first, then the flow.
-The two are orthogonal: a superuser who may act against both would need a hook in both, which is
-accepted. A policy outside the binary, such as Open Policy Agent
-([24](../issues/24-opa-security-manager.md)), states both. `allow_all` allows every action, but no
-flow the rules refuse.
+An act that moves information asks its own permission of the `SecurityManager` and the flow; in
+which order is [SECURITY.md](SECURITY.md#operations-that-check-themselves)'s - the flow of the
+actor's own request may come first, since it tells them nothing of others. The two are orthogonal: a
+superuser who may act against both would need a hook in both, which is accepted. A policy outside
+the binary, such as Open Policy Agent ([24](../issues/24-opa-security-manager.md)), states both.
+`allow_all` allows every action, but no flow the rules refuse.
 
 ## Open questions
 
@@ -475,8 +478,7 @@ flow the rules refuse.
     ([139](../issues/139-mcp-result-classification.md)). Configuring a tool with a classification is
     trusted: it is not checked as one that can be given.
 *   **Roles from directories.** Roles come from the configuration of the user provider; mapping
-    directory groups to roles is [142](../issues/142-roles.md). Events about a channel without
-    content - a reclassification, say - still reach whoever may read the channel, cleared or not.
+    directory groups to roles is [142](../issues/142-roles.md).
 *   **Sessions.** An agent's memory is so far the one way across sessions; whoever is added to a
     channel later sees what it drew from other sessions
     ([143](../issues/143-joining-a-channel-with-foreign-knowledge.md)).
