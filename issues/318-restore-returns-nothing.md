@@ -77,3 +77,6 @@ The first two together are the answer.
 
 - **2026-10-11** — Opened at the maintainer's request, after checking every caller of a store's
   `restore_…`: all of them need the entity afterwards, and four read it again under `Read`.
+- **2026-10-11** — [314](314-session-manager-handles-agents.md) moved
+  `SessionManager::restore_agent` to `AgentManager::restore`, which still rebuilds the agent and
+  returns it; the table above names it by its old place.

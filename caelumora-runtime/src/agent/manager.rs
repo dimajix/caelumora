@@ -12,7 +12,7 @@
 //! the views show it as a former member, removed as its mark says.
 
 use crate::event::EventBus;
-use caelumora_model::agent::AgentId;
+use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
 use caelumora_model::store::{EntityStore, StateStore, StoreError, StoreResult, StoreResultExt};
@@ -68,19 +68,20 @@ impl AgentManager {
     /// Restores the deleted agent `id` on behalf of `context` (issues 164,
     /// 314): its mark taken away, with its state. It takes part again in
     /// every channel it rested in - a running one starts its actor as it
-    /// learns of it (`SessionLoop`).
+    /// learns of it (`SessionLoop`). Returns the agent as it is restored.
     ///
     /// # Errors
     /// `StoreError::NotFound` if there is no such deleted agent or
     /// `context` may not see it, `StoreError::PermissionDenied` if they may
     /// but not restore it, `StoreError::NameTaken` if another agent took its
     /// name in its scope meanwhile (issue 250).
-    pub async fn restore(&self, context: &SecurityContext, id: AgentId) -> StoreResult<()> {
+    pub async fn restore(&self, context: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
         let deleted = self.entities.get_deleted_agent(context, id).await?;
         self.entities.restore_agent(context, id).await?;
-        self.events.publish(GlobalEvent::AgentRestored(id), deleted.security_attributes);
+        let agent = Agent { deleted: None, ..deleted };
+        self.events.publish(GlobalEvent::AgentRestored(id), agent.security_attributes.clone());
         info!("Agent {} restored by {}", id, context.caller_id);
-        Ok(())
+        Ok(agent)
     }
 
     /// Removes the deleted agent `id` for good on behalf of `context` (issue
