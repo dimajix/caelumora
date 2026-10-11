@@ -29,7 +29,6 @@ use super::commands::AgentCommands;
 use super::intake::{catch_up, take_in};
 use super::{failure_message, reject_retries};
 use crate::actor::{Actor, Answering};
-use crate::command::CommandResult;
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::agent::state::AgentStateHandle;
 use crate::component_impl::external_context_provider::EXTERNAL_CONTEXT_PROVIDER_KIND;
@@ -896,10 +895,6 @@ impl Actor for ExternalAgentActor {
 
     async fn commands(&self, issuer: &SecurityContext) -> Vec<Command> {
         self.commands.visible(issuer).await
-    }
-
-    async fn admit_command(&self, name: &str, issuer: &SecurityContext) -> CommandResult<Command> {
-        self.commands.admit(name, issuer).await
     }
 
     /// Takes in what it missed as what it hears (issues 190, 196, 206); the

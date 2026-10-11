@@ -4397,6 +4397,11 @@ mod tests {
     /// out `/mark`, idle after it answered alice's "hello" - or asleep, if
     /// it said good-bye.
     async fn with_a_marking_agent(asleep: bool) -> Stuck {
+        with_a_marking_agent_under(Arc::new(DummySecurityManager::new()), asleep).await
+    }
+
+    /// `with_a_marking_agent`, under `security`.
+    async fn with_a_marking_agent_under(security: Arc<dyn SecurityManager>, asleep: bool) -> Stuck {
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         use caelumora_model::message::MessageRole;
         use caelumora_model::tool::{ToolCall, ToolVisibility};
@@ -4411,7 +4416,7 @@ mod tests {
             ComponentDescriptor::new("marking", "test_marking"),
             ComponentDescriptor::new("stop", crate::tool::stop_tool::STOP_TOOL_KIND),
         ] };
-        let mut stuck = with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([hi].into()))), components).await;
+        let mut stuck = with_an_agent_under(security, Arc::new(Scripted(std::sync::Mutex::new([hi].into()))), components).await;
         answered(&mut stuck.events, stuck.agent).await;
         settled(&stuck.helper, if asleep { ActorState::Sleeping } else { ActorState::Idle }).await;
         stuck
@@ -4471,6 +4476,29 @@ mod tests {
         assert!(recorded, "the channel's history records what was carried out, and on whose word");
         assert_eq!(told_states(&mut watch.events, agent, ActorState::Idle).await, [ActorState::Idle], "idle again after, and no answer begun");
         assert_eq!(helper.state(), ActorState::Idle);
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn a_command_its_issuer_may_see_but_not_ask_for_is_refused_by_the_agent_alone() {
+        let seen_not_asked = Policy(|action| !matches!(action, ActionType::ExecuteAgentCommand { .. }));
+        let Stuck { channel, context, agent, running, .. } = with_a_marking_agent_under(Arc::new(seen_not_asked), false).await;
+        let alice = alice_of(&context);
+        let actor = channel.user_actor(alice).unwrap();
+        let mut watch = actor.watch();
+        let before = channel.state.lock().await.history.items().len();
+
+        // Her actor finds the agent by what she sees and asks nothing more:
+        // the agent decides, once, as it carries it out (issue 304).
+        let reply = actor.execute_command("mark", "@helper twice").await.expect("sent: the agent decides");
+        assert!(reply.output.is_none() && reply.span_id.is_some(), "{reply:?}");
+        let (started, _, answer) = command_events(&mut watch).await;
+        assert!(started.is_none(), "never begun");
+        let ActorEvent::CommandFailed { command, to, turn_id, .. } = answer.event else { panic!("refused, not {:?}", answer.event) };
+        assert_eq!((command.as_str(), to, turn_id), ("mark", ActorId::User(alice), None), "to her alone");
+        let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+        assert!(state.notes.current().is_empty() && state.turn.is_none(), "nothing staged, no turn left");
+        assert_eq!(channel.state.lock().await.history.items().len(), before, "nothing in the channel's history");
         running.abort();
     }
 

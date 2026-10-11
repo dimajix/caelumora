@@ -13,7 +13,6 @@ use crate::context::ContextProvider;
 use crate::llm::LLMClient;
 use crate::message::{EmitOutProcessor, PerceiveInProcessor};
 use crate::runtime::ActorRuntime;
-use crate::command::CommandResult;
 use crate::tool::{ToolExecutor, ToolProvider};
 use crate::transport::{EventReceiver, EventSender};
 use anyhow::{anyhow, Context, Result};
@@ -929,10 +928,6 @@ impl Actor for AgentActor {
 
     async fn commands(&self, issuer: &SecurityContext) -> Vec<Command> {
         self.commands.visible(issuer).await
-    }
-
-    async fn admit_command(&self, name: &str, issuer: &SecurityContext) -> CommandResult<Command> {
-        self.commands.admit(name, issuer).await
     }
 
     /// Takes in what it missed as what it hears (issues 190, 196): all of

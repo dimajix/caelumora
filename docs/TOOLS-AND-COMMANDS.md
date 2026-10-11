@@ -600,10 +600,12 @@ agent alike.
     unknown.
 *   **Sent, then carried out.** `UserActor::execute_command` asks the session's commands first; a
     command they do not know it looks for among the agents of the channel
-    (`ChannelLoop::agent_commands`, what each agent carries out as the issuer may see it). It asks
-    each agent named whether the issuer may ask it (`Actor::admit_command`) - so that a refusal is
-    told at once - and sends `ActorEvent::CommandRequested { command, args, agent }` through its
-    own transport, one per agent under one span, with no wakeup ahead of it. The channel admits it
+    (`ChannelLoop::agent_commands`, what each agent carries out as the issuer may see it). That is
+    offering: it asks the policy through the agent's executor directly, not through the agent's
+    queue, so it answers at once while the agent is busy. It asks nothing more - whether the issuer
+    may ask for the command is the agent's to decide (below, issue 304) - and sends
+    `ActorEvent::CommandRequested { command, args, agent }` through its own transport, one per
+    agent named under one span, with no wakeup ahead of it. The channel admits it
     only from a user to an agent taking part; the moderator routes it to that agent alone. A quiet
     channel delivers it as well.
 *   **Where it came.** The agent takes in what it was told up to the command (`take_in` ends the
@@ -613,13 +615,15 @@ agent alike.
     is under way waits for it.
 *   **In a turn of its own.** The agent begins a command turn
     (`AgentChannelState::begin_command_turn`) in the request's contexts continued in its name - its
-    owner's rights, the issuer as initiator
-    ([SECURITY.md](SECURITY.md#in-whose-name-an-agent-acts)) - and its executor asks again, in the
-    context the request came with, whether the issuer may ask for it. The component stages what
-    the command changes, as a tool does. Carried out, the turn is taken over and stored; not carried
-    out, it is dropped as if it had never begun. A command turn is no answer: it announces no
-    answer's start nor end, asks nobody to respond, can be neither cancelled nor asked for again,
-    and is never stored under way - one found after a restart is dropped, unanswered.
+    owner's rights, the issuer as initiator ([SECURITY.md](SECURITY.md#in-whose-name-an-agent-acts))
+    - and its executor asks, in the context the request came with, whether the issuer may ask for
+    it: the one place it is asked (issue 304). Refused, the agent answers `CommandFailed` to the
+    issuer, the turn dropped; the refusal comes when the agent takes the request in, as its answer
+    would. The component stages what the command changes, as a tool does. Carried out, the turn is
+    taken over and stored; not carried out, it is dropped as if it had never begun. A command turn
+    is no answer: it announces no answer's start nor end, asks nobody to respond, can be neither
+    cancelled nor asked for again, and is never stored under way - one found after a restart is
+    dropped, unanswered.
 *   **Begun** (issue 299). Admitted, the agent tells the issuer alone that it began -
     `ActorEvent::CommandStarted` with the turn's id, which its answer carries too -, whatever its
     answer's visibility: for `/compact`, the issuer sees it begin and everybody sees it done. An

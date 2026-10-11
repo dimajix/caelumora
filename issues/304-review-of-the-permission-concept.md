@@ -639,3 +639,17 @@ where they test the door.
   message from what it shows by a history entry of its own. The map (`docs/PERMISSION-CHECKS.md`)
   is redone in step 5. No stored data changes.
 
+- **2026-10-11** — Step 3, where agent commands are admitted, decided by the maintainer (option A)
+  and done: a command of an agent is the agent's act, so the agent alone asks whether the issuer
+  may ask for it (`ExecuteAgentCommand`), once, as it carries it out (`carry_out`), and answers a
+  refusal with `CommandFailed`, which existed already. The issuer's actor finds whom they name by
+  what they see of the agents' commands (`ShowAgentCommand`, offering in the sense of rule 5) and
+  asks nothing more; `Actor::admit_command` is gone, and so is the reply naming agents not asked
+  of `@all`. The channel keeps to the form of the request, as before. Option B - the channel
+  asking the agent's executor as it admits the request - was rejected: it would make the channel
+  answer for the agent's components, and the gap between admission and carrying out would make
+  the agent ask again. Checked on the way, at the maintainer's question: the list of an agent's
+  commands is no event and does not wait in its queue - `Actor::commands` asks the policy through
+  its executor directly, uncached, for the member snapshot, `/help` and finding whom a command
+  names. Only the refusal of a command one may see but not ask for comes as late as the agent
+  takes the request in; under the ownership policy both are decided by one rule.

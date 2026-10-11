@@ -5,7 +5,7 @@
 use super::Answering;
 use crate::agent::state::AgentStateHandle;
 use crate::agent::turn::Turn;
-use crate::command::{AgentCommandProvider, CommandError, CommandExecutor, CommandResult};
+use crate::command::{AgentCommandProvider, CommandError, CommandExecutor};
 use crate::component::{ComponentContainer, ComponentError, ComponentResult};
 use crate::controller::AgentController;
 use crate::runtime::ActorRuntime;
@@ -79,23 +79,13 @@ impl AgentCommands {
         self.executor.visible(issuer, &agent, &channel.security_attributes()).await
     }
 
-    /// The command `name`, if `issuer` may ask the agent for it in its
-    /// channel.
-    ///
-    /// # Errors
-    /// As `CommandExecutor::admitted`; `Unknown` without a channel.
-    pub(super) async fn admit(&self, name: &str, issuer: &SecurityContext) -> CommandResult<Command> {
-        let Some(channel) = self.runtime.channel_loop() else { return Err(CommandError::Unknown(name.to_string())) };
-        let agent = self.agent.load().security_attributes.clone();
-        self.executor.admitted(name, issuer, &agent, &channel.security_attributes()).await.map(|admitted| admitted.command().clone())
-    }
-
     /// Carries out the `CommandRequested` in `request` in a turn of its own,
     /// begun on `state` in the request's contexts continued in the agent's
     /// name (`Answering::to`): its owner's rights, whoever asked its
-    /// initiator. The executor asks again, in the context the request came
-    /// with, whether the issuer may ask for it; admitted, the agent tells the
-    /// issuer alone that it began (`CommandStarted`, issue 299).
+    /// initiator. The executor asks, in the context the request came with,
+    /// whether the issuer may ask for it - the one place that is asked
+    /// (issue 304); admitted, the agent tells the issuer alone that it began
+    /// (`CommandStarted`, issue 299), refused it answers `CommandFailed`.
     ///
     /// Carried out, the turn is taken over - what the command staged applied,
     /// the command recorded before the turn's end - and stored, and the

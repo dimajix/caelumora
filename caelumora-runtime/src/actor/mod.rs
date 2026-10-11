@@ -16,7 +16,6 @@ use std::any::Any;
 use std::fmt::Debug;
 use tracing::warn;
 
-use crate::command::{CommandError, CommandResult};
 use crate::transport::{EventReceiver, EventSender};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, RetryTarget};
 use caelumora_model::agent::RetryRefused;
@@ -81,17 +80,6 @@ pub(crate) trait Actor: Any + Debug + Send + Sync {
     /// user, an approver, an agent whose personality provides none.
     async fn commands(&self, _issuer: &SecurityContext) -> Vec<Command> {
         Vec::new()
-    }
-
-    /// The command `name`, if `issuer` may ask it to carry it out (issue
-    /// 269) - asked before the request is sent, so that the issuer learns
-    /// of a refusal at once; the actor asks again as it carries it out.
-    ///
-    /// # Errors
-    /// `CommandError::Unknown` if it has no such command or the issuer may
-    /// not see it, `Forbidden` if they may see but not ask for it.
-    async fn admit_command(&self, name: &str, _issuer: &SecurityContext) -> CommandResult<Command> {
-        Err(CommandError::Unknown(name.to_string()))
     }
 
     /// Wakes the actor from `Sleeping`. Synchronous and infallible on

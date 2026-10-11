@@ -3252,8 +3252,9 @@ fn about_agent_commands(asked: &[String]) -> Vec<&str> {
 /// A command of an agent (issue 269) is seen and asked for by whoever may
 /// write in the channel - bob, taking part -, unless it is for the agent's
 /// owners alone: `/seal` bob neither sees nor asks for, alice, the agent's
-/// owner, does. Bob's actor asks before it sends, and the agent asks again,
-/// in the context the request came with, before it carries it out.
+/// owner, does. Bob's actor finds whom he names among the agents by what he
+/// sees, and asks nothing more; the agent asks, once, in the context the
+/// request came with, as it carries it out (issue 304).
 #[tokio::test]
 async fn a_bystander_asks_an_agent_for_its_command_but_not_for_one_of_its_owners() {
     let (world, session, main, _, mut his) = with_a_commanded_agent().await;
@@ -3270,9 +3271,7 @@ async fn a_bystander_asks_an_agent_for_its_command_but_not_for_one_of_its_owners
         "bob: ShowAgentCommand(alice's) no",
         "bob: ShowAgentCommand(alice's) yes",
         "bob: ExecuteAgentCommand(alice's) yes",
-        "bob: ShowAgentCommand(alice's) yes",
-        "bob: ExecuteAgentCommand(alice's) yes",
-    ], "what he sees, what he may ask for, and the agent asking again");
+    ], "what he sees, then the agent asking whether he may ask for it");
 
     let refused = bob.execute_command("seal", "@helper").await.expect_err("not his");
     assert!(matches!(refused.downcast_ref::<caelumora_runtime::command::CommandError>(), Some(caelumora_runtime::command::CommandError::Unknown(name)) if name == "seal"), "unknown to him: {refused}");

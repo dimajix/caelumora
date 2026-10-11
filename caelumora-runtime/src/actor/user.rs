@@ -488,27 +488,28 @@ impl UserActor {
     /// Asks agents of `channel` to carry out the command `name` (issue 269).
     /// `args` begins with whom: `@handle` names one agent, `@all` every
     /// agent here that carries the command out; the rest is the command's.
-    /// Asked here first - which agents carry it out as this user sees them
-    /// (`ChannelLoop::agent_commands`), and whether this user may ask each
-    /// (`Actor::admit_command`) - so that they learn of a refusal at once;
-    /// each agent asks again. Sent as `CommandRequested`, one per agent
-    /// under one span, through this actor's transport; no wakeup ahead of
-    /// it - a sleeping agent carries a command out asleep.
+    /// Whom it names is found among the agents that carry it out as this
+    /// user sees them (`ChannelLoop::agent_commands`, `ShowAgentCommand`) -
+    /// offering, which asks nothing of the agent's queue. Whether this user
+    /// may ask for it (`ExecuteAgentCommand`) is each agent's to decide, once,
+    /// as it carries it out; a refusal is its `CommandFailed` (issue 304).
+    /// Sent as `CommandRequested`, one per agent under one span, through
+    /// this actor's transport; no wakeup ahead of it - a sleeping agent
+    /// carries a command out asleep.
     ///
     /// # Errors
     /// `CommandError::Unknown` if no agent here carries it out as this user
-    /// sees it; `InvalidArguments` if `args` names no agent that does;
-    /// `Forbidden` if this user may ask none of those named; an error if a
-    /// request cannot be sent.
+    /// sees it; `InvalidArguments` if `args` names no agent that does; an
+    /// error if a request cannot be sent.
     async fn request_command(&self, channel: &crate::channel::ChannelLoop, name: &str, args: &str) -> anyhow::Result<CommandReply> {
         let understanding: Vec<_> = channel.agent_commands(&self.security_context()).await.into_iter()
             .filter(|(_, commands)| commands.iter().any(|c| c.name == name))
-            .filter_map(|(member, _)| channel.actor_by_id(member.id).map(|actor| (member, actor)))
+            .map(|(member, _)| member)
             .collect();
         if understanding.is_empty() {
             return Err(CommandError::Unknown(name.to_string()).into());
         }
-        let handles: Vec<String> = understanding.iter().filter_map(|(m, _)| m.handle.as_ref()).map(|h| format!("@{h}")).collect();
+        let handles: Vec<String> = understanding.iter().filter_map(|m| m.handle.as_ref()).map(|h| format!("@{h}")).collect();
         let invalid = |reason: String| CommandError::InvalidArguments { command: name.to_string(), reason };
         let (whom, rest) = args.split_once(char::is_whitespace).unwrap_or((args, ""));
         let targets: Vec<_> = match whom.strip_prefix('@') {
@@ -519,32 +520,19 @@ impl UserActor {
                     let names: Vec<&str> = named.iter().map(|m| m.name.as_str()).collect();
                     return Err(invalid(format!("{whom} names several agents: {}", names.join(", "))).into());
                 }
-                understanding.into_iter().filter(|(m, _)| named.iter().any(|n| n.id == m.id)).collect()
+                understanding.into_iter().filter(|m| named.iter().any(|n| n.id == m.id)).collect()
             }
             None => return Err(invalid(format!("name the agent: {}, or @all", handles.join(", "))).into()),
         };
         if targets.is_empty() {
             return Err(invalid(format!("{whom} does not carry it out here; name {}, or @all", handles.join(", "))).into());
         }
-        let single = targets.len() == 1;
         let span_id = Uuid::new_v4();
-        let (mut asked, mut refused) = (0, Vec::new());
-        for (member, actor) in targets {
-            match actor.admit_command(name, &self.security_context()).await {
-                Ok(_) => {
-                    let event = ActorEvent::CommandRequested { command: name.to_string(), args: rest.trim().to_string(), agent: member.id };
-                    self.send(self.envelope(event, span_id)).await?;
-                    asked += 1;
-                }
-                Err(e) if single => return Err(e.into()),
-                Err(_) => refused.push(member.handle.map(|h| format!("@{h}")).unwrap_or_else(|| member.name.to_string())),
-            }
+        for member in targets {
+            let event = ActorEvent::CommandRequested { command: name.to_string(), args: rest.trim().to_string(), agent: member.id };
+            self.send(self.envelope(event, span_id)).await?;
         }
-        if asked == 0 {
-            return Err(CommandError::Forbidden(name.to_string()).into());
-        }
-        let output = (!refused.is_empty()).then(|| format!("You may not ask {} to run /{name}; the others were asked.", refused.join(", ")));
-        Ok(CommandReply { command: name.to_string(), output, visibility: CommandVisibility::Private, span_id: Some(span_id) })
+        Ok(CommandReply { command: name.to_string(), output: None, visibility: CommandVisibility::Private, span_id: Some(span_id) })
     }
 
     /// The commands this user may see, e.g. for completion.
