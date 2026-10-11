@@ -137,10 +137,10 @@ impl ChannelController {
         }
         self.store(ctx, &channel).await?;
         self.keep_participants(&channel).await;
-        let attributes = channel.security_attributes.clone();
+        let (attributes, classification) = (channel.security_attributes.clone(), channel.classification.clone());
         self.channel.store(Arc::new(channel));
         if let Some(event) = self.membership_event(id, true) {
-            self.event_publisher.publish(event, attributes);
+            self.event_publisher.publish_classified(event, attributes, &[classification]);
         }
         Ok(())
     }
@@ -169,9 +169,10 @@ impl ChannelController {
         let told = channel.security_attributes.clone().granting(Subject::Actor(participant), Grant::Read);
         self.store(ctx, &channel).await?;
         self.keep_participants(&channel).await;
+        let classification = channel.classification.clone();
         self.channel.store(Arc::new(channel));
         if let Some(event) = self.membership_event(participant, false) {
-            self.event_publisher.publish(event, told);
+            self.event_publisher.publish_classified(event, told, &[classification]);
         }
         Ok(removed)
     }
@@ -193,9 +194,9 @@ impl ChannelController {
     /// channel as a former member; restored, it takes part again. Announced
     /// as a leave or a join is, to whoever reads the channel.
     pub(crate) fn announce_resting(&self, agent: AgentId, resting: bool) {
-        let attributes = self.channel.load().security_attributes.clone();
+        let channel = self.channel.load();
         if let Some(event) = self.membership_event(ActorId::Agent(agent), !resting) {
-            self.event_publisher.publish(event, attributes);
+            self.event_publisher.publish_classified(event, channel.security_attributes.clone(), std::slice::from_ref(&channel.classification));
         }
     }
 
@@ -234,6 +235,9 @@ impl ChannelController {
     async fn update(&self, ctx: &SecurityContext, event: &ChannelUpdateEvent) -> StoreResult<()> {
         let _writing = self.write_lock.lock().await;
         let mut channel = (**self.channel.load()).clone();
+        // Announced to who reaches it as it was, too: who no longer does
+        // learns so (issue 312).
+        let had = channel.classification.clone();
         match event {
             ChannelUpdateEvent::NameChanged(name) => channel.name = Name::new(name)?,
             ChannelUpdateEvent::ClassificationChanged(classification) => channel.classification = classification.clone(),
@@ -243,9 +247,9 @@ impl ChannelController {
             ChannelUpdateEvent::UsesWorkspaceChanged(uses) => channel.uses_workspace = *uses,
         }
         self.store(ctx, &channel).await?;
-        let attributes = channel.security_attributes.clone();
+        let (attributes, classifications) = (channel.security_attributes.clone(), [had, channel.classification.clone()]);
         self.channel.store(Arc::new(channel));
-        self.event_publisher.publish(GlobalEvent::ChannelUpdated(self.session_id, self.id, event.clone()), attributes);
+        self.event_publisher.publish_classified(GlobalEvent::ChannelUpdated(self.session_id, self.id, event.clone()), attributes, &classifications);
         Ok(())
     }
 }

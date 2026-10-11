@@ -217,7 +217,7 @@ mod tests {
 
     fn manager() -> (Arc<MemoryStore>, Arc<EventBus>, ControllerManager) {
         let store = Arc::new(MemoryStore::new());
-        let bus = Arc::new(EventBus::new(Arc::new(DummySecurityManager::new())));
+        let bus = Arc::new(EventBus::new(Arc::new(DummySecurityManager::new()), Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default())));
         let manager = ControllerManager::new(Arc::<MemoryStore>::clone(&store), Arc::clone(&bus));
         (store, bus, manager)
     }

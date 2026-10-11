@@ -116,15 +116,17 @@ clicked.
 
 ### Who may approve
 
-Who may approve a call is the `SecurityManager`'s to decide, and the approver enforces it:
-`ApproveToolCall` carries the attributes of the agent - loaded, never taken from the request, which
-the agent makes itself - and of the channel. The ownership policy grants it the agent's owner and
-whom the agent's access list lets read it, who are responsible for it also in someone else's
-channel; for an agent of the system, the channel's owner.
+Who may approve a call is the `SecurityManager`'s to decide, and the channel enforces it as it
+admits an answer (issue 312): `ApproveToolCall` carries the attributes of the agent the answer
+names, loaded, never taken from the answer or the request, and of the channel. The ownership policy
+grants it the agent's owner and whom the agent's access list lets read it, who are responsible for
+it also in someone else's channel; for an agent of the system, the channel's owner.
 
-*   An answer counts only if its sender may approve, asked in the context the answer came with; any
-    other is left out, logged and without telling the sender - only who may approve is offered the
-    buttons, so such an answer comes from a client going round what it was shown.
+*   An answer enters the channel only if its sender may approve, asked in the context the answer
+    came with; any other is refused and its sender told (`MessageRejected`), as everything the
+    channel does not let in. The approver counts an answer only for the agent that asked; one
+    naming another agent is left out and logged. A decision - granted, denied, timed out - enters
+    the channel only from an approver.
 *   The strategies count only those taking part who may approve, now. An answer of someone who left
     or may no longer approve does not count, either way. With nobody left who may approve, the
     request is denied.

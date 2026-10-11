@@ -243,7 +243,7 @@ impl ActorRuntime {
         let (Ok(agent), Some(channel)) = (self.agent_id(), self.channel_loop()) else { return };
         let attributes = channel.security_attributes();
         self.runtime.runtime_manager.event_bus()
-            .publish(GlobalEvent::AgentChannelStateChanged(self.session_id, self.channel_id, agent), attributes);
+            .publish_classified(GlobalEvent::AgentChannelStateChanged(self.session_id, self.channel_id, agent), attributes, &[channel.classification()]);
     }
 
     /// What the actor's turns navigate (issue 163): its session, read from
@@ -318,13 +318,13 @@ impl RuntimeManager {
     ) -> ComponentResult<Self> {
         component_registry.set_defaults(&config.component_defaults)?;
 
-        let event_bus = Arc::new(EventBus::new(Arc::clone(&security_manager)));
+        let event_bus = Arc::new(EventBus::new(Arc::clone(&security_manager), Arc::clone(&confidentiality)));
         let controller_manager = Arc::new(ControllerManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus)));
         let agent_states = Arc::new(crate::agent::state::AgentStates::new(Arc::clone(&state_store), Arc::<EventBus>::clone(&event_bus)));
         let workspaces = crate::workspace::WorkspaceManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus), Arc::clone(&security_manager), Arc::clone(&confidentiality), Arc::clone(&controller_manager), &secret_manager, &config.workspaces)?;
         let skills = Arc::new(crate::skill::SkillManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus), Arc::clone(&confidentiality)));
         let artifacts = Arc::new(crate::artifact::ArtifactManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus), Arc::clone(&security_manager), Arc::clone(&confidentiality), &config.artifacts)?);
-        let groups = Arc::new(GroupManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus)));
+        let groups = Arc::new(GroupManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus), Arc::clone(&security_manager)));
         let agents = Arc::new(AgentManager::new(Arc::clone(&entity_store), Arc::clone(&state_store), Arc::clone(&event_bus), Arc::clone(&security_manager)));
         let scoped = Arc::new(crate::scoped::ScopedEntities::new(Arc::clone(&entity_store), Arc::clone(&agents), Arc::clone(&workspaces), Arc::clone(&skills), Arc::clone(&artifacts), Arc::clone(&groups)));
 

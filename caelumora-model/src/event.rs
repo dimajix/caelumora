@@ -6,6 +6,7 @@ use crate::workspace::{WorkspaceId, WorkspaceUpdateEvent};
 use crate::skill::{SkillId, SkillUpdateEvent};
 use crate::artifact::ArtifactId;
 use crate::group::{GroupId, GroupUpdateEvent};
+use crate::confidentiality::Classification;
 use crate::security::SecurityAttributes;
 use serde::{Deserialize, Serialize};
 
@@ -93,8 +94,18 @@ pub trait EventPublisher: Send + Sync + std::fmt::Debug {
     /// about (issue 39).
     /// They decide who may receive it; they are not part of the event.
     fn publish(&self, event: GlobalEvent, attributes: SecurityAttributes);
+
+    /// Publishes `event` about a classified entity - a channel and what
+    /// happens in it, a workspace, a skill, an artifact: received only by
+    /// whoever may read it and is cleared for one of `classifications`, as
+    /// the views reach it (issue 312). One classification, the entity's;
+    /// two as it is reclassified, the one it had and the one it has, so
+    /// that whoever no longer reaches it learns so.
+    fn publish_classified(&self, event: GlobalEvent, attributes: SecurityAttributes, classifications: &[Classification]);
 }
 
 impl EventPublisher for () {
     fn publish(&self, _event: GlobalEvent, _attributes: SecurityAttributes) {}
+
+    fn publish_classified(&self, _event: GlobalEvent, _attributes: SecurityAttributes, _classifications: &[Classification]) {}
 }

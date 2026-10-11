@@ -387,9 +387,10 @@ fn quiet() -> caelumora_model::component::ComponentConfig {
 }
 
 /// Whether `error` says that what was asked for is not there - which is
-/// also what is answered for what the caller may not see.
+/// also what is answered for what the caller may not see or reach.
 fn not_found(error: &Error) -> bool {
     matches!(error.downcast_ref::<StoreError>(), Some(StoreError::NotFound { .. }))
+        || matches!(error.downcast_ref::<WorkspaceError>(), Some(WorkspaceError::NotFound(_)))
 }
 
 fn denied(error: &Error) -> bool {
@@ -1428,9 +1429,10 @@ async fn a_rule_of_a_place_outweighs_a_persons_rule() {
 
 /// Approving a tool call (issue 14) is for who is responsible for the
 /// agent - its owner and contributors: alice's answer counts, bob's, who
-/// only takes part, is left out. The approver asks in the context each
-/// answer comes with, and of everybody taking part to know whom to wait
-/// for; the view offers it to alice alone.
+/// only takes part, is refused by the channel as it admits it, and he is
+/// told (`MessageRejected`, issue 312). The approver asks of everybody
+/// taking part to know whom to wait for; the view offers it to alice
+/// alone.
 #[tokio::test]
 async fn a_tool_call_is_approved_by_who_is_responsible_for_the_agent() {
     use caelumora_model::actor::ActorEvent;
@@ -1463,9 +1465,11 @@ async fn a_tool_call_is_approved_by_who_is_responsible_for_the_agent() {
     assert_eq!(approving, ["alice: ApproveToolCall(alice's) yes", "bob: ApproveToolCall(alice's) no"]);
 
     let response = ApprovalResponse::new(request.id, helper);
+    let mut his = main.user_actor(world.bob).unwrap().watch();
     let (_, asked) = world.asked(async {
         main.user_actor(world.bob).unwrap().send_approval(response.clone(), false).await.expect("sent");
-        asked_for(&world, "bob: ApproveToolCall(alice's) no").await;
+        let ActorEvent::MessageRejected { rejected, reason, .. } = shown(&mut his, "MessageRejected").await else { unreachable!() };
+        assert_eq!((rejected.as_str(), reason), ("ApprovalDenied", Rejection::Forbidden), "his answer is refused, and he is told");
         main.user_actor(world.alice).unwrap().send_approval(response.clone(), true).await.expect("sent");
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
             loop {
@@ -1484,9 +1488,9 @@ async fn a_tool_call_is_approved_by_who_is_responsible_for_the_agent() {
     }).await;
     let approving: Vec<&String> = asked.iter().filter(|line| line.contains("ApproveToolCall")).collect();
     assert_eq!(approving, [
-        // bob answers, and is left out.
+        // bob answers; the channel refuses it.
         "bob: ApproveToolCall(alice's) no",
-        // alice answers; whom to wait for: her alone.
+        // alice answers, the channel admits it; whom to wait for: her alone.
         "alice: ApproveToolCall(alice's) yes",
         "alice: ApproveToolCall(alice's) yes",
         "bob: ApproveToolCall(alice's) no",
@@ -2040,10 +2044,12 @@ fn checks(lines: &[&str]) -> Vec<String> {
     lines.iter().map(|line| line.to_string()).collect()
 }
 
-/// Making a session from a template: reading the template and its owner,
-/// finding or making the agents - reading their personalities -, the
-/// classification and everyone's clearance for the channels, each agent's
-/// personality in its own name, and creating the session and its channels.
+/// Making a session from a template: reading the template, then creating
+/// the session - before anything is found or made for it (issue 312) -,
+/// reading its owner, finding or making the agents - reading their
+/// personalities -, then everyone's clearance for the channels and each
+/// agent's personality in its own name, and the store creating the session
+/// again and its channels.
 #[tokio::test]
 async fn making_a_session_needs_the_template_the_personalities_and_creating_what_is_made() {
     let world = World::new().await;
@@ -2056,6 +2062,7 @@ async fn making_a_session_needs_the_template_the_personalities_and_creating_what
     let session = made.expect("alice makes it");
     assert_eq!(asked, checks(&[
         "alice: GetSessionTemplate(system's) yes",
+        "alice: CreateSession(alice's) yes",
         "alice: GetUser(system's) yes",
         "alice: ListAgents yes",
         "alice: GetPersonality(bob's) yes",
@@ -2087,6 +2094,7 @@ async fn making_a_session_needs_the_template_the_personalities_and_creating_what
     assert!(not_found(&refused.unwrap_err()));
     assert_eq!(asked, checks(&[
         "alice: GetSessionTemplate(alice's) yes",
+        "alice: CreateSession(alice's) yes",
         "alice: GetUser(system's) yes",
         "alice: ListAgents yes",
         "alice: GetAgent(alice's) yes",
@@ -2151,9 +2159,9 @@ async fn deleting_a_session_needs_owning_it() {
     assert!(world.store.get_agent(&World::system(), bobs.id).await.is_ok(), "and comes back with it");
 }
 
-/// Creating a channel: the classification it is given, everyone's
-/// clearance for it, creating it - as its session's owner - and changing
-/// the session that lists it.
+/// Creating a channel: the classification it is given, creating it - as
+/// its session's owner -, then everyone's clearance for it (issue 312), and
+/// the store creating it again and changing the session that lists it.
 #[tokio::test]
 async fn creating_a_channel_needs_owning_its_session() {
     let world = World::new().await;
@@ -2162,7 +2170,7 @@ async fn creating_a_channel_needs_owning_its_session() {
     let (created, asked) = world.asked(session.create_channel(&World::as_user(world.alice), spec(vec![ActorId::User(world.bob)]))).await;
     assert!(created.is_ok());
     assert_eq!(asked, checks(&[
-        "alice: UpdateSession(alice's) yes",
+        "alice: CreateChannel(alice's) yes",
         "alice: JoinChannel(alice) yes",
         "alice: JoinChannel(bob) yes",
         "alice: CreateChannel(alice's) yes",
@@ -2181,11 +2189,12 @@ async fn who_may_not_create_a_channel_is_refused_before_the_others_are_looked_at
     let spec = ChannelSpec { name: "his".to_string(), components: quiet(), participants: vec![ActorId::User(world.alice)], classification: None, language: None, uses_workspace: None };
     let (refused, asked) = world.asked(session.create_channel(&World::as_user(world.bob), spec)).await;
     assert!(refused.is_err());
-    assert_eq!(asked, checks(&["bob: UpdateSession(alice's) no"]));
+    assert_eq!(asked, checks(&["bob: CreateChannel(alice's) no"]));
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
-/// Deleting a channel, in the order of issue 304: reading the channel,
+/// Deleting a channel, in the order of issue 304: reaching the channel as
+/// the views do - reading it and being cleared for it (issue 312) -,
 /// deleting it - its owner's alone -, then, as the store takes it out of
 /// its session and marks it, changing the session and deleting it again
 /// (rule 2: the operation asks before it acts, the store as it stores).
@@ -2196,12 +2205,13 @@ async fn deleting_a_channel_needs_owning_its_session() {
     let main = session.channels()[0].id();
     let (refused, asked) = world.asked(session.delete_channel(&World::as_user(world.bob), main)).await;
     assert!(denied(&refused.expect_err("not his")));
-    assert_eq!(asked, checks(&["bob: GetChannel(alice's) yes", "bob: DeleteChannel(alice's) no"]), "refused before the session is touched");
+    assert_eq!(asked, checks(&["bob: GetChannel(alice's) yes", "bob: JoinChannel(bob) yes", "bob: DeleteChannel(alice's) no"]), "refused before the session is touched");
     assert!(session.channel_by_id(main).is_some(), "and the channel runs on");
     let (deleted, asked) = world.asked(session.delete_channel(&World::as_user(world.alice), main)).await;
     assert!(deleted.is_ok());
     assert_eq!(asked, checks(&[
         "alice: GetChannel(alice's) yes",
+        "alice: JoinChannel(alice) yes",
         "alice: DeleteChannel(alice's) yes",
         "alice: GetSession(alice's) yes",
         "alice: UpdateSession(alice's) yes",
@@ -2254,21 +2264,28 @@ async fn purging_a_session_is_not_its_owners() {
     ]), "only what was deleted, asked by the agent manager and again by the store");
 }
 
-/// Restoring a deleted channel: changing its session - its owner's alone
-/// -, everyone's clearance and restoring the channel (issue 164).
+/// Restoring a deleted channel (issue 164), in the order of issue 304:
+/// reading it as deleted, as the session's trash lists it, restoring it -
+/// its owner's alone - before everyone's clearance is asked (issue 312),
+/// and the store restoring the channel again and listing it in its
+/// session.
 #[tokio::test]
 async fn restoring_a_channel_needs_owning_its_session() {
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
     let main = session.channels()[0].id();
     session.delete_channel(&World::as_user(world.alice), main).await.unwrap();
-    let (_, asked) = world.asked(session.restore_channel(&World::as_user(world.bob), main)).await;
-    assert_eq!(asked, checks(&["bob: UpdateSession(alice's) no"]));
+    let (refused, asked) = world.asked(session.restore_channel(&World::as_user(world.carol), main)).await;
+    assert!(matches!(refused.unwrap_err().downcast_ref::<SessionError>(), Some(SessionError::ChannelNotFound { .. })), "a stranger finds nothing");
+    assert_eq!(asked, checks(&["carol: ReadDeleted(alice's) no"]));
+    let (refused, asked) = world.asked(session.restore_channel(&World::as_user(world.bob), main)).await;
+    assert!(matches!(refused.unwrap_err().downcast_ref::<SessionError>(), Some(SessionError::ChannelNotFound { .. })), "a participant does not see the trash");
+    assert_eq!(asked, checks(&["bob: ReadDeleted(alice's) no"]));
     let (restored, asked) = world.asked(session.restore_channel(&World::as_user(world.alice), main)).await;
     assert!(restored.is_ok());
     assert_eq!(asked, checks(&[
-        "alice: UpdateSession(alice's) yes",
         "alice: ReadDeleted(alice's) yes",
+        "alice: Restore(alice's) yes",
         "alice: JoinChannel(alice) yes",
         "alice: JoinChannel(bob) yes",
         "alice: ReadDeleted(alice's) yes",
@@ -2411,9 +2428,9 @@ async fn publish(world: &World, ctx: &SecurityContext, session: SessionId, chann
 }
 
 /// A workspace is its owner's alone (issue 251, decision 12): made by a
-/// user cleared for its classification, read, changed, deleted and
-/// restored by them, by nobody else - and purged by the system, its files
-/// with it.
+/// user cleared for its classification, read, changed, deleted and restored by them, by nobody
+/// else, each reached as the views reach it - and purged by the system,
+/// its files with it.
 #[tokio::test]
 async fn a_workspace_is_its_owners_alone() {
     let world = World::new().await;
@@ -2423,7 +2440,7 @@ async fn a_workspace_is_its_owners_alone() {
 
     let (made, asked) = world.asked(workspaces.create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", Some("Drafts"), internal.clone())).await;
     let docs = made.expect("alice makes one");
-    assert_eq!(asked, checks(&["alice: JoinChannel(alice) yes", "alice: CreateWorkspace(alice's) yes"]));
+    assert_eq!(asked, checks(&["alice: JoinChannel(alice) yes", "alice: CreateWorkspace(alice's) yes"]), "her own flow, then creating it as it is stored (issue 312)");
     assert!(world.files.path().join(docs.id.to_string()).is_dir(), "with its place");
     let above = workspaces.create(&alice, "secrets", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Confidential)).await;
     assert!(matches!(above, Err(WorkspaceError::NotCleared)), "not above what she is cleared for: {above:?}");
@@ -2441,7 +2458,7 @@ async fn a_workspace_is_its_owners_alone() {
     assert!(matches!(renamed, Err(WorkspaceError::NotFound(_))), "bob does not rename it: {renamed:?}");
     let (renamed, asked) = world.asked(workspaces.rename(&alice, docs.id, "notes")).await;
     assert_eq!(renamed.expect("alice does").name.name, "notes");
-    assert_eq!(asked, checks(&["alice: GetWorkspace(alice's) yes", "alice: GetWorkspace(alice's) yes", "alice: UpdateWorkspace(alice's) yes"]));
+    assert_eq!(asked, checks(&["alice: GetWorkspace(alice's) yes", "alice: JoinChannel(alice) yes", "alice: GetWorkspace(alice's) yes", "alice: UpdateWorkspace(alice's) yes"]));
 
     assert!(!workspaces.delete(&bob, docs.id).await.unwrap(), "nothing bob could see to delete");
     assert!(workspaces.delete(&alice, docs.id).await.unwrap());
@@ -2461,7 +2478,8 @@ async fn a_workspace_is_its_owners_alone() {
 /// A workspace is reached as the views reach it (issue 304): read and
 /// cleared for, else it is not found - before anything else is asked, so
 /// that whoever is not cleared for it learns nothing of it, not even that
-/// they may not change its files.
+/// they may not change its files; by its id as by navigating to it (issue
+/// 312).
 #[tokio::test]
 async fn a_workspace_one_is_not_cleared_for_is_not_found() {
     let world = World::new().await;
@@ -2477,6 +2495,15 @@ async fn a_workspace_one_is_not_cleared_for_is_not_found() {
     let (reached, asked) = world.asked(workspaces.terminal(&alice, docs.id, Grant::Write)).await;
     assert!(reached.is_ok(), "cleared, she reaches it");
     assert_eq!(asked, checks(&["alice: GetWorkspace(alice's) yes", "alice: JoinChannel(alice) yes", "alice: WriteWorkspace(alice's) yes"]), "read, cleared, then the verb");
+
+    // Named by its id, it is reached alike (issue 312): its owner, no
+    // longer cleared, neither renames, shares nor deletes it.
+    let (renamed, asked) = world.asked(workspaces.rename(&uncleared, docs.id, "mine")).await;
+    assert!(matches!(renamed, Err(WorkspaceError::NotFound(_))), "{renamed:?}");
+    assert_eq!(asked, checks(&["alice: GetWorkspace(alice's) yes", "alice: JoinChannel(alice) no"]));
+    let shared = workspaces.share(&uncleared, docs.id, Subject::Actor(ActorId::User(world.bob)), Grant::Read).await;
+    assert!(matches!(shared, Err(WorkspaceError::NotFound(_))), "{shared:?}");
+    assert!(!workspaces.delete(&uncleared, docs.id).await.unwrap(), "nothing she reaches to delete");
 }
 
 /// A storage takes what may flow to where it puts it (issue 251, part B2):
@@ -2524,7 +2551,7 @@ async fn only_its_owner_attaches_a_workspace_to_a_session_they_may_change() {
 
     let (attached, asked) = world.asked(session.set_workspace(&alice, Some(hers.id), None)).await;
     attached.expect("hers, into her session");
-    assert_eq!(asked, checks(&["alice: UpdateSession(alice's) yes", "alice: GetWorkspace(alice's) yes", "alice: UpdateWorkspace(alice's) yes", "alice: GetSession(alice's) yes", "alice: UpdateSession(alice's) yes"]));
+    assert_eq!(asked, checks(&["alice: UpdateSession(alice's) yes", "alice: GetWorkspace(alice's) yes", "alice: JoinChannel(alice) yes", "alice: UpdateWorkspace(alice's) yes", "alice: GetSession(alice's) yes", "alice: UpdateSession(alice's) yes"]));
     assert_eq!(session.session().workspace, Some(hers.id));
     let members = Subject::Group(GroupId::of_session(session.id()));
     assert!(world.store.get_workspace(&alice, hers.id).await.unwrap().security_attributes.acl.is_empty(), "attaching alone shares nothing");
@@ -2706,8 +2733,8 @@ async fn a_workspace_is_reached_by_its_list_wherever_one_acts() {
     assert_eq!(asked, checks(&["bob: GetWorkspace(alice's) no"]));
     let (shared, asked) = world.asked(workspaces.set_access(&alice, docs.id, bobs.clone())).await;
     shared.expect("its owner shares it");
-    assert_eq!(asked, checks(&["alice: GetWorkspace(alice's) yes", "alice: UpdateWorkspace(alice's) yes", "alice: GetWorkspace(alice's) yes", "alice: UpdateWorkspace(alice's) yes"]),
-        "read and changed - asked before a group it names is looked at (issue 286) -, then changed as stored");
+    assert_eq!(asked, checks(&["alice: GetWorkspace(alice's) yes", "alice: JoinChannel(alice) yes", "alice: GetWorkspace(alice's) yes", "alice: UpdateWorkspace(alice's) yes"]),
+        "reached, then changed as stored: whether she reads a group it names tells her nothing of others (issue 312)");
 
     let elsewhere = SecurityContext::new(ActorId::User(world.bob), SessionId::new(), ChannelId::new()).with_roles(vec![*STAFF], None);
     let his = views(&elsewhere).workspace(docs.id).await.expect("he reads it, wherever he acts");
@@ -2743,10 +2770,11 @@ async fn what_is_shared_with_a_team_is_read_by_its_members_while_they_are_member
     let project = groups.create(&alice, "project", Scope::UserScope { user_id: world.alice }).await.expect("alice makes a team");
     let (made, asked) = world.asked(groups.set_members(&alice, project.id, vec![world.bob])).await;
     made.expect("and names its members");
-    assert_eq!(asked, checks(&["alice: GetGroup(alice's) yes", "alice: GetGroup(alice's) yes", "alice: UpdateGroup(alice's) yes"]), "read, then changed as stored");
+    assert_eq!(asked, checks(&["alice: GetGroup(alice's) yes", "alice: UpdateGroup(alice's) yes", "alice: GetGroup(alice's) yes", "alice: UpdateGroup(alice's) yes"]),
+        "read, changed - before whether its members exist is asked (issue 312) -, then changed as stored");
     let (refused, asked) = world.asked(groups.set_members(&bob, project.id, vec![world.bob, world.carol])).await;
     assert!(matches!(refused, Err(GroupError::Store(StoreError::PermissionDenied))), "a member reads it but changes nothing: {refused:?}");
-    assert_eq!(asked, checks(&["bob: GetGroup(alice's) yes", "bob: GetGroup(alice's) yes", "bob: UpdateGroup(alice's) no"]));
+    assert_eq!(asked, checks(&["bob: GetGroup(alice's) yes", "bob: UpdateGroup(alice's) no"]), "refused before he learns whether carol exists");
     assert!(matches!(views(&carol).group(project.id).await, Err(ViewError::GroupNotFound(_))), "a stranger does not find it");
     let listed: Vec<GroupId> = views(&bob).groups().await.unwrap().iter().map(|g| g.id()).collect();
     assert_eq!(listed, [project.id], "listed among his");
@@ -2776,7 +2804,7 @@ async fn a_group_is_named_in_an_access_list_only_by_who_reads_it() {
     let naming = vec![AclEntry { subject: Subject::Group(project.id), grant: Grant::Read }];
     let (refused, asked) = world.asked(workspaces.set_access(&carol, hers.id, naming)).await;
     assert!(matches!(refused, Err(WorkspaceError::Store(StoreError::Validation(_)))), "carol cannot read alice's team: {refused:?}");
-    assert_eq!(asked, checks(&["carol: GetWorkspace(carol's) yes", "carol: UpdateWorkspace(carol's) yes", "carol: GetGroup(alice's) no"]), "her own permission first, then the group");
+    assert_eq!(asked, checks(&["carol: GetWorkspace(carol's) yes", "carol: JoinChannel(carol) yes", "carol: GetGroup(alice's) no"]), "reached, then the group: her own question");
 }
 
 /// G3 (issue 286): the participants of a channel are a group that follows
@@ -2956,7 +2984,8 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
     assert_eq!(listed(&bob).await, [artifact.id], "shared with him by name, it is among his");
     let (added, third) = publish(&world, &bob, session_id, main, &at, "report.csv", None).await.expect("whom it is shared with to write adds a version");
     assert_eq!((third, added.owner()), (3, Some(world.alice)), "hers still");
-    assert!(matches!(artifacts.keep(&bob, artifact.id, Scope::UserScope { user_id: world.bob }).await, Err(ArtifactError::Store(StoreError::PermissionDenied))), "nor keeps it");
+    assert!(matches!(artifacts.keep(&bob, artifact.id, Scope::UserScope { user_id: world.bob }).await, Err(ArtifactError::InvalidScope)), "not in his scope, whose it is not");
+    assert!(matches!(artifacts.keep(&bob, artifact.id, Scope::GlobalScope).await, Err(ArtifactError::Store(StoreError::PermissionDenied))), "nor keeps it at all");
     let kept_one = artifacts.keep(&alice, artifact.id, Scope::UserScope { user_id: world.alice }).await.expect("its owner keeps it");
     assert_eq!(kept_one.name.scope, Scope::UserScope { user_id: world.alice });
     let (left, _) = publish(&world, &alice, session_id, main, &at, "draft.csv", None).await.unwrap();
@@ -3285,12 +3314,12 @@ async fn a_workspace_chosen_as_a_session_is_made_takes_the_place_of_its_template
     let (attached, asked) = world.asked(world.manager.create_from_template(&alice, template, None, Some(WorkspaceChoice::Existing { id: hers.id, share: None }))).await;
     let attached = attached.expect("hers");
     assert_eq!(attached.session().workspace, Some(hers.id));
-    assert_eq!(asked[..3], checks(&["alice: GetSessionTemplate(system's) yes", "alice: GetWorkspace(alice's) yes", "alice: UpdateWorkspace(alice's) yes"]), "{asked:?}");
+    assert_eq!(asked[..5], checks(&["alice: GetSessionTemplate(system's) yes", "alice: CreateSession(alice's) yes", "alice: GetWorkspace(alice's) yes", "alice: JoinChannel(alice) yes", "alice: UpdateWorkspace(alice's) yes"]), "{asked:?}");
     assert!(!asked.iter().any(|line| line.contains("UpdateSession")), "she is making the session: {asked:?}");
 
     let (refused, asked) = world.asked(world.manager.create_from_template(&alice, template, None, Some(WorkspaceChoice::Existing { id: his.id, share: None }))).await;
     assert!(not_found(&refused.unwrap_err()), "not bob's");
-    assert_eq!(asked, checks(&["alice: GetSessionTemplate(system's) yes", "alice: GetWorkspace(bob's) no"]), "refused before anything is made");
+    assert_eq!(asked, checks(&["alice: GetSessionTemplate(system's) yes", "alice: CreateSession(alice's) yes", "alice: GetWorkspace(bob's) no"]), "refused before anything is made");
 
     let made = world.manager.create_from_template(&alice, template, Some("Report"), Some(WorkspaceChoice::New { storage: "main".to_string(), classification: internal.clone() })).await.expect("one of its own");
     let own = world.store.get_workspace(&alice, made.session().workspace.expect("attached")).await.unwrap();

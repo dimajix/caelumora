@@ -439,6 +439,8 @@ pub trait ConfidentialityQuestions {
     /// Whether `context` is cleared for `classification` by its roles - and,
     /// for a caller limited to roles, by those as well (issue 179): what
     /// decides which channels, and what else classified, a viewer is shown.
+    /// The system is cleared for everything, as it may do everything
+    /// (issue 312).
     fn cleared_for(&self, context: &SecurityContext, classification: &Classification) -> bool;
 
     /// Nothing if what is classified `classification` may be put into a
@@ -478,6 +480,9 @@ impl<T: ConfidentialityPolicy + ?Sized> ConfidentialityQuestions for T {
 
     fn cleared_for(&self, context: &SecurityContext, classification: &Classification) -> bool {
         let participant = context.principal_id;
+        if participant == ActorId::System {
+            return true;
+        }
         self.cleared(context, participant, &context.roles, classification)
             && context.limiting_roles.as_ref().is_none_or(|limit| self.cleared(context, participant, limit, classification))
     }

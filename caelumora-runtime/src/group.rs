@@ -30,7 +30,7 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::group::{Group, GroupId, GroupUpdateEvent};
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{AclEntry, Grant, SecurityContext, Subject};
+use caelumora_model::security::{AclEntry, ActionType, Enforcement, Grant, SecurityContext, SecurityManager, Subject};
 use caelumora_model::store::{EntityStore, StoreError, StoreResult, StoreResultExt};
 use caelumora_model::user::UserId;
 use caelumora_model::value::name::ScopedName;
@@ -75,6 +75,8 @@ fn store_error(id: GroupId) -> impl FnOnce(StoreError) -> GroupError {
 /// The one writer of teams (issue 286).
 pub struct GroupManager {
     entities: Arc<dyn EntityStore>,
+    /// Asked where the manager asks before the store does (issue 312).
+    security: Arc<dyn SecurityManager>,
     events: Arc<EventBus>,
     /// Held by every write of a document, so that none is lost to another.
     writing: Mutex<()>,
@@ -87,8 +89,8 @@ impl fmt::Debug for GroupManager {
 }
 
 impl GroupManager {
-    pub(crate) fn new(entities: Arc<dyn EntityStore>, events: Arc<EventBus>) -> Self {
-        Self { entities, events, writing: Mutex::new(()) }
+    pub(crate) fn new(entities: Arc<dyn EntityStore>, events: Arc<EventBus>, security: Arc<dyn SecurityManager>) -> Self {
+        Self { entities, security, events, writing: Mutex::new(()) }
     }
 
     /// Makes a team of the user `ctx` acts for, of `name` in `scope` - the
@@ -124,29 +126,22 @@ impl GroupManager {
     /// `UnknownMember` for a user that does not exist, otherwise as
     /// [`Self::update`].
     pub async fn set_members(&self, ctx: &SecurityContext, id: GroupId, members: Vec<UserId>) -> GroupResult<Group> {
-        let system = SecurityContext::system();
-        let mut actors = Vec::with_capacity(members.len());
-        for user in members {
-            if self.entities.get_user(&system, user).await.optional()?.is_none() {
-                return Err(GroupError::UnknownMember(user));
-            }
-            if !actors.contains(&ActorId::User(user)) {
-                actors.push(ActorId::User(user));
-            }
-        }
-        self.update(ctx, id, GroupUpdateEvent::MembersChanged, Some(actors)).await
+        self.update(ctx, id, GroupUpdateEvent::MembersChanged, Some(members)).await
     }
 
     /// Applies `event` to team `id` on behalf of `ctx` - with `members` for
-    /// its new members: stored first, which is where the permission is
-    /// checked (`UpdateGroup`), then announced to whoever reads it, before
-    /// and after.
+    /// its new members: stored, which is where the permission is checked
+    /// (`UpdateGroup`), then announced to whoever reads it, before and
+    /// after. Whether the new members exist is asked of others, in the
+    /// runtime's name, so changing the team is asked before (issue 312):
+    /// who may not change it learns nothing of who exists.
     ///
     /// # Errors
     /// `NotFound` if there is none the caller may read, `Participants` for
     /// the participants of a session or channel, `Invalid` if a name does
-    /// not fit, or whatever the store reports.
-    async fn update(&self, ctx: &SecurityContext, id: GroupId, event: GroupUpdateEvent, members: Option<Vec<ActorId>>) -> GroupResult<Group> {
+    /// not fit, `UnknownMember` for a user that does not exist, or whatever
+    /// the store reports.
+    async fn update(&self, ctx: &SecurityContext, id: GroupId, event: GroupUpdateEvent, members: Option<Vec<UserId>>) -> GroupResult<Group> {
         let _writing = self.writing.lock().await;
         let mut group = self.entities.get_group(ctx, id).await.map_err(store_error(id))?;
         if group.is_participants() {
@@ -159,7 +154,18 @@ impl GroupManager {
             GroupUpdateEvent::MembersChanged => {}
         }
         if let Some(members) = members {
-            group.members = members;
+            self.security.require(ctx, ActionType::UpdateGroup(&group.security_attributes), || StoreError::PermissionDenied).await?;
+            let system = SecurityContext::system();
+            let mut actors = Vec::with_capacity(members.len());
+            for user in members {
+                if self.entities.get_user(&system, user).await.optional()?.is_none() {
+                    return Err(GroupError::UnknownMember(user));
+                }
+                if !actors.contains(&ActorId::User(user)) {
+                    actors.push(ActorId::User(user));
+                }
+            }
+            group.members = actors;
         }
         group.updated_at = Utc::now();
         self.entities.update_group(ctx, &group).await.map_err(store_error(id))?;

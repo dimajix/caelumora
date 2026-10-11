@@ -296,18 +296,24 @@ asks what, in whose name and by which reason is mapped, check by check, in
 1.  **The entity layer always asks.** The store asks `Read` on every read and the verb on every
     write, answering "not found" and "denied" (see [How stores check](#how-stores-check)). It is the
     last line, whether or not an operation asked before.
-2.  **An operation asks before it stores only if it does something first** - looks at others, stops
-    actors, deletes files, sends something. Then it asks in the order (see [Operations that check
+2.  **An operation asks before it stores only if it does something first** - changes another object
+    (stops actors, deletes files, makes agents, sends something), or asks something about others
+    that the actor could not learn otherwise (a participant's clearance, whether a user exists).
+    Then it asks its verb in the order (see [Operations that check
     themselves](#operations-that-check-themselves)), and the store asks again when it stores. That
-    pair is the rule, not a double; no token tells the store it was asked already.
+    pair is the rule, not a double; no token tells the store it was asked already. What it only
+    reads before - the object it reached, the flow of what the actor asks for, a group the actor
+    names - is no reason: the store's question is then the only one.
 3.  **The channel decides what enters it**, once, as it takes it in (see [What enters a
     channel](#what-enters-a-channel)). Actors ask nothing for what they send.
 4.  **Every act has one owner, and only the owner asks, once**: a tool call the `ToolExecutor` as it
     admits it, a command of an agent the agent as it carries it out, a command of the session the
-    `CommandExecutor`, an approval the approver as it counts the answer, a secret the
-    `SecretManager`, a skill the `SkillManager`. A component owns the acts on what it keeps -
-    reclassifying a note, forgetting a memory entry - and asks for those itself, in the turn's
-    context; reading beyond its channel it leaves to the views.
+    `CommandExecutor`, a secret the `SecretManager`, a skill the `SkillManager`. An answer to an
+    approval request is something that enters a channel: the channel asks whether its sender may
+    approve the calls of the agent it names (rule 3), the approver only counts it (issue 312). A
+    component owns the acts on what it keeps - reclassifying a note, forgetting a memory entry -
+    and asks for those itself, in the turn's context; reading beyond its channel it leaves to the
+    views.
 5.  **Offering is not permitting.** The views, a snapshot's flags, the filters of lists, the
     approver's choice of whom to wait for, the visible commands and the event bus ask to decide what
     to show or whom to wait for, never to permit; the act asks again when it is done, and that is no
@@ -315,12 +321,11 @@ asks what, in whose name and by which reason is mapped, check by check, in
     `ConfidentialityQuestions::require_*`, offering with `AccessQuestions::may_*` and
     `ConfidentialityQuestions::may_*`.
 
-Two enforcing sites turn a refusal into an outcome of their own rather than an error: the
-`ToolExecutor`, which answers a call refused by the policy as forbidden, and the approver, which
-leaves out the answer of someone who may not approve. They ask as every act does, so that the
-refusal is logged alike. `ChannelLoop::reclassify` asks `may_publish` of the old classification into
-the new one to learn whether the channel was lowered: a question, not a permission, and the same one
-an agent asks at its next step, so that both agree on what was lowered.
+One enforcing site turns a refusal into an outcome of its own rather than an error: the
+`ToolExecutor`, which answers a call refused by the policy as forbidden. It asks as every act does,
+so that the refusal is logged alike. `ChannelLoop::reclassify` asks `may_publish` of the old
+classification into the new one to learn whether the channel was lowered: a question, not a
+permission, and the same one an agent asks at its next step, so that both agree on what was lowered.
 
 ### Access questions
 
@@ -352,17 +357,25 @@ trait on every `SecurityManager`. It answers a refusal with the operation's own 
 refusal alike, at `debug!`, naming the action and what identifies its object, never content such as
 a tool call's arguments.
 
-**The order.** An operation reaches its object first, then asks its own verb, then the flow, then
-anything about others:
+**The order.** An operation reaches its object first; what tells the actor only about their own
+request may follow; their own permission comes before anything of others and before anything is
+changed:
 
 1.  **Reaching** is reading the object (`Get…`) and, where the object is classified, being cleared
-    for it - what the views ask (`channel_reading` for a channel). Who may not reach it is answered
-    "not found", so that nothing can be probed; a channel deleted is "gone" only to whom a live one
-    would be there.
-2.  **The actor's own permission** comes next, before anything of others: who may not do it is
-    refused before the rest is looked at, and learns nothing of the others on the way. Every refusal
-    from here on is "forbidden".
-3.  **The flow**, then **the others** - a participant's clearance, an agent's personality.
+    for it - what the views ask (`channel_reading` for a channel). An operation that names its
+    object by id reaches it as one that navigated to it. Who may not reach it is answered "not
+    found", so that nothing can be probed; a channel deleted is "gone" only to whom a live one
+    would be there. What was deleted is reached as the store lists it, by `ReadDeleted`; that the
+    clearance is asked outside the store is issue
+    [322](../issues/322-clearance-decided-outside-the-store.md).
+2.  **The actor's own request** - its form, the structure of the reached object, the flow of what
+    they ask for - may be asked next: it tells them nothing they could not know.
+3.  **The actor's own permission** comes before anything of others and before anything is changed:
+    who may not do it is refused before the rest is looked at, and learns nothing of the others on
+    the way. Where nothing of the kind follows, it is the store's question alone (rule 2). Every
+    refusal of a permission is "forbidden".
+4.  **The others** - a participant's clearance, an agent's personality, whether a user exists -
+    and what the operation changes before it stores.
 
 The store asks again as it stores (rule 2): that pair is the rule, not a double.
 
@@ -380,10 +393,10 @@ methods.
 The channel decides what enters it: every event an actor sends is admitted or refused by the
 channel's loop, in order, as it takes it in (see [CHANNELS.md](CHANNELS.md)) - against the channel
 as it is then, so that nothing changes between the check and the entry. The actor that sends asks
-nothing of the policy. So a message, a change of one, a reclassification, a request to answer again
-and an answer to questions are each asked once, in the sender's name - first whether it may act so,
-then the flow of what it carries -, and what is refused is answered to its sender alone
-(`MessageRejected`), never written to the history.
+nothing of the policy. So a message, a change of one, a reclassification, a request to answer
+again, an answer to questions and an answer to an approval request are each asked once, in the
+sender's name - first whether it may act so, then the flow of what it carries -, and what is refused
+is answered to its sender alone (`MessageRejected`), never written to the history.
 
 ## The security suite
 

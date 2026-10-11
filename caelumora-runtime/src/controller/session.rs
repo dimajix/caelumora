@@ -219,6 +219,10 @@ mod tests {
         fn publish(&self, event: GlobalEvent, _attributes: SecurityAttributes) {
             self.0.lock().unwrap().push(event);
         }
+
+        fn publish_classified(&self, event: GlobalEvent, attributes: SecurityAttributes, _classifications: &[caelumora_model::confidentiality::Classification]) {
+            self.publish(event, attributes);
+        }
     }
 
     #[tokio::test]

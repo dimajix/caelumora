@@ -13,7 +13,7 @@ use caelumora_model::value::language::Language;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext};
 use crate::view::{channel_reading, ChannelReader};
-use caelumora_model::store::{StoreError, StoreResultExt};
+use caelumora_model::store::{EntityKind, StoreError, StoreResultExt};
 use tracing::{info, warn};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::ChannelId;
@@ -91,8 +91,11 @@ impl SessionLoop {
     /// Creates a channel in the running session on behalf of `context` and
     /// starts it (issue 09). The channel is a document of its own (issue 70),
     /// stored first (`CreateChannel`), and then listed in the session, which
-    /// takes the permission to change the session (`UpdateSession`); the
-    /// channel belongs to the session's owner, like the session's others.
+    /// takes the permission to change the session (`UpdateSession`, asked
+    /// by the store); the channel belongs to the session's owner, like the
+    /// session's others. In the order of issue 304: what `spec` asks for is
+    /// validated, then creating the channel is asked, then its members'
+    /// admission, and the store asks again as it stores (issue 312).
     ///
     /// # Errors
     /// - `ValueError` if its name is no name or its language no tag.
@@ -101,15 +104,10 @@ impl SessionLoop {
     /// - [`SessionError`] if `spec` asks for something that cannot be:
     ///   components that make no moderator, or a participant who is not one
     ///   of the session's.
-    /// - `StoreError::PermissionDenied` if `context` may not change the
-    ///   session; nothing is changed then.
+    /// - `StoreError::PermissionDenied` if `context` may not create the
+    ///   channel or change the session; nothing is changed then.
     pub async fn create_channel(self: &Arc<Self>, context: &SecurityContext, spec: ChannelSpec) -> Result<Arc<ChannelLoop>> {
         let session = Arc::clone(&self.session());
-        // Whether the actor may change the session at all, before anything
-        // is asked of the others in the channel (issue 198, F2): who may not
-        // learns nothing of their clearance.
-        self.security
-            .require(context, ActionType::UpdateSession(&session.security_attributes), || StoreError::PermissionDenied).await?;
         let name = Name::new(&spec.name)?;
         let language = Language::optional(spec.language.as_deref())?;
         let classification = spec.classification.unwrap_or_default();
@@ -138,6 +136,11 @@ impl SessionLoop {
         if let Some(uses) = spec.uses_workspace {
             channel.uses_workspace = uses;
         }
+        // Whether the actor may create it, before anything is asked of the
+        // others in it (issues 198, 312): who may not learns nothing of their
+        // clearance. The store asks again as it stores.
+        self.security
+            .require(context, ActionType::CreateChannel(&channel.security_attributes), || StoreError::PermissionDenied).await?;
         crate::channel::require_admitted(&self.runtime_manager, context, &channel).await?;
         let store = &self.entities;
         store.create_channel(context, &channel).await?;
@@ -162,7 +165,7 @@ impl SessionLoop {
                 return Err(error);
             }
         };
-        self.events.publish(GlobalEvent::ChannelCreated(self.id, channel.id), channel.security_attributes.clone());
+        self.events.publish_classified(GlobalEvent::ChannelCreated(self.id, channel.id), channel.security_attributes.clone(), std::slice::from_ref(&channel.classification));
         info!("Channel {}/{} created in session {}", channel.name, channel.id, self.id);
         Ok(channel_loop)
     }
@@ -183,22 +186,21 @@ impl SessionLoop {
     /// and its document marked, but it and its state stay stored - it can
     /// be restored (`restore_channel`) - until it is purged with its session
     /// (`SessionManager::purge_session`). Asked about first, in the order
-    /// of issue 304 - whether `context` may read the channel (`GetChannel`),
-    /// then delete it (`DeleteChannel`), then, as it is taken out of the
-    /// session, change the session (`UpdateSession`, by the store) - so that
-    /// a refused deletion leaves the channel running and listed.
+    /// of issue 304 - whether `context` reaches the channel as the views
+    /// reach it (`channel_for`), then may delete it (`DeleteChannel`), then,
+    /// as it is taken out of the session, change the session
+    /// (`UpdateSession`, by the store) - so that a refused deletion leaves
+    /// the channel running and listed.
     ///
     /// # Errors
     /// - `SessionError::ChannelNotFound` if the session has no such channel,
-    ///   and equally if `context` may not read it.
+    ///   and equally if `context` may not read it or is not cleared for it.
     /// - `StoreError::PermissionDenied` if `context` may not delete the
     ///   channel or change the session; nothing is changed then.
     pub async fn delete_channel(&self, context: &SecurityContext, channel_id: ChannelId) -> Result<()> {
-        let not_found = || SessionError::ChannelNotFound { session: self.id, channel: channel_id };
-        let running = self.channel_by_id(channel_id).ok_or_else(not_found)?;
+        let running = self.channel_for(context, channel_id).await?;
         // Not the guard itself: it would be held across the awaits below.
         let channel = Arc::clone(&running.channel());
-        self.security.require(context, ActionType::GetChannel(&channel.security_attributes), not_found).await?;
         self.security.require(context, ActionType::DeleteChannel(&channel.security_attributes), || StoreError::PermissionDenied).await?;
         self.session_controller.remove_channel(context, channel_id).await?;
         // Permitted, so only the store itself can fail here: the channel is
@@ -215,9 +217,9 @@ impl SessionLoop {
         let event_bus = &self.events;
         if let Some(task) = task {
             task.abort();
-            event_bus.publish(GlobalEvent::ChannelStopped(self.id, channel_id), channel.security_attributes.clone());
+            event_bus.publish_classified(GlobalEvent::ChannelStopped(self.id, channel_id), channel.security_attributes.clone(), std::slice::from_ref(&channel.classification));
         }
-        event_bus.publish(GlobalEvent::ChannelDeleted(self.id, channel_id), channel.security_attributes.clone());
+        event_bus.publish_classified(GlobalEvent::ChannelDeleted(self.id, channel_id), channel.security_attributes.clone(), std::slice::from_ref(&channel.classification));
         // What lies in its scope goes with it (issue 178); an agent of it
         // takes part in no other channel (`Scope::admits`).
         if let Err(e) = self.scoped.delete_lying_in(&Scope::ChannelScope { session_id: self.id, channel_id }).await {
@@ -229,26 +231,28 @@ impl SessionLoop {
 
     /// Restores the deleted channel `channel_id` of this session on behalf
     /// of `context` (issue 164): its mark taken away, listed in the session
-    /// again and started from its stored state. Asks to change the session
-    /// (`UpdateSession`) and its participants' clearance, as creating one
-    /// does, and the store asks to restore it (`Restore`).
+    /// again and started from its stored state. In the order of issue 304:
+    /// the deleted channel is read as such (`ReadDeleted`, as the session's
+    /// trash lists it), then restoring it is asked (`Restore`), then its
+    /// participants' clearance, as creating one does; the store asks again
+    /// as it restores it, and to change the session that lists it again
+    /// (`UpdateSession`).
     ///
     /// # Errors
     /// - `SessionError::ChannelNotFound` if the session has no such deleted
     ///   channel, or `context` may not see it.
     /// - `StoreError::NameTaken` if its name was taken since (issue 250).
-    /// - `StoreError::PermissionDenied` if `context` may not change the
-    ///   session or restore the channel; nothing is changed then.
+    /// - `StoreError::PermissionDenied` if `context` may not restore the
+    ///   channel or change the session; nothing is changed then.
     pub async fn restore_channel(self: &Arc<Self>, context: &SecurityContext, channel_id: ChannelId) -> Result<Arc<ChannelLoop>> {
-        let session = Arc::clone(&self.session());
-        self.security
-            .require(context, ActionType::UpdateSession(&session.security_attributes), || StoreError::PermissionDenied).await?;
         let not_found = || SessionError::ChannelNotFound { session: self.id, channel: channel_id };
         let store = &self.entities;
         let channel = match store.get_deleted_channel(context, channel_id).await.optional()? {
             Some(channel) if channel.session_id == self.id => channel,
             _ => return Err(not_found().into()),
         };
+        self.security
+            .require(context, ActionType::Restore(EntityKind::Channel, &channel.security_attributes), || StoreError::PermissionDenied).await?;
         // As when it was created: its participants' clearance may have
         // changed while it was deleted.
         crate::channel::require_admitted(&self.runtime_manager, context, &channel).await?;
@@ -275,7 +279,7 @@ impl SessionLoop {
                 warn!("Channel {} of session {} was restored, but not what lies in its scope: {}", channel_id, self.id, e);
             }
         }
-        self.events.publish(GlobalEvent::ChannelRestored(self.id, channel_id), channel.security_attributes.clone());
+        self.events.publish_classified(GlobalEvent::ChannelRestored(self.id, channel_id), channel.security_attributes.clone(), std::slice::from_ref(&channel.classification));
         info!("Channel {}/{} restored in session {} by {}", channel.name, channel_id, self.id, context.caller_id);
         Ok(channel_loop)
     }

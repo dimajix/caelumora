@@ -1,6 +1,6 @@
 # 312 — Not every operation follows the order and the one reach
 
-**Status:** open
+**Status:** done
 **Area:** Identity and access management
 
 ## The problem
@@ -79,3 +79,33 @@ rights. Where the code differs, the rule in SECURITY.md promises what the code d
 
 - **2026-10-11** — Opened at the end of issue 304, step 5, from the map redone from the code: what
   304 found but did not decide.
+- **2026-10-11** — Done. Decided with the maintainer: an operation asks its verb before the store
+  does only if it changes another object first, or asks something about others the actor could not
+  learn otherwise (a participant's clearance, whether a user exists); validation, the structure of
+  the reached object and the flow of the actor's own request tell nothing of others and may come
+  first, the store's question then being the only one. SECURITY.md (rule 2, the order) says so.
+  - Finding 1: `create_from_template` asks `CreateSession` before anything is found or made;
+    `create_channel` asks `CreateChannel` instead of `UpdateSession` before the members, which the
+    store asks as it lists the channel; `restore_channel` reaches the deleted channel, then asks
+    `Restore` before the members.
+  - Finding 2: the explicit verbs before the flow (workspaces, skills) and before `require_nameable`
+    (workspaces, artifacts) and the scope (`keep`) are gone; `set_members` asks `UpdateGroup` before
+    it looks up whether the users exist. The structural refusals of groups and `remove_participant`
+    stay, as structure seen by whoever reached the object.
+  - Finding 3: the workspace, skill and artifact managers reach a live entity by id as the views
+    do - read and cleared -, also `require_attachable`; deleting a channel reaches it by
+    `channel_reading`. What was deleted is reached as the store lists it (`ReadDeleted`), restoring
+    a channel too: the maintainer decided that what a list returns is the store's, and that a view
+    does not filter it again; that the clearance is asked outside the store is issue
+    [322](322-clearance-decided-outside-the-store.md). The system is cleared for everything (`ConfidentialityQuestions::cleared_for`).
+  - Finding 4: `EventPublisher::publish_classified`: the bus asks `cleared_for` of what is
+    classified, and a reclassification reaches who was cleared before or is now.
+  - Finding 5: an answer to an approval request is admitted by the channel (`ApproveToolCall`), a
+    refusal told with `MessageRejected`; the approver only checks that it names the agent that
+    asked.
+  - Finding 6: notes and memory entries are reclassified with their channel's attributes (F14);
+    the channel's components in its owner's name went to issue
+    [321](321-channel-components-in-the-owners-name.md).
+  - Finding 7: decided to stay and written into the map: `UpdateWorkspace` is now asked twice for
+    attaching and sharing, `ApproveToolCall` three times for an answer by a rule, each for a reason
+    of its own.

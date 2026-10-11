@@ -1,5 +1,6 @@
 use caelumora_model::agent::AgentId;
 use caelumora_model::channel::ChannelId;
+use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
 use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::security::{ActionType, Secured, SecurityAttributes, SecurityContext, SecurityManager};
 use caelumora_model::session::SessionId;
@@ -24,12 +25,13 @@ pub enum SubscriptionTopic {
 const SUBSCRIPTION_CAPACITY: usize = 128;
 
 /// An event on its way through the bus, with the attributes of the entity
-/// it is about. Only the bus sees the attributes: subscribers receive the
-/// `GlobalEvent` alone.
+/// it is about and, for a classified one, its classifications. Only the bus
+/// sees them: subscribers receive the `GlobalEvent` alone.
 #[derive(Debug, Clone)]
 struct PublishedEvent {
     event: GlobalEvent,
     attributes: SecurityAttributes,
+    classifications: Vec<Classification>,
 }
 
 impl Secured for PublishedEvent {
@@ -84,6 +86,9 @@ pub struct EventBus {
     parties: Arc<Mutex<Vec<Party>>>,
     dispatcher: OnceLock<mpsc::UnboundedSender<PublishedEvent>>,
     security_manager: Arc<dyn SecurityManager>,
+    /// Who is cleared for what a classified entity's events are about
+    /// (issue 312).
+    confidentiality: Arc<dyn ConfidentialityPolicy>,
 }
 
 /// The events of an `EventBus` subscription.
@@ -133,17 +138,23 @@ impl EventPublisher for EventBus {
     fn publish(&self, event: GlobalEvent, attributes: SecurityAttributes) {
         self.publish(event, attributes);
     }
+
+    fn publish_classified(&self, event: GlobalEvent, attributes: SecurityAttributes, classifications: &[Classification]) {
+        self.publish_classified(event, attributes, classifications);
+    }
 }
 
 impl EventBus {
     /// A bus whose `subscribe_as` subscriptions receive what
-    /// `security_manager` lets their context read.
-    pub fn new(security_manager: Arc<dyn SecurityManager>) -> Self {
+    /// `security_manager` lets their context read and, of what is
+    /// classified, what `confidentiality` clears them for.
+    pub fn new(security_manager: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> Self {
         Self {
             subscribers: DashMap::new(),
             parties: Arc::new(Mutex::new(Vec::new())),
             dispatcher: OnceLock::new(),
             security_manager,
+            confidentiality,
         }
     }
 
@@ -167,6 +178,7 @@ impl EventBus {
         let (tx, mut rx) = mpsc::unbounded_channel::<PublishedEvent>();
         let parties = Arc::clone(&self.parties);
         let security_manager = Arc::clone(&self.security_manager);
+        let confidentiality = Arc::clone(&self.confidentiality);
         tokio::spawn(async move {
             while let Some(published) = rx.recv().await {
                 // The parties as they are now; the lock is not held while the
@@ -178,6 +190,12 @@ impl EventBus {
                 let mut gone = Vec::new();
                 for (context, tx) in current {
                     if !security_manager.check(&context, published.read_action()).await {
+                        continue;
+                    }
+                    // Reached as the views reach it: cleared for what it is,
+                    // or was (issue 312).
+                    let classifications = &published.classifications;
+                    if !classifications.is_empty() && !classifications.iter().any(|c| confidentiality.cleared_for(&context, c)) {
                         continue;
                     }
                     // A send fails only when the subscription is gone.
@@ -229,8 +247,16 @@ impl EventBus {
     /// and through the dispatcher to every `subscribe_as` subscription
     /// allowed to read that entity.
     pub fn publish(&self, event: GlobalEvent, attributes: SecurityAttributes) {
+        self.publish_classified(event, attributes, &[]);
+    }
+
+    /// Publishes `event` about an entity with these `attributes`, classified
+    /// as `classifications` says (see `EventPublisher::publish_classified`):
+    /// as `publish` does, and to a `subscribe_as` subscription only if it
+    /// is cleared for one of them.
+    pub fn publish_classified(&self, event: GlobalEvent, attributes: SecurityAttributes, classifications: &[Classification]) {
         if let Some(dispatcher) = self.dispatcher.get() {
-            let _ = dispatcher.send(PublishedEvent { event: event.clone(), attributes });
+            let _ = dispatcher.send(PublishedEvent { event: event.clone(), attributes, classifications: classifications.to_vec() });
         }
 
         let mut topics_to_notify = vec![SubscriptionTopic::All];
@@ -295,10 +321,11 @@ mod tests {
     use super::*;
     use caelumora_model::security::{DummySecurityManager, OwnershipSecurityManager};
     use caelumora_model::actor::ActorId;
+    use caelumora_model::confidentiality::ConfidentialityRules;
     use std::time::Duration;
 
     fn bus() -> EventBus {
-        EventBus::new(Arc::new(DummySecurityManager::new()))
+        EventBus::new(Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()))
     }
 
     fn created() -> GlobalEvent {
@@ -360,7 +387,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_party_receives_what_it_may_read_and_nothing_else() {
-        let bus = EventBus::new(Arc::new(OwnershipSecurityManager::new()));
+        let bus = EventBus::new(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()));
         let (alice, bob, carol) = (UserId::new(), UserId::new(), UserId::new());
         let mut alices = bus.subscribe_as(as_user(alice));
         let mut bobs = bus.subscribe_as(as_user(bob));
@@ -392,7 +419,7 @@ mod tests {
             }
         }
 
-        let bus = EventBus::new(Arc::new(ChannelsOnly));
+        let bus = EventBus::new(Arc::new(ChannelsOnly), Arc::new(ConfidentialityRules::default()));
         let alice = UserId::new();
         let mut alices = bus.subscribe_as(as_user(alice));
         let (session, channel) = (SessionId::new(), ChannelId::new());
@@ -407,8 +434,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_events_of_a_classified_channel_reach_who_is_cleared_for_it() {
+        use caelumora_model::confidentiality::{Clearance, Compartments, Confidentiality};
+        use caelumora_model::role::{RoleId, Roles};
+        let staff = RoleId::new();
+        let roles = Roles::new([(staff, "staff".to_string(), vec![Clearance { level: Confidentiality::Internal, compartment: None }])]).unwrap();
+        let rules = ConfidentialityRules::new(Compartments::new([]).unwrap()).with_roles(roles);
+        let bus = EventBus::new(Arc::new(OwnershipSecurityManager::new()), Arc::new(rules));
+        let (alice, bob) = (UserId::new(), UserId::new());
+        let mut alices = bus.subscribe_as(as_user(alice).with_roles(vec![staff], None));
+        let mut bobs = bus.subscribe_as(as_user(bob));
+
+        let (session, channel) = (SessionId::new(), ChannelId::new());
+        let shared = SecurityAttributes::owned_by(ActorId::User(alice)).granting(caelumora_model::security::Subject::Actor(ActorId::User(bob)), caelumora_model::security::Grant::Read);
+        let (public, internal) = (Classification::general(Confidentiality::Public), Classification::general(Confidentiality::Internal));
+        bus.publish_classified(GlobalEvent::ChannelCreated(session, channel), shared.clone(), std::slice::from_ref(&internal));
+        bus.publish_classified(GlobalEvent::ChannelStarted(session, channel), shared.clone(), std::slice::from_ref(&public));
+        let lowered = caelumora_model::channel::ChannelUpdateEvent::ClassificationChanged(public.clone());
+        bus.publish_classified(GlobalEvent::ChannelUpdated(session, channel, lowered), shared, &[internal, public]);
+
+        let kinds = |events: Vec<GlobalEvent>| events.iter().map(|e| format!("{e:?}").split('(').next().unwrap().to_string()).collect::<Vec<_>>();
+        assert_eq!(kinds(drain(&mut alices).await), ["ChannelCreated", "ChannelStarted", "ChannelUpdated"], "cleared, she gets it all");
+        assert_eq!(kinds(drain(&mut bobs).await), ["ChannelStarted", "ChannelUpdated"], "he reads it, but is cleared only for what is public (issue 312) - and learns of its reclassification");
+    }
+
+    #[tokio::test]
     async fn a_profile_s_change_reaches_its_user_alone() {
-        let bus = EventBus::new(Arc::new(OwnershipSecurityManager::new()));
+        let bus = EventBus::new(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()));
         let (alice, bob) = (UserId::new(), UserId::new());
         let mut alices = bus.subscribe_as(as_user(alice));
         let mut bobs = bus.subscribe_as(as_user(bob));
@@ -423,7 +475,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_workspace_s_events_reach_whoever_may_use_it() {
-        let bus = EventBus::new(Arc::new(OwnershipSecurityManager::new()));
+        let bus = EventBus::new(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()));
         let (alice, bob, carol) = (UserId::new(), UserId::new(), UserId::new());
         let mut alices = bus.subscribe_as(as_user(alice));
         let mut bobs = bus.subscribe_as(as_user(bob));
@@ -444,7 +496,7 @@ mod tests {
 
     #[tokio::test]
     async fn what_belongs_to_the_system_reaches_every_party() {
-        let bus = EventBus::new(Arc::new(OwnershipSecurityManager::new()));
+        let bus = EventBus::new(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()));
         let mut someone = bus.subscribe_as(as_user(UserId::new()));
         bus.publish(GlobalEvent::SessionCreated(SessionId::new()), SecurityAttributes::default());
         assert_eq!(drain(&mut someone).await.len(), 1);
@@ -452,7 +504,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_dropped_party_is_removed() {
-        let bus = EventBus::new(Arc::new(DummySecurityManager::new()));
+        let bus = EventBus::new(Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()));
         drop(bus.subscribe_as(as_user(UserId::new())));
         let mut kept = bus.subscribe_as(as_user(UserId::new()));
         bus.publish(GlobalEvent::SessionCreated(SessionId::new()), SecurityAttributes::default());
