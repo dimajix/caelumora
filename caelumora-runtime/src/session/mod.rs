@@ -15,7 +15,7 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
 use crate::view::{Viewer, Views};
 use caelumora_model::privacy::SessionPrivacy;
-use caelumora_model::store::{EntityStore, StoreError, StoreResult, StoreResultExt};
+use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResult, StoreResultExt};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::group::GroupId;
@@ -62,6 +62,27 @@ pub enum SessionError {
     /// that session alone (issue 251, `Scope::admits`).
     #[error("The workspace {0} lies in another session's scope")]
     WorkspaceOutOfScope(caelumora_model::workspace::WorkspaceId),
+    /// What lies in the scope of a session or channel being deleted is not
+    /// all the caller's to delete (issue 320): what was is deleted, the
+    /// session or channel is kept. `left` says how many of each kind are
+    /// left - not which, since they need not be the caller's to read.
+    #[error("The {} is not deleted: {} of what lies in its scope may not be deleted by you", shown_holder(.holder), shown_left(.left))]
+    ScopeNotEmpty { holder: Scope, left: Vec<(EntityKind, usize)> },
+}
+
+/// The session or channel whose scope `holder` is, as an error names it.
+fn shown_holder(holder: &Scope) -> String {
+    match holder {
+        Scope::SessionScope { session_id } => format!("session {session_id}"),
+        Scope::ChannelScope { session_id, channel_id } => format!("channel {channel_id} of session {session_id}"),
+        // Nothing else holds a scope that is deleted with it.
+        _ => "holder of the scope".to_string(),
+    }
+}
+
+/// How many of each kind are left, as an error says it: "1 agent, 2 artifact".
+fn shown_left(left: &[(EntityKind, usize)]) -> String {
+    left.iter().map(|(kind, count)| format!("{count} {kind}")).collect::<Vec<_>>().join(", ")
 }
 
 /// Nothing if a channel may be given `classification` at all - it names

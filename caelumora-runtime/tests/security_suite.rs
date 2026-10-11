@@ -38,7 +38,7 @@ use caelumora_model::group::{Group, GroupId};
 use caelumora_model::security::{AclEntry, ActionType, Grant, OwnershipSecurityManager, Reclassified, SecurityAttributes, SecurityContext, SecurityManager, Subject};
 use caelumora_model::snapshot::{Detail, PublicationSnapshot};
 use caelumora_model::session::{ChannelId, Session, SessionId};
-use caelumora_model::store::{ComponentStore, EntityStore, StateStore, StoreError};
+use caelumora_model::store::{ComponentStore, EntityKind, EntityStore, StateStore, StoreError};
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId, TemplateError, WorkspaceTemplate};
 use caelumora_model::user::{User, UserId, UserProfile};
@@ -2124,12 +2124,13 @@ async fn stopping_a_session_needs_owning_it() {
 
 /// Deleting a session: reading it and deleting it - its owner's alone. It
 /// is marked and kept, with its channels (issue 164), and what lies in its
-/// scope goes with it in the runtime's name - also an agent of somebody
-/// else's, whom nothing more is asked (issue 178).
+/// scope goes with it in her name (issue 320): an agent of somebody else's
+/// she may not delete keeps the session, and she is told what is left.
 #[tokio::test]
 async fn deleting_a_session_needs_owning_it() {
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
+    let alice = World::as_user(world.alice);
     let personality = world.personality("plain", None, &[]).await;
     let bobs = Agent::new(ScopedName::new("helper", Scope::SessionScope { session_id: session.id() }).unwrap(), &personality, ActorId::User(world.bob));
     world.store.create_agent(&World::system(), &bobs).await.unwrap();
@@ -2137,18 +2138,24 @@ async fn deleting_a_session_needs_owning_it() {
     assert_eq!(asked, checks(&["carol: GetSession(alice's) no"]));
     let (_, asked) = world.asked(world.manager.delete_session(&World::as_user(world.bob), session.id())).await;
     assert_eq!(asked, checks(&["bob: GetSession(alice's) yes", "bob: DeleteSession(alice's) no"]));
-    let (deleted, asked) = world.asked(world.manager.delete_session(&World::as_user(world.alice), session.id())).await;
-    assert!(deleted.unwrap());
+    let (refused, asked) = world.asked(world.manager.delete_session(&alice, session.id())).await;
+    let refused = refused.expect_err("bob's agent is left");
+    assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::ScopeNotEmpty { left, .. }) if *left == [(EntityKind::Agent, 1)]), "{refused}");
     assert_eq!(asked, checks(&[
         "alice: GetSession(alice's) yes",
         "alice: DeleteSession(alice's) yes",
         "alice: GetSession(alice's) yes",
         "alice: DeleteSession(alice's) yes",
-    ]), "asked by the session manager before it stops anything, and again by the store");
-    assert!(world.store.get_agent(&World::system(), bobs.id).await.is_err(), "bob's agent of its scope went with it");
+        "alice: GetAgent(bob's) no",
+    ]), "asked by the session manager before it stops anything, again by the store, and for what lies in its scope");
+    assert!(world.store.get_session(&alice, session.id()).await.is_ok(), "the session is kept");
+    assert!(world.store.get_agent(&World::system(), bobs.id).await.is_ok(), "and bob's agent");
 
-    world.manager.restore_session(&World::as_user(world.alice), session.id()).await.unwrap();
-    assert!(world.store.get_agent(&World::system(), bobs.id).await.is_ok(), "and comes back with it");
+    world.runtime.agent_manager().delete(&World::as_user(world.bob), bobs.id).await.expect("his to delete");
+    let (deleted, _) = world.asked(world.manager.delete_session(&alice, session.id())).await;
+    assert!(deleted.unwrap(), "nothing of anybody else's is left");
+    world.manager.restore_session(&alice, session.id()).await.unwrap();
+    assert!(world.store.get_agent(&World::system(), bobs.id).await.is_err(), "deleted before the session, bob's agent stays deleted");
 }
 
 /// Creating a channel: the classification it is given, everyone's
@@ -2188,7 +2195,9 @@ async fn who_may_not_create_a_channel_is_refused_before_the_others_are_looked_at
 /// Deleting a channel, in the order of issue 304: reading the channel,
 /// deleting it - its owner's alone -, then, as the store takes it out of
 /// its session and marks it, changing the session and deleting it again
-/// (rule 2: the operation asks before it acts, the store as it stores).
+/// (rule 2: the operation asks before it acts, the store as it stores) -
+/// and, in her name, what lies in its scope (issue 320): the group of its
+/// participants.
 #[tokio::test]
 async fn deleting_a_channel_needs_owning_its_session() {
     let world = World::new().await;
@@ -2207,6 +2216,8 @@ async fn deleting_a_channel_needs_owning_its_session() {
         "alice: UpdateSession(alice's) yes",
         "alice: GetChannel(alice's) yes",
         "alice: DeleteChannel(alice's) yes",
+        "alice: GetGroup(alice's) yes",
+        "alice: DeleteGroup(alice's) yes",
     ]));
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
@@ -2216,7 +2227,8 @@ async fn deleting_a_channel_needs_owning_its_session() {
 /// trash, there is nothing to restore (issue 164). The manager reads it
 /// first, as whoever restores it (issue 304), and the store asks again as
 /// it restores it (rule 2) - and returns it, so that it is not read back
-/// (issue 318).
+/// (issue 318). What went with it comes back in her name (issue 320): the
+/// groups of its participants and of its channel's.
 #[tokio::test]
 async fn restoring_a_session_needs_owning_it() {
     let world = World::new().await;
@@ -2230,6 +2242,10 @@ async fn restoring_a_session_needs_owning_it() {
     assert!(restored.is_ok());
     assert_eq!(asked, checks(&[
         "alice: ReadDeleted(alice's) yes",
+        "alice: ReadDeleted(alice's) yes",
+        "alice: Restore(alice's) yes",
+        "alice: ReadDeleted(alice's) yes",
+        "alice: Restore(alice's) yes",
         "alice: ReadDeleted(alice's) yes",
         "alice: Restore(alice's) yes",
     ]), "and does not read it back");
@@ -2255,7 +2271,8 @@ async fn purging_a_session_is_not_its_owners() {
 }
 
 /// Restoring a deleted channel: changing its session - its owner's alone
-/// -, everyone's clearance and restoring the channel (issue 164).
+/// -, everyone's clearance and restoring the channel (issue 164), and in
+/// her name what went with it (issue 320): the group of its participants.
 #[tokio::test]
 async fn restoring_a_channel_needs_owning_its_session() {
     let world = World::new().await;
@@ -2275,7 +2292,9 @@ async fn restoring_a_channel_needs_owning_its_session() {
         "alice: Restore(alice's) yes",
         "alice: GetSession(alice's) yes",
         "alice: UpdateSession(alice's) yes",
-    ]), "everyone's clearance again, as when it was created, and listing it in the session");
+        "alice: ReadDeleted(alice's) yes",
+        "alice: Restore(alice's) yes",
+    ]), "everyone's clearance again, as when it was created, listing it in the session, and its participants' group");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
@@ -2968,6 +2987,81 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
     assert!(world.files.path().join("artifacts").join(artifact.id.to_string()).is_dir(), "with its content");
     assert!(world.store.get_deleted_artifact(&World::system(), left.id).await.is_err(), "what was not kept went with the session");
     assert!(!world.files.path().join("artifacts").join(left.id.to_string()).exists(), "its content too");
+}
+
+/// A session of alice's with her workspace attached for writing and a file
+/// in it, and an artifact published from it in its channel "main" by each
+/// of alice and bob - each his publisher's (issue 271), in the session's
+/// scope.
+async fn session_with_artifacts(world: &World) -> (Arc<SessionLoop>, caelumora_model::artifact::Artifact, caelumora_model::artifact::Artifact) {
+    let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
+    let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
+    let session = world.shared_session(&[], &[]).await;
+    session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
+    let (session_id, main) = (session.id(), session.channels()[0].id());
+    let (_, terminal) = world.runtime.workspace_manager().terminal_in(&alice, session_id, main, Grant::Write).await.unwrap();
+    let at = WorkspacePath::parse("out/report.csv").unwrap();
+    terminal.write(&at, file("a,b"), 100).await.unwrap();
+    let (hers, _) = publish(world, &alice, session_id, main, &at, "hers.csv", None).await.unwrap();
+    let (his, _) = publish(world, &bob, session_id, main, &at, "his.csv", None).await.unwrap();
+    assert_eq!((hers.owner(), his.owner()), (Some(world.alice), Some(world.bob)));
+    (session, hers, his)
+}
+
+/// Issue 320: what lies in a session's scope goes with it in the name of
+/// whoever deletes it, as far as they may. An artifact another participant
+/// published in the session is his: deleting the session deletes hers, in
+/// her name, and keeps the session, telling her what is left - until he
+/// keeps his elsewhere.
+#[tokio::test]
+async fn a_session_goes_with_what_lies_in_it_only_as_far_as_whoever_deletes_it_may() {
+    let world = World::new().await;
+    let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
+    let (session, hers, his) = session_with_artifacts(&world).await;
+    let session_id = session.id();
+
+    let (refused, asked) = world.asked(world.manager.delete_session(&alice, session_id)).await;
+    let refused = refused.expect_err("bob's artifact is left");
+    assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::ScopeNotEmpty { left, .. }) if *left == [(EntityKind::Artifact, 1)]), "{refused}");
+    assert!(refused.to_string().contains("1 artifact") && !refused.to_string().contains("his.csv"), "what is left, by kind, not by name: {refused}");
+    assert_eq!(asked, checks(&[
+        "alice: GetSession(alice's) yes",
+        "alice: DeleteSession(alice's) yes",
+        "alice: GetSession(alice's) yes",
+        "alice: DeleteSession(alice's) yes",
+        "alice: GetArtifact(bob's) no",
+        "alice: GetArtifact(alice's) yes",
+        "alice: DeleteArtifact(alice's) yes",
+    ]), "asked in her name, who does not read bob's outside the channel");
+    assert!(world.store.get_session(&alice, session_id).await.is_ok(), "the session is kept");
+    assert!(world.manager.views(Viewer::new(alice.clone())).session(session_id).await.is_ok(), "and runs on");
+    assert!(world.store.get_artifact(&bob, his.id).await.is_ok(), "bob's artifact stays");
+    let removal = world.store.get_deleted_artifact(&World::system(), hers.id).await.unwrap().deleted.expect("hers went");
+    assert_eq!(removal.by, ActorId::User(world.alice), "in her name");
+
+    world.runtime.artifact_manager().keep(&bob, his.id, Scope::UserScope { user_id: world.bob }).await.expect("bob keeps his");
+    assert!(world.manager.delete_session(&alice, session_id).await.expect("nothing of anybody else's is left"));
+    assert!(world.store.get_artifact(&bob, his.id).await.is_ok(), "what bob kept stays");
+}
+
+/// Issue 320: what went with a session comes back with it in the name of
+/// whoever restores it, as far as they may; the session comes back all the
+/// same, and what they may not restore stays deleted for its owner to
+/// restore.
+#[tokio::test]
+async fn a_session_comes_back_with_what_lies_in_it_as_far_as_whoever_restores_it_may() {
+    let world = World::new().await;
+    let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
+    let (session, hers, his) = session_with_artifacts(&world).await;
+    let session_id = session.id();
+    world.manager.delete_session(&World::system(), session_id).await.expect("the system's to delete, all of it");
+
+    let (restored, asked) = world.asked(world.manager.restore_session(&alice, session_id)).await;
+    restored.expect("restored all the same");
+    assert!(asked.contains(&"alice: ReadDeleted(bob's) no".to_string()), "asked in her name: {asked:?}");
+    assert!(world.store.get_artifact(&alice, hers.id).await.is_ok(), "hers comes back with it");
+    assert!(world.store.get_deleted_artifact(&World::system(), his.id).await.is_ok(), "bob's stays deleted: not hers to restore");
+    world.runtime.artifact_manager().restore(&bob, his.id).await.expect("bob restores his");
 }
 
 /// Waits until `events` has received each of `wanted`, in any order -

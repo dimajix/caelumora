@@ -13,7 +13,7 @@
 //! the views show it as a former member, removed as its mark says.
 
 use crate::event::EventBus;
-use crate::scoped::{deleted_since, unless_taken, within};
+use crate::scoped::{deleted_since, deleted_unless_refused, restored_unless_refused, within};
 use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::scope::Scope;
@@ -106,34 +106,39 @@ impl AgentManager {
         Ok(true)
     }
 
-    /// Deletes the agents that lie in `holder` or within it, in the
-    /// runtime's name (`scoped`), and announces them as `delete` does. They
-    /// leave no channel: they take part only within `holder`
-    /// (`Scope::admits`).
+    /// Deletes the agents that lie in `holder` or within it on behalf of
+    /// `ctx` (`scoped`), as far as they may, and announces them as `delete`
+    /// does; answers how many are left. They leave no channel: they take
+    /// part only within `holder` (`Scope::admits`).
     ///
     /// # Errors
-    /// Whatever the store reports; what was deleted before stays deleted.
-    pub(crate) async fn delete_lying_in(&self, holder: &Scope) -> StoreResult<()> {
+    /// Whatever else the store reports; what was deleted before stays
+    /// deleted.
+    pub(crate) async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> StoreResult<usize> {
         let system = SecurityContext::system();
+        let mut left = 0;
         for agent in self.entities.list_agents(&system, &within(holder)).await?.items {
-            self.entities.delete_agent(&system, agent.id).await?;
-            self.events.publish(GlobalEvent::AgentDeleted(agent.id), agent.security_attributes);
+            if deleted_unless_refused(self.entities.delete_agent(ctx, agent.id).await)? {
+                self.events.publish(GlobalEvent::AgentDeleted(agent.id), agent.security_attributes);
+            } else {
+                left += 1;
+            }
         }
-        Ok(())
+        Ok(left)
     }
 
     /// Restores the agents that lie in `holder` or within it and were
-    /// deleted at `since` or later, in the runtime's name (`scoped`), and
+    /// deleted at `since` or later on behalf of `ctx` (`scoped`), and
     /// announces them as `restore` does. One whose name was taken meanwhile
-    /// stays deleted.
+    /// stays deleted, as does one `ctx` may not restore.
     ///
     /// # Errors
     /// Whatever else the store reports; what was restored before stays
     /// restored.
-    pub(crate) async fn restore_lying_in(&self, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()> {
+    pub(crate) async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()> {
         let system = SecurityContext::system();
         for agent in deleted_since(self.entities.list_deleted_agents(&system, &within(holder)).await?.items, since) {
-            if let Some(restored) = unless_taken(self.entities.restore_agent(&system, agent.id).await, "agent", &agent.name)? {
+            if let Some(restored) = restored_unless_refused(self.entities.restore_agent(ctx, agent.id).await, "agent", &agent.name)? {
                 self.events.publish(GlobalEvent::AgentRestored(restored.id), restored.security_attributes);
             }
         }

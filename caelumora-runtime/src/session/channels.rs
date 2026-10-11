@@ -193,6 +193,10 @@ impl SessionLoop {
     ///   and equally if `context` may not read it.
     /// - `StoreError::PermissionDenied` if `context` may not delete the
     ///   channel or change the session; nothing is changed then.
+    /// - `SessionError::ScopeNotEmpty` if something of its scope is left
+    ///   that `context` may not delete (issue 320): what they may is
+    ///   deleted, the channel is kept and runs on.
+    /// - Whatever else the store reports; the channel is kept then too.
     pub async fn delete_channel(&self, context: &SecurityContext, channel_id: ChannelId) -> Result<()> {
         let not_found = || SessionError::ChannelNotFound { session: self.id, channel: channel_id };
         let running = self.channel_by_id(channel_id).ok_or_else(not_found)?;
@@ -200,11 +204,22 @@ impl SessionLoop {
         let channel = Arc::clone(&running.channel());
         self.security.require(context, ActionType::GetChannel(&channel.security_attributes), not_found).await?;
         self.security.require(context, ActionType::DeleteChannel(&channel.security_attributes), || StoreError::PermissionDenied).await?;
+        let scope = Scope::ChannelScope { session_id: self.id, channel_id };
         self.session_controller.remove_channel(context, channel_id).await?;
-        // Permitted, so only the store itself can fail here: the channel is
-        // out of the session, and stays so.
-        if let Err(e) = self.entities.delete_channel(context, channel_id).await {
-            warn!("Channel {} was taken out of session {} but not marked deleted: {}", channel_id, self.id, e);
+        // Marked before what lies in its scope, so that all of that is
+        // deleted with it, not before it: it comes back with it
+        // (`restore_channel`, issue 178). Then what lies in its scope goes as
+        // far as `context` may delete it (issue 320); an agent of it takes
+        // part in no other channel (`Scope::admits`). If either fails, the
+        // channel is put back - in the runtime's name: its deletion was
+        // permitted - and runs on, without what was deleted.
+        let deleted = match self.entities.delete_channel(context, channel_id).await {
+            Ok(_) => self.scoped.delete_lying_in(context, &scope).await,
+            Err(error) => Err(error.into()),
+        };
+        if let Err(error) = deleted {
+            self.keep_channel(channel_id).await;
+            return Err(error);
         }
 
         let task = self.channels.remove(&channel_id).and_then(|(_, entry)| entry.task);
@@ -218,11 +233,6 @@ impl SessionLoop {
             event_bus.publish(GlobalEvent::ChannelStopped(self.id, channel_id), channel.security_attributes.clone());
         }
         event_bus.publish(GlobalEvent::ChannelDeleted(self.id, channel_id), channel.security_attributes.clone());
-        // What lies in its scope goes with it (issue 178); an agent of it
-        // takes part in no other channel (`Scope::admits`).
-        if let Err(e) = self.scoped.delete_lying_in(&Scope::ChannelScope { session_id: self.id, channel_id }).await {
-            warn!("Channel {} was deleted from session {}, but not what lies in its scope: {}", channel_id, self.id, e);
-        }
         info!("Channel {}/{} deleted from session {} by {}", channel.name, channel_id, self.id, context.caller_id);
         Ok(())
     }
@@ -271,13 +281,26 @@ impl SessionLoop {
         };
         if let Some(since) = deleted_at {
             // What was deleted with it comes back with it (issue 178).
-            if let Err(e) = self.scoped.restore_lying_in(&Scope::ChannelScope { session_id: self.id, channel_id }, since).await {
+            if let Err(e) = self.scoped.restore_lying_in(context, &Scope::ChannelScope { session_id: self.id, channel_id }, since).await {
                 warn!("Channel {} of session {} was restored, but not what lies in its scope: {}", channel_id, self.id, e);
             }
         }
         self.events.publish(GlobalEvent::ChannelRestored(self.id, channel_id), channel.security_attributes.clone());
         info!("Channel {}/{} restored in session {} by {}", channel.name, channel_id, self.id, context.caller_id);
         Ok(channel_loop)
+    }
+
+    /// Puts the channel `channel_id` back after deleting it failed half-way -
+    /// in the runtime's name: its deletion was permitted. Listed in the
+    /// session again, last, and its mark taken away, if it was marked.
+    async fn keep_channel(&self, channel_id: ChannelId) {
+        let system = SecurityContext::system();
+        if let Err(e) = self.entities.restore_channel(&system, channel_id).await.optional() {
+            warn!("Channel {} of session {} could not be deleted and not be unmarked again: {}", channel_id, self.id, e);
+        }
+        if let Err(e) = self.session_controller.add_channel(&system, channel_id).await {
+            warn!("Channel {} of session {} could not be deleted and not be listed again: {}", channel_id, self.id, e);
+        }
     }
 
     /// Deletes the stored channel `channel_id` again after creating it failed

@@ -22,7 +22,7 @@ mod local;
 
 use crate::component::{ComponentError, ComponentResult};
 use crate::event::EventBus;
-use crate::scoped::{deleted_since, unless_taken, within};
+use crate::scoped::{deleted_since, deleted_unless_refused, restored_unless_refused, within};
 use crate::terminal::ByteStream;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
@@ -392,34 +392,39 @@ impl ArtifactManager {
     }
 
     /// Deletes the artifacts that lie in `holder` or within it, their
-    /// content kept, in the runtime's name (`scoped`), and announces them
-    /// as `delete` does.
+    /// content kept, on behalf of `ctx` (`scoped`), as far as they may, and
+    /// announces them as `delete` does; answers how many are left.
     ///
     /// # Errors
-    /// Whatever the store reports; what was deleted before stays deleted.
-    pub(crate) async fn delete_lying_in(&self, holder: &Scope) -> ArtifactResult<()> {
+    /// Whatever else the store reports; what was deleted before stays
+    /// deleted.
+    pub(crate) async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> ArtifactResult<usize> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
+        let mut left = 0;
         for artifact in self.entities.list_artifacts(&system, &within(holder)).await?.items {
-            self.entities.delete_artifact(&system, artifact.id).await?;
-            self.events.publish(GlobalEvent::ArtifactDeleted(artifact.id), artifact.reader_attributes());
+            if deleted_unless_refused(self.entities.delete_artifact(ctx, artifact.id).await)? {
+                self.events.publish(GlobalEvent::ArtifactDeleted(artifact.id), artifact.reader_attributes());
+            } else {
+                left += 1;
+            }
         }
-        Ok(())
+        Ok(left)
     }
 
     /// Restores the artifacts that lie in `holder` or within it and were
-    /// deleted at `since` or later, in the runtime's name (`scoped`), and
+    /// deleted at `since` or later on behalf of `ctx` (`scoped`), and
     /// announces them as `restore` does. One whose name was taken meanwhile
-    /// stays deleted.
+    /// stays deleted, as does one `ctx` may not restore.
     ///
     /// # Errors
     /// Whatever else the store reports; what was restored before stays
     /// restored.
-    pub(crate) async fn restore_lying_in(&self, holder: &Scope, since: DateTime<Utc>) -> ArtifactResult<()> {
+    pub(crate) async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> ArtifactResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         for artifact in deleted_since(self.entities.list_deleted_artifacts(&system, &within(holder)).await?.items, since) {
-            if let Some(restored) = unless_taken(self.entities.restore_artifact(&system, artifact.id).await, "artifact", &artifact.name)? {
+            if let Some(restored) = restored_unless_refused(self.entities.restore_artifact(ctx, artifact.id).await, "artifact", &artifact.name)? {
                 self.events.publish(GlobalEvent::ArtifactRestored(restored.id), restored.reader_attributes());
             }
         }

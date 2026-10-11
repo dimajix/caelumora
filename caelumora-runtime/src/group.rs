@@ -25,7 +25,7 @@
 //! grants what they cannot tell to whom.
 
 use crate::event::EventBus;
-use crate::scoped::{deleted_since, unless_taken, within};
+use crate::scoped::{deleted_since, deleted_unless_refused, restored_unless_refused, within};
 use caelumora_model::actor::ActorId;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::group::{Group, GroupId, GroupUpdateEvent};
@@ -231,34 +231,40 @@ impl GroupManager {
     }
 
     /// Deletes the groups that lie in `holder` or within it - the
-    /// participants of a session or channel among them -, in the runtime's
-    /// name (`scoped`), and announces them as `delete` does a team.
+    /// participants of a session or channel among them - on behalf of `ctx`
+    /// (`scoped`), as far as they may, and announces them as `delete` does
+    /// a team; answers how many are left.
     ///
     /// # Errors
-    /// Whatever the store reports; what was deleted before stays deleted.
-    pub(crate) async fn delete_lying_in(&self, holder: &Scope) -> GroupResult<()> {
+    /// Whatever else the store reports; what was deleted before stays
+    /// deleted.
+    pub(crate) async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> GroupResult<usize> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
+        let mut left = 0;
         for group in self.entities.list_groups(&system, &within(holder)).await?.items {
-            self.entities.delete_group(&system, group.id).await?;
-            self.events.publish(GlobalEvent::GroupDeleted(group.id), group.security_attributes);
+            if deleted_unless_refused(self.entities.delete_group(ctx, group.id).await)? {
+                self.events.publish(GlobalEvent::GroupDeleted(group.id), group.security_attributes);
+            } else {
+                left += 1;
+            }
         }
-        Ok(())
+        Ok(left)
     }
 
     /// Restores the groups that lie in `holder` or within it and were
-    /// deleted at `since` or later, in the runtime's name (`scoped`), and
+    /// deleted at `since` or later on behalf of `ctx` (`scoped`), and
     /// announces them as `restore` does a team. One whose name was taken
-    /// meanwhile stays deleted.
+    /// meanwhile stays deleted, as does one `ctx` may not restore.
     ///
     /// # Errors
     /// Whatever else the store reports; what was restored before stays
     /// restored.
-    pub(crate) async fn restore_lying_in(&self, holder: &Scope, since: DateTime<Utc>) -> GroupResult<()> {
+    pub(crate) async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> GroupResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         for group in deleted_since(self.entities.list_deleted_groups(&system, &within(holder)).await?.items, since) {
-            if let Some(restored) = unless_taken(self.entities.restore_group(&system, group.id).await, "group", &group.name)? {
+            if let Some(restored) = restored_unless_refused(self.entities.restore_group(ctx, group.id).await, "group", &group.name)? {
                 self.events.publish(GlobalEvent::GroupRestored(restored.id), restored.security_attributes);
             }
         }
