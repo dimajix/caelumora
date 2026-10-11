@@ -61,6 +61,7 @@ published before anyone else can take it.
 | [130](130-llm-configuration.md) | done | The language model is configured through environment variables, not in the configuration file like everything else. |
 | [209](209-token-usage.md) | done | The tokens of each model call are recorded per message but summed up nowhere, and the model's context size is unknown, so nobody sees how full an agent's context is. |
 | [297](297-orderly-shutdown.md) | open | Caelumora ends without an orderly shutdown: a signal ends turns mid-step, breaks off streams and leaves the `local` shell's commands running. |
+| [307](307-load-and-performance-tests.md) | open | Nothing measures how Caelumora behaves under load, so its bottlenecks are guessed at, and a real model would hide them behind its own latency. |
 
 ## Persistence
 
