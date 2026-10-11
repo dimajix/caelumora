@@ -17,11 +17,14 @@ reached only through its session -, purging it removes them. A session is loaded
 name, since starting a session the caller may read must not fail on a channel the caller is not in.
 
 What lies in a session's scope - its personalities, session templates and agents, those of its
-channels' scopes, its workspace if made for it, the artifacts published in it and not kept - goes
-with it (`caelumora-runtime/src/scoped.rs`): deleting the session deletes them, restoring it
-restores those deleted with it - not one deleted by hand before, nor one whose name was taken
-meanwhile -, purging it purges them. That is done in the runtime's name, as a consequence of what
-was permitted.
+channels' scopes, its workspace if made for it, the artifacts published in it and not kept, the
+groups of its participants - goes with it (`ScopedEntities`, `caelumora-runtime/src/scoped.rs`):
+deleting the session deletes them, restoring it restores those deleted with it - not one deleted by
+hand before, nor one whose name was taken meanwhile -, purging it purges them. That is done in the
+runtime's name, as a consequence of what was permitted. What has a manager of its own - agents,
+workspaces, skills, artifacts, groups - is deleted, restored and purged by it (`…_lying_in`), and
+announced as it announces its own deletions: an artifact to whoever reads any of its versions, as
+when it is deleted alone (issue 319).
 
 That holds because what lies in a session's or a channel's scope is used only within it
 (`Scope::admits`): an agent of it takes part only in that session's channels, or in that channel,

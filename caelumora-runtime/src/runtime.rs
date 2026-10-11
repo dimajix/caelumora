@@ -55,6 +55,9 @@ pub struct RuntimeManager {
     groups: Arc<GroupManager>,
     /// The one owner of agents' lifecycle (issue 314).
     agents: Arc<AgentManager>,
+    /// What deletes, restores and purges what lies in a scope with what
+    /// holds it (issues 178, 319).
+    scoped: Arc<crate::scoped::ScopedEntities>,
     /// The services components may use (issue 296), each given to the
     /// kinds that declare it (`ComponentKind::uses`).
     component_services: ComponentServices,
@@ -323,6 +326,7 @@ impl RuntimeManager {
         let artifacts = Arc::new(crate::artifact::ArtifactManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus), Arc::clone(&security_manager), Arc::clone(&confidentiality), &config.artifacts)?);
         let groups = Arc::new(GroupManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus)));
         let agents = Arc::new(AgentManager::new(Arc::clone(&entity_store), Arc::clone(&state_store), Arc::clone(&event_bus), Arc::clone(&security_manager)));
+        let scoped = Arc::new(crate::scoped::ScopedEntities::new(Arc::clone(&entity_store), Arc::clone(&agents), Arc::clone(&workspaces), Arc::clone(&skills), Arc::clone(&artifacts), Arc::clone(&groups)));
 
         let component_services = ComponentServices::empty()
             .with(Arc::clone(&security_manager))
@@ -347,6 +351,7 @@ impl RuntimeManager {
             artifacts,
             groups,
             agents,
+            scoped,
             component_services,
         })
     }
@@ -430,6 +435,12 @@ impl RuntimeManager {
     /// The one owner of agents' lifecycle (issue 314).
     pub fn agent_manager(&self) -> &Arc<AgentManager> {
         &self.agents
+    }
+
+    /// What deletes, restores and purges what lies in a scope with what
+    /// holds it (issues 178, 319).
+    pub(crate) fn scoped_entities(&self) -> &Arc<crate::scoped::ScopedEntities> {
+        &self.scoped
     }
 
     pub fn new_recorder(&self) -> Result<Box<dyn Recorder>> {

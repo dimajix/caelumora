@@ -1,9 +1,10 @@
 //! `AgentManager`: deleting, restoring and purging agents (issue 314).
 //!
-//! What lies in a session's or a channel's scope goes with it (`scoped`),
-//! its agents among it; the `AgentManager` is the owner of an agent on its
-//! own - one of a user's or a group's scope, or a global one, that outlives
-//! every session it takes part in.
+//! The `AgentManager` is the owner of an agent on its own - one of a
+//! user's or a group's scope, or a global one, that outlives every session
+//! it takes part in - and of those that lie in a session's or a channel's
+//! scope, which go with it (`scoped`) and which it deletes, restores and
+//! purges with it (`…_lying_in`).
 //!
 //! A deleted agent rests in the channels it takes part in (issue 314): their
 //! documents keep it, and they follow its mark instead - a running channel
@@ -12,10 +13,13 @@
 //! the views show it as a former member, removed as its mark says.
 
 use crate::event::EventBus;
+use crate::scoped::{deleted_since, unless_taken, within};
 use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::event::GlobalEvent;
+use caelumora_model::scope::Scope;
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
 use caelumora_model::store::{EntityStore, StateStore, StoreError, StoreResult, StoreResultExt};
+use chrono::{DateTime, Utc};
 use std::fmt;
 use std::sync::Arc;
 use tracing::info;
@@ -100,5 +104,53 @@ impl AgentManager {
         self.states.delete_agent_state(id).await?;
         info!("Agent {} purged by {}", id, context.caller_id);
         Ok(true)
+    }
+
+    /// Deletes the agents that lie in `holder` or within it, in the
+    /// runtime's name (`scoped`), and announces them as `delete` does. They
+    /// leave no channel: they take part only within `holder`
+    /// (`Scope::admits`).
+    ///
+    /// # Errors
+    /// Whatever the store reports; what was deleted before stays deleted.
+    pub(crate) async fn delete_lying_in(&self, holder: &Scope) -> StoreResult<()> {
+        let system = SecurityContext::system();
+        for agent in self.entities.list_agents(&system, &within(holder)).await?.items {
+            self.entities.delete_agent(&system, agent.id).await?;
+            self.events.publish(GlobalEvent::AgentDeleted(agent.id), agent.security_attributes);
+        }
+        Ok(())
+    }
+
+    /// Restores the agents that lie in `holder` or within it and were
+    /// deleted at `since` or later, in the runtime's name (`scoped`), and
+    /// announces them as `restore` does. One whose name was taken meanwhile
+    /// stays deleted.
+    ///
+    /// # Errors
+    /// Whatever else the store reports; what was restored before stays
+    /// restored.
+    pub(crate) async fn restore_lying_in(&self, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()> {
+        let system = SecurityContext::system();
+        for agent in deleted_since(self.entities.list_deleted_agents(&system, &within(holder)).await?.items, since) {
+            if let Some(restored) = unless_taken(self.entities.restore_agent(&system, agent.id).await, "agent", &agent.name)? {
+                self.events.publish(GlobalEvent::AgentRestored(restored.id), restored.security_attributes);
+            }
+        }
+        Ok(())
+    }
+
+    /// Purges the deleted agents that lie in `holder` or within it, with
+    /// their state, as `purge` does - in the runtime's name (`scoped`).
+    ///
+    /// # Errors
+    /// Whatever the stores report; what was purged before stays purged.
+    pub(crate) async fn purge_lying_in(&self, holder: &Scope) -> StoreResult<()> {
+        let system = SecurityContext::system();
+        for agent in self.entities.list_deleted_agents(&system, &within(holder)).await?.items {
+            self.entities.purge_agent(&system, agent.id).await?;
+            self.states.delete_agent_state(agent.id).await?;
+        }
+        Ok(())
     }
 }

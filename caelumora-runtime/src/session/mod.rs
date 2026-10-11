@@ -4,6 +4,7 @@ use caelumora_model::value::name::Name;
 use crate::channel::ChannelLoop;
 use crate::command::{CommandExecutor, ChannelCommandProvider};
 use crate::runtime::{ChannelRuntime, RuntimeManager};
+use crate::scoped::ScopedEntities;
 use crate::event::{EventBus, SubscriptionTopic};
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
@@ -102,6 +103,8 @@ pub struct SessionLoop {
     confidentiality: Arc<dyn ConfidentialityPolicy>,
     entities: Arc<dyn EntityStore>,
     events: Arc<EventBus>,
+    /// What goes with a channel deleted or restored (issue 178).
+    scoped: Arc<ScopedEntities>,
     /// The user commands of every channel of the session.
     commands: Arc<CommandExecutor<dyn ChannelCommandProvider>>,
     /// The session's channels, and which of them run (issue 116). A channel
@@ -179,6 +182,7 @@ impl SessionLoop {
             confidentiality: Arc::clone(runtime_manager.confidentiality()),
             entities: Arc::clone(runtime_manager.entity_store()),
             events: Arc::clone(runtime_manager.event_bus()),
+            scoped: Arc::clone(runtime_manager.scoped_entities()),
             runtime_manager,
             commands,
             channels,

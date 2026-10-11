@@ -2,8 +2,7 @@
 //! makes, changes, deletes and purges workspaces - stored first, then
 //! announced - and is the only code that holds the `TerminalProvider`s,
 //! one per configured storage. Reading the documents is the views'
-//! (`view::WorkspaceView`); deleting and restoring them with what holds
-//! their scope is `scoped.rs`'s, which marks them as it marks every kind.
+//! (`view::WorkspaceView`).
 //!
 //! A workspace is used in one of two ways, each checked here before
 //! anything else (issue 251, decisions 10 to 12):
@@ -19,8 +18,8 @@
 //!
 //! A workspace lies in a scope as an agent does (issue 251, decision 13):
 //! what lies in a session's scope is used within that session only
-//! (`Scope::admits`), and is deleted, restored and purged with it - its
-//! place removed by `purge_lying_in`.
+//! (`Scope::admits`), and is deleted, restored and purged with it
+//! (`…_lying_in`, called by `scoped`) - its place removed as it is purged.
 //!
 //! A command in a workspace is its channel's - the scope of its shell -
 //! and runs on only as long as some current member of the channel could
@@ -31,6 +30,7 @@
 use crate::component::{ComponentError, ComponentResult};
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
+use crate::scoped::{deleted_since, unless_taken, within};
 use crate::terminal::{CommandKey, CommandState, DockerProvider, LocalProvider, Shell, SharedProvider, Terminal, TerminalError, TerminalProvider};
 use caelumora_model::actor::ActorId;
 use caelumora_model::config::{StorageConfig, WorkspacesConfig};
@@ -49,6 +49,7 @@ use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;
 use caelumora_model::workspace::{Workspace, WorkspaceId, WorkspaceUpdateEvent};
+use chrono::{DateTime, Utc};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::{Arc, OnceLock, Weak};
@@ -437,6 +438,41 @@ impl WorkspaceManager {
         Ok(flows.then_some(workspace))
     }
 
+    /// Deletes the workspaces that lie in `holder` or within it, their
+    /// places kept, in the runtime's name (`scoped`), and announces them as
+    /// `delete` does.
+    ///
+    /// # Errors
+    /// Whatever the store reports; what was deleted before stays deleted.
+    pub(crate) async fn delete_lying_in(&self, holder: &Scope) -> WorkspaceResult<()> {
+        let system = SecurityContext::system();
+        let _writing = self.writing.lock().await;
+        for workspace in self.entities.list_workspaces(&system, &within(holder)).await?.items {
+            self.entities.delete_workspace(&system, workspace.id).await?;
+            self.events.publish(GlobalEvent::WorkspaceDeleted(workspace.id), workspace.security_attributes);
+        }
+        Ok(())
+    }
+
+    /// Restores the workspaces that lie in `holder` or within it and were
+    /// deleted at `since` or later, with their places, in the runtime's
+    /// name (`scoped`), and announces them as `restore` does. One whose
+    /// name was taken meanwhile stays deleted.
+    ///
+    /// # Errors
+    /// Whatever else the store reports; what was restored before stays
+    /// restored.
+    pub(crate) async fn restore_lying_in(&self, holder: &Scope, since: DateTime<Utc>) -> WorkspaceResult<()> {
+        let system = SecurityContext::system();
+        let _writing = self.writing.lock().await;
+        for workspace in deleted_since(self.entities.list_deleted_workspaces(&system, &within(holder)).await?.items, since) {
+            if let Some(restored) = unless_taken(self.entities.restore_workspace(&system, workspace.id).await, "workspace", &workspace.name)? {
+                self.events.publish(GlobalEvent::WorkspaceRestored(restored.id), restored.security_attributes);
+            }
+        }
+        Ok(())
+    }
+
     /// Purges the deleted workspaces that lie in `holder` or within it,
     /// their places first.
     ///
@@ -446,7 +482,7 @@ impl WorkspaceManager {
     pub(crate) async fn purge_lying_in(&self, holder: &Scope) -> WorkspaceResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for workspace in self.entities.list_deleted_workspaces(&system, &crate::scoped::within(holder)).await?.items {
+        for workspace in self.entities.list_deleted_workspaces(&system, &within(holder)).await?.items {
             self.provider(&workspace)?.remove(workspace.id).await?;
             self.entities.purge_workspace(&system, workspace.id).await?;
         }

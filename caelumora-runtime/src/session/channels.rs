@@ -19,7 +19,6 @@ use caelumora_model::scope::Scope;
 use caelumora_model::session::ChannelId;
 use caelumora_model::group::Group;
 use crate::group::keep_participants;
-use crate::scoped::{delete_scoped_in, restore_scoped_in};
 use std::sync::Arc;
 use super::{ChannelEntry, SessionError, SessionLoop, preferred_language, purge_channel_document, require_classification};
 
@@ -221,7 +220,7 @@ impl SessionLoop {
         event_bus.publish(GlobalEvent::ChannelDeleted(self.id, channel_id), channel.security_attributes.clone());
         // What lies in its scope goes with it (issue 178); an agent of it
         // takes part in no other channel (`Scope::admits`).
-        if let Err(e) = delete_scoped_in(self.entities.as_ref(), event_bus, &Scope::ChannelScope { session_id: self.id, channel_id }).await {
+        if let Err(e) = self.scoped.delete_lying_in(&Scope::ChannelScope { session_id: self.id, channel_id }).await {
             warn!("Channel {} was deleted from session {}, but not what lies in its scope: {}", channel_id, self.id, e);
         }
         info!("Channel {}/{} deleted from session {} by {}", channel.name, channel_id, self.id, context.caller_id);
@@ -272,7 +271,7 @@ impl SessionLoop {
         };
         if let Some(since) = deleted_at {
             // What was deleted with it comes back with it (issue 178).
-            if let Err(e) = restore_scoped_in(self.entities.as_ref(), &self.events, &Scope::ChannelScope { session_id: self.id, channel_id }, since).await {
+            if let Err(e) = self.scoped.restore_lying_in(&Scope::ChannelScope { session_id: self.id, channel_id }, since).await {
                 warn!("Channel {} of session {} was restored, but not what lies in its scope: {}", channel_id, self.id, e);
             }
         }
