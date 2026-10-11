@@ -1879,7 +1879,7 @@ mod tests {
     async fn help_answers_the_issuer_alone_and_lists_what_they_may_see() {
         let alice = user("alice");
         // `/wakeup` is hidden from everybody.
-        let policy = Policy(|action| !matches!(action, ActionType::ShowCommand("wakeup")));
+        let policy = Policy(|action| !matches!(action, ActionType::ShowCommand { command, .. } if command.name == "wakeup"));
         let channel = channel_with(&[&alice], Arc::new(policy)).await;
         let actor = channel.user_actor(alice.id).unwrap();
         let mut events = channel.observe();
@@ -1944,7 +1944,7 @@ mod tests {
         assert!(matches!(command_error(&error), crate::command::CommandError::Forbidden(_)), "{error}");
         assert!(crate::error::is_forbidden(&error), "{error}");
 
-        let refuse_running = Policy(|action| !matches!(action, ActionType::ExecuteCommand("wakeup")));
+        let refuse_running = Policy(|action| !matches!(action, ActionType::ExecuteCommand { command, .. } if command.name == "wakeup"));
         let channel = channel_with(&[&alice], Arc::new(refuse_running)).await;
         let actor = channel.user_actor(alice.id).unwrap();
         let error = actor.execute_command("wakeup", "").await.expect_err("running it is refused");

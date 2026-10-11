@@ -172,11 +172,14 @@ pub enum ActionType<'a> {
     /// be given there is the `ConfidentialityPolicy`'s, asked beside it
     /// (issue 304).
     Reclassify(Reclassified<'a>),
-    /// Seeing that a user command exists - in `/help` and in completion.
-    /// Keyed by the command's name, without the slash (issue 28).
-    ShowCommand(&'a str),
-    /// Running a user command, keyed by its name.
-    ExecuteCommand(&'a str),
+    /// Seeing that the session's command `command` exists in the channel
+    /// with `channel` attributes - in `/help` and in completion (issue 28).
+    /// Shaped as a command of an agent is, so that both are decided alike
+    /// (issue 304).
+    ShowCommand { command: &'a Command, channel: &'a SecurityAttributes },
+    /// Running the session's command `command` in the channel, alike. Whom
+    /// the command is for is the command's own word (`Command::owners_only`).
+    ExecuteCommand { command: &'a Command, channel: &'a SecurityAttributes },
     /// Seeing that an agent carries out `command` (issue 269) - in `/help`,
     /// in completion, in the member's snapshot. Carries the agent's
     /// attributes and those of the channel it is asked in.
@@ -279,8 +282,8 @@ impl ActionType<'_> {
             ActionType::ModifyMessage { author, .. } => format!("ModifyMessage(of {author})"),
             ActionType::RevokeMessage { author, .. } => format!("RevokeMessage(of {author})"),
             ActionType::Reclassify(target) => format!("Reclassify({target:?})"),
-            ActionType::ShowCommand(name) => format!("ShowCommand(/{name})"),
-            ActionType::ExecuteCommand(name) => format!("ExecuteCommand(/{name})"),
+            ActionType::ShowCommand { command, .. } => format!("ShowCommand(/{})", command.name),
+            ActionType::ExecuteCommand { command, .. } => format!("ExecuteCommand(/{})", command.name),
             ActionType::ShowAgentCommand { command, .. } => format!("ShowAgentCommand(/{})", command.name),
             ActionType::ExecuteAgentCommand { command, .. } => format!("ExecuteAgentCommand(/{})", command.name),
             ActionType::CallTool(call) => format!("CallTool({})", call.function_name),
@@ -932,6 +935,11 @@ impl SecurityManager for OwnershipSecurityManager {
             ActionType::ShowAgentCommand { command, agent, channel } | ActionType::ExecuteAgentCommand { command, agent, channel } => {
                 if command.owners_only { self.answers_for(agent, channel, context).await } else { self.granted(channel, Grant::Read, context, false).await }
             }
+            // A command of the session alike (issue 304): its members, or
+            // for the owners alone, whoever may change the channel.
+            ActionType::ShowCommand { command, channel } | ActionType::ExecuteCommand { command, channel } => {
+                if command.owners_only { channel.owner_id == me && me != ActorId::None } else { self.granted(channel, Grant::Read, context, false).await }
+            }
             ActionType::Reclassify(target) => {
                 let owns = |attributes: &SecurityAttributes| attributes.owner_id == me && me != ActorId::None;
                 match target {
@@ -999,9 +1007,10 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::ListArtifacts
             | ActionType::ListGroups
             | ActionType::ListComponents => true,
-            ActionType::ShowCommand(_)
-            | ActionType::ExecuteCommand(_)
-            | ActionType::CallTool(_)
+            // Hooks for another policy (issue 24): what decides a call
+            // today is the tools offered and the place's rules; secrets
+            // have no owner to decide by yet (issue 310).
+            ActionType::CallTool(_)
             | ActionType::ReadSecret(_) => true,
         }
     }
@@ -1133,6 +1142,14 @@ mod tests {
         assert!(!allows(carol, run(&owners, &hers, &theirs)).await, "not whose channel it is");
         assert!(!allows(carol, show(&owners, &hers, &theirs)).await, "who may not run it does not see it");
         assert!(allows(carol, run(&owners, &systems, &theirs)).await, "an agent of the system: whose channel it is");
+        // A command of the session is decided alike (issue 304), by the
+        // channel alone.
+        let run = |command, channel| ActionType::ExecuteCommand { command, channel };
+        let show = |command, channel| ActionType::ShowCommand { command, channel };
+        assert!(allows(carol, run(&members, &theirs)).await && allows(carol, show(&members, &theirs)).await, "a command for the members: whoever reads the channel");
+        assert!(!allows(bob, run(&members, &theirs)).await, "nobody else");
+        assert!(allows(carol, run(&owners, &theirs)).await, "a command for the owners: whose channel it is");
+        assert!(!allows(alice, run(&owners, &theirs)).await && !allows(alice, show(&owners, &theirs)).await, "not a member who does not own it");
         assert!(!allows(bob, ActionType::UpdateSession(&hers)).await);
         assert!(!allows(bob, ActionType::DeleteSession(&hers)).await);
         // A skill (issue 22) is used as it is read; changed by its owner.

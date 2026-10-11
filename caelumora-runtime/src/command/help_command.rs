@@ -56,7 +56,7 @@ async fn agents_commands(context: &CommandContext<'_>) -> BTreeMap<String, (Comm
 #[async_trait]
 impl ChannelCommandProvider for HelpCommandProvider {
     async fn execute(&self, _name: &str, args: &str, context: &CommandContext<'_>) -> CommandResult<CommandOutput> {
-        let visible = context.executor.visible(&context.issuer.security_context()).await;
+        let visible = context.executor.visible(&context.issuer.security_context(), &context.channel.security_attributes()).await;
         let of_agents = agents_commands(context).await;
         let wanted = args.trim().trim_start_matches('/');
         if !wanted.is_empty() {

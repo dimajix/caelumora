@@ -210,12 +210,14 @@ impl<P: ?Sized + ProvidesCommands> CommandExecutor<P> {
 }
 
 /// The commands of the channel - the session's set, run in each of its
-/// channels: seen and run by `ShowCommand` and `ExecuteCommand` of the
-/// name.
+/// channels: seen and run by `ShowCommand` and `ExecuteCommand`, with the
+/// attributes of the channel they are run in - as the commands of an agent
+/// are, with the agent's besides (issue 304).
 impl CommandExecutor<dyn ChannelCommandProvider> {
-    /// The commands `issuer` may see (`ShowCommand`), sorted by name.
-    pub async fn visible(&self, issuer: &SecurityContext) -> Vec<Command> {
-        self.visible_by(issuer, |c| ActionType::ShowCommand(&c.name)).await
+    /// The commands `issuer` may see in the channel with `channel`
+    /// attributes (`ShowCommand`), sorted by name.
+    pub async fn visible(&self, issuer: &SecurityContext, channel: &SecurityAttributes) -> Vec<Command> {
+        self.visible_by(issuer, |command| ActionType::ShowCommand { command, channel }).await
     }
 
     /// Runs the command `name` for `context.issuer`.
@@ -225,7 +227,13 @@ impl CommandExecutor<dyn ChannelCommandProvider> {
     /// command or the issuer may not see it; `Forbidden` if they may see but
     /// not run it; otherwise whatever the command reports.
     pub async fn execute(&self, name: &str, args: &str, context: &CommandContext<'_>) -> CommandResult<CommandOutput> {
-        let entry = self.admit(name, &context.issuer.security_context(), |c| ActionType::ShowCommand(&c.name), |c| ActionType::ExecuteCommand(&c.name)).await?;
+        let channel = context.channel.security_attributes();
+        let entry = self.admit(
+            name,
+            &context.issuer.security_context(),
+            |command| ActionType::ShowCommand { command, channel: &channel },
+            |command| ActionType::ExecuteCommand { command, channel: &channel },
+        ).await?;
         entry.provider.execute(name, args, context).await
     }
 }
@@ -358,7 +366,7 @@ mod tests {
         assert!(message.contains("/help") && message.contains("'help'") && message.contains("'my-help'"), "{message}");
 
         let executor = CommandExecutor::new(security, vec![provider("wakeup", "wakeup"), provider("help", "help")]).unwrap();
-        let names: Vec<String> = executor.visible(&SecurityContext::default()).await.into_iter().map(|c| c.name).collect();
+        let names: Vec<String> = executor.visible(&SecurityContext::default(), &SecurityAttributes::default()).await.into_iter().map(|c| c.name).collect();
         assert_eq!(names, vec!["help", "wakeup"], "sorted by name");
     }
 

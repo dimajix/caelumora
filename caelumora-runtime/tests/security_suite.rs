@@ -157,7 +157,7 @@ fn attributes_of<'a>(action: &ActionType<'a>) -> Option<&'a SecurityAttributes> 
         | GetChannel(a) | CreateChannel(a) | UpdateChannel(a) | DeleteChannel(a)
         | GetUser(a) | CreateUser(a) | UpdateUser(a) | DeleteUser(a)
         | GetUserProfile(a) | CreateUserProfile(a) | UpdateUserProfile(a) | DeleteUserProfile(a)
-        | CancelChannel(a) | WakeChannel(a) | RetryMessage(a) | AnswerQuestion(a)
+        | CancelChannel(a) | WakeChannel(a) | RetryMessage(a) | AnswerQuestion(a) | ShowCommand { channel: a, .. } | ExecuteCommand { channel: a, .. }
         | GetWorkspace(a) | WriteWorkspace(a) | CreateWorkspace(a) | UpdateWorkspace(a) | DeleteWorkspace(a)
         | GetSkill(a) | CreateSkill(a) | UpdateSkill(a) | DeleteSkill(a) | UseSkill(a)
         | GetArtifact(a) | WriteArtifact(a) | CreateArtifact(a) | UpdateArtifact(a) | DeleteArtifact(a)
@@ -3247,6 +3247,33 @@ async fn with_a_commanded_agent() -> (World, Arc<SessionLoop>, Arc<caelumora_run
 /// What was asked about the commands of agents, of `asked`.
 fn about_agent_commands(asked: &[String]) -> Vec<&str> {
     asked.iter().filter(|line| line.contains("AgentCommand")).map(String::as_str).collect()
+}
+
+/// A command of the session (issue 28) is seen and run by whoever reads the
+/// channel it is run in - bob, taking part -, asked of the channel's
+/// attributes as a command of an agent is of the agent's (issue 304): first
+/// whether he sees it, then whether he may run it, then, for `/help`, what
+/// else he sees.
+#[tokio::test]
+async fn a_command_of_the_session_is_seen_and_run_by_whoever_reads_the_channel() {
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    let bob = main.user_actor(world.bob).unwrap();
+
+    let (reply, asked) = world.asked(bob.execute_command("help", "")).await;
+    let text = reply.expect("his to run").output.expect("answered to him");
+    assert!(text.contains("/wakeup") && text.contains("/nudge"), "{text}");
+    let about: Vec<&str> = asked.iter().filter(|line| line.contains("Command(")).map(String::as_str).collect();
+    assert_eq!(about, [
+        "bob: ShowCommand(alice's) yes",
+        "bob: ExecuteCommand(alice's) yes",
+        "bob: ShowCommand(alice's) yes",
+        "bob: ShowCommand(alice's) yes",
+        "bob: ShowCommand(alice's) yes",
+    ], "by the channel's attributes: the command, then what /help lists");
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// A command of an agent (issue 269) is seen and asked for by whoever may

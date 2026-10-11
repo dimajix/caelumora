@@ -149,6 +149,16 @@ themselves, an agent its owner (see [In whose name an agent acts](#in-whose-name
     channel's attributes) by whoever may write in the channel - its members -, unless the
     command says it is for the agent's owners alone (`Command::owners_only`): then by whoever
     answers for the agent, as `ApproveToolCall` is granted. Who may not run one does not see it.
+*   A command of the session (issue [28](../issues/28-user-commands.md)) is decided alike, by the
+    channel it is run in (`ShowCommand`, `ExecuteCommand`, each with the command and the channel's
+    attributes, issue 304): by whoever reads the channel, or for a command for the owners alone
+    by the channel's owner.
+*   Calling a tool (`CallTool`) and reading a secret (`ReadSecret`) are always allowed. They stay
+    actions so that another policy can decide them (issue
+    [24](../issues/24-opa-security-manager.md)); what decides a call here is the tools offered and
+    the rules of its place (see [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md)). A secret has no
+    owner to decide by yet (issue [310](../issues/310-secrets-have-no-owner.md)), see
+    [Secrets](#secrets).
 *   Deleting an agent is its owner's (`DeleteAgent`). That it leaves channels owned by others is
     done in the runtime's name: it is a consequence of the deletion, not a change of those channels
     by the owner.
@@ -572,4 +582,9 @@ the environment.
 
 Every `SecretManager::resolve` is checked with the `SecurityManager` (`ActionType::ReadSecret`)
 before any provider is consulted, as the `EntityStore` and `StateStore` check access on a
-`SecurityContext`.
+`SecurityContext`. The ownership policy allows every one: a secret is a key and a value, with no
+owner and no access list to decide by. So whoever writes a component that names a secret decides
+which credential it uses and where it is sent. Until secrets have an owner
+([310](../issues/310-secrets-have-no-owner.md)), only the seed and the configuration - whoever
+runs the server - may write personalities and components that name secrets; nothing may let users
+write them.

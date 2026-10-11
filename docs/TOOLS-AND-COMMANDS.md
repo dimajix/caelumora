@@ -536,9 +536,13 @@ and there is nothing about running commands to try out.
 
 Seeing and running a command are separate permissions:
 
-*   `ActionType::ShowCommand(name)` decides whether a command appears in `/help` and in completion
-    (`GET .../commands`).
-*   `ActionType::ExecuteCommand(name)` decides whether it runs.
+*   `ActionType::ShowCommand { command, channel }` decides whether a command appears in `/help`
+    and in completion (`GET .../commands`).
+*   `ActionType::ExecuteCommand { command, channel }` decides whether it runs.
+
+Both carry the command and the attributes of the channel it is run in, as the commands of an agent
+carry the agent's besides (issue 304). The ownership policy grants them whoever reads the channel,
+and a command for the owners alone (`Command::owners_only`) the channel's owner.
 
 A command the user may not see is answered exactly like an unknown one, so hidden commands cannot be
 found by trying names. Whatever the command does is checked on its own as well: `/wakeup` asks for

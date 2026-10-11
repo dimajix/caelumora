@@ -1394,7 +1394,7 @@ mod tests {
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         let runtime = test_runtime();
         let names = |executor: crate::command::CommandExecutor<dyn crate::command::ChannelCommandProvider>| async move {
-            executor.visible(&SecurityContext::default()).await.into_iter().map(|c| c.name).collect::<Vec<_>>()
+            executor.visible(&SecurityContext::default(), &SecurityAttributes::default()).await.into_iter().map(|c| c.name).collect::<Vec<_>>()
         };
 
         let session = make_session("plain");

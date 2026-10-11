@@ -537,7 +537,8 @@ impl UserActor {
 
     /// The commands this user may see, e.g. for completion.
     pub async fn visible_commands(&self) -> Vec<Command> {
-        self.actor_runtime.command_executor().visible(&self.security_context()).await
+        let channel = self.channel.load().security_attributes.clone();
+        self.actor_runtime.command_executor().visible(&self.security_context(), &channel).await
     }
 
     /// Follows the channel as this user, from now on: see `ChannelWatch`.

@@ -653,3 +653,15 @@ where they test the door.
   its executor directly, uncached, for the member snapshot, `/help` and finding whom a command
   names. Only the refusal of a command one may see but not ask for comes as late as the agent
   takes the request in; under the ownership policy both are decided by one rule.
+- **2026-10-11** — Step 3, F12 decided by the maintainer per action (option C), revising the plan
+  that all four leave `ActionType`. `ShowCommand` and `ExecuteCommand` take the shape of the
+  commands of an agent: the command and the attributes of the channel it is run in, decided by the
+  ownership policy alike - whoever reads the channel, or for a command for the owners alone the
+  channel's owner. Before, they carried a name and were always allowed, so a command of the
+  session marked `owners_only` was not decided by it. `CallTool` stays an action the policy
+  allows, a documented hook for another policy (issue 24): the call is an object one can decide
+  by, and what decides it here - the tools offered, the place's rules - is enforced where it is.
+  `ReadSecret` stays as it is, with the gap it hides opened as issue
+  [310](310-secrets-have-no-owner.md): a secret has no owner, so whoever writes a component that
+  names one decides which credential is sent where. SECURITY.md says that until 310 only the seed
+  and the configuration may write such components. No stored data changes.
