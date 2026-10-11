@@ -114,6 +114,110 @@ map, not before.
     itself; the codebase already has three ways to ask and that is one too many for most readers.
     Fewer entry points, each with one concept, is the direction.
 
+## The target picture
+
+Decided with the maintainer on 2026-10-11, on the map
+([docs/PERMISSION-CHECKS.md](../docs/PERMISSION-CHECKS.md)). It says what is to be, not what is;
+the map says what is, and the steps below lead from one to the other.
+
+**The principle.** Every decision is made from the acting entity's `SecurityContext`, the verb,
+the object's `SecurityAttributes`, the acting entity's clearances and the object's classification,
+and from nothing else. Reachability decides only what is visible in a context, never whether
+something is permitted: an operation that reaches an object by its id has exactly the rights of
+one that navigated to it. Nothing is looked up during a decision but what the object's access list
+names.
+
+**Three decisions, orthogonal.** Each is a function of its own, and an act passes only where every
+one it needs says yes.
+
+1.  **Security** - who may do what with the object: a function of the context, the verb and the
+    attributes. Access lists name three kinds of subject: `Actor` (a user; a stored list never
+    names an agent directly), `Role` (from the user provider) and `Group` (below). An entry naming
+    a group is resolved by one read of that group, one naming a role by the roles of the subject;
+    that is the whole of what the policy learns beyond its inputs. The confidentiality verbs leave
+    the `SecurityManager`.
+2.  **Flow** - whether information may go where the act takes it: a function of the subject's
+    clearances, the object's classification and the destination's - the channel acted in, or the
+    work of the agent that reads, as it is classified now. The clearances are computed once per
+    context - the principal's roles, narrowed by the caller's personality - and carried in the
+    `SecurityContext`, which already carries the place. A session's privacy (issue 134) is part of
+    this decision, as a fact of the source session compared with the session in the context.
+    `Publish`, `CopyInformation` and the clearance at a channel's door are flow decisions;
+    `Classify` is validation of the model and leaves the policy altogether; `Reclassify` splits
+    into security (may the actor change this - its owner, its author) and flow (is the new
+    classification admissible). This reverses issue [138](138-confidentiality-policy-in-ownership.md):
+    a superuser who may act against both needs a hook in both, which is accepted.
+3.  **Visibility** - what a client or an agent is shown: the views navigate and ask `Read` of each
+    thing they reach, lists are filtered by `Read`, and what may not be read is not found. There is
+    no rule of visibility beyond that: no `channel_reading`, no clearance asked by the views on
+    their own.
+
+**The order.** An operation asks `Read` of the object first, then its own verb for the actor, then
+the flow, then anything about others - a participant's clearance, an agent's personality. A refusal
+of `Read` is "not found"; every refusal after it is "forbidden" and reveals nothing about objects
+the actor cannot read. The security suite asserts this order for every action it covers.
+
+**Groups** (issue [286](286-groups-as-subjects.md), the first step). A `Group` is an entity of its
+own: `SecurityAttributes`, a list of actors - users and agents, no nesting - and a scope. Access
+lists name it as `Subject::Group(id)`; `Subject::MemberOf`, `Membership`, the `Memberships` trait
+and `StoreMemberships` go. The rules:
+
+- Every session and every channel keeps an internal group of its participants. The controller
+  that changes the participants writes the group in the same operation, before the participant,
+  so that a failure between the two leaves someone reading who is about to join rather than a
+  participant who may not read. It is the one writer of that group.
+- An internal group lies in the scope of its session: deleted, restored and purged with it (issue
+  178). It is readable through the group API, not changeable; only its session or channel changes
+  it.
+- A group is read by its owner and by its members; the policy reads it in the system's name when
+  it resolves an entry.
+- An agent may be a member of a group - the internal group of a channel holds its agents, so that
+  an agent reads what it takes part in (issue 264). A stored access list still names no agent as
+  an `Actor`.
+- `Role` stays a subject of its own: roles come from the user provider and carry clearances;
+  binding them to an entity users can change would bind the clearances with them.
+- Attaching a workspace to a session shares it with `Group(session)`, which resolves issue
+  [289](289-attach-compares-access.md); issue [287](287-memberships-cache.md) shrinks to the
+  reading of groups. An artifact published in a channel is shared explicitly in its own list; with
+  what by default - `Group(channel)`, or the actors of the moment - is decided when the artifact
+  tool is touched.
+
+**What becomes of the findings** of the map:
+
+| Finding | Under the target picture |
+|---|---|
+| F1 - the store asks again | Stays: the manager asks before acting (the order), the store when it stores, as the last line. SECURITY.md names the pair. |
+| F2 - the channel admits again | The channel is the enforcement, the actor's check a courtesy for an early answer. The two lines are drawn the same for every act (`AnswerQuestion`, `WakeChannel`, a nudge, an approval by click included), each decided when touched. |
+| F3 - `CallTool`, commands, `ApproveToolCall` more than once | One question by the owner of the act - `ToolExecutor`, `CommandExecutor`, the approver; what is asked before is named a courtesy or removed. |
+| F4 - `GetPersonality` twice, F5 - the views and then the operation | Deliberate, stay. |
+| F6 - three mechanisms of reachability | Gone by the principle: `MemberOf` becomes `Group`, `channel_reading`, `require_seen`, `cleared_for` and `reached` become `Read` followed by the flow. |
+| F7 - what a refusal tells | Gone by the order: "not found" for `Read`, "forbidden" after. `delete_channel` asks its own verb first. |
+| F8 - an agent's own session without `Read` | The agent reads it as every viewer does, by the internal group. |
+| F9 - `JoinChannel` with two meanings | Only at the door, as the flow decision about the member being admitted; seeing is `Read` and the viewer's clearance. |
+| F10 - limiting roles at the door only | Gone: the clearances in the context, computed once. |
+| F11 - using a skill decided twice | `Read` and `Use` (security) and the flow, for a user and an agent alike. |
+| F12 - four verbs always allowed | Each gets an object with attributes - a secret, a command, a tool - or leaves the policy; decided per verb when touched. |
+| F13 - principal or caller | Stays: authorship is the caller's; the refusal log names both. |
+| F14 - a note's reclassification without attributes | Carries the attributes of its channel, as a message does. |
+| F15 - `ReadSecret` in two names | Stays, named in SECURITY.md. |
+| F16 - `Publish` as a flag | Replaced by the flow function asked as a question, not a permission. |
+| F17 - events about a channel ask `GetSession` | Ask `Read` of the channel. |
+| F18 - components in the channel owner's name | Decided when components are given their context. |
+| F19 - `channel_reading` refuses unevenly | Gone: whole or entry by entry is the flow's answer, after `Read`. |
+| F20 - the REST context without a place | Carries the place wherever a request names one. |
+
+**The steps**, each a branch of its own, in this order:
+
+1.  Groups (issue 286): the entity, `Subject::Group`, the internal groups of sessions and
+    channels, `MemberOf` and `Memberships` removed. Stored sessions and channels, workspaces and
+    artifacts with `MemberOf` entries are deleted, not converted.
+2.  Clearances in the `SecurityContext`; the flow decisions out of the `SecurityManager` into a
+    function of their own; `Classify` to validation; `Reclassify` split; issue 138 reversed.
+3.  The order applied everywhere: `channel_reading`, `require_seen`, `cleared_for`, `reached`
+    replaced by `Read` and the flow; refusals aligned; F7, F8, F11, F17.
+4.  The doubles named or removed (F2, F3, F12, F16); the suite asserts the order.
+5.  SECURITY.md and CONFIDENTIALITY.md rewritten to the target picture; the map redone.
+
 ## Done when
 
 - A map of every permission check - where, in whose name, which action, which concept - is in
@@ -141,3 +245,13 @@ map, not before.
   agent; four actions the policy always allows; the event bus asking `GetSession` with a channel's
   attributes. No code was changed. Next: decide which concepts are layers with a fixed order
   (consideration 2), and which of the findings are deliberate, which are to be fixed.
+- **2026-10-11** — The target picture decided with the maintainer and written above: every
+  decision from the context, the verb, the attributes, the clearances and the classification alone;
+  three orthogonal decisions - security, flow, visibility -, with the flow decisions leaving the
+  `SecurityManager` (reversing issue 138) and the clearances carried in the context; the order
+  `Read`, the actor's verb, the flow, then others; groups as entities (issue 286) in place of
+  `MemberOf`, with internal groups kept by every session and channel. Weighed on the way and
+  rejected: the participants handed to the policy as derived attributes (membership and reading
+  would be one thing, an observer impossible); the join writing an `Actor` entry (explicit, but a
+  second mechanism beside teams); readers inherited from a scope (an automatism, `MemberOf` by
+  another name). What each finding becomes, and the five steps, are listed above.

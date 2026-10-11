@@ -54,3 +54,9 @@ provider.
 
 - **2026-10-10** — Opened as issue 23 planned it (decision 3): sharing with a team is wanted, a
   group of our own is an entity of its own with ownership and scope, and comes after 23.
+- **2026-10-11** — Chosen as the first step of the target picture of issue
+  [304](304-review-of-the-permission-concept.md): a `Group` is an entity with `SecurityAttributes`,
+  a list of actors (users and agents, no nesting) and a scope; `Subject::Group(id)` replaces
+  `Subject::MemberOf`, and every session and channel keeps an internal group of its participants,
+  written by its controller, in its session's scope, readable but not changeable through the group
+  API. The conditions are recorded there.
