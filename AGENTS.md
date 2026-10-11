@@ -23,6 +23,7 @@ change something, read the document on its subject:
 | the web UI | [WEB-UI.md](docs/WEB-UI.md) |
 | stores, controllers, persistence | [STORAGE.md](docs/STORAGE.md) |
 | permissions, ownership, the views, users, authentication, secrets | [SECURITY.md](docs/SECURITY.md) |
+| where a permission is checked, in whose name, by which concept | [PERMISSION-CHECKS.md](docs/PERMISSION-CHECKS.md) |
 | confidentiality levels and labels | [CONFIDENTIALITY.md](docs/CONFIDENTIALITY.md) |
 | `AppConfig` and its sections | [CONFIGURATION.md](docs/CONFIGURATION.md) |
 | which settings suit which language model | [LLM-MODELS.md](docs/LLM-MODELS.md) |

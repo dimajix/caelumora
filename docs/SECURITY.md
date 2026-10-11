@@ -280,7 +280,9 @@ asked, `an_agent_asked_by_an_agent_acts_for_its_own_owner` and
 
 ## Where permission checks go
 
-There are three ways code asks the `SecurityManager`, and each has its place.
+There are three ways code asks the `SecurityManager`, and each has its place. Which operation asks
+what, in whose name and where the same question is asked again is mapped, check by check, in
+[PERMISSION-CHECKS.md](PERMISSION-CHECKS.md) (issue 304).
 
 ### Access questions
 

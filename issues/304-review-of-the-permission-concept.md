@@ -1,6 +1,6 @@
 # 304 — Four kinds of permission are checked in many places, and nobody has reviewed how they fit
 
-**Status:** open
+**Status:** in progress
 **Area:** Identity and access management
 
 ## The problem
@@ -129,3 +129,15 @@ map, not before.
 - **2026-10-11** — Opened at the maintainer's request: it had become hard to tell at which places
   which permissions are checked, and whether the four concepts - ownership, flow rules, actions,
   reachability - are each applied clearly and in the right place.
+- **2026-10-11** — The map is written, as a document of its own:
+  [docs/PERMISSION-CHECKS.md](../docs/PERMISSION-CHECKS.md) - the four concepts and the mechanisms
+  each one has, every `ActionType` with the concept that decides it, the seven kinds of code that
+  ask, and every operation with its questions in order, in whose name, where it is asked again, and
+  how it refuses. Twenty findings are listed there (F1-F20), as facts, for the decision: the
+  doubles (store after manager, channel after actor, `CallTool` twice, agent commands three times,
+  `ApproveToolCall` up to three times); reachability with three mechanisms and no rule, and
+  refusals that tell different things by path; `JoinChannel` with two meanings and an agent's
+  limiting roles counting at the door only; using a skill decided differently for a user and an
+  agent; four actions the policy always allows; the event bus asking `GetSession` with a channel's
+  attributes. No code was changed. Next: decide which concepts are layers with a fixed order
+  (consideration 2), and which of the findings are deliberate, which are to be fixed.

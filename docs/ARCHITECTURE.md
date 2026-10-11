@@ -267,5 +267,7 @@ The design repeats a few decisions; new code follows them.
     secrets.
 *   [CONFIDENTIALITY.md](CONFIDENTIALITY.md) - classifications, compartments and the flow rule, what
     only an owner sees, and what is still open.
+*   [PERMISSION-CHECKS.md](PERMISSION-CHECKS.md) - the map of every permission check: which
+    operation asks what, in whose name, by which concept, and where it is asked again.
 *   [CONFIGURATION.md](CONFIGURATION.md) - the sections of the configuration file.
 *   [CODING-GUIDELINES.md](CODING-GUIDELINES.md) - coding style, error handling, logging, tests.
