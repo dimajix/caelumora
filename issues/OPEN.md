@@ -57,6 +57,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [317](317-teams-listed-by-a-scan.md) | open | `Views::groups` lists the viewer's teams by reading every group and asking the policy of each, while `Views::artifacts` finds them by a query.
 | [320](320-scoped-deletion-in-the-runtimes-name.md) | open | What lies in a session's or channel's scope is deleted and restored with it in the runtime's name, so the store asks nothing, another's things go without their owner being asked, and the deletion is recorded as the system's. |
 | [321](321-channel-components-in-the-owners-name.md) | open | A channel's components act in its owner's name with the roles of when the channel was built, a context nobody decided on, so what they may read or use depends on when the channel was last built. |
+| [322](322-clearance-decided-outside-the-store.md) | open | Whether one is cleared for a classified entity is asked by the views, three managers and the event bus each, besides the store, so that what a reader forgets to ask is found, and the deleted are reached by other rules than the live. |
 
 ## Tools and approvals
 
