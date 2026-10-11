@@ -2,6 +2,24 @@
 //! tasks it keeps open.
 
 use super::*;
+use caelumora_model::value::name::Name;
+use crate::channel::ChannelLoop;
+use crate::command::CommandExecutor;
+use crate::runtime::{ChannelRuntime, RuntimeManager};
+use anyhow::Result;
+use caelumora_model::actor::ActorId;
+use caelumora_model::channel::Channel;
+use caelumora_model::security::{SecurityAttributes, SecurityContext, SecurityManager};
+use caelumora_model::store::EntityStore;
+use caelumora_model::session::{ChannelId, SessionId};
+use std::sync::Arc;
+use caelumora_model::value::name::ScopedName;
+use caelumora_model::secret::SecretManager;
+use caelumora_model::security::DummySecurityManager;
+use caelumora_model::store::memory::MemoryStore;
+use caelumora_model::actor::{ActorEvent, Envelope};
+use crate::session::SessionManager;
+use crate::session::testing::*;
 
 /// A running channel with alice and an external agent (issue 179) that
 /// `remote` stands in for, after alice said "hello". The remote agent is
@@ -1092,4 +1110,88 @@ async fn a_followed_task_whose_stream_breaks_says_nothing_and_stays_open() {
     assert_eq!(state.remote.open_tasks.iter().map(|t| (t.task.clone(), t.state)).collect::<Vec<_>>(), vec![(task("t-1"), OpenTaskState::Working)], "left open, to be followed again");
     assert!(state.history.messages().is_empty(), "nothing is kept as said");
     running.abort();
+}
+
+#[tokio::test]
+async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_since() {
+    use crate::external::ExternalEvent;
+    use crate::external::testing::ScriptedExternalAgent;
+    use caelumora_model::actor::{ActorEvent, ActorId};
+    use caelumora_model::agent::{Agent, Personality, PersonalityId, PersonalityKind};
+    use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+    use caelumora_model::scope::Scope;
+    use caelumora_model::store::EntityStore;
+    use caelumora_model::user::{User, UserId};
+
+    let answer = |text: &str| vec![Ok(ExternalEvent::Message(text.to_string())), Ok(ExternalEvent::Completed)];
+    let remote = Arc::new(ScriptedExternalAgent::answering(vec![answer("Hello."), answer("Hi, bob.")]));
+    let store = Arc::new(MemoryStore::new());
+    let mut registry = crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
+    registry.register(
+        crate::component::ComponentKind::new("test_remote").provides::<dyn crate::external::ExternalAgent>(),
+        { let remote = Arc::clone(&remote); move |_descriptor, _context| {
+            let mut facets = crate::component::ComponentFacets::empty();
+            facets.insert::<dyn crate::external::ExternalAgent>(Arc::<ScriptedExternalAgent>::clone(&remote));
+            Ok(facets)
+        } },
+    );
+    let policy = Arc::new(DummySecurityManager::new());
+    let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&policy)));
+    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig::default(), registry).unwrap());
+    let manager = SessionManager::new(Arc::clone(&runtime));
+    let system = SecurityContext::system();
+
+    let user = |name: &str| User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: Vec::new(), deleted: None };
+    let (alice, bob) = (user("alice"), user("bob"));
+    let participants = record_users(&manager, &[&alice, &bob]).await;
+    let mut members = ComponentDescriptor::new("members", "channel_members_prompt_provider");
+    members.params = serde_json::json!({ "changes_only": true });
+    let personality = Personality {
+        id: PersonalityId::new(), name: ScopedName::new("remote", Default::default()).unwrap(), kind: PersonalityKind::External,
+        roles: None, description: None, introduction: None,
+        components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("remote", "test_remote"), members] },
+        security_attributes: Default::default(), reasoning_visibility: Default::default(),
+        deleted: None,
+    };
+    store.create_personality(&system, &personality).await.unwrap();
+    let hermes = Agent::new(ScopedName::new("hermes", Scope::GlobalScope).unwrap(), &personality, ActorId::User(alice.id));
+    store.create_agent(&system, &hermes).await.unwrap();
+
+    let alice_ctx = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
+    let mut session = make_session("roster");
+    session.participants = participants;
+    session.participants.push(caelumora_model::session::Participant::Agent(hermes.id));
+    let session = create(&manager, &alice_ctx, session).await.unwrap();
+    let channel = session.create_channel(&alice_ctx, spec("talk", vec![ActorId::User(alice.id), ActorId::Agent(hermes.id)])).await.unwrap();
+    let mut events = channel.user_actor(alice.id).unwrap().watch().events;
+    let answered = |events: &mut tokio::sync::broadcast::Receiver<caelumora_model::actor::Envelope>| {
+        let mut events = events.resubscribe();
+        async move {
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    let envelope = events.recv().await.expect("the channel is running");
+                    if envelope.context.sender_id == ActorId::Agent(hermes.id) && matches!(envelope.event, ActorEvent::TurnFinished { .. }) { break }
+                }
+            }).await.expect("the agent answers")
+        }
+    };
+
+    let waiting = answered(&mut events);
+    channel.user_actor(alice.id).unwrap().send_message("hello".to_string(), None).await.unwrap();
+    waiting.await;
+    let waiting = answered(&mut events);
+    channel.add_participant(&alice_ctx, ActorId::User(bob.id), caelumora_model::channel::HistoryAccess::All).await.unwrap();
+    channel.user_actor(alice.id).unwrap().send_message("bob is here".to_string(), None).await.unwrap();
+    waiting.await;
+
+    let sent = remote.sent.lock().unwrap().clone();
+    let first = &sent[0].1.prompts;
+    assert_eq!(first.len(), 1, "{first:?}");
+    assert!(first[0].starts_with("[Who is in this channel]\nYou are hermes (@hermes).\n"), "{}", first[0]);
+    assert!(first[0].contains("- alice (@alice), a person.") && !first[0].contains("bob"), "{}", first[0]);
+    let second = &sent[1].1.prompts;
+    assert_eq!(second.len(), 1, "{second:?}");
+    assert!(second[0].contains("- bob (@bob), a person.\n"), "the whole roster again: {}", second[0]);
+    assert!(second[0].ends_with("Since you were last told who is here:\n- Joined: bob (@bob), a person."), "{}", second[0]);
+    manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
 }

@@ -131,3 +131,154 @@ pub(crate) async fn require_admitted(runtime: &RuntimeManager, context: &Securit
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use caelumora_model::value::name::Name;
+    use crate::runtime::RuntimeManager;
+    use caelumora_model::actor::ActorId;
+    use caelumora_model::agent::Agent;
+    use caelumora_model::confidentiality::Classification;
+    use caelumora_model::security::{SecurityAttributes, SecurityContext};
+    use caelumora_model::scope::Scope;
+    use caelumora_model::session::{ChannelId, SessionId};
+    use std::sync::Arc;
+    use caelumora_model::value::name::ScopedName;
+    use caelumora_model::secret::SecretManager;
+    use caelumora_model::store::memory::MemoryStore;
+    use crate::session::{ChannelSpec, SessionManager};
+    use crate::session::testing::*;
+
+    #[tokio::test]
+    async fn an_agent_is_cleared_only_as_far_as_its_owner_and_its_personality_are() {
+        use crate::channel::ChannelError;
+        use caelumora_model::actor::ActorId;
+        use caelumora_model::agent::{Agent, Personality, PersonalityId, PersonalityKind};
+        use caelumora_model::confidentiality::{Clearance, Compartment, Compartments, ConfidentialityRules, Confidentiality};
+        use caelumora_model::role::{RoleId, Roles};
+        use caelumora_model::value::name::ScopedName;
+        use caelumora_model::scope::Scope;
+        use caelumora_model::store::EntityStore;
+        use caelumora_model::user::{User, UserId};
+
+        let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
+        let roles = Roles::new([
+            (RoleId::new(), "staff".to_string(), vec![Clearance { level: Confidentiality::Internal, compartment: None }]),
+            (RoleId::new(), "hr".to_string(), vec![Clearance { level: Confidentiality::Confidential, compartment: Some(Compartment::new("hr")) }]),
+        ]).unwrap();
+        let ids = roles.clone();
+        let (policy, confidentiality, store) = crate::session::testing::owned_store(ConfidentialityRules::new(compartments).with_roles(roles));
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::clone(&confidentiality), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
+        let system = SecurityContext::system();
+        let user = |name: &str, roles: &[&str]| User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: ids.ids_of(roles).unwrap(), deleted: None };
+        let (alice, bob) = (user("alice", &["staff", "hr"]), user("bob", &["staff"]));
+        let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(bob.id));
+        let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
+        // An agent of `owner` whose personality is of `kind` and names `roles`.
+        let agent = |name: &'static str, owner: ActorId, kind: PersonalityKind, roles: Option<&'static [&'static str]>| {
+            let store = Arc::clone(&store);
+            let system = system.clone();
+            let ids = ids.clone();
+            async move {
+                let personality = Personality {
+                    id: PersonalityId::new(), name: ScopedName::new(name, Default::default()).unwrap(), kind,
+                    roles: roles.map(|roles| ids.ids_of(roles).unwrap()),
+                    description: None, introduction: None, components: Default::default(),
+                    security_attributes: Default::default(), reasoning_visibility: Default::default(),
+                    deleted: None,
+                };
+                store.create_personality(&system, &personality).await.unwrap();
+                let agent = Agent::new(ScopedName::new(name, Scope::GlobalScope).unwrap(), &personality, owner);
+                store.create_agent(&system, &agent).await.unwrap();
+                ActorId::Agent(agent.id)
+            }
+        };
+        // Stored first: their roles are read from the store.
+        let users = record_users(&manager, &[&alice, &bob]).await;
+        let hers = agent("hers", alice_id, PersonalityKind::Internal, None).await;
+        let limited = agent("limited", alice_id, PersonalityKind::Internal, Some(&["staff"])).await;
+        let bobs = agent("bobs", bob_id, PersonalityKind::Internal, None).await;
+        let remote = agent("remote", alice_id, PersonalityKind::External, None).await;
+        let cleared_remote = agent("cleared", alice_id, PersonalityKind::External, Some(&["staff"])).await;
+
+        let hr = Classification::new(Confidentiality::Confidential, [Compartment::new("hr")]).unwrap();
+        let internal = Classification::general(Confidentiality::Internal);
+        let cleared = |participant: ActorId, classification: &Classification| {
+            let runtime = Arc::clone(&runtime);
+            let (alice_ctx, classification) = (alice_ctx.clone(), classification.clone());
+            async move {
+                // A channel of only `participant` - and its approver, who is
+                // cleared for anything.
+                let ActorId::Agent(id) = participant else { unreachable!("agents only") };
+                let channel = caelumora_model::channel::Channel::build(SessionId::new(), alice_id, caelumora_model::value::name::Name::new("probe").unwrap(),
+                    Default::default(), classification, None, vec![caelumora_model::channel::Participant::Agent(id)]);
+                crate::channel::require_admitted(&runtime, &alice_ctx, &channel).await.is_ok()
+            }
+        };
+        assert!(cleared(hers, &hr).await, "an agent that names no roles is cleared as its owner");
+        assert!(!cleared(limited, &hr).await, "its personality limits it below its owner");
+        assert!(cleared(limited, &internal).await, "within its limit");
+        assert!(!cleared(bobs, &hr).await, "its owner is not cleared");
+        assert!(!cleared(remote, &internal).await, "an external agent that names no roles sees only what is public");
+        assert!(cleared(remote, &Classification::PUBLIC).await);
+        assert!(cleared(cleared_remote, &internal).await, "one that names its roles, within them");
+        assert!(!cleared(cleared_remote, &hr).await);
+
+        // The same question when a channel is created and when one is joined.
+        let mut session = make_session("hers");
+        session.security_attributes = SecurityAttributes::owned_by(alice_id).granting(caelumora_model::security::Subject::Actor(bob_id), caelumora_model::security::Grant::Read);
+        session.participants = users;
+        session.participants.extend([hers, limited].map(|a| match a { ActorId::Agent(id) => caelumora_model::channel::Participant::Agent(id), _ => unreachable!() }));
+        let session = create(&manager, &alice_ctx, session).await.unwrap();
+        let with = |name: &str, participants| ChannelSpec { classification: Some(hr.clone()), ..spec(name, participants) };
+        let refused = session.create_channel(&alice_ctx, with("hr", vec![limited])).await.expect_err("limited below HR");
+        assert!(matches!(refused.downcast_ref::<ChannelError>(), Some(ChannelError::NotCleared { participant, .. }) if *participant == limited), "{refused}");
+        let channel = session.create_channel(&alice_ctx, with("hr", vec![hers])).await.expect("cleared as alice");
+        let joining = channel.add_participant(&alice_ctx, limited, caelumora_model::channel::HistoryAccess::All).await.expect_err("nor may it join");
+        assert!(matches!(joining.downcast_ref::<ChannelError>(), Some(ChannelError::NotCleared { .. })), "{joining}");
+        manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_agent_takes_part_only_within_its_sessions_or_channels_scope() {
+        use crate::channel::ChannelError;
+        use caelumora_model::agent::{Personality, PersonalityId};
+        use caelumora_model::channel::{HistoryAccess, Participant};
+
+        let runtime = test_runtime();
+        let store = Arc::clone(runtime.entity_store());
+        let manager = SessionManager::new(runtime);
+        let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
+        let personality = Personality {
+            id: PersonalityId::new(), name: ScopedName::new("plain", Scope::GlobalScope).unwrap(), kind: Default::default(),
+            roles: None, description: None, introduction: None, components: Default::default(),
+            security_attributes: Default::default(), reasoning_visibility: Default::default(), deleted: None,
+        };
+        store.create_personality(&system, &personality).await.unwrap();
+        let mut session = make_session("scoped");
+        let id = session.id;
+        let elsewhere = [
+            Agent::new(ScopedName::new("aside", Scope::ChannelScope { session_id: id, channel_id: ChannelId::new() }).unwrap(), &personality, ActorId::None),
+            Agent::new(ScopedName::new("visitor", Scope::SessionScope { session_id: SessionId::new() }).unwrap(), &personality, ActorId::None),
+        ];
+        for agent in &elsewhere {
+            store.create_agent(&system, agent).await.unwrap();
+            session.participants.push(Participant::Agent(agent.id));
+        }
+        let running = create(&manager, &ctx, session).await.unwrap();
+        let main = running.channel_by_name("main").unwrap();
+
+        for agent in &elsewhere {
+            let actor = ActorId::Agent(agent.id);
+            let refused = running.create_channel(&ctx, spec("with-it", vec![actor])).await.expect_err("not in a new channel");
+            assert!(matches!(refused.downcast_ref::<ChannelError>(), Some(ChannelError::OutOfScope { participant, .. }) if *participant == actor), "{refused}");
+            let refused = main.add_participant(&ctx, actor, HistoryAccess::All).await.expect_err("nor in one there is");
+            assert!(matches!(refused.downcast_ref::<ChannelError>(), Some(ChannelError::OutOfScope { participant, .. }) if *participant == actor), "{refused}");
+        }
+        assert!(running.channel_by_name("with-it").is_none(), "nothing was created");
+        assert!(main.channel().participants.is_empty(), "nor added");
+        manager.stop_session(&system, id).await.unwrap();
+    }
+}
