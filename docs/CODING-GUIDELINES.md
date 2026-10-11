@@ -245,6 +245,9 @@ that answered it.
 ### Unit tests
 
 *   **Placement:** in a `mod tests` block at the bottom of the file, guarded by `#[cfg(test)]`.
+*   **Shared fixtures:** what the tests of several files use lives in a `#[cfg(test)] pub(crate) mod
+    testing` of the module it builds, e.g. `session::testing`. The tests of the actors in a running
+    channel share the channel's fixtures and live with them in `channel/tests/`.
 *   **Async tests:** use `#[tokio::test]` for tests involving async code.
 *   **Naming:** use descriptive names, e.g.
     `an_answer_is_its_whole_messages_and_what_was_being_written`.

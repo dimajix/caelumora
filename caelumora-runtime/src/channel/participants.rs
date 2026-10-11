@@ -1,0 +1,485 @@
+//! The participants of a channel: adding, removing and leaving, their mentions, and finding them by
+//! name.
+
+use caelumora_model::value::name::Name;
+use crate::actor::Actor;
+use anyhow::Result;
+use caelumora_model::actor::ActorId;
+use caelumora_model::channel::HistoryAccess;
+use caelumora_model::mention::{handle_of, MentionDirectory};
+use caelumora_model::question::{QuestionError, Questions};
+use caelumora_model::security::{ActionType, SecurityContext};
+use tracing::{info, warn};
+use std::collections::HashMap;
+use std::sync::Arc;
+use super::{ActorChange, Actors, ChannelActor, ChannelError, ChannelLoop, ChannelMember, LEAVE_GRACE};
+use super::history::history_start;
+
+impl ChannelLoop {
+    /// Adds `participant` - a participant of the session - to the channel on
+    /// behalf of `context` (issue 46), seeing as much of the history as
+    /// `history` grants. Stored first (`UpdateChannel`, also asked as
+    /// `ConfidentialityPolicy::cleared`), then its actor built and given the part of the
+    /// history it may see (`Actor::catch_up`, issue 190), then started, the
+    /// moderator and the mention directory told, and the join announced.
+    /// A participant removed shortly before is added only once its old
+    /// actor has ended (`left`, issue 171).
+    ///
+    /// # Errors
+    /// `ChannelError::NotInSession`, `OutOfScope`, `AlreadyParticipant`,
+    /// `StillLeaving` or `Forbidden`; a `StoreError` if `context` may not
+    /// change the channel.
+    pub async fn add_participant(&self, context: &SecurityContext, participant: ActorId, history: HistoryAccess) -> Result<()> {
+        // Whether the actor may change the channel at all, before anything
+        // is asked of the participant (issue 198, F2): who may not learns
+        // nothing of its clearance or its personality.
+        let attributes = self.security_attributes();
+        self.require(context, ActionType::UpdateChannel(&attributes), "adding a participant to").await?;
+        if self.actors.load().contains_key(&participant) {
+            return Err(ChannelError::AlreadyParticipant { participant, channel: self.id }.into());
+        }
+        self.left(participant).await?;
+        let found = self.session_loop()
+            .and_then(|s| s.session().participants.iter().find(|p| p.actor_id() == participant).cloned())
+            .ok_or(ChannelError::NotInSession { participant, channel: self.id })?;
+        let member = self.member_of(&found).await?
+            .ok_or(ChannelError::ParticipantGone { participant, channel: self.id })?;
+        member.require_in_scope(self.session_id, self.id)?;
+        member.require_cleared(self.confidentiality.as_ref(), context, &self.classification(), self.session_id, self.id)?;
+
+        let messages = self.history().await;
+        let start = history_start(history, &messages, chrono::Utc::now());
+        self.channel.add_participant(context, found.clone(), start).await?;
+
+        let started = async {
+            let actor = Self::create_actor(Arc::clone(&self.channel), &member, &self.runtime).await?;
+            actor.catch_up(self.visible_history(participant).await.messages()).await?;
+            Ok::<_, anyhow::Error>(actor)
+        }.await;
+        let actor: Arc<dyn Actor> = match started {
+            Ok(actor) => Arc::from(actor),
+            Err(error) => {
+                // Stored, but it cannot run: taken back out, in the runtime's
+                // name - adding it was permitted.
+                if let Err(undo) = self.channel.remove_participant(&SecurityContext::system(), participant).await {
+                    warn!("{} was added to channel {} but could not be started nor removed again: {}", participant, self.id, undo);
+                }
+                return Err(error);
+            }
+        };
+        let adopted = self.adopt(actor, member).await;
+        let _ = self.changes_tx.send(ActorChange::Start(adopted));
+        info!("{} joined channel {}", participant, self.id);
+        Ok(())
+    }
+
+    /// Removes `participant` from the channel on behalf of `context` (issue
+    /// 46): stored first (`UpdateChannel`), then its actor stopped - an agent
+    /// at once, without finishing a turn; the approver discards its pending
+    /// approvals. Until its task has ended, the participant cannot be added
+    /// again (`left`, issue 171). The leave is announced by the
+    /// `ChannelController` on the event bus (issue 73), and in the channel by
+    /// `run` with a `ParticipantRemoved` in the name of `context`'s caller,
+    /// once the actor's task has ended: what it still sends until then - the
+    /// step it was in, the end of its turn - enters the channel as its own,
+    /// and nothing of it follows the announcement (issues 162, 262).
+    /// Its state is kept, for the record and for when it joins again.
+    ///
+    /// # Errors
+    /// `ChannelError::ApproverStays` or `NotAParticipant`; a `StoreError` if
+    /// `context` may not change the channel.
+    pub async fn remove_participant(&self, context: &SecurityContext, participant: ActorId) -> Result<()> {
+        if matches!(participant, ActorId::Approver(_)) {
+            return Err(ChannelError::ApproverStays { channel: self.id }.into());
+        }
+        let Some(ChannelActor { actor, task, .. }) = self.actors.load().get(&participant).cloned() else {
+            return Err(ChannelError::NotAParticipant { participant, channel: self.id }.into());
+        };
+        self.channel.remove_participant(context, participant).await?;
+        self.leaving.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).insert(participant, task);
+        self.actors.rcu(|actors| {
+            let mut actors = HashMap::clone(actors);
+            actors.remove(&participant);
+            actors
+        });
+        self.moderator.remove_actor(participant);
+        self.rebuild_mentions();
+        actor.stop();
+        let _ = self.changes_tx.send(ActorChange::Stop(participant, context.clone()));
+        info!("{} left channel {}, removed by {}", participant, self.id, context.caller_id);
+        Ok(())
+    }
+
+    /// Waits until the actor `participant` had in the channel before has
+    /// ended its task, if it was removed (issue 171): until then it may
+    /// still store the participant's state - a turn given up - which a new
+    /// actor loads as it is built, and what it sends would pass as the new
+    /// actor's. At most `LEAVE_GRACE`: by then `run` has aborted it.
+    ///
+    /// # Errors
+    /// `ChannelError::StillLeaving` if it has not ended even so - it blocks
+    /// without ever reaching an `await`.
+    async fn left(&self, participant: ActorId) -> Result<(), ChannelError> {
+        let Some(task) = self.leaving.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).get(&participant).cloned() else {
+            return Ok(());
+        };
+        // Closed by `run` once it stops the actor; not if the channel does
+        // not run, and then nothing is tracked to wait for.
+        task.close();
+        if tokio::time::timeout(LEAVE_GRACE, task.wait()).await.is_err() {
+            warn!("{} is added to channel {} again, but its old actor has not ended", participant, self.id);
+            return Err(ChannelError::StillLeaving { participant, channel: self.id });
+        }
+        self.leaving.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).remove(&participant);
+        Ok(())
+    }
+
+    pub(super) fn rebuild_mentions(&self) {
+        let mentions = Self::mention_directory(&self.actors.load());
+        for handle in mentions.ambiguous() {
+            warn!("Channel {}: handle @{} is shared by several participants; mentioning it addresses all of them", self.id, handle);
+        }
+        self.mentions.store(Arc::new(mentions));
+    }
+
+    pub fn actor_ids(&self) -> Vec<ActorId> {
+        self.actors.load().keys().copied().collect()
+    }
+
+    /// All participants of the channel, in no particular order.
+    pub fn members(&self) -> Vec<ChannelMember> {
+        self.actors.load().values()
+            .map(|ChannelActor { actor: a, .. }| {
+                let name = a.name();
+                let handle = Some(name.handle())
+                    .filter(|h| Self::is_mentionable(a.id()) && !h.is_empty());
+                ChannelMember { id: a.id(), name, handle, kind: a.kind() }
+            })
+            .collect()
+    }
+
+    /// The agents of the channel `text` names, as a user names one in a
+    /// command (issue 277): those whose name it is - as a `Name`, regardless
+    /// of case and spelling - or, if there are none, those whose handle it
+    /// is, with or without its `@`, normalised as a mention is (`handle_of`).
+    /// Several if it is ambiguous, none if it names no agent; sorted by name.
+    pub fn agents_named(&self, text: &str) -> Vec<ChannelMember> {
+        Self::named(self.members().into_iter().filter(|m| m.id.as_agent_id().is_some()).collect(), text)
+    }
+
+    /// The participants of the channel `text` names - agents, users and
+    /// every other actor -, found as `agents_named` finds agents: for a
+    /// command that takes anyone taking part, such as `/nudge` (issue 278).
+    pub fn participants_named(&self, text: &str) -> Vec<ChannelMember> {
+        Self::named(self.members(), text)
+    }
+
+    /// Those of `members` that `text` names: by name, or else by handle;
+    /// sorted by name.
+    fn named(mut members: Vec<ChannelMember>, text: &str) -> Vec<ChannelMember> {
+        members.sort_by(|l, r| l.name.as_str().cmp(r.name.as_str()));
+        if let Ok(name) = Name::new(text) {
+            let named: Vec<_> = members.iter().filter(|m| m.name == name).cloned().collect();
+            if !named.is_empty() {
+                return named;
+            }
+        }
+        let handle = handle_of(text);
+        members.into_iter().filter(|m| !handle.is_empty() && m.handle.as_deref() == Some(handle.as_str())).collect()
+    }
+
+    /// The agents of the channel that carry out commands themselves (issue
+    /// 269), each with the commands `issuer` may see of it, by handle; an
+    /// agent with none is left out.
+    pub(crate) async fn agent_commands(&self, issuer: &SecurityContext) -> Vec<(ChannelMember, Vec<caelumora_model::command::Command>)> {
+        let mut found = Vec::new();
+        for member in self.members().into_iter().filter(|m| m.id.as_agent_id().is_some()) {
+            let Some(actor) = self.actor_by_id(member.id) else { continue };
+            let commands = actor.commands(issuer).await;
+            if !commands.is_empty() {
+                found.push((member, commands));
+            }
+        }
+        found.sort_by(|(l, _), (r, _)| l.handle.cmp(&r.handle));
+        found
+    }
+
+    /// `questions` as put to the users of the channel (issue 165): every
+    /// addressee found among them - a handle as its participants are
+    /// mentioned, the agent's owner as `owner` (`Questions::resolve`).
+    pub(crate) fn put(&self, questions: Questions, owner: ActorId) -> Result<Questions, QuestionError> {
+        let users: Vec<ActorId> = self.actor_ids().into_iter().filter(|id| matches!(id, ActorId::User(_))).collect();
+        questions.resolve(&self.mentions.load(), &users, owner)
+    }
+
+    fn is_mentionable(id: ActorId) -> bool {
+        matches!(id, ActorId::User(_) | ActorId::Agent(_))
+    }
+
+    fn mention_directory(actors: &Actors) -> MentionDirectory {
+        let names: Vec<(ActorId, Name)> = actors.values()
+            .map(|a| &a.actor)
+            .filter(|a| Self::is_mentionable(a.id()))
+            .map(|a| (a.id(), a.name()))
+            .collect();
+        MentionDirectory::new(names.iter().map(|(id, name)| (*id, name.as_str())))
+    }
+
+    /// The participants `text` mentions by their `@`-handles, as the channel
+    /// resolves them when a message enters it (issue 29) - for an actor
+    /// that shows its own message before (issue 220).
+    pub(crate) fn mentions_in(&self, text: &str) -> Vec<ActorId> {
+        self.mentions.load().resolve(text)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use caelumora_model::actor::ActorId;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio_util::task::TaskTracker;
+    
+    use caelumora_model::security::DummySecurityManager;
+    use crate::channel::tests::*;
+
+    use caelumora_model::value::name::Name;
+    use crate::runtime::RuntimeManager;
+    use caelumora_model::confidentiality::Classification;
+    use caelumora_model::event::GlobalEvent;
+    use caelumora_model::security::{SecurityAttributes, SecurityContext};
+    use crate::view::Viewer;
+    use caelumora_model::session::ChannelId;
+    use caelumora_model::secret::SecretManager;
+    use caelumora_model::store::memory::MemoryStore;
+    use crate::session::{ChannelSpec, SessionError, SessionManager};
+    use crate::session::testing::*;
+    #[tokio::test]
+    async fn an_agent_is_found_by_its_name_or_its_handle_however_it_is_written() {
+        let (channel, _, _) = channel_with_sleepers(&["Sassy", "Dr. Who", "Dr-Who", "Zoë"]).await;
+        let named = |text: &str| channel.agents_named(text).into_iter().map(|m| m.name.to_string()).collect::<Vec<_>>();
+
+        for text in ["Sassy", "sassy", "SASSY", "@Sassy", "@sassy"] {
+            assert_eq!(named(text), ["Sassy"], "{text}");
+        }
+        assert_eq!(named("Zoe"), ["Zoë"], "by its ASCII form, as a name");
+        assert_eq!(named("@zoë"), ["Zoë"], "and as a mention");
+        assert_eq!(named("dr. who"), ["Dr. Who"], "a name before a handle: no ambiguity");
+        assert_eq!(named("dr-who"), ["Dr-Who"], "the other's name");
+        assert_eq!(named("@dr-who"), ["Dr-Who", "Dr. Who"], "the handle of both: ambiguous");
+        assert!(named("alice").is_empty(), "a user is no agent");
+        assert!(named("nobody").is_empty() && named("@").is_empty() && named("").is_empty(), "nobody");
+    }
+
+    #[tokio::test]
+    async fn a_participant_is_added_again_only_once_its_old_actor_has_ended() {
+        let (channel, _, agent, _) = agent_channel(Arc::new(DummySecurityManager::new()), Arc::new(NeverAnswers), Default::default()).await;
+        let participant = ActorId::Agent(agent);
+        assert!(channel.left(participant).await.is_ok(), "nothing to wait for: it never left");
+
+        // Its old actor takes a while to end, as one that stores its state.
+        let old = TaskTracker::new();
+        let ended = Arc::new(AtomicBool::new(false));
+        let ending = Arc::clone(&ended);
+        old.spawn(async move {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            ending.store(true, Ordering::SeqCst);
+        });
+        channel.leaving.lock().unwrap().insert(participant, old);
+
+        channel.left(participant).await.expect("it ends within the grace");
+        assert!(ended.load(Ordering::SeqCst), "not before its old actor ended");
+        assert!(!channel.leaving.lock().unwrap().contains_key(&participant), "and is forgotten");
+    }
+
+    #[tokio::test]
+    async fn only_who_is_cleared_takes_part_in_or_reads_a_channel() {
+        use crate::channel::ChannelError;
+        use caelumora_model::actor::ActorId;
+        use caelumora_model::confidentiality::{Clearance, Compartment, Compartments, ConfidentialityRules, Confidentiality};
+        use caelumora_model::role::{RoleId, Roles};
+        use caelumora_model::user::{User, UserId};
+
+        let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
+        let roles = Roles::new([
+            (RoleId::new(), "staff".to_string(), vec![Clearance { level: Confidentiality::Internal, compartment: None }]),
+            (RoleId::new(), "hr".to_string(), vec![Clearance { level: Confidentiality::Confidential, compartment: Some(Compartment::new("hr")) }]),
+        ]).unwrap();
+        let ids = roles.clone();
+        let (policy, confidentiality, store) = crate::session::testing::owned_store(ConfidentialityRules::new(compartments).with_roles(roles));
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::clone(&confidentiality), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
+        let user = |name: &str, roles: &[&str]| User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: ids.ids_of(roles).unwrap(), deleted: None };
+        let (alice, bob) = (user("alice", &["staff", "hr"]), user("bob", &["staff"]));
+        let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(bob.id));
+        let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
+        let mut session = make_session("hers");
+        session.security_attributes = SecurityAttributes::owned_by(alice_id).granting(caelumora_model::security::Subject::Actor(bob_id), caelumora_model::security::Grant::Read);
+        session.participants = record_users(&manager, &[&alice, &bob]).await;
+        let session = create(&manager, &alice_ctx, session).await.unwrap();
+
+        let hr_confidential = Classification::new(Confidentiality::Confidential, [Compartment::new("hr")]).unwrap();
+        let with = |name: &str, classification: &Classification, participants| ChannelSpec { classification: Some(classification.clone()), ..spec(name, participants) };
+        let refused = session.create_channel(&alice_ctx, with("hr", &hr_confidential, vec![bob_id])).await.expect_err("bob is not cleared for HR");
+        assert!(matches!(refused.downcast_ref::<ChannelError>(), Some(ChannelError::NotCleared { participant, .. }) if *participant == bob_id), "{refused}");
+        let hr = session.create_channel(&alice_ctx, with("hr", &hr_confidential, vec![])).await.expect("alice is");
+        let joining = hr.add_participant(&alice_ctx, bob_id, caelumora_model::channel::HistoryAccess::All).await.expect_err("nor may he join");
+        assert!(matches!(joining.downcast_ref::<ChannelError>(), Some(ChannelError::NotCleared { .. })), "{joining}");
+
+        let team = session.create_channel(&alice_ctx, with("team", &Classification::general(Confidentiality::Internal), vec![bob_id])).await.expect("both are cleared for internal");
+        let raising = team.reclassify(&alice_ctx, Classification::general(Confidentiality::Confidential)).await.expect_err("above bob");
+        assert!(matches!(raising.downcast_ref::<ChannelError>(), Some(ChannelError::NotCleared { .. })), "{raising}");
+        assert_eq!(team.classification(), Classification::general(Confidentiality::Internal), "unchanged");
+
+        // Alice, no longer in HR - as her context says from now on -, no
+        // longer sees its channel, though she owns it.
+        let alice_ctx = alice_ctx.with_roles(ids.ids_of(&["staff"]).unwrap(), None);
+        assert!(matches!(session.channel_for(&alice_ctx, hr.id()).await.expect_err("not cleared").downcast_ref::<SessionError>(), Some(SessionError::ChannelNotFound { .. })));
+        let listed: Vec<ChannelId> = manager.views(Viewer::new(alice_ctx.clone())).session(session.id()).await.unwrap().channels().await.iter().map(|c| c.id()).collect();
+        assert!(!listed.contains(&hr.id()) && listed.contains(&team.id()), "listed without it");
+        manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_participant_added_later_sees_the_history_granted_and_is_announced() {
+        use crate::channel::ChannelError;
+        use caelumora_model::channel::HistoryAccess;
+        let runtime = test_runtime();
+        let manager = SessionManager::new(Arc::clone(&runtime));
+        let (session, ctx, other) = running_session_of_a_user(&manager).await;
+        let channel = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
+        let owner = match ctx.initiator_id { caelumora_model::actor::ActorId::User(id) => id, _ => unreachable!() };
+        let writer = channel.user_actor(owner).expect("the creator takes part");
+        for text in ["one", "two", "three"] {
+            writer.send_message(text.to_string(), None).await.unwrap();
+        }
+        let before = history_of(&channel, 3).await;
+        let mut rx = runtime.event_bus().subscribe_all();
+
+        channel.add_participant(&ctx, other, HistoryAccess::LastMessages { count: 1 }).await.expect("a user of the session joins");
+
+        assert!(channel.members().iter().any(|m| m.id == other), "a member now");
+        let other_user = match other { caelumora_model::actor::ActorId::User(id) => id, _ => unreachable!() };
+        assert!(channel.user_actor(other_user).is_some(), "with an actor of their own");
+        let visible: Vec<_> = channel.visible_history(other).await.messages().into_iter().map(|m| m.content).collect();
+        assert_eq!(visible, vec![Some("three".to_string())], "the last message and no more");
+        assert_eq!(channel.visible_history(ctx.initiator_id).await.messages().len(), before.len(), "the others still see everything");
+        // What a reader records as read says from where (issue 72).
+        let (limited, full) = (channel.visible_history(other).await, channel.visible_history(ctx.initiator_id).await);
+        assert_eq!(limited.start, Some(caelumora_model::channel::HistoryStart::From(before[2].id)), "from the last message");
+        assert_eq!(full.start, None, "all of it");
+        assert_eq!(limited.digest, full.digest, "up to where is the same for both");
+        let stored = runtime.entity_store().get_channel(&ctx, channel.id()).await.unwrap();
+        assert!(stored.participants.iter().any(|p| p.actor_id() == other), "stored, not only in memory");
+        assert_eq!(stored.history_limits.len(), 1, "with the limit");
+        let events = drain(&mut rx);
+        assert!(events.iter().any(|e| matches!(e, GlobalEvent::UserChannelJoined(_, cid, uid) if *cid == channel.id() && *uid == other_user)),
+                "the join is announced: {events:?}");
+
+        // What is written after joining is visible.
+        writer.send_message("four".to_string(), None).await.unwrap();
+        history_of(&channel, 4).await;
+        assert_eq!(channel.visible_history(other).await.messages().len(), 2);
+
+        let refusal = |error: anyhow::Error| error.downcast::<ChannelError>().expect("a ChannelError");
+        let again = channel.add_participant(&ctx, other, HistoryAccess::All).await.expect_err("already in");
+        assert!(matches!(refusal(again), ChannelError::AlreadyParticipant { .. }));
+        let stranger = caelumora_model::actor::ActorId::User(caelumora_model::user::UserId::new());
+        let outside = channel.add_participant(&ctx, stranger, HistoryAccess::All).await.expect_err("not in the session");
+        assert!(matches!(refusal(outside), ChannelError::NotInSession { .. }));
+        manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_users_watch_ends_when_they_leave_or_the_channel_is_deleted() {
+        let runtime = test_runtime();
+        let manager = SessionManager::new(Arc::clone(&runtime));
+        let (session, ctx, other) = running_session_of_a_user(&manager).await;
+        let owner = ctx.initiator_id.as_user_id().unwrap();
+        let within = |ended: tokio_util::sync::CancellationToken| async move {
+            tokio::time::timeout(std::time::Duration::from_secs(5), ended.cancelled_owned()).await
+        };
+
+        // Leaving ends it.
+        let channel = session.create_channel(&ctx, spec("side", vec![other])).await.unwrap();
+        let theirs = channel.user_actor(other.as_user_id().unwrap()).unwrap().watch();
+        let mine = channel.user_actor(owner).unwrap().watch();
+        channel.remove_participant(&ctx, other).await.expect("removed");
+        within(theirs.ended).await.expect("the watch of whoever left ends");
+        assert!(!mine.ended.is_cancelled(), "everybody else's goes on");
+
+        // So does deleting the channel, for everybody.
+        session.delete_channel(&ctx, channel.id()).await.expect("deleted");
+        within(mine.ended).await.expect("a deleted channel is watched by nobody");
+        manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_removed_participant_is_kept_as_a_former_one_and_announced_but_the_approver_stays() {
+        use crate::channel::ChannelError;
+        let runtime = test_runtime();
+        let manager = SessionManager::new(Arc::clone(&runtime));
+        let (session, ctx, other) = running_session_of_a_user(&manager).await;
+        let channel = session.create_channel(&ctx, spec("side", vec![other])).await.unwrap();
+        let mut rx = runtime.event_bus().subscribe_all();
+
+        channel.remove_participant(&ctx, other).await.expect("removed");
+
+        assert!(!channel.members().iter().any(|m| m.id == other), "no longer a member");
+        let stored = runtime.entity_store().get_channel(&ctx, channel.id()).await.unwrap();
+        assert!(!stored.participants.iter().any(|p| p.actor_id() == other), "stored, not only in memory");
+        let former = stored.former.iter().find(|f| f.participant.actor_id() == other).expect("kept as a former participant (issue 164)");
+        assert_eq!(former.left.by, ctx.caller_id, "with who removed it");
+        let events = drain(&mut rx);
+        assert!(events.iter().any(|e| matches!(e, GlobalEvent::UserChannelLeft(_, cid, _) if *cid == channel.id())),
+                "the leave is announced: {events:?}");
+
+        let refusal = |error: anyhow::Error| error.downcast::<ChannelError>().expect("a ChannelError");
+        let gone = channel.remove_participant(&ctx, other).await.expect_err("not in it any more");
+        assert!(matches!(refusal(gone), ChannelError::NotAParticipant { .. }));
+        let approver = channel.members().into_iter().find(|m| m.kind == "approver").expect("an approver").id;
+        let stays = channel.remove_participant(&ctx, approver).await.expect_err("the approver stays");
+        assert!(matches!(refusal(stays), ChannelError::ApproverStays { .. }));
+
+        // Added again at once, once its old actor has ended (issue 171).
+        channel.add_participant(&ctx, other, caelumora_model::channel::HistoryAccess::All).await.expect("added again");
+        assert!(channel.user_actor(other.as_user_id().unwrap()).is_some(), "with a new actor");
+        let stored = runtime.entity_store().get_channel(&ctx, channel.id()).await.unwrap();
+        assert!(stored.former.is_empty(), "and no longer a former participant");
+        manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn only_who_may_change_a_channel_adds_or_removes_its_participants() {
+        use caelumora_model::actor::ActorId;
+        use caelumora_model::channel::HistoryAccess;
+        use caelumora_model::user::{User, UserId};
+
+        let (policy, confidentiality, store) = crate::session::testing::owned_store(Default::default());
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::clone(&confidentiality), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let manager = SessionManager::new(runtime);
+        let user = |name: &str| User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: Vec::new(), deleted: None };
+        let (alice, bob, carol) = (user("alice"), user("bob"), user("carol"));
+        let (alice_id, bob_id, carol_id) = (ActorId::User(alice.id), ActorId::User(bob.id), ActorId::User(carol.id));
+        let as_user = |actor| SecurityContext::new(actor, Default::default(), Default::default());
+        let mut session = make_session("hers");
+        session.participants = record_users(&manager, &[&alice, &bob, &carol]).await;
+        session.security_attributes = SecurityAttributes::owned_by(alice_id).granting(caelumora_model::security::Subject::Actor(bob_id), caelumora_model::security::Grant::Read).granting(caelumora_model::security::Subject::Actor(carol_id), caelumora_model::security::Grant::Read);
+        let running = create(&manager, &as_user(alice_id), session).await.unwrap();
+        let channel = running.create_channel(&as_user(alice_id), spec("side", vec![bob_id])).await.unwrap();
+
+        let refused = channel.add_participant(&as_user(bob_id), carol_id, HistoryAccess::All).await.expect_err("a participant may not");
+        assert!(crate::error::is_forbidden(&refused), "{refused}");
+        let refused = channel.remove_participant(&as_user(bob_id), bob_id).await.expect_err("nor remove anyone");
+        assert!(crate::error::is_forbidden(&refused), "{refused}");
+        assert_eq!(channel.members().len(), 3, "alice, bob and the approver, unchanged");
+
+        channel.add_participant(&as_user(alice_id), carol_id, HistoryAccess::None).await.expect("the owner may");
+        channel.remove_participant(&as_user(alice_id), bob_id).await.expect("the owner may");
+        assert!(channel.members().iter().any(|m| m.id == carol_id) && !channel.members().iter().any(|m| m.id == bob_id));
+        manager.stop_session(&SecurityContext::system(), running.id()).await.unwrap();
+    }
+}

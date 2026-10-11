@@ -1,6 +1,6 @@
 # 311 — `channel.rs` and `session.rs` hold everything about channels and sessions in two files
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -95,3 +95,32 @@ at, not decided here.
 ## History
 
 - **2026-10-11** — Opened.
+- **2026-10-11** — Done, as moves only: every line of the two files is in one of the new ones;
+  added are re-exports, so that `crate::channel::…` and `crate::session::…` stay as they were, and
+  `pub(super)` where one part calls another.
+  - `channel/` holds `mod.rs`, `member.rs`, `settings.rs`, `participants.rs`, `control.rs`,
+    `run.rs` and `history.rs`, as proposed. Calls between the parts are few: `pub(super)` went on
+    `Member` and four of its methods, on `rebuild_mentions`, `cancel_actors`, `wake_for_delivery`
+    and `history_start`. `RunningActor` is `run`'s alone and moved there.
+  - The tests of the actors went to `channel/tests/`, the cheaper way, as the maintainer decided:
+    `agent.rs` (named after the actor, since it also holds what an agent takes in when it joins),
+    `external_agent.rs`, `commands.rs` and `questions.rs`, with the fixtures and the tests of
+    `mod.rs` in `channel/tests/mod.rs`. A child of `channel`, the fixtures see what the tests used
+    of `ChannelLoop`'s private fields; the few the tests in the part files use are `pub(super)`. The
+    tests of cancelling one actor and of a cancelled channel call `route_event` and moved to
+    `run.rs`.
+  - `session/` holds `mod.rs`, `settings.rs` (added: the session's settings, as for the channel),
+    `channels.rs`, `manager.rs` and `testing.rs`. The free functions several parts use
+    (`require_classification`, `preferred_language`, `purge_channel_document`,
+    `require_attachable`) stay in `mod.rs`.
+  - The tests in `session.rs` about a channel went to `channel/settings.rs`, `member.rs`,
+    `participants.rs` and `tests/external_agent.rs`; the fixtures they share with the session's
+    tests are in `session::testing`, whose `record_users` reads `SessionManager::runtime_manager`,
+    now `pub(super)`. Four tests of reading and snapshots stay in `session/mod.rs`, though they are
+    about the views: `view/mod.rs` has fixtures of the same names (`make_session`, `record_users`)
+    and other signatures, and two of them build a `ChannelRuntime` from `SessionLoop`'s private
+    fields - moving them would mean rewriting them.
+  - Opened from what was noticed: [314](314-session-manager-handles-agents.md), whether the
+    `SessionManager` should delete, restore and purge agents, and
+    [315](315-view-and-session-test-fixtures.md), the fixtures that keep the four tests of the views
+    with the sessions.
