@@ -1,9 +1,9 @@
 //! The one owner of "an artifact and its content" (issue 271): it publishes
 //! versions - their content kept first, then the document, then announced -,
-//! keeps artifacts in another scope, deletes and purges them, and is the
-//! only code that holds the `ArtifactStorage`s, one per configured storage.
-//! Deleting and restoring artifacts with what holds their scope is
-//! `scoped.rs`'s, which marks them as it marks every kind.
+//! keeps artifacts in another scope, deletes, restores and purges them -
+//! also with what holds their scope (`…_lying_in`, called by `scoped`) -,
+//! and is the only code that holds the `ArtifactStorage`s, one per
+//! configured storage.
 //!
 //! A version is read in one of two ways:
 //!
@@ -22,6 +22,7 @@ mod local;
 
 use crate::component::{ComponentError, ComponentResult};
 use crate::event::EventBus;
+use crate::scoped::{deleted_since, unless_taken, within};
 use crate::terminal::ByteStream;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
@@ -38,7 +39,7 @@ use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResultExt
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use futures::StreamExt;
 use local::LocalArtifactStorage;
 use std::collections::BTreeMap;
@@ -390,6 +391,41 @@ impl ArtifactManager {
         Ok(purged)
     }
 
+    /// Deletes the artifacts that lie in `holder` or within it, their
+    /// content kept, in the runtime's name (`scoped`), and announces them
+    /// as `delete` does.
+    ///
+    /// # Errors
+    /// Whatever the store reports; what was deleted before stays deleted.
+    pub(crate) async fn delete_lying_in(&self, holder: &Scope) -> ArtifactResult<()> {
+        let system = SecurityContext::system();
+        let _writing = self.writing.lock().await;
+        for artifact in self.entities.list_artifacts(&system, &within(holder)).await?.items {
+            self.entities.delete_artifact(&system, artifact.id).await?;
+            self.events.publish(GlobalEvent::ArtifactDeleted(artifact.id), artifact.security_attributes.clone());
+        }
+        Ok(())
+    }
+
+    /// Restores the artifacts that lie in `holder` or within it and were
+    /// deleted at `since` or later, in the runtime's name (`scoped`), and
+    /// announces them as `restore` does. One whose name was taken meanwhile
+    /// stays deleted.
+    ///
+    /// # Errors
+    /// Whatever else the store reports; what was restored before stays
+    /// restored.
+    pub(crate) async fn restore_lying_in(&self, holder: &Scope, since: DateTime<Utc>) -> ArtifactResult<()> {
+        let system = SecurityContext::system();
+        let _writing = self.writing.lock().await;
+        for artifact in deleted_since(self.entities.list_deleted_artifacts(&system, &within(holder)).await?.items, since) {
+            if let Some(restored) = unless_taken(self.entities.restore_artifact(&system, artifact.id).await, "artifact", &artifact.name)? {
+                self.events.publish(GlobalEvent::ArtifactRestored(restored.id), restored.security_attributes);
+            }
+        }
+        Ok(())
+    }
+
     /// Purges the deleted artifacts that lie in `holder` or within it,
     /// their content first.
     ///
@@ -399,7 +435,7 @@ impl ArtifactManager {
     pub(crate) async fn purge_lying_in(&self, holder: &Scope) -> ArtifactResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for artifact in self.entities.list_deleted_artifacts(&system, &crate::scoped::within(holder)).await?.items {
+        for artifact in self.entities.list_deleted_artifacts(&system, &within(holder)).await?.items {
             self.storage(&artifact.storage)?.remove(artifact.id).await?;
             self.entities.purge_artifact(&system, artifact.id).await?;
         }

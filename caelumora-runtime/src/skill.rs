@@ -1,8 +1,7 @@
 //! The one writer of skills (issue 22): it makes, changes, deletes,
 //! restores and purges them - stored first, then announced. Reading them is
-//! the views' (`view::SkillView`); deleting and restoring them with what
-//! holds their scope is `scoped.rs`'s, which marks them as it marks every
-//! kind.
+//! the views' (`view::SkillView`). Those of a session's scope it deletes,
+//! restores and purges with the session (`…_lying_in`, called by `scoped`).
 //!
 //! A skill belongs to whoever it is made for - the principal of the context
 //! it is made in, a user, or the system for the seed's - and lies in the
@@ -12,6 +11,7 @@
 //! not read.
 
 use crate::event::EventBus;
+use crate::scoped::{deleted_since, unless_taken, within};
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
 use caelumora_model::event::GlobalEvent;
@@ -22,6 +22,7 @@ use caelumora_model::store::{EntityStore, StoreError, StoreResultExt};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::{Description, SkillBody};
 use caelumora_model::value::ValueError;
+use chrono::{DateTime, Utc};
 use std::fmt;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -214,5 +215,53 @@ impl SkillManager {
         let purged = self.entities.purge_skill(ctx, id).await?;
         info!(skill = %id, by = %ctx.caller_id, "Skill purged");
         Ok(purged)
+    }
+
+    /// Deletes the skills that lie in `holder` or within it, in the
+    /// runtime's name (`scoped`), and announces them as `delete` does.
+    ///
+    /// # Errors
+    /// Whatever the store reports; what was deleted before stays deleted.
+    pub(crate) async fn delete_lying_in(&self, holder: &Scope) -> SkillResult<()> {
+        let system = SecurityContext::system();
+        let _writing = self.writing.lock().await;
+        for skill in self.entities.list_skills(&system, &within(holder)).await?.items {
+            self.entities.delete_skill(&system, skill.id).await?;
+            self.events.publish(GlobalEvent::SkillDeleted(skill.id), skill.security_attributes);
+        }
+        Ok(())
+    }
+
+    /// Restores the skills that lie in `holder` or within it and were
+    /// deleted at `since` or later, in the runtime's name (`scoped`), and
+    /// announces them as `restore` does. One whose name was taken meanwhile
+    /// stays deleted.
+    ///
+    /// # Errors
+    /// Whatever else the store reports; what was restored before stays
+    /// restored.
+    pub(crate) async fn restore_lying_in(&self, holder: &Scope, since: DateTime<Utc>) -> SkillResult<()> {
+        let system = SecurityContext::system();
+        let _writing = self.writing.lock().await;
+        for skill in deleted_since(self.entities.list_deleted_skills(&system, &within(holder)).await?.items, since) {
+            if let Some(restored) = unless_taken(self.entities.restore_skill(&system, skill.id).await, "skill", &skill.name)? {
+                self.events.publish(GlobalEvent::SkillRestored(restored.id), restored.security_attributes);
+            }
+        }
+        Ok(())
+    }
+
+    /// Purges the deleted skills that lie in `holder` or within it, in the
+    /// runtime's name (`scoped`).
+    ///
+    /// # Errors
+    /// Whatever the store reports; what was purged before stays purged.
+    pub(crate) async fn purge_lying_in(&self, holder: &Scope) -> SkillResult<()> {
+        let system = SecurityContext::system();
+        let _writing = self.writing.lock().await;
+        for skill in self.entities.list_deleted_skills(&system, &within(holder)).await?.items {
+            self.entities.purge_skill(&system, skill.id).await?;
+        }
+        Ok(())
     }
 }

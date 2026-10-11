@@ -17,7 +17,7 @@ use caelumora_model::group::{Group, GroupId};
 use crate::group::{keep_participants, purge_participants};
 use caelumora_model::template::{ScopeTemplate, SessionTemplateId, WorkspaceTemplate};
 use caelumora_model::workspace::WorkspaceChoice;
-use crate::scoped::{delete_scoped_in, purge_scoped_in, restore_scoped_in};
+use crate::scoped::ScopedEntities;
 use crate::workspace::WorkspaceManager;
 use dashmap::DashMap;
 use std::sync::Arc;
@@ -40,6 +40,8 @@ pub struct SessionManager {
     entities: Arc<dyn EntityStore>,
     events: Arc<EventBus>,
     workspaces: Arc<WorkspaceManager>,
+    /// What goes with a session deleted, restored or purged (issue 178).
+    scoped: Arc<ScopedEntities>,
 }
 
 /// A session as [`SessionManager::find`] found it for a context that may
@@ -72,6 +74,7 @@ impl SessionManager {
             entities: Arc::clone(runtime_manager.entity_store()),
             events: Arc::clone(runtime_manager.event_bus()),
             workspaces: Arc::clone(runtime_manager.workspace_manager()),
+            scoped: Arc::clone(runtime_manager.scoped_entities()),
             runtime_manager,
         }
     }
@@ -352,7 +355,7 @@ impl SessionManager {
         // 178). Its agents take part in no other session (`Scope::admits`):
         // they leave nothing, and come back with its channels.
         if removed {
-            if let Err(e) = delete_scoped_in(self.entities.as_ref(), event_bus, &Scope::SessionScope { session_id: id }).await {
+            if let Err(e) = self.scoped.delete_lying_in(&Scope::SessionScope { session_id: id }).await {
                 warn!("Session {} was deleted, but not what lies in its scope: {}", id, e);
             }
         }
@@ -382,7 +385,7 @@ impl SessionManager {
         let deleted_at = store.get_deleted_session(context, id).await?.deleted.map(|removal| removal.at);
         let session = store.restore_session(context, id).await?;
         if let Some(since) = deleted_at {
-            if let Err(e) = restore_scoped_in(store.as_ref(), &self.events, &Scope::SessionScope { session_id: id }, since).await {
+            if let Err(e) = self.scoped.restore_lying_in(&Scope::SessionScope { session_id: id }, since).await {
                 warn!("Session {} was restored, but not what lies in its scope: {}", id, e);
             }
         }
@@ -422,7 +425,7 @@ impl SessionManager {
             state_store.delete_channel_state(channel_id).await?;
         }
         // And what lay in its scope and in its channels' (issue 178).
-        purge_scoped_in(store.as_ref(), state_store.as_ref(), self.runtime_manager.workspace_manager(), self.runtime_manager.artifact_manager(), &Scope::SessionScope { session_id: id }).await?;
+        self.scoped.purge_lying_in(&Scope::SessionScope { session_id: id }).await?;
         self.starts.remove(&id);
         info!("Session {} purged by {}", id, context.caller_id);
         Ok(())

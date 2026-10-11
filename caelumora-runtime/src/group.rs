@@ -10,7 +10,9 @@
 //! the participants it follows, which is the act that was permitted; it is
 //! derived anew from the participants each time, so that a write that
 //! failed is corrected by the next. What lies in a session's or channel's
-//! scope goes with it (`scoped`), the group of its participants among it.
+//! scope goes with it (`scoped`), the group of its participants among it:
+//! the `GroupManager` deletes, restores and purges it with the session or
+//! channel (`…_lying_in`).
 //!
 //! A team is made and changed by the `GroupManager`, its one writer, which
 //! leaves the permissions to the store - who reads, changes and deletes a
@@ -23,6 +25,7 @@
 //! grants what they cannot tell to whom.
 
 use crate::event::EventBus;
+use crate::scoped::{deleted_since, unless_taken, within};
 use caelumora_model::actor::ActorId;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::group::{Group, GroupId, GroupUpdateEvent};
@@ -32,7 +35,7 @@ use caelumora_model::store::{EntityStore, StoreError, StoreResult, StoreResultEx
 use caelumora_model::user::UserId;
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::ValueError;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use std::fmt;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -225,6 +228,51 @@ impl GroupManager {
         let purged = self.entities.purge_group(ctx, id).await?;
         info!(group = %id, by = %ctx.caller_id, "Group purged");
         Ok(purged)
+    }
+
+    /// Deletes the groups that lie in `holder` or within it - the
+    /// participants of a session or channel among them -, in the runtime's
+    /// name (`scoped`).
+    ///
+    /// # Errors
+    /// Whatever the store reports; what was deleted before stays deleted.
+    pub(crate) async fn delete_lying_in(&self, holder: &Scope) -> GroupResult<()> {
+        let system = SecurityContext::system();
+        let _writing = self.writing.lock().await;
+        for group in self.entities.list_groups(&system, &within(holder)).await?.items {
+            self.entities.delete_group(&system, group.id).await?;
+        }
+        Ok(())
+    }
+
+    /// Restores the groups that lie in `holder` or within it and were
+    /// deleted at `since` or later, in the runtime's name (`scoped`). One
+    /// whose name was taken meanwhile stays deleted.
+    ///
+    /// # Errors
+    /// Whatever else the store reports; what was restored before stays
+    /// restored.
+    pub(crate) async fn restore_lying_in(&self, holder: &Scope, since: DateTime<Utc>) -> GroupResult<()> {
+        let system = SecurityContext::system();
+        let _writing = self.writing.lock().await;
+        for group in deleted_since(self.entities.list_deleted_groups(&system, &within(holder)).await?.items, since) {
+            unless_taken(self.entities.restore_group(&system, group.id).await, "group", &group.name)?;
+        }
+        Ok(())
+    }
+
+    /// Purges the deleted groups that lie in `holder` or within it, in the
+    /// runtime's name (`scoped`).
+    ///
+    /// # Errors
+    /// Whatever the store reports; what was purged before stays purged.
+    pub(crate) async fn purge_lying_in(&self, holder: &Scope) -> GroupResult<()> {
+        let system = SecurityContext::system();
+        let _writing = self.writing.lock().await;
+        for group in self.entities.list_deleted_groups(&system, &within(holder)).await?.items {
+            self.entities.purge_group(&system, group.id).await?;
+        }
+        Ok(())
     }
 }
 
