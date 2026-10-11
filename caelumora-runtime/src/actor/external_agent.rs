@@ -226,7 +226,7 @@ impl ExternalAgentActor {
     /// # Errors
     /// If its context provider cannot assemble them.
     async fn prompts_to_give(&self, state: &AgentChannelState, work: &mut Work) -> Result<Vec<(String, PromptPart)>> {
-        let reading = AgentWork::new(self.agent_id, work, state, &self.agent_state, Some(&self.views));
+        let reading = AgentWork::new(self.agent_id, work, state, &self.agent_state, &self.views);
         let (parts, knowledge) = self.context_provider.current_context(&reading).await
             .map_err(|e| e.context(format!("component '{}' could not assemble the context", self.context_provider.id)))?;
         work.take_in_context(&parts, knowledge);

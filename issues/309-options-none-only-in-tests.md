@@ -1,6 +1,6 @@
 # 309 — Fields are optional that production code always sets
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -98,3 +98,21 @@ reason for `None`: `ChannelLanguagePromptProvider::told` and `ChannelMembersProm
 
 - **2026-10-11** — Opened at the maintainer's request after a search for `Option` fields in structs
   that only tests leave `None`.
+- **2026-10-11** — Done, after [315](315-view-and-session-test-fixtures.md) had gathered the
+  fixtures the tests of turns in a session needed.
+  - `ComponentContainer` holds an `Arc<Graph>` and has no `Default`; the three branches of the
+    empty container and its error are gone.
+  - `Turn::of` takes the views, `AgentWork::new` a `&ViewsFactory`, `with_views` is gone. Tests get
+    `ViewsFactory::detached()`, `Turn::begun` uses it: an actor runtime in a channel of a session
+    that is not running (`ChannelRuntime::outside_a_session`), so `session` is `None` for the
+    production reason, a channel not attached to a session.
+  - Beyond the issue: `FactoryRoot::Session` and `ViewsFactory::in_session` were a `#[cfg(test)]`
+    arm in the production `match`, the very thing the considerations above rejected. Both are
+    gone, so `ViewsFactory` holds its `ActorRuntime` directly. Their five users - the tests of
+    `agent_memory`, of the three channel prompt providers and of `workspace` - reach their session
+    through `session::testing::views_in`; `agent_memory`'s test sessions got a main channel for it.
+  - `tests/mcp_tool_integration.rs` stayed an integration test. It builds its detached views from
+    the public API (`ChannelRuntime::new`, `new_actor_runtime`, `views`), so no visibility
+    changed and `Turn::of` stays public - tool providers outside the crate need it in their tests.
+  - The comments of four prompt providers, of `skills::session_of` and of `ChannelLoop::session`
+    no longer give tests as a reason for a missing session.

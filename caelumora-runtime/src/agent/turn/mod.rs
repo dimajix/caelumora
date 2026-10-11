@@ -75,46 +75,34 @@ pub struct Turn<'a> {
     /// reads it and stages changes, never holds it.
     agent_state: Arc<AgentStateHandle>,
     /// What the turn navigates (issue 163): the agent's session, read from
-    /// its channel at the turn's classification. `None` for a turn outside
-    /// of a channel - in tests - which reads nothing elsewhere.
-    views: Option<ViewsFactory>,
+    /// its channel at the turn's classification.
+    views: ViewsFactory,
 }
 
 impl<'a> Turn<'a> {
     /// The turn under way in the agent `agent_id`'s `agent_channel_state`,
     /// as a step of its run loop works with it; `None` between turns. A
     /// turn is begun on the state (`AgentChannelState::begin_turn`), and
-    /// ended through its handle (`commit`, `give_up`).
-    pub fn of(agent_id: AgentId, agent_name: String, agent_channel_state: &'a mut AgentChannelState, agent_state: Arc<AgentStateHandle>) -> Option<Self> {
+    /// ended through its handle (`commit`, `give_up`). It navigates `views`.
+    pub fn of(agent_id: AgentId, agent_name: String, agent_channel_state: &'a mut AgentChannelState, agent_state: Arc<AgentStateHandle>, views: ViewsFactory) -> Option<Self> {
         agent_channel_state.turn.as_ref()?;
-        Some(Self {
-            agent_id,
-            agent_name,
-            agent_channel_state,
-            agent_state,
-            views: None,
-        })
+        Some(Self { agent_id, agent_name, agent_channel_state, agent_state, views })
     }
 
     /// A turn begun on `agent_channel_state` with default contexts, no
-    /// tools and the default profile - what a test needs to work in one.
+    /// tools and the default profile, in a channel of no running session
+    /// (`ViewsFactory::detached`) - what a test needs to work in one.
     #[cfg(test)]
     pub(crate) fn begun(agent_id: AgentId, agent_name: String, agent_channel_state: &'a mut AgentChannelState, agent_state: Arc<AgentStateHandle>) -> Self {
         agent_channel_state.begin_turn(Default::default(), Default::default(), Default::default(), Vec::new(), Default::default());
-        Self { agent_id, agent_name, agent_channel_state, agent_state, views: None }
-    }
-
-    /// With what the turn navigates: the agent's views.
-    pub fn with_views(mut self, views: ViewsFactory) -> Self {
-        self.views = Some(views);
-        self
+        Self { agent_id, agent_name, agent_channel_state, agent_state, views: ViewsFactory::detached() }
     }
 
     /// The turn as a piece of work of the agent, to read (issue 204): what
     /// components that only read are given, as an external agent's work
     /// gives it too.
     pub fn work(&self) -> AgentWork<'_> {
-        AgentWork::new(self.agent_id, &self.current().work, self.agent_channel_state, &self.agent_state, self.views.as_ref())
+        AgentWork::new(self.agent_id, &self.current().work, self.agent_channel_state, &self.agent_state, &self.views)
     }
 
     /// The agent's session as the turn reads it from its channel
@@ -395,7 +383,7 @@ mod tests {
         // Stored and loaded again, as after a restart.
         let stored = serde_json::to_value(&state).unwrap();
         let mut state: AgentChannelState = serde_json::from_value(stored).unwrap();
-        let mut turn = Turn::of(AgentId::default(), String::new(), &mut state, crate::agent::state::AgentStateHandle::detached()).expect("a turn is under way");
+        let mut turn = Turn::of(AgentId::default(), String::new(), &mut state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn is under way");
         assert!(turn.count_model_call(), "the last one it may make");
         assert!(!turn.count_model_call(), "the limit holds across the restart");
 
@@ -413,7 +401,7 @@ mod tests {
         let output = crate::transport::memory::InMemoryEventSender::new(tx);
         let mut state = AgentChannelState::default();
         state.begin_turn(Default::default(), Default::default(), Default::default(), Vec::new(), Default::default());
-        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached()).expect("a turn was begun");
+        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn was begun");
 
         let call = ToolCall { id: Some("1".to_string()), function_name: "write_private_note".to_string(), arguments: serde_json::json!({"text": "secret"}), visibility: ToolVisibility::HIDDEN, presentation: Default::default() };
         let message = Message { role: MessageRole::Assistant, tool_calls: vec![call], ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) };
@@ -452,13 +440,13 @@ mod tests {
         let mut state = AgentChannelState::default();
         state.transcript.extend(vec![said(&Classification::PUBLIC, "Hello.")]);
         state.begin_turn(EventContext::default(), SecurityContext::default(), confidential.clone(), Vec::new(), Default::default());
-        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached()).expect("a turn was begun");
+        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn was begun");
         assert_eq!(turn.label(), Classification::PUBLIC, "a public transcript");
 
         turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification: Some(Classification::PUBLIC), source: None }], Vec::new());
         assert_eq!(turn.label(), Classification::PUBLIC);
         state.perceive(Vec::new(), vec![said(&internal, "Our numbers are good.")]);
-        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached()).expect("a turn is under way");
+        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn is under way");
         assert_eq!(turn.label(), internal, "what others said during the turn");
         turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification: None, source: None }], Vec::new());
         assert_eq!(turn.label(), confidential, "a part that does not say counts as the channel");

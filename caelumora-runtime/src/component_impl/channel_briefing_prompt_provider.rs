@@ -81,7 +81,7 @@ impl PromptProvider for ChannelBriefingPromptProvider {
     }
 
     async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt> {
-        // Work outside of a channel, in tests, has no place to describe.
+        // Work that reaches no session (`AgentWork::session`) has no place to describe.
         let Some(session) = work.session().await else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
         let channel = session.channel(work.channel_id()).await?;
         let ours = described("session", session.summary(), session.briefing());
@@ -130,7 +130,6 @@ mod tests {
     use crate::agent::turn::Turn;
     use crate::runtime::RuntimeManager;
     use crate::session::SessionLoop;
-    use crate::view::ViewsFactory;
     use caelumora_model::actor::{ActorId, EventContext};
     use caelumora_model::agent::{Agent, AgentChannelState, AgentId, Personality, PersonalityId};
     use caelumora_model::channel::{Channel, Participant};
@@ -221,8 +220,7 @@ mod tests {
 
     /// What `provider` tells agent `agent` in the turn begun in `state`.
     async fn told(provider: &ChannelBriefingPromptProvider, agent: AgentId, session_loop: &Arc<SessionLoop>, state: &mut AgentChannelState) -> Prompt {
-        let turn = Turn::of(agent, "Jonathan".to_string(), state, AgentStateHandle::detached()).expect("a turn was begun")
-            .with_views(ViewsFactory::in_session(Arc::clone(session_loop)));
+        let turn = Turn::of(agent, "Jonathan".to_string(), state, AgentStateHandle::detached(), crate::session::testing::views_in(session_loop, &session_loop.channels()[0], ActorId::Agent(agent))).expect("a turn was begun");
         provider.get_prompt(&turn.work()).await.unwrap()
     }
 }

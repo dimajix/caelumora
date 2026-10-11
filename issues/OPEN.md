@@ -99,7 +99,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 
 | No. | Status | Issue |
 |---|---|---|
-| [309](309-options-none-only-in-tests.md) | open | Some fields are an `Option` that production code always sets - a turn's views only tests leave out, a component container's graph nobody does - so their readers handle a case that never occurs. |
 | [314](314-session-manager-handles-agents.md) | open | The `SessionManager` also deletes, restores and purges agents, though only deleting has to do with sessions, and agents have no owner of their own as groups do. |
 
 ## Open architecture questions

@@ -115,7 +115,7 @@ impl AgentCommands {
             self.profile,
             kept,
         );
-        let Some(mut turn) = Turn::of(agent_id, name.clone(), state, Arc::clone(&self.agent_state)).map(|turn| turn.with_views(self.views.clone())) else {
+        let Some(mut turn) = Turn::of(agent_id, name.clone(), state, Arc::clone(&self.agent_state), self.views.clone()) else {
             warn!("Agent {} lost the turn it began for /{}", agent_id, command);
             return;
         };

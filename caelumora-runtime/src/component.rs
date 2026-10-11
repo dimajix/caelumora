@@ -713,9 +713,9 @@ fn cycle(asked: Option<(String, TypeKey)>, other: &str) -> ComponentError {
 }
 
 /// The components of one configuration, built.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ComponentContainer {
-    graph: Option<Arc<Graph>>,
+    graph: Arc<Graph>,
 }
 
 impl ComponentContainer {
@@ -801,7 +801,7 @@ impl ComponentContainer {
         for index in 0..graph.planned.len() {
             graph.ensure(index, None).await?;
         }
-        Ok(Self { graph: Some(graph) })
+        Ok(Self { graph })
     }
 
     /// What it was built from: its configuration with every `ref` resolved
@@ -809,8 +809,7 @@ impl ComponentContainer {
     /// order. The defaults built for singles it does not configure are not
     /// among them.
     pub fn components(&self) -> ComponentConfig {
-        let Some(graph) = &self.graph else { return ComponentConfig::default() };
-        ComponentConfig { component_nodes: graph.planned.iter().map(|planned| planned.descriptor.clone()).collect() }
+        ComponentConfig { component_nodes: self.graph.planned.iter().map(|planned| planned.descriptor.clone()).collect() }
     }
 
     /// Every component that provides `T` - with `tag`, if one is given - in
@@ -819,8 +818,7 @@ impl ComponentContainer {
     where
         T: ?Sized + Send + Sync + 'static,
     {
-        let Some(graph) = &self.graph else { return Vec::new() };
-        let states = graph.states.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let states = self.graph.states.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         states.iter()
             .filter_map(|state| match state {
                 State::Built(node) => Some(node),
@@ -839,10 +837,7 @@ impl ComponentContainer {
     /// Whatever building the default reports; `ComponentError::InvalidConfig`
     /// if `T` is not a facet of which there is one.
     pub async fn one<T: ?Sized + Send + Sync + 'static>(&self) -> ComponentResult<ComponentImpl<T>> {
-        match &self.graph {
-            Some(graph) => graph.one::<T>(None).await,
-            None => Err(ComponentError::InvalidConfig(format!("an empty container has no {}", TypeKey::of::<T>().name))),
-        }
+        self.graph.one::<T>(None).await
     }
 }
 

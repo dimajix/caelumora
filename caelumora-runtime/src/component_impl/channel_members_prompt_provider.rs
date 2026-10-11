@@ -69,7 +69,7 @@ impl PromptProvider for ChannelMembersPromptProvider {
     }
 
     async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt> {
-        // Work outside of a channel, in tests, has nobody to name.
+        // Work that reaches no session (`AgentWork::session`) has nobody to name.
         let Some(session) = work.session().await else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
         let channel = session.channel(work.channel_id()).await?;
         let own = ActorId::Agent(work.agent_id());
@@ -211,7 +211,6 @@ mod tests {
     use crate::agent::state::AgentStateHandle;
     use crate::runtime::RuntimeManager;
     use crate::session::SessionLoop;
-    use crate::view::ViewsFactory;
     use caelumora_model::actor::EventContext;
     use caelumora_model::agent::{Agent, AgentChannelState, Personality, PersonalityId};
     use caelumora_model::approval::{ApprovalStrategy, Approver, ApproverId};
@@ -332,8 +331,7 @@ mod tests {
         let context = SecurityContext::default().next(ActorId::Agent(jonathan.id), ActorId::None);
         let mut state = AgentChannelState::default();
         state.begin_turn(EventContext::new(session.id, channel.id, ActorId::None, String::new()), context.clone(), channel.classification.clone(), Vec::new(), Default::default());
-        let turn = Turn::of(jonathan.id, "Jonathan".to_string(), &mut state, AgentStateHandle::detached()).expect("a turn was begun")
-            .with_views(ViewsFactory::in_session(session_loop));
+        let turn = Turn::of(jonathan.id, "Jonathan".to_string(), &mut state, AgentStateHandle::detached(), crate::session::testing::views_in(&session_loop, &session_loop.channels()[0], ActorId::Agent(jonathan.id))).expect("a turn was begun");
 
         let prompt = ChannelMembersPromptProvider::new(PromptPosition::Start).get_prompt(&turn.work()).await.unwrap();
         assert_eq!(prompt.text, "[Who is in this channel]\n\

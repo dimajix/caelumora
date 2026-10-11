@@ -26,9 +26,8 @@ pub struct AgentWork<'a> {
     work: &'a Work,
     agent_channel_state: &'a AgentChannelState,
     agent_state: &'a Arc<AgentStateHandle>,
-    /// What it navigates: the agent's views. `None` for work outside of a
-    /// channel - in tests - which reads nothing elsewhere.
-    views: Option<&'a ViewsFactory>,
+    /// What it navigates: the agent's views.
+    views: &'a ViewsFactory,
 }
 
 impl<'a> AgentWork<'a> {
@@ -39,7 +38,7 @@ impl<'a> AgentWork<'a> {
         work: &'a Work,
         agent_channel_state: &'a AgentChannelState,
         agent_state: &'a Arc<AgentStateHandle>,
-        views: Option<&'a ViewsFactory>,
+        views: &'a ViewsFactory,
     ) -> Self {
         Self { agent_id, work, agent_channel_state, agent_state, views }
     }
@@ -79,10 +78,11 @@ impl<'a> AgentWork<'a> {
     /// The agent's session as the work reads it from its channel (issue
     /// 163): the root of what it may read elsewhere - the other channels'
     /// notes and histories, its own private notes there - at the
-    /// classification the work began with (issue 67). `None` for work
-    /// outside of a channel, which reads nothing elsewhere.
+    /// classification the work began with (issue 67). `None` while its
+    /// channel is not attached to its session, once the session is gone, or
+    /// if the agent may not read it.
     pub async fn session(&self) -> Option<SessionView> {
-        self.views?.session(&self.work.security_context, self.channel_id(), self.work.classification.clone()).await
+        self.views.session(&self.work.security_context, self.channel_id(), self.work.classification.clone()).await
     }
 
     /// The agent's state in this channel as it stands: what components read

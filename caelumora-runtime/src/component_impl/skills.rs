@@ -98,8 +98,8 @@ fn catalogue(skills: &[SkillView]) -> String {
     titled(CATALOGUE_TITLE, &text)
 }
 
-/// The session `turn` reads from; a turn outside of one - in tests - has
-/// no skills.
+/// The session `turn` reads from (`Turn::session`); a turn that reaches
+/// none has no skills.
 async fn session_of(turn: &Turn<'_>) -> Result<SessionView, ToolError> {
     turn.session().await.ok_or_else(|| ToolError::ExecutionFailed("the turn is in no session to load skills in".to_string()))
 }
