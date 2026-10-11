@@ -10,11 +10,11 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::channel::{Channel, ChannelField};
 use caelumora_model::component::ComponentConfig;
-use caelumora_model::confidentiality::{Classification, ConfidentialityQuestions};
+use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions, Place};
 use caelumora_model::value::language::Language;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{ActionType, Enforcement, Grant, SecurityAttributes, SecurityContext, SecurityManager, Subject};
-use crate::view::{Viewer, Views};
+use crate::view::{channel_reading, ChannelReader, Viewer, Views};
 use caelumora_model::privacy::{PrivacyConfig, SessionPrivacy};
 use caelumora_model::store::{EntityStore, StoreError, StoreResult, StoreResultExt};
 use tracing::{info, warn};
@@ -64,17 +64,6 @@ pub enum SessionError {
 fn require_classification(runtime_manager: &RuntimeManager, classification: &Classification) -> Result<()> {
     runtime_manager.confidentiality().require_classifiable(classification, || SessionError::ClassificationRefused(classification.clone()))?;
     Ok(())
-}
-
-/// Nothing if the user `context` acts for is cleared for `channel` (issue
-/// 133); `refusal` otherwise - reading a channel one is not cleared for is
-/// the same as reading one that does not exist.
-fn require_seen<E: Into<anyhow::Error> + Send>(runtime_manager: &RuntimeManager, context: &SecurityContext, channel: &Classification, refusal: impl FnOnce() -> E + Send) -> Result<()> {
-    if runtime_manager.confidentiality().cleared_for(context, channel) {
-        Ok(())
-    } else {
-        Err(refusal().into())
-    }
 }
 
 /// What a new channel should be (issue 09), as it was asked: its name and
@@ -129,6 +118,7 @@ pub struct SessionLoop {
     /// The services it works with, taken from `runtime_manager` once (issue
     /// 229).
     security: Arc<dyn SecurityManager>,
+    confidentiality: Arc<dyn ConfidentialityPolicy>,
     entities: Arc<dyn EntityStore>,
     events: Arc<EventBus>,
     /// The user commands of every channel of the session.
@@ -169,6 +159,7 @@ impl SessionLoop {
             id,
             session_controller,
             security: Arc::clone(runtime_manager.security_manager()),
+            confidentiality: Arc::clone(runtime_manager.confidentiality()),
             entities: Arc::clone(runtime_manager.entity_store()),
             events: Arc::clone(runtime_manager.event_bus()),
             runtime_manager,
@@ -316,8 +307,10 @@ impl SessionLoop {
         self.channels.get(&channel_id).map(|entry| Arc::clone(&entry.channel))
     }
 
-    /// The channel `channel_id`, if `context` may read it (`GetChannel`,
-    /// issues 70, 102) - the counterpart of `SessionManager::open_session`.
+    /// The channel `channel_id`, if the user `context` acts for may read it,
+    /// as `SessionManager::open_session` opens a session (issues 70, 102):
+    /// reached as the views reach a channel for a user (`channel_reading`,
+    /// issue 304), by `GetChannel` and their clearance for it as a whole.
     ///
     /// # Errors
     /// `SessionError::ChannelNotFound` if there is no such channel, and
@@ -326,9 +319,9 @@ impl SessionLoop {
     pub async fn channel_for(&self, context: &SecurityContext, channel_id: ChannelId) -> Result<Arc<ChannelLoop>> {
         let not_found = || SessionError::ChannelNotFound { session: self.id, channel: channel_id };
         let channel = self.channel_by_id(channel_id).ok_or_else(not_found)?;
-        self.security
-            .require(context, ActionType::GetChannel(&channel.security_attributes()), not_found).await?;
-        require_seen(&self.runtime_manager, context, &channel.classification(), not_found)?;
+        let at = Place { channel: channel_id, classification: channel.classification(), session: self.privacy() };
+        channel_reading(self.security.as_ref(), self.confidentiality.as_ref(), context, &channel.security_attributes(), &at, ChannelReader::Cleared).await
+            .ok_or_else(not_found)?;
         Ok(channel)
     }
 
@@ -430,20 +423,27 @@ impl SessionLoop {
     /// Deleting marks (issue 164): the channel is taken out of the session
     /// and its document marked, but it and its state stay stored - it can
     /// be restored (`restore_channel`) - until it is purged with its session
-    /// (`SessionManager::purge_session`). Asked about first, like creating
-    /// one: a refused deletion leaves the channel running.
+    /// (`SessionManager::purge_session`). Asked about first, in the order
+    /// of issue 304 - whether `context` may read the channel (`GetChannel`),
+    /// then delete it (`DeleteChannel`), then, as it is taken out of the
+    /// session, change the session (`UpdateSession`, by the store) - so that
+    /// a refused deletion leaves the channel running and listed.
     ///
     /// # Errors
-    /// - `SessionError::ChannelNotFound` if the session has no such channel.
-    /// - `StoreError::PermissionDenied` if `context` may not change the
-    ///   session; nothing is changed then.
+    /// - `SessionError::ChannelNotFound` if the session has no such channel,
+    ///   and equally if `context` may not read it.
+    /// - `StoreError::PermissionDenied` if `context` may not delete the
+    ///   channel or change the session; nothing is changed then.
     pub async fn delete_channel(&self, context: &SecurityContext, channel_id: ChannelId) -> Result<()> {
-        let Some(running) = self.channel_by_id(channel_id) else {
-            return Err(SessionError::ChannelNotFound { session: self.id, channel: channel_id }.into());
-        };
-        self.session_controller.remove_channel(context, channel_id).await?;
+        let not_found = || SessionError::ChannelNotFound { session: self.id, channel: channel_id };
+        let running = self.channel_by_id(channel_id).ok_or_else(not_found)?;
         // Not the guard itself: it would be held across the awaits below.
         let channel = Arc::clone(&running.channel());
+        self.security.require(context, ActionType::GetChannel(&channel.security_attributes), not_found).await?;
+        self.security.require(context, ActionType::DeleteChannel(&channel.security_attributes), || StoreError::PermissionDenied).await?;
+        self.session_controller.remove_channel(context, channel_id).await?;
+        // Permitted, so only the store itself can fail here: the channel is
+        // out of the session, and stays so.
         if let Err(e) = self.entities.delete_channel(context, channel_id).await {
             warn!("Channel {} was taken out of session {} but not marked deleted: {}", channel_id, self.id, e);
         }
@@ -973,19 +973,18 @@ impl SessionManager {
     ///
     /// # Errors
     /// `StoreError::NotFound` if there is no such deleted session or
-    /// `context` may not see it, `StoreError::PermissionDenied` if they may
-    /// but not restore it.
+    /// `context` may not see it (`ReadDeleted`, asked first, issue 304),
+    /// `StoreError::PermissionDenied` if they may but not restore it.
     pub async fn restore_session(&self, context: &SecurityContext, id: SessionId) -> Result<Session> {
         // The lock of deleting and purging it: a purge never meets it half
         // restored.
         let start = self.start_lock(id);
         let _starting = start.lock().await;
         let store = &self.entities;
-        // When it was deleted, read before the mark goes - in the runtime's
-        // name, and used only once restoring it was permitted: what was
-        // deleted with it comes back with it (issue 178).
-        let deleted_at = store.get_deleted_session(&SecurityContext::system(), id).await.optional()?
-            .and_then(|session| session.deleted.map(|removal| removal.at));
+        // When it was deleted, read before the mark goes - as `context`, so
+        // that whoever may not see it learns nothing more: what was deleted
+        // with it comes back with it (issue 178).
+        let deleted_at = store.get_deleted_session(context, id).await?.deleted.map(|removal| removal.at);
         store.restore_session(context, id).await?;
         let session = store.get_session(context, id).await?;
         if let Some(since) = deleted_at {
@@ -1944,7 +1943,9 @@ mod tests {
         let channel_runtime = ChannelRuntime::new(Arc::clone(&runtime), Arc::clone(&hers.commands), Arc::clone(&hers.session_controller));
         channel_runtime.attach(&channel);
         let views = channel_runtime.new_actor_runtime(alice_id, hers.id(), channel.id()).views();
-        let session = views.session(&alice_ctx, channel.id(), channel.classification()).expect("attached to its session");
+        let session = views.session(&alice_ctx, channel.id(), channel.classification()).await.expect("attached to its session");
+        let stranger = SecurityContext::new(ActorId::Agent(caelumora_model::agent::AgentId::new()), Default::default(), Default::default());
+        assert!(views.session(&stranger, channel.id(), channel.classification()).await.is_none(), "reached by who may read it alone (issue 304)");
 
         let own = session.privacy();
         assert_eq!((own.policy, own.owner), (PrivacyConfig::SameOwner, alice_id));
@@ -1995,12 +1996,13 @@ mod tests {
             let channel_runtime = ChannelRuntime::new(Arc::clone(&runtime), Arc::clone(&session.commands), Arc::clone(&session.session_controller));
             channel_runtime.attach(channel);
             let views = channel_runtime.new_actor_runtime(alice_id, session.id(), channel.id()).views();
-            views.session(&alice_ctx, channel.id(), channel.classification()).expect("attached to its session")
+            let (context, channel_id, classification) = (alice_ctx.clone(), channel.id(), channel.classification());
+            async move { views.session(&context, channel_id, classification).await.expect("attached to its session") }
         };
-        let read = reading_from(&finance).channel_named("hr").await.expect("reachable for what was released").history().await.expect("what was released to finance");
+        let read = reading_from(&finance).await.channel_named("hr").await.expect("reachable for what was released").history().await.expect("what was released to finance");
         let texts: Vec<_> = read.messages().iter().map(|m| m.content.clone().unwrap_or_default()).collect();
         assert_eq!(texts, ["for finance too"], "only what was released");
-        let nothing = reading_from(&team).channel_named("hr").await.expect("reachable, but").history().await;
+        let nothing = reading_from(&team).await.channel_named("hr").await.expect("reachable, but").history().await;
         assert!(matches!(nothing, Err(ViewError::NoChannelNamed(_))), "nothing was released to a general channel");
         manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }

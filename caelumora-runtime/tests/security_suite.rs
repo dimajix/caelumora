@@ -2184,18 +2184,24 @@ async fn who_may_not_create_a_channel_is_refused_before_the_others_are_looked_at
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
-/// Deleting a channel: changing its session - its owner's alone - and
-/// deleting the channel.
+/// Deleting a channel, in the order of issue 304: reading the channel,
+/// deleting it - its owner's alone -, then, as the store takes it out of
+/// its session and marks it, changing the session and deleting it again
+/// (rule 2: the operation asks before it acts, the store as it stores).
 #[tokio::test]
 async fn deleting_a_channel_needs_owning_its_session() {
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
     let main = session.channels()[0].id();
-    let (_, asked) = world.asked(session.delete_channel(&World::as_user(world.bob), main)).await;
-    assert_eq!(asked, checks(&["bob: GetSession(alice's) yes", "bob: UpdateSession(alice's) no"]));
+    let (refused, asked) = world.asked(session.delete_channel(&World::as_user(world.bob), main)).await;
+    assert!(denied(&refused.expect_err("not his")));
+    assert_eq!(asked, checks(&["bob: GetChannel(alice's) yes", "bob: DeleteChannel(alice's) no"]), "refused before the session is touched");
+    assert!(session.channel_by_id(main).is_some(), "and the channel runs on");
     let (deleted, asked) = world.asked(session.delete_channel(&World::as_user(world.alice), main)).await;
     assert!(deleted.is_ok());
     assert_eq!(asked, checks(&[
+        "alice: GetChannel(alice's) yes",
+        "alice: DeleteChannel(alice's) yes",
         "alice: GetSession(alice's) yes",
         "alice: UpdateSession(alice's) yes",
         "alice: GetChannel(alice's) yes",
@@ -2206,7 +2212,9 @@ async fn deleting_a_channel_needs_owning_its_session() {
 
 /// Restoring a deleted session: reading it as deleted and restoring it -
 /// its owner's alone, not a contributor's; for whoever may not read the
-/// trash, there is nothing to restore (issue 164).
+/// trash, there is nothing to restore (issue 164). The manager reads it
+/// first, as whoever restores it (issue 304), and the store asks again as
+/// it restores it (rule 2).
 #[tokio::test]
 async fn restoring_a_session_needs_owning_it() {
     let world = World::new().await;
@@ -2219,6 +2227,7 @@ async fn restoring_a_session_needs_owning_it() {
     let (restored, asked) = world.asked(world.manager.restore_session(&World::as_user(world.alice), session.id())).await;
     assert!(restored.is_ok());
     assert_eq!(asked, checks(&[
+        "alice: ReadDeleted(alice's) yes",
         "alice: ReadDeleted(alice's) yes",
         "alice: Restore(alice's) yes",
         "alice: GetSession(alice's) yes",
@@ -2446,6 +2455,27 @@ async fn a_workspace_is_its_owners_alone() {
     assert!(world.files.path().join(docs.id.to_string()).is_dir(), "and the files stay");
     assert!(workspaces.purge(&World::system(), docs.id).await.unwrap(), "the system does");
     assert!(!world.files.path().join(docs.id.to_string()).exists(), "with the files");
+}
+
+/// A workspace is reached as the views reach it (issue 304): read and
+/// cleared for, else it is not found - before anything else is asked, so
+/// that whoever is not cleared for it learns nothing of it, not even that
+/// they may not change its files.
+#[tokio::test]
+async fn a_workspace_one_is_not_cleared_for_is_not_found() {
+    let world = World::new().await;
+    let workspaces = world.runtime.workspace_manager();
+    let alice = World::as_user(world.alice);
+    let docs = workspaces.create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.expect("hers");
+
+    // Alice without the role that clears her for internal.
+    let uncleared = SecurityContext::new(ActorId::User(world.alice), Default::default(), Default::default());
+    let (reached, asked) = world.asked(workspaces.terminal(&uncleared, docs.id, Grant::Write)).await;
+    assert!(matches!(reached, Err(WorkspaceError::NotFound(id)) if id == docs.id), "not found, not refused: {:?}", reached.map(|(w, _)| w.id));
+    assert_eq!(asked, checks(&["alice: GetWorkspace(alice's) yes", "alice: JoinChannel(alice) no"]), "read, not cleared - and not asked whether she may change it");
+    let (reached, asked) = world.asked(workspaces.terminal(&alice, docs.id, Grant::Write)).await;
+    assert!(reached.is_ok(), "cleared, she reaches it");
+    assert_eq!(asked, checks(&["alice: GetWorkspace(alice's) yes", "alice: JoinChannel(alice) yes", "alice: WriteWorkspace(alice's) yes"]), "read, cleared, then the verb");
 }
 
 /// A storage takes what may flow to where it puts it (issue 251, part B2):

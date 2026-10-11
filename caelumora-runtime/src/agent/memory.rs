@@ -48,7 +48,7 @@ impl AgentMemory {
     /// recalls nothing. A turn in no session recalls nothing.
     pub async fn recalled(work: &AgentWork<'_>, confidentiality: &dyn ConfidentialityPolicy) -> Vec<Memory> {
         let context = work.security_context();
-        let Some(own) = work.session() else { return Vec::new() };
+        let Some(own) = work.session().await else { return Vec::new() };
         let Some(here) = own.views().viewer().place().cloned() else { return Vec::new() };
         let memory = work.agent_state().current().memory.current();
         let mut sessions: Vec<(SessionId, Option<SessionPrivacy>)> = Vec::new();
@@ -130,10 +130,10 @@ impl AgentMemory {
     /// of one agent - in other channels and sessions - remember at the same
     /// time, and would otherwise hand out the same number. Deliberately the
     /// one exception to "commit, don't write" (issue 19).
-    pub fn remember(turn: &mut Turn, text: String) -> MemoryId {
+    pub async fn remember(turn: &mut Turn<'_>, text: String) -> MemoryId {
         let classification = turn.label();
         let id = turn.agent_state().reserve_memory_id();
-        let origin = Self::origin(turn);
+        let origin = Self::origin(turn).await;
         turn.stage_memory(MemoryChange::Add { id, text, classification }, origin);
         id
     }
@@ -154,7 +154,7 @@ impl AgentMemory {
         let Some(stored) = turn.agent_state().current().memory.current().into_iter().find(|m| m.id == id) else {
             return Some(entry);
         };
-        let own = turn.session()?;
+        let own = turn.session().await?;
         let here = own.views().viewer().place()?.clone();
         Self::may_recall(&stored, &here, own.views(), &mut Vec::new(), confidentiality, turn.security_context()).await.then_some(entry)
     }
@@ -169,7 +169,7 @@ impl AgentMemory {
             return false;
         }
         let classification = turn.label();
-        let origin = Self::origin(turn);
+        let origin = Self::origin(turn).await;
         turn.stage_memory(MemoryChange::Update { id, text, classification }, origin);
         true
     }
@@ -181,7 +181,7 @@ impl AgentMemory {
         if Self::find(turn, id, confidentiality).await.is_none() {
             return false;
         }
-        let origin = Self::origin(turn);
+        let origin = Self::origin(turn).await;
         turn.stage_memory(MemoryChange::Remove { id }, origin);
         true
     }
@@ -205,15 +205,15 @@ impl AgentMemory {
         let action = ActionType::Reclassify(Reclassified::Memory { author: ActorId::Agent(turn.agent_id()) });
         security.require(turn.security_context(), action, refused).await?;
         confidentiality.require_publish(turn.security_context(), &classification, &here, refused)?;
-        let origin = Self::origin(turn);
+        let origin = Self::origin(turn).await;
         turn.stage_memory(MemoryChange::Reclassify { id, classification }, origin);
         Ok(())
     }
 
     /// Where a change made in `turn` is made: its channel, and the privacy
     /// its session has now (issue 134) - private, for a turn in no session.
-    fn origin(turn: &Turn) -> MemoryOrigin {
-        let session = turn.session().map(|s| s.privacy())
+    async fn origin(turn: &Turn<'_>) -> MemoryOrigin {
+        let session = turn.session().await.map(|s| s.privacy())
             .unwrap_or_else(|| SessionPrivacy { id: turn.session_id(), ..SessionPrivacy::default() });
         MemoryOrigin { channel: turn.channel_id(), session }
     }

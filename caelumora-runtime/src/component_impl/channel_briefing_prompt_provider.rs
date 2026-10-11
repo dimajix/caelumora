@@ -82,7 +82,7 @@ impl PromptProvider for ChannelBriefingPromptProvider {
 
     async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt> {
         // Work outside of a channel, in tests, has no place to describe.
-        let Some(session) = work.session() else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
+        let Some(session) = work.session().await else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
         let channel = session.channel(work.channel_id()).await?;
         let ours = described("session", session.summary(), session.briefing());
         let its = described("channel", channel.summary(), channel.briefing());

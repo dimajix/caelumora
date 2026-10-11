@@ -83,7 +83,7 @@ impl PromptProvider for ChannelLanguagePromptProvider {
 
     async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt> {
         // Work outside of a channel, in tests, has no language to follow.
-        let Some(session) = work.session() else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
+        let Some(session) = work.session().await else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
         let channel = session.channel(work.channel_id()).await?;
         let text = self.text(channel.language().cloned());
         // Which language a channel is held in is no secret of its contents.

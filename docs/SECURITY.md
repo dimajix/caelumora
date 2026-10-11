@@ -390,11 +390,23 @@ extension trait on every `SecurityManager`. It answers a refusal with the operat
 `ActionType::describe`, which names the action and what identifies its object, never content such as
 a tool call's arguments.
 
-**The actor's own permission first.** An operation asks whether the actor may do it at all before
-it asks anything of others - a participant's clearance, an agent's personality (issue 198). Who may
-not do it is refused before the rest is looked at, and learns nothing of the others on the way:
-`create_channel` asks `UpdateSession` first, as `delete_channel` does; `add_participant` asks
-`UpdateChannel` first, as `remove_participant` does when the change is stored.
+**The order** (issue 304). An operation reaches its object first, then asks its own verb, then the
+flow, then anything about others:
+
+1.  **Reaching** is reading the object (`Get…`) and, where the object is classified, being cleared
+    for it - what the views ask (`channel_reading` for a channel). Who may not reach it is answered
+    "not found", so that nothing can be probed: `SessionLoop::channel_for` and `delete_channel`
+    answer `ChannelNotFound`, `WorkspaceManager::reached` `NotFound` for a workspace one is not
+    cleared for, `SessionManager::restore_session` reads the deleted session as whoever restores
+    it, and a channel deleted is "gone" only to whom a live one would be there.
+2.  **The actor's own permission** comes next, before anything of others (issue 198): who may not
+    do it is refused before the rest is looked at, and learns nothing of the others on the way.
+    `delete_channel` asks `DeleteChannel` before the session is changed, `create_channel` asks
+    `UpdateSession` first, `add_participant` asks `UpdateChannel` first, as `remove_participant`
+    does when the change is stored. Every refusal from here on is "forbidden".
+3.  **The flow**, then **the others** - a participant's clearance, an agent's personality.
+
+The store asks again as it stores (rule 2): that pair is the rule, not a double.
 
 **Actors are controlled only through such operations.** `Actor::cancel`, `retry_turn`,
 `interrupt_tool_call`, `wakeup` and `stop` check nothing: they are the consequence of an act that

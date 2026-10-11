@@ -40,13 +40,17 @@ impl Secured for PublishedEvent {
 
 impl PublishedEvent {
     /// What a party must be allowed to receive this event: to read the
-    /// entity it is about - the same question the `EntityStore` asks. A
-    /// channel's events go by the channel's attributes, which there is no
-    /// action of its own for.
+    /// entity it is about - the same question the `EntityStore` asks. The
+    /// events of a channel, of its members and of an agent's state in it go
+    /// by the channel's attributes, as reading the channel (issue 304).
     fn read_action(&self) -> ActionType<'_> {
         let attributes = self.security_attributes();
         match self.event {
-            GlobalEvent::AgentCreated(..) | GlobalEvent::AgentUpdated(..) | GlobalEvent::AgentDeleted(..) | GlobalEvent::AgentRestored(..) => ActionType::GetAgent(attributes),
+            GlobalEvent::AgentCreated(..) | GlobalEvent::AgentUpdated(..) | GlobalEvent::AgentDeleted(..) | GlobalEvent::AgentRestored(..) | GlobalEvent::AgentStateChanged(_) => ActionType::GetAgent(attributes),
+            GlobalEvent::ChannelCreated(..) | GlobalEvent::ChannelUpdated(..) | GlobalEvent::ChannelDeleted(..) | GlobalEvent::ChannelRestored(..)
+            | GlobalEvent::ChannelStarted(..) | GlobalEvent::ChannelStopped(..)
+            | GlobalEvent::AgentChannelJoined(..) | GlobalEvent::AgentChannelLeft(..) | GlobalEvent::AgentChannelStateChanged(..)
+            | GlobalEvent::UserChannelJoined(..) | GlobalEvent::UserChannelLeft(..) => ActionType::GetChannel(attributes),
             GlobalEvent::UserCreated(_) | GlobalEvent::UserUpdated(..) | GlobalEvent::UserDeleted(_) => ActionType::GetUser(attributes),
             GlobalEvent::UserProfileUpdated(..) => ActionType::GetUserProfile(attributes),
             GlobalEvent::WorkspaceCreated(_) | GlobalEvent::WorkspaceUpdated(..) | GlobalEvent::WorkspaceDeleted(_) | GlobalEvent::WorkspaceRestored(_) => ActionType::GetWorkspace(attributes),
@@ -373,6 +377,33 @@ mod tests {
         assert_eq!(kinds(drain(&mut alices).await), ["SessionCreated", "ChannelCreated", "SessionDeleted"], "the owner gets it all, in order - a deletion too");
         assert_eq!(kinds(drain(&mut bobs).await), ["SessionCreated", "ChannelCreated", "SessionDeleted"], "so does a contributor");
         assert_eq!(kinds(drain(&mut carols).await), ["UserCreated"], "a stranger only her own user event");
+    }
+
+    #[tokio::test]
+    async fn the_events_of_a_channel_are_received_by_who_may_read_the_channel() {
+        /// Lets read channels alone, so that the question asked shows.
+        #[derive(Debug)]
+        struct ChannelsOnly;
+
+        #[async_trait::async_trait]
+        impl SecurityManager for ChannelsOnly {
+            async fn check(&self, _context: &SecurityContext, action: ActionType<'_>) -> bool {
+                matches!(action, ActionType::GetChannel(_))
+            }
+        }
+
+        let bus = EventBus::new(Arc::new(ChannelsOnly));
+        let alice = UserId::new();
+        let mut alices = bus.subscribe_as(as_user(alice));
+        let (session, channel) = (SessionId::new(), ChannelId::new());
+        let attributes = SecurityAttributes::owned_by(ActorId::User(alice));
+        bus.publish(GlobalEvent::SessionCreated(session), attributes.clone());
+        bus.publish(GlobalEvent::ChannelCreated(session, channel), attributes.clone());
+        bus.publish(GlobalEvent::UserChannelJoined(session, channel, alice), attributes.clone());
+        bus.publish(GlobalEvent::AgentChannelStateChanged(session, channel, caelumora_model::agent::AgentId::new()), attributes);
+
+        let kinds: Vec<String> = drain(&mut alices).await.iter().map(|e| format!("{e:?}").split('(').next().unwrap().to_string()).collect();
+        assert_eq!(kinds, ["ChannelCreated", "UserChannelJoined", "AgentChannelStateChanged"], "asked as reading the channel (issue 304), the session's as reading it");
     }
 
     #[tokio::test]

@@ -665,3 +665,31 @@ where they test the door.
   [310](310-secrets-have-no-owner.md): a secret has no owner, so whoever writes a component that
   names one decides which credential is sent where. SECURITY.md says that until 310 only the seed
   and the configuration may write such components. No stored data changes.
+- **2026-10-11** — Step 4 on the branch `issue-304-order`, built on `issue-304-admission`: C2 and
+  C6, the order and the one reach.
+  - C2: `SessionLoop::delete_channel` reaches the channel (`GetChannel`, else `ChannelNotFound`)
+    and asks `DeleteChannel` before it takes the channel out of its session; a refusal leaves the
+    channel running and listed. `SessionManager::restore_session` reads the deleted session as
+    whoever restores it, no longer in the runtime's name, so that who may not see it learns
+    nothing; the store asks `ReadDeleted` again as it restores (rule 2).
+  - The one reach for channels: `SessionLoop::channel_for` - the REST server's way to a channel -
+    reaches it through `channel_reading`, as the views do; `require_seen` is gone. A deleted channel
+    is "gone" only to whom a live one would be there (`Views::gone_channel` asks
+    `SessionView::readable`, the clearance included). `WorkspaceManager::usable_in_channel`
+    already asked `channel_reading`.
+  - The agent's own session: `ViewsFactory::session` asks `GetSession` as `Views::session` does,
+    and is async with `AgentWork::session` and `Turn::session`; the agent passes by the group of
+    the session's participants.
+  - Entries: `Views::may_copy_from` answers no for a viewer without a place - a user reads whole
+    channels only.
+  - Skills: `Views::usable_skills` asks the agent's clearance too, as a user's skills are asked.
+  - Events: the events of a channel, of its members and of an agent's state in it are asked as
+    `GetChannel`, `AgentStateChanged` as `GetAgent`.
+  - Refusals: `WorkspaceManager::reached` asks the clearance before `WriteWorkspace`, and answers a
+    workspace one is not cleared for as `NotFound`, as the views do.
+  - Not done, laid before the maintainer: the REST context with its place (F20). No decision reads
+    the place from the context - the flow is given its places as arguments -, so it would serve the
+    log alone. Left over of C5, outside this step's scope: `ApproverActor` using `require(.., ||
+    ())` as a flag, `ChannelLoop::reclassify` learning whether it lowered by asking `may_publish`,
+    and `WorkspaceManager::usable_in` asking `check` and `may_publish` where it enforces. No stored
+    data changes.

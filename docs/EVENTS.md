@@ -35,9 +35,11 @@ by that user (issue 39). The bus keeps both together internally; subscribers onl
 
 `subscribe_as(context)` receives the events about the entities `context` may read. It asks the
 `SecurityManager` the same question the `EntityStore` asks for reading them (`GetSession`,
-`GetAgent`, `GetUser`, `GetUserProfile`): a user's record is everybody's to read, their profile only
-theirs, so `UserProfileUpdated`, which carries the profile, reaches nobody else. A deletion is
-decided by the attributes it was published with, since the entity is gone by then.
+`GetChannel`, `GetAgent`, `GetUser`, `GetUserProfile`, ...). The events of a channel - its creation,
+change, start and stop, who joins and leaves it, an agent's state in it - go by the channel's
+attributes and are asked as reading the channel (issue 304). A user's record is everybody's to read,
+their profile only theirs, so `UserProfileUpdated`, which carries the profile, reaches nobody else.
+A deletion is decided by the attributes it was published with, since the entity is gone by then.
 
 These subscriptions are served by one dispatcher task. The policy is asked asynchronously, and
 `publish` must not wait for it; a single task keeps every party's events in the order they were

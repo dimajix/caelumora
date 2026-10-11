@@ -205,7 +205,7 @@ impl CompactionStrategy for SummaryCompaction {
         let read = skills_read(&turn.agent_channel_state().history);
         let still_there = skills_in(kept, &read);
         let wanted: Vec<SkillId> = skills_in(summarised, &read).into_iter().filter(|s| !still_there.contains(s)).collect();
-        let usable = match (wanted.is_empty(), turn.session()) {
+        let usable = match (wanted.is_empty(), turn.session().await) {
             (true, _) => Vec::new(),
             (false, Some(session)) => session.views().usable_skills().await.map_err(|e| {
                 tracing::warn!("Agent {}: a compaction could not read the skills: {:#}", turn.agent_id(), e);

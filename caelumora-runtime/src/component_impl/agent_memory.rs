@@ -126,7 +126,7 @@ impl ToolProvider for AgentMemoryComponent {
 
     async fn execute(&self, name: &str, params: &Value, _answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
         let value = match name {
-            REMEMBER_TOOL_NAME => self.execute_remember(params, turn),
+            REMEMBER_TOOL_NAME => self.execute_remember(params, turn).await,
             UPDATE_MEMORY_TOOL_NAME => self.execute_update(params, turn).await,
             FORGET_TOOL_NAME => self.execute_forget(params, turn).await,
             RECLASSIFY_MEMORY_TOOL_NAME => self.execute_reclassify(params, turn).await,
@@ -141,8 +141,8 @@ impl ToolProvider for AgentMemoryComponent {
 impl AgentMemoryComponent {
     /// `remember(text)`: remembers `text`, taken over when the turn
     /// completes.
-    fn execute_remember(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
-        let id = AgentMemory::remember(turn, text_argument(params)?);
+    async fn execute_remember(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
+        let id = AgentMemory::remember(turn, text_argument(params)?).await;
         Ok(serde_json::json!({ "status": "remembered", "id": id.0 }))
     }
 

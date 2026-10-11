@@ -192,7 +192,7 @@ impl NotesComponent {
         #[derive(Deserialize)]
         struct ReadNotes { #[serde(default)] channel: Option<String> }
         let ReadNotes { channel } = arguments(params)?;
-        let Some(session) = turn.session() else {
+        let Some(session) = turn.session().await else {
             return Err(ToolError::ExecutionFailed("the turn is in no session to read from".to_string()));
         };
         let channels = match channel.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
@@ -247,7 +247,7 @@ impl PromptProvider for NotesComponent {
     async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt> {
         let own = ActorId::Agent(work.agent_id());
         let mut others = Vec::new();
-        if let Some(session) = work.session() {
+        if let Some(session) = work.session().await {
             let published = match session.channel(work.channel_id()).await {
                 Ok(channel) => channel.notes().await,
                 Err(e) => Err(e),

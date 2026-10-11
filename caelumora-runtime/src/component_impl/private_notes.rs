@@ -187,7 +187,7 @@ impl PromptProvider for PrivateNotesComponent {
         let own = AgentNotes::current(work, NoteKind::Private);
         // This channel's come from the turn, with its own changes; the
         // others' through the agent itself.
-        let elsewhere = match work.session() {
+        let elsewhere = match work.session().await {
             Some(session) => session.own_private_notes().await,
             None => Vec::new(),
         };

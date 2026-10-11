@@ -100,8 +100,8 @@ fn catalogue(skills: &[SkillView]) -> String {
 
 /// The session `turn` reads from; a turn outside of one - in tests - has
 /// no skills.
-fn session_of(turn: &Turn<'_>) -> Result<SessionView, ToolError> {
-    turn.session().ok_or_else(|| ToolError::ExecutionFailed("the turn is in no session to load skills in".to_string()))
+async fn session_of(turn: &Turn<'_>) -> Result<SessionView, ToolError> {
+    turn.session().await.ok_or_else(|| ToolError::ExecutionFailed("the turn is in no session to load skills in".to_string()))
 }
 
 /// What `create_skill` is called with.
@@ -170,7 +170,7 @@ impl PromptProvider for SkillsComponent {
     }
 
     async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt> {
-        let Some(session) = work.session() else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
+        let Some(session) = work.session().await else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
         let skills = session.views().usable_skills().await?;
         let classification = joined(&skills, &work.classification());
         Ok(Prompt::classified(catalogue(&skills), classification))
@@ -276,7 +276,7 @@ impl ToolProvider for SkillsComponent {
     async fn execute(&self, name: &str, params: &Value, _answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
         match name {
             LIST_SKILLS_TOOL_NAME => {
-                let skills = session_of(turn)?.views().usable_skills().await?;
+                let skills = session_of(turn).await?.views().usable_skills().await?;
                 let listed: Vec<Value> = skills.iter().map(|s| serde_json::json!({ "name": s.name(), "description": s.description().as_str(), "skill_id": s.id() })).collect();
                 Ok(ToolOutput { value: serde_json::json!({ "skills": listed }), classification: Some(joined(&skills, &turn.classification())) })
             }
@@ -284,13 +284,13 @@ impl ToolProvider for SkillsComponent {
                 #[derive(Deserialize)]
                 struct Load { name: String }
                 let Load { name } = arguments(params)?;
-                let skill = session_of(turn)?.views().usable_skill_named(name.trim()).await?;
+                let skill = session_of(turn).await?.views().usable_skill_named(name.trim()).await?;
                 turn.record_knowledge(skill.knowledge(turn.channel_id(), turn.session_id()));
                 Ok(ToolOutput { value: Value::String(skill.as_given()), classification: Some(skill.classification().clone()) })
             }
             CREATE_SKILL_TOOL_NAME => {
                 let Create { name, description, body, scope } = arguments(params)?;
-                let session = session_of(turn)?;
+                let session = session_of(turn).await?;
                 let context = turn.security_context().clone();
                 let scope = match SkillScope::of(&scope)? {
                     SkillScope::Session => Scope::SessionScope { session_id: turn.session_id() },
@@ -309,7 +309,7 @@ impl ToolProvider for SkillsComponent {
                 if description.is_none() && body.is_none() {
                     return Err(ToolError::InvalidParameter("give a new description, new steps, or both".to_string()));
                 }
-                let session = session_of(turn)?;
+                let session = session_of(turn).await?;
                 let skill = session.views().usable_skill_named(name.trim()).await?;
                 let context = turn.security_context().clone();
                 let manager = session.views().skill_manager();
@@ -368,7 +368,7 @@ fn command_error(command: &str, error: ViewError) -> CommandError {
 impl AgentCommandProvider for SkillsComponent {
     async fn execute(&self, name: &str, args: &str, turn: &mut Turn<'_>) -> CommandResult<CommandOutput> {
         let failed = |reason: &str| CommandError::Failed { command: name.to_string(), reason: reason.to_string() };
-        let session = turn.session().ok_or_else(|| failed("the agent is in no session"))?;
+        let session = turn.session().await.ok_or_else(|| failed("the agent is in no session"))?;
         match name {
             SKILLS_COMMAND_NAME => {
                 let skills = session.views().usable_skills().await.map_err(|e| command_error(name, e))?;

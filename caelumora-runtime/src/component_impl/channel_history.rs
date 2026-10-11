@@ -80,7 +80,7 @@ impl ToolProvider for ChannelHistoryComponent {
         let last = last.map(|n| n.clamp(1, MAX_LAST)).unwrap_or(DEFAULT_LAST);
         let query = query.as_deref().map(str::trim).filter(|q| !q.is_empty());
 
-        let Some(session) = turn.session() else {
+        let Some(session) = turn.session().await else {
             return Err(ToolError::ExecutionFailed("the turn is in no session to read from".to_string()));
         };
         let channel = session.channel_named(channel).await?;

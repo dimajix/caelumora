@@ -70,7 +70,7 @@ impl PromptProvider for ChannelMembersPromptProvider {
 
     async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt> {
         // Work outside of a channel, in tests, has nobody to name.
-        let Some(session) = work.session() else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
+        let Some(session) = work.session().await else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
         let channel = session.channel(work.channel_id()).await?;
         let own = ActorId::Agent(work.agent_id());
         let mut me = None;

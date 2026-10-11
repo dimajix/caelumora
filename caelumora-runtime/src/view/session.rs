@@ -166,7 +166,7 @@ impl SessionView {
     /// Whoever may not read the channel - its owner, its participants, an
     /// agent's owner or the agent itself (issue 264) - reads none of it
     /// (`GetChannel`).
-    async fn readable(&self, channel: &Channel) -> Option<ChannelReading> {
+    pub(super) async fn readable(&self, channel: &Channel) -> Option<ChannelReading> {
         let at = Place { channel: channel.id, classification: channel.classification.clone(), session: self.privacy() };
         let reader = match self.views.viewer().place() {
             Some(from) => ChannelReader::From(from),
