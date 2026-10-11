@@ -21,10 +21,10 @@ prefix (`vite.config.ts`); the REST server is started as described in the [READM
 
 The UI shows what the server says and repeats no rule of its own:
 
-*   **Permissions come from the server.** Whether the user may change a channel (`can_change`) or
-    see what an agent saw (`can_read_context`) is part of the responses, decided by the runtime's
-    views (see [SECURITY.md](SECURITY.md#views)). The UI offers an action only where it is set, and
-    never works it out itself.
+*   **Permissions come from the server.** Whether the user may change a channel (`can_change`), see
+    what an agent saw (`can_read_context`), approve, retry, cancel or delete is part of the
+    responses, decided by the runtime's views (see [SECURITY.md](SECURITY.md#views)). The UI offers
+    an action only where it is set, and never works it out itself.
 *   **Only lexical rules are mirrored.** Whether a line is a command (`command.ts`, mirroring
     `caelumora_model::command::parse_input`) and how a participant's handle is derived
     (`mention.ts`, mirroring `caelumora_model::mention`) are repeated here, because the UI needs
@@ -33,6 +33,9 @@ The UI shows what the server says and repeats no rule of its own:
     tables agree. What a command means and whom a mention addresses is decided by the server.
 *   **The types mirror the server.** `src/types` holds the request and response types of
     `caelumora-rest-server/src/models.rs`; a change to the REST API changes them too.
+*   **What the server refuses is shown where it can be corrected.** A dialog shows the server's
+    refusal - a name taken, a classification the user is not cleared for - next to the field; it
+    does not check beforehand what the server decides.
 
 ## Structure
 
@@ -45,13 +48,9 @@ The UI shows what the server says and repeats no rule of its own:
 | `src/stream.ts` | `openEventStream`, for both event streams |
 | `src/globalEvents.ts` | What the session list does with a global event |
 | `src/command.ts`, `src/mention.ts` | The lexical rules mirrored from the model |
-| `src/messages.ts` | Helpers for showing messages, shared by the chat and the context panel |
-| `src/panelWidth.ts` | The widths of the panels beside the chat, kept in browser storage |
-| `src/classNames.ts` | `cn`, how every component composes its Tailwind classes |
-| `src/moderator.ts`, `src/confidentiality.ts`, `src/workspace.ts`, `src/scope.ts` | Labels and explanations of responder policies, classifications, storages, and where a workspace or a skill lies |
-| `src/page.ts`, `src/pageList.ts` | What is shown in the place of a channel (`Page`), and the entries of a list in the sidebar it is opened from (`usePageList`) |
+| `src/page.ts`, `src/pageList.ts` | What is shown in the place of a channel, and the lists in the sidebar it is opened from |
 | `src/App.tsx` | Login state, keep-alive, the error banner, the layout |
-| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `ToolCallView`, `QuestionCard`, `QuestionView`, `MarkdownMessage`, `GrowingTextarea`, `ContextPanel`, `HistoryPanel`, `ToolsPanel`, `PrivateNotesPanel`, `ToolSetList`, `DeletedList`, `NotesList`, `TokenGauge`, `HoverCard`, `ActionMenu`, `ResizeHandle`, `UsageStats`, `NewSessionDialog`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ApprovalRulesDialog`, `ErrorBanner`, `PageList`, `AccessList`, `WorkspacePage`, `FileBrowser`, `ChannelWorkspacePanel`, `NewWorkspaceDialog`, `ClassificationFields`, `SessionWorkspaceDialog`, `SkillPage`, `NewSkillDialog`, `ArtifactPage`, `GroupPage`, `NewGroupDialog` |
+| `src/components/` | One component per file, named after what it shows |
 
 ## Talking to the server
 
@@ -61,25 +60,24 @@ The session is an `HttpOnly` cookie the UI never sees; `api` sends it with every
 brings up the login page.
 
 A user who only reads would be logged out mid-conversation, because the event streams cannot renew
-the token (see [REST-SERVER.md](REST-SERVER.md#renewal)). So `session.ts` renews by itself with
-`POST /auth/refresh` while its tab is visible, and only then - a tab in the background is not
-someone watching (issue 31). When to renew is read from the `caelumora_session_expires` cookie,
-which also tells a tab about a renewal another tab made.
+the token (see [REST-SERVER.md](REST-SERVER.md#renewal)). So the UI renews by itself with
+`POST /auth/refresh` while its tab is visible, and only then: a tab in the background is not someone
+watching. When to renew is read from the `caelumora_session_expires` cookie, which also tells a tab
+about a renewal another tab made.
 
 ### Errors
 
 The server answers errors with problem details (see [REST-SERVER.md](REST-SERVER.md#errors)).
 `ApiRequestError` carries their `detail` as message and the `request_id`, under which the full error
 is in the server log. Failed operations are listed in the error banner, newest last, each with its
-request id; dialogs show what the server says about a request they can correct - a name that is
-taken, say - next to the field.
+request id.
 
 ### The event streams
 
-Both streams go through one `openEventStream` (`src/stream.ts`), so the snapshot, the reconnect and
-the check of the session are handled in one place:
+Both streams go through one `openEventStream`, so the snapshot, the reconnect and the check of the
+session are handled in one place:
 
-*   It always asks for a snapshot (`?snapshot=true`), and gets one again after every reconnect.
+*   It always asks for a snapshot, and gets one again after every reconnect.
 *   On `expired` it reconnects at once. The new request carries the renewed cookie, and its snapshot
     restores what happened in between, so the handover is invisible.
 *   An unexpected break is left to the browser's own retry. A stream that is really closed checks
@@ -87,538 +85,276 @@ the check of the session are handled in one place:
 
 Messages can arrive twice, in the snapshot and as an event; they are dropped by id.
 
+What the server announces but does not store - a turn given up, the channel-wide answer of a
+command, a chain cut off, a nudge, a refusal to let something into the channel, a retry rejected -
+is shown live and gone on reload. Everything else is applied as the server reads it, so that a
+reload shows the same.
+
 ## What it shows
 
-### Panel widths
+### Common elements
 
-The panels beside the chat - the sidebar, the members of a channel, and the panel that shows an
-agent's context, history or tools in their place - can be made wider or narrower (issue 231): their
-edge towards the chat is a handle (`ResizeHandle`), dragged with the mouse, a finger or a pen, or
-focused and moved with the arrow keys (Shift for larger steps, Home and End for the narrowest and
-widest); a double click, or Enter, returns it to the width it starts with. Each panel has a
-narrowest and a widest width, and takes at most two fifths of the window, so that the chat keeps
-room. The handle sits beside the panel, not in it, so that it does not scroll with the members
-list.
-
-The width is kept per panel - the context, history, tools and private notes panels share one - in
-this browser's local storage (`usePanelWidth`, `src/panelWidth.ts`), not in the user's profile: the
-right width depends on the screen. Without storage the panels start at their usual width every time.
+*   **Menus.** What can be done with something in a list is in a menu behind three dots
+    (`ActionMenu`). It lists only what may be done, and there is no menu where nothing may; it is
+    reached with the keyboard too. An entry that cannot be undone asks once more in its place.
+*   **Hover cards and menus** are placed in the page's body and inside the window, so that no
+    scrolling list cuts them off.
+*   **Panel widths.** The panels beside the chat can be made wider or narrower by their edge, with
+    pointer or keyboard. Each takes at most two fifths of the window, so that the chat keeps room.
+    The width is kept per panel in this browser's local storage, not in the user's profile: the
+    right width depends on the screen.
+*   **The trash.** What the user deleted is listed folded below its list ("Deleted sessions",
+    "Deleted channels", ...) until it is purged, each entry with who deleted it when, and restore
+    and purge where the server allows them. A list is shown only while it holds an entry: the server
+    leaves out what the user may not read, so an empty list means nothing to see, whichever the
+    reason.
 
 ### The session list
 
-The sidebar lists the user's sessions with their channels. It follows the global stream (issue 35,
-`globalEvents.ts`): it takes its state from the snapshot, removes a session on `SessionDeleted`,
-takes a new name from `SessionUpdated`, and fetches a session again (`GET /sessions/{id}`) on any
-other `SessionUpdated` - a changed privacy - and on any event that changes its channels or their
-members. Starting and stopping are ignored.
+The sidebar lists the user's sessions with their channels and follows the global stream: it takes
+its state from the snapshot and fetches a session again on any event that changes it, its channels
+or their members. Starting and stopping are ignored.
 
-What can be done with a session - rename, privacy, delete - and with a channel - delete - is in a
-menu behind three dots at the end of its row, shown while the row is hovered (`ActionMenu`, issue
-230). The menu is used the same way wherever something in a list has actions: it lists only what
-may be done, and nothing - no button - where nothing may; it is reached with the keyboard too
-(arrow keys, Escape returns to the button); an entry that cannot be undone may ask once more in its
-place before it acts. Like the hover card it is placed in the page's body and inside the window
-(`floating.ts`), so that no scrolling list cuts it off. Deleting a session or a channel asks once
-more ("Delete session?", "Delete channel?"), though it only goes to the trash.
+A session's privacy is shown to everyone in it; its owner changes it (`PrivacyDialog`). Choosing a
+policy that lets other sessions read says that it holds for what is said from then on. The session's
+approval rules are changed by its owner from its menu. Deleting a session or a channel asks once
+more, though it only goes to the trash.
 
-A session's privacy (issue 134, `privacy.ts`) is shown to everyone in it: a session other sessions
-may read is marked in the list, and its menu opens `PrivacyDialog`, where its owner (`can_change`)
-changes it. Choosing a policy that lets other sessions read says that it holds for what is said from
-then on. The menu's "Approval rules" opens `ApprovalRulesDialog` (issue 13): the session's rules,
-which its owner changes.
+The user's name at the foot of the sidebar opens their profile: how they introduce themselves to the
+agents - with the note that every agent in every channel they take part in is given it - the
+language they prefer, which the channels they create are held in, and their own rules on tool
+calls, each with where it reaches and until when, to take back. Whether a language tag is valid is
+the server's to decide.
 
-The user's name at the foot of the sidebar opens `ProfileDialog` (issue 176), where they write how
-they introduce themselves to the agents (`GET`/`PUT /profile`). It counts the characters against the
-limit the server names, and says that every agent in every channel they take part in is given it.
-There, too, they choose the language they prefer (issue 56), which the channels they create are held
-in. A language is typed as a tag or picked from suggestions (`LanguageField`, `src/language.ts`),
-and shown by the name the browser knows for it (`Intl.DisplayNames`); whether it is a tag is the
-server's to decide. Below, they see their rules on tool calls (issue 13), each with where it reaches
-and until when, and take them back.
-
-What the user deleted stays in the trash until it is purged (issue 164, `DeletedList`): below the
-sessions a folded "Deleted sessions", and in every unfolded session a folded "Deleted channels",
-each loaded when shown and again on `SessionDeleted`, `SessionRestored`, `ChannelDeleted` and
-`ChannelRestored`. A list is shown only while it holds an entry (issue 232): the server leaves out
-what the user may not read, so an empty list means nothing to see, whichever the reason, and it
-disappears as soon as its last entry is restored or purged. An entry shows who deleted it when, and
-offers "Restore" where `can_restore` and "Delete for good" - confirmed by a second click - where
-`can_purge`; a channel only with its session. A restored session or channel is fetched again like
-a new one.
-
-"New Session" opens `NewSessionDialog` (issue [266](../issues/266-workspace-on-new-session.md)): the
-template - the one used last in this browser preselected (issue 40) -, the name, "New \<template\>"
-until the user changes it, and the workspace: as the template says, where it names one - its name
-and where it lies, from `GET /templates` -, none, one of the user's own - not one made for another
-session -, or a new one for the session alone, in a storage the user chooses, always offered, preset
-to the template's or the first, and classified as they say. Everything is preset, so that Enter
-makes a session as its template has it; a workspace chosen takes the place of the template's. What
-the server refuses - a workspace not the user's, a classification they are not cleared for - is
-shown in the dialog. A new channel is created with its name, responder policy, classification - a
-level and, if any are configured, compartments from `GET /compartments` (issue 133) - language,
-preset to the one the user prefers (issue 56), whether it uses the session's workspace, preset to
-yes (issue 253), and participants (`NewChannelDialog`, issue 09).
+"New Session" presets everything - the template used last in this browser, its name, the workspace
+the template names - so that Enter makes a session as its template has it. A workspace chosen there
+takes the place of the template's: none, one of the user's own, or a new one for the session alone.
+A new channel is created with its name, responder policy, classification, language (preset to the
+one the user prefers), whether it uses the session's workspace (preset to yes), and participants.
 
 ### Workspaces
 
-The workspaces the user may read (issue [253](../issues/253-workspace.md)) - their own and those
-shared with them (issue [23](../issues/23-acls-in-security-attributes.md)) - are listed below the
-sessions, each with where it lies where that is not their own scope, and a folded "Deleted
-workspaces" - the trash, as for sessions - below them; the list is loaded again on every global
-event about a workspace (`WorkspaceCreated`, `…Updated`, `…Deleted`, `…Restored`). "+" opens
-`NewWorkspaceDialog`: its name, the storage from those the server names - each with the kind of
-workspace it makes, files only or files and a shell (issue 266) -, whether its name lies in the
-user's scope or the global one, what it holds and its classification
-(`WorkspaceClassificationFields`, shared with `NewSessionDialog`) - what the server refuses, a name
-taken or a classification the user is not cleared for, is shown in the dialog.
+The workspaces the user may read - their own and those shared with them - are listed below the
+sessions, each with where it lies where that is not the user's own scope. A workspace opens in the
+place of a channel (`WorkspacePage`): what it is, what its owner may do with it, whom it is shared
+with (`AccessList`), and its files - wherever it lies.
 
-A workspace chosen there takes the place of a channel (`WorkspacePage`): what it is, the menu of
-what its owner may do - rename, describe, reclassify, delete -, for its owner whom it is shared
-with (`AccessList`), and its files (`FileBrowser`) - wherever it lies, also in a session's scope.
+`AccessList` shows each grant with what it allows, to change or take away, and adds the members of a
+session the user may read, or of one of its channels, or a team the user reads. Users and roles are
+not offered: the REST API lists neither.
 
-`AccessList` shows each entry of the list with what it grants, to change or take away, and below
-them adds the members of a session the user may read, or of one of its channels, with what they
-may do - reading unless chosen otherwise (issue
-[291](../issues/291-share-artifacts-in-the-web-ui.md)) -, or a team the user reads (issue
-[286](../issues/286-groups-as-subjects.md)), from `GET /groups`. The session is chosen first, from
-`GET /sessions`; its channels are loaded once it is. Users and roles are not offered: the REST API
-lists neither. A list that names nobody says so; the workspace's and the artifact's page say in
-their own words what each grant means.
+The lists of workspaces, skills, artifacts and teams in the sidebar are one component (`PageList`).
+A page shown in the place of a channel is closed when the list it was listed in loses its entry; one
+the list never had - an artifact read only as a member of a channel, opened from the chat - stays.
 
-The lists of workspaces, skills, artifacts and teams in the sidebar are one component
-(`PageList`, with `usePageList`): each entry with where it lies where that is not the user's own
-scope, "+" where one is made here, and its trash. A page shown in the place of a channel (`Page`,
-`src/page.ts`) is closed when the list it was listed in loses its entry; one the list never had -
-an artifact read only as a member of a channel, opened from the chat - stays.
+The file browser downloads a file through a plain link - the cookie goes with it, and the server
+sends it as an attachment - and uploads and deletes only for whoever may change the files
+(`can_write`); who may only read is told so. It works always by the workspace, never through a
+channel.
 
-`FileBrowser` shows one directory at a time, directories first, with a path back to the top. A file
-is downloaded through a plain link - the cookie goes with it, and the server sends it as an
-attachment; files are uploaded into the directory shown, one request each, the file as the body;
-deleting asks once more in the menu. Uploading and deleting are offered only to whoever may change
-the files (`canWrite`, the workspace's `can_write`); who may only read is told so. It works on the
-`WorkspaceFiles` of the API client (`api.workspaceFiles`), always by the workspace, never through a
-channel (issue 23).
-
-A session's menu has "Workspace" (`SessionWorkspaceDialog`): the workspace attached, if the user
-may read it, and to whoever may change the session one of their own workspaces to attach, not one
-made for another session - shared with the session's members as chosen (`ShareSelect`: to read and
-change, the default, to read, or not) -, or taking it away. `NewSessionDialog` offers the same
-choice for one of the user's own chosen there.
+A session's workspace is attached or taken away from its menu by whoever may change the session: one
+of their own workspaces, not one made for another session, shared with the session's members as
+chosen.
 
 ### Skills
 
-The skills the user may read and is cleared for (issue [22](../issues/22-skill-management.md)) are
-listed below the workspaces, each with where it lies where that is not their own scope, and a
-folded "Deleted skills" - the trash. The list is loaded again on every event about a skill
-(`SkillCreated`, `…Updated`, `…Deleted`, `…Restored`). "+" opens `NewSkillDialog`: its name, what
-it is for in a line, where it lies - the user's scope or the global one -, its classification and
-its text, Markdown. What the server refuses - a taken name, a text too long, a classification the
-user is not cleared for - is shown in the dialog.
-
-A skill opens on a page of its own (`SkillPage`), in the place of a channel: its name, what it is
-for, where it lies, whether it is the system's, its classification, and its text, shown as Markdown.
-Its owner renames it, says anew what it is for, reclassifies and deletes it from its menu, and edits
-its text in place. In the chat, `/skill` is shown as every command of an agent, the skill's text
-stands in the agent's history panel as what the issuer gave it, and the context panel lists the
-skill under "Knowledge read" ("A skill, loaded in …"). An agent's calls of the skill tools are
-shown by their presentation, `skill` (issue 281): the skill loaded by its name, one written or
-changed with its text, the name linked to the skill's page; a call of `list_skills` by
-`skill_list` (issue 301), the skills listed with what each is for, as `/skills` lists them, each
-name linked to the skill's page.
+The skills the user may read and is cleared for are listed below the workspaces. A skill opens on a
+page of its own, its text shown as Markdown; its owner renames, describes, reclassifies, deletes it
+and edits its text in place. In the chat, `/skill` is shown as every command of an agent, and the
+skill's text stands in the agent's history panel as what the issuer gave it. An agent's calls of the
+skill tools are shown by their presentations: the skill by its name, linked to its page - never the
+text a skill loaded gave the agent.
 
 ### Artifacts
 
-The artifacts the user may read (issue [291](../issues/291-share-artifacts-in-the-web-ui.md)) -
-their own and those shared with them by name, as `GET /artifacts` lists them - are listed below the
-skills, with a folded "Deleted artifacts", the trash; the list is loaded again on every event about
-an artifact (`ArtifactPublished`, `…Updated`, `…Deleted`, `…Restored`). Nothing is made there: an
-artifact is published by an agent (issue 271). An artifact read only as a member of the channel it
-was published in is not listed, but opened from its card in the chat.
+The artifacts the user may read - their own and those shared with them by name - are listed below
+the skills. Nothing is made there: an artifact is published by an agent. One read only as a member
+of the channel it was published in is not listed, but opened from its card in the chat.
 
-An artifact opens on a page of its own (`ArtifactPage`), in the place of a channel: its name, what
-its owner says of it, where it lies - "gone with it unless kept" in a session's scope - and its
-classification. Its owner describes it, keeps it among their artifacts or for everyone while it
-lies in a session's scope, and deletes it from its menu, and shares it as a whole (`AccessList`:
-reading every version, or reading and adding versions). Whoever may add versions without owning it
-is told so. Below, its versions the user may read, newest first, each with its size, media type
-and description, its download, when it was published, and where and by whom - by name where the
-server names them, for whoever may read that channel, the channel opening on a click; "a channel
-you do not read" otherwise. Its owner sees whom each version reaches besides (`access` of the
-version), which publishing set and the page does not change.
+An artifact's page shows what it is, where it lies, its classification, and its versions the user
+may read, each with where and by whom it was published - by name for whoever may read that channel,
+"a channel you do not read" otherwise. Its owner describes, keeps, shares and deletes it, and sees
+whom each version reaches besides; whoever may add versions without owning it is told so.
 
 ### Teams
 
-The teams the user owns or belongs to (issue [286](../issues/286-groups-as-subjects.md)) are
-listed below the artifacts, with a folded "Deleted teams", the trash; the list is loaded again on
-every event about a group (`GroupCreated`, `…Updated`, `…Deleted`, `…Restored`). "+" opens
-`NewGroupDialog`: its name and where it lies - the user's scope or the global one; what the server
-refuses is shown in the dialog.
-
-A team opens on a page of its own (`GroupPage`), in the place of a channel: its name, where it
-lies, and its members by name. Its owner renames and deletes it from its menu, takes members out,
-and adds them; every change writes the whole list of members. Since the REST API lists no users,
-a member is chosen as a user is for an access list: from one of the user's sessions, among its
-participants - so only someone the user shares a session with. A member who does not own the team
-sees it read-only; so does everyone the group of a session's or channel's participants, which
-changes only by taking part.
+The teams the user owns or belongs to are listed below the artifacts. A team's page shows its
+members; its owner renames and deletes it and adds and removes members, every change writing the
+whole list. Since the REST API lists no users, a member is chosen from the participants of one of
+the user's sessions - so only someone the user shares a session with. Everyone else sees the team
+read-only, as everyone sees the group of a session's or channel's participants, which changes only
+by taking part.
 
 ### A channel
 
 `ChatView` shows one channel. Only a participant follows it live, over the channel's stream; anyone
 else who may read it - the session's owner, say - is shown its history and no input.
 
-*   **History.** The snapshot holds the last 20 items of the history; older ones are fetched on
-    request (`GET …/history`). Its messages are shown, and a turn given up as the notice the chat
-    shows live, named for its turn so that it is shown once (`chatMessages`, `givenUpNotice`, issue
-    258); a turn that finished shows nothing of its own. A
-    message is shown with its tool calls, their status, their result and how long they took
-    (`MessageView`); a call that is not public is marked with how far it may travel (issues 54, 61,
-    100). A message's reasoning, where the server hands it out, is folded above its content under
-    "Thought" and opened by the user (issue 216).
-*   **Tool calls** are shown by their presentation (issue 165), which the tool declares and the
-    agent stamps on each call, never by the tool's name. `ToolCallView` draws the frame every call
-    has - the tool, who sees it, its status and duration - and leaves what is inside to the handler
-    of the call's presentation (`PRESENTATIONS`); a call without one, or with one this client does
-    not know, gets the default handler: its arguments and its result as they are. The `shell`
-    handler (issue 251) shows a command as a line of code, what it printed as a terminal shows it,
-    and its exit code, or the id it runs under; a call that follows or ends a command names its id.
-    The `file_read`, `file_write` and `file_edit` handlers show the file's path and its text as it
-    is - its lines kept, a long line wrapped at word boundaries, a long text scrolling in its box:
-    what was read, with which lines of how many and where to read on; what was written, and how many
-    bytes; the text replaced and the text put in its place, and how many places. The `file_list` and
-    `file_search` handlers (issue 265) show a directory listed - its path, its entries as the file
-    browser shows them, and whether the listing was cut off - and a search - its pattern and where,
-    its matches by file with their line numbers, and whether it stopped early or skipped files. The
-    `file_move` handler (issue 267) shows where a file or directory lay and where it lies now, and
-    whether it was renamed or moved. The `artifact_publish` handler (issue 271) shows a published
-    version as a card like `file_publish`'s (`DownloadCard`) - the artifact's name, version, size
-    and description, a download of that version by the artifact (`artifacts`, handed as `files` is;
-    issue 23), "Keep" for its owner while it lies in the session's scope, and "Open", its page
-    (issue 291), for whoever may read the artifact, which it learns by asking for it. The
-    `file_publish` handler (issue 273) shows a file offered for download as a card - its name, size
-    and what it is - with a download from the session's workspace, by its id as the channel names it
-    (`files`, which `ChatView` hands through `MessageView`), and says when the file changed since it
-    was offered - its size or when it was changed differ - or is gone; whoever cannot use the
-    workspace there, and every view outside the chat, gets the card without the download. The `plan`
-    handler shows a plan's summary and its steps, numbered (issue 263). The `skill` handler (issue
-    281) shows the skill a call loads, writes or changes by its name, and what it is for and its
-    text, as Markdown, where the arguments hold them - never the text a skill loaded gave the agent;
-    where the result names the skill (`skill_id`), the name opens its page in the chat
-    (`onSelectPage`, which `Layout` hands through `ChatView` and `MessageView`). The `skill_list`
-    handler (issue 301) shows how many skills an agent listed - "No skills to load here" for none -
-    and each by its name, which opens its page as `skill`'s does, and what it is for. The `note`
-    handler (issue 303) shows a note, a private note or a memory entry acted on by its number and
-    what was done to it, its new text where it was written or updated, and its new classification
-    where it was reclassified; the `note_list` handler shows the notes `read_notes` read, by channel
-    and by who wrote them, as `NotesList` groups them - "Nothing noted" for none. Where a result
-    keeps the record of the questions its call asked (`answers`, issue 165), the frame shows it
-    (`AnswersRecord`, issue 268): who answered or declined, and each question with every choice that
-    was offered, one below the other, the chosen ones marked and the others muted, "Other" with its
-    text, a written answer as a quote, a skipped question as such. A question's text keeps its line
-    breaks, so that an approver reads a command of several lines as it was written. The `questions`
-    handler of `ask_user` shows nothing raw: while it waits, its questions as they were put and whom
-    they wait for; once answered, nothing beyond the record.
-*   **While an agent answers**, its partial message is shown as it streams, its reasoning
-    included: folded under "Thinking" until the answer begins (issue 216). Several agents answering
-    at once each have an answer of their own, in the order they began (issue 203). Answers under
-    way are shown below every complete message: a message joins the history when it is complete,
-    so an answer that ends first moves up past those still under way - as a reload shows the
-    history. The answer of a step of a plan (`IntermediatePartialGenerated`) streams in within its
-    step's block instead, after the step's messages; only where its turn has no such block - a
-    snapshot without the step's mark - is it shown below (issue 263). Each answer under way knows
-    its turn, from `ResponseStarted` or, for one that began before the page was loaded, from the
-    snapshot's `turn_under_way` of its member (issues 235, 240); what streamed before is not
-    shown. The stop button stays while any agent answers. Reasoning that is the owner's never
-    reaches the chat, and reasoning held back while the agent could still make a call whose
-    arguments are the owner's arrives only with the complete message (see
-    [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reasoning)). A turn given up (`TurnGivenUp`, issue 258)
-    is shown in the chat with why: a failure as an alert naming what failed, any other reason as a
-    notice - the channel lowered, the answer asked for again; it is not stored yet and gone on
-    reload. The channel-wide answer of a command is shown but never stored. A command an agent
-    carried out (issue 269) is shown as the agent's notice - with what it answered, live, to the
-    issuer or to everybody -, kept once by its turn, and from the history after a reload without the
-    answer; one it did not carry out is a notice for the issuer alone. The issuer sees the notice
-    as soon as the agent begins (`CommandStarted`, issue 299), with an orange pulsing dot, and its
-    answer or failure takes its place. An agent removed while
-    it answers gives its turn up and says so, which is shown as any turn given up (issue 262); once
-    it has ended, the channel says so with `ParticipantRemoved`, and nothing of it follows: what
-    an agent aborted without a word left - its partial answer, the stop button, its calls still
-    without a result - goes or is shown as abandoned (issue 162).
-    When a chain between agents is cut off at its limit (`ChainCutOff`), a notice "Chain cut off"
-    says so, naming the agents mentioned that were not asked, and that a message of a user starts a
-    new chain; like the answer of a command, it is gone on reload (issue 200). A user someone
-    nudges (`/nudge`, issue 278) is sent a `ResponseRequested` - the only way a user is - and shown
-    a notice "… asks you to respond" for them alone, gone on reload as well.
-*   **A plan** (issue 263) is shown by its call: `create_plan` is presented as `plan`, its summary
-    and its steps numbered, a plan extended as a call of its own.
-*   **The steps of a plan** (issues 258, 263). While an agent works through a plan, what each step
-    says - its answer, its tool calls and their results - arrives as `IntermediatePartialGenerated`
-    and `IntermediateMessageGenerated` and is shown as any partial and complete message is, a tool
-    result refreshing the workspace alike. Each step is a block of its own (`PlanSteps`,
-    `chatRows`), headed "works on step 2 of 3" with the step's description: `PlanStepStarted`, live,
-    and the history's `plan_step_started`, after a reload, become a mark in the chat's messages
-    (`planStepMark`) that begins the block, and the internal messages of its turn that follow join
-    it. The step a turn is in is open while the turn is under way, every other step folded, unless
-    the user opened or closed it. Messages of a turn interrupted by another agent's continue in a
-    block of their own under the same step; internal messages before any mark - a history from
-    before steps were recorded, or a snapshot cut within a step - are headed "the plan". The
-    messages are rendered as every other message, with their icons; none of them is offered for
+*   **History.** The snapshot holds the newest items of the history; older ones are fetched on
+    request. A turn given up is shown as the notice the chat shows live, once; a turn that finished
+    shows nothing of its own. A call that is not public is marked with how far it may travel. A
+    message's reasoning, where the server hands it out, is folded above its content.
+*   **Tool calls** are shown by their presentation, which the tool declares and the agent stamps on
+    each call, never by the tool's name. `ToolCallView` draws the frame every call has - the tool,
+    who sees it, its status and duration, the record of questions it asked - and leaves what is
+    inside to the handler of the presentation (`PRESENTATIONS`); a call without one, or with one
+    this client does not know, shows its arguments and result as they are. What each handler shows
+    is described with it in `ToolCallView.tsx`.
+*   **While an agent answers**, its partial message is shown as it streams. Several agents answering
+    at once each have an answer of their own, in the order they began, below every complete
+    message: a message joins the history when it is complete, so an answer that ends first moves up
+    past those still under way - as a reload shows the history. Each answer under way knows its
+    turn, from its start or from the snapshot. Reasoning that is the owner's never reaches the chat,
+    and reasoning held back while the agent could still make a call whose arguments are the owner's
+    arrives only with the complete message (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reasoning)).
+*   **What ends without an answer.** A turn given up is shown with why: a failure as an alert naming
+    what failed, any other reason as a notice. A command an agent carries out is shown to the issuer
+    as the agent's notice from when it begins, replaced by its answer or failure. What an agent
+    aborted without a word left - its partial answer, the stop button, calls without a result -
+    goes or is shown as abandoned once the channel says it was removed. A chain between agents cut
+    off at its limit says so, naming the agents that were not asked, and that a message of a user
+    starts a new chain. A user someone nudges is shown that they are asked to respond.
+*   **A plan** is shown by its call, its steps numbered. While an agent works through it, each step
+    is a block of its own, headed with the step, that holds what the step said; the step a turn is
+    in is open while the turn is under way, every other one folded unless the user opened or closed
+    it. Internal messages before any step's mark are headed "the plan". None of them is offered for
     another answer.
-*   **Changing one's own messages** (issue 234). A participant's own message has an edit icon, which
-    turns it into an editor in its place (`MessageEditor`: save, cancel, Escape, Ctrl+Enter), and a
-    take-back icon, which asks "Take back?" on the first click and takes the message back on the
-    second (`PUT` and `DELETE …/messages/{mid}`). A modified message shows "edited" in its footer
-    with when on hover; one taken back is a placeholder naming who took it back. Both arrive as
-    `MessageModified` and `MessageRevoked` - from others, and from the user's own actor - and are
-    applied to the message in place as the server reads them, so a reload shows the same. The
-    classification of a modified message stays as it is; it is changed as before, with the shield
-    icon.
-*   **What the channel did not let in** (issue 304). What the user sends is shown as they sent it,
-    and the channel decides whether it enters; a refusal arrives as `MessageRejected`. A message of
-    theirs refused so is marked "Not let into the channel", with why in this page's words for each
-    `reason`; a refused change of a message - modified, taken back, reclassified - is undone by
-    reading the message back from the history, and a notice "Not let in" says what was refused and
-    why. Both are gone on reload, as nothing refused is in the history.
-*   **Asking for another answer** (issue 234). The last message of the chat, if an agent's, has a
-    retry icon while nothing is being generated and its member's `can_retry` allows it (`POST
-    …/messages/{mid}/retry`) - not of an external agent, which never answers again (issue 242). The
-    agent decides: on `RetryAccepted` it is shown as answering, its message turns into a placeholder
-    as it takes it back, and its new answer follows; on `RetryRejected` a notice "Not answered
-    again" says why, in this page's words for each `reason`, and is gone on reload. An answer still
-    under way has a retry icon of its own once its turn is known and its
-    member's `can_retry` allows it (issue 235): `POST …/participants/{aid}/retry` with the turn.
-    Refused if the answer ended meanwhile - its last message then has the icon. On `RetryAccepted`
-    of a turn, the messages of that turn shown so far stay: what was said is not unsaid, and the
-    history keeps them (issue 258). The notice of a turn given up because it failed or the channel
-    was lowered has the retry icon too, while it is the last thing in the chat, nothing is being
-    generated and the member's `can_retry` allows it (issue 259): the same route with that turn,
-    and the agent answers anew after it.
-*   **Approvals.** A tool call that needs approval is shown to everybody, with approve and deny only
-    for who may approve the agent's calls (`can_approve` of the member, issue 14); everybody else is
-    told that it waits for whoever is responsible for the agent. Once this user answered, it waits
-    for the decision; it disappears only when the approver ends it - decided, timed out, or
-    withdrawn by an agent whose turn ended (issue 148). The pending approvals come with the stream's
-    snapshot, so a reload shows them again; a request that arrives again - asked anew by an agent
-    after a restart - is shown once (issue 172). Whether this user answered is known only to this
-    page: after a reload, an answered approval is offered again. Unless a rule of the session or
-    channel asked for it (`explicit`), a card offers "and from now on" (`ApprovalRuleOffer`, issue
-    13): a rule derived from the call - its patterns from `suggested`, editable - for this
-    channel, this session or everywhere, until taken back or for an hour or a day; it is added
-    after the answer, with the answer's decision. A request a rule of this user's answered says so
-    ("Answered by your rule"), from their own answer as their actor shows it.
-*   **Questions.** The questions an agent's call waits for the answers to (issue 165) are shown to
-    everybody the server sends them to, above the approvals (`QuestionCard`): each question with
-    its header, its choices one below the other, each a row of the full width with what it means -
-    a circle where one is chosen, a box where several may be, the recommended one marked (issue
-    268) - an "Other" field below them, or a text field without choices. The card and the record of
-    the answers draw a question alike (`QuestionView`). Only the users they are put to get
-    the controls, everybody else whom they wait for; a question may be skipped, the whole of them
-    declined. Sensitive questions mask the input and say that the answers go to the tool alone;
-    the others that they go to the agent, and that writing a message instead declines them. Sent
-    with `POST …/questions/{qid}`, a card says "Answered" until the agent closes the questions
-    (`QuestionClosed`); the open questions come with the stream's snapshot.
-*   **Brave mode.** "Approve everything in this session for an hour" adds a rule that allows every
-    tool call there for an hour (`approvalRules.ts`); while one of this user's rules allows
-    everything in the channel, a bar says so, until when, and stops it. The user's rules follow
-    the global stream (`UserProfileUpdated`).
-*   **Stop.** The stop button ends the current turn of every agent (`POST …/cancel`). The stop
-    icon on an answer under way ends that agent's turn alone (`POST …/participants/{aid}/cancel`,
-    issue 235); the other answers go on. A tool call shown as "Executing" has a stop icon of its
-    own while its agent runs tools and the member's `can_cancel` allows it: it interrupts that
-    call alone, and the agent goes on (`POST …/participants/{aid}/tool-calls/{call_id}/cancel`
-    with the turn, issue 276). A command a call handed back as "Still running" has a stop icon at
-    its status for whoever may change the workspace's files (`can_write`): it ends the command and
-    what it started (`POST …/commands/{command_id}/kill`, issue 294). It is gone once a later
-    result in the channel shows the command ended (`endedCommands`), or the user ended it.
-*   **Input.** A line starting with `/` is sent as a command, `//` as a literal slash
-    (`command.ts`). Typing `@` completes the members' handles, `/` the commands the user may see -
-    the channel's, and the agents' with each handle that carries one out and `@all` (issue 269). An
-    unsent draft survives a forced re-login, in the session storage. A message can be sent while
-    an agent answers (issue 202): an agent in a turn hears it once the turn ends and answers it in
-    a turn of its own, if asked to; the turn under way does not see it.
-    The field (`GrowingTextarea`, issue 274) wraps long lines and grows with its text up to a third
-    of the window's height, then scrolls; `Enter` sends, `Shift+Enter` breaks the line, and while
-    the completion list is open `Enter` chooses from it. A user's message is shown with its line
-    breaks as typed (`remark-breaks`), while an agent's follows Markdown, where a single line break
-    is none.
+*   **Changing one's own messages.** A participant's own message can be edited in place or taken
+    back, which asks once more. A modified message shows "edited"; one taken back is a placeholder
+    naming who took it back. Both are applied to the message in place as the server reads them. A
+    modification keeps the message's classification.
+*   **What the channel did not let in.** What the user sends is shown as they sent it, and the
+    channel decides whether it enters. A message refused is marked so, with why; a refused change of
+    a message is undone by reading the message back from the history.
+*   **Asking for another answer.** An agent's last message has a retry icon while nothing is being
+    generated and its member's `can_retry` allows it - never an external agent's, which never
+    answers again. So has an answer under way, once its turn is known, and the notice of a turn
+    given up because it failed or the channel was lowered, while it is the last thing in the chat.
+    The agent decides: accepted, its answer is taken back and the new one follows - what a turn
+    under way said stays, since what was said is not unsaid; rejected, a notice says why.
+*   **Approvals.** A call that needs approval is shown to everybody, with approve and deny only for
+    who may approve the agent's calls (`can_approve`); everybody else is told it waits for whoever
+    is responsible for the agent. It disappears only when the approver ends it - decided, timed out
+    or withdrawn. The pending approvals come with the snapshot, and a request asked anew after a
+    restart is shown once. Whether this user answered is known only to this page. Unless a rule of
+    the place asked for it, a card offers to add a rule derived from the call with the answer
+    ("and from now on"); a request a rule of this user's answered says so.
+*   **Questions** an agent's call waits for are shown to everybody the server sends them to, above
+    the approvals, with the controls only for the users they are put to. A question may be skipped,
+    the whole of them declined; a question's text keeps its line breaks, so that a command of
+    several lines reads as written. Sensitive questions mask the input and say that the answers go
+    to the tool alone; the others that they go to the agent, and that writing a message instead
+    declines them.
+*   **Brave mode** adds a rule that allows every tool call in the session for an hour; while a rule
+    of this user's allows everything in the channel, a bar says so, until when, and stops it.
+*   **Stop.** The stop button ends the current turn of every agent; the stop icon on an answer under
+    way ends that agent's turn alone; a tool call that runs has a stop icon that interrupts that
+    call alone, and the agent goes on. A command a call handed back as still running can be ended by
+    whoever may change the workspace's files.
+*   **Input.** A line starting with `/` is sent as a command, `//` as a literal slash. Typing `@`
+    completes the members' handles, `/` the commands the user may see - the channel's, and the
+    agents' with each handle that carries one out. An unsent draft survives a forced re-login. A
+    message can be sent while an agent answers: the agent hears it once its turn ends and answers in
+    a turn of its own, if asked to. `Enter` sends, `Shift+Enter` breaks the line. A user's message
+    is shown with its line breaks as typed, an agent's as Markdown.
 
 ### Classification
 
-The channel's classification is shown above the member list. Next to the input,
-`ClassificationPicker` lets a user release the next message (issue 133): to a lower level than the
-channel's, or - in a channel with compartments - to further compartments from `GET /compartments`.
-It offers only what may enter the channel, the server decides, and a release is for one message.
-Messages whose classification differs from the channel's carry a `released` badge.
+The channel's classification is shown above the member list. Next to the input, a user can release
+the next message to a lower level or further compartments; it offers only what may enter the
+channel, the server decides, and a release is for one message. Messages whose classification
+differs from the channel's carry a badge.
 
-Who may reclassify - the channel's owner the channel, the author or the owner a message - changes it
-with `ClassificationDialog`: from the pencil next to the channel's classification, or the shield
-among a message's actions. A change that releases something says what it releases before it is made.
-A message takes its new classification from `MessageReclassified` on the channel's stream, as
-every change to a message (issue 239); a reclassified channel follows the global stream and fetches
-its messages again, which lowering it may have changed.
+Who may reclassify - the channel's owner the channel, the author or the owner a message - does so
+with one dialog, which says what a change releases before it is made. A message takes its new
+classification from the channel's stream; a reclassified channel fetches its messages again, which
+lowering it may have changed.
 
 ### What the channel is for
 
-The panel beside the chat is the channel panel - its tab is called "Channel" (issue 245). At its
-top stands the channel's summary and, behind "Briefing", its briefing rendered as Markdown
-(`ChannelDescription`). Who may change the channel changes both with `DescriptionDialog`, from the
-pencil next to the summary, or from "Say what this channel is for" where it says nothing yet; the
-dialog says who reads it. A change made elsewhere arrives as `ChannelUpdated` with
-`DescriptionChanged`, which carries both.
-
-A session's description is opened from its menu in the sidebar ("Description"), with the same
-dialog - read-only for whoever may not change the session - which says there that everybody in the
-session and every agent in its channels reads it, external ones too. The session is fetched first:
-the list holds no briefing, and saving without it would remove it. The summaries of sessions and
-channels are their tooltips in the sidebar.
+The panel beside the chat is the channel panel. At its top stand the channel's summary and its
+briefing, rendered as Markdown; who may change the channel changes both, and the dialog says who
+reads them. A session's description is opened from its menu in the sidebar, read-only for whoever
+may not change the session, and says that everybody in the session and every agent in its channels
+reads it, external ones too. The session is fetched before it is changed: the list holds no
+briefing, and saving without it would remove it.
 
 ### Language
 
-The channel's language is shown below its classification (issue 56). Who may change the channel
-(`can_change`) changes it or takes it back with `LanguageDialog`, from the pencil next to it; the
-dialog says that nothing said before is translated. A change made elsewhere arrives as
-`ChannelUpdated` with `LanguageChanged`.
+The channel's language is shown below its classification. Who may change the channel changes it or
+takes it back; the dialog says that nothing said before is translated.
 
 ### Approval rules
 
-Below the language, the channel's approval rules are counted (issue 13), for whoever may change the
-channel and, once there are some, for everyone; the count opens `ApprovalRulesDialog`, the same
-dialog as the session's. A rule names a tool - `*` for every one - and optionally a pattern per
-argument, and asks or denies; the dialog offers nothing that allows, since a place cannot. The
-rules are saved as a whole, and what the server refuses of them is shown in the dialog. An
-approval asked for by such a rule says so on its card (`explicit`).
+The channel's approval rules are counted below the language and changed in the same dialog as the
+session's. A rule names a tool - `*` for every one - and optionally a pattern per argument, and asks
+or denies; the dialog offers nothing that allows, since a place cannot. The rules are saved as a
+whole. An approval asked for by such a rule says so on its card.
 
 ### The channel's files
 
-Beside "Channel" and "Notes", the channel panel has "Files" (`ChannelWorkspacePanel`): the session's
-workspace as the channel names it (`workspace_id`, where it uses it and the user may read it) - its
-name, classification and what it holds - and its files, by the workspace (issue 23); or that no
-workspace is used in this channel, without why. `ChatView` fetches the workspace, which the stop
-icon of a command needs as well, and hands it to the panel. The files are loaded again when the tab
-is shown, when a tool call of the channel ended (a `CompleteMessageGenerated` with tool results),
-when the user ended a command and when the channel's switch changes. The "Channel" tab shows the
-switch - "Workspace: used here" - as a checkbox to whoever may change the channel, as text to
-everybody else (issue 251).
+The channel panel's "Files" shows the session's workspace as the channel names it - where the
+channel uses it and the user may read it - and its files, by the workspace; or that no workspace is
+used here, without why. The files are loaded again when a tool call of the channel ended, when the
+user ended a command, and when the channel's switch to use the workspace changes.
 
 ### Members, moderator and notes
 
-Under each agent, a bar shows how full its context is (issue 209): the tokens of its last call
-against the size of its context, amber from three quarters on and red from nine tenths
-(`TokenGauge`); without a known size, the tokens alone. Its hover card keeps two things apart: the
-context of the last call, against the context's size, and the usage of all of the agent's calls in
-the channel as total input and total output tokens - totals, which grow much faster than the
-context, since every call is given the whole context again. Above the list, "Total tokens" adds up
-the usage of the agents shown. The numbers come with the stream's snapshot; an agent's are updated
-by each of its calls as its message arrives - the steps of a plan are many calls of one turn - and
-fetched again when its turn ends or is given up (`GET …/participants/{aid}`), which also counts
-calls whose messages were not published. An external agent reports none. A message's "(i)" shows
-the input and output tokens of its call, how full the call's context was, and its times.
+Under each agent, a gauge shows how full its context is: the tokens of its last call against the
+size of its context, coloured as it fills; without a known size, the tokens alone. Its hover card
+keeps two things apart: the context of the last call, and the usage of all of the agent's calls in
+the channel as totals - which grow much faster than the context, since every call is given the whole
+context again. Above the list, "Total tokens" adds up the usage of the agents shown. An agent's
+numbers are updated by each of its calls and fetched again when its turn ends, which also counts
+calls whose messages were not published. An external agent reports none.
 
-All three show their numbers in the same hover card (`HoverCard` with `UsageStats`, issue 219):
-groups under a heading, labels on the left and values aligned on the right, never wrapped, the card
-as wide as its content. It opens on hover, on keyboard focus and on tap, above its trigger - below
-where there is no room - and always inside the window; it is placed in the page's body, so that the
-scrolling member list and chat do not cut it off, and closes when what holds its trigger scrolls -
-not when the chat beside it receives messages. It is placed by `useFloating` (`floating.ts`), like
-the menus, and placed again when its size changes.
-
-Each agent has a dot for where it stands (issue 243), its state as the dot's title: green when
-idle, green pulsing in colour and size while it works (`Planning`, `ExecutingTools`, `Reflecting`,
-`Cancelling`), orange pulsing so while it carries out a command (`CarryingOutCommand`, issue 299),
-amber while it waits for an approval, a still blue while it sleeps, and grey where
-nothing runs - the channel does not run, or the agent is gone. Users and approvers have none. The
-dot starts from the member's `state` in the snapshot and follows `StateChanged`. The dots beside an
-answer under way in the chat - "generating…", "Thinking", the step of a plan it works on - pulse as
-a working agent's does, in green (`animate-working`). An agent whose
-answer a cancel can still end - working or waiting for an approval - has a stop icon where its
-member's `can_cancel` allows it (`POST …/participants/{aid}/cancel`); so has its answer under way in
-the chat, offered to everybody before.
+Each agent has a dot for where it stands, starting from the snapshot and following its state
+changes: idle, working, carrying out a command, waiting for an approval, sleeping, or nothing
+running. Users and approvers have none.
 
 The member list is sorted by name and uses the members' handles for `@` completion and for
 highlighting mentions; participants that cannot be mentioned, such as approvers, have none. Who
-answers - the channel's `responder_policy` (issue 174) - is shown above it as its moderator, and for
-`mentions_only_policy` the input says that agents answer only when mentioned (`moderator.ts`) - by
-a user or by another agent.
+answers - the channel's responder policy - is shown above it as its moderator, and for
+`mentions_only_policy` the input says that agents answer only when mentioned.
 
-A member's row shows its name and handle, and below them how full its context is; what can be done
-with the member is in its menu (`ActionMenu`, issue 230) - "Show history", "Show private notes",
-"Show tools", "Remove from channel", "Delete agent" - each only where the member offers it, and no
-menu where it offers nothing.
+What can be done with a member is in its menu, each entry only where the member offers it: its
+profile, its history, its private notes, its tools, removing it from the channel (where `can_change`
+is set, which also offers adding a participant of the session with how much of the history they
+may see), and deleting the agent - which asks once more, since the agent leaves every channel it
+takes part in, not only this one.
 
-Where `can_change` is set, the member list offers adding a participant of the session - with how
-much of the history they may see (`AddParticipantDialog`, issue 46) - and the menu removing one.
-The channel is fetched again when the global stream announces a join or leave for it.
+*   **The profile** shows name and handle; of an agent its personality, whether it runs here or
+    elsewhere - where what it is given leaves the system - and who owns it; and its introduction, a
+    user's as "in their own words".
+*   **The tools** (`can_read_tools`) are what the agent can call in this channel now, by tool set,
+    each set with why it is unavailable where it is, each tool marked where a call needs approval,
+    is shown to its owner only, or has its results classified.
+*   **The private notes** (`can_read_context`) are what the agent noted for itself in every channel
+    of the session the user may read, this channel first, fetched again whenever the agent's state
+    in the session changes. Who may read an agent's context sees them there anyway; the panel shows
+    them current and on their own.
 
-Every member but the approver has "Show profile" in its menu (issue 244). It opens the profile
-panel (`ProfilePanel`), filled once by `GET …/participants/{aid}`: name and handle; of an agent the
-name of its personality, whether it runs here or elsewhere - where what it is given leaves the
-system - and who owns it; and its introduction, a user's as "in their own words", or that there is
-none.
-
-An agent whose tools the user may see (`can_read_tools`, issue 194) has "Show tools" in its menu.
-It opens the tools panel (`ToolsPanel`): what the agent can call in this channel now
-(`GET …/actors/{aid}/tools`), by the tool set the tools come from, with each set's description and,
-where it is unavailable, why - each tool marked where a call needs approval, is shown to its owner
-only, or has its results classified. The sets are drawn by `ToolSetList`, as in the context panel.
-An agent that has no tools here - external, or its channel not running - says so.
-
-An agent whose context the user may read (`can_read_context`) has "Show private notes" in its menu
-beside "Show history" (issue 233). It opens the private notes panel (`PrivateNotesPanel`): what the
-agent noted for itself in every channel of the session the user may read
-(`GET /sessions/{id}/actors/{aid}/private_notes`), grouped by channel - this channel first, the
-others by name - each note with when it was written and its classification, and with its number
-only in this channel, where the agent is shown it. It is fetched again whenever the global stream
-announces `AgentChannelStateChanged` for that agent in the session. Who may read an agent's context
-sees its private notes there anyway (issue 54); the panel shows them current and on their own.
-
-An agent the user may delete (`can_delete`) has "Delete agent" in its menu; it asks once more in its
-place ("Delete agent? It leaves every channel"), since the agent leaves every channel it takes part
-in, not only this one, and a restore - only over REST so far - brings it back into none (issue 164).
-
-Below the members, a folded group "Former members" lists who took part and left (issue 164), each
-with when, and - where `can_read_context` - "Show history" and "Show private notes" in its menu, so
-that what a removed agent did, the turn it gave up when it was removed included
-([146](../issues/146-show-given-up-turns.md)), and what it kept to itself can still be read.
-
-A "Notes" tab next to the members shows the notes the channel's agents published (`NotesList`, issue
-17). They come with the snapshot and are fetched again (`GET …/notes`) when the global stream
-announces `AgentChannelStateChanged` for the channel.
+Below the members, "Former members" lists who took part and left, with history and private notes
+where `can_read_context`, so that what a removed agent did - the turn it gave up when removed
+included - can still be read. A "Notes" tab shows the notes the channel's agents published.
 
 ### What an agent saw
 
-Stored messages of agents whose context the user may read (`can_read_context`) carry an eye icon. It
-opens the context panel (`ContextPanel`, issue 41): the messages of the context and the prompt parts
-where they were given, a leading system prompt on top (issue 47), the knowledge the turn read as
-"Knowledge read" - a channel of another session, which an agent's memory came from, is not named
-(issue 134) - and - collapsed - the tools the model was offered as "Tools offered", grouped by the
-tool set they came from with its description and, where it was unavailable, why (issue 194), each
-tool with its description and parameters (issue 137) and marked, as in the tools panel, where a call
-needed approval, was shown to its owner only, or had its results classified. Every prompt part,
-message and knowledge read shows how it was classified - "counts as the channel" where that is not
-known - and what set the message's label, which the panel's head names, is marked in amber (issue
-170). The panel shows internal messages and tool results, which the chat folds, and the reasoning of
-the messages the model was given, marked "owner only" where it is the owner's; `MessageView` renders
-a message the same way in both. For an answer of an external agent the panel shows the messages the
-remote agent was given in the call that produced it, and nothing else (issue 205): no prompt parts,
-tools or knowledge, and not what it was given in earlier calls. The panel's head words it so that it
-holds for both kinds of agent ("What … was given"; the label set by what it had seen, marked what of
-this set it): the REST API does not tell them apart. A context never changes, so what was fetched
-once is kept. See [AGENT-TURN.md](AGENT-TURN.md#asking-what-an-agent-saw).
+Stored messages of agents whose context the user may read carry an eye icon, which opens the
+context panel: the messages of the context and the prompt parts where they were given, the
+knowledge read, and - collapsed - the tools offered by tool set. Every item shows how it was
+classified - "counts as the channel" where that is not known - and what set the message's label is
+marked. A channel of another session, which an agent's memory came from, is not named. The panel
+shows internal messages, tool results and the reasoning the model was given, which the chat folds,
+marked "owner only" where it is the owner's. For an answer of an external agent it shows the
+messages the remote agent was given in the call that produced it, and nothing else. The panel's
+wording holds for both kinds of agent, since the REST API does not tell them apart. A context never
+changes, so what was fetched once is kept. See
+[AGENT-TURN.md](AGENT-TURN.md#asking-what-an-agent-saw).
 
-Every agent whose context the user may read has "Show history" in its menu in the member list. It
-opens the history panel (`HistoryPanel`, issue 207): all that was offered to the agent in the
-channel and what it said itself (`GET …/actors/{aid}/history`), which may differ from what the
-channel shows. What its perceive processors did not pass on to its transcript is greyed out and
-marked "not passed on"; a message whose context is recorded opens it in the context panel, and
-closing that returns to the history. The history is loaded again whenever the channel's messages
-change.
-
-A turn the agent gave up (issues 146, 258) is marked where it ended, after what it said: why -
-failed, stopped, the channel lowered, asked for again - and when, as the history's items say. Its
-messages stand among the others, each with its context where it is recorded. A turn given up
-because the agent was removed from the channel is shown in its history panel, offered among the
-former members (issue 164). A command the agent carried out (issue 269) is marked where it was:
-which, with its arguments, on whose word, and when. A compaction of its context (issue 16) is
-marked where it was made, "Context compacted" and when; what replaced the older messages - the
-summary, the skills given again - follows it as messages without a context of their own, and the
-messages before it keep theirs.
+The history panel shows all that was offered to the agent in the channel and what it said itself,
+which may differ from what the channel shows. What its perceive processors did not pass on is
+greyed out and marked "not passed on"; a message whose context is recorded opens it in the context
+panel. Where a turn was given up, a command carried out or the context compacted, it is marked where
+it happened, with why, on whose word, and when; what replaced the older messages in a compaction
+follows its mark.

@@ -41,39 +41,29 @@ communicate only through **envelopes** - an event with who sent it, on whose aut
 
 An **agent** is an identity with a **personality**. The personality says what the agent consists of:
 a list of components (its tools, its system prompt, its notes, ...), how its agents are introduced
-to the others (issue 176) and how confidential its reasoning is. An agent is read through its
-personality, not copied from it. One agent can take part in many sessions and channels at the same
-time; it has one actor in each channel and one state across them.
+to the others and how confidential its reasoning is. An agent is read through its personality, not
+copied from it. One agent can take part in many sessions and channels at the same time; it has one
+actor in each channel and one state across them.
 
 Sessions are made from **session templates**. A template names every participant of the session -
 users, agents with their personality and scope, approvers with their strategy - and the channels,
-which refer to the participants by name. Creating a session from a template has two steps (issue
-88):
+which refer to the participants by name. The model builds the session and its channels from the
+participants it is given, without touching a store (`SessionTemplate::build`); the runtime finds
+the owner and the agents - an agent is the one of its name in exactly the scope the template asks
+for, made if there is none - and stores and starts the session
+(`SessionManager::create_from_template`). REST and the TUI both create sessions this way.
 
-1.  The model says what each participant is for the session (`ParticipantTemplate::request`: "user"
-    is the session's owner, an agent is the one of its name in exactly the scope the template asks
-    for, an approver is made), and
-    builds the session and its channels from the participants it is given
-    (`SessionTemplate::build`), without touching a store.
-2.  `SessionManager::create_from_template(ctx, template_id, name)` does the rest: it reads the
-    template, finds the owner and the agents (`EntityStore::find_agent_by_name`, issue 178), makes
-    the agents that are missing (only when the lookup finds none, never because it failed), refuses
-    one of another personality (`TemplateError::AgentNameTaken`), and builds, stores and starts the
-    session. An agent another made meanwhile the store refuses to make twice, since names are unique
-    in their scope (issue 250); the template then looks for it once more. REST (`POST /sessions`)
-    and the TUI both call it.
-
-A session may have a **workspace** attached (issue 253): a tree of files that belongs to a user,
-with one classification, used by the members of those channels of the session where it and the
-channel flow both ways. Its files lie in a configured storage and are reached through a
-`Terminal`. What an agent hands over to keep it publishes as an **artifact** (issue 271): a fixed
-copy of a file, in a version of an artifact that belongs to a user, kept in an artifact storage
-beyond the workspace and downloaded where it was published.
+A session may have a **workspace** attached: a tree of files that belongs to a user, with one
+classification, used by the members of those channels of the session where it and the channel flow
+both ways. Its files lie in a configured storage and are reached through a `Terminal`. What an agent
+hands over to keep it publishes as an **artifact**: a fixed copy of a file, in a version of an
+artifact that belongs to a user, kept in an artifact storage beyond the workspace and downloaded
+where it was published. Details: [WORKSPACE.md](WORKSPACE.md).
 
 Sessions and channels hold their users and agents by reference - `Participant::User(UserId)`,
-`Participant::Agent(AgentId)` - not as copies (issue 120). The records live in the `EntityStore`; a
-channel leaves out, with a warning, a participant whose record no longer exists, and runs without
-it. An approver has no record of its own and is held whole.
+`Participant::Agent(AgentId)` - not as copies. The records live in the `EntityStore`; a channel
+leaves out, with a warning, a participant whose record no longer exists, and runs without it. An
+approver has no record of its own and is held whole.
 
 Details: [CHANNELS.md](CHANNELS.md).
 
@@ -100,14 +90,14 @@ The path of one message shows how the parts fit together:
 
 A turn that fails ends the turn, not the agent: it is reported as `TurnGivenUp` and the agent
 returns to idle. A turn cut off by a crash is resumed when the agent is loaded again. Every turn has
-an id, which `ResponseStarted` announces and every message of the turn carries (issue 235).
+an id, which `ResponseStarted` announces and every message of the turn carries.
 
-What was said can be changed afterwards, but never rewritten (issue 234): its author modifies or
-takes back a message, and every store that holds it records the change after it, so that what an
-agent saw for an earlier answer can still be told as it was. An agent can be asked to answer again
-instead of its last answer; whether it does is its own to decide. Nothing forks. An answer still
-under way can be stopped alone, or asked for again: its turn is then given up before any of it
-reaches the channel's history, and the agent answers anew (issue 235).
+What was said can be changed afterwards, but never rewritten: its author modifies or takes back a
+message, and every store that holds it records the change after it, so that what an agent saw for an
+earlier answer can still be told as it was. An agent can be asked to answer again instead of its
+last answer; whether it does is its own to decide. Nothing forks. An answer still under way can be
+stopped alone, or asked for again: its turn is then given up before any of it reaches the channel's
+history, and the agent answers anew.
 
 Details: [AGENT-TURN.md](AGENT-TURN.md), [CHANNELS.md](CHANNELS.md), [EVENTS.md](EVENTS.md),
 [REST-SERVER.md](REST-SERVER.md#streams).
@@ -127,24 +117,24 @@ Components are wired by type, much like Spring beans: a component asks for the f
 the container builds whatever provides them. User commands such as `/help` are components as well,
 built once per session; a command that acts on an agent - `/compact` - is a component of its
 personality, which the user's actor sends to the agent and the agent carries out in a turn of its
-own (issue 269).
+own.
+
+Details: [COMPONENTS.md](COMPONENTS.md), [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md).
 
 ## Agents that run elsewhere
 
-An agent need not run here. A personality of kind `external` makes an **external agent** (issue
-179): another system with its own model, tools and memory, reached through the one component of the
-personality that provides `ExternalAgent` - `a2a_agent` speaks the Agent2Agent protocol. Its
+An agent need not run here. A personality of kind `external` makes an **external agent**: another
+system with its own model, tools and memory, reached through the one component of the personality
+that provides `ExternalAgent` - `a2a_agent` speaks the Agent2Agent protocol. Its
 `ExternalAgentActor` has no turn: it hears what is said in the channel, gives the remote agent what
 it has not heard yet when it is asked, and says what comes back, also on its own when a task of the
 remote agent ends later. What leaves the system is decided at the door: the roles its personality
 names limit what it is cleared for, and an external agent that names none sees only what is public.
 What the remote agent was given cannot be changed there; a message changed or taken back afterwards
-is told to it with its next call, by a notice in the name of its author (issue 236).
+is told to it with its next call, by a notice in the name of its author.
 
 Details: [CHANNELS.md](CHANNELS.md#actors-and-envelopes),
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md#personalities-limit-their-agents).
-
-Details: [COMPONENTS.md](COMPONENTS.md), [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md).
 
 ## What an agent remembers
 
@@ -159,14 +149,14 @@ Details: [MEMORY.md](MEMORY.md), [AGENT-TURN.md](AGENT-TURN.md).
 
 ## What an agent can look up
 
-What an agent knows how to do need not be built into its personality: a **skill** (issue 22) is a
-procedure written down - instructions only, no tools - that a user owns, shares and edits like a
-document, kept in the `EntityStore`. An agent with the `skills` component is shown a catalogue of
-the skills it may load where it is - name and description - and loads one when a task calls for it;
-a member can give it one with `/skill`. Either way the skill's text goes into the agent's own
-transcript, never into the system prompt or the channel's history, and loading it is a decision of
-its own (`UseSkill`), besides whether its classification may flow into the channel. An agent may
-also write a skill down, for its owner, with approval.
+What an agent knows how to do need not be built into its personality: a **skill** is a procedure
+written down - instructions only, no tools - that a user owns, shares and edits like a document,
+kept in the `EntityStore`. An agent with the `skills` component is shown a catalogue of the skills
+it may load where it is - name and description - and loads one when a task calls for it; a member
+can give it one with `/skill`. Either way the skill's text goes into the agent's own transcript,
+never into the system prompt or the channel's history, and loading it is a decision of its own
+(`UseSkill`), besides whether its classification may flow into the channel. An agent may also write
+a skill down, for its owner, with approval.
 
 Details: [SKILLS.md](SKILLS.md).
 
@@ -202,9 +192,9 @@ stores it and only then announces the change. For entities, that writer is a **c
 state, the channel loop, the agent's actor in its channel, or the agent's state handle. Agents and
 users have one controller per process, however many sessions they take part in.
 
-The server runs in one process today, but is cut so that it can run in several (issue 122): a
-session runs in exactly one instance, while agents and users may be active in several, kept in step
-through the global events.
+The server runs in one process today, but is cut so that it can run in several: a session runs in
+exactly one instance, while agents and users may be active in several, kept in step through the
+global events.
 
 Details: [STORAGE.md](STORAGE.md).
 
@@ -215,11 +205,11 @@ Two questions are kept apart:
 *   **Who may do what** is decided by one `SecurityManager` per process, asked with an `ActionType`
     and the `SecurityAttributes` (owner and access list) of the entity concerned. The default policy
     is ownership: owners do everything, whom the access list grants it read and use - a user, a
-    role, or a group: a team users make, or the participants of a session or channel (issue 286),
-    which follow who belongs to it. What a client may see, it reads through the runtime's
-    **views** (see [Reading what is there](#reading-what-is-there)), which ask the policy at every
-    step for that viewer; frontends never ask the policy themselves. Users come from a chain of user
-    providers, and the REST server authenticates them with a short-lived signed token.
+    role, or a group: a team users make, or the participants of a session or channel, which follow
+    who belongs to it. What a client may see, it reads through the runtime's **views** (see [Reading
+    what is there](#reading-what-is-there)), which ask the policy at every step for that viewer;
+    frontends never ask the policy themselves. Users come from a chain of user providers, and the
+    REST server authenticates them with a short-lived signed token.
 *   **What may flow where** is decided by classifications, not by who takes part. Every channel has
     a classification - a level from `public` to `strictly_confidential` and an audience of
     compartments, which the administrator configures - and one flow rule decides whether a channel
@@ -264,6 +254,7 @@ The design repeats a few decisions; new code follows them.
     event streams.
 *   [WEB-UI.md](WEB-UI.md) - the browser frontend: how it talks to the server and what it shows.
 *   [STORAGE.md](STORAGE.md) - entity and state store, controllers, several instances.
+*   [WORKSPACE.md](WORKSPACE.md) - workspaces, their storages and the commands run in them.
 *   [SECURITY.md](SECURITY.md) - the security manager, ownership, views, users, authentication,
     secrets.
 *   [CONFIDENTIALITY.md](CONFIDENTIALITY.md) - classifications, compartments and the flow rule, what
@@ -271,4 +262,5 @@ The design repeats a few decisions; new code follows them.
 *   [PERMISSION-CHECKS.md](PERMISSION-CHECKS.md) - the map of every permission check: which
     operation asks what, in whose name, by which concept, and where it is asked again.
 *   [CONFIGURATION.md](CONFIGURATION.md) - the sections of the configuration file.
+*   [LLM-MODELS.md](LLM-MODELS.md) - which settings suit which language model.
 *   [CODING-GUIDELINES.md](CODING-GUIDELINES.md) - coding style, error handling, logging, tests.

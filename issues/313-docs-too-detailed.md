@@ -1,6 +1,6 @@
 # 313 — The documents in `docs/` retell the code instead of explaining it
 
-**Status:** open
+**Status:** done
 **Area:** Maintenance
 
 ## The problem
@@ -98,3 +98,50 @@ point to it, so the documents do not grow back while they are reworked.
 ## History
 
 - **2026-10-11** — Opened.
+- **2026-10-11** — The rule is in `CODING-GUIDELINES.md` (*What goes where*), and step 4 of
+  AGENTS.md points to it. First document reworked by it, `AGENT-TURN.md`: 914 lines and 64 KB down
+  to 493 lines and 31 KB. Dropped: what doc comments already say (what a digest covers, how
+  control tokens are found, the wording of a notice), how older stored data is read, the fields of
+  the REST response, and the inline issue references. The rules of the cycle, of ending a turn, of
+  the chain and of the prompt parts are kept; two that only the code said again were kept as well
+  (a personality with two `ContextProvider`s is refused; a turn state without its working state
+  starts idle). Inbound links to its sections still resolve. The other documents wait for the
+  maintainer's review of this one.
+- **2026-10-11** — Done. The maintainer agreed with `AGENT-TURN.md` as the pattern and decided that
+  `PERMISSION-CHECKS.md`, redone from the code by issue 304 and kept with the security suite, stays
+  as it is. Every other document is reworked by the same rule; `docs/` went from 524 KB to 359 KB,
+  and the inline issue references from about 650 to 31. Lines and KB before and after:
+
+  | Document | before | after |
+  |---|---|---|
+  | `AGENT-TURN.md` | 914, 62 | 465, 28 |
+  | `CHANNELS.md` | 904, 63 | 638, 41 |
+  | `TOOLS-AND-COMMANDS.md` | 841, 62 | 591, 41 |
+  | `SECURITY.md` | 654, 44 | 508, 34 |
+  | `WEB-UI.md` | 624, 47 | 360, 23 |
+  | `CONFIDENTIALITY.md` | 596, 37 | 510, 31 |
+  | `STORAGE.md` | 501, 35 | 307, 19 |
+  | `REST-SERVER.md` | 310, 36 | 253, 18 |
+  | `COMPONENTS.md` | 297, 25 | 263, 21 |
+  | `ARCHITECTURE.md` | 274, 17 | 265, 16 |
+  | `MEMORY.md` | 254, 20 | 197, 14 |
+  | `CODING-GUIDELINES.md` | 237, 13 | 256, 14 |
+  | `SKILLS.md` | 141, 9 | 119, 7 |
+  | `CONFIGURATION.md` | 79, 10 | 92, 9 |
+  | `LLM-MODELS.md` | 66, 3 | 66, 3 |
+  | `EVENTS.md` | 53, 3 | 52, 2 |
+
+  What was dropped was checked to be in the code's doc comments or another document; rules that
+  only a document stated stayed in it, some moved to where they belong (rules spread over the rows
+  of the REST endpoint table are a list of their own). The documents that were rules or reference
+  throughout - `CONFIDENTIALITY.md`, `ARCHITECTURE.md`, `CODING-GUIDELINES.md`, the tables of
+  `CONFIGURATION.md` and `COMPONENTS.md` - shrank least. Every link between the documents and from
+  the issues into them resolves.
+- **2026-10-11** — At the maintainer's request, workspaces have a document of their own,
+  `WORKSPACE.md`: what a workspace is, how a session comes to one, its storages and how far they
+  keep workspaces apart, and how commands live. It gathers what `STORAGE.md`, `CHANNELS.md`,
+  `TOOLS-AND-COMMANDS.md` and `CONFIDENTIALITY.md` said of it; those keep a short section that
+  links to it, and `CONFIDENTIALITY.md` the rules of who is cleared for a workspace. In
+  `AGENT-TURN.md` the section on control tokens, an implementation detail, and the note on the one
+  `ContextProvider`, which `COMPONENTS.md` holds, are dropped, and the runtime's prompt parts are
+  shortened to their rules.

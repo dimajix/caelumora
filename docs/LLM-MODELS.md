@@ -26,14 +26,14 @@ component_defaults:
 |---|---|---|
 | `sender_format` | `xml` | Attributes every message right (6 of 6 probes, 30 answers); with `prefix` it reads "@carol: ... Alice, what's our budget?" as Alice asking, every time, and a sixth of its answers begin with a marker of their own (`RESULTS.md`, findings 19-20) |
 | `sender_style` | `handle` | No difference to attribution; the model addresses senders as the roster names them (`@carol`) |
-| `context_size` | as much as the machine holds, e.g. `65536` | The model was trained for 262144 tokens; unless told, Ollama loads it with its own default, which may be far fewer, and cuts a longer prompt off without saying so. Set, the gauge in the web UI knows the size (issue 209) |
+| `context_size` | as much as the machine holds, e.g. `65536` | The model was trained for 262144 tokens; unless told, Ollama loads it with its own default, which may be far fewer, and cuts a longer prompt off without saying so. Set, the gauge in the web UI knows the size |
 | `think` | left out | Ollama's default for the model; not measured |
 | `reasoning_history` | `current_turn` (default) | What reasoning models document; not measured for gemma4 |
-| `system_messages` | `only_at_start` (default) | Holds for every model. Whether gemma4 keeps a later system message in place is not measured: Ollama renders its chat template internally (issue 49) |
+| `system_messages` | `only_at_start` (default) | Holds for every model. Whether gemma4 keeps a later system message in place is not measured: Ollama renders its chat template internally |
 
 ## Telling who said what
 
-How a model is told the sender of a message (`sender_format`, `sender_style`, issue 135) matters
+How a model is told the sender of a message (`sender_format`, `sender_style`) matters
 most in a channel with several participants. Measured on 2026-09-30 with formats close to, not
 identical with, today's (`RESULTS.md`, findings 1-5; `results/overview.md`), the share of probes
 answered right that need the sender:
@@ -56,7 +56,7 @@ format. Only gemma4 was measured again with exactly what Caelumora sends (findin
 Every model needs the format explained, which the roster part does
 (`channel_members_prompt_provider`); without the explanation some imitate the marker in their
 answers. Whatever the format, a marker is a claim: a participant can write another's into their own
-message, and the models measured believe it (issue 150, findings 8 and 12-18). Nothing with
+message, and the models measured believe it (findings 8 and 12-18). Nothing with
 consequences may rest on whom the model believes said something.
 
 ## External agents
