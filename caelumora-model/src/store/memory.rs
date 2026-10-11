@@ -11,6 +11,7 @@ use std::sync::{Arc, RwLock};
 use crate::removal::{Deletable, Removal, Stored};
 use crate::scope::Scoped;
 use crate::value::name::ScopedName;
+use crate::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
 use crate::security::{DummySecurityManager, SecurityManager};
 use crate::store::access::{name_free, Access, Actions, AGENTS, ARTIFACTS, CHANNELS, COMPONENTS, GROUPS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, SKILLS, USERS, USER_PROFILES, WORKSPACES};
 use crate::workspace::{Workspace, WorkspaceId};
@@ -30,6 +31,8 @@ use crate::session::SessionField;
 #[derive(Debug)]
 pub struct MemoryStore {
     security_manager: Arc<dyn SecurityManager>,
+    /// Who is cleared for what is reached by clearance (issue 322).
+    confidentiality: Arc<dyn ConfidentialityPolicy>,
     personalities: RwLock<HashMap<PersonalityId, Personality>>,
     session_templates: RwLock<HashMap<SessionTemplateId, SessionTemplate>>,
     agents: RwLock<HashMap<AgentId, Agent>>,
@@ -49,7 +52,7 @@ pub struct MemoryStore {
 
 impl Default for MemoryStore {
     fn default() -> Self {
-        Self::with_security_manager(Arc::new(DummySecurityManager::new()))
+        Self::with_policies(Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()))
     }
 }
 
@@ -59,11 +62,14 @@ impl MemoryStore {
         Self::default()
     }
 
-    /// A store that asks `security_manager` about every access to an entity.
-    pub fn with_security_manager(security_manager: Arc<dyn SecurityManager>) -> Self {
+    /// A store that asks `security_manager` about every access to an
+    /// entity, and `confidentiality` whether the caller is cleared for what
+    /// is reached by clearance.
+    pub fn with_policies(security_manager: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> Self {
         info!("Creating memory store");
         Self {
             security_manager,
+            confidentiality,
             personalities: Default::default(),
             session_templates: Default::default(),
             agents: Default::default(),
@@ -83,7 +89,7 @@ impl MemoryStore {
     }
 
     fn access<'a>(&'a self, ctx: &'a SecurityContext) -> Access<'a> {
-        Access::new(self.security_manager.as_ref(), ctx)
+        Access::new(self.security_manager.as_ref(), self.confidentiality.as_ref(), ctx)
     }
 
     // A poisoned lock is used anyway: the locks are held only by the
@@ -708,6 +714,8 @@ impl StateStore for MemoryStore {
 mod tests {
     use super::*;
     use crate::store::suite;
+    use crate::confidentiality::ConfidentialityRules;
+    use crate::security::OwnershipSecurityManager;
 
     #[tokio::test]
     async fn behaves_as_an_entity_store() {
@@ -729,7 +737,7 @@ mod tests {
         use crate::confidentiality::Classification;
         use crate::scope::Scope;
         use crate::security::OwnershipSecurityManager;
-        let store = MemoryStore::with_security_manager(Arc::new(OwnershipSecurityManager::new()));
+        let store = MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()));
         let (alice, bob) = (UserId::new(), UserId::new());
         let mut hers = Vec::new();
         for (index, owner) in [alice, bob, bob, alice, bob, alice].into_iter().enumerate() {
@@ -777,7 +785,7 @@ mod tests {
     #[tokio::test]
     async fn keeps_names_unique() {
         suite::names_are_unique(&MemoryStore::new()).await;
-        let owners = MemoryStore::with_security_manager(Arc::new(crate::security::OwnershipSecurityManager::new()));
+        let owners = MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()));
         suite::names_are_unique_beyond_what_is_read(&owners).await;
     }
 }

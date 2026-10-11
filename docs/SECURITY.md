@@ -176,7 +176,15 @@ The stores ask the same way for every entity kind (`store::access`):
 
 *   **Reads** are checked with the attributes as stored. An entity the caller may not read is
     reported as not found, so ids cannot be probed.
-*   **Lists** are filtered by what the caller may read.
+*   **The clearance** is asked next of what is classified - a channel, a workspace, a skill, an
+    artifact (`Stored::classification`, issue 322): who is not cleared for it does not find it
+    either, for every operation below, the deleted included. What the views read in the runtime's
+    name they reach themselves: a channel from the reader's place (`view::channel_reading`) - an
+    agent may read one it is not cleared for as a whole entry by entry -, an artifact by the access
+    lists of its versions, which the store does not check yet
+    (issue [316](../issues/316-store-checks-artifact-without-versions.md)).
+*   **Lists** are filtered by what the caller reaches: what they may read and are cleared for. What
+    a list returns is the store's to decide; a view does not filter it again.
 *   **Changes and deletions** are checked against the attributes *as stored*, never against those of
     the new value, which the caller controls.
 *   **Creations** are checked against the new entity's attributes.
@@ -372,9 +380,8 @@ changed:
     for it - what the views ask (`channel_reading` for a channel). An operation that names its
     object by id reaches it as one that navigated to it. Who may not reach it is answered "not
     found", so that nothing can be probed; a channel deleted is "gone" only to whom a live one
-    would be there. What was deleted is reached as the store lists it, by `ReadDeleted`; that the
-    clearance is asked outside the store is issue
-    [322](../issues/322-clearance-decided-outside-the-store.md).
+    would be there. What is read through the store is reached by it, the clearance included (see
+    [How stores check](#how-stores-check)); what was deleted is reached as the store lists it.
 2.  **The actor's own request** - its form, the structure of the reached object, the flow of what
     they ask for - may be asked next: it tells them nothing they could not know.
 3.  **The actor's own permission** comes before anything of others and before anything is changed:

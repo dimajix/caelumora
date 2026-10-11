@@ -222,6 +222,10 @@ impl crate::removal::Stored for Artifact {
         }
         Ok(())
     }
+
+    fn classification(&self) -> Option<&Classification> {
+        Some(&self.classification)
+    }
 }
 
 impl crate::removal::Deletable for Artifact {

@@ -8,8 +8,8 @@
 //! global scope, its owner's or a session's. Who may read, change and use
 //! it is the policy's; that its owner is cleared for its classification is
 //! asked here, as for a workspace, so that nobody writes what they could
-//! not read. A skill named by its id is reached as the views reach it -
-//! read and cleared for - before anything is done with it (issue 312).
+//! not read. A skill named by its id is reached by the store, as the views
+//! reach it: read and cleared for (issues 312, 322).
 
 use crate::event::EventBus;
 use crate::scoped::{deleted_since, deleted_unless_refused, restored_unless_refused, within};
@@ -19,7 +19,7 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::skill::{Skill, SkillId, SkillUpdateEvent};
-use caelumora_model::store::{EntityStore, StoreError};
+use caelumora_model::store::{EntityStore, StoreError, StoreResultExt};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::{Description, SkillBody};
 use caelumora_model::value::ValueError;
@@ -75,22 +75,10 @@ impl fmt::Debug for SkillManager {
 
 impl SkillManager {
     /// Who may do what is asked by the store `entities`, which every write
-    /// goes through; the manager asks the flow and the reach alone (issues
-    /// 304, 312).
+    /// goes through - the clearance for a skill reached included (issue
+    /// 322); the manager asks the flow alone (issue 304).
     pub(crate) fn new(entities: Arc<dyn EntityStore>, events: Arc<EventBus>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> Self {
         Self { entities, events, confidentiality, writing: Mutex::new(()) }
-    }
-
-    /// Skill `id`, reached as the views reach it (issue 312): `ctx` may read
-    /// it (`GetSkill`) and is cleared for its classification.
-    ///
-    /// # Errors
-    /// `NotFound` if there is none they may read or are cleared for;
-    /// whatever else the store reports.
-    async fn reached(&self, ctx: &SecurityContext, id: SkillId) -> SkillResult<Skill> {
-        let skill = self.entities.get_skill(ctx, id).await.map_err(store_error(id))?;
-        self.confidentiality.require_cleared_for(ctx, &skill.classification, || SkillError::NotFound(id))?;
-        Ok(skill)
     }
 
     /// Whether the one `ctx` acts for is cleared for `classification`: what
@@ -160,8 +148,8 @@ impl SkillManager {
         self.update(ctx, id, SkillUpdateEvent::ClassificationChanged(classification)).await
     }
 
-    /// Applies `event` to skill `id` on behalf of `ctx`: reached as the
-    /// views reach it, stored, which is where the permission is checked
+    /// Applies `event` to skill `id` on behalf of `ctx`: reached by the
+    /// store, stored, which is where the permission is checked
     /// (`UpdateSkill`), then announced. A new classification is validated
     /// and its flow asked before.
     ///
@@ -171,7 +159,7 @@ impl SkillManager {
     /// or `NotCleared` for a classification, or whatever the store reports.
     async fn update(&self, ctx: &SecurityContext, id: SkillId, event: SkillUpdateEvent) -> SkillResult<Skill> {
         let _writing = self.writing.lock().await;
-        let mut skill = self.reached(ctx, id).await?;
+        let mut skill = self.entities.get_skill(ctx, id).await.map_err(store_error(id))?;
         // Announced to who reaches it as it was, too: who no longer does
         // learns so (issue 312).
         let had = skill.classification.clone();
@@ -193,17 +181,13 @@ impl SkillManager {
     }
 
     /// Deletes skill `id` (`DeleteSkill`): marked, kept. `false` if there
-    /// was none the caller could reach.
+    /// was none the caller could reach, by the store.
     ///
     /// # Errors
     /// Whatever the store reports, `PermissionDenied` included.
     pub async fn delete(&self, ctx: &SecurityContext, id: SkillId) -> SkillResult<bool> {
         let _writing = self.writing.lock().await;
-        let skill = match self.reached(ctx, id).await {
-            Ok(skill) => skill,
-            Err(SkillError::NotFound(_)) => return Ok(false),
-            Err(e) => return Err(e),
-        };
+        let Some(skill) = self.entities.get_skill(ctx, id).await.optional()? else { return Ok(false) };
         if !self.entities.delete_skill(ctx, id).await? {
             return Ok(false);
         }

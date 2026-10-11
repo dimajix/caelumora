@@ -214,10 +214,11 @@ mod tests {
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::user::{User, UserUpdateEvent};
     use std::time::Duration;
+    use caelumora_model::confidentiality::ConfidentialityRules;
 
     fn manager() -> (Arc<MemoryStore>, Arc<EventBus>, ControllerManager) {
         let store = Arc::new(MemoryStore::new());
-        let bus = Arc::new(EventBus::new(Arc::new(DummySecurityManager::new()), Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default())));
+        let bus = Arc::new(EventBus::new(Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default())));
         let manager = ControllerManager::new(Arc::<MemoryStore>::clone(&store), Arc::clone(&bus));
         (store, bus, manager)
     }

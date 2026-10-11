@@ -188,7 +188,7 @@ mod tests {
             self.0.lock().unwrap().push(event);
         }
 
-        fn publish_classified(&self, event: GlobalEvent, attributes: SecurityAttributes, _classifications: &[caelumora_model::confidentiality::Classification]) {
+        fn publish_classified(&self, event: GlobalEvent, attributes: SecurityAttributes, _classifications: &[Classification]) {
             self.publish(event, attributes);
         }
     }

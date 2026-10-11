@@ -407,10 +407,10 @@ impl WorkspaceManager {
     }
 
     /// Workspace `id`, used directly by whoever `ctx` acts for, wherever the
-    /// caller acts (issue 23): reached as the views reach it (issue 304) - its
-    /// access list lets them read it (`GetWorkspace`) and they are cleared
-    /// for its classification -, then if it grants them what `need` asks
-    /// for (`WriteWorkspace`).
+    /// caller acts (issue 23): reached as the views reach it, by the store -
+    /// its access list lets them read it (`GetWorkspace`) and they are
+    /// cleared for its classification (issues 304, 322) -, then if it grants
+    /// them what `need` asks for (`WriteWorkspace`).
     ///
     /// # Errors
     /// `NotFound` if there is none they may read or are cleared for, so
@@ -418,7 +418,6 @@ impl WorkspaceManager {
     /// files where `need` asks to; or whatever else the store reports.
     pub(crate) async fn reached(&self, ctx: &SecurityContext, id: WorkspaceId, need: Grant) -> WorkspaceResult<Workspace> {
         let workspace = self.entities.get_workspace(ctx, id).await.map_err(store_error(id))?;
-        self.confidentiality.require_cleared_for(ctx, &workspace.classification, || WorkspaceError::NotFound(id))?;
         if need == Grant::Write {
             self.security.require(ctx, ActionType::WriteWorkspace(&workspace.security_attributes), || WorkspaceError::ReadOnly(id)).await?;
         }

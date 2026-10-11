@@ -403,34 +403,26 @@ impl Views {
         Ok(deleted)
     }
 
-    /// The workspaces the viewer may read (issue 23) - their own and those
-    /// shared with them, wherever they lie - and is cleared for, in the
-    /// order the store lists them.
+    /// The workspaces the store lists for the viewer (issues 23, 322) -
+    /// their own and those shared with them, wherever they lie, that they
+    /// are cleared for -, in the order it lists them.
     ///
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn workspaces(&self) -> ViewResult<Vec<WorkspaceView>> {
         let workspaces = self.entities.list_workspaces(self.viewer.context(), &Query::all()).await.map(|page| page.items)
             .map_err(|e| ViewError::failed(e, "listing the workspaces"))?;
-        let mut readable = Vec::with_capacity(workspaces.len());
-        for workspace in workspaces {
-            if self.cleared_for(&workspace.classification) {
-                readable.push(WorkspaceView::of(self.clone(), workspace));
-            }
-        }
-        Ok(readable)
+        Ok(workspaces.into_iter().map(|workspace| WorkspaceView::of(self.clone(), workspace)).collect())
     }
 
-    /// Workspace `id`, if the viewer may read it (`GetWorkspace`, issue 23)
-    /// and is cleared for it.
+    /// Workspace `id`, if the store lets the viewer reach it - read it
+    /// (`GetWorkspace`, issue 23) and be cleared for it (issue 322).
     ///
     /// # Errors
-    /// `WorkspaceNotFound` if there is none they may read - one they are
-    /// not cleared for is the same.
+    /// `WorkspaceNotFound` if there is none they may reach.
     pub async fn workspace(&self, id: WorkspaceId) -> ViewResult<WorkspaceView> {
         match self.entities.get_workspace(self.viewer.context(), id).await.optional() {
-            Ok(Some(workspace)) if self.cleared_for(&workspace.classification) => Ok(WorkspaceView::of(self.clone(), workspace)),
-            Ok(Some(_)) => Err(ViewError::WorkspaceNotFound(id)),
+            Ok(Some(workspace)) => Ok(WorkspaceView::of(self.clone(), workspace)),
             Ok(None) => Err(ViewError::WorkspaceNotFound(id)),
             Err(e) => Err(ViewError::failed(e, "reading a workspace")),
         }
@@ -733,41 +725,34 @@ impl Views {
     /// Whether the viewer is cleared for `classification` (issue 133), by
     /// the roles of their context - an agent's narrowed by its personality
     /// (issue 304): what one is not cleared for is the same as what does not
-    /// exist - a channel, a skill.
+    /// exist - an artifact, whose reach the store does not decide yet
+    /// (issues 316, 322).
     pub(super) fn cleared_for(&self, classification: &Classification) -> bool {
         self.confidentiality.cleared_for(self.viewer.context(), classification)
     }
 
-    /// The skills the viewer may read (`GetSkill`) and is cleared for (issue
-    /// 22): their own, those shared with them, the system's.
+    /// The skills the store lists for the viewer (issues 22, 322): their
+    /// own, those shared with them, the system's, that they are cleared
+    /// for.
     ///
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn skills(&self) -> ViewResult<Vec<SkillView>> {
         let skills = self.entities.list_skills(self.viewer.context(), &Query::all()).await.map(|page| page.items)
             .map_err(|e| ViewError::failed(e, "listing the skills"))?;
-        let mut readable = Vec::with_capacity(skills.len());
-        for skill in skills {
-            if self.cleared_for(&skill.classification) {
-                readable.push(SkillView::of(self.clone(), skill));
-            }
-        }
-        Ok(readable)
+        Ok(skills.into_iter().map(|skill| SkillView::of(self.clone(), skill)).collect())
     }
 
-    /// Skill `id`, if the viewer may read it and is cleared for it.
+    /// Skill `id`, if the store lets the viewer reach it - read it and be
+    /// cleared for it.
     ///
     /// # Errors
-    /// `SkillNotFound` if there is none they may read, alike.
+    /// `SkillNotFound` if there is none they may reach.
     pub async fn skill(&self, id: SkillId) -> ViewResult<SkillView> {
-        let skill = match self.entities.get_skill(self.viewer.context(), id).await.optional() {
-            Ok(Some(skill)) => skill,
-            Ok(None) => return Err(ViewError::SkillNotFound(id)),
-            Err(e) => return Err(ViewError::failed(e, "reading a skill")),
-        };
-        match self.cleared_for(&skill.classification) {
-            true => Ok(SkillView::of(self.clone(), skill)),
-            false => Err(ViewError::SkillNotFound(id)),
+        match self.entities.get_skill(self.viewer.context(), id).await.optional() {
+            Ok(Some(skill)) => Ok(SkillView::of(self.clone(), skill)),
+            Ok(None) => Err(ViewError::SkillNotFound(id)),
+            Err(e) => Err(ViewError::failed(e, "reading a skill")),
         }
     }
 
@@ -796,12 +781,12 @@ impl Views {
     }
 
     /// The skills an agent may load where it reads from (issue 22): of those
-    /// it may read, each it may use (`UseSkill`), is cleared for (as a user
-    /// reading skills is, issue 304) and whose classification it may put
-    /// into its channel (`may_publish`, as what a turn writes is asked) -
-    /// and of those, for every name the one found from its channel (the
-    /// innermost: the session's before its owner's before the global one).
-    /// By name. None for a viewer who reads from no place: skills are loaded
+    /// the store lists for it - read and cleared for, as for a user (issues
+    /// 304, 322) -, each it may use (`UseSkill`) and whose classification it
+    /// may put into its channel (`may_publish`, as what a turn writes is
+    /// asked) - and of those, for every name the one found from its channel
+    /// (the innermost: the session's before its owner's before the global
+    /// one). By name. None for a viewer who reads from no place: skills are loaded
     /// into turns.
     ///
     /// # Errors
@@ -818,7 +803,6 @@ impl Views {
         let mut usable = Vec::with_capacity(skills.len());
         for skill in skills {
             if self.security.may_use_skill(context, &skill.security_attributes).await
-                && self.cleared_for(&skill.classification)
                 && self.confidentiality.may_publish(context, &skill.classification, &place.classification)
             {
                 usable.push(skill);

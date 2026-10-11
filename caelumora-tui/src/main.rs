@@ -457,10 +457,10 @@ async fn main() -> anyhow::Result<()> {
     let security_manager = config.create_security_manager(Arc::<StoreMemberships>::clone(&memberships));
     // What may flow where, decided apart from who may do what (issue 304).
     let confidentiality = config.create_confidentiality_policy();
-    let state_store = config.create_state_store(Arc::clone(&security_manager))?;
-    let entity_store = config.create_entity_store(Arc::clone(&security_manager))?;
+    let state_store = config.create_state_store(Arc::clone(&security_manager), Arc::clone(&confidentiality))?;
+    let entity_store = config.create_entity_store(Arc::clone(&security_manager), Arc::clone(&confidentiality))?;
     memberships.bind(&entity_store);
-    let component_store = config.create_component_store(Arc::clone(&security_manager))?;
+    let component_store = config.create_component_store(Arc::clone(&security_manager), Arc::clone(&confidentiality))?;
     let secret_manager = config.create_secret_manager(Arc::clone(&security_manager))?;
 
     let runtime = Arc::new(RuntimeManager::new(

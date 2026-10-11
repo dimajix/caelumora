@@ -4,6 +4,7 @@ use crate::approval::{ApprovalRule, ApprovalStrategy, Approver, ApproverId};
 use crate::chain::Stored;
 use crate::component::{ComponentConfig, ComponentDescriptor};
 use crate::confidentiality::Classification;
+use crate::removal::{self, Deletable, Removal};
 use crate::value::language::Language;
 use crate::message::MessageId;
 use crate::message_history::{HistoryEntry, MessageHistory};
@@ -140,7 +141,22 @@ pub struct HistoryLimit {
     pub start: HistoryStart,
 }
 
-crate::impl_deletable!(Channel);
+// `removal::Stored`, beside the `chain::Stored` of the channel's history.
+impl removal::Stored for Channel {
+    fn deleted(&self) -> Option<&Removal> {
+        self.deleted.as_ref()
+    }
+
+    fn classification(&self) -> Option<&Classification> {
+        Some(&self.classification)
+    }
+}
+
+impl Deletable for Channel {
+    fn set_deleted(&mut self, deleted: Option<Removal>) {
+        self.deleted = deleted;
+    }
+}
 
 /// A channel's name is unique in its session (issue 250).
 impl Scoped for Channel {

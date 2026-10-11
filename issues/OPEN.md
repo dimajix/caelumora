@@ -55,7 +55,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [316](316-store-checks-artifact-without-versions.md) | open | The store checks an artifact against its own access list only, not its versions', so the views list and read artifacts in the runtime's name and decide themselves who may read them.
 | [317](317-teams-listed-by-a-scan.md) | open | `Views::groups` lists the viewer's teams by reading every group and asking the policy of each, while `Views::artifacts` finds them by a query.
 | [321](321-channel-components-in-the-owners-name.md) | open | A channel's components act in its owner's name with the roles of when the channel was built, a context nobody decided on, so what they may read or use depends on when the channel was last built. |
-| [322](322-clearance-decided-outside-the-store.md) | open | Whether one is cleared for a classified entity is asked by the views, three managers and the event bus each, besides the store, so that what a reader forgets to ask is found, and the deleted are reached by other rules than the live. |
 
 ## Tools and approvals
 

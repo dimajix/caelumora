@@ -35,10 +35,11 @@ use tokio::sync::broadcast;
 pub(crate) fn owned_store(rules: ConfidentialityRules) -> (Arc<dyn SecurityManager>, Arc<dyn ConfidentialityPolicy>, Arc<MemoryStore>) {
     let memberships = Arc::new(StoreMemberships::new());
     let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_memberships(Arc::<StoreMemberships>::clone(&memberships)));
-    let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
+    let confidentiality: Arc<dyn ConfidentialityPolicy> = Arc::new(rules);
+    let store = Arc::new(MemoryStore::with_policies(Arc::clone(&policy), Arc::clone(&confidentiality)));
     let entities: Arc<dyn EntityStore> = Arc::<MemoryStore>::clone(&store);
     memberships.bind(&entities);
-    (policy, Arc::new(rules), store)
+    (policy, confidentiality, store)
 }
 
 /// A user named `name`, not stored.

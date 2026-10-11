@@ -1,6 +1,6 @@
 # 322 — Whether one is cleared for what one reaches is decided outside the store
 
-**Status:** open
+**Status:** done
 **Area:** Identity and access management
 
 ## The problem
@@ -54,3 +54,20 @@ second filter beside the store's, written in several places.
 
 - **2026-10-11** — Opened from issue 312, where the maintainer decided that lists are the store's
   to decide and the trashes are not filtered again in the views.
+- **2026-10-11** — Done, as decided with the maintainer: the store reaches workspaces and skills,
+  the clearance included (`Stored::readers_cleared_for`; `MemoryStore::with_policies` and
+  `JsonFileStore::new` take a `ConfidentialityPolicy`), for every operation, the deleted alike. The
+  views no longer filter the lists of workspaces and skills, `usable_skills` no longer asks the
+  clearance, `WorkspaceManager::reached` asks only `WriteWorkspace` besides the store, and
+  `SkillManager::reached` is gone. The store's list filter and the event bus ask one function,
+  `confidentiality::may_reach`. Channels stay with `view::channel_reading`, since an agent reads
+  one it is not cleared for entry by entry from its place, which a context does not carry;
+  artifacts follow with issue [316](316-store-checks-artifact-without-versions.md). SECURITY.md,
+  STORAGE.md and the map say so.
+- **2026-10-11** — Extended: the views read channels and artifacts in the runtime's name, so that
+  asking the clearance of them in the store takes nothing from an agent reading another channel
+  entry by entry; the reason given above for leaving them out did not hold. `readers_cleared_for`
+  became `Stored::classification`, which every classified kind answers - channels, workspaces,
+  skills, artifacts -, and the store asks the clearance of all of them. `ArtifactManager::reached`
+  is gone; the views keep reaching what they read in the runtime's name themselves:
+  `channel_reading` for a channel, the versions' lists for an artifact (issue 316).

@@ -4,7 +4,8 @@ This document is the map of every place where the runtime asks a permission ques
 operation asks, in whose name, what, which concept decides it, by which of the five reasons it is
 asked, and where the same question is asked again on the way. It records what the code does at the
 end of issue [304](../issues/304-review-of-the-permission-concept.md) (2026-10-11), redone from the
-code, and brought up to date by issue [312](../issues/312-order-and-reach-not-everywhere.md). The rules it is measured against - the three decisions, the order, the five reasons to ask -
+code, and brought up to date by issues [312](../issues/312-order-and-reach-not-everywhere.md) and
+[322](../issues/322-clearance-decided-outside-the-store.md). The rules it is measured against - the three decisions, the order, the five reasons to ask -
 are in [SECURITY.md](SECURITY.md#where-permission-checks-go) and
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md); what each action is expected to ask is asserted by the
 security suite (`caelumora-runtime/tests/security_suite.rs`, issue 198). A new action, or a change
@@ -19,7 +20,7 @@ Who may do what is decided by four concepts. Since issue 304 each has its own fu
 | 1 | **Ownership and access lists**: who may read, use, change or delete a stored thing | the `SecurityManager`, from `SecurityAttributes` (`owner_id`, `acl` naming actors, roles and groups) and the context's principal; `OwnershipSecurityManager::granted` | `Get*`, `Create*`, `Update*`, `Delete*`, `Write*`, `UseSkill`, `ReadDeleted`, `Restore`, and the acts in a conversation (`CancelChannel`, `WakeChannel`, `RetryMessage`, `AnswerQuestion`) |
 | 2 | **Flow and clearance**: whether information may go where the act takes it, and who is cleared for it | the `ConfidentialityPolicy` (`ConfidentialityRules`), from the roles in the context, the classifications and the places | `may_publish`, `may_copy_information`, `cleared_for`, and their `require_*` forms; `require_classifiable` is validation |
 | 3 | **Rules of particular actions**: what is neither ownership nor flow | a rule written into the policy for the variant: authorship, who answers for an agent, the system alone; or nothing, the action being a hook | `ModifyMessage`, `RevokeMessage`, `Reclassify`, `ApproveToolCall`, `ShowAgentCommand`, `ExecuteAgentCommand`, `ShowCommand`, `ExecuteCommand`, `Purge`; `CallTool`, `ReadSecret` |
-| 4 | **Reach**: whether a thing can be reached from where one stands | reading it (1) followed by the flow (2): `view::channel_reading` for a channel - `GetChannel`, then for a user the clearance, for an agent the copy into its place -, `Get*` and `cleared_for` for a workspace, a skill, an artifact | no action of its own; answered "not found" |
+| 4 | **Reach**: whether a thing can be reached from where one stands | reading it (1) followed by the flow (2), one question (`confidentiality::may_reach`, issue 322): the store's for what is classified - `Get*` or `ReadDeleted`, then `cleared_for` (`Stored::classification`); for a channel read from a place `view::channel_reading` over a document read in S - `GetChannel`, then for a user the clearance, for an agent the copy into its place; for an artifact the views' over documents read in S, by its versions' lists (issue 316) | no action of its own; answered "not found" |
 
 ## Which concept decides each action
 
@@ -53,7 +54,7 @@ message, note or memory entry by the caller - an agent is judged as itself for w
 
 | Layer | Asks | Form | Refusal |
 |---|---|---|---|
-| **Store** (`caelumora-model/src/store/access.rs`), rule 1 | `Get*` on every read; `List*`, then `Get*` per item as a filter; `Create*` with the new attributes; `Get*` then `Update*`/`Delete*` on the stored ones; `ReadDeleted` then `Restore`/`Purge` - always Read before the verb | `require`; `check` as the list filter | `NotFound` for what may not be read, `PermissionDenied` for what may not be changed, `Ok(false)` for what cannot be deleted |
+| **Store** (`caelumora-model/src/store/access.rs`), rule 1 and reach | `Get*` on every read; `List*`, then `Get*` per item as a filter; `Create*` with the new attributes; `Get*` then `Update*`/`Delete*` on the stored ones; `ReadDeleted` then `Restore`/`Purge` - always Read before the verb; after the Read, for what is classified, `cleared_for` (issue 322) | `require`, `require_cleared_for`; `may_reach` as the list filter | `NotFound` for what may not be read or is not cleared for, `PermissionDenied` for what may not be changed, `Ok(false)` for what cannot be deleted |
 | **Managers** (`SessionManager`, `SessionLoop`, `AgentManager`, `WorkspaceManager`, `ArtifactManager`, `SkillManager`, `GroupManager`, `SecretManager`), rules 2 and 4 | their verb before they act, where they act before they store; the flow of what they keep or make | `require`, `require_*` | the manager's error |
 | **Channel loop** (`ChannelLoop`), rules 2 and 3 | what changes the channel, who is admitted, and what enters it (`admission`) | `require`, `require_*` | `ChannelError::Forbidden`, `NotCleared`; `MessageRejected` to the sender |
 | **Owners of acts** (`ToolExecutor`, `CommandExecutor`, the agent carrying out a command, the approver, components on what they keep), rule 4 | the act's own question, once | `require` | the act's own answer: a forbidden result, `CommandFailed`, a left-out answer |
@@ -72,7 +73,9 @@ owner as principal, whoever asked as initiator); **A** the agent's own (its owne
 **E** an envelope's, as its sender's actor set it; **V** a viewer's (U, or T with the place the
 agent reads from); **C** the channel owner's (the channel's components); **S** the system's, which
 asks nothing. After the name the concept. The rule column names the reason it is asked (R1-R5,
-SECURITY.md); "store" is the store layer, in the context the caller passes.
+SECURITY.md); "store" is the store layer, in the context the caller passes. Every Read of the store
+of what is classified - a channel, a workspace, a skill, an artifact - is followed by `cleared_for`
+in the same context (issue 322), named in the rows where it is the reason of a refusal.
 
 ### Sessions
 
@@ -165,25 +168,25 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 
 | Operation | Questions in order | Rule | Again | Refusal |
 |---|---|---|---|---|
-| A user lists or reads skills (`Views::skills`, `skill`) | store `GetSkill` (V,1); `cleared_for` (V,2) | R1 + reach | - | left out; `SkillNotFound` |
-| An agent's catalogue, `list_skills`, `load_skill`, `/skills`, `/skill`, compaction (`Views::usable_skills`, `usable_skill_named`) | store `GetSkill` of what is seen from the place (T,1); `UseSkill` (T,1); `cleared_for` (T,2); `may_publish` into the place (T,2) | reach | - | left out; `NoSkillNamed` |
+| A user lists or reads skills (`Views::skills`, `skill`) | store `GetSkill` (V,1), `cleared_for` (V,2) | R1 + reach (store) | - | left out; `SkillNotFound` |
+| An agent's catalogue, `list_skills`, `load_skill`, `/skills`, `/skill`, compaction (`Views::usable_skills`, `usable_skill_named`) | store `GetSkill` of what is seen from the place (T,1), `cleared_for` (T,2); `UseSkill` (T,1); `may_publish` into the place (T,2) | reach (store) | - | left out; `NoSkillNamed` |
 | Create (`SkillManager::create`) | `require_classifiable`; `require_cleared_for` (U or T,2); store `CreateSkill` (1) | R4 (flow) + R1 | - | `ClassificationRefused`, `NotCleared`, `PermissionDenied`, `NameTaken` |
-| Change, reclassify (`SkillManager::update`) | reached: store `GetSkill`, `cleared_for` (2), else `NotFound`; for a classification `require_classifiable`, `require_cleared_for`; store `GetSkill` + `UpdateSkill` | reach + R1 (+ flow) | `GetSkill` (store) | `NotFound`, `ClassificationRefused`, `NotCleared`, `PermissionDenied` |
-| Delete, restore, purge (`SkillManager`) | delete: reached - `GetSkill`, `cleared_for` (2) -, else `false`; restore, purge: the store alone, as the trash lists them (issue [322](../issues/322-clearance-decided-outside-the-store.md)) | reach + R1 | `GetSkill` (store) | `PermissionDenied`, `NotFound` |
+| Change, reclassify (`SkillManager::update`) | store `GetSkill`, `cleared_for` (2); for a classification `require_classifiable`, `require_cleared_for`; store `GetSkill`, `cleared_for` + `UpdateSkill` | reach (store) + R1 (+ flow) | `GetSkill`, `cleared_for` (store) | `NotFound`, `ClassificationRefused`, `NotCleared`, `PermissionDenied` |
+| Delete, restore, purge (`SkillManager`) | store only: `GetSkill` or `ReadDeleted`, `cleared_for`, then the verb | R1 + reach (store) | - | `PermissionDenied`, `NotFound` |
 
 ### Workspaces
 
 | Operation | Questions in order | Rule | Again | Refusal |
 |---|---|---|---|---|
-| A user lists or reaches one (`Views::workspaces`, `workspace`) | store `GetWorkspace` (V,1); `cleared_for` (V,2) | R1 + reach | by `reached` for a file route | left out; `WorkspaceNotFound` |
-| A user works in it directly (`WorkspaceManager::reached`, the file routes) | store `GetWorkspace` (U,1); `cleared_for` (U,2), else `NotFound`; for a change `WriteWorkspace` (U,1) | reach, then R4 | - | `NotFound`, `ReadOnly` |
+| A user lists or reaches one (`Views::workspaces`, `workspace`) | store `GetWorkspace` (V,1), `cleared_for` (V,2) | R1 + reach (store) | by `reached` for a file route | left out; `WorkspaceNotFound` |
+| A user works in it directly (`WorkspaceManager::reached`, the file routes) | store `GetWorkspace` (U,1), `cleared_for` (U,2), else `NotFound`; for a change `WriteWorkspace` (U,1) | reach (store), then R4 | - | `NotFound`, `ReadOnly` |
 | In a channel (`usable_in_channel`, behind `terminal_in`, the terminal and artifact tools, the workspace prompt) | session and channel read in S; `may_read_session` (1); `channel_reading`; `usable_in`: the channel uses it, the caller takes part, scope, `may_read_workspace` (1), `may_publish` both ways (2); for a change `WriteWorkspace` (1) | reach, then R4 | - | `NotUsableInChannel`, `ReadOnly` |
 | A running command goes on (`may_run`, as the channel's members or the workspace change) | the chain of *In a channel* per current member | an act that lasts, asked again as what permitted it changes | per member and event | the command ended |
 | The channel's workspace offered (`ChannelView::workspace`) | `usable_in` (V) | R5 | - | none |
 | Create (`WorkspaceManager::create`) | `require_classifiable`; `require_publish` into the storage's destination (U,2); `require_cleared_for` (U,2); store `CreateWorkspace` (U,1) | R4 (flow) + R1 | - | `ClassificationRefused`, `StorageNotCleared`, `NotCleared`, `PermissionDenied`, `NameTaken` |
-| Change, reclassify (`update`) | reached (`GetWorkspace` U,1, `cleared_for` U,2); a classification as creating; store `GetWorkspace` + `UpdateWorkspace` | reach + R1 (+ flow) | `GetWorkspace` (store) | `NotFound`, `ClassificationRefused`, `StorageNotCleared`, `NotCleared`, `PermissionDenied` |
-| Share (`set_access`, `share`) | reached; `require_nameable`: store `GetGroup` per newly named group - the caller's own question (issue 312); store `GetWorkspace` + `UpdateWorkspace` | reach + R1 | - | `NotFound`, `PermissionDenied`, `Validation` |
-| Delete, restore (`WorkspaceManager`) | delete: reached - `GetWorkspace`, `cleared_for` -, else `false`; restore: the store alone, as the trash lists it (issue [322](../issues/322-clearance-decided-outside-the-store.md)) | reach + R1 | `GetWorkspace` (store) | `PermissionDenied`, `NotFound` |
+| Change, reclassify (`update`) | reached (store `GetWorkspace` U,1, `cleared_for` U,2); a classification as creating; store `GetWorkspace`, `cleared_for` + `UpdateWorkspace` | reach (store) + R1 (+ flow) | `GetWorkspace`, `cleared_for` (store) | `NotFound`, `ClassificationRefused`, `StorageNotCleared`, `NotCleared`, `PermissionDenied` |
+| Share (`set_access`, `share`) | reached; `require_nameable`: store `GetGroup` per newly named group - the caller's own question (issue 312); store `GetWorkspace`, `cleared_for` + `UpdateWorkspace` | reach (store) + R1 | `GetWorkspace`, `cleared_for` (store) | `NotFound`, `PermissionDenied`, `Validation` |
+| Delete, restore (`WorkspaceManager`) | delete: reached, else `false`; restore: the store alone - `ReadDeleted`, `cleared_for`, then the verb | R1 + reach (store) | `GetWorkspace`, `cleared_for` (store) for a deletion | `PermissionDenied`, `NotFound` |
 | Purge (`purge`) | store `ReadDeleted`; `Purge` (U,3); files removed; store `ReadDeleted` + `Purge` | R2 + R1 | `Purge` (pair) | `PermissionDenied` |
 
 ### Artifacts
@@ -193,10 +196,10 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 | List, reach (`Views::artifacts`, `artifact`, `ChannelView::artifacts`) | listing: the teams the viewer belongs to found in S, named besides them and their roles; read in S; `may_read_artifact` with the artifact's list, else per version with the version's (V,1); `cleared_for` (V,2) | reach | - | left out; `ArtifactNotFound` |
 | Where a version was published (`ArtifactView::publication`) | `Views::channel_of`: the session, then `channel_reading`; gone, as a live one would be reached | reach | - | not named |
 | Publish (`ArtifactManager::publish`, the artifact tool) | the workspace's reach (*In a channel*); an existing artifact found in S: `WriteArtifact` (T,1) - one not the caller's to add to is refused as such, not taken for a name to make anew; or `CreateArtifact` (T,1); `require_publish` into the storage's destination (T,2); content kept; store `CreateArtifact` for a new one | R2 + R1 | `CreateArtifact` (pair) | `PermissionDenied`, `ClassifiedOtherwise`, `StorageNotCleared` |
-| Share (`set_access`) | reached (`GetArtifact` U,1, `cleared_for` U,2); `require_nameable`; store `GetArtifact` + `UpdateArtifact` | reach + R1 | `GetArtifact` (store) | `NotFound`, `PermissionDenied`, `Validation` |
-| Keep in a scope (`keep`) | reached; the scope compared with the owner (structural); store `GetArtifact` + `UpdateArtifact` | reach + R1 | `GetArtifact` (store) | `NotFound`, `InvalidScope`, `PermissionDenied` |
-| Describe (`describe`) | reached; store `GetArtifact` + `UpdateArtifact` | reach + R1 | `GetArtifact` (store) | `NotFound`, `PermissionDenied`, `Invalid` |
-| Delete, restore (`ArtifactManager`) | delete: reached - `GetArtifact`, `cleared_for` -, else `false`; restore: the store alone, as the trash lists it (issue [322](../issues/322-clearance-decided-outside-the-store.md)) | reach + R1 | `GetArtifact` (store) | `PermissionDenied`, `NotFound` |
+| Share (`set_access`) | store `GetArtifact` (U,1), `cleared_for` (U,2); `require_nameable`; store `GetArtifact`, `cleared_for` + `UpdateArtifact` | reach (store) + R1 | `GetArtifact`, `cleared_for` (store) | `NotFound`, `PermissionDenied`, `Validation` |
+| Keep in a scope (`keep`) | store `GetArtifact`, `cleared_for`; the scope compared with the owner (structural); store `GetArtifact`, `cleared_for` + `UpdateArtifact` | reach (store) + R1 | `GetArtifact`, `cleared_for` (store) | `NotFound`, `InvalidScope`, `PermissionDenied` |
+| Describe (`describe`) | store `GetArtifact`, `cleared_for`; store `GetArtifact`, `cleared_for` + `UpdateArtifact` | reach (store) + R1 | `GetArtifact`, `cleared_for` (store) | `NotFound`, `PermissionDenied`, `Invalid` |
+| Delete, restore (`ArtifactManager`) | the store: `GetArtifact` or `ReadDeleted`, `cleared_for`, then the verb; a deletion reads first to announce it | reach (store) + R1 | `GetArtifact`, `cleared_for` (store) for a deletion | `PermissionDenied`, `NotFound` |
 | Purge (`purge`) | store `ReadDeleted`; `Purge` (U,3); content removed; store `ReadDeleted` + `Purge` | R2 + R1 | `Purge` (pair) | `PermissionDenied` |
 
 ### Groups
@@ -221,7 +224,7 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 | Flags of a session, channel, member, workspace, skill, group, artifact | `may_change_session`, `may_change_channel`, `may_read_agent_context`, `may_read_agent_tools`, `may_read_agent_components`, `may_approve`, `may_retry_message`, `may_cancel_channel`, `may_delete_agent`, the member's commands, `may_change_workspace`, `may_write_workspace`, `may_change_skill`, `may_change_group`, `may_change_artifact`, `may_write_artifact` | R5 | a flag false |
 | A member's tools, components, context, private notes (`tool_sets`, `components`, `context`) | `ReadAgentTools`, `ReadAgentComponents`, `ReadAgentContext` (V,1), the context also only of a channel read whole | R4: reading them is the views' act | `Forbidden` |
 | What was deleted (`deleted_*`) | store `ReadDeleted` per item; flags `may_restore`, `may_purge` | R1 + R5 | - |
-| An event reaching a subscriber (`EventBus`, `subscribe_as`) | per event and party the read question: `GetChannel` for a channel's events, its members' and an agent's state in it; `GetAgent`, `GetUser`, `GetUserProfile`, `GetWorkspace`, `GetSkill`, `GetGroup`, `GetArtifact` by kind; `GetSession` for a session's; for what is classified also `cleared_for` the classification it has, or had as it is reclassified (issue 312) | R5 + reach | not delivered |
+| An event reaching a subscriber (`EventBus`, `subscribe_as`) | per event and party `may_reach`, as the store asks it: the read question - `GetChannel` for a channel's events, its members' and an agent's state in it; `GetAgent`, `GetUser`, `GetUserProfile`, `GetWorkspace`, `GetSkill`, `GetGroup`, `GetArtifact` by kind; `GetSession` for a session's -, and for what is classified `cleared_for` the classification it has, or had as it is reclassified (issues 312, 322) | R5 + reach | not delivered |
 
 ### Users
 
@@ -287,9 +290,22 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 - **A channel's components in its owner's name** are issue
   [321](../issues/321-channel-components-in-the-owners-name.md).
 - **What is listed is the store's to decide.** A view does not filter a store's list again: the
-  trashes show what `ReadDeleted` lets through, and restoring and purging reach it alike. That the
-  live lists, the managers and the event bus add the clearance themselves is issue
-  [322](../issues/322-clearance-decided-outside-the-store.md).
+  trashes show what `ReadDeleted` lets through, and restoring and purging reach it alike.
+
+### Decided in issue 322
+
+- **The store reaches what is classified, the clearance included.** Channels, workspaces, skills
+  and artifacts answer their classification (`Stored::classification`), and the store asks
+  `cleared_for` after every Read, the deleted alike. The views and the managers no longer ask it of
+  what they read through the store; an operation asks it twice where it reads before it stores,
+  as it asks `Get*` twice.
+- **What the views read in the runtime's name stays theirs.** They read channels and artifacts in
+  S and decide the reach themselves: a channel's depends on where the reader reads from - an agent
+  reads one it is not cleared for as a whole entry by entry -, which a context does not carry; an
+  artifact's on its versions' lists until issue
+  [316](../issues/316-store-checks-artifact-without-versions.md).
+- **One question of reach.** The store's list filter and the event bus ask
+  `confidentiality::may_reach`, so that both reach alike.
 
 ### Open
 

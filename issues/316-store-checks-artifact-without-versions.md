@@ -52,3 +52,11 @@ are listed or read, since the store then asks the policy in the viewer's name.
   [308](308-artifacts-shared-with-a-team-not-listed.md): asked why `Views::artifacts` lists in the
   runtime's name, the reason was that the store's check knows the artifact's list and not those of
   its versions.
+- **2026-10-11** — Issue [322](322-clearance-decided-outside-the-store.md) moved the clearance of
+  workspaces and skills into the store (`Stored::readers_cleared_for`). An artifact's follows here,
+  once the store checks its versions' lists: then `Artifact` answers its classification, and the
+  views' and `ArtifactManager::reached`'s own `cleared_for` fall away.
+- **2026-10-11** — Issue 322 then moved an artifact's clearance into the store as well
+  (`Stored::classification`): it does not depend on the versions' lists. What is left here is
+  reading by those lists; the views still read artifacts in the runtime's name and ask the
+  clearance themselves until then.

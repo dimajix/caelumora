@@ -5,6 +5,7 @@
 //! participant that leaves a channel is marked the same way.
 
 use crate::actor::ActorId;
+use crate::confidentiality::Classification;
 use crate::security::Secured;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -41,6 +42,13 @@ pub trait Stored: Secured {
     /// changed.
     fn validate(&self) -> Result<(), String> {
         Ok(())
+    }
+
+    /// How it is classified - a channel, a workspace, a skill, an artifact
+    /// -, `None` for a kind that is not. Whoever reaches it through the store
+    /// must be cleared for it (issue 322).
+    fn classification(&self) -> Option<&Classification> {
+        None
     }
 }
 

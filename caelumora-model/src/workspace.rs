@@ -118,6 +118,10 @@ impl crate::removal::Stored for Workspace {
     fn validate(&self) -> Result<(), String> {
         crate::scope::validate_users_own("workspace", &self.security_attributes, &self.name.scope)
     }
+
+    fn classification(&self) -> Option<&Classification> {
+        Some(&self.classification)
+    }
 }
 
 impl crate::removal::Deletable for Workspace {

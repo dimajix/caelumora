@@ -131,6 +131,11 @@ operations of its own, each with a permission of its own:
 | `restore_x` | `ReadDeleted`, then `Restore` | takes the mark away and returns the restored document |
 | `purge_x` | `ReadDeleted`, then `Purge` | removes the document for good - only if it is marked, also when it is removed |
 
+For what is classified - a channel, a workspace, a skill, an artifact -, every operation also asks
+whether the caller is cleared for it, the deleted alike (issue 322, see
+[SECURITY.md](SECURITY.md#how-stores-check)): the store is given a `ConfidentialityPolicy` beside
+its `SecurityManager`.
+
 Purging only what is still marked keeps a purge from removing what was restored meanwhile. Restoring
 and purging a session are serialised by the `SessionManager`, under the lock it also deletes and
 starts a session with. What the runtime removes for good that is not marked - the channels of a

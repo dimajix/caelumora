@@ -278,25 +278,12 @@ impl ArtifactManager {
         self.storage(&artifact.storage)?.get(artifact.id, number).await
     }
 
-    /// Artifact `id`, reached for an act of its owner's by its own access
-    /// list (`GetArtifact`) and the clearance for its classification
-    /// (issue 312); a version's list reaches its content, not the artifact.
-    ///
-    /// # Errors
-    /// `NotFound` if there is none the caller may read or is cleared for;
-    /// whatever else the store reports.
-    async fn reached(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<Artifact> {
-        let artifact = self.entities.get_artifact(ctx, id).await.map_err(store_error(id))?;
-        self.confidentiality.require_cleared_for(ctx, &artifact.classification, || ArtifactError::NotFound(id))?;
-        Ok(artifact)
-    }
-
     /// Gives artifact `id` the access list `acl` for the whole of it (issue
-    /// 23) on behalf of `ctx`: reached, each group the list names newly read,
-    /// since who names one must read it (issue 286), then stored, which is
-    /// where its owner's act is asked (`UpdateArtifact`): whether the caller
-    /// reads a group tells them nothing of others (issue 312). The lists of
-    /// its versions stay as they are.
+    /// 23) on behalf of `ctx`: reached by the store, each group the list
+    /// names newly read, since who names one must read it (issue 286), then
+    /// stored, which is where its owner's act is asked (`UpdateArtifact`):
+    /// whether the caller reads a group tells them nothing of others (issue
+    /// 312). The lists of its versions stay as they are.
     ///
     /// # Errors
     /// `NotFound` if there is none the caller may reach, or what the store
@@ -304,7 +291,7 @@ impl ArtifactManager {
     /// an agent, the system or nobody, or a group the caller cannot read.
     pub async fn set_access(&self, ctx: &SecurityContext, id: ArtifactId, acl: Vec<AclEntry>) -> ArtifactResult<Artifact> {
         let _writing = self.writing.lock().await;
-        let mut artifact = self.reached(ctx, id).await?;
+        let mut artifact = self.entities.get_artifact(ctx, id).await.map_err(store_error(id))?;
         crate::group::require_nameable(self.entities.as_ref(), ctx, &artifact.security_attributes.acl, &acl).await?;
         artifact.security_attributes.acl = acl;
         artifact.updated_at = Utc::now();
@@ -325,7 +312,7 @@ impl ArtifactManager {
     /// reports - `PermissionDenied` and `NameTaken` among it.
     pub async fn keep(&self, ctx: &SecurityContext, id: ArtifactId, scope: Scope) -> ArtifactResult<Artifact> {
         let _writing = self.writing.lock().await;
-        let mut artifact = self.reached(ctx, id).await?;
+        let mut artifact = self.entities.get_artifact(ctx, id).await.map_err(store_error(id))?;
         match (&scope, artifact.owner()) {
             (Scope::GlobalScope, _) => {}
             (Scope::UserScope { user_id }, Some(owner)) if *user_id == owner => {}
@@ -347,7 +334,7 @@ impl ArtifactManager {
     /// whatever the store reports - `PermissionDenied` among it.
     pub async fn describe(&self, ctx: &SecurityContext, id: ArtifactId, description: Option<&str>) -> ArtifactResult<Artifact> {
         let _writing = self.writing.lock().await;
-        let mut artifact = self.reached(ctx, id).await?;
+        let mut artifact = self.entities.get_artifact(ctx, id).await.map_err(store_error(id))?;
         artifact.description = Description::optional(description)?;
         artifact.updated_at = Utc::now();
         self.entities.update_artifact(ctx, &artifact).await?;
@@ -356,17 +343,13 @@ impl ArtifactManager {
     }
 
     /// Deletes artifact `id` (`DeleteArtifact`), its content kept until it
-    /// is purged; `false` if there was none the caller could reach.
+    /// is purged; `false` if there was none the caller could reach, by the store.
     ///
     /// # Errors
     /// Whatever the store reports, `PermissionDenied` included.
     pub async fn delete(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<bool> {
         let _writing = self.writing.lock().await;
-        let artifact = match self.reached(ctx, id).await {
-            Ok(artifact) => artifact,
-            Err(ArtifactError::NotFound(_)) => return Ok(false),
-            Err(e) => return Err(e),
-        };
+        let Some(artifact) = self.entities.get_artifact(ctx, id).await.optional()? else { return Ok(false) };
         if !self.entities.delete_artifact(ctx, id).await? {
             return Ok(false);
         }
