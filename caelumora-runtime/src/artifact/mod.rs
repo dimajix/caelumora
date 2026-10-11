@@ -302,7 +302,9 @@ impl ArtifactManager {
 
     /// Keeps artifact `id` in `scope` - its owner's or the global one -,
     /// beyond the session it was published in (`UpdateArtifact`, its
-    /// owner's act).
+    /// owner's act). Asked before the scope is looked at, which compares it
+    /// with the artifact's owner - the actor's own permission first (issue
+    /// 304) -, and by the store again as it stores.
     ///
     /// # Errors
     /// `NotFound`, `InvalidScope` for another scope, or whatever the store
@@ -325,7 +327,7 @@ impl ArtifactManager {
     }
 
     /// Says what artifact `id` is; `None` or empty takes it away
-    /// (`UpdateArtifact`, its owner's act).
+    /// (`UpdateArtifact`, its owner's act, asked by the store).
     ///
     /// # Errors
     /// `NotFound`, `Invalid` for a description that does not fit, or
@@ -333,7 +335,6 @@ impl ArtifactManager {
     pub async fn describe(&self, ctx: &SecurityContext, id: ArtifactId, description: Option<&str>) -> ArtifactResult<Artifact> {
         let _writing = self.writing.lock().await;
         let mut artifact = self.entities.get_artifact(ctx, id).await.map_err(store_error(id))?;
-        self.security.require(ctx, ActionType::UpdateArtifact(&artifact.security_attributes), || StoreError::PermissionDenied).await?;
         artifact.description = Description::optional(description)?;
         artifact.updated_at = Utc::now();
         self.entities.update_artifact(ctx, &artifact).await?;

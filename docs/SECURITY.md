@@ -30,6 +30,27 @@ it.
     `ListPersonalities`, `CancelChannel`, ...). An action on a stored entity carries the entity's
     `SecurityAttributes`, not the entity itself.
 
+### Three decisions
+
+Every decision is made from the acting entity's `SecurityContext`, the verb, the object's
+`SecurityAttributes`, the acting entity's clearances - its roles, in the context - and the
+object's classification, and from nothing else (issue
+[304](../issues/304-review-of-the-permission-concept.md)). Nothing is looked up while a decision
+is made but the groups an access list names. Three decisions are made apart, each by a function of
+its own, and an act passes only where every one it needs says yes:
+
+1.  **Security** - who may do what with the object: the `SecurityManager`, from the context, the
+    verb and the attributes. Access lists name actors, roles and groups (see
+    [Access lists](#access-lists)).
+2.  **Flow** - whether information may go where the act takes it, and who is cleared for it: the
+    `ConfidentialityPolicy`, from the clearances, the object's classification and the
+    destination's (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
+3.  **Visibility** - what a client or an agent is shown: the views reach each thing by reading it
+    (security) and, where it is classified, by the clearance for it (flow); what may not be reached
+    is not found (see [Views](#views)). Reaching decides what is visible in a context, never
+    whether something is permitted: an operation that reaches an object by its id has exactly the
+    rights of one that navigated to it.
+
 ### One manager per process
 
 One `SecurityManager` is built per process and handed to everything that checks: the stores, the
@@ -342,9 +363,40 @@ asked, `an_agent_asked_by_an_agent_acts_for_its_own_owner` and
 
 ## Where permission checks go
 
-There are three ways code asks the `SecurityManager`, and each has its place. Which operation asks
-what, in whose name and where the same question is asked again is mapped, check by check, in
-[PERMISSION-CHECKS.md](PERMISSION-CHECKS.md) (issue 304).
+Every question has one of five reasons to be asked (issue 304); a question with none is removed.
+Which operation asks what, in whose name and by which reason is mapped, check by check, in
+[PERMISSION-CHECKS.md](PERMISSION-CHECKS.md).
+
+1.  **The entity layer always asks.** The store asks `Read` on every read and the verb on every
+    write, answering "not found" and "denied" (see [How stores check](#how-stores-check)). It is
+    the last line, whether or not an operation asked before.
+2.  **An operation asks before it stores only if it does something first** - looks at others,
+    stops actors, deletes files, sends something. Then it asks in the order (see
+    [Operations that check themselves](#operations-that-check-themselves)), and the store asks
+    again when it stores. That pair is the rule, not a double; no token tells the store it was
+    asked already.
+3.  **The channel decides what enters it**, once, as it takes it in (see
+    [What enters a channel](#what-enters-a-channel)). Actors ask nothing for what they send.
+4.  **Every act has one owner, and only the owner asks, once**: a tool call the `ToolExecutor` as it
+    admits it, a command of an agent the agent as it carries it out, a command of the session the
+    `CommandExecutor`, an approval the approver as it counts the answer, a secret the
+    `SecretManager`, a skill the `SkillManager`. A component owns the acts on what it keeps -
+    reclassifying a note, forgetting a memory entry - and asks for those itself, in the turn's
+    context; reading beyond its channel it leaves to the views.
+5.  **Offering is not permitting.** The views, a snapshot's flags, the filters of lists, the
+    approver's `approvers_of`, the visible commands and the event bus ask to decide what to show or
+    whom to wait for, never to permit; the act asks again when it is done, and that is no double.
+    The form tells them apart: enforcing asks with `Enforcement::require` and
+    `ConfidentialityQuestions::require_*`, offering with `AccessQuestions::may_*` and
+    `ConfidentialityQuestions::may_*`.
+
+Two enforcing sites turn a refusal into an outcome of their own rather than an error, and ask
+`require` with a refusal of `()`: the `ToolExecutor`, which answers a call refused by the policy as
+forbidden, and the approver, which leaves out the answer of someone who may not approve. They ask
+as every act does, so that the refusal is logged alike. `ChannelLoop::reclassify` asks
+`may_publish` of the old classification into the new one to learn whether the channel was lowered:
+a question, not a permission, and the same one an agent asks at its next step, so that both agree
+on what was lowered.
 
 ### Access questions
 

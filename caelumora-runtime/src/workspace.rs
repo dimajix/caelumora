@@ -430,7 +430,7 @@ impl WorkspaceManager {
             warn!(session = %session.id, workspace = %id, "A workspace of another session's scope is attached to a session");
             return Ok(None);
         }
-        if !self.security.check(ctx, ActionType::GetWorkspace(&workspace.security_attributes)).await {
+        if !self.security.may_read_workspace(ctx, &workspace.security_attributes).await {
             return Ok(None);
         }
         let (inside, outside) = (&workspace.classification, &channel.classification);

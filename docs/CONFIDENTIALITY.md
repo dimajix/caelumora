@@ -90,9 +90,10 @@ code path can leave a message classified by accident.
     question, it is asked as `ConfidentialityPolicy::may_publish` (issue 158). An event with a
     message it may not admit is written nowhere, and its sender is told why
     (`ActorEvent::MessageRejected` with `Rejection::ClassificationRefused`, see
-    [CHANNELS.md](CHANNELS.md)). The ownership policy allows it if the actor is the one acting (the
-    context's caller), every compartment is configured, and the classification flows into the
-    channel.
+    [CHANNELS.md](CHANNELS.md)). The rules allow it if every compartment is configured and the
+    classification flows into the channel; that only the actor acting puts something into a
+    channel - the context's caller is the event's sender - is the channel's own check of the
+    event, not a question of the flow.
 *   **Released when written.** By the flow rule a message is never classified above its channel. One
     classified otherwise is released: at a lower level, or to further compartments besides those the
     channel's are covered by - an `{hr, finance}` message in an `{hr}` channel is readable from
@@ -120,10 +121,10 @@ added to the audience, or none left - *releases* what it holds to a wider circle
 retracts nothing already read. The circle is one of classification: a release adds no readers to the
 channel it is in - an agent reads a released entry of another channel only where it may read that
 channel (see [Reading another channel](#reading-another-channel), issue
-[264](../issues/264-agent-reads-channels-its-owner-may-not.md)). The ownership policy allows a
-channel's owner to reclassify the channel and every message in it, and a message's author to
-reclassify their own message - a message never above its channel, and only with configured
-compartments.
+[264](../issues/264-agent-reads-channels-its-owner-may-not.md)). Who may reclassify is the
+`SecurityManager`'s (`Reclassify`): the ownership policy allows a channel's owner to reclassify the
+channel and every message in it, and a message's author to reclassify their own message. To what is
+the flow's: a message never above its channel, and only with configured compartments.
 
 *   **A channel** (`ChannelLoop::reclassify`, REST `PUT …/channels/{cid}/classification`) is stored
     (`UpdateChannel`) and announced as `GlobalEvent::ChannelUpdated` with
@@ -183,10 +184,10 @@ compartments.
 
 *   **A note or a memory entry** is reclassified by its agent, through a tool that asks for approval
     (`reclassify_note`, `reclassify_private_note`, `reclassify_memory`): a change of its chain
-    (`NoteChange::Reclassify`, `MemoryChange::Reclassify`), taken over with the turn. The policy
-    allows it to the author - the agent calling - never above the turn's channel; a memory entry
-    only where it may be recalled. A reclassified memory entry is recalled where its new
-    classification may be read. Agents do not reclassify channels or messages: people do.
+    (`NoteChange::Reclassify`, `MemoryChange::Reclassify`), taken over with the turn. The ownership
+    policy allows it to the author - the agent calling -, the flow never above the turn's channel; a
+    memory entry only where it may be recalled. A reclassified memory entry is recalled where its
+    new classification may be read. Agents do not reclassify channels or messages: people do.
 
 Who reclassified what is not recorded: that is an audit log ([140](../issues/140-audit-log.md));
 the chains of the history, of notes and of memory keep the change and its place in what happened,
@@ -316,7 +317,7 @@ classified, and the channel's session as privacy sees it (`SessionPrivacy` - its
 and people, issue 134) -, with `ConfidentialityQuestions::may_copy_information`. It is asked in the
 name of the agent that reads - the security context it acts in, its owner's - because the agent
 passes on what it reads (issue 131). A channel may always be copied into itself. Otherwise the
-ownership policy allows it if
+rules allow it if
 
 *   the entry's classification flows into the reader's, and
 *   both channels belong to the same session, or the source's session lets the reader's read it
@@ -585,9 +586,6 @@ is complete. What is still open:
 *   **The answer text.** It carries no label and is always published; the model is only told what
     not to quote ([66](../issues/66-channel-level-in-prompt.md)). Keeping private knowledge out of
     it relies on the model.
-*   **Whose rights.** Reading is asked in the name of the agent's owner. How an agent's rights
-    combine with those of the user it acts for is open
-    ([12](../issues/12-user-and-agent-permissions.md)).
 *   **Knowledge beyond the session.** Knowledge kept across sessions or shared between agents
     ([18](../issues/18-knowledge-sharing.md)) and retrieval of notes
     ([59](../issues/59-retrieval-of-notes.md)) will have to carry and respect the classification of

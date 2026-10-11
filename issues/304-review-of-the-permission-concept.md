@@ -1,6 +1,6 @@
 # 304 — Four kinds of permission are checked in many places, and nobody has reviewed how they fit
 
-**Status:** in progress
+**Status:** done
 **Area:** Identity and access management
 
 ## The problem
@@ -693,3 +693,23 @@ where they test the door.
     ())` as a flag, `ChannelLoop::reclassify` learning whether it lowered by asking `may_publish`,
     and `WorkspaceManager::usable_in` asking `check` and `may_publish` where it enforces. No stored
     data changes.
+- **2026-10-11** — Step 5 on the branch `issue-304-docs`, and done. The map
+  (`docs/PERMISSION-CHECKS.md`) is redone from the code: every operation with its questions in
+  order, in whose name, the concept, the reason it is asked (the five rules), what is asked again
+  and the refusal; the findings split into what was decided to stay, with the reason, and what is
+  open. SECURITY.md states the three decisions, the five rules and the order; CONFIDENTIALITY.md no
+  longer gives the ownership policy the flow. Left over of C5, decided on the way: the approver's
+  and the `ToolExecutor`'s `require` with a refusal of `()` stay - a refusal that is no error of
+  theirs, logged as every act's -; `ChannelLoop::reclassify` keeps asking `may_publish` to learn
+  whether it lowered, since an agent asks the same at its next step and both have to agree (the
+  plan's `flows_to` would have bypassed the policy); `WorkspaceManager::usable_in` asks
+  `may_read_workspace`, new beside `may_read_artifact`. Found by the map and fixed:
+  `SkillManager::purge` asked `Purge` with nothing done before the store, and the `SkillManager`
+  no longer takes the `SecurityManager` at all; `ArtifactManager::describe` left `UpdateArtifact`
+  to the store, while `keep` asks it first since it compares the scope with the artifact's owner.
+  F20 (the place in a REST context) dropped at the maintainer's agreement: no decision reads it.
+  What the review found and did not fix has issues of its own: secrets without an owner
+  ([310](310-secrets-have-no-owner.md)), and the order and the reach where the code does not follow
+  them yet ([312](312-order-and-reach-not-everywhere.md)). Every point of *Done when* holds: the
+  map, the concept per action, the order as a rule with the suite asserting it where it changed,
+  and an issue for what is open. No stored data changes.

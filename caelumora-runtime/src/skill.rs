@@ -16,9 +16,9 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
+use caelumora_model::security::SecurityContext;
 use caelumora_model::skill::{Skill, SkillId, SkillUpdateEvent};
-use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResultExt};
+use caelumora_model::store::{EntityStore, StoreError, StoreResultExt};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::{Description, SkillBody};
 use caelumora_model::value::ValueError;
@@ -59,7 +59,6 @@ fn store_error(id: SkillId) -> impl FnOnce(StoreError) -> SkillError {
 pub struct SkillManager {
     entities: Arc<dyn EntityStore>,
     events: Arc<EventBus>,
-    security: Arc<dyn SecurityManager>,
     /// What may flow where, and who is cleared for what (issue 304).
     confidentiality: Arc<dyn ConfidentialityPolicy>,
     /// Held by every write of a document, so that none is lost to another.
@@ -73,8 +72,10 @@ impl fmt::Debug for SkillManager {
 }
 
 impl SkillManager {
-    pub(crate) fn new(entities: Arc<dyn EntityStore>, events: Arc<EventBus>, security: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> Self {
-        Self { entities, events, security, confidentiality, writing: Mutex::new(()) }
+    /// Who may do what is asked by the store `entities`, which every write
+    /// goes through; the manager asks the flow alone (issue 304).
+    pub(crate) fn new(entities: Arc<dyn EntityStore>, events: Arc<EventBus>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> Self {
+        Self { entities, events, confidentiality, writing: Mutex::new(()) }
     }
 
     /// Whether `classification` may be given at all, and the one `ctx` acts
@@ -202,16 +203,14 @@ impl SkillManager {
         Ok(())
     }
 
-    /// Removes the deleted skill `id` for good (`Purge`). Announces nothing,
-    /// as no purge does. `false` if there was nothing deleted the caller
-    /// could see.
+    /// Removes the deleted skill `id` for good (`Purge`, asked by the store:
+    /// nothing is done before, issue 304). Announces nothing, as no purge
+    /// does. `false` if there was nothing deleted the caller could see.
     ///
     /// # Errors
     /// `PermissionDenied`, or whatever the store reports.
     pub async fn purge(&self, ctx: &SecurityContext, id: SkillId) -> SkillResult<bool> {
         let _writing = self.writing.lock().await;
-        let Some(skill) = self.entities.get_deleted_skill(ctx, id).await.optional()? else { return Ok(false) };
-        self.security.require(ctx, ActionType::Purge(EntityKind::Skill, &skill.security_attributes), || StoreError::PermissionDenied).await?;
         let purged = self.entities.purge_skill(ctx, id).await?;
         info!(skill = %id, by = %ctx.caller_id, "Skill purged");
         Ok(purged)

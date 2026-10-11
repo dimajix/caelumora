@@ -576,6 +576,11 @@ pub trait AccessQuestions {
     /// attributes (`WriteWorkspace`, issue 23).
     async fn may_write_workspace(&self, context: &SecurityContext, workspace: &SecurityAttributes) -> bool;
 
+    /// Whether `context` may read a workspace with these attributes - see
+    /// it and read its files (`GetWorkspace`, issue 23): asked where a
+    /// workspace is reached, as a channel is (issue 304).
+    async fn may_read_workspace(&self, context: &SecurityContext, workspace: &SecurityAttributes) -> bool;
+
     /// Whether `context` may change an artifact with these attributes -
     /// keep it in another scope, describe it, share it, delete it
     /// (`UpdateArtifact`, issue 271).
@@ -667,6 +672,10 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
 
     async fn may_write_workspace(&self, context: &SecurityContext, workspace: &SecurityAttributes) -> bool {
         self.check(context, ActionType::WriteWorkspace(workspace)).await
+    }
+
+    async fn may_read_workspace(&self, context: &SecurityContext, workspace: &SecurityAttributes) -> bool {
+        self.check(context, ActionType::GetWorkspace(workspace)).await
     }
 
     async fn may_change_artifact(&self, context: &SecurityContext, artifact: &SecurityAttributes) -> bool {
