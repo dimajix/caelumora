@@ -55,6 +55,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [310](310-secrets-have-no-owner.md) | open | Any secret can be named by whoever writes a component: secrets have no owner and no access list, and the policy allows every `ReadSecret`. |
 | [312](312-order-and-reach-not-everywhere.md) | open | Some operations ask about others before their own verb, or reach an object by id with fewer questions than the views, so a refusal tells more than it may and "by id" is not "by navigation". |
 | [316](316-store-checks-artifact-without-versions.md) | open | The store checks an artifact against its own access list only, not its versions', so the views list and read artifacts in the runtime's name and decide themselves who may read them.
+| [317](317-teams-listed-by-a-scan.md) | open | `Views::groups` lists the viewer's teams by reading every group and asking the policy of each, while `Views::artifacts` finds them by a query.
 
 ## Tools and approvals
 
