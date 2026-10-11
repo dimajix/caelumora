@@ -246,6 +246,268 @@ and `StoreMemberships` go. The rules:
 4.  The doubles named or removed (F2, F3, F12, F16); the suite asserts the order.
 5.  SECURITY.md and CONFIDENTIALITY.md rewritten to the target picture; the map redone.
 
+## Implementation plan
+
+Written 2026-10-11, against the code as the map describes it. Line numbers are those of the map
+(`docs/PERMISSION-CHECKS.md`) and will have moved by the time a step is taken; the names will not.
+Five branches, in this order; each is a step of its own that leaves the tests green, and each
+records what it did under *History*. Open decisions are collected at the end.
+
+### A. The core model (`caelumora-model`)
+
+**A1 - `SecurityContext` carries the roles.** The flow decision needs the subject's clearances; a
+clearance is a role as the configuration reads it (`ConfidentialityRules::cleared`), so what the
+context carries are the *roles*: `roles: Vec<RoleId>`, the principal's, narrowed by the caller's
+personality where the caller is an agent. Carrying roles rather than clearances keeps the context
+free of configuration and lets the narrowing stay an intersection of roles.
+
+- `SecurityContext::new(actor, session, channel, roles)`; `next(caller, principal, limit:
+  Option<&[RoleId]>)` narrows; `system()` carries none and needs none.
+- One function resolves the roles of a subject: today's `user_roles` and
+  `StoreMemberships::agent_roles`, moved together to `caelumora_model::role::roles_of(store,
+  actor)` (an agent: its owner's, narrowed by its personality's limiting roles). It is called where
+  a context is *built*, never where one is *used*.
+- Builders to change (production only): `AuthenticatedUser::security_context` (`auth.rs`), which
+  reads the user's roles from the store per request - the `UserController` does not follow role
+  changes (issue 181) - and gains `security_context_in(session, channel)` for every route that
+  names a place (F20); `Agent::security_context` (`agent.rs`) takes the owner's roles and the
+  personality, and its callers `actor/agent/mod.rs`, `actor/external_agent.rs`,
+  `workspace.rs::may_run`; `User::security_context` (`user.rs`); `external_agent.rs`;
+  `template.rs`; `event.rs`; `runtime.rs`; `channel.rs` where the components are built;
+  `controller/user.rs`; `view/mod.rs`; `actor/user.rs`; `actor/approval.rs`; the TUI. Each gets
+  its roles from `roles_of` or from a context it derives from.
+- `Member::clearances`, `channel::user_roles`, `Views::roles`, `cleared_for` and every
+  `user_roles(...)` call in the runtime (`channel.rs`, `session.rs`, `skill.rs`, `view/mod.rs`,
+  `workspace.rs`) go: the roles are in the context. The door (`Member::require_cleared`) asks with
+  the *member's* roles, resolved by `roles_of` for the member, not the caller's context.
+
+**A2 - Access lists name groups.** `Subject::Group(GroupId)` replaces `Subject::MemberOf`; the
+`Membership` enum, its `FieldValue` mapping and the REST and web UI mappings of the subject
+(`caelumora-rest-server/src/models.rs`, `caelumora-web-ui/src/types`) follow.
+`SecurityAttributes::validate` keeps "an `Actor` entry never names an agent" and allows any group.
+`Grant` is unchanged.
+
+**A3 - The `Group` entity** (`caelumora-model/src/group.rs`): `id: GroupId`, `name:
+ScopedName`, `members: Vec<ActorId>` (users and agents, no groups), `internal: bool`, `scope:
+Scope`, `security_attributes`, `deleted`. `Secured` and `Scoped`; `EntityKind::Group`; the ten
+store operations every kind has (`create_group` ... `find_group_by_name`) in `store/mod.rs`,
+`memory.rs`, `json.rs`, with `Actions::GROUPS` in `store/access.rs`; `ActionType::{Get, List,
+Create, Update, Delete}Group`. The policy decides them as for every kind: the owner changes and
+deletes. That a member reads its group is an entry of the group's own list naming the group
+itself, written when it is created - resolved by the one read that resolves every group entry -,
+so the policy needs no rule of its own. The existing `Scope::GroupScope { group_id: Uuid }` takes a
+`GroupId`; what lies in a team's scope is a question for later, not of this plan.
+
+**A4 - The policy resolves groups, nothing else.** A trait `Groups { async fn
+members_of(&self, group: GroupId) -> Option<Vec<ActorId>> }` replaces `Memberships`;
+`StoreGroups` (`store/groups.rs`, from `store/memberships.rs`) replaces `StoreMemberships` and is
+bound the same way (`config.rs`, `main.rs`). `roles_of` leaves the trait: the roles are in the
+context. In `OwnershipSecurityManager::granted`, `Subject::Role(r)` is `context.roles.contains(r)`,
+`Subject::Group(g)` is "the members of `g` contain the principal, or the caller where reading"
+(issue 264, unchanged in meaning). `NoMemberships` becomes `NoGroups`.
+
+**A5 - The flow decisions leave the `SecurityManager`.** `ConfidentialityRules` becomes the flow
+function and takes the context where it needs the subject:
+
+- `cleared(&context, &classification)` - the context's roles clear the classification; and
+  `cleared_roles(&roles, &classification)` for the door, where the roles are another's;
+- `may_publish(&context, from: &Classification, into: &Classification)` - the actor is the
+  caller, and `from` flows into `into`;
+- `may_copy(&context, from: &Place, into: &Place)` - same channel; or same session or the
+  source's privacy permits the reader's, and the entry flows;
+- each with a `require_*` twin that returns the caller's error, as `Enforcement::require` does,
+  logging alike.
+
+`ActionType` loses `Publish`, `CopyInformation`, `Classify` and `JoinChannel`. `Reclassify {
+target }` keeps the security half only - a channel its owner, a message the channel's owner or its
+author, a note or memory entry its author, each target carrying its channel's attributes (F14) -;
+the flow half is `may_classify`/`may_publish` of the new classification, asked beside it by the
+owner of the act. `AccessQuestions` loses `may_publish`, `may_copy_information`,
+`may_see_channel` and `channel_reading`. `OwnershipSecurityManager` no longer holds the rules
+(issue 138 reversed; `allow_all` allows every *security* question and nothing of the flow, which
+is a change for tests and development setups). `Classify` becomes validation:
+`Classification::validate(&Compartments)` on creating or reclassifying a channel, a workspace and
+a skill (`session.rs::require_classification`, `workspace.rs`, `skill.rs`), as a `Validation`
+error of the model, not a refusal.
+
+At runtime the rules are one service beside the `SecurityManager`: `RuntimeManager` holds
+`Arc<ConfidentialityRules>` and hands it, at construction, to `ChannelLoop`, `ToolExecutor`,
+`Views`, `WorkspaceManager`, `ArtifactManager`, `SkillManager`, `SessionManager`, the agent and
+external-agent actors and the `ComponentContext` (for the acts a component owns). Nobody fetches
+it through the runtime at use.
+
+**A6 - The form.** Enforcing asks `Enforcement::require` or a `require_*` of the rules; offering
+asks `may_*`. The map's offending sites are listed under C5.
+
+### B. Runtime infrastructure
+
+**B1 - Internal groups of sessions and channels.** `Session` and `Channel` get `group_id:
+GroupId`. `SessionManager::create_session` creates the session's group, `create_channel` (and
+`SessionLoop::create_channel`) the channel's, in the runtime's name, `internal: true`, in the
+session's scope, owned by the session's owner; the session's and the channel's own access lists
+get a `Group(own)` entry granting `Read` where they had `MemberOf(self)` (`template.rs`,
+`channel.rs` in the model). The one writer of each internal group is the controller that changes
+the participants - `ChannelController::add_participant`, `remove_participant`, and the session's
+equivalents -, which writes the group *first* and the participant second, in the runtime's name as
+scoped data is written (issue 178); a failure between the two is logged, and the next change
+corrects the group. `delete_agent`'s `leave_channels` goes through the same controller methods.
+Internal groups are deleted, restored and purged with their session by `delete_scoped_in` and its
+siblings. Whether they are listed through the group API is an open decision (below); they are
+never changed through it (`GroupManager` refuses `internal`).
+
+**B2 - Teams.** A `GroupManager` (create, rename, add and remove members, share, delete, restore,
+purge), REST routes `/groups`, and the web UI's access dialogs offering a group as a subject. The
+manager checks itself as the others do (A3's actions, the store again).
+
+**B3 - What is shared with a group.** Attaching a workspace to a session shares it with
+`Group(session.group_id)` (`session.rs::set_workspace`, `create_from_template`), which closes
+issue 289. Publishing an artifact in a channel writes `Group(channel.group_id)` into its list
+(`artifact/mod.rs::publish`, `Artifact::read_by`) - the default is an open decision (below), the
+mechanism is not. Issue 287 shrinks to the reading of groups, or closes.
+
+### C. The sites, by rule
+
+Every row of the map ends up with one of the five reasons or goes. What is not obvious has its
+plan here; what is - a `may_*` turned into a `require`, a question dropped - is only named.
+
+**C1 - Rule 1, the entity layer.** Unchanged. The `Group` kind joins `store/access.rs`.
+
+**C2 - Rule 2, an operation before it stores.** Named in SECURITY.md as the pair; the sites of F1
+stay. Two operations do not follow the order and are fixed: `SessionLoop::delete_channel` asks
+`DeleteChannel` before it drops the channel from the session, and a refusal ends the operation
+instead of being warned; `SessionManager::restore_session` asks `ReadDeleted` (through the store)
+before it reads the deleted session in the runtime's name.
+
+**C3 - Rule 3, admission at submission.** The one structural change of the runtime, with its own
+plan:
+
+1.  A new `EventSender` in `channel.rs`, `AdmittingSender { channel: Weak<ChannelLoop>, inner:
+    Box<dyn EventSender> }`, wrapped around the `OriginEventSender` that `spawn_actor` gives every
+    actor - so the actor still sends only through the transport `run` was handed, and the sender
+    carries the sender id as issue 228 made it. Its `send` and `try_send` call `admits` and
+    `admits_change` on the loop with the envelope as it is, and forward it only if both say yes.
+2.  `TransportError` gains `Refused(ChannelError)`, so that the refusal reaches the actor as the
+    error of its send. `process_envelope` no longer asks `admits` or `admits_change`: there is one
+    way into the loop, and it admits.
+3.  `admits` asks `rules.require_publish` per part (C5); `admits_change` asks `ModifyMessage`,
+    `RevokeMessage`, `Reclassify`, `RetryMessage` as today, and gains the two acts the actor
+    asked for alone: `AnswerQuestion` on `QuestionAnswered`/`QuestionDeclined`, and `WakeChannel`
+    on `WakeupRequested` (which `ChannelLoop::wakeup` then no longer asks itself; `wakeup_actor`
+    alike). A nudge stays unasked. An approval by click stays the approver's (rule 4).
+4.  `UserActor` drops every `require` for what it sends: `send_message`, `modify_message`
+    (`ModifyMessage` and `Publish`), `revoke_message`, `reclassify_message`, `request_retry` and
+    `request_retry_of_turn` (`require_retry`), `answer_questions`; `message_to_change` keeps the
+    lookup and the revoked check, which are not permissions. The actor maps
+    `TransportError::Refused` to the `ChannelError` it answered before, so that the REST API and
+    the web UI see what they see today.
+5.  The agents keep their flow questions for what they give up or bring (`AgentActor::turn_flow`,
+    `ExternalAgentActor::lowered`, `exchange`, `may_answer_in`): those are the agent's own act of
+    withholding, not a pre-check of the channel's. `ToolExecutor::admitted` keeps `Publish` of a
+    tool result into the agent's context: a destination of its own, before the channel's.
+6.  Risk to check first: `admits_change` reads the channel's history under `state`, and the
+    sender is called from an actor's task while the loop may hold `state` in `process_envelope`.
+    The loop must not hold `state` across an await on the actors' output, or the admission must
+    read the history through the recorder; decided when the branch starts, by reading
+    `process_envelope` and `route_event`.
+7.  The security suite's tests of these actions change from "the actor asks, then the channel"
+    to "the channel asks once" (`a_message_is_modified_and_taken_back_by_its_author_alone`,
+    `asking_an_agent_to_answer_again_is_for_whoever_takes_part`,
+    `a_message_is_reclassified_by_its_author_or_the_channels_owner`, and the sending tests).
+
+**C4 - Rule 4, one owner, once.**
+
+- `ToolExecutor::check` drops `CallTool`; `admit` asks it once. The place's rules and the
+  approval stay where they are. The test of the executor that asserts two questions asserts one.
+- `AgentCommands::carry_out` drops its `admitted`; `AgentCommands::admit` asks once, in the
+  issuer's context; the filter (`visible`) is offering (rule 5). `CommandExecutor::admitted` is
+  then called from one place and loses the `admitted` entry point.
+- `UserActor::answer_by_rule` drops `may_approve`; the approver asks `ApproveToolCall` when it
+  counts the answer, for a rule's answer as for a click; `approvers_of` is offering.
+- F12: `CallTool`, `ReadSecret`, `ShowCommand` and `ExecuteCommand` leave `ActionType` unless the
+  decision below gives them an object with attributes. Their owners enforce what decides them
+  today - the place's tool rules, the secret policy, the command's scope - and the policy is not
+  asked a question it cannot answer.
+- A component asks for the acts on what it keeps as today: `AgentNotes::reclassify`,
+  `AgentMemory::reclassify` (security half: `Reclassify` of a note or memory entry with its
+  channel's attributes; flow half: `require_publish` of the new classification). Nothing else in
+  `component_impl` asks the policy; reading goes through the views.
+
+**C5 - Rule 5, the form.** Enforcing with `may_*` becomes `require`: `ChannelLoop::admits`
+(`may_publish`), `WorkspaceManager::require_classification` (`may_publish`, `may_see_channel`),
+`reached` (`may_see_channel`), `usable_in` (`check` of `GetWorkspace`, `may_publish` twice),
+`SkillManager::require_classification` (`may_see_channel`), `ArtifactManager::publish`
+(`may_publish`), `ApproverActor::handle_response` (`require` with `|| ()` used as a flag).
+`ChannelLoop::reclassify` asks no `Publish` to learn whether it lowered: it compares
+`old.flows_to(new)` with the rules' compartments. Offering keeps `may_*`: the views' flags,
+`approvers_of`, `visible_by`, the stores' and the event bus's filters.
+
+**C6 - The order and the principle, site by site.**
+
+- *One reach for channels.* `SessionView::readable` is the one function that reaches a channel:
+  `Read` (security), then for a user `rules.cleared(context, channel)`, for an agent
+  `rules.may_copy(context, channel as a whole, its place)` - whole, entry by entry, or not at all.
+  `SessionLoop::channel_for` (`require_seen`) and `WorkspaceManager::usable_in_channel` call it
+  through the views instead of asking by hand; `require_seen` goes. `Views::gone_channel` asks
+  the clearance too, so that a deleted channel is "never" where a live one is "not found".
+- *The agent's own session.* `ViewsFactory::session` asks `Read` of the session like
+  `Views::session`; the agent passes by its channel's group.
+- *Entries.* `ChannelView::may_read_entry` and `Views::may_copy_from` decide by the viewer's kind:
+  an agent by `may_copy` of the entry into its place; a user reads whole channels only, so "entry
+  by entry" does not arise for a user and `may_copy_from` no longer answers `true` for a viewer
+  without a place.
+- *Skills.* `Views::skills` (user) and `Views::usable_skills` (agent) ask the same: `Read`, `Use`
+  (security), `cleared` (flow), and for the agent `may_publish` of the skill into its place.
+- *Events.* `PublishedEvent::read_action` asks `GetChannel` with the channel's attributes for
+  every event about a channel, its members and its agents, `GetSession` for a session's.
+- *The REST context.* Routes on a session or a channel build the context with that place
+  (`security_context_in`), so that the flow decisions see where the user acts.
+- *Refusals.* `WorkspaceError::ReadOnly` and `NotCleared` stay as answers after `GetWorkspace`
+  passed (the viewer may read the workspace); `NotCleared` on the file routes becomes
+  `WorkspaceNotFound`, because the views answer that for an uncleared workspace.
+
+**C7 - Documents and the UI.** SECURITY.md (the model, ownership, access lists with groups, in
+whose name, where checks go: the five rules, the order), CONFIDENTIALITY.md (clearances from the
+context, who applies the rules: issue 138 reversed, reading another channel), MEMORY.md,
+TOOLS-AND-COMMANDS.md (who may approve), REST-SERVER.md and WEB-UI.md (groups, the subject
+`group`), STORAGE.md (the kind), CONFIGURATION.md (`allow_all`), and the map redone from the code.
+The web UI: `types/index.ts` for the subject, the access dialogs of workspaces and artifacts, a
+page for teams.
+
+**C8 - Tests.** The policy's unit tests in `security.rs` (groups, roles from the context, the
+flow gone); the store suite for the group kind; the flow function's tests in
+`confidentiality.rs`; the security suite: new scenarios - a team shares a workspace, the internal
+group follows the participants, an observer reads a session without taking part, a role lost is
+a clearance lost at the next request -, and every action whose questions change re-asserted; the
+clearance tests of `session.rs` moved to the flow function where they test the rule and kept
+where they test the door.
+
+**C9 - Stored data to delete.** Everything with a `member_of` entry and everything that gets a
+`group_id`: all sessions, channels, workspaces and artifacts. No reader of the old form.
+
+### D. The branches
+
+1.  `issue-286-groups`: A2, A3, A4, B1, B2, B3, C1, C7 and C8 as far as groups go. Behaviour
+    changes only where `MemberOf` becomes `Group`; closes 286 and 289.
+2.  `issue-304-flow`: A1, A5, A6, `Classify` to validation, `Reclassify` split, issue 138
+    reversed, C5 for the flow sites, C7 for CONFIDENTIALITY.md.
+3.  `issue-304-admission`: C3 and C4 - admission at submission, one owner once, the F12 decision.
+4.  `issue-304-order`: C2 and C6 - the reach function, the refusals, the events, the REST place.
+5.  `issue-304-docs`: C7 complete, the map redone; 304 closed.
+
+### Open decisions
+
+- **Roles or clearances in the context** (A1): roles, as proposed, or the clearances computed by
+  the rules at build time. The plan assumes roles.
+- **Where a request's roles come from** (A1): read from the store per request, or carried in the
+  token's claims and renewed at login. The plan assumes the store.
+- **`allow_all` and the flow** (A5): with the flow orthogonal, `allow_all` no longer disables it;
+  tests and development that relied on that configure no compartments and no roles instead.
+- **The artifact's default** (B3): `Group(channel)` or the actors of the moment.
+- **Internal groups through the API** (B1): listed and readable, or not reachable at all.
+- **F12 per verb** (C4): `ReadSecret` with the secret's attributes if secrets get
+  `SecurityAttributes`; `CallTool` with the tool set's; or all four gone from the policy.
+- **C3 step 6**: how the admission reads the history, decided after reading the loop's locking.
+
 ## Done when
 
 - A map of every permission check - where, in whose name, which action, which concept - is in
@@ -288,3 +550,10 @@ and `StoreMemberships` go. The rules:
   submission with the actors asking nothing for what they send, one owner per act asking once -
   a component included, for the acts on what it keeps -, and offering apart from permitting, told
   apart by `require` against `may_*`. Applied in steps 3 and 4.
+- **2026-10-11** — The implementation plan written above at the maintainer's request: the
+  changes to `SecurityContext` (roles), `SecurityAttributes` (`Subject::Group`), the `Group`
+  entity, the policy's `Groups` lookup, the flow function out of the `SecurityManager`; the
+  internal groups and teams; every site of the map by the rule that keeps or removes it, with a
+  plan of its own for admission at submission (a sender that admits, wrapped around the actor's
+  transport), the reach function and the events; documents, tests, the stored data to delete;
+  five branches in order; seven open decisions.
