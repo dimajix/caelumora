@@ -119,7 +119,7 @@ impl crate::removal::Stored for Workspace {
         crate::scope::validate_users_own("workspace", &self.security_attributes, &self.name.scope)
     }
 
-    fn readers_cleared_for(&self) -> Option<&Classification> {
+    fn classification(&self) -> Option<&Classification> {
         Some(&self.classification)
     }
 }

@@ -5,11 +5,11 @@
 //!
 //! - **Reading** asks with the stored attributes. An entity the caller may
 //!   not read is reported as not found, so that ids cannot be probed for
-//!   existence. Where reaching it also means being cleared for it - a
-//!   workspace, a skill (`Stored::readers_cleared_for`, issue 322) -, the
-//!   `ConfidentialityPolicy` is asked that next, and who is not cleared
-//!   does not find it either: for every operation below, the deleted
-//!   included, as for reading.
+//!   existence. Where it is classified - a channel, a workspace, a skill,
+//!   an artifact (`Stored::classification`, issue 322) -, the
+//!   `ConfidentialityPolicy` is asked next whether the caller is cleared
+//!   for it, and who is not does not find it either: for every operation
+//!   below, the deleted included, as for reading.
 //! - **Listing** asks whether the caller may list at all, then filters the
 //!   result by what they may read.
 //! - **Creating** asks with the attributes of the new entity.
@@ -63,10 +63,10 @@ impl<'a> Access<'a> {
         self.manager.require(self.ctx, action, refusal).await
     }
 
-    /// Nothing if the caller is cleared for what `value` asks of whoever
-    /// reaches it (`Stored::readers_cleared_for`), `refusal()` otherwise.
+    /// Nothing if the caller is cleared for how `value` is classified
+    /// (`Stored::classification`), `refusal()` otherwise.
     fn require_cleared<T: Stored, E>(&self, value: &T, refusal: impl FnOnce() -> E) -> Result<(), E> {
-        match value.readers_cleared_for() {
+        match value.classification() {
             Some(classification) => self.confidentiality.require_cleared_for(self.ctx, classification, refusal),
             None => Ok(()),
         }
@@ -123,9 +123,9 @@ impl<'a> Access<'a> {
     }
 
     /// Whether the caller reaches `value`, asked as `read`: `may_reach`,
-    /// with what it asks of whoever reaches it.
+    /// with how it is classified.
     async fn reachable<T: Stored>(&self, value: &T, read: ActionType<'_>) -> bool {
-        let classifications = value.readers_cleared_for().map_or(&[][..], std::slice::from_ref);
+        let classifications = value.classification().map_or(&[][..], std::slice::from_ref);
         may_reach(self.manager, self.confidentiality, self.ctx, read, classifications).await
     }
 
@@ -362,6 +362,7 @@ mod tests {
     use crate::user::UserId;
     use crate::value::name::Name;
     use std::sync::Arc;
+    use crate::confidentiality::ConfidentialityRules;
 
     /// Owners do everything, whom the list names read, nobody acts for
     /// another.
@@ -413,7 +414,7 @@ mod tests {
         let sessions = [session(carol, Vec::new()), session(alice, Vec::new()), session(alice, Vec::new()), session(alice, Vec::new())];
         let keys: Vec<(String, usize)> = ["a", "b", "c", "d"].into_iter().map(String::from).zip(0..).collect();
         let mut loaded = Vec::new();
-        let page = super::Access::new(&OwnersAndContributors, &crate::confidentiality::ConfidentialityRules::default(), &alice_ctx)
+        let page = super::Access::new(&OwnersAndContributors, &ConfidentialityRules::default(), &alice_ctx)
             .page(keys, &Query::<NoField>::all().limited(2), &super::SESSIONS, false, |n: usize| {
                 loaded.push(n);
                 std::future::ready(Ok(Some(sessions[n].clone())))
@@ -462,7 +463,7 @@ mod tests {
 
     #[tokio::test]
     async fn what_the_caller_may_not_read_does_not_exist_for_them() {
-        let store = MemoryStore::with_policies(Arc::new(OwnersAndContributors), Arc::new(crate::confidentiality::ConfidentialityRules::default()));
+        let store = MemoryStore::with_policies(Arc::new(OwnersAndContributors), Arc::new(ConfidentialityRules::default()));
         let (alice, alice_ctx) = user();
         let (bob, bob_ctx) = user();
         let (_, carol_ctx) = user();
@@ -477,7 +478,7 @@ mod tests {
 
     #[tokio::test]
     async fn changes_are_checked_against_what_is_stored() {
-        let store = MemoryStore::with_policies(Arc::new(OwnersAndContributors), Arc::new(crate::confidentiality::ConfidentialityRules::default()));
+        let store = MemoryStore::with_policies(Arc::new(OwnersAndContributors), Arc::new(ConfidentialityRules::default()));
         let (alice, alice_ctx) = user();
         let (bob, bob_ctx) = user();
         let (carol, carol_ctx) = user();
@@ -501,7 +502,7 @@ mod tests {
     #[tokio::test]
     async fn what_was_deleted_is_the_owners_to_read_and_restore_and_the_systems_to_purge() {
         use crate::security::OwnershipSecurityManager;
-        let store = MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(crate::confidentiality::ConfidentialityRules::default()));
+        let store = MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()));
         let (alice, alice_ctx) = user();
         let (bob, bob_ctx) = user();
         let hers = session(alice, vec![bob]);
@@ -526,7 +527,7 @@ mod tests {
 
     #[tokio::test]
     async fn nobody_creates_in_someone_elses_name() {
-        let store = MemoryStore::with_policies(Arc::new(OwnersAndContributors), Arc::new(crate::confidentiality::ConfidentialityRules::default()));
+        let store = MemoryStore::with_policies(Arc::new(OwnersAndContributors), Arc::new(ConfidentialityRules::default()));
         let (alice, _) = user();
         let (_, bob_ctx) = user();
         assert!(matches!(store.create_session(&bob_ctx, &session(alice, Vec::new())).await, Err(StoreError::PermissionDenied)));
@@ -537,7 +538,7 @@ mod tests {
         use crate::security::OwnershipSecurityManager;
         use crate::user::User;
 
-        let store = MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(crate::confidentiality::ConfidentialityRules::default()));
+        let store = MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()));
         let system = SecurityContext::system();
         let alice_id = UserId::new();
         let alice_ctx = SecurityContext::new(ActorId::User(alice_id), Default::default(), Default::default());

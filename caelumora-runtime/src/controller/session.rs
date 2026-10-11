@@ -193,6 +193,7 @@ mod tests {
     use super::*;
     use caelumora_model::security::SecurityAttributes;
     use caelumora_model::store::memory::MemoryStore;
+    use caelumora_model::confidentiality::Classification;
 
     fn session() -> Session {
         Session {
@@ -220,7 +221,7 @@ mod tests {
             self.0.lock().unwrap().push(event);
         }
 
-        fn publish_classified(&self, event: GlobalEvent, attributes: SecurityAttributes, _classifications: &[caelumora_model::confidentiality::Classification]) {
+        fn publish_classified(&self, event: GlobalEvent, attributes: SecurityAttributes, _classifications: &[Classification]) {
             self.publish(event, attributes);
         }
     }

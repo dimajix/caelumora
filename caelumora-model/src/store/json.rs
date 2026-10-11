@@ -1068,9 +1068,11 @@ mod tests {
     use crate::store::suite;
     use tempfile::tempdir;
     use uuid::Uuid;
+    use crate::confidentiality::ConfidentialityRules;
+    use crate::security::{DummySecurityManager, OwnershipSecurityManager};
 
     fn store(dir: &std::path::Path) -> JsonFileStore {
-        JsonFileStore::new(dir, Arc::new(crate::security::DummySecurityManager::new()), Arc::new(crate::confidentiality::ConfidentialityRules::default())).unwrap()
+        JsonFileStore::new(dir, Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default())).unwrap()
     }
 
     #[tokio::test]
@@ -1108,7 +1110,7 @@ mod tests {
         let dir = tempdir().unwrap();
         suite::names_are_unique(&store(dir.path())).await;
         let dir = tempdir().unwrap();
-        let owners = JsonFileStore::new(dir.path(), Arc::new(crate::security::OwnershipSecurityManager::new()), Arc::new(crate::confidentiality::ConfidentialityRules::default())).unwrap();
+        let owners = JsonFileStore::new(dir.path(), Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default())).unwrap();
         suite::names_are_unique_beyond_what_is_read(&owners).await;
     }
 
@@ -1205,7 +1207,7 @@ mod tests {
 
         let dir = tempdir().unwrap();
         let security_manager = Arc::new(crate::security::DummySecurityManager::new());
-        let store = JsonFileStore::new(dir.path(), security_manager, Arc::new(crate::confidentiality::ConfidentialityRules::default())).unwrap();
+        let store = JsonFileStore::new(dir.path(), security_manager, Arc::new(ConfidentialityRules::default())).unwrap();
         let ctx = SecurityContext::default();
 
         let session_id = SessionId(Uuid::new_v4());
@@ -1276,7 +1278,7 @@ mod tests {
     async fn list_sessions_skips_corrupted_files() {
         let dir = tempdir().unwrap();
         let security_manager = Arc::new(crate::security::DummySecurityManager::new());
-        let store = JsonFileStore::new(dir.path(), security_manager, Arc::new(crate::confidentiality::ConfidentialityRules::default())).unwrap();
+        let store = JsonFileStore::new(dir.path(), security_manager, Arc::new(ConfidentialityRules::default())).unwrap();
         let ctx = SecurityContext::default();
 
         let s1 = Session {
@@ -1421,7 +1423,7 @@ mod tests {
         let lines = std::fs::read_to_string(&journal).unwrap();
 
         // As if the crash came after the snapshot and before the journal was emptied.
-        let folding = JsonFileStore::new(dir.path(), Arc::new(crate::security::DummySecurityManager::new()), Arc::new(crate::confidentiality::ConfidentialityRules::default())).unwrap().with_journal_floor(0);
+        let folding = JsonFileStore::new(dir.path(), Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default())).unwrap().with_journal_floor(0);
         folding.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
         assert!(!journal.exists());
         std::fs::write(&journal, &lines).unwrap();

@@ -56,3 +56,7 @@ are listed or read, since the store then asks the policy in the viewer's name.
   workspaces and skills into the store (`Stored::readers_cleared_for`). An artifact's follows here,
   once the store checks its versions' lists: then `Artifact` answers its classification, and the
   views' and `ArtifactManager::reached`'s own `cleared_for` fall away.
+- **2026-10-11** — Issue 322 then moved an artifact's clearance into the store as well
+  (`Stored::classification`): it does not depend on the versions' lists. What is left here is
+  reading by those lists; the views still read artifacts in the runtime's name and ask the
+  clearance themselves until then.

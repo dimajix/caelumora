@@ -131,8 +131,8 @@ operations of its own, each with a permission of its own:
 | `restore_x` | `ReadDeleted`, then `Restore` | takes the mark away and returns the restored document |
 | `purge_x` | `ReadDeleted`, then `Purge` | removes the document for good - only if it is marked, also when it is removed |
 
-For what is reached by clearance - a workspace, a skill -, every operation also asks whether the
-caller is cleared for it, the deleted alike (issue 322, see
+For what is classified - a channel, a workspace, a skill, an artifact -, every operation also asks
+whether the caller is cleared for it, the deleted alike (issue 322, see
 [SECURITY.md](SECURITY.md#how-stores-check)): the store is given a `ConfidentialityPolicy` beside
 its `SecurityManager`.
 

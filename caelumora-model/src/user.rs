@@ -182,6 +182,7 @@ impl From<UserProfileFields> for UserProfile {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::confidentiality::ConfidentialityRules;
 
     #[test]
     fn a_profile_belongs_to_its_user_whatever_is_stored() {
@@ -247,7 +248,7 @@ mod tests {
         use crate::store::memory::MemoryStore;
         use std::sync::Arc;
 
-        let store = MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(crate::confidentiality::ConfidentialityRules::default()));
+        let store = MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()));
         let (alice, bob) = (UserId::new(), UserId::new());
         let as_user = |id| SecurityContext::new(ActorId::User(id), SessionId::default(), ChannelId::default());
 

@@ -105,7 +105,7 @@ impl crate::removal::Stored for Skill {
         }
     }
 
-    fn readers_cleared_for(&self) -> Option<&Classification> {
+    fn classification(&self) -> Option<&Classification> {
         Some(&self.classification)
     }
 }

@@ -44,13 +44,10 @@ pub trait Stored: Secured {
         Ok(())
     }
 
-    /// What whoever reads it through the store must be cleared for (issue
-    /// 322): its classification, where reaching it is reading it and being
-    /// cleared for it - a workspace, a skill. `None` for a kind that is not
-    /// classified, and for one whose reach is not the store's alone: a
-    /// channel, read from the reader's place (`view::channel_reading`), and
-    /// an artifact, read by the access lists of its versions (issue 316).
-    fn readers_cleared_for(&self) -> Option<&Classification> {
+    /// How it is classified - a channel, a workspace, a skill, an artifact
+    /// -, `None` for a kind that is not. Whoever reaches it through the store
+    /// must be cleared for it (issue 322).
+    fn classification(&self) -> Option<&Classification> {
         None
     }
 }

@@ -2216,6 +2216,7 @@ async fn deleting_a_channel_needs_owning_its_session() {
         "alice: GetSession(alice's) yes",
         "alice: UpdateSession(alice's) yes",
         "alice: GetChannel(alice's) yes",
+        "alice: JoinChannel(alice) yes",
         "alice: DeleteChannel(alice's) yes",
     ]));
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
@@ -2285,10 +2286,12 @@ async fn restoring_a_channel_needs_owning_its_session() {
     assert!(restored.is_ok());
     assert_eq!(asked, checks(&[
         "alice: ReadDeleted(alice's) yes",
+        "alice: JoinChannel(alice) yes",
         "alice: Restore(alice's) yes",
         "alice: JoinChannel(alice) yes",
         "alice: JoinChannel(bob) yes",
         "alice: ReadDeleted(alice's) yes",
+        "alice: JoinChannel(alice) yes",
         "alice: Restore(alice's) yes",
         "alice: GetSession(alice's) yes",
         "alice: UpdateSession(alice's) yes",
@@ -2361,6 +2364,7 @@ async fn adding_an_agent_needs_owning_the_channel_and_the_agent_its_personality(
         "alice as helper: GetPersonality(bob's) yes",
         "alice: JoinChannel(helper) yes",
         "alice: GetChannel(alice's) yes",
+        "alice: JoinChannel(alice) yes",
         "alice: UpdateChannel(alice's) yes",
     ]));
 
@@ -2397,10 +2401,10 @@ async fn removing_an_agent_needs_owning_the_channel() {
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
     let (_, asked) = world.asked(main.remove_participant(&World::as_user(world.bob), ActorId::Agent(helper))).await;
-    assert_eq!(asked, checks(&["bob: GetChannel(alice's) yes", "bob: UpdateChannel(alice's) no"]));
+    assert_eq!(asked, checks(&["bob: GetChannel(alice's) yes", "bob: JoinChannel(bob) yes", "bob: UpdateChannel(alice's) no"]), "reached by the store, the clearance included (issue 322)");
     let (removed, asked) = world.asked(main.remove_participant(&World::as_user(world.alice), ActorId::Agent(helper))).await;
     assert!(removed.is_ok());
-    assert_eq!(asked, checks(&["alice: GetChannel(alice's) yes", "alice: UpdateChannel(alice's) yes"]));
+    assert_eq!(asked, checks(&["alice: GetChannel(alice's) yes", "alice: JoinChannel(alice) yes", "alice: UpdateChannel(alice's) yes"]));
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

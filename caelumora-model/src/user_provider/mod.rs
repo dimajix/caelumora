@@ -211,6 +211,7 @@ mod tests {
     use crate::value::name::Name;
     use std::collections::HashMap;
     use std::sync::Mutex;
+    use crate::confidentiality::Classification;
 
     /// What was announced.
     #[derive(Debug, Default)]
@@ -221,7 +222,7 @@ mod tests {
             self.0.lock().unwrap().push(event);
         }
 
-        fn publish_classified(&self, event: GlobalEvent, attributes: SecurityAttributes, _classifications: &[crate::confidentiality::Classification]) {
+        fn publish_classified(&self, event: GlobalEvent, attributes: SecurityAttributes, _classifications: &[Classification]) {
             self.publish(event, attributes);
         }
     }

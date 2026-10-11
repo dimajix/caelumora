@@ -714,6 +714,8 @@ impl StateStore for MemoryStore {
 mod tests {
     use super::*;
     use crate::store::suite;
+    use crate::confidentiality::ConfidentialityRules;
+    use crate::security::OwnershipSecurityManager;
 
     #[tokio::test]
     async fn behaves_as_an_entity_store() {
@@ -735,7 +737,7 @@ mod tests {
         use crate::confidentiality::Classification;
         use crate::scope::Scope;
         use crate::security::OwnershipSecurityManager;
-        let store = MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(crate::confidentiality::ConfidentialityRules::default()));
+        let store = MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()));
         let (alice, bob) = (UserId::new(), UserId::new());
         let mut hers = Vec::new();
         for (index, owner) in [alice, bob, bob, alice, bob, alice].into_iter().enumerate() {
@@ -783,7 +785,7 @@ mod tests {
     #[tokio::test]
     async fn keeps_names_unique() {
         suite::names_are_unique(&MemoryStore::new()).await;
-        let owners = MemoryStore::with_policies(Arc::new(crate::security::OwnershipSecurityManager::new()), Arc::new(crate::confidentiality::ConfidentialityRules::default()));
+        let owners = MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()));
         suite::names_are_unique_beyond_what_is_read(&owners).await;
     }
 }

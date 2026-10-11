@@ -319,6 +319,8 @@ mod tests {
     use caelumora_model::actor::ActorId;
     use caelumora_model::confidentiality::ConfidentialityRules;
     use std::time::Duration;
+    use caelumora_model::channel::ChannelUpdateEvent;
+    use caelumora_model::security::{Grant, Subject};
 
     fn bus() -> EventBus {
         EventBus::new(Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()))
@@ -442,11 +444,11 @@ mod tests {
         let mut bobs = bus.subscribe_as(as_user(bob));
 
         let (session, channel) = (SessionId::new(), ChannelId::new());
-        let shared = SecurityAttributes::owned_by(ActorId::User(alice)).granting(caelumora_model::security::Subject::Actor(ActorId::User(bob)), caelumora_model::security::Grant::Read);
+        let shared = SecurityAttributes::owned_by(ActorId::User(alice)).granting(Subject::Actor(ActorId::User(bob)), Grant::Read);
         let (public, internal) = (Classification::general(Confidentiality::Public), Classification::general(Confidentiality::Internal));
         bus.publish_classified(GlobalEvent::ChannelCreated(session, channel), shared.clone(), std::slice::from_ref(&internal));
         bus.publish_classified(GlobalEvent::ChannelStarted(session, channel), shared.clone(), std::slice::from_ref(&public));
-        let lowered = caelumora_model::channel::ChannelUpdateEvent::ClassificationChanged(public.clone());
+        let lowered = ChannelUpdateEvent::ClassificationChanged(public.clone());
         bus.publish_classified(GlobalEvent::ChannelUpdated(session, channel, lowered), shared, &[internal, public]);
 
         let kinds = |events: Vec<GlobalEvent>| events.iter().map(|e| format!("{e:?}").split('(').next().unwrap().to_string()).collect::<Vec<_>>();

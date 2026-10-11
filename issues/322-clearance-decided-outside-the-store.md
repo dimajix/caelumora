@@ -64,3 +64,10 @@ second filter beside the store's, written in several places.
   one it is not cleared for entry by entry from its place, which a context does not carry;
   artifacts follow with issue [316](316-store-checks-artifact-without-versions.md). SECURITY.md,
   STORAGE.md and the map say so.
+- **2026-10-11** — Extended: the views read channels and artifacts in the runtime's name, so that
+  asking the clearance of them in the store takes nothing from an agent reading another channel
+  entry by entry; the reason given above for leaving them out did not hold. `readers_cleared_for`
+  became `Stored::classification`, which every classified kind answers - channels, workspaces,
+  skills, artifacts -, and the store asks the clearance of all of them. `ArtifactManager::reached`
+  is gone; the views keep reaching what they read in the runtime's name themselves:
+  `channel_reading` for a channel, the versions' lists for an artifact (issue 316).

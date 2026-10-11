@@ -433,6 +433,7 @@ mod tests {
     use caelumora_model::user_provider::UserProvider;
     use caelumora_model::user_provider::accept_any::AcceptAnyUserProvider;
     use tower::ServiceExt;
+    use caelumora_model::confidentiality::ConfidentialityRules;
 
     const KEY: &[u8] = b"0123456789abcdef0123456789abcdef";
 
@@ -446,7 +447,7 @@ mod tests {
 
     /// Auth asking `providers`, the users recorded in `store` (issue 306).
     fn auth(store: Arc<dyn EntityStore>, providers: Vec<Arc<dyn UserProvider>>) -> Arc<Auth> {
-        let events = Arc::new(EventBus::new(Arc::new(DummySecurityManager::new()), Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default())));
+        let events = Arc::new(EventBus::new(Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default())));
         let controllers = Arc::new(ControllerManager::new(Arc::clone(&store), Arc::<EventBus>::clone(&events)));
         Arc::new(Auth { tokens: tokens(), users: Arc::new(UserManager::new(providers, store, events)), controllers })
     }
