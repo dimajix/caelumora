@@ -21,7 +21,7 @@ use crate::user::{User, UserId, UserProfile};
 use crate::value::name::ScopedName;
 use crate::workspace::{Workspace, WorkspaceId};
 use crate::skill::{Skill, SkillId};
-use crate::group::{Group, GroupId};
+use crate::group::{Group, GroupField, GroupId};
 use crate::artifact::{Artifact, ArtifactField, ArtifactId};
 use crate::channel::ChannelField;
 use crate::scope::ScopeField;
@@ -303,11 +303,11 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn get_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group>;
     async fn update_group(&self, ctx: &SecurityContext, value: &Group) -> StoreResult<()>;
     async fn delete_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<bool>;
-    async fn list_groups(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Group>>;
+    async fn list_groups(&self, ctx: &SecurityContext, query: &Query<GroupField>) -> StoreResult<Page<Group>>;
     async fn restore_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<()>;
     async fn purge_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<bool>;
     async fn get_deleted_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group>;
-    async fn list_deleted_groups(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Group>>;
+    async fn list_deleted_groups(&self, ctx: &SecurityContext, query: &Query<GroupField>) -> StoreResult<Page<Group>>;
     async fn find_group_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Group>;
 }
 

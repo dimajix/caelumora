@@ -12,7 +12,7 @@ use crate::template::{SessionTemplate, SessionTemplateId};
 use crate::user::{User, UserId, UserProfile};
 use crate::workspace::{Workspace, WorkspaceId};
 use crate::skill::{Skill, SkillId};
-use crate::group::{Group, GroupId};
+use crate::group::{Group, GroupField, GroupId};
 use crate::artifact::{Artifact, ArtifactId};
 use async_trait::async_trait;
 use tracing::{debug, info, warn};
@@ -922,7 +922,7 @@ impl EntityStore for JsonFileStore {
     async fn delete_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<bool> {
         self.delete_file::<Group>(ctx, &GROUPS, self.group_path(id)).await
     }
-    async fn list_groups(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Group>> {
+    async fn list_groups(&self, ctx: &SecurityContext, query: &Query<GroupField>) -> StoreResult<Page<Group>> {
         self.list_dir(ctx, &GROUPS, self.groups_dir(), query).await
     }
     async fn restore_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<()> {
@@ -934,7 +934,7 @@ impl EntityStore for JsonFileStore {
     async fn get_deleted_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group> {
         self.get_deleted_file(ctx, &GROUPS, self.group_path(id), id.to_string()).await
     }
-    async fn list_deleted_groups(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Group>> {
+    async fn list_deleted_groups(&self, ctx: &SecurityContext, query: &Query<GroupField>) -> StoreResult<Page<Group>> {
         self.list_deleted_dir(ctx, &GROUPS, self.groups_dir(), query).await
     }
     async fn find_group_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Group> {

@@ -1,6 +1,6 @@
 # 308 — An artifact shared with a team is not listed among its members' artifacts
 
-**Status:** open
+**Status:** done
 **Area:** Identity and access management
 
 ## The problem
@@ -53,3 +53,15 @@ The first is the likely answer: it keeps the list a query and names the teams on
 - **2026-10-11** — Opened at the maintainer's request, found during step 2a of issue
   [304](304-review-of-the-permission-concept.md): `Views::artifacts` names the viewer and their
   roles to the store, never a group.
+- **2026-10-11** — Done as the first consideration, with one restriction: only teams are named, not
+  the participants of a session or channel. Publishing gives a version the group of the channel's
+  participants, so naming every group of the viewer would list every artifact published in their
+  channels among their own, which `Views::artifacts` leaves to `ChannelView::artifacts`. Groups
+  are queried by `GroupField` (`Scope`, `Members`, `Member`), which `list_groups` and
+  `list_deleted_groups` take instead of `ScopeField`; `Views::artifacts` asks, in the runtime's
+  name, for the groups the viewer is a member of - not those they only own, since the policy
+  resolves a group by its members - and names the teams among them besides the viewer and their
+  roles. The security suite covers it as G4: an artifact shared with a team as a whole and one by
+  a version are listed for a member, not for a participant of the channel outside the team, and no
+  longer once the member left. No operation shares a single version yet, so the test writes that
+  list as stored.

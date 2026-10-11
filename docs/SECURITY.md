@@ -428,7 +428,9 @@ in the viewer's name:
 *   Workspaces and artifacts are reached by their access lists, wherever the viewer acts, cleared
     for their classification; an artifact's view holds and hands out only the versions the viewer
     may read. Where a version was published and by whom is named only where the viewer reaches that
-    channel, so that a version shared beyond it names nothing of it.
+    channel, so that a version shared beyond it names nothing of it. The viewer's own list of
+    artifacts holds those they own and those shared with them, a role of theirs or a team they
+    belong to; what reaches them only as a participant of a channel is listed in that channel.
 *   `Views::channel_of` reaches what a memory entry's origin or a recorded piece of knowledge names,
     wherever it is, and answers `None` for what is gone or not the viewer's to read.
 

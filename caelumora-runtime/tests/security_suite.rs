@@ -2804,6 +2804,52 @@ async fn the_group_of_a_channels_participants_follows_who_takes_part() {
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
+/// G4 (issue 308): an artifact shared with a team - as a whole, or by a
+/// version - is among the artifacts of its members while they are members.
+/// What was published in a channel is shared with the channel's
+/// participants and stays found through it, not among theirs.
+#[tokio::test]
+async fn an_artifact_shared_with_a_team_is_among_its_members_artifacts() {
+    let world = World::new().await;
+    let (alice, bob, carol) = (World::as_user(world.alice), World::as_user(world.bob), World::as_user(world.carol));
+    let groups = world.runtime.group_manager();
+    let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
+    let session = world.shared_session(&[], &[]).await;
+    session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
+    let (session_id, main) = (session.id(), session.channels()[0].id());
+    let (_, terminal) = world.runtime.workspace_manager().terminal_in(&alice, session_id, main, Grant::Write).await.expect("hers to use");
+    let at = WorkspacePath::parse("report.md").unwrap();
+    terminal.write(&at, file("final"), 100).await.unwrap();
+    let (whole, _) = publish(&world, &alice, session_id, main, &at, "report.md", None).await.expect("one to share as a whole");
+    let (by_version, _) = publish(&world, &alice, session_id, main, &at, "notes.md", None).await.expect("one to share by a version");
+    let listed = |ctx: &SecurityContext| {
+        let views = world.manager.views(Viewer::new(ctx.clone()));
+        async move {
+            let mut ids = views.artifacts().await.unwrap().iter().map(|a| a.artifact().id).collect::<Vec<_>>();
+            ids.sort_by_key(|id| id.to_string());
+            ids
+        }
+    };
+    assert!(listed(&bob).await.is_empty(), "the participants of the channel are not named");
+
+    let project = groups.create(&alice, "project", Scope::UserScope { user_id: world.alice }).await.unwrap();
+    groups.set_members(&alice, project.id, vec![world.carol]).await.unwrap();
+    let the_team = AclEntry { subject: Subject::Group(project.id), grant: Grant::Read };
+    world.runtime.artifact_manager().set_access(&alice, whole.id, vec![the_team]).await.expect("shared with the team");
+    // No operation shares a single version yet; its list is written as stored.
+    let mut stored = world.store.get_artifact(&World::system(), by_version.id).await.unwrap();
+    stored.versions[0].acl.push(the_team);
+    world.store.update_artifact(&World::system(), &stored).await.unwrap();
+
+    let mut both = vec![whole.id, by_version.id];
+    both.sort_by_key(|id| id.to_string());
+    assert_eq!(listed(&carol).await, both, "a member finds both among hers");
+    assert!(listed(&bob).await.is_empty(), "who is not in the team does not");
+    groups.set_members(&alice, project.id, Vec::new()).await.unwrap();
+    assert!(listed(&carol).await.is_empty(), "who left it no longer does");
+    world.manager.stop_session(&alice, session_id).await.unwrap();
+}
+
 /// Who takes part in the session but not in the channel does not use the
 /// channel's workspace there - an agent of alice's waiting in the session,
 /// say.
