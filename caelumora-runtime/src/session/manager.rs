@@ -560,7 +560,7 @@ mod tests {
         let mut rx = runtime.event_bus().subscribe_all();
         let ctx = SecurityContext::default();
 
-        let session = make_session("s1");
+        let session = make_session("s1", ActorId::None);
         let session_id = session.id;
         let channel_id = session.channels[0];
 
@@ -590,7 +590,7 @@ mod tests {
         let manager = SessionManager::new(Arc::clone(&runtime));
         let ctx = SecurityContext::default();
 
-        let session = make_session("s2");
+        let session = make_session("s2", ActorId::None);
         let session_id = session.id;
         let channel_id = session.channels[0];
         create(&manager, &ctx, session).await.unwrap();
@@ -620,7 +620,7 @@ mod tests {
         let ctx = SecurityContext::default();
 
         // Persist a session directly, without going through create_session.
-        let session = make_session("s3");
+        let session = make_session("s3", ActorId::None);
         let session_id = session.id;
         persist(&runtime, &ctx, &session).await;
 
@@ -645,7 +645,7 @@ mod tests {
         let runtime = test_runtime();
         let manager = SessionManager::new(Arc::clone(&runtime));
         let ctx = SecurityContext::default();
-        let session = make_session("concurrent");
+        let session = make_session("concurrent", ActorId::None);
         let session_id = session.id;
         persist(&runtime, &ctx, &session).await;
 
@@ -668,7 +668,7 @@ mod tests {
         let runtime = test_runtime();
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let ctx = SecurityContext::default();
-        let session = make_session("stopped");
+        let session = make_session("stopped", ActorId::None);
         let session_id = session.id;
         persist(&runtime, &ctx, &session).await;
 
@@ -700,13 +700,13 @@ mod tests {
             executor.visible(&SecurityContext::default(), &SecurityAttributes::default()).await.into_iter().map(|c| c.name).collect::<Vec<_>>()
         };
 
-        let session = make_session("plain");
+        let session = make_session("plain", ActorId::None);
         let executor = runtime.new_command_executor(&session).await.expect("the global commands build");
         assert_eq!(names(executor).await, vec!["help", "nudge", "wakeup"]);
 
         // A second /help from the session's own configuration - with the same
         // component id, which is fine across the two configurations.
-        let mut session = make_session("clashing");
+        let mut session = make_session("clashing", ActorId::None);
         session.commands = ComponentConfig {
             component_nodes: vec![ComponentDescriptor {
                 id: "help".to_string(),
@@ -740,11 +740,11 @@ mod tests {
         let actor = ActorId::Agent(helper.id);
 
         // In a running session's channel, and in a stopped one's.
-        let mut running = make_session("running");
+        let mut running = make_session("running", ActorId::None);
         running.participants = vec![Participant::Agent(helper.id)];
         let running = create(&manager, &ctx, running).await.unwrap();
         let talk = running.create_channel(&ctx, spec("talk", vec![actor])).await.unwrap();
-        let mut stopped = make_session("stopped");
+        let mut stopped = make_session("stopped", ActorId::None);
         stopped.participants = vec![Participant::Agent(helper.id)];
         store.create_session(&system, &stopped).await.unwrap();
         store.create_channel(&system, &Channel { participants: vec![Participant::Agent(helper.id)], ..main_channel(&stopped) }).await.unwrap();
@@ -847,7 +847,7 @@ mod tests {
         let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&states), Arc::<MemoryStore>::clone(&entities), secret_manager, Arc::new(DummySecurityManager::new()), Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&entities))).unwrap());
         let manager = SessionManager::new(runtime);
         let ctx = SecurityContext::default();
-        let session = make_session("two-stores");
+        let session = make_session("two-stores", ActorId::None);
         let (id, channel_id) = (session.id, session.channels[0]);
         create(&manager, &ctx, session).await.unwrap();
         assert!(states.get_channel_state(channel_id).await.is_ok(), "the channel keeps its state in the state store");
@@ -884,7 +884,7 @@ mod tests {
         let store = Arc::clone(runtime.entity_store());
         let manager = SessionManager::new(runtime);
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
-        let session = make_session("scoped");
+        let session = make_session("scoped", ActorId::None);
         let id = session.id;
         let running = create(&manager, &ctx, session).await.unwrap();
         let side = running.create_channel(&ctx, spec("side", vec![])).await.unwrap().id();
@@ -948,15 +948,12 @@ mod tests {
         use caelumora_model::actor::ActorId;
         use caelumora_model::user::UserId;
 
-        let (policy, confidentiality, store) = crate::session::testing::owned_store(Default::default());
-        let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::clone(&confidentiality), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
-        let manager = SessionManager::new(runtime);
+        let (_, manager) = owned_runtime(Default::default());
 
         let as_user = |id| SecurityContext::new(ActorId::User(id), Default::default(), Default::default());
         let (alice, bob, carol) = (UserId::new(), UserId::new(), UserId::new());
-        let mut session = make_session("hers");
-        session.security_attributes = SecurityAttributes::owned_by(ActorId::User(alice)).granting(caelumora_model::security::Subject::Actor(ActorId::User(bob)), caelumora_model::security::Grant::Read);
+        let mut session = make_session("hers", ActorId::User(alice));
+        session.security_attributes = session.security_attributes.clone().granting(caelumora_model::security::Subject::Actor(ActorId::User(bob)), caelumora_model::security::Grant::Read);
         let id = session.id;
         create(&manager, &as_user(alice), session).await.expect("alice creates her own session");
 

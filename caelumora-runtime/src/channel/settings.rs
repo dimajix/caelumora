@@ -133,15 +133,15 @@ impl ChannelLoop {
 
 #[cfg(test)]
 mod tests {
-    use caelumora_model::value::name::Name;
+
     use crate::channel::ChannelLoop;
-    use crate::runtime::RuntimeManager;
+
     use caelumora_model::confidentiality::Classification;
-    use caelumora_model::security::{SecurityAttributes, SecurityContext};
+    use caelumora_model::security::SecurityContext;
     use caelumora_model::store::StoreError;
     use std::sync::Arc;
-    use caelumora_model::secret::SecretManager;
-    use caelumora_model::store::memory::MemoryStore;
+
+    
     use caelumora_model::actor::Rejection;
     use crate::session::{ChannelSpec, SessionManager};
     use crate::session::testing::*;
@@ -169,20 +169,16 @@ mod tests {
         use crate::channel::ChannelError;
         use caelumora_model::actor::ActorId;
         use caelumora_model::confidentiality::{Compartment, Compartments, ConfidentialityRules, Confidentiality};
-        use caelumora_model::user::{User, UserId};
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![]), (Compartment::new("finance"), vec![])]).unwrap();
-        let (policy, confidentiality, store) = crate::session::testing::owned_store(ConfidentialityRules::new(compartments));
-        let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::clone(&confidentiality), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
-        let manager = SessionManager::new(Arc::clone(&runtime));
-        let user = |name: &str| User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: Vec::new(), deleted: None };
+        let (_, manager) = owned_runtime(ConfidentialityRules::new(compartments));
+        let runtime = Arc::clone(runtime_of(&manager));
         let (alice, bob) = (user("alice"), user("bob"));
         let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(bob.id));
         let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
         let bob_ctx = SecurityContext::new(bob_id, Default::default(), Default::default());
-        let mut session = make_session("hers");
-        session.security_attributes = SecurityAttributes::owned_by(alice_id).granting(caelumora_model::security::Subject::Actor(bob_id), caelumora_model::security::Grant::Read);
+        let mut session = make_session("hers", alice_id);
+        session.security_attributes = session.security_attributes.clone().granting(caelumora_model::security::Subject::Actor(bob_id), caelumora_model::security::Grant::Read);
         session.participants = record_users(&manager, &[&alice, &bob]).await;
         let session = create(&manager, &alice_ctx, session).await.unwrap();
 
@@ -224,16 +220,13 @@ mod tests {
     async fn renaming_a_channel_is_stored_and_only_the_owner_may() {
         use caelumora_model::actor::ActorId;
         use caelumora_model::store::EntityStore;
-        use caelumora_model::user::UserId;
 
-        let (policy, confidentiality, store) = crate::session::testing::owned_store(Default::default());
-        let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::clone(&confidentiality), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
-        let manager = SessionManager::new(runtime);
-        let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
+        let (store, manager) = owned_runtime(Default::default());
+        let users = (user("alice"), user("bob"));
+        let (alice, bob) = (ActorId::User(users.0.id), ActorId::User(users.1.id));
         let as_user = |actor| SecurityContext::new(actor, Default::default(), Default::default());
-        let mut session = make_session("hers");
-        session.security_attributes = SecurityAttributes::owned_by(alice).granting(caelumora_model::security::Subject::Actor(bob), caelumora_model::security::Grant::Read);
+        let mut session = make_session("hers", alice);
+        session.participants = record_users(&manager, &[&users.0, &users.1]).await;
         let running = create(&manager, &as_user(alice), session).await.unwrap();
         let main = running.channel_by_name("main").unwrap();
 

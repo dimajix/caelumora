@@ -297,18 +297,19 @@ impl SessionLoop {
 
 #[cfg(test)]
 mod tests {
-    use caelumora_model::value::name::Name;
+    use caelumora_model::actor::ActorId;
+
     use crate::channel::ChannelLoop;
-    use crate::runtime::RuntimeManager;
+
     use anyhow::Result;
     use caelumora_model::value::language::Language;
     use caelumora_model::event::GlobalEvent;
-    use caelumora_model::security::{SecurityAttributes, SecurityContext};
+    use caelumora_model::security::SecurityContext;
     use caelumora_model::store::StoreError;
     use caelumora_model::session::ChannelId;
     use std::sync::Arc;
-    use caelumora_model::secret::SecretManager;
-    use caelumora_model::store::memory::MemoryStore;
+
+    
     use crate::session::{ChannelSpec, SessionError, SessionLoop, SessionManager};
     use crate::session::testing::*;
 
@@ -464,7 +465,7 @@ mod tests {
     async fn a_channel_deleted_before_the_session_runs_is_never_started() {
         let runtime = test_runtime();
         let ctx = SecurityContext::default();
-        let session = make_session("waiting");
+        let session = make_session("waiting", ActorId::None);
         let channel_id = session.channels[0];
         persist(&runtime, &ctx, &session).await;
         let session_loop = SessionLoop::new(session.clone(), vec![main_channel(&session)], Arc::clone(&runtime)).await.unwrap();
@@ -486,19 +487,15 @@ mod tests {
     #[tokio::test]
     async fn only_who_may_change_the_session_creates_or_deletes_its_channels() {
         use caelumora_model::actor::ActorId;
-        use caelumora_model::user::{User, UserId};
+        use caelumora_model::user::UserId;
 
-        let (policy, confidentiality, store) = crate::session::testing::owned_store(Default::default());
-        let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::clone(&confidentiality), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
-        let manager = SessionManager::new(runtime);
+        let (_, manager) = owned_runtime(Default::default());
 
-        let user = |name: &str| User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: Vec::new(), deleted: None };
         let (alice, bob) = (user("alice"), user("bob"));
         let as_user = |id: UserId| SecurityContext::new(ActorId::User(id), Default::default(), Default::default());
         let (alice_ctx, bob_ctx) = (as_user(alice.id), as_user(bob.id));
-        let mut session = make_session("hers");
-        session.security_attributes = SecurityAttributes::owned_by(ActorId::User(alice.id)).granting(caelumora_model::security::Subject::Actor(ActorId::User(bob.id)), caelumora_model::security::Grant::Read);
+        let mut session = make_session("hers", ActorId::User(alice.id));
+        session.security_attributes = session.security_attributes.clone().granting(caelumora_model::security::Subject::Actor(ActorId::User(bob.id)), caelumora_model::security::Grant::Read);
         session.participants = record_users(&manager, &[&alice, &bob]).await;
         let session = create(&manager, &alice_ctx, session).await.unwrap();
         let main = session.channel_by_name("main").unwrap().id();
@@ -516,17 +513,13 @@ mod tests {
     #[tokio::test]
     async fn a_channel_its_viewer_may_not_read_is_not_there_for_them() {
         use caelumora_model::actor::ActorId;
-        use caelumora_model::user::{User, UserId};
+        use caelumora_model::user::UserId;
 
-        let (policy, confidentiality, store) = crate::session::testing::owned_store(Default::default());
-        let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::clone(&confidentiality), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
-        let manager = SessionManager::new(runtime);
-        let user = |name: &str| User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: Vec::new(), deleted: None };
+        let (_, manager) = owned_runtime(Default::default());
         let (alice, bob) = (user("alice"), user("bob"));
         let as_user = |id: UserId| SecurityContext::new(ActorId::User(id), Default::default(), Default::default());
-        let mut session = make_session("hers");
-        session.security_attributes = SecurityAttributes::owned_by(ActorId::User(alice.id)).granting(caelumora_model::security::Subject::Actor(ActorId::User(bob.id)), caelumora_model::security::Grant::Read);
+        let mut session = make_session("hers", ActorId::User(alice.id));
+        session.security_attributes = session.security_attributes.clone().granting(caelumora_model::security::Subject::Actor(ActorId::User(bob.id)), caelumora_model::security::Grant::Read);
         session.participants = record_users(&manager, &[&alice, &bob]).await;
         let session = create(&manager, &as_user(alice.id), session).await.unwrap();
         // Alice's alone: bob takes part in the session, not in this channel.

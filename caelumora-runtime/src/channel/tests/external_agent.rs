@@ -1121,7 +1121,6 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_since() 
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::scope::Scope;
     use caelumora_model::store::EntityStore;
-    use caelumora_model::user::{User, UserId};
 
     let answer = |text: &str| vec![Ok(ExternalEvent::Message(text.to_string())), Ok(ExternalEvent::Completed)];
     let remote = Arc::new(ScriptedExternalAgent::answering(vec![answer("Hello."), answer("Hi, bob.")]));
@@ -1141,7 +1140,6 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_since() 
     let manager = SessionManager::new(Arc::clone(&runtime));
     let system = SecurityContext::system();
 
-    let user = |name: &str| User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: Vec::new(), deleted: None };
     let (alice, bob) = (user("alice"), user("bob"));
     let participants = record_users(&manager, &[&alice, &bob]).await;
     let mut members = ComponentDescriptor::new("members", "channel_members_prompt_provider");
@@ -1158,7 +1156,7 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_since() 
     store.create_agent(&system, &hermes).await.unwrap();
 
     let alice_ctx = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
-    let mut session = make_session("roster");
+    let mut session = make_session("roster", ActorId::None);
     session.participants = participants;
     session.participants.push(caelumora_model::session::Participant::Agent(hermes.id));
     let session = create(&manager, &alice_ctx, session).await.unwrap();
