@@ -335,7 +335,8 @@ impl SessionManager {
 
     /// Stops and deletes a session. Deleting marks (issue 164): the session
     /// is kept, with its channels and their state, hidden until it is
-    /// restored (`restore_session`) or purged (`purge_session`).
+    /// restored (`restore_session`) or purged (`purge_session`). What lies
+    /// in its scope is deleted with it, in `context`'s name (issue 320).
     ///
     /// Asked about before anything happens - a refused deletion must not
     /// stop the session on the way (issue 11).
@@ -343,7 +344,10 @@ impl SessionManager {
     /// # Errors
     /// `StoreError::NotFound` if there is no such session or `context` may
     /// not read it, `StoreError::PermissionDenied` if they may read but not
-    /// delete it.
+    /// delete it, `SessionError::ScopeNotEmpty` if something of its scope
+    /// is left that they may not delete - what they may is deleted, the
+    /// session is kept; whatever else the store reports, which keeps the
+    /// session too.
     pub async fn delete_session(&self, context: &SecurityContext, id: SessionId) -> Result<bool> {
         // Held until the session is gone from the store, so that no request
         // starts it again from there in the meantime (issue 62).
@@ -359,28 +363,36 @@ impl SessionManager {
             .map(|c| (c.id, c.security_attributes, c.classification))
             .collect();
 
+        // Marked, not removed (issue 164): its channels and their state stay
+        // as they are, hidden with it - a channel is reached only through
+        // its session - until it is purged. Marked before what lies in its
+        // scope, so that all of that is deleted with it, not before it: it
+        // comes back with it (`restore_session`, issue 178).
+        if !self.entities.delete_session(context, id).await? {
+            return Ok(false);
+        }
+        // What lies in its scope and in its channels' goes as far as
+        // `context` may delete it (issue 320). If something is left, the
+        // mark is taken away again - in the runtime's name: the deletion was
+        // permitted - and the session runs on if it ran, without what was
+        // deleted, and `context` is told what is left. Its agents take part
+        // in no other session (`Scope::admits`): they leave nothing.
+        if let Err(left) = self.scoped.delete_lying_in(context, &Scope::SessionScope { session_id: id }).await {
+            if let Err(undo) = self.entities.restore_session(&SecurityContext::system(), id).await {
+                warn!("Session {} could not be deleted and not be unmarked again: {}", id, undo);
+            }
+            return Err(left);
+        }
+
         self.stop_running(id).await;
 
         let event_bus = &self.events;
         for (channel_id, attributes, classification) in channels {
             event_bus.publish_classified(GlobalEvent::ChannelDeleted(id, channel_id), attributes, &[classification]);
         }
-
-        // Marked, not removed (issue 164): its channels and their state stay
-        // as they are, hidden with it - a channel is reached only through
-        // its session - until it is purged.
-        let removed = self.entities.delete_session(context, id).await?;
-        // What lies in its scope and in its channels' goes with it (issue
-        // 178). Its agents take part in no other session (`Scope::admits`):
-        // they leave nothing, and come back with its channels.
-        if removed {
-            if let Err(e) = self.scoped.delete_lying_in(&Scope::SessionScope { session_id: id }).await {
-                warn!("Session {} was deleted, but not what lies in its scope: {}", id, e);
-            }
-        }
         event_bus.publish(GlobalEvent::SessionDeleted(id), session.security_attributes.clone());
         self.starts.remove(&id);
-        Ok(removed)
+        Ok(true)
     }
 
     /// Restores the deleted session `id` on behalf of `context` (issue 164):
@@ -404,7 +416,7 @@ impl SessionManager {
         let deleted_at = store.get_deleted_session(context, id).await?.deleted.map(|removal| removal.at);
         let session = store.restore_session(context, id).await?;
         if let Some(since) = deleted_at {
-            if let Err(e) = self.scoped.restore_lying_in(&Scope::SessionScope { session_id: id }, since).await {
+            if let Err(e) = self.scoped.restore_lying_in(context, &Scope::SessionScope { session_id: id }, since).await {
                 warn!("Session {} was restored, but not what lies in its scope: {}", id, e);
             }
         }

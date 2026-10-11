@@ -178,8 +178,8 @@ impl ApiError {
     /// - a request that cannot be met is the client's: `404` for a session,
     ///   template, channel, participant or context that is not there (or may
     ///   not be seen, which is answered the same), `409` for one that is
-    ///   there already - or still leaving -, `400` for any other
-    ///   `SessionError`, `ChannelError`,
+    ///   there already - or still leaving, or kept by what is left in its
+    ///   scope -, `400` for any other `SessionError`, `ChannelError`,
     ///   `CommandError` or `TemplateError`;
     /// - a refusal (`is_forbidden`, or a refused context) is `403`,
     ///   `<subject>_forbidden`, saying what was refused and not why;
@@ -303,6 +303,7 @@ impl ApiError {
                 SessionError::InvalidModerator(_) | SessionError::NotAParticipant { .. }
                 | SessionError::ClassificationRefused(_) => return bad_request("invalid_channel"),
                 SessionError::WorkspaceOutOfScope(_) => return bad_request("workspace_out_of_scope"),
+                SessionError::ScopeNotEmpty { .. } => return Self::conflict("scope_not_empty", detail),
                 // A caller that is no user: not the client's request.
                 SessionError::OwnerNotAUser(_) => {}
             }
@@ -563,6 +564,8 @@ mod tests {
             assert_eq!(workspace(WorkspaceError::Terminal(TerminalError::UnknownCommand("7".to_string()))), (404, "command_not_found"), "nor one not started in the channel");
             assert_eq!(answer(not_found("workspace"), Subject::Session), (404, "workspace_not_found"), "as attaching reports it");
             assert_eq!(answer(anyhow::Error::new(SessionError::WorkspaceOutOfScope(id)), Subject::Session), (400, "workspace_out_of_scope"));
+            let left = vec![(caelumora_model::store::EntityKind::Artifact, 1)];
+            assert_eq!(answer(anyhow::Error::new(SessionError::ScopeNotEmpty { holder: caelumora_model::scope::Scope::SessionScope { session_id: session }, left }), Subject::Session), (409, "scope_not_empty"), "what is left is the others' to take away (issue 320)");
         {
             use caelumora_runtime::artifact::ArtifactError;
             let artifact = caelumora_model::artifact::ArtifactId::new();

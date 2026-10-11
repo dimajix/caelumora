@@ -150,9 +150,16 @@ themselves, an agent its owner (see [In whose name an agent acts](#in-whose-name
 *   Deleting an agent is its owner's. The channels it takes part in are not changed: it rests in
     them, and that its actors stop there - and start again once it is restored - is done in the
     runtime's name, a consequence of the deletion, not a change of channels owned by others.
-*   What lies in a session's or a channel's scope - personalities, session templates, agents - is
-    deleted, restored and purged with it in the runtime's name: whoever may delete the session
-    deletes an agent of its scope even if it is somebody else's, and is asked nothing more.
+*   What lies in a session's or a channel's scope - personalities, session templates, agents,
+    workspaces, skills, artifacts, groups - is deleted and restored with it in the name of whoever
+    deletes or restores it (issue 320); only finding it is done in the runtime's name. Whoever
+    deletes a session deletes what of its scope they may; if something is left - an artifact
+    another participant published there, a contributor's agent -, the session is kept, and they
+    are told what is left, by kind and count (`SessionError::ScopeNotEmpty`). What they may is
+    deleted all the same, so that what is left to do is plain: its owners keep it elsewhere or
+    delete it. Whoever restores a session restores it and what of its scope they may; the rest
+    stays deleted for its owner to restore. Purging is the system's anyway and done in the
+    runtime's name.
 *   The runtime acting on its own uses `SecurityContext::system()`, which may do everything. This is
     deliberate and never a default: an empty context has no rights.
 

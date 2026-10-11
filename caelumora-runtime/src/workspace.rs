@@ -30,7 +30,7 @@
 use crate::component::{ComponentError, ComponentResult};
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
-use crate::scoped::{deleted_since, unless_taken, within};
+use crate::scoped::{deleted_since, deleted_unless_refused, restored_unless_refused, within};
 use crate::terminal::{CommandKey, CommandState, DockerProvider, LocalProvider, Shell, SharedProvider, Terminal, TerminalError, TerminalProvider};
 use caelumora_model::actor::ActorId;
 use caelumora_model::config::{StorageConfig, WorkspacesConfig};
@@ -460,34 +460,39 @@ impl WorkspaceManager {
     }
 
     /// Deletes the workspaces that lie in `holder` or within it, their
-    /// places kept, in the runtime's name (`scoped`), and announces them as
-    /// `delete` does.
+    /// places kept, on behalf of `ctx` (`scoped`), as far as they may, and
+    /// announces them as `delete` does; answers how many are left.
     ///
     /// # Errors
-    /// Whatever the store reports; what was deleted before stays deleted.
-    pub(crate) async fn delete_lying_in(&self, holder: &Scope) -> WorkspaceResult<()> {
+    /// Whatever else the store reports; what was deleted before stays
+    /// deleted.
+    pub(crate) async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> WorkspaceResult<usize> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
+        let mut left = 0;
         for workspace in self.entities.list_workspaces(&system, &within(holder)).await?.items {
-            self.entities.delete_workspace(&system, workspace.id).await?;
-            self.events.publish_classified(GlobalEvent::WorkspaceDeleted(workspace.id), workspace.security_attributes, std::slice::from_ref(&workspace.classification));
+            if deleted_unless_refused(self.entities.delete_workspace(ctx, workspace.id).await)? {
+                self.events.publish_classified(GlobalEvent::WorkspaceDeleted(workspace.id), workspace.security_attributes, std::slice::from_ref(&workspace.classification));
+            } else {
+                left += 1;
+            }
         }
-        Ok(())
+        Ok(left)
     }
 
     /// Restores the workspaces that lie in `holder` or within it and were
-    /// deleted at `since` or later, with their places, in the runtime's
-    /// name (`scoped`), and announces them as `restore` does. One whose
-    /// name was taken meanwhile stays deleted.
+    /// deleted at `since` or later, with their places, on behalf of `ctx`
+    /// (`scoped`), and announces them as `restore` does. One whose name was
+    /// taken meanwhile stays deleted, as does one `ctx` may not restore.
     ///
     /// # Errors
     /// Whatever else the store reports; what was restored before stays
     /// restored.
-    pub(crate) async fn restore_lying_in(&self, holder: &Scope, since: DateTime<Utc>) -> WorkspaceResult<()> {
+    pub(crate) async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> WorkspaceResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         for workspace in deleted_since(self.entities.list_deleted_workspaces(&system, &within(holder)).await?.items, since) {
-            if let Some(restored) = unless_taken(self.entities.restore_workspace(&system, workspace.id).await, "workspace", &workspace.name)? {
+            if let Some(restored) = restored_unless_refused(self.entities.restore_workspace(ctx, workspace.id).await, "workspace", &workspace.name)? {
                 self.events.publish_classified(GlobalEvent::WorkspaceRestored(restored.id), restored.security_attributes, std::slice::from_ref(&restored.classification));
             }
         }
