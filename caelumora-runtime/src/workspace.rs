@@ -259,16 +259,21 @@ impl WorkspaceManager {
     }
 
     /// Gives workspace `id` the access list `acl` (issue 23) on behalf of
-    /// `ctx`: its owner's act (`UpdateWorkspace`, asked as it is stored).
-    /// Announced without the list, which only its owner sees.
+    /// `ctx`: its owner's act (`UpdateWorkspace`), asked before a group the
+    /// list names newly is looked at - who names one must read it (issue
+    /// 286) - and again as it is stored. Announced without the list, which
+    /// only its owner sees.
     ///
     /// # Errors
     /// `NotFound` if there is none the caller may read, a `StoreError` -
     /// `PermissionDenied` for anyone but its owner, `Validation` for an
-    /// entry that names anyone but a user.
+    /// entry that names an agent, the system or nobody, or a group the
+    /// caller cannot read.
     pub async fn set_access(&self, ctx: &SecurityContext, id: WorkspaceId, acl: Vec<AclEntry>) -> WorkspaceResult<Workspace> {
         let _writing = self.writing.lock().await;
         let mut workspace = self.entities.get_workspace(ctx, id).await.map_err(store_error(id))?;
+        self.security.require(ctx, ActionType::UpdateWorkspace(&workspace.security_attributes), || StoreError::PermissionDenied).await?;
+        crate::group::require_nameable(self.entities.as_ref(), ctx, &workspace.security_attributes.acl, &acl).await?;
         workspace.security_attributes.acl = acl;
         workspace.updated_at = chrono::Utc::now();
         self.entities.update_workspace(ctx, &workspace).await.map_err(store_error(id))?;

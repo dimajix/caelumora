@@ -23,6 +23,7 @@ use caelumora_model::security::{SecurityContext, SecurityManager};
 use caelumora_model::session::Session;
 use caelumora_model::store::{EntityStore, StateStore};
 use std::sync::{Arc, OnceLock, Weak};
+use crate::group::GroupManager;
 
 #[derive(Debug)]
 pub struct RuntimeManager {
@@ -45,6 +46,8 @@ pub struct RuntimeManager {
     skills: Arc<crate::skill::SkillManager>,
     /// The one owner of artifacts and their content (issue 271).
     artifacts: Arc<crate::artifact::ArtifactManager>,
+    /// The one writer of teams (issue 286).
+    groups: Arc<GroupManager>,
     /// The services components may use (issue 296), each given to the
     /// kinds that declare it (`ComponentKind::uses`).
     component_services: ComponentServices,
@@ -326,6 +329,7 @@ impl RuntimeManager {
         let workspaces = crate::workspace::WorkspaceManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus), Arc::clone(&security_manager), &secret_manager, &config.workspaces)?;
         let skills = Arc::new(crate::skill::SkillManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus), Arc::clone(&security_manager)));
         let artifacts = Arc::new(crate::artifact::ArtifactManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus), Arc::clone(&security_manager), &config.artifacts)?);
+        let groups = Arc::new(GroupManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus)));
 
         let component_services = ComponentServices::empty()
             .with(Arc::clone(&security_manager))
@@ -346,6 +350,7 @@ impl RuntimeManager {
             workspaces,
             skills,
             artifacts,
+            groups,
             component_services,
         })
     }
@@ -416,6 +421,11 @@ impl RuntimeManager {
     /// The one owner of artifacts and their content (issue 271).
     pub fn artifact_manager(&self) -> &Arc<crate::artifact::ArtifactManager> {
         &self.artifacts
+    }
+
+    /// The one writer of teams (issue 286).
+    pub fn group_manager(&self) -> &Arc<GroupManager> {
+        &self.groups
     }
 
     pub fn new_recorder(&self) -> Result<Box<dyn Recorder>> {

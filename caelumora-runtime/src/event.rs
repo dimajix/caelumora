@@ -51,6 +51,7 @@ impl PublishedEvent {
             GlobalEvent::UserProfileUpdated(..) => ActionType::GetUserProfile(attributes),
             GlobalEvent::WorkspaceCreated(_) | GlobalEvent::WorkspaceUpdated(..) | GlobalEvent::WorkspaceDeleted(_) | GlobalEvent::WorkspaceRestored(_) => ActionType::GetWorkspace(attributes),
             GlobalEvent::SkillCreated(_) | GlobalEvent::SkillUpdated(..) | GlobalEvent::SkillDeleted(_) | GlobalEvent::SkillRestored(_) => ActionType::GetSkill(attributes),
+            GlobalEvent::GroupCreated(_) | GlobalEvent::GroupUpdated(..) | GlobalEvent::GroupDeleted(_) | GlobalEvent::GroupRestored(_) => ActionType::GetGroup(attributes),
             GlobalEvent::ArtifactPublished(..) | GlobalEvent::ArtifactUpdated(_) | GlobalEvent::ArtifactDeleted(_) | GlobalEvent::ArtifactRestored(_) => ActionType::GetArtifact(attributes),
             _ => ActionType::GetSession(attributes),
         }
@@ -266,6 +267,8 @@ impl EventBus {
             GlobalEvent::SkillCreated(_) | GlobalEvent::SkillUpdated(..) | GlobalEvent::SkillDeleted(_) | GlobalEvent::SkillRestored(_) => {}
             // Likewise for artifacts (issue 271).
             GlobalEvent::ArtifactPublished(..) | GlobalEvent::ArtifactUpdated(_) | GlobalEvent::ArtifactDeleted(_) | GlobalEvent::ArtifactRestored(_) => {}
+            // Likewise for groups (issue 286).
+            GlobalEvent::GroupCreated(_) | GlobalEvent::GroupUpdated(..) | GlobalEvent::GroupDeleted(_) | GlobalEvent::GroupRestored(_) => {}
         }
 
         for topic in topics_to_notify {

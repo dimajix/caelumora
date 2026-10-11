@@ -326,12 +326,12 @@ export type ScopeKind = 'session' | 'user' | 'global';
 export type Grant = 'read' | 'write';
 
 /**
- * An entry of a workspace's access list (issue 23): whom - a user, a role, or
- * the members of a session or a channel - it grants what, with how whom is
- * called where the server knows it.
+ * An entry of a workspace's access list (issue 23): whom - a user, a role,
+ * the members of a session or a channel, or a team (issue 286) - it grants
+ * what, with how whom is called where the server knows it.
  */
 export interface AccessEntry {
-  kind: 'user' | 'role' | 'session' | 'channel';
+  kind: 'user' | 'role' | 'session' | 'channel' | 'group';
   id: string;
   grant: Grant;
   name?: string;
@@ -386,6 +386,38 @@ export interface CreateSkillRequest {
   description: string;
   body: string;
   classification?: Classification;
+}
+
+/**
+ * A group (issue 286), as its owner and its members see it: a team a user
+ * made, or the participants of a session or a channel.
+ */
+export interface GroupResponse {
+  id: string;
+  name: string;
+  /** `user` or `global` for a team; `session` for the participants of the session `session_id` - or of its channel `channel_id`. */
+  scope: ScopeKind;
+  session_id?: string;
+  channel_id?: string;
+  /** Whose it is. */
+  owner: ActorId;
+  /** Who belongs to it - users alone in a team. */
+  members: GroupMemberResponse[];
+  /** Whether you may rename it, change its members and delete it: the owner of a team. */
+  can_change: boolean;
+}
+
+/** A member of a group (issue 286), with their name where the server knows it. */
+export interface GroupMemberResponse {
+  id: ActorId;
+  name?: string;
+}
+
+/** A team to make (issue 286): with nobody in it yet. */
+export interface CreateGroupRequest {
+  name: string;
+  /** `user` unless given; the participants of a session or a channel are a group made with it. */
+  scope?: 'user' | 'global';
 }
 
 /** An artifact (issue 271), as whoever reads any of its versions sees it (issue 23): with those versions alone. */

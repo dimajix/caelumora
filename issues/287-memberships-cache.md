@@ -46,3 +46,7 @@ each is a file read.
 
 - **2026-10-10** — Opened as issue 23 planned it (decision 6): a cache of memberships is an
   optimisation, apart from the correctness of step 1.
+- **2026-10-11** — Since groups (issue [286](286-groups-as-subjects.md)) replaced `MemberOf`,
+  a membership is read from the one group an entry names - a small document, never the session or
+  channel itself (`StoreMemberships::members_of`). Every check still reads the store; what a cache
+  would hold is now groups.

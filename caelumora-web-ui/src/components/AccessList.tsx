@@ -2,11 +2,11 @@
 // the entries of its access list, each with what it grants, and adding the
 // members of a session or of one of its channels (issue 291) - picked from
 // the sessions the user may read, a session's channels loaded once it is
-// chosen.
+// chosen - or a team the user may read (issue 286).
 
 import React, {useEffect, useState} from 'react';
 import {Plus, Trash2} from 'lucide-react';
-import type {AccessEntry, ChannelResponse, Grant, SessionResponse} from '../types';
+import type {AccessEntry, ChannelResponse, Grant, GroupResponse, SessionResponse} from '../types';
 import {api} from '../api';
 import {reportError} from '../errors';
 
@@ -16,6 +16,7 @@ const KIND_LABELS: Record<AccessEntry['kind'], string> = {
   role: 'Role',
   session: 'Members of the session',
   channel: 'Members of the channel',
+  group: 'Team',
 };
 
 /** What each grant lets whom an entry names do, as a reader is told. */
@@ -33,7 +34,7 @@ interface AccessListProps {
 /**
  * Whom something is shared with (issue 23), for its owner: each entry with
  * what it grants, which can be changed, or taken away, and below them the
- * members of a session or channel to add (issue 291).
+ * members of a session or channel (issue 291) or a team (issue 286) to add.
  */
 export const AccessList: React.FC<AccessListProps> = ({access, onChange, nobody, grants}) => (
   <div className="space-y-1">
@@ -67,12 +68,15 @@ export const AccessList: React.FC<AccessListProps> = ({access, onChange, nobody,
         ))}
       </ul>
     )}
-    <AddMembers
-      grants={grants}
-      onAdd={(added) => onChange([...access.filter(e => e.kind !== added.kind || e.id !== added.id), added])}
-    />
+    <AddMembers grants={grants} onAdd={(added) => onChange(withEntry(access, added))} />
+    <AddTeam grants={grants} onAdd={(added) => onChange(withEntry(access, added))} />
   </div>
 );
+
+/** `access` with `added`, in the place of an entry naming the same members. */
+function withEntry(access: AccessEntry[], added: AccessEntry): AccessEntry[] {
+  return [...access.filter(e => e.kind !== added.kind || e.id !== added.id), added];
+}
 
 interface GrantSelectProps {
   value: Grant;
@@ -164,6 +168,64 @@ const AddMembers: React.FC<AddMembersProps> = ({grants, onAdd}) => {
             {channels.map(c => <option key={c.id} value={c.id}>the channel {c.name}</option>)}
           </select>
           <GrantSelect value={grant} grants={grants} onChange={setGrant} label="What they may do" />
+          <button
+            type="button"
+            onClick={add}
+            className="flex items-center gap-1 rounded-md border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 px-2 py-0.5"
+          >
+            <Plus size={12} /> Share
+          </button>
+        </>
+      )}
+    </div>
+  );
+};
+
+interface AddTeamProps {
+  grants: GrantLabels;
+  /** Adds the entry, in the place of one naming the same team. */
+  onAdd: (entry: AccessEntry) => void;
+}
+
+/**
+ * Picks a team the user may read (issue 286) - one they own or are in; the
+ * server names no other - and what its members may do, reading unless
+ * chosen otherwise.
+ */
+const AddTeam: React.FC<AddTeamProps> = ({grants, onAdd}) => {
+  const [groups, setGroups] = useState<GroupResponse[]>([]);
+  const [groupId, setGroupId] = useState('');
+  const [grant, setGrant] = useState<Grant>('read');
+
+  useEffect(() => {
+    let current = true;
+    api.getGroups()
+      .then(found => { if (current) setGroups(found); })
+      .catch(error => reportError('Failed to fetch the teams', error));
+    return () => { current = false; };
+  }, []);
+
+  const group = groups.find(g => g.id === groupId);
+
+  const add = () => {
+    if (!group) return;
+    onAdd({kind: 'group', id: group.id, grant, name: group.name});
+    setGroupId('');
+  };
+
+  if (groups.length === 0) return null;
+
+  const field = "rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-1 py-0.5 text-xs";
+  return (
+    <div className="flex flex-wrap items-center gap-2 pt-1 text-xs">
+      <span className="text-gray-500">Share with</span>
+      <select value={groupId} onChange={(e) => setGroupId(e.target.value)} className={field} aria-label="The team">
+        <option value="">a team …</option>
+        {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+      </select>
+      {group && (
+        <>
+          <GrantSelect value={grant} grants={grants} onChange={setGrant} label="What its members may do" />
           <button
             type="button"
             onClick={add}

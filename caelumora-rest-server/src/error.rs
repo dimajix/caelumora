@@ -134,6 +134,7 @@ pub enum Subject {
     Workspace,
     Skill,
     Artifact,
+    Group,
 }
 
 impl Subject {
@@ -148,6 +149,7 @@ impl Subject {
             Subject::Workspace => "workspace_forbidden",
             Subject::Skill => "skill_forbidden",
             Subject::Artifact => "artifact_forbidden",
+            Subject::Group => "group_forbidden",
         }
     }
 
@@ -162,6 +164,7 @@ impl Subject {
             Subject::Workspace => "workspace_failed",
             Subject::Skill => "skill_failed",
             Subject::Artifact => "artifact_failed",
+            Subject::Group => "group_failed",
         }
     }
 }
@@ -193,6 +196,7 @@ impl ApiError {
         use caelumora_runtime::workspace::WorkspaceError;
         use caelumora_runtime::skill::SkillError;
         use caelumora_runtime::artifact::ArtifactError;
+        use caelumora_runtime::group::GroupError;
 
         let detail = error.to_string();
         let bad_request = |code| Self::new(StatusCode::BAD_REQUEST, code, detail.clone());
@@ -213,6 +217,7 @@ impl ApiError {
                 ViewError::MemberNotFound { .. } => return Self::not_found("actor_not_found", detail),
                 ViewError::WorkspaceNotFound(_) => return Self::not_found("workspace_not_found", detail),
                 ViewError::SkillNotFound(_) | ViewError::NoSkillNamed(_) => return Self::not_found("skill_not_found", detail),
+                ViewError::GroupNotFound(_) => return Self::not_found("group_not_found", detail),
                 ViewError::ArtifactNotFound(_) => return Self::not_found("artifact_not_found", detail),
                 ViewError::NoContext { .. } => return Self::not_found("context_not_recorded", detail),
                 ViewError::Forbidden { .. } => return Self::forbidden(subject.forbidden(), detail),
@@ -233,6 +238,9 @@ impl ApiError {
                 WorkspaceError::Store(StoreError::NotFound { .. }) => return Self::not_found("workspace_not_found", detail),
                 WorkspaceError::Store(StoreError::NameTaken { .. }) => return Self::conflict("name_taken", detail),
                 WorkspaceError::Store(StoreError::PermissionDenied) => return Self::forbidden(subject.forbidden(), format!("{} is not permitted", capitalize(action))),
+                // A scope it does not lie in, an access list that names whom
+                // it may not (issue 286): the client's request.
+                WorkspaceError::Store(StoreError::Validation(_)) => return bad_request("validation_failed"),
                 // A caller that is no user, or the store broke: not the
                 // client's request.
                 WorkspaceError::OwnerNotAUser | WorkspaceError::Store(_) => {}
@@ -252,6 +260,20 @@ impl ApiError {
                 SkillError::OwnerNotAUser | SkillError::Store(_) => {}
             }
         }
+        if let Some(e) = error.downcast_ref::<GroupError>() {
+            match e {
+                GroupError::NotFound(_) | GroupError::Store(StoreError::NotFound { .. }) => return Self::not_found("group_not_found", detail),
+                GroupError::Participants(_) => return Self::conflict("group_of_participants", detail),
+                GroupError::UnknownMember(_) => return bad_request("unknown_member"),
+                GroupError::Invalid(e) => return Self::invalid_value(e),
+                GroupError::Store(StoreError::NameTaken { .. }) => return Self::conflict("name_taken", detail),
+                GroupError::Store(StoreError::Validation(_)) => return bad_request("invalid_scope"),
+                GroupError::Store(StoreError::PermissionDenied) => return Self::forbidden(subject.forbidden(), format!("{} is not permitted", capitalize(action))),
+                // A caller that is no user, or the store broke: not the
+                // client's request.
+                GroupError::OwnerNotAUser | GroupError::Store(_) => {}
+            }
+        }
         if let Some(e) = error.downcast_ref::<ArtifactError>() {
             match e {
                 ArtifactError::NotFound(_) | ArtifactError::Store(StoreError::NotFound { .. }) => return Self::not_found("artifact_not_found", detail),
@@ -266,6 +288,7 @@ impl ApiError {
                 ArtifactError::Invalid(e) => return Self::invalid_value(e),
                 ArtifactError::Store(StoreError::NameTaken { .. }) => return Self::conflict("name_taken", detail),
                 ArtifactError::Store(StoreError::PermissionDenied) => return Self::forbidden(subject.forbidden(), format!("{} is not permitted", capitalize(action))),
+                ArtifactError::Store(StoreError::Validation(_)) => return bad_request("validation_failed"),
                 // A caller that is no user, the workspace's own failure, the
                 // storage or the store broke: not the client's request.
                 ArtifactError::OwnerNotAUser | ArtifactError::Unavailable(_) | ArtifactError::Store(_) => {}

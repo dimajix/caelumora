@@ -2,6 +2,7 @@ use crate::actor::ActorId;
 use crate::session::SessionId;
 use crate::channel::ChannelId;
 use crate::command::Command;
+use crate::group::GroupId;
 use crate::confidentiality::{Classification, ConfidentialityRules};
 use crate::privacy::SessionPrivacy;
 use crate::role::{RoleId, Roles};
@@ -140,6 +141,16 @@ pub enum ActionType<'a> {
     /// it is kept in - with its attributes as stored.
     UpdateArtifact(&'a SecurityAttributes),
     DeleteArtifact(&'a SecurityAttributes),
+    /// Reading a group (issue 286): who belongs to it. Granted to its owner
+    /// and, by its own access list, to its members.
+    GetGroup(&'a SecurityAttributes),
+    ListGroups,
+    CreateGroup(&'a SecurityAttributes),
+    /// Changing a group - its name, its members - with its attributes as
+    /// stored. The participants of a session or channel are changed only
+    /// by that, in the runtime's name.
+    UpdateGroup(&'a SecurityAttributes),
+    DeleteGroup(&'a SecurityAttributes),
     /// Ending the current turn of every agent in a channel, carrying the
     /// channel's attributes.
     CancelChannel(&'a SecurityAttributes),
@@ -318,6 +329,11 @@ impl ActionType<'_> {
             ActionType::CreateArtifact(_) => "CreateArtifact".into(),
             ActionType::UpdateArtifact(_) => "UpdateArtifact".into(),
             ActionType::DeleteArtifact(_) => "DeleteArtifact".into(),
+            ActionType::GetGroup(_) => "GetGroup".into(),
+            ActionType::ListGroups => "ListGroups".into(),
+            ActionType::CreateGroup(_) => "CreateGroup".into(),
+            ActionType::UpdateGroup(_) => "UpdateGroup".into(),
+            ActionType::DeleteGroup(_) => "DeleteGroup".into(),
             ActionType::CancelChannel(_) => "CancelChannel".into(),
             ActionType::WakeChannel(_) => "WakeChannel".into(),
             ActionType::RetryMessage(_) => "RetryMessage".into(),
@@ -400,7 +416,7 @@ impl SecurityAttributes {
         for entry in &self.acl {
             if let Subject::Actor(actor) = entry.subject {
                 if !matches!(actor, ActorId::User(_)) {
-                    return Err(format!("an access list names users, roles and members, not {actor}"));
+                    return Err(format!("an access list names users, roles and groups, not {actor}"));
                 }
             }
         }
@@ -428,17 +444,10 @@ pub enum Subject {
     /// Whoever holds the role - an agent its owner's roles, narrowed by its
     /// personality's limiting roles.
     Role(RoleId),
-    /// The current participants of a session or a channel, as the policy
-    /// learns from its `Memberships`.
-    MemberOf(Membership),
-}
-
-/// A session or a channel, as something one is a member of.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Membership {
-    Session(SessionId),
-    Channel(ChannelId),
+    /// The members of a group (issues 286, 304) - a team, or the current
+    /// participants of a session or a channel -, as the policy learns from
+    /// its `Memberships`.
+    Group(GroupId),
 }
 
 /// A subject as a query compares it, after serde's tags:
@@ -448,17 +457,7 @@ impl From<Subject> for FieldValue {
         match subject {
             Subject::Actor(actor) => FieldValue::tagged("actor", actor),
             Subject::Role(role) => FieldValue::tagged("role", role),
-            Subject::MemberOf(place) => FieldValue::tagged("member_of", place),
-        }
-    }
-}
-
-/// A place as a query compares it, after serde's tags: `{"session": "…"}`.
-impl From<Membership> for FieldValue {
-    fn from(place: Membership) -> Self {
-        match place {
-            Membership::Session(id) => FieldValue::tagged("session", id),
-            Membership::Channel(id) => FieldValue::tagged("channel", id),
+            Subject::Group(group) => FieldValue::tagged("group", group),
         }
     }
 }
@@ -483,15 +482,16 @@ impl Grant {
 }
 
 /// What a policy needs to know of actors that the attributes it is handed
-/// do not say (issue 23): whether someone is a participant of a session or
-/// channel an access list names, and which roles count for them. A fact,
-/// not a decision - the decision stays the policy's. Implemented by the
-/// runtime over the stores, read in the system's name.
+/// do not say (issue 23): who belongs to a group an access list names
+/// (issue 286), and which roles count for someone. A fact, not a decision
+/// - the decision stays the policy's. Implemented over the stores, read in
+/// the system's name: one group at a time, never what an actor is a member
+/// of.
 #[async_trait]
 pub trait Memberships: Debug + Send + Sync {
-    /// Whether `actor` is a current participant of `place`, a user or an
-    /// agent - not an approver.
-    async fn is_member_of(&self, actor: ActorId, place: Membership) -> bool;
+    /// The members of `group` - also of one that was deleted, whose members
+    /// are told of the deletion; none of one that does not exist.
+    async fn members_of(&self, group: GroupId) -> Vec<ActorId>;
 
     /// The roles that count for `actor`: a user's own; an agent's owner's,
     /// narrowed by its personality's limiting roles (issue 179).
@@ -505,8 +505,8 @@ pub struct NoMemberships;
 
 #[async_trait]
 impl Memberships for NoMemberships {
-    async fn is_member_of(&self, _actor: ActorId, _place: Membership) -> bool {
-        false
+    async fn members_of(&self, _group: GroupId) -> Vec<ActorId> {
+        Vec::new()
     }
 
     async fn roles_of(&self, _actor: ActorId) -> Vec<RoleId> {
@@ -740,6 +740,9 @@ pub trait AccessQuestions {
     /// name, description, body, classification - and delete it
     /// (`UpdateSkill`, issue 22).
     async fn may_change_skill(&self, context: &SecurityContext, skill: &SecurityAttributes) -> bool;
+    /// Whether `context` may rename a group with these attributes, change
+    /// its members and delete it (`UpdateGroup`, issue 286).
+    async fn may_change_group(&self, context: &SecurityContext, group: &SecurityAttributes) -> bool;
 
     /// Whether `context` may load the skill with `skill` attributes into a
     /// turn (`UseSkill`, issue 22).
@@ -862,6 +865,10 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
 
     async fn may_purge(&self, context: &SecurityContext, kind: EntityKind, attributes: &SecurityAttributes) -> bool {
         self.check(context, ActionType::Purge(kind, attributes)).await
+    }
+
+    async fn may_change_group(&self, context: &SecurityContext, group: &SecurityAttributes) -> bool {
+        self.check(context, ActionType::UpdateGroup(group)).await
     }
 
     async fn may_change_skill(&self, context: &SecurityContext, skill: &SecurityAttributes) -> bool {
@@ -1043,15 +1050,9 @@ impl OwnershipSecurityManager {
         for entry in attributes.acl.iter().filter(|entry| entry.grant.covers(needed)) {
             let matches = match entry.subject {
                 Subject::Actor(actor) => actors.contains(&actor),
-                Subject::MemberOf(place) => {
-                    let mut member = false;
-                    for actor in actors {
-                        if self.memberships.is_member_of(*actor, place).await {
-                            member = true;
-                            break;
-                        }
-                    }
-                    member
+                Subject::Group(group) => {
+                    let members = self.memberships.members_of(group).await;
+                    actors.iter().any(|actor| members.contains(actor))
                 }
                 Subject::Role(role) => {
                     if roles.is_none() {
@@ -1091,7 +1092,8 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::GetUserProfile(a)
             | ActionType::GetWorkspace(a)
             | ActionType::GetArtifact(a)
-            | ActionType::GetSkill(a) => self.granted(a, Grant::Read, context, true).await,
+            | ActionType::GetSkill(a)
+            | ActionType::GetGroup(a) => self.granted(a, Grant::Read, context, true).await,
             // Using a skill is granted as reading it is: what the owner may
             // read the agent may follow (issue 22).
             ActionType::UseSkill(a) => self.granted(a, Grant::Read, context, true).await,
@@ -1141,6 +1143,7 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::CreateWorkspace(a)
             | ActionType::CreateSkill(a)
             | ActionType::CreateArtifact(a)
+            | ActionType::CreateGroup(a)
             | ActionType::CreateComponents(a) => a.owner_id == me && me != ActorId::None,
             ActionType::UpdatePersonality(a)
             | ActionType::DeletePersonality(a)
@@ -1165,6 +1168,8 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::DeleteSkill(a)
             | ActionType::UpdateArtifact(a)
             | ActionType::DeleteArtifact(a)
+            | ActionType::UpdateGroup(a)
+            | ActionType::DeleteGroup(a)
             | ActionType::UpdateComponents(a)
             | ActionType::DeleteComponents(a)
             | ActionType::ReadDeleted(_, a)
@@ -1182,6 +1187,7 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::ListWorkspaces
             | ActionType::ListSkills
             | ActionType::ListArtifacts
+            | ActionType::ListGroups
             | ActionType::ListComponents => true,
             ActionType::ShowCommand(_)
             | ActionType::ExecuteCommand(_)
@@ -1202,6 +1208,9 @@ impl SecurityManager for OwnershipSecurityManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::group::Group;
+    use crate::scope::Scope;
+    use crate::value::name::ScopedName;
     use crate::confidentiality::{Compartment, Compartments, Confidentiality};
     use crate::privacy::PrivacyConfig;
     use crate::user::UserId;
@@ -1226,14 +1235,14 @@ mod tests {
     /// Memberships and roles as a test sets them.
     #[derive(Debug, Default)]
     struct Known {
-        members: Vec<(ActorId, Membership)>,
+        members: Vec<(ActorId, GroupId)>,
         roles: Vec<(ActorId, RoleId)>,
     }
 
     #[async_trait]
     impl Memberships for Known {
-        async fn is_member_of(&self, actor: ActorId, place: Membership) -> bool {
-            self.members.contains(&(actor, place))
+        async fn members_of(&self, group: GroupId) -> Vec<ActorId> {
+            self.members.iter().filter(|(_, g)| *g == group).map(|(actor, _)| *actor).collect()
         }
 
         async fn roles_of(&self, actor: ActorId) -> Vec<RoleId> {
@@ -1394,8 +1403,8 @@ mod tests {
     async fn an_agent_reads_what_its_owner_may_read_or_it_takes_part_in_and_changes_as_its_owner() {
         let (alice, bob) = (user(), user());
         let (hers, his, member) = (ActorId::Agent(crate::agent::AgentId::new()), ActorId::Agent(crate::agent::AgentId::new()), ActorId::Agent(crate::agent::AgentId::new()));
-        let place = Membership::Channel(ChannelId::new());
-        let alices = SecurityAttributes::owned_by(alice).granting(Subject::MemberOf(place), Grant::Read);
+        let place = GroupId::of_channel(ChannelId::new());
+        let alices = SecurityAttributes::owned_by(alice).granting(Subject::Group(place), Grant::Read);
         let policy = knowing(Known { members: vec![(member, place)], ..Known::default() });
         assert!(policy.check(&context(bob).next(hers, alice), ActionType::GetChannel(&alices)).await, "her agent, whoever asked");
         assert!(!policy.check(&context(bob).next(his, bob), ActionType::GetChannel(&alices)).await, "not his: he may not read it");
@@ -1537,17 +1546,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn members_of_a_place_read_while_they_are_members_wherever_they_stand() {
+    async fn members_of_a_group_read_while_they_are_members_wherever_they_stand() {
         let (alice, bob, carol) = (user(), user(), user());
-        let place = Membership::Session(SessionId::new());
-        let hers = SecurityAttributes::owned_by(alice).granting(Subject::MemberOf(place), Grant::Read);
+        let place = GroupId::new();
+        let hers = SecurityAttributes::owned_by(alice).granting(Subject::Group(place), Grant::Read);
         let policy = knowing(Known { members: vec![(bob, place)], ..Known::default() });
         let elsewhere = SecurityContext::new(bob, SessionId::new(), ChannelId::new());
         assert!(policy.check(&elsewhere, ActionType::GetSession(&hers)).await, "a member, though he acts somewhere else");
         assert!(!policy.check(&context(carol), ActionType::GetSession(&hers)).await, "not who is no member");
         assert!(!policy.check(&context(bob), ActionType::UpdateSession(&hers)).await, "reading, not changing");
-        let other = SecurityAttributes::owned_by(alice).granting(Subject::MemberOf(Membership::Session(SessionId::new())), Grant::Read);
-        assert!(!policy.check(&context(bob), ActionType::GetSession(&other)).await, "a member of the place named, not of any");
+        let other = SecurityAttributes::owned_by(alice).granting(Subject::Group(GroupId::new()), Grant::Read);
+        assert!(!policy.check(&context(bob), ActionType::GetSession(&other)).await, "a member of the group named, not of any");
+    }
+
+    #[tokio::test]
+    async fn a_group_is_read_by_its_owner_and_its_members_and_changed_by_its_owner() {
+        let (alice, bob, carol) = (user(), user(), user());
+        let ActorId::User(alice_id) = alice else { unreachable!() };
+        let team = Group::team(ScopedName::new("project", Scope::GlobalScope).unwrap(), alice_id);
+        let policy = knowing(Known { members: vec![(bob, team.id)], ..Known::default() });
+        let theirs = &team.security_attributes;
+        assert!(policy.check(&context(alice), ActionType::GetGroup(theirs)).await, "its owner");
+        assert!(policy.check(&context(bob), ActionType::GetGroup(theirs)).await, "a member, by the group's own list");
+        assert!(!policy.check(&context(carol), ActionType::GetGroup(theirs)).await, "not a stranger");
+        assert!(policy.check(&context(alice), ActionType::UpdateGroup(theirs)).await && policy.check(&context(alice), ActionType::DeleteGroup(theirs)).await);
+        assert!(!policy.check(&context(bob), ActionType::UpdateGroup(theirs)).await, "a member does not change it");
     }
 
     #[tokio::test]
@@ -1591,11 +1614,11 @@ mod tests {
     }
 
     #[test]
-    fn an_access_list_names_people_roles_and_members_never_an_agent() {
+    fn an_access_list_names_people_roles_and_groups_never_an_agent() {
         let alice = user();
         let agent = ActorId::Agent(crate::agent::AgentId::new());
         assert_eq!(shared(alice, &[user()]).validate(), Ok(()));
-        let place = Subject::MemberOf(Membership::Channel(ChannelId::new()));
+        let place = Subject::Group(GroupId::new());
         assert_eq!(SecurityAttributes::owned_by(alice).granting(Subject::Role(RoleId::new()), Grant::Read).granting(place, Grant::Write).validate(), Ok(()));
         for nobody in [agent, ActorId::System, ActorId::None] {
             assert!(SecurityAttributes::owned_by(alice).granting(Subject::Actor(nobody), Grant::Read).validate().is_err(), "not {nobody}");
@@ -1643,16 +1666,14 @@ mod tests {
         assert_eq!(policy.require(&context(stranger), ActionType::DeleteSession(&hers), || Refused).await, Err(Refused));
     }
 
-    /// A subject and a place as a query compares them (issue 293).
+    /// A subject as a query compares it (issue 293).
     #[test]
     fn a_subject_meets_exactly_the_subjects_equal_to_it() {
         let id = uuid::Uuid::new_v4();
-        let places = [Membership::Session(SessionId(id)), Membership::Channel(ChannelId(id)), Membership::Channel(ChannelId::new())];
-        crate::store::query::meets_exactly_its_equals(&places);
         crate::store::query::meets_exactly_its_equals(&[
             Subject::Actor(ActorId::User(crate::user::UserId(id))), Subject::Actor(ActorId::Agent(crate::agent::AgentId(id))),
             Subject::Actor(ActorId::System), Subject::Role(RoleId(id)), Subject::Role(RoleId::new()),
-            Subject::MemberOf(places[0]), Subject::MemberOf(places[1]), Subject::MemberOf(places[2]),
+            Subject::Group(GroupId(id)), Subject::Group(GroupId::new()),
         ]);
     }
 

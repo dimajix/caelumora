@@ -798,7 +798,8 @@ it as it is given (issue [296](../issues/296-workspace-operations-on-the-view.md
 the name of whoever the agent acts for: its owner, who
 makes the artifact (`CreateArtifact`), or adds a version where the artifact's list lets them
 (`WriteArtifact`, issue 23 - its owner always), asked before anything is kept. The version is read
-by the members of the channel it is published in (an entry `MemberOf` the channel in its own list),
+by the members of the channel it is published in (an entry naming the group of the channel's
+participants in its own list, issue 286),
 and carries the description it was published with. An artifact is published into the session's
 scope, under its name - the file's unless given, at most 100 characters -, made with its first
 version and given one more by every later publication under that name. It is classified as the

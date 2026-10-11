@@ -51,7 +51,7 @@ The UI shows what the server says and repeats no rule of its own:
 | `src/moderator.ts`, `src/confidentiality.ts`, `src/workspace.ts`, `src/scope.ts` | Labels and explanations of responder policies, classifications, storages, and where a workspace or a skill lies |
 | `src/page.ts`, `src/pageList.ts` | What is shown in the place of a channel (`Page`), and the entries of a list in the sidebar it is opened from (`usePageList`) |
 | `src/App.tsx` | Login state, keep-alive, the error banner, the layout |
-| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `ToolCallView`, `QuestionCard`, `QuestionView`, `MarkdownMessage`, `GrowingTextarea`, `ContextPanel`, `HistoryPanel`, `ToolsPanel`, `PrivateNotesPanel`, `ToolSetList`, `DeletedList`, `NotesList`, `TokenGauge`, `HoverCard`, `ActionMenu`, `ResizeHandle`, `UsageStats`, `NewSessionDialog`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ApprovalRulesDialog`, `ErrorBanner`, `PageList`, `AccessList`, `WorkspacePage`, `FileBrowser`, `ChannelWorkspacePanel`, `NewWorkspaceDialog`, `ClassificationFields`, `SessionWorkspaceDialog`, `SkillPage`, `NewSkillDialog`, `ArtifactPage` |
+| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `ToolCallView`, `QuestionCard`, `QuestionView`, `MarkdownMessage`, `GrowingTextarea`, `ContextPanel`, `HistoryPanel`, `ToolsPanel`, `PrivateNotesPanel`, `ToolSetList`, `DeletedList`, `NotesList`, `TokenGauge`, `HoverCard`, `ActionMenu`, `ResizeHandle`, `UsageStats`, `NewSessionDialog`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ApprovalRulesDialog`, `ErrorBanner`, `PageList`, `AccessList`, `WorkspacePage`, `FileBrowser`, `ChannelWorkspacePanel`, `NewWorkspaceDialog`, `ClassificationFields`, `SessionWorkspaceDialog`, `SkillPage`, `NewSkillDialog`, `ArtifactPage`, `GroupPage`, `NewGroupDialog` |
 
 ## Talking to the server
 
@@ -179,16 +179,17 @@ with (`AccessList`), and its files (`FileBrowser`) - wherever it lies, also in a
 `AccessList` shows each entry of the list with what it grants, to change or take away, and below
 them adds the members of a session the user may read, or of one of its channels, with what they
 may do - reading unless chosen otherwise (issue
-[291](../issues/291-share-artifacts-in-the-web-ui.md)). The session is chosen first, from
+[291](../issues/291-share-artifacts-in-the-web-ui.md)) -, or a team the user reads (issue
+[286](../issues/286-groups-as-subjects.md)), from `GET /groups`. The session is chosen first, from
 `GET /sessions`; its channels are loaded once it is. Users and roles are not offered: the REST API
 lists neither. A list that names nobody says so; the workspace's and the artifact's page say in
 their own words what each grant means.
 
-The lists of workspaces, skills and artifacts in the sidebar are one component (`PageList`, with
-`usePageList`): each entry with where it lies where that is not the user's own scope, "+" where one
-is made here, and its trash. A page shown in the place of a channel (`Page`, `src/page.ts`) is
-closed when the list it was listed in loses its entry; one the list never had - an artifact read
-only as a member of a channel, opened from the chat - stays.
+The lists of workspaces, skills, artifacts and teams in the sidebar are one component
+(`PageList`, with `usePageList`): each entry with where it lies where that is not the user's own
+scope, "+" where one is made here, and its trash. A page shown in the place of a channel (`Page`,
+`src/page.ts`) is closed when the list it was listed in loses its entry; one the list never had -
+an artifact read only as a member of a channel, opened from the chat - stays.
 
 `FileBrowser` shows one directory at a time, directories first, with a path back to the top. A file
 is downloaded through a plain link - the cookie goes with it, and the server sends it as an
@@ -244,6 +245,22 @@ and description, its download, when it was published, and where and by whom - by
 server names them, for whoever may read that channel, the channel opening on a click; "a channel
 you do not read" otherwise. Its owner sees whom each version reaches besides (`access` of the
 version), which publishing set and the page does not change.
+
+### Teams
+
+The teams the user owns or belongs to (issue [286](../issues/286-groups-as-subjects.md)) are
+listed below the artifacts, with a folded "Deleted teams", the trash; the list is loaded again on
+every event about a group (`GroupCreated`, `…Updated`, `…Deleted`, `…Restored`). "+" opens
+`NewGroupDialog`: its name and where it lies - the user's scope or the global one; what the server
+refuses is shown in the dialog.
+
+A team opens on a page of its own (`GroupPage`), in the place of a channel: its name, where it
+lies, and its members by name. Its owner renames and deletes it from its menu, takes members out,
+and adds them; every change writes the whole list of members. Since the REST API lists no users,
+a member is chosen as a user is for an access list: from one of the user's sessions, among its
+participants - so only someone the user shares a session with. A member who does not own the team
+sees it read-only; so does everyone the group of a session's or channel's participants, which
+changes only by taking part.
 
 ### A channel
 

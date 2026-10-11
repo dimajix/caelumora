@@ -22,6 +22,7 @@ use crate::removal::{Deletable, Removal};
 use crate::user::{User, UserId, UserProfile};
 use crate::workspace::{Workspace, WorkspaceId};
 use crate::skill::{Skill, SkillId};
+use crate::group::{Group, GroupId};
 use crate::artifact::{Artifact, ArtifactField, ArtifactId};
 use chrono::Utc;
 use uuid::Uuid;
@@ -174,6 +175,20 @@ fn skill_named(name: ScopedName) -> Skill {
         _ => UserId::new(),
     };
     Skill::new(name, crate::value::text::Description::new("How we write a release note").unwrap(), crate::value::text::SkillBody::new("Collect, group, write.").unwrap(), Classification::CHANNEL_DEFAULT, crate::actor::ActorId::User(owner))
+}
+
+fn group(owner: UserId) -> Group {
+    group_named(ScopedName::new("project", Scope::UserScope { user_id: owner }).unwrap())
+}
+
+/// A team of `name`, owned by the user whose scope it lies in, else by
+/// another.
+fn group_named(name: ScopedName) -> Group {
+    let owner = match name.scope {
+        Scope::UserScope { user_id } => user_id,
+        _ => UserId::new(),
+    };
+    Group::team(name, owner)
 }
 
 /// A workspace of `name`, owned by the user whose scope it lies in, else by
@@ -367,6 +382,8 @@ pub(crate) async fn entity_store_behaves(store: &dyn EntityStore) {
         create_skill, get_skill, update_skill, delete_skill, list_skills);
     lifecycle!(store, artifact(UserId::new()), |v: &Artifact| v.id, name.name, "artifact",
         create_artifact, get_artifact, update_artifact, delete_artifact, list_artifacts);
+    lifecycle!(store, group(UserId::new()), |v: &Group| v.id, name.name, "group",
+        create_group, get_group, update_group, delete_group, list_groups);
 
     let ctx = SecurityContext::default();
     let alice = user("alice");
@@ -404,6 +421,11 @@ pub(crate) async fn entity_store_behaves(store: &dyn EntityStore) {
         create_skill, delete_skill, find_skill_by_name);
     let nobodys = store.create_skill(&ctx, &Skill { security_attributes: Default::default(), ..skill(UserId::new()) }).await;
     assert!(matches!(nobodys, Err(StoreError::Validation(_))), "skill: one that belongs to nobody is not stored, got {nobodys:?}");
+
+    found_by_name!(store, group_named, "group",
+        create_group, delete_group, find_group_by_name);
+    let stray = store.create_group(&ctx, &Group { name: ScopedName::new("participants", Scope::SessionScope { session_id: SessionId::new() }).unwrap(), ..group(UserId::new()) }).await;
+    assert!(matches!(stray, Err(StoreError::Validation(_))), "group: one in a session's scope that is not its participants is not stored, got {stray:?}");
 
     found_by_name!(store, artifact_named, "artifact",
         create_artifact, delete_artifact, find_artifact_by_name);
@@ -480,6 +502,10 @@ pub(crate) async fn names_are_unique(store: &dyn EntityStore) {
         elsewhere: |name| Artifact { name: in_scope(name, &Scope::UserScope { user_id: bob }), id: ArtifactId::new(), ..artifact(bob) },
         rename: |value: Artifact, name| Artifact { name: in_scope(name, &value.name.scope), ..value }, "artifact",
         create_artifact, update_artifact, delete_artifact, restore_artifact);
+    unique_by_name!(store, |name| Group { name: in_scope(name, &global), id: GroupId::new(), ..group(alice) },
+        elsewhere: |name| Group { name: in_scope(name, &Scope::UserScope { user_id: bob }), id: GroupId::new(), ..group(bob) },
+        rename: |value: Group, name| Group { name: in_scope(name, &value.name.scope), ..value }, "group",
+        create_group, update_group, delete_group, restore_group);
 
     // Moved into a scope where its name is taken.
     let ctx = SecurityContext::default();

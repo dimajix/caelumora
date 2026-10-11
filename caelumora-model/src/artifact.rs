@@ -299,11 +299,12 @@ pub(crate) mod tests {
 
     #[test]
     fn a_version_is_read_by_whom_the_artifact_or_the_version_grants_it() {
-        use crate::security::{Membership, Subject};
+        use crate::group::GroupId;
+        use crate::security::Subject;
         let (alice, bob) = (UserId::new(), UserId::new());
         let session_id = SessionId::new();
-        let (drafts, team) = (Membership::Channel(ChannelId::new()), Membership::Channel(ChannelId::new()));
-        let read_by = |place| AclEntry { subject: Subject::MemberOf(place), grant: Grant::Read };
+        let (drafts, team) = (GroupId::of_channel(ChannelId::new()), GroupId::of_channel(ChannelId::new()));
+        let read_by = |group| AclEntry { subject: Subject::Group(group), grant: Grant::Read };
         let mut shared = artifact(Scope::SessionScope { session_id }, alice);
         shared.versions[0].acl = vec![read_by(drafts)];
         shared.add_version(ArtifactVersion { acl: vec![read_by(team)], ..version(b"final", session_id) });

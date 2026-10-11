@@ -14,9 +14,10 @@ import {
   ShieldAlert,
   Trash2,
   User,
-  Users
+  Users,
+  UsersRound
 } from 'lucide-react';
-import type {ArtifactResponse, ChannelResponse, SessionSnapshot, SkillResponse, UserResponse, WorkspaceResponse} from '../types';
+import type {ArtifactResponse, ChannelResponse, GroupResponse, SessionSnapshot, SkillResponse, UserResponse, WorkspaceResponse} from '../types';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
 import {dispatchGlobalEvent, sessionChange} from '../globalEvents';
@@ -32,6 +33,7 @@ import {DescriptionDialog} from './DescriptionDialog';
 import {ProfileDialog} from './ProfileDialog';
 import {NewWorkspaceDialog} from './NewWorkspaceDialog';
 import {NewSkillDialog} from './NewSkillDialog';
+import {NewGroupDialog} from './NewGroupDialog';
 import {NewSessionDialog} from './NewSessionDialog';
 import {SessionWorkspaceDialog} from './SessionWorkspaceDialog';
 import {privacyInfo} from '../privacy';
@@ -55,10 +57,10 @@ function trashChangedBy(event: Record<string, unknown>): boolean {
   const kind = Object.keys(event)[0];
   return kind === 'SessionDeleted' || kind === 'SessionRestored' || kind === 'ChannelDeleted' || kind === 'ChannelRestored'
     || kind === 'WorkspaceDeleted' || kind === 'WorkspaceRestored' || kind === 'SkillDeleted' || kind === 'SkillRestored'
-    || kind === 'ArtifactDeleted' || kind === 'ArtifactRestored';
+    || kind === 'ArtifactDeleted' || kind === 'ArtifactRestored' || kind === 'GroupDeleted' || kind === 'GroupRestored';
 }
 
-/** Whether `event` is about something whose events are named `prefix…` - `Workspace`, `Skill`, `Artifact`. */
+/** Whether `event` is about something whose events are named `prefix…` - `Workspace`, `Skill`, `Artifact`, `Group`. */
 function isAbout(event: Record<string, unknown>, prefix: string): boolean {
   return Object.keys(event)[0]?.startsWith(prefix) ?? false;
 }
@@ -94,7 +96,7 @@ interface SidebarProps {
   onSessionDeleted: (sessionId: string) => void;
   /** The selected channel no longer exists - deleted here or elsewhere. */
   onChannelDeleted: (channelId: string) => void;
-  /** What is shown in the place of a channel - a workspace (issue 253), a skill (issue 22) or an artifact (issue 291). */
+  /** What is shown in the place of a channel - a workspace (issue 253), a skill (issue 22), an artifact (issue 291) or a team (issue 286). */
   page: Page | null;
   onSelectPage: (page: Page) => void;
   /** What the page shows no longer exists, or may no longer be read. */
@@ -114,13 +116,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onPageGone,
 }) => {
   const [sessions, setSessions] = useState<SessionSnapshot[]>([]);
-  // The workspaces (issue 253), skills (issue 22) and artifacts (issue 291)
-  // the user may read, loaded again on every event about one of them.
+  // The workspaces (issue 253), skills (issue 22), artifacts (issue 291) and
+  // teams (issue 286) the user may read, loaded again on every event about
+  // one of them.
   const workspaces = usePageList<WorkspaceResponse>('workspace', 'workspaces', () => api.getWorkspaces(), page, onPageGone);
   const [isCreatingWorkspace, setIsCreatingWorkspace] = useState(false);
   const skills = usePageList<SkillResponse>('skill', 'skills', () => api.getSkills(), page, onPageGone);
   const [isCreatingSkill, setIsCreatingSkill] = useState(false);
   const artifacts = usePageList<ArtifactResponse>('artifact', 'artifacts', () => api.getArtifacts(), page, onPageGone);
+  const groups = usePageList<GroupResponse>('group', 'teams', () => api.getGroups(), page, onPageGone);
+  const [isCreatingGroup, setIsCreatingGroup] = useState(false);
   // The session whose workspace is shown, by id, so that the dialog follows it.
   const [workspaceOf, setWorkspaceOf] = useState<string | null>(null);
   const workspaceSession = sessions.find(s => s.id === workspaceOf) ?? null;
@@ -171,6 +176,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const workspacesChangedFromStream = useEffectEvent(() => workspaces.reload());
   const skillsChangedFromStream = useEffectEvent(() => skills.reload());
   const artifactsChangedFromStream = useEffectEvent(() => artifacts.reload());
+  const groupsChangedFromStream = useEffectEvent(() => groups.reload());
   const refreshSessionFromStream = useEffectEvent((sessionId: string) => void refreshSession(sessionId));
 
   // The list is the global stream's: its snapshot, then its events (issue
@@ -198,6 +204,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         if (isAbout(event, 'Workspace')) workspacesChangedFromStream();
         if (isAbout(event, 'Skill')) skillsChangedFromStream();
         if (isAbout(event, 'Artifact')) artifactsChangedFromStream();
+        if (isAbout(event, 'Group')) groupsChangedFromStream();
         const change = sessionChange(event);
         if (change.kind === 'remove') {
           removeSessionFromStream(change.sessionId);
@@ -476,6 +483,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
           restore={(artifactId) => api.restoreArtifact(artifactId)}
           purge={(artifactId) => api.purgeArtifact(artifactId)}
         />
+
+        <PageList
+          list={groups}
+          title="Teams"
+          icon={UsersRound}
+          page={page}
+          onSelectPage={onSelectPage}
+          onNew={() => setIsCreatingGroup(true)}
+          newLabel="New team"
+          loadDeleted={() => api.getDeletedGroups()}
+          trashVersion={trashVersion}
+          restore={(groupId) => api.restoreGroup(groupId)}
+          purge={(groupId) => api.purgeGroup(groupId)}
+        />
       </div>
 
       {privacySession && (
@@ -547,6 +568,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
             onSelectPage({kind: 'skill', id: skill.id});
           }}
           onClose={() => setIsCreatingSkill(false)}
+        />
+      )}
+
+      {isCreatingGroup && (
+        <NewGroupDialog
+          onCreated={(group) => {
+            setIsCreatingGroup(false);
+            groups.add(group);
+            onSelectPage({kind: 'group', id: group.id});
+          }}
+          onClose={() => setIsCreatingGroup(false)}
         />
       )}
 

@@ -9,7 +9,8 @@ use crate::actor::ActorId;
 use crate::confidentiality::Classification;
 use crate::removal::Removal;
 use crate::scope::{Scope, Scoped};
-use crate::security::{Grant, Membership, Secured, SecurityAttributes, Subject};
+use crate::group::GroupId;
+use crate::security::{Grant, Secured, SecurityAttributes, Subject};
 use crate::user::UserId;
 use crate::value::name::ScopedName;
 use crate::value::text::Description;
@@ -74,12 +75,13 @@ impl Workspace {
     /// A new workspace of `owner`, of `name` where it lies, in `storage`,
     /// classified `classification`, without a description. One that lies
     /// in a session's scope is the session's to work on: its members read
-    /// and write it (issue 23); any other grants nobody anything.
+    /// and write it (issue 23) - the group of the session's participants
+    /// (issue 304); any other grants nobody anything.
     pub fn new(name: ScopedName, storage: impl Into<String>, classification: Classification, owner: UserId) -> Self {
         let now = Utc::now();
         let owned = SecurityAttributes::owned_by(ActorId::User(owner));
         let security_attributes = match name.scope {
-            Scope::SessionScope { session_id } => owned.granting(Subject::MemberOf(Membership::Session(session_id)), Grant::Write),
+            Scope::SessionScope { session_id } => owned.granting(Subject::Group(GroupId::of_session(session_id)), Grant::Write),
             _ => owned,
         };
         Self {
@@ -172,7 +174,7 @@ mod tests {
             assert_eq!(workspace.scoped_name().scope, scope);
             assert!(workspace.validate().is_ok(), "{scope:?}");
         }
-        for scope in [Scope::UserScope { user_id: UserId::new() }, Scope::ChannelScope { session_id, channel_id: ChannelId::new() }, Scope::GroupScope { group_id: uuid::Uuid::new_v4() }] {
+        for scope in [Scope::UserScope { user_id: UserId::new() }, Scope::ChannelScope { session_id, channel_id: ChannelId::new() }, Scope::GroupScope { group_id: GroupId::new() }] {
             assert!(Workspace::new(named(scope.clone()), "main", Classification::CHANNEL_DEFAULT, alice).validate().is_err(), "not in {scope:?}");
         }
     }
@@ -185,7 +187,7 @@ mod tests {
         assert!(workspace.security_attributes.acl.is_empty(), "one of its owner's grants nobody anything until shared");
         let session_id = SessionId::new();
         let sessions = Workspace::new(named(Scope::SessionScope { session_id }), "main", Classification::CHANNEL_DEFAULT, alice);
-        assert_eq!(sessions.security_attributes.acl, [AclEntry { subject: Subject::MemberOf(Membership::Session(session_id)), grant: Grant::Write }], "one made for a session, its members");
+        assert_eq!(sessions.security_attributes.acl, [AclEntry { subject: Subject::Group(GroupId::of_session(session_id)), grant: Grant::Write }], "one made for a session, the group of its participants");
         let shared = Workspace { security_attributes: workspace.security_attributes.clone().granting(Subject::Actor(ActorId::User(UserId::new())), Grant::Read), ..workspace.clone() };
         assert!(shared.validate().is_ok(), "shared with someone");
         let systems = Workspace { security_attributes: SecurityAttributes::owned_by(ActorId::System), ..workspace };

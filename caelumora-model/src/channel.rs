@@ -11,7 +11,8 @@ use crate::scope::{Scope, Scoped};
 use crate::value::name::{Name, ScopedName};
 use crate::value::text::{Briefing, Summary};
 use crate::value::ValueError;
-use crate::security::{Grant, Membership, Secured, SecurityAttributes, Subject};
+use crate::group::GroupId;
+use crate::security::{Grant, Secured, SecurityAttributes, Subject};
 use crate::session::SessionId;
 use crate::store::Journaled;
 use crate::store::query::Field;
@@ -173,7 +174,9 @@ impl Channel {
     /// A new channel of `participants`, owned by `owner`, as every channel is
     /// built - from a template or on request (issue 09): with an approver
     /// added if there is none, and read by its members (issue 23): every
-    /// user and agent in it, whoever they are at the time. Held in
+    /// user and agent in it, whoever they are at the time - the group of its
+    /// participants (issue 304), which whoever stores the channel stores
+    /// with it (`Group::of_channel`). Held in
     /// `language`, if any - by default the language its creator prefers.
     pub fn build(session_id: SessionId, owner: ActorId, name: Name, components: ComponentConfig, classification: Classification, language: Option<Language>, mut participants: Vec<Participant>) -> Self {
         if !participants.iter().any(|p| matches!(p, Participant::Approver(_))) {
@@ -183,7 +186,7 @@ impl Channel {
             }));
         }
         let id = ChannelId::new();
-        let security_attributes = SecurityAttributes::owned_by(owner).granting(Subject::MemberOf(Membership::Channel(id)), Grant::Read);
+        let security_attributes = SecurityAttributes::owned_by(owner).granting(Subject::Group(GroupId::of_channel(id)), Grant::Read);
         Self {
             id,
             session_id,

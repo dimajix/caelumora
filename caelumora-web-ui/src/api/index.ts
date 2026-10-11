@@ -4,6 +4,8 @@ import type {
   Grant,
   CreateSkillRequest,
   SkillResponse,
+  CreateGroupRequest,
+  GroupResponse,
   Description,
   AgentToolsResponse,
   ApprovalRule,
@@ -744,6 +746,76 @@ export const api = {
   async purgeSkill(skillId: string): Promise<void> {
     const res = await request(`/skills/${skillId}/purge`, {method: 'POST'});
     await ensureOk(res, 'Failed to delete the skill for good');
+  },
+
+  /** The teams the user owns or belongs to (issue 286), with their members. */
+  async getGroups(): Promise<GroupResponse[]> {
+    const res = await request('/groups');
+    await ensureOk(res, 'Failed to fetch the teams');
+    return res.json();
+  },
+
+  /** The user's teams they deleted, the trash. */
+  async getDeletedGroups(): Promise<Deleted[]> {
+    const res = await request('/groups?deleted=true');
+    await ensureOk(res, 'Failed to fetch the deleted teams');
+    return res.json();
+  },
+
+  /** One group: a team, or the participants of a session or a channel. */
+  async getGroup(groupId: string): Promise<GroupResponse> {
+    const res = await request(`/groups/${groupId}`);
+    await ensureOk(res, 'Failed to fetch the team');
+    return res.json();
+  },
+
+  /** Makes a team of the user's, with nobody in it yet. */
+  async createGroup(payload: CreateGroupRequest): Promise<GroupResponse> {
+    const res = await request('/groups', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    await ensureOk(res, 'Failed to create the team');
+    return res.json();
+  },
+
+  async renameGroup(groupId: string, name: string): Promise<GroupResponse> {
+    const res = await request(`/groups/${groupId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    await ensureOk(res, 'Failed to rename the team');
+    return res.json();
+  },
+
+  /** Makes the users `userIds` the members of the team, replacing who was in it. */
+  async setGroupMembers(groupId: string, userIds: string[]): Promise<GroupResponse> {
+    const res = await request(`/groups/${groupId}/members`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(userIds),
+    });
+    await ensureOk(res, 'Failed to change the members of the team');
+    return res.json();
+  },
+
+  /** Deletes the team: kept until it is purged. */
+  async deleteGroup(groupId: string): Promise<void> {
+    const res = await request(`/groups/${groupId}`, {method: 'DELETE'});
+    await ensureOk(res, 'Failed to delete the team');
+  },
+
+  async restoreGroup(groupId: string): Promise<GroupResponse> {
+    const res = await request(`/groups/${groupId}/restore`, {method: 'POST'});
+    await ensureOk(res, 'Failed to restore the team');
+    return res.json();
+  },
+
+  async purgeGroup(groupId: string): Promise<void> {
+    const res = await request(`/groups/${groupId}/purge`, {method: 'POST'});
+    await ensureOk(res, 'Failed to delete the team for good');
   },
 
   /** The files of a workspace the user may read (issue 23), wherever it is used. */

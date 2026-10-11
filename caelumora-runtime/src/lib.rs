@@ -26,5 +26,6 @@ pub mod terminal;
 pub mod workspace;
 pub mod skill;
 pub mod artifact;
+pub mod group;
 mod template;
 mod scoped;

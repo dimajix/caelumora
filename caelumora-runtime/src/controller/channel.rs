@@ -6,6 +6,8 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::approval::ApprovalRule;
 use caelumora_model::channel::{Channel, ChannelId, ChannelUpdateEvent, FormerParticipant, HistoryLimit, HistoryStart, Participant};
 use caelumora_model::removal::Removal;
+use caelumora_model::group::Group;
+use tracing::error;
 use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::security::{Grant, SecurityContext, Subject};
 use caelumora_model::session::SessionId;
@@ -113,9 +115,9 @@ impl ChannelController {
     }
 
     /// Adds `participant` to the channel on behalf of `ctx` (issue 46), seeing
-    /// its history from `start` on (`None`: all of it). The channel's
-    /// attributes are derived anew from its participants, so the newcomer
-    /// may read it. Stored first (`UpdateChannel`), then taken over and
+    /// its history from `start` on (`None`: all of it). Stored first
+    /// (`UpdateChannel`), then the group of its participants follows, so
+    /// that the newcomer may read it (issue 286), then taken over and
     /// announced (`AgentChannelJoined` / `UserChannelJoined`).
     ///
     /// # Errors
@@ -133,6 +135,7 @@ impl ChannelController {
             channel.history_limits.push(HistoryLimit { participant: id, start });
         }
         self.store(ctx, &channel).await?;
+        self.keep_participants(&channel).await;
         let attributes = channel.security_attributes.clone();
         self.channel.store(Arc::new(channel));
         if let Some(event) = self.membership_event(id, true) {
@@ -164,6 +167,7 @@ impl ChannelController {
         // Never stored: only who receives the announcement.
         let told = channel.security_attributes.clone().granting(Subject::Actor(participant), Grant::Read);
         self.store(ctx, &channel).await?;
+        self.keep_participants(&channel).await;
         self.channel.store(Arc::new(channel));
         if let Some(event) = self.membership_event(participant, false) {
             self.event_publisher.publish(event, told);
@@ -191,6 +195,16 @@ impl ChannelController {
             (ActorId::User(u), true) => Some(GlobalEvent::UserChannelJoined(self.session_id, self.id, u)),
             (ActorId::User(u), false) => Some(GlobalEvent::UserChannelLeft(self.session_id, self.id, u)),
             _ => None,
+        }
+    }
+
+    /// Lets the group of the participants of `channel` follow them, in the
+    /// runtime's name (issue 286): the change of the participants was
+    /// permitted and is stored. A failure is logged and corrected by the
+    /// next change, which derives the group anew.
+    async fn keep_participants(&self, channel: &Channel) {
+        if let Err(e) = crate::group::keep_participants(self.entity_store.as_ref(), Group::of_channel(channel)).await {
+            error!(channel = %channel.id, "The group of the channel's participants does not follow them: {e}");
         }
     }
 

@@ -308,6 +308,15 @@ pub(crate) const ARTIFACTS: Actions = Actions {
     delete: |a| ActionType::DeleteArtifact(a),
 };
 
+pub(crate) const GROUPS: Actions = Actions {
+    entity: EntityKind::Group,
+    get: |a| ActionType::GetGroup(a),
+    list: ActionType::ListGroups,
+    create: |a| ActionType::CreateGroup(a),
+    update: |a| ActionType::UpdateGroup(a),
+    delete: |a| ActionType::DeleteGroup(a),
+};
+
 pub(crate) const COMPONENTS: Actions = Actions {
     entity: EntityKind::Components,
     get: |a| ActionType::GetComponents(a),

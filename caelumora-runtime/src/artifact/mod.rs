@@ -31,8 +31,9 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::digest::ContentDigest;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{AccessQuestions, AclEntry, ActionType, Enforcement, Grant, Membership, SecurityAttributes, SecurityContext, SecurityManager, Subject};
+use caelumora_model::security::{AccessQuestions, AclEntry, ActionType, Enforcement, Grant, SecurityAttributes, SecurityContext, SecurityManager, Subject};
 use caelumora_model::session::{ChannelId, SessionId};
+use caelumora_model::group::GroupId;
 use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResultExt};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
@@ -221,10 +222,11 @@ impl ArtifactManager {
             }
         };
 
-        // Read by the members of the channel it is published in (issue 23):
-        // a draft published where few are reaches nobody who reads a later
-        // version published where many are.
-        let acl = vec![AclEntry { subject: Subject::MemberOf(Membership::Channel(channel)), grant: Grant::Read }];
+        // Read by the members of the channel it is published in (issue 23) -
+        // the group of its participants (issue 286): a draft published where
+        // few are reaches nobody who reads a later version published where
+        // many are.
+        let acl = vec![AclEntry { subject: Subject::Group(GroupId::of_channel(channel)), grant: Grant::Read }];
         let version = ArtifactVersion { number, size, digest, media_type: None, description, session_id: session, channel_id: channel, published_by: ctx.caller_id, published_at: Utc::now(), acl };
         let stored = match existing {
             Some(mut artifact) => {
@@ -276,16 +278,20 @@ impl ArtifactManager {
     }
 
     /// Gives artifact `id` the access list `acl` for the whole of it (issue
-    /// 23) on behalf of `ctx`: its owner's act (`UpdateArtifact`, asked as
-    /// it is stored). The lists of its versions stay as they are.
+    /// 23) on behalf of `ctx`: its owner's act (`UpdateArtifact`), asked
+    /// before a group the list names newly is looked at - who names one must
+    /// read it (issue 286) - and again as it is stored. The lists of its
+    /// versions stay as they are.
     ///
     /// # Errors
     /// `NotFound` if there is none the caller may read, or what the store
     /// reports - `PermissionDenied`, `Validation` for an entry that names
-    /// anyone but a user.
+    /// an agent, the system or nobody, or a group the caller cannot read.
     pub async fn set_access(&self, ctx: &SecurityContext, id: ArtifactId, acl: Vec<AclEntry>) -> ArtifactResult<Artifact> {
         let _writing = self.writing.lock().await;
         let mut artifact = self.entities.get_artifact(ctx, id).await.map_err(store_error(id))?;
+        self.security.require(ctx, ActionType::UpdateArtifact(&artifact.security_attributes), || StoreError::PermissionDenied).await?;
+        crate::group::require_nameable(self.entities.as_ref(), ctx, &artifact.security_attributes.acl, &acl).await?;
         artifact.security_attributes.acl = acl;
         artifact.updated_at = Utc::now();
         self.entities.update_artifact(ctx, &artifact).await?;

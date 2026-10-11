@@ -30,6 +30,11 @@ The `EntityStore` trait (in `caelumora-model`) stores the long-lived domain enti
     each a user's, with one classification and its versions in the document - their size, digest,
     the channel each was published in and by whom. The content of the versions is no part of it and
     lies in a configured artifact storage, which the document names.
+*   **Groups**: lists of actors an access list names as one subject (issue
+    [286](../issues/286-groups-as-subjects.md)) - a user's teams, in the global scope or theirs,
+    and the participants of every session and channel, in its scope and with its id. The
+    `GroupManager` writes teams; what changes the participants writes theirs. See
+    [SECURITY.md](SECURITY.md#groups).
 
 The files of workspaces lie in the configured storages (`workspaces` in
 [CONFIGURATION.md](CONFIGURATION.md)), each served by one `TerminalProvider`
@@ -213,8 +218,8 @@ Every list of the entity store takes a query (`caelumora_model::store::query`, i
     of a collection meets a condition of its own (`Any`). It names fields of the kind (an
     `ArtifactField`, say), each a path into the document as it is serialized; a field used within
     `Any` lies within the element. What a kind may be asked:
-    *   personalities, session templates, agents, workspaces and skills share the field of what
-        lies in a scope (`ScopeField`): its scope;
+    *   personalities, session templates, agents, workspaces, skills and groups share the field of
+        what lies in a scope (`ScopeField`): its scope;
     *   artifacts have those and more (`ArtifactField`): the owner, the access list, the versions
         with the place each was published in and their own lists;
     *   channels have their session (`ChannelField`), sessions their participants
@@ -224,8 +229,8 @@ Every list of the entity store takes a query (`caelumora_model::store::query`, i
     a filter cannot fail: a `Uuid` for every id, a `Text` for a unit variant (`"GlobalScope"`), and
     `Tagged` for a variant (`{"User": "…"}`). `Tagged` meets an object that *has* its key with a
     matching value - containment, as `@>` in Postgres -, so that a value names only what
-    identifies it: a channel's scope its channel alone, whose id is unique. `ActorId`, `Subject`,
-    `Membership` and `Scope` convert by `From`, written after serde's tags; a test per type holds
+    identifies it: a channel's scope its channel alone, whose id is unique. `ActorId`, `Subject`
+    and `Scope` convert by `From`, written after serde's tags; a test per type holds
     each to meeting exactly the serialized values equal to it. A participant is asked by the
     `ActorId` of the same form.
 *   **Scope conditions** are made by the scope, so that the rule lives with `Scope`:

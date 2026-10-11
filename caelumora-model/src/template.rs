@@ -21,7 +21,8 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use crate::actor::ActorId;
-use crate::security::{Grant, Membership, Secured, SecurityAttributes, Subject};
+use crate::group::GroupId;
+use crate::security::{Grant, Secured, SecurityAttributes, Subject};
 use crate::user::UserId;
 
 /// A template that cannot be made into a session. The messages are meant
@@ -266,8 +267,9 @@ impl SessionTemplate {
             .map(|channel| channel.instantiate(id, owner, language, &participants))
             .collect::<TemplateResult<Vec<_>>>()?;
         let participants: Vec<Participant> = participants.into_iter().map(|(_, participant)| participant).collect();
-        // Read by its members, whoever they are at the time (issue 23).
-        let security_attributes = SecurityAttributes::owned_by(ActorId::User(owner)).granting(Subject::MemberOf(Membership::Session(id)), Grant::Read);
+        // Read by its members, whoever they are at the time (issue 23): the
+        // group of its participants, stored with it (`Group::of_session`).
+        let security_attributes = SecurityAttributes::owned_by(ActorId::User(owner)).granting(Subject::Group(GroupId::of_session(id)), Grant::Read);
         let now = Utc::now();
         let session = Session {
             id,
