@@ -13,7 +13,9 @@ change something, read the document on its subject:
 |---|---|
 | any code | [CODING-GUIDELINES.md](docs/CODING-GUIDELINES.md) |
 | components, facets, `ComponentRegistry` | [COMPONENTS.md](docs/COMPONENTS.md) |
-| tools, tool execution, approvals, user commands | [TOOLS-AND-COMMANDS.md](docs/TOOLS-AND-COMMANDS.md) |
+| tools, tool execution | [TOOLS.md](docs/TOOLS.md) |
+| approvals, questions a tool asks a person | [APPROVALS.md](docs/APPROVALS.md) |
+| user commands, commands of an agent | [COMMANDS.md](docs/COMMANDS.md) |
 | the agent's cognitive cycle, `Turn`, transcript, prompt parts | [AGENT-TURN.md](docs/AGENT-TURN.md) |
 | notes, private notes, agent memory, reading other channels | [MEMORY.md](docs/MEMORY.md) |
 | skills: the catalogue, loading and writing them | [SKILLS.md](docs/SKILLS.md) |
@@ -22,6 +24,7 @@ change something, read the document on its subject:
 | the REST API, login and tokens, server-sent event streams | [REST-SERVER.md](docs/REST-SERVER.md) |
 | the web UI | [WEB-UI.md](docs/WEB-UI.md) |
 | stores, controllers, persistence | [STORAGE.md](docs/STORAGE.md) |
+| workspaces, their storages, commands run in them | [WORKSPACE.md](docs/WORKSPACE.md) |
 | permissions, ownership, the views, users, authentication, secrets | [SECURITY.md](docs/SECURITY.md) |
 | where a permission is checked, in whose name, by which concept | [PERMISSION-CHECKS.md](docs/PERMISSION-CHECKS.md) |
 | confidentiality levels and labels | [CONFIDENTIALITY.md](docs/CONFIDENTIALITY.md) |
@@ -79,8 +82,9 @@ The reasons and details are in [CODING-GUIDELINES.md](docs/CODING-GUIDELINES.md)
 2.  **Plan**: Identify the files that need modification and the tests required.
 3.  **Implement**: Apply minimal, focused changes following the coding style.
 4.  **Document**: Update the document in `docs/` on the subject, `docs/ARCHITECTURE.md` and/or
-    `README.md` if your changes introduce new architectural concepts, modules, or significant
-    features.
+    `README.md` where your change changes a concept, a rule or how the parts fit together; what a
+    type or method does in detail goes into its doc comments. What belongs where is described in
+    [CODING-GUIDELINES.md](docs/CODING-GUIDELINES.md#what-goes-where).
 5.  **Verify**: Run existing tests and add new ones to cover your changes.
 6.  **Refactor**: Ensure the code is clean and well-documented.
 7.  **Record**: If the change resolves or advances an issue, update its status in *both*

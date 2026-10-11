@@ -65,7 +65,7 @@ asked; the presentation decides only what of the tool's own arguments and result
 - a question skipped as "skipped", the whole declined as "Declined by …", otherwise "Answered by
   …";
 - sensitive questions leave no record at all (`Answers::record`, see
-  [TOOLS-AND-COMMANDS.md](../docs/TOOLS-AND-COMMANDS.md#sensitive-questions)): nothing of them is
+  [APPROVALS.md](../docs/APPROVALS.md#sensitive-questions)): nothing of them is
   shown, as now.
 
 The card while waiting and the record once answered show a question alike - the same rows, once

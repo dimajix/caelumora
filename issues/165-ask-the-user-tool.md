@@ -279,7 +279,7 @@ is, since its answers go to the model. For sensitive questions:
    the agent does not see it", input masked; otherwise: "goes to the agent". The flag comes from
    the tool, so a model cannot make an `ask_user` question look like a trustworthy tool's.
 6. **The tool's result does not repeat them** - the tool's responsibility, documented in
-   [TOOLS-AND-COMMANDS.md](../docs/TOOLS-AND-COMMANDS.md).
+   [APPROVALS.md](../docs/APPROVALS.md#sensitive-questions).
 7. **Only the in-memory transport.** A transport that keeps envelopes
    ([122](122-several-instances.md)) must not keep answers to sensitive questions.
 

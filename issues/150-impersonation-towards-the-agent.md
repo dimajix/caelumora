@@ -36,7 +36,7 @@ fooled.
   here, because the fake stays inside Bob's message and the model still believes it.
 - **It can be bounded.** Decisions with consequences must not depend on whom the model believes:
   tool approvals are already given by the runtime to the actual user
-  ([TOOLS-AND-COMMANDS.md](../docs/TOOLS-AND-COMMANDS.md)), and permissions are the
+  ([APPROVALS.md](../docs/APPROVALS.md)), and permissions are the
   `SecurityManager`'s. What remains is what an agent does on its own authority because of what
   someone said. That is the surface to look at: which tools run without approval, and whether an
   agent should be told that the names in its input are claims.

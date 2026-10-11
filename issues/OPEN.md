@@ -95,12 +95,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [284](284-automatic-context-compaction.md) | open | An agent's context is compacted only when somebody asks for it; nothing compacts it before a model call that would not fit, least of all within the turn that makes it. |
 | [305](305-skill-versions.md) | open | A skill keeps only its current text: every change overwrites what it said, nobody sees what changed, and an earlier version cannot be made current again. |
 
-## Maintenance
-
-| No. | Status | Issue |
-|---|---|---|
-| [313](313-docs-too-detailed.md) | open | The documents in `docs/` have about 130,000 tokens, mostly code retold - variants, fields, call orders - and inline issue history, so the concepts and rules are hard to find and every change has a second place to update. |
-
 ## Code structure
 
 | No. | Status | Issue |

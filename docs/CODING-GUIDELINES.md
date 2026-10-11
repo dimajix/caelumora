@@ -25,6 +25,27 @@ tests. Rules that belong to one subject live with it - where permission checks g
     `#[expect(clippy::…, reason = "…")]` on the item - `expect` rather than `allow`, so that it is
     noticed once the lint no longer fires.
 
+### What goes where
+
+What is known about the code has three places, each kept by whoever changes what it describes:
+
+*   **The documents in `docs/`** explain what the code does not show by itself: the concepts and
+    who owns them; the principles and rules - invariants, orders, who checks what, what is never
+    done and why; and how the parts fit together. A type or method is named where a reader needs
+    the name to find the code - the name, not what it does in detail. A document says what holds,
+    not how it came to be, and is read before every piece of work on its subject, so every line of
+    it costs every reader.
+*   **Doc comments and module docs** (`///`, `//!`) hold what one type, method or module does in
+    detail: its variants and fields, its steps and their order, its errors, its constants. They are
+    changed and reviewed with the code they describe.
+*   **Issues** hold how something came to be: the options weighed and why one was chosen. A
+    document links an issue only where a rule would otherwise look wrong or arbitrary and the issue
+    says why - not to record which issue added what.
+
+A change updates the document on its subject where it changes a concept, a rule or how the parts
+fit together, and only the doc comments where it changes how something is done. A rule that only a
+document states is moved, not dropped, when the document is shortened.
+
 ## Imports
 
 A type, trait or function used by name is imported with `use` at the top of the module and written
@@ -57,7 +78,7 @@ more than two parts, or its parts have the same type and could be swapped unnoti
 ### Runtimes and their entities
 
 A running object - `SessionLoop`, `ChannelLoop`, `ActorRuntime` - and the stored entity it holds
-(`Session`, `Channel`) share their work by three rules (issue 144):
+(`Session`, `Channel`) share their work by three rules:
 
 *   **The model derives.** A value derived from an entity is computed in `caelumora-model` - a
     method of the entity (`Agent::security_context`) or a constructor of the derived type
@@ -76,7 +97,7 @@ A running object - `SessionLoop`, `ChannelLoop`, `ActorRuntime` - and the stored
 ### Services are held, not fetched
 
 A type takes the services it works with - the `SecurityManager`, the stores, the event bus, the
-`ComponentRegistry` - when it is made, and keeps them as fields (issue 229):
+`ComponentRegistry` - when it is made, and keeps them as fields:
 
 *   **Constructor injection.** `new` takes the services, or takes them once from the runtime it is
     given, and stores them as `Arc<dyn Trait>`: `dyn`, since the policy and the stores are chosen
@@ -111,7 +132,7 @@ type, `Arc::<MemoryStore>::clone(&store)`, since the type cannot be inferred fro
 
 ## Error handling
 
-Errors carry what failed, and only what may be shown goes to users (issue 02).
+Errors carry what failed, and only what may be shown goes to users.
 
 ### Types
 
@@ -136,9 +157,8 @@ Errors carry what failed, and only what may be shown goes to users (issue 02).
 ### What users see
 
 What users may see is decided in one place, `caelumora_runtime::error::user_message`. It looks
-through an error chain for a domain error written to be read - `LLMError`, `ExternalAgentError`,
-`ComponentError`, `ToolError`, `TemplateError`, `ValueError`, `StoreError` other than `Backend` -
-and returns its message. Anything else stays in the log.
+through an error chain for a domain error written to be read and returns its message. Anything else
+stays in the log.
 
 A new error type meant for users must meet the rules above and be added to `user_message`.
 
@@ -151,8 +171,8 @@ let a turn-time error escape `AgentActor::run`.
 
 Moderators forward `TurnGivenUp` to the users, whose actors pass it on to the UI. The failure's
 message is not given to a model: what it is told of a turn given up is a fixed text of the
-runtime's, with the reason (issue 258). Errors the model *should* see are
-the subject of [15](../issues/15-disallowed-tool-errors-to-llm.md).
+runtime's, with the reason. What a model is told of a failed tool call is the `ToolExecutor`'s (see
+[TOOLS.md](TOOLS.md#results)).
 
 ### REST errors
 
@@ -211,8 +231,7 @@ Every span that works on an envelope carries the ids as fields named after the `
 fields: `span_id`, `event_id`, `correlation_id` and `span_depth`. There are three kinds of span:
 
 *   **`request`** - one REST request, with `method`, `uri`, `request_id`, the authenticated
-    `user_id`, and the `span_id` of the envelopes the request started (`UserActor::send_message`
-    builds the envelopes and returns it).
+    `user_id`, and the `span_id` of the envelopes the request started.
 *   **`envelope`** - handling one envelope in the `ChannelLoop` or an idle agent
     (`logging::envelope_span`), with session, channel, sender and event kind.
 *   **`turn`** - one iteration of an agent's cognitive cycle, with agent and state and the ids of
