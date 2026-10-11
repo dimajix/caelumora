@@ -15,7 +15,7 @@ use crate::security::{DummySecurityManager, SecurityManager};
 use crate::store::access::{name_free, Access, Actions, AGENTS, ARTIFACTS, CHANNELS, COMPONENTS, GROUPS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, SKILLS, USERS, USER_PROFILES, WORKSPACES};
 use crate::workspace::{Workspace, WorkspaceId};
 use crate::skill::{Skill, SkillId};
-use crate::group::{Group, GroupId};
+use crate::group::{Group, GroupField, GroupId};
 use crate::artifact::{Artifact, ArtifactId};
 use std::fmt::Display;
 use std::hash::Hash;
@@ -616,7 +616,7 @@ impl EntityStore for MemoryStore {
     async fn delete_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<bool> {
         self.delete_in(ctx, &self.groups, &GROUPS, id).await
     }
-    async fn list_groups(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Group>> {
+    async fn list_groups(&self, ctx: &SecurityContext, query: &Query<GroupField>) -> StoreResult<Page<Group>> {
         self.list_in(ctx, &self.groups, &GROUPS, query).await
     }
     async fn restore_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<()> {
@@ -628,7 +628,7 @@ impl EntityStore for MemoryStore {
     async fn get_deleted_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group> {
         self.get_deleted_in(ctx, &self.groups, &GROUPS, &id).await
     }
-    async fn list_deleted_groups(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Group>> {
+    async fn list_deleted_groups(&self, ctx: &SecurityContext, query: &Query<GroupField>) -> StoreResult<Page<Group>> {
         self.list_deleted_in(ctx, &self.groups, &GROUPS, query).await
     }
     async fn find_group_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Group> {

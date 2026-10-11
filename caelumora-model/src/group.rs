@@ -20,9 +20,10 @@
 use crate::actor::ActorId;
 use crate::channel::{Channel, Participant};
 use crate::removal::{Deletable, Removal, Stored};
-use crate::scope::{Scope, Scoped};
+use crate::scope::{Scope, Scoped, ScopedField};
 use crate::security::{Grant, Secured, SecurityAttributes, Subject};
 use crate::session::{ChannelId, Session, SessionId};
+use crate::store::query::Field;
 use crate::user::UserId;
 use crate::value::name::{Name, ScopedName};
 use chrono::{DateTime, Utc};
@@ -41,6 +42,32 @@ impl GroupId {
     /// own id.
     pub fn of_channel(channel: ChannelId) -> Self {
         Self(channel.0)
+    }
+}
+
+/// What a query of groups may name (issue 308). `Member` is an element of
+/// `Members`, the whole of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GroupField {
+    /// Where it lies: a `Scope`.
+    Scope,
+    /// Who belongs to it.
+    Members,
+    /// A member, within `Members`: an `ActorId`.
+    Member,
+}
+
+impl ScopedField for GroupField {
+    const SCOPE: Self = GroupField::Scope;
+}
+
+impl Field for GroupField {
+    fn path(self) -> &'static [&'static str] {
+        match self {
+            GroupField::Scope => &["scope"],
+            GroupField::Members => &["members"],
+            GroupField::Member => &[],
+        }
     }
 }
 

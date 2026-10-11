@@ -188,7 +188,7 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 
 | Operation | Questions in order | Rule | Again | Refusal |
 |---|---|---|---|---|
-| List, reach (`Views::artifacts`, `artifact`, `ChannelView::artifacts`) | read in S; `may_read_artifact` with the artifact's list, else per version with the version's (V,1); `cleared_for` (V,2) | reach | - | left out; `ArtifactNotFound` |
+| List, reach (`Views::artifacts`, `artifact`, `ChannelView::artifacts`) | listing: the teams the viewer belongs to found in S, named besides them and their roles; read in S; `may_read_artifact` with the artifact's list, else per version with the version's (V,1); `cleared_for` (V,2) | reach | - | left out; `ArtifactNotFound` |
 | Where a version was published (`ArtifactView::publication`) | `Views::channel_of`: the session, then `channel_reading`; gone, as a live one would be reached | reach | - | not named |
 | Publish (`ArtifactManager::publish`, the artifact tool) | the workspace's reach (*In a channel*); an existing artifact found in S: `WriteArtifact` (T,1) - one not the caller's to add to is refused as such, not taken for a name to make anew; or `CreateArtifact` (T,1); `require_publish` into the storage's destination (T,2); content kept; store `CreateArtifact` for a new one | R2 + R1 | `CreateArtifact` (pair) | `PermissionDenied`, `ClassifiedOtherwise`, `StorageNotCleared` |
 | Share (`set_access`) | store `GetArtifact`; `UpdateArtifact` (U,1); `require_nameable`; store `UpdateArtifact` | R2 + R1 | `UpdateArtifact` (pair) | `NotFound`, `PermissionDenied`, `Validation` |

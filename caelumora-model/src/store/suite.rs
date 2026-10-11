@@ -318,6 +318,16 @@ pub(crate) async fn queries_behave(store: &dyn EntityStore) {
     store.create_channel(&ctx, &Channel { session_id: without.id, ..self::channel() }).await.unwrap();
     let found = store.list_channels(&ctx, &Query::filtered(Filter::eq(ChannelField::Session, with_agent.id))).await.unwrap();
     assert_eq!(found.items.iter().map(|c| c.id).collect::<Vec<_>>(), [of_it.id], "the channels of a session");
+
+    // By a member (issue 308).
+    use crate::group::GroupField;
+    let mut his = group(alice);
+    his.members.push(ActorId::User(bob));
+    store.create_group(&ctx, &his).await.unwrap();
+    store.create_group(&ctx, &group(UserId::new())).await.unwrap();
+    let belonging = Filter::any(GroupField::Members, Filter::eq(GroupField::Member, ActorId::User(bob)));
+    let found = store.list_groups(&ctx, &Query::filtered(belonging)).await.unwrap();
+    assert_eq!(found.items.iter().map(|g| g.id).collect::<Vec<_>>(), [his.id], "the groups of a member, not those of their owner");
 }
 
 /// Preconfigured components go through the same life as the entities.

@@ -57,7 +57,7 @@ use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::snapshot::{AccessSnapshot, AgentSnapshot, DeletedSnapshot};
 use caelumora_model::workspace::WorkspaceId;
 use caelumora_model::skill::SkillId;
-use caelumora_model::group::{Group, GroupId};
+use caelumora_model::group::{Group, GroupField, GroupId};
 use caelumora_model::scope::{found_from, Scope, Scoped};
 use caelumora_model::value::name::Name;
 use crate::workspace::WorkspaceManager;
@@ -436,14 +436,16 @@ impl Views {
         }
     }
 
-    /// The viewer's artifacts (issues 271, 23, 293): those they own and
-    /// those shared with them by name - an entry naming them or one of their
-    /// roles, in the artifact's list or a version's -, each with the
-    /// versions they may read, if they are cleared for it. What they read
-    /// only as a member of a channel is found through that channel
-    /// (`ChannelView::artifacts`). The store is asked for these alone, in
-    /// the runtime's name - its own check knows the artifact's list, not
-    /// those of its versions -, and each is asked of the policy here.
+    /// The viewer's artifacts (issues 271, 23, 293, 308): those they own and
+    /// those shared with them by name - an entry naming them, one of their
+    /// roles or a team they belong to, in the artifact's list or a
+    /// version's -, each with the versions they may read, if they are
+    /// cleared for it. What they read only as a member of a channel is found
+    /// through that channel (`ChannelView::artifacts`), so the participants
+    /// of a session or channel are not named. The store is asked for these
+    /// alone, in the runtime's name - its own check knows the artifact's
+    /// list, not those of its versions -, and each is asked of the policy
+    /// here.
     ///
     /// # Errors
     /// `Failed` if the store cannot list them.
@@ -452,7 +454,10 @@ impl Views {
         let context = self.viewer.context();
         let principal = context.principal_id;
         let roles = context.roles.iter().copied().filter(|role| context.has_role(*role));
-        let subjects: Vec<Subject> = std::iter::once(Subject::Actor(principal)).chain(roles.map(Subject::Role)).collect();
+        let belonging = Filter::any(GroupField::Members, Filter::eq(GroupField::Member, principal));
+        let groups = self.entities.list_groups(&SecurityContext::system(), &Query::filtered(belonging)).await.map_err(failed)?.items;
+        let teams = groups.iter().filter(|group| !group.is_participants()).map(|group| Subject::Group(group.id));
+        let subjects: Vec<Subject> = std::iter::once(Subject::Actor(principal)).chain(roles.map(Subject::Role)).chain(teams).collect();
         let named = Filter::is_in(ArtifactField::Subject, subjects);
         let theirs = Filter::Or(vec![
             Filter::eq(ArtifactField::Owner, principal),
