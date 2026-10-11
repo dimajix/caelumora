@@ -450,6 +450,8 @@ async fn main() -> anyhow::Result<()> {
     // (issue 23): made before the store, bound to it once it exists.
     let memberships = Arc::new(StoreMemberships::new());
     let security_manager = config.create_security_manager(Arc::<StoreMemberships>::clone(&memberships));
+    // What may flow where, decided apart from who may do what (issue 304).
+    let confidentiality = config.create_confidentiality_policy();
     let state_store = config.create_state_store(Arc::clone(&security_manager))?;
     let entity_store = config.create_entity_store(Arc::clone(&security_manager))?;
     memberships.bind(&entity_store);
@@ -461,10 +463,11 @@ async fn main() -> anyhow::Result<()> {
         Arc::clone(&entity_store),
         secret_manager,
         Arc::clone(&security_manager),
+        Arc::clone(&confidentiality),
         &config,
         ComponentRegistry::built_in(Arc::clone(&component_store)),
     )?);
-    caelumora_runtime::seed::load(entity_store.as_ref(), component_store.as_ref(), security_manager.as_ref(), &config.seed).await?;
+    caelumora_runtime::seed::load(entity_store.as_ref(), component_store.as_ref(), confidentiality.as_ref(), &config.seed).await?;
 
     let owner = UserId::default();
     // Users belong to the system (issue 94), so the system records this one.

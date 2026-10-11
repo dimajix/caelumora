@@ -4,8 +4,11 @@ This document is the map of every place where the runtime asks the `SecurityMana
 question: which operation asks, in whose name, which `ActionType`, which of the four concepts of
 permission decides it, and where the same question is asked again on the way. It records what the
 code does, as of 2026-10-11 (issue [304](../issues/304-review-of-the-permission-concept.md)),
-with groups in place of `MemberOf` since issue [286](../issues/286-groups-as-subjects.md); the
-rules themselves are in [SECURITY.md](SECURITY.md) and [CONFIDENTIALITY.md](CONFIDENTIALITY.md),
+with groups in place of `MemberOf` since issue [286](../issues/286-groups-as-subjects.md), the
+roles in the context and the flow decided apart, by the `ConfidentialityPolicy`, since step 2 of
+issue 304 - where the tables below still say `Publish`, `CopyInformation` or `JoinChannel`, read
+the flow question of that name, which the security suite records alike, and for `Classify` the
+validation of the classification, which no longer is a question; the rules themselves are in [SECURITY.md](SECURITY.md) and [CONFIDENTIALITY.md](CONFIDENTIALITY.md),
 and what each action is expected to ask is asserted by the security suite
 (`caelumora-runtime/tests/security_suite.rs`, issue 198). A new action, or a change to what one
 asks, changes this map as it changes the suite.
@@ -46,12 +49,12 @@ user themselves, an agent its owner -, "caller" the one acting - the agent itsel
 | `Purge` | nobody but the system (issue 125) | 3 |
 | `List*` (11) | always; the store filters each item with `Get*` | 1 per item |
 | `ShowCommand`, `ExecuteCommand`, `CallTool`, `ReadSecret` | always: governed outside the policy - a command's scope, the approval strategy and the tool rules of a place, the secret policy | 3, decided elsewhere |
-| `CopyInformation` | same channel; or same session or the source's privacy permits the reader's, and the entry's classification flows into the reader's | 2 + 4 (privacy) |
-| `Classify` | the compartments are configured | 2 |
-| `Reclassify` | a channel: the principal owns it, and `may_classify`; a message: the principal owns the channel or the caller is the author, and the new classification flows into the channel; a note or memory entry: the caller is the author, and it flows | 1 or 3, + 2 |
-| `Publish` | the actor is the caller, and the classification flows into the channel | 3 (identity) + 2 |
+| `CopyInformation` - since issue 304 `ConfidentialityPolicy::may_copy` | same channel; or same session or the source's privacy permits the reader's, and the entry's classification flows into the reader's | 2 + 4 (privacy), no longer the `SecurityManager`'s |
+| `Classify` - since issue 304 `require_classifiable` | the compartments are configured: validation, not a permission | - |
+| `Reclassify` | since issue 304 the security half alone: a channel its owner, a message the channel's owner or its author, a note or memory entry its author; whether the new classification may be given there is `may_publish` | 1 or 3 |
+| `Publish` - since issue 304 `ConfidentialityPolicy::may_publish` | the classification flows into the destination; that only who acts puts something into a channel is the channel's own check (`admits`) | 2, no longer the `SecurityManager`'s |
 | `ModifyMessage`, `RevokeMessage` | the author is the caller | 3: authorship, not ownership |
-| `JoinChannel` | the roles given clear the classification | 2; the roles are looked up by the runtime (issue 181) |
+| `JoinChannel` - since issue 304 `ConfidentialityPolicy::cleared` | the roles given clear the classification, asked in the context of whoever admits | 2, no longer the `SecurityManager`'s |
 
 Most variants are decided by the principal; `Publish`, `ModifyMessage`, `RevokeMessage` and
 `Reclassify` of a message, note or memory entry by the caller - an agent is judged as itself for

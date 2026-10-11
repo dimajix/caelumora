@@ -15,7 +15,7 @@
 //! channel if they may read its document and are cleared for it (issues
 //! 70, 133). An **agent** reads *from its channel* (`Viewer::from_place`,
 //! issue 17): another channel as a whole if its channel may read it by
-//! their classifications (`AccessQuestions::may_copy_information`, issue 133),
+//! their classifications (`ConfidentialityQuestions::may_copy_information`, issue 133),
 //! else entry by entry - only what was released to it - and a channel it
 //! may not read at all is one that does not exist. Its root is its own
 //! session, reached through its turn (`Turn::session`); a frontend's root
@@ -49,10 +49,10 @@ use crate::session::{Found, SessionLoop, SessionManager};
 use crate::tool::ToolError;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId};
-use caelumora_model::confidentiality::Classification;
+use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions, Place};
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::removal::Removal;
-use caelumora_model::security::{AccessQuestions, AclEntry, Place, SecurityContext, SecurityManager, Subject};
+use caelumora_model::security::{AccessQuestions, AclEntry, SecurityAttributes, SecurityContext, SecurityManager, Subject};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::snapshot::{AccessSnapshot, AgentSnapshot, DeletedSnapshot};
 use caelumora_model::workspace::WorkspaceId;
@@ -192,6 +192,7 @@ impl RunningSessions for OwnSession {
 #[derive(Clone)]
 pub struct Views {
     security: Arc<dyn SecurityManager>,
+    confidentiality: Arc<dyn ConfidentialityPolicy>,
     entities: Arc<dyn EntityStore>,
     states: Arc<dyn StateStore>,
     components: Arc<ComponentRegistry>,
@@ -206,6 +207,7 @@ impl Views {
     pub(crate) fn new(runtime: &RuntimeManager, running: Arc<dyn RunningSessions>, viewer: Viewer) -> Self {
         Self {
             security: Arc::clone(runtime.security_manager()),
+            confidentiality: Arc::clone(runtime.confidentiality()),
             entities: Arc::clone(runtime.entity_store()),
             states: Arc::clone(runtime.state_store()),
             components: Arc::clone(runtime.component_registry()),
@@ -235,6 +237,11 @@ impl Views {
     /// The policy every edge asks, in the viewer's `context`.
     pub(crate) fn security(&self) -> &Arc<dyn SecurityManager> {
         &self.security
+    }
+
+    /// What may flow where, and who is cleared for what (issue 304).
+    pub(crate) fn confidentiality(&self) -> &Arc<dyn ConfidentialityPolicy> {
+        &self.confidentiality
     }
 
     pub(crate) fn entities(&self) -> &Arc<dyn EntityStore> {
@@ -405,7 +412,7 @@ impl Views {
             .map_err(|e| ViewError::failed(e, "listing the workspaces"))?;
         let mut readable = Vec::with_capacity(workspaces.len());
         for workspace in workspaces {
-            if self.cleared_for(&workspace.classification).await {
+            if self.cleared_for(&workspace.classification) {
                 readable.push(WorkspaceView::of(self.clone(), workspace));
             }
         }
@@ -420,7 +427,7 @@ impl Views {
     /// not cleared for is the same.
     pub async fn workspace(&self, id: WorkspaceId) -> ViewResult<WorkspaceView> {
         match self.entities.get_workspace(self.viewer.context(), id).await.optional() {
-            Ok(Some(workspace)) if self.cleared_for(&workspace.classification).await => Ok(WorkspaceView::of(self.clone(), workspace)),
+            Ok(Some(workspace)) if self.cleared_for(&workspace.classification) => Ok(WorkspaceView::of(self.clone(), workspace)),
             Ok(Some(_)) => Err(ViewError::WorkspaceNotFound(id)),
             Ok(None) => Err(ViewError::WorkspaceNotFound(id)),
             Err(e) => Err(ViewError::failed(e, "reading a workspace")),
@@ -489,7 +496,7 @@ impl Views {
             }
             artifact.versions = readable;
         }
-        if artifact.versions.is_empty() || !self.cleared_for(&artifact.classification).await {
+        if artifact.versions.is_empty() || !self.cleared_for(&artifact.classification) {
             return None;
         }
         Some(ArtifactView::of(self.clone(), artifact))
@@ -507,7 +514,7 @@ impl Views {
             let (name, scope) = match entry.subject {
                 Subject::Actor(ActorId::User(user)) => (self.entities.get_user(&system, user).await.optional().ok().flatten().map(|u| u.username.to_string()), None),
                 Subject::Actor(_) => (None, None),
-                Subject::Role(role) => (self.security.role_name(role), None),
+                Subject::Role(role) => (self.confidentiality.roles().and_then(|roles| roles.name_of(role)).map(str::to_string), None),
                 Subject::Group(group) => match self.entities.get_group(&system, group).await.optional().ok().flatten() {
                     Some(group) => (self.group_name(&group).await, Some(group.name.scope)),
                     None => (None, None),
@@ -653,11 +660,12 @@ impl Views {
     }
 
     /// Whether what `from` holds may be copied into the viewer's place
-    /// (`AccessQuestions::may_copy_information`, issues 133, 264). A viewer
-    /// without a place reads by other questions and is not asked this one.
-    pub(crate) async fn may_copy_from(&self, from: &Place) -> bool {
+    /// (`ConfidentialityQuestions::may_copy_information`, issues 133, 264,
+    /// 304). A viewer without a place reads by other questions and is not
+    /// asked this one.
+    pub(crate) fn may_copy_from(&self, from: &Place) -> bool {
         let Some(into) = &self.viewer.from else { return true };
-        self.security.may_copy_information(self.viewer.context(), from, into).await
+        self.confidentiality.may_copy_information(self.viewer.context(), from, into)
     }
 
     /// The name of `actor`; `None` for a user or agent that no longer
@@ -711,8 +719,8 @@ impl Views {
     /// the roles of their context - an agent's narrowed by its personality
     /// (issue 304): what one is not cleared for is the same as what does not
     /// exist - a channel, a skill.
-    pub(super) async fn cleared_for(&self, classification: &Classification) -> bool {
-        self.security.may_see_channel(self.viewer.context(), classification).await
+    pub(super) fn cleared_for(&self, classification: &Classification) -> bool {
+        self.confidentiality.cleared_for(self.viewer.context(), classification)
     }
 
     /// The skills the viewer may read (`GetSkill`) and is cleared for (issue
@@ -725,7 +733,7 @@ impl Views {
             .map_err(|e| ViewError::failed(e, "listing the skills"))?;
         let mut readable = Vec::with_capacity(skills.len());
         for skill in skills {
-            if self.cleared_for(&skill.classification).await {
+            if self.cleared_for(&skill.classification) {
                 readable.push(SkillView::of(self.clone(), skill));
             }
         }
@@ -742,7 +750,7 @@ impl Views {
             Ok(None) => return Err(ViewError::SkillNotFound(id)),
             Err(e) => return Err(ViewError::failed(e, "reading a skill")),
         };
-        match self.cleared_for(&skill.classification).await {
+        match self.cleared_for(&skill.classification) {
             true => Ok(SkillView::of(self.clone(), skill)),
             false => Err(ViewError::SkillNotFound(id)),
         }
@@ -774,7 +782,7 @@ impl Views {
 
     /// The skills an agent may load where it reads from (issue 22): of those
     /// it may read, each it may use (`UseSkill`) whose classification it may
-    /// put into its channel (`Publish`, as what a turn writes is asked) -
+    /// put into its channel (`may_publish`, as what a turn writes is asked) -
     /// and of those, for every name the one found from its channel (the
     /// innermost: the session's before its owner's before the global one).
     /// By name. None for a viewer who reads from no place: skills are loaded
@@ -794,7 +802,7 @@ impl Views {
         let mut usable = Vec::with_capacity(skills.len());
         for skill in skills {
             if self.security.may_use_skill(context, &skill.security_attributes).await
-                && self.security.may_publish(context, context.caller_id, &skill.classification, &place.classification).await
+                && self.confidentiality.may_publish(context, &skill.classification, &place.classification)
             {
                 usable.push(skill);
             }
@@ -812,6 +820,45 @@ impl Views {
         let not_found = || ViewError::NoSkillNamed(name.to_string());
         let wanted = Name::new(name).map_err(|_| not_found())?;
         self.usable_skills().await?.into_iter().find(|skill| skill.scoped_name().name == wanted).ok_or_else(not_found)
+    }
+}
+
+/// How a channel may be read, where it may be read at all (issue 133): as
+/// a whole, or only what was released to where the reader reads from,
+/// entry by entry, each by its own classification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelReading {
+    Whole,
+    Released,
+}
+
+/// How someone reads a channel (issue 133): an agent from its own place -
+/// its channel, the classification it reads at, its session's privacy -,
+/// a user by what the roles of their context clear them for.
+#[derive(Debug, Clone, Copy)]
+pub enum ChannelReader<'a> {
+    From(&'a Place),
+    Cleared,
+}
+
+/// How `context` may read the channel with `channel` attributes, which lies
+/// `at` its place (issues 133, 264, 296, 304): not at all if it may not read
+/// it (`GetChannel`, the `SecurityManager`'s). Beyond that, as the
+/// `ConfidentialityPolicy` decides: an agent reading from its place reads it
+/// as a whole if what is there may be copied into that place, and entry by
+/// entry otherwise; a user reads it as a whole if they are cleared for its
+/// classification, and not at all otherwise. What the views reach a channel
+/// by, and what an operation in a channel asks before it acts there.
+pub(crate) async fn channel_reading(security: &dyn SecurityManager, confidentiality: &dyn ConfidentialityPolicy, context: &SecurityContext, channel: &SecurityAttributes, at: &Place, reader: ChannelReader<'_>) -> Option<ChannelReading> {
+    if !security.may_read_channel(context, channel).await {
+        return None;
+    }
+    match reader {
+        ChannelReader::From(from) => Some(match confidentiality.may_copy_information(context, at, from) {
+            true => ChannelReading::Whole,
+            false => ChannelReading::Released,
+        }),
+        ChannelReader::Cleared => confidentiality.cleared_for(context, &at.classification).then_some(ChannelReading::Whole),
     }
 }
 
@@ -920,9 +967,9 @@ mod tests {
     /// The runtime under the ownership policy with `rules`, which learns who
     /// takes part where from its store (issue 23).
     fn owned_runtime_under(rules: ConfidentialityRules) -> (Arc<MemoryStore>, Arc<SessionManager>) {
-        let (policy, store) = crate::session::testing::owned_store(rules);
+        let (policy, confidentiality, store) = crate::session::testing::owned_store(rules);
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::clone(&confidentiality), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         (store, Arc::new(SessionManager::new(runtime)))
     }
 

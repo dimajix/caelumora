@@ -25,7 +25,7 @@ use caelumora_model::channel::{moderation_components, Channel, HistoryAccess, Pa
 use caelumora_model::config::{ArtifactStorageConfig, ArtifactsConfig, StorageConfig, WorkspacesConfig, DEFAULT_MAX_RUN_SECS};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, StoredComponents};
 use caelumora_model::external_agent::{ConversationId, TaskId};
-use caelumora_model::confidentiality::{Classification, Clearance, Compartments, ConfidentialityRules, Confidentiality};
+use caelumora_model::confidentiality::{Classification, Clearance, Compartments, ConfidentialityPolicy, ConfidentialityRules, Confidentiality, Place};
 use caelumora_model::role::{RoleId, Roles};
 use caelumora_model::store::memberships::StoreMemberships;
 use caelumora_model::value::name::{Name, ScopedName};
@@ -62,6 +62,9 @@ use caelumora_model::workspace::{WorkspaceChoice, WorkspaceId};
 #[derive(Debug)]
 struct Recorder {
     policy: OwnershipSecurityManager,
+    /// The flow decisions (issue 304), recorded in the same list, so that
+    /// the order of an action's questions shows both.
+    rules: ConfidentialityRules,
     asked: Mutex<Vec<String>>,
     /// The names actors are recorded by.
     names: Mutex<HashMap<ActorId, String>>,
@@ -79,21 +82,17 @@ impl Recorder {
     fn label(&self, action: &ActionType<'_>) -> String {
         let kind = action.describe().split('(').next().unwrap_or_default().to_string();
         match action {
-            ActionType::JoinChannel { participant, .. } => format!("{kind}({})", self.name(*participant)),
             ActionType::ModifyMessage { author, .. } | ActionType::RevokeMessage { author, .. } => format!("{kind}({}'s)", self.name(*author)),
-            ActionType::Reclassify { target: Reclassified::Message { author, .. }, .. } => format!("{kind}({}'s message)", self.name(*author)),
+            ActionType::Reclassify(Reclassified::Message { author, .. }) => format!("{kind}({}'s message)", self.name(*author)),
             _ => match attributes_of(action) {
                 Some(attributes) => format!("{kind}({}'s)", self.name(attributes.owner_id)),
                 None => kind,
             },
         }
     }
-}
 
-#[async_trait]
-impl SecurityManager for Recorder {
-    async fn check(&self, context: &SecurityContext, action: ActionType<'_>) -> bool {
-        let allowed = self.policy.check(context, action).await;
+    /// Records `what` was asked in `context`, and the answer.
+    fn record(&self, context: &SecurityContext, what: String, allowed: bool) {
         let acting = match (context.principal_id, context.caller_id) {
             (principal, caller) if caller == principal || caller == ActorId::None => self.name(principal),
             (principal, caller) => format!("{} as {}", self.name(principal), self.name(caller)),
@@ -103,16 +102,47 @@ impl SecurityManager for Recorder {
             initiator => format!("{acting}, asked by {}", self.name(initiator)),
         };
         let answer = if allowed { "yes" } else { "no" };
-        self.asked.lock().unwrap().push(format!("{who}: {} {answer}", self.label(&action)));
+        self.asked.lock().unwrap().push(format!("{who}: {what} {answer}"));
+    }
+}
+
+#[async_trait]
+impl SecurityManager for Recorder {
+    async fn check(&self, context: &SecurityContext, action: ActionType<'_>) -> bool {
+        let allowed = self.policy.check(context, action).await;
+        self.record(context, self.label(&action), allowed);
+        allowed
+    }
+}
+
+/// The flow decisions, recorded by the names the actions had before they
+/// left the `SecurityManager` (issue 304): `Publish`, `CopyInformation`,
+/// and `JoinChannel` with whom it clears.
+impl ConfidentialityPolicy for Recorder {
+    fn may_publish(&self, context: &SecurityContext, classification: &Classification, into: &Classification) -> bool {
+        let allowed = self.rules.may_publish(context, classification, into);
+        self.record(context, "Publish".to_string(), allowed);
         allowed
     }
 
-    fn role_id(&self, name: &str) -> Option<RoleId> {
-        self.policy.role_id(name)
+    fn may_copy(&self, context: &SecurityContext, from: &Place, into: &Place) -> bool {
+        let allowed = self.rules.may_copy(context, from, into);
+        self.record(context, "CopyInformation".to_string(), allowed);
+        allowed
     }
 
-    fn role_name(&self, id: RoleId) -> Option<String> {
-        self.policy.role_name(id)
+    fn cleared(&self, context: &SecurityContext, participant: ActorId, roles: &[RoleId], classification: &Classification) -> bool {
+        let allowed = self.rules.cleared(context, participant, roles, classification);
+        self.record(context, format!("JoinChannel({})", self.name(participant)), allowed);
+        allowed
+    }
+
+    fn compartments(&self) -> &Compartments {
+        self.rules.compartments()
+    }
+
+    fn roles(&self) -> Option<&Roles> {
+        self.rules.roles()
     }
 }
 
@@ -168,7 +198,7 @@ impl World {
         // The policy learns who takes part where from the store it guards
         // (issue 23), bound once the store is made.
         let memberships = Arc::new(StoreMemberships::new());
-        let recorder = Arc::new(Recorder { policy: OwnershipSecurityManager::with_rules(rules, Arc::<StoreMemberships>::clone(&memberships)), asked: Mutex::new(Vec::new()), names: Mutex::new(HashMap::new()) });
+        let recorder = Arc::new(Recorder { policy: OwnershipSecurityManager::with_memberships(Arc::<StoreMemberships>::clone(&memberships)), rules, asked: Mutex::new(Vec::new()), names: Mutex::new(HashMap::new()) });
         let policy: Arc<dyn SecurityManager> = Arc::<Recorder>::clone(&recorder);
         let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
         let entities: Arc<dyn EntityStore> = Arc::<MemoryStore>::clone(&store);
@@ -180,7 +210,7 @@ impl World {
         let shell = StorageConfig::Local { root: files.path().join("shell"), shell: true, destination: Some(Classification::general(Confidentiality::Internal)), max_run_secs: DEFAULT_MAX_RUN_SECS };
         let workspaces = WorkspacesConfig { storage: [("main".to_string(), StorageConfig::Local { root: files.path().to_path_buf(), shell: false, destination: None, max_run_secs: DEFAULT_MAX_RUN_SECS }), ("shell".to_string(), shell)].into(), ..Default::default() };
         let artifacts = ArtifactsConfig { storage: [("kept".to_string(), ArtifactStorageConfig::Local { root: files.path().join("artifacts"), destination: None })].into(), ..Default::default() };
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig { workspaces, artifacts, ..Default::default() }, registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::<Recorder>::clone(&recorder), &caelumora_model::config::AppConfig { workspaces, artifacts, ..Default::default() }, registry).unwrap());
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let mut world = Self { policy: recorder, store, runtime, manager, alice: UserId::new(), bob: UserId::new(), carol: UserId::new(), files };
         world.alice = world.user("alice").await;
@@ -797,7 +827,8 @@ async fn a_message_is_reclassified_by_its_author_or_the_channels_owner() {
         bob.reclassify_message(bobs, public.clone()).await.expect("his own");
         shown(&mut hers, "MessageReclassified").await;
     }).await;
-    assert_eq!(asked, checks(&["bob: Reclassify(bob's message) yes", "bob: Reclassify(bob's message) yes"]), "his actor, then the channel");
+    assert_eq!(asked, checks(&["bob: Reclassify(bob's message) yes", "bob: Publish yes", "bob: Reclassify(bob's message) yes", "bob: Publish yes"]),
+        "his actor, then the channel - each his permission, then the flow (issue 304)");
 
     let internal = Classification::general(Confidentiality::Internal);
     let (_, asked) = world.asked(async {
@@ -805,7 +836,7 @@ async fn a_message_is_reclassified_by_its_author_or_the_channels_owner() {
         // His actor showed him his own before.
         while !matches!(shown(&mut his, "MessageReclassified").await, ActorEvent::MessageReclassified { classification, .. } if classification == internal) {}
     }).await;
-    assert_eq!(asked, checks(&["alice: Reclassify(bob's message) yes", "alice: Reclassify(bob's message) yes"]), "the owner, another's");
+    assert_eq!(asked, checks(&["alice: Reclassify(bob's message) yes", "alice: Publish yes", "alice: Reclassify(bob's message) yes", "alice: Publish yes"]), "the owner, another's");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
@@ -1972,7 +2003,6 @@ async fn making_a_session_needs_the_template_the_personalities_and_creating_what
         "alice: ListAgents yes",
         "alice: GetPersonality(bob's) yes",
         "alice: CreateAgent(alice's) yes",
-        "alice: Classify yes",
         "alice: JoinChannel(alice) yes",
         "alice as helper: GetPersonality(bob's) yes",
         "alice: JoinChannel(helper) yes",
@@ -2076,7 +2106,6 @@ async fn creating_a_channel_needs_owning_its_session() {
     assert!(created.is_ok());
     assert_eq!(asked, checks(&[
         "alice: UpdateSession(alice's) yes",
-        "alice: Classify yes",
         "alice: JoinChannel(alice) yes",
         "alice: JoinChannel(bob) yes",
         "alice: CreateChannel(alice's) yes",
@@ -2330,7 +2359,7 @@ async fn a_workspace_is_its_owners_alone() {
 
     let (made, asked) = world.asked(workspaces.create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", Some("Drafts"), internal.clone())).await;
     let docs = made.expect("alice makes one");
-    assert_eq!(asked, checks(&["alice: Classify yes", "alice: JoinChannel(alice) yes", "alice: CreateWorkspace(alice's) yes"]));
+    assert_eq!(asked, checks(&["alice: JoinChannel(alice) yes", "alice: CreateWorkspace(alice's) yes"]));
     assert!(world.files.path().join(docs.id.to_string()).is_dir(), "with its place");
     let above = workspaces.create(&alice, "secrets", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Confidential)).await;
     assert!(matches!(above, Err(WorkspaceError::NotCleared)), "not above what she is cleared for: {above:?}");
@@ -2376,11 +2405,11 @@ async fn a_storage_holds_no_workspace_above_its_destination() {
 
     let (above, asked) = world.asked(workspaces.create(&alice, "secrets", mine.clone(), "shell", None, Classification::general(Confidentiality::Confidential))).await;
     assert!(matches!(&above, Err(WorkspaceError::StorageNotCleared(storage)) if storage == "shell"), "{above:?}");
-    assert_eq!(asked, checks(&["alice: Classify yes", "alice: Publish no"]));
+    assert_eq!(asked, checks(&["alice: Publish no"]));
 
     let (made, asked) = world.asked(workspaces.create(&alice, "docs", mine, "shell", None, Classification::general(Confidentiality::Internal))).await;
     let docs = made.expect("up to it");
-    assert_eq!(asked, checks(&["alice: Classify yes", "alice: Publish yes", "alice: JoinChannel(alice) yes", "alice: CreateWorkspace(alice's) yes"]));
+    assert_eq!(asked, checks(&["alice: Publish yes", "alice: JoinChannel(alice) yes", "alice: CreateWorkspace(alice's) yes"]));
     let raised = workspaces.reclassify(&alice, docs.id, Classification::general(Confidentiality::Confidential)).await;
     assert!(matches!(raised, Err(WorkspaceError::StorageNotCleared(_))), "{raised:?}");
 }

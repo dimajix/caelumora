@@ -31,7 +31,7 @@ use caelumora_model::confidentiality::{Classification, Visibility};
 use caelumora_model::message::{Message, MessageEvent};
 use caelumora_model::turn::GivenUpReason;
 use caelumora_model::plan::PlanProgress;
-use caelumora_model::security::{AccessQuestions, SecurityContext};
+use caelumora_model::security::SecurityContext;
 use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState, ToolCallStatus, ToolResultStatus, ToolSet};
 use caelumora_model::value::name::Name;
 use tracing::{debug, info, warn, Instrument};
@@ -124,6 +124,7 @@ impl AgentActor {
         let emit_out_processors = components.get_all::<dyn EmitOutProcessor>(None);
         let tool_executor = ToolExecutor::new(
             Arc::clone(actor_runtime.security_manager()),
+            Arc::clone(actor_runtime.confidentiality()),
             components.get_all::<dyn ToolProvider>(None),
             Arc::clone(actor_runtime.approval_rules()),
             Arc::clone(actor_runtime.session_controller()),
@@ -487,7 +488,7 @@ impl AgentActor {
     }
 
     /// Whether what the turn `under_way` saw may still flow into the channel
-    /// as it is now (`AccessQuestions::may_publish`, in the agent's name, as
+    /// as it is now (`ConfidentialityPolicy::may_publish`, in the agent's name, as
     /// its tools' results are admitted) - which it may not once the channel
     /// was lowered below the classification the turn began with (issue 141).
     async fn turn_flow(&self, under_way: &TurnState) -> TurnFlow {
@@ -495,7 +496,7 @@ impl AgentActor {
             return TurnFlow::NoChannel;
         };
         let context = &under_way.work.security_context;
-        if self.actor_runtime.security_manager().may_publish(context, context.caller_id, &under_way.work.classification, &channel).await {
+        if self.actor_runtime.confidentiality().may_publish(context, &under_way.work.classification, &channel) {
             TurnFlow::Flows
         } else {
             TurnFlow::Lowered(channel)

@@ -120,10 +120,10 @@ classification to `internal` without compartments, as in a template (see
 
 A request that cannot be met is a `SessionError`, refused before anything is stored: no name, a name
 the session already has, someone who is not a participant of the session, or a classification the
-policy refuses (`ActionType::Classify`: a compartment that is not configured). The last is asked for
-channels from a template too. Components that make no moderator (`SessionError::InvalidModerator`)
-are found when the channel is built, after it was stored; it is then taken back out of the session
-and deleted.
+policy refuses (`ConfidentialityQuestions::require_classifiable`: a compartment that is not
+configured). The last is asked for channels from a template too. Components that make no moderator
+(`SessionError::InvalidModerator`) are found when the channel is built, after it was stored; it is
+then taken back out of the session and deleted.
 
 ### Its language
 
@@ -219,7 +219,7 @@ and says nothing of it otherwise - a view to read, which does nothing with it. U
 in a channel (`terminal_in`), its shell as the channel sees it (`shell_in`) and ending a command
 there (`kill_command`) read the session and the channel as they are stored then and ask as the
 views ask - `GetSession`, whether the caller may read the channel
-(`AccessQuestions::channel_reading`: an agent from the channel it acts in, a user by their roles),
+(`view::channel_reading`: an agent from the channel it acts in, a user by their roles),
 whether the workspace is usable there - and, for changing its files, `WriteWorkspace` (`ReadOnly`
 where the list grants reading). Where there is none to use, the answer is one case
 (`NotUsableInChannel`). A channel's
@@ -313,7 +313,7 @@ message, and what they said in reply stays.
     `UserActor::modify_message(message, content, classification)` and `revoke_message(message)`. The
     actor looks the message up in the channel's history and asks before it sends - whether the user
     may change it (`ModifyMessage`, `RevokeMessage`; a message is its author's), then for a
-    modification whether it may enter the channel so classified (`Publish`) - so that the user
+    modification whether it may enter the channel so classified (`may_publish`) - so that the user
     learns of a refusal: `ChannelError::MessageNotFound`, `Forbidden`, `MessageRevoked` for one
     taken back already, `ClassificationRefused`. It then sends `ActorEvent::MessageModified`, the
     message as it reads from now on, or `MessageRevoked { message, at }` through its transport, as
@@ -464,8 +464,9 @@ every channel. An agent of a session's or a channel's scope is also deleted, res
 with that session or channel (see [Sessions](#sessions)).
 
 Adding is asked first as `UpdateChannel`, before anything of the newcomer is looked at (issue 198),
-and additionally as `ActionType::JoinChannel` with the channel's classification, where a policy can
-hold the channel's level against the newcomer (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
+and additionally as `ConfidentialityPolicy::cleared` with the channel's classification, where a
+policy can hold the channel's level against the newcomer (see
+[CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
 
 ### How much history a newcomer sees
 

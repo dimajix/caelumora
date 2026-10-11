@@ -18,7 +18,7 @@ use caelumora_model::channel::{Channel, ChannelId, ChannelState, HistoryAccess, 
 use crate::controller::{AgentController, ChannelController, ControllerManager, UserController};
 use caelumora_model::agent::{Personality, PersonalityKind};
 use caelumora_model::approval::{ApprovalRule, Approver};
-use caelumora_model::confidentiality::Classification;
+use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
 use caelumora_model::role::RoleId;
 use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::question::{QuestionError, QuestionId, Questions};
@@ -231,17 +231,17 @@ impl Member {
     }
 
     /// Nothing if the member is cleared for channel `channel`, classified
-    /// `classification` (`JoinChannel`), by every set of roles that binds
-    /// it - to join it, to take part in it when it is created, or for what
-    /// it would be reclassified to.
+    /// `classification`, by every set of roles that binds it - to join it,
+    /// to take part in it when it is created, or for what it would be
+    /// reclassified to - as `confidentiality` decides, asked in `context`,
+    /// the context of whoever admits it (issue 304).
     ///
     /// # Errors
     /// `ChannelError::NotCleared` if it is not.
-    async fn require_cleared(&self, security: &dyn SecurityManager, context: &SecurityContext, classification: &Classification, session: SessionId, channel: ChannelId) -> Result<()> {
+    fn require_cleared(&self, confidentiality: &dyn ConfidentialityPolicy, context: &SecurityContext, classification: &Classification, session: SessionId, channel: ChannelId) -> Result<()> {
         let participant = self.actor_id();
         for roles in self.clearances(session, channel) {
-            let action = ActionType::JoinChannel { participant, roles: &roles, channel: classification };
-            security.require(context, action, || ChannelError::NotCleared { participant, channel }).await?;
+            confidentiality.require_cleared(context, participant, &roles, classification, || ChannelError::NotCleared { participant, channel })?;
         }
         Ok(())
     }
@@ -259,7 +259,7 @@ pub(crate) async fn require_admitted(runtime: &RuntimeManager, context: &Securit
     for participant in &channel.participants {
         if let Some(member) = Member::of(participant, channel, runtime.controller_manager(), runtime.security_manager().as_ref()).await? {
             member.require_in_scope(channel.session_id, channel.id)?;
-            member.require_cleared(runtime.security_manager().as_ref(), context, &channel.classification, channel.session_id, channel.id).await?;
+            member.require_cleared(runtime.confidentiality().as_ref(), context, &channel.classification, channel.session_id, channel.id)?;
         }
     }
     Ok(())
@@ -328,6 +328,7 @@ pub struct ChannelLoop {
     runtime: ChannelRuntime,
     /// The services it works with, taken from `runtime` once (issue 229).
     security: Arc<dyn SecurityManager>,
+    confidentiality: Arc<dyn ConfidentialityPolicy>,
     controllers: Arc<ControllerManager>,
     /// The actors of the participants, each with what it was built from -
     /// what a reclassification asks its clearances of; replaced as a whole
@@ -414,6 +415,7 @@ impl ChannelLoop {
             session_id,
             channel: channel_controller,
             security: Arc::clone(runtime.security_manager()),
+            confidentiality: Arc::clone(runtime.confidentiality()),
             controllers: Arc::clone(runtime.controller_manager()),
             runtime,
             actors: ArcSwap::from_pointee(HashMap::new()),
@@ -613,7 +615,8 @@ impl ChannelLoop {
     }
 
     /// Reclassifies the channel as `classification` on behalf of `context`
-    /// (issue 133): asked as `ActionType::Reclassify`, then stored
+    /// (issue 133): asked as `ActionType::Reclassify` - its owner's -, the
+    /// classification checked as one that can be given at all, then stored
     /// (`UpdateChannel`) and announced. Lowering it releases what is in it:
     /// every message is fitted into the new classification
     /// (`MessageHistory::fit_into`), since the agents in the channel carry
@@ -627,28 +630,26 @@ impl ChannelLoop {
     /// that its turn does not flow into the channel any more and gives it
     /// up (`GivenUpReason::Lowered`) instead of taking it over. Lowered
     /// means: what the channel held, classified as it was, may not be put
-    /// into it as it is now (`AccessQuestions::may_publish`, in `context`'s name).
+    /// into it as it is now (`ConfidentialityPolicy::may_publish`, in
+    /// `context`'s name) - a question, not a permission.
     ///
     /// # Errors
     /// `ChannelError::Forbidden` if `context` may not reclassify the
-    /// channel as asked; whatever storing it reports.
+    /// channel, `ClassificationRefused` if `classification` names
+    /// compartments that are not configured, `NotCleared` if it is raised
+    /// above a participant; whatever storing it reports.
     pub async fn reclassify(&self, context: &SecurityContext, classification: Classification) -> Result<()> {
         let channel = self.classification();
         let attributes = self.security_attributes();
-        let action = ActionType::Reclassify {
-            target: Reclassified::Channel { attributes: &attributes },
-            current: &channel,
-            new: &classification,
-            channel: &channel,
-        };
-        self.require(context, action, "reclassifying").await?;
+        self.require(context, ActionType::Reclassify(Reclassified::Channel { attributes: &attributes }), "reclassifying").await?;
+        self.confidentiality.require_classifiable(&classification, || ChannelError::ClassificationRefused { classification: classification.clone(), channel: self.id })?;
         // Raised above a participant, the channel would show them what they
         // may not see: refused rather than anyone removed.
         for ChannelActor { member, .. } in self.actors.load().values() {
-            member.require_cleared(self.security.as_ref(), context, &classification, self.session_id, self.id).await?;
+            member.require_cleared(self.confidentiality.as_ref(), context, &classification, self.session_id, self.id)?;
         }
         self.channel.update_classification(context, classification.clone()).await?;
-        let lowered = !self.security.may_publish(context, context.caller_id, &channel, &classification).await;
+        let lowered = !self.confidentiality.may_publish(context, &channel, &classification);
         if lowered {
             self.cancel_actors();
         }
@@ -683,7 +684,7 @@ impl ChannelLoop {
     /// Adds `participant` - a participant of the session - to the channel on
     /// behalf of `context` (issue 46), seeing as much of the history as
     /// `history` grants. Stored first (`UpdateChannel`, also asked as
-    /// `JoinChannel`), then its actor built and given the part of the
+    /// `ConfidentialityPolicy::cleared`), then its actor built and given the part of the
     /// history it may see (`Actor::catch_up`, issue 190), then started, the
     /// moderator and the mention directory told, and the join announced.
     /// A participant removed shortly before is added only once its old
@@ -709,7 +710,7 @@ impl ChannelLoop {
         let member = self.member_of(&found).await?
             .ok_or(ChannelError::ParticipantGone { participant, channel: self.id })?;
         member.require_in_scope(self.session_id, self.id)?;
-        member.require_cleared(self.security.as_ref(), context, &self.classification(), self.session_id, self.id).await?;
+        member.require_cleared(self.confidentiality.as_ref(), context, &self.classification(), self.session_id, self.id)?;
 
         let messages = self.history().await;
         let start = history_start(history, &messages, chrono::Utc::now());
@@ -1282,15 +1283,23 @@ impl ChannelLoop {
 
     /// Whether every message `event` carries may enter the channel as its
     /// sender classified it, and every tool result in them as it is
-    /// classified (`AccessQuestions::may_publish`, issue 133): the gate for every
-    /// actor, whatever it checked itself. An event with a part that may not
-    /// is dropped whole, and logged: its sender misclassified it.
+    /// classified (`ConfidentialityPolicy::may_publish`, issues 133, 304):
+    /// the gate for every actor, whatever it checked itself. Only who acts
+    /// may put something into the channel: an envelope whose context names
+    /// another caller than its sender is not admitted. An event with a part
+    /// that may not is dropped whole, and logged: its sender misclassified
+    /// it.
     async fn admits(&self, event: &Envelope) -> bool {
         let channel = self.classification();
-        for message in event.event.messages() {
+        let messages = event.event.messages();
+        if !messages.is_empty() && event.security.caller_id != event.context.sender_id {
+            warn!("Dropped {}: it was sent by {} in the name of {}", event.describe(), event.context.sender_id, event.security.caller_id);
+            return false;
+        }
+        for message in messages {
             let parts = std::iter::once(&message.classification).chain(message.tool_results.iter().map(|r| &r.classification));
             for classification in parts {
-                if !self.security.may_publish(&event.security, event.context.sender_id, classification, &channel).await {
+                if !self.confidentiality.may_publish(&event.security, classification, &channel) {
                     warn!("Dropped {}: a part of its message {} is classified {}, which channel {} does not admit", event.describe(), message.id, classification, self.id);
                     return false;
                 }
@@ -1306,7 +1315,8 @@ impl ChannelLoop {
     /// (`Message::modify`, `Message::revoke`): not taken back, and modified
     /// by its own sender in its own role. A reclassification (issue 239)
     /// likewise, but by its author or the channel's owner, as the policy
-    /// says (`may_reclassify`), never above the channel. A request to
+    /// says (`may_reclassify`), and never above the channel, as the
+    /// `ConfidentialityPolicy` says (`may_publish`, issue 304). A request to
     /// answer again, too:
     /// its sender may ask it (`may_retry_message`), and it names the agent
     /// that said the message, not taken back, as its author. A command for
@@ -1327,9 +1337,9 @@ impl ChannelLoop {
             },
             ActorEvent::MessageReclassified { message, classification } => match self.message(*message).await {
                 Some(mut said) => {
-                    let current = said.classification.clone();
                     let target = Reclassified::Message { author: said.sender_id, attributes: &channel };
-                    self.security.may_reclassify(&event.security, target, &current, classification, &self.classification()).await
+                    self.security.may_reclassify(&event.security, target).await
+                        && self.confidentiality.may_publish(&event.security, classification, &self.classification())
                         && said.reclassify(classification)
                 }
                 None => false,
@@ -1699,7 +1709,7 @@ mod tests {
     /// A channel of `participants` with `components`, built by `registry`.
     async fn channel_built(store: Arc<MemoryStore>, participants: Vec<Participant>, security: Arc<dyn SecurityManager>, registry: crate::component::ComponentRegistry, components: caelumora_model::component::ComponentConfig) -> Arc<ChannelLoop> {
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&security)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, security, &caelumora_model::config::AppConfig::default(), registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, security, Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig::default(), registry).unwrap());
         let channel = Channel {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
@@ -2413,7 +2423,7 @@ mod tests {
         assert!(matches!(error(his.request_retry(MessageId::new()).await), ChannelError::MessageNotFound { .. }));
         assert!(matches!(error(his.request_retry_of_turn(alice_id, TurnId::new()).await), ChannelError::NotAParticipant { .. }), "no agent answers here");
         assert!(matches!(error(his.reclassify_message(said.id, Classification::PUBLIC).await), ChannelError::Forbidden { .. }), "not his to release");
-        assert!(matches!(error(hers.reclassify_message(said.id, above.clone()).await), ChannelError::Forbidden { .. }), "never above the channel");
+        assert!(matches!(error(hers.reclassify_message(said.id, above.clone()).await), ChannelError::ClassificationRefused { .. }), "never above the channel - the flow, not her permission (issue 304)");
         assert!(matches!(error(hers.reclassify_message(MessageId::new(), Classification::PUBLIC).await), ChannelError::MessageNotFound { .. }));
         hers.modify_message(said.id, "hello".to_string(), None).await.expect("hers to modify");
         hers.reclassify_message(said.id, Classification::PUBLIC).await.expect("and to release");
@@ -2773,7 +2783,7 @@ mod tests {
                 fail_policy: Default::default(),
             }],
         };
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store, secrets, security, &caelumora_model::config::AppConfig { component_defaults: defaults, ..Default::default() }, registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store, secrets, security, Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig { component_defaults: defaults, ..Default::default() }, registry).unwrap());
         let channel = Channel {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
@@ -3434,22 +3444,6 @@ mod tests {
         running.abort();
     }
 
-    /// A policy that permits everything, but puts into a channel only what
-    /// flows into it (`ActionType::Publish`) - what lowering a channel is
-    /// judged by.
-    #[derive(Debug)]
-    struct FlowRule;
-
-    #[async_trait::async_trait]
-    impl SecurityManager for FlowRule {
-        async fn check(&self, _context: &SecurityContext, action: ActionType<'_>) -> bool {
-            match action {
-                ActionType::Publish { classification, channel, .. } => classification.flows_to(channel, &Default::default()),
-                _ => true,
-            }
-        }
-    }
-
     /// What the model of the agent whose state is `stored` is given next:
     /// its transcript as it stands, resolved as a turn's context is.
     fn given_next(stored: &caelumora_model::agent::AgentChannelState, agent: caelumora_model::agent::AgentId) -> Vec<Message> {
@@ -3513,7 +3507,7 @@ mod tests {
         // ever.
         let (calculate, components) = calculator();
         let Stuck { channel, context, agent, helper, mut events, running } =
-            with_an_agent_under(Arc::new(FlowRule), Arc::new(Scripted(std::sync::Mutex::new([calculate.clone()].into()))), components).await;
+            with_an_agent_under(Arc::new(caelumora_model::security::DummySecurityManager::new()), Arc::new(Scripted(std::sync::Mutex::new([calculate.clone()].into()))), components).await;
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
@@ -3559,7 +3553,7 @@ mod tests {
         // Nobody approves the call.
         let (call, components) = a_call_needing_approval();
         let Stuck { channel, context, agent, helper, mut events, running } =
-            with_an_agent_under(Arc::new(FlowRule), Arc::new(Scripted(std::sync::Mutex::new([call].into()))), components).await;
+            with_an_agent_under(Arc::new(caelumora_model::security::DummySecurityManager::new()), Arc::new(Scripted(std::sync::Mutex::new([call].into()))), components).await;
         settled(&helper, ActorState::WaitingForUser).await;
 
         channel.reclassify(&context, Classification::general(Confidentiality::Public)).await.expect("permitted");
@@ -3572,7 +3566,7 @@ mod tests {
     #[tokio::test]
     async fn raising_the_channel_lets_a_running_turn_go_on() {
         use caelumora_model::confidentiality::Confidentiality;
-        let stuck = with_an_agent_under(Arc::new(FlowRule), Arc::new(NeverAnswers), Default::default()).await;
+        let stuck = with_an_agent_under(Arc::new(caelumora_model::security::DummySecurityManager::new()), Arc::new(NeverAnswers), Default::default()).await;
         settled(&stuck.helper, ActorState::Planning).await;
 
         stuck.channel.reclassify(&stuck.context, Classification::general(Confidentiality::Confidential)).await.expect("permitted");
@@ -4197,7 +4191,7 @@ mod tests {
         store.create_user(&SecurityContext::system(), &alice).await.unwrap();
         store.create_agent(&SecurityContext::system(), &agent).await.unwrap();
 
-        let security: Arc<dyn SecurityManager> = Arc::new(FlowRule);
+        let security: Arc<dyn SecurityManager> = Arc::new(caelumora_model::security::DummySecurityManager::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&security)));
         let mut registry = crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
         registry.register(
@@ -4211,7 +4205,7 @@ mod tests {
         register_no_secrets(&mut registry);
         register_heard(&mut registry);
         register_marking_command(&mut registry);
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store, secrets, security, &caelumora_model::config::AppConfig::default(), registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store, secrets, security, Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig::default(), registry).unwrap());
         let channel = Channel {
             summary: None, briefing: None,
             approval_rules: Vec::new(),

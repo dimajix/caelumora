@@ -13,10 +13,10 @@
 
 use crate::event::EventBus;
 use caelumora_model::actor::ActorId;
-use caelumora_model::confidentiality::Classification;
+use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityContext, SecurityManager};
+use caelumora_model::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
 use caelumora_model::skill::{Skill, SkillId, SkillUpdateEvent};
 use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResultExt};
 use caelumora_model::value::name::ScopedName;
@@ -60,6 +60,8 @@ pub struct SkillManager {
     entities: Arc<dyn EntityStore>,
     events: Arc<EventBus>,
     security: Arc<dyn SecurityManager>,
+    /// What may flow where, and who is cleared for what (issue 304).
+    confidentiality: Arc<dyn ConfidentialityPolicy>,
     /// Held by every write of a document, so that none is lost to another.
     writing: Mutex<()>,
 }
@@ -71,21 +73,19 @@ impl fmt::Debug for SkillManager {
 }
 
 impl SkillManager {
-    pub(crate) fn new(entities: Arc<dyn EntityStore>, events: Arc<EventBus>, security: Arc<dyn SecurityManager>) -> Self {
-        Self { entities, events, security, writing: Mutex::new(()) }
+    pub(crate) fn new(entities: Arc<dyn EntityStore>, events: Arc<EventBus>, security: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> Self {
+        Self { entities, events, security, confidentiality, writing: Mutex::new(()) }
     }
 
-    /// Whether `classification` may be given, and the one `ctx` acts for is
-    /// cleared for it: what they write they can read.
-    async fn require_classification(&self, ctx: &SecurityContext, classification: &Classification) -> SkillResult<()> {
-        self.security.require(ctx, ActionType::Classify(classification), || SkillError::ClassificationRefused).await?;
+    /// Whether `classification` may be given at all, and the one `ctx` acts
+    /// for is cleared for it: what they write they can read - the
+    /// `ConfidentialityPolicy`'s (issue 304).
+    fn require_classification(&self, ctx: &SecurityContext, classification: &Classification) -> SkillResult<()> {
+        self.confidentiality.require_classifiable(classification, || SkillError::ClassificationRefused)?;
         if ctx.principal_id == ActorId::System {
             return Ok(());
         }
-        match self.security.may_see_channel(ctx, classification).await {
-            true => Ok(()),
-            false => Err(SkillError::NotCleared),
-        }
+        self.confidentiality.require_cleared_for(ctx, classification, || SkillError::NotCleared)
     }
 
     /// Makes a skill of the one `ctx` acts for - a user, or the system - of
@@ -103,7 +103,7 @@ impl SkillManager {
             _ => return Err(SkillError::OwnerNotAUser),
         };
         let skill = Skill::new(ScopedName::new(name, scope)?, Description::new(description)?, SkillBody::new(body)?, classification, owner);
-        self.require_classification(ctx, &skill.classification).await?;
+        self.require_classification(ctx, &skill.classification)?;
 
         let _writing = self.writing.lock().await;
         self.entities.create_skill(ctx, &skill).await?;
@@ -161,7 +161,7 @@ impl SkillManager {
             SkillUpdateEvent::DescriptionChanged(description) => skill.description = Description::new(description)?,
             SkillUpdateEvent::BodyChanged(body) => skill.body = SkillBody::new(body)?,
             SkillUpdateEvent::ClassificationChanged(classification) => {
-                self.require_classification(ctx, classification).await?;
+                self.require_classification(ctx, classification)?;
                 skill.classification = classification.clone();
             }
         }

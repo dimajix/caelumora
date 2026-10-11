@@ -81,16 +81,16 @@ told about results it must not quote is described in [CONFIDENTIALITY.md](CONFID
 
 ### Classified results
 
-How sensitive a result is, is its classification (issue 133). The `ToolExecutor` gives every
-result one: as the tool classified it, else as the tool is configured (`Tool::classification`, as
-the turn began with its tools), else as the channel. A result that may not flow into the channel
-(`ActionType::Publish`, in the agent's name) never reaches the model: it is replaced by the status
-`withheld` and a message that names the classification and asks the model not to obtain it another
-way. The value is not kept anywhere. Results that did not come from the tool - refused, denied,
-timed out - are the runtime's fixed texts and classified as the turn's label; a failed one, whose
-error may come from the tool, is the channel's. Built-in tools whose answer is derived from the
-arguments alone classify it as the turn's label too (issue 168): the model sees every result, and
-what it has seen classifies what the turn writes (see
+How sensitive a result is, is its classification (issue 133). The `ToolExecutor` gives every result
+one: as the tool classified it, else as the tool is configured (`Tool::classification`, as the turn
+began with its tools), else as the channel. A result that may not flow into the channel
+(`ConfidentialityPolicy::may_publish`, in the agent's name) never reaches the model: it is replaced
+by the status `withheld` and a message that names the classification and asks the model not to
+obtain it another way. The value is not kept anywhere. Results that did not come from the tool -
+refused, denied, timed out - are the runtime's fixed texts and classified as the turn's label; a
+failed one, whose error may come from the tool, is the channel's. Built-in tools whose answer is
+derived from the arguments alone classify it as the turn's label too (issue 168): the model sees
+every result, and what it has seen classifies what the turn writes (see
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md#what-a-turn-writes-as)). See
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md#tool-results).
 

@@ -11,7 +11,7 @@ use caelumora_model::channel::ChannelId;
 use caelumora_model::command::{Command, CommandVisibility};
 use caelumora_model::message::{Message, MessageId, MessageRole};
 use caelumora_model::question::{QuestionError, QuestionId, QuestionRequest, Response};
-use caelumora_model::confidentiality::Classification;
+use caelumora_model::confidentiality::{Classification, ConfidentialityQuestions};
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Reclassified, SecurityAttributes, SecurityContext, SecurityManager};
 use caelumora_model::session::SessionId;
 use caelumora_model::value::name::Name;
@@ -178,10 +178,8 @@ impl UserActor {
             .ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))?;
         let channel = channel_loop.classification();
         let classification = classification.unwrap_or_else(|| channel.clone());
-        let action = ActionType::Publish { classification: &classification, actor: self.id(), channel: &channel };
-        self.actor_runtime.security_manager()
-            .require(&self.security_context(), action, || crate::channel::ChannelError::ClassificationRefused { classification: classification.clone(), channel: self.channel_id })
-            .await?;
+        self.actor_runtime.confidentiality()
+            .require_publish(&self.security_context(), &classification, &channel, || crate::channel::ChannelError::ClassificationRefused { classification: classification.clone(), channel: self.channel_id })?;
         let msg = Message {
             role: MessageRole::User,
             mentions: channel_loop.mentions_in(&message),
@@ -211,7 +209,7 @@ impl UserActor {
     /// (issue 234), classified `classification` - as it is classified now
     /// if `None`. Asked here, so that the user learns of a refusal - whether
     /// they may modify it (`ModifyMessage`), then whether it may enter the
-    /// channel so classified (`Publish`) - and asked again by the channel as
+    /// channel so classified (`may_publish`) - and asked again by the channel as
     /// it admits the modification. The message keeps its place; nobody is
     /// asked to respond to it.
     ///
@@ -228,10 +226,8 @@ impl UserActor {
         let original = self.message_to_change(&channel_loop, message, |author, channel| ActionType::ModifyMessage { author, channel }, "modifying a message of").await?;
         let channel = channel_loop.classification();
         let classification = classification.unwrap_or_else(|| original.classification.clone());
-        let action = ActionType::Publish { classification: &classification, actor: self.id(), channel: &channel };
-        self.actor_runtime.security_manager()
-            .require(&self.security_context(), action, || crate::channel::ChannelError::ClassificationRefused { classification: classification.clone(), channel: self.channel_id })
-            .await?;
+        self.actor_runtime.confidentiality()
+            .require_publish(&self.security_context(), &classification, &channel, || crate::channel::ChannelError::ClassificationRefused { classification: classification.clone(), channel: self.channel_id })?;
         let modified = Message {
             mentions: channel_loop.mentions_in(&content),
             content: Some(content),
@@ -282,15 +278,14 @@ impl UserActor {
         let said = channel_loop.message(message).await
             .ok_or(ChannelError::MessageNotFound { message, channel: self.channel_id })?;
         let (attributes, channel) = (channel_loop.security_attributes(), channel_loop.classification());
-        let action = ActionType::Reclassify {
-            target: Reclassified::Message { author: said.sender_id, attributes: &attributes },
-            current: &said.classification,
-            new: &classification,
-            channel: &channel,
-        };
+        let context = self.security_context();
+        let action = ActionType::Reclassify(Reclassified::Message { author: said.sender_id, attributes: &attributes });
         self.actor_runtime.security_manager()
-            .require(&self.security_context(), action, || ChannelError::Forbidden { action: "reclassifying a message of", channel: self.channel_id })
+            .require(&context, action, || ChannelError::Forbidden { action: "reclassifying a message of", channel: self.channel_id })
             .await?;
+        // Never above the channel (issue 304: the policy's flow, beside it).
+        self.actor_runtime.confidentiality()
+            .require_publish(&context, &classification, &channel, || ChannelError::ClassificationRefused { classification: classification.clone(), channel: self.channel_id })?;
         if said.revoked.is_some() {
             return Err(ChannelError::MessageRevoked { message, channel: self.channel_id }.into());
         }
@@ -745,7 +740,7 @@ mod tests {
     async fn user_actor() -> (UserActor, Arc<crate::channel::ChannelLoop>) {
         let store = Arc::new(MemoryStore::new());
         let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(DummySecurityManager::new()), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(DummySecurityManager::new()), Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let session_id = SessionId::new();
         let channel_runtime = ChannelRuntime::outside_a_session(Arc::clone(&runtime), Arc::new(CommandExecutor::empty(Arc::clone(runtime.security_manager()))), session_id);
         let channel = caelumora_model::channel::Channel {

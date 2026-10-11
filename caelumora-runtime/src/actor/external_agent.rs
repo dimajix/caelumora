@@ -56,7 +56,7 @@ use caelumora_model::turn::GivenUpReason;
 use caelumora_model::work::{TurnId, Work};
 use caelumora_model::message::{Message, MessageId, MessageRole};
 use caelumora_model::transcript::TranscriptEntry;
-use caelumora_model::security::{AccessQuestions, SecurityContext, SecurityManager};
+use caelumora_model::security::SecurityContext;
 use caelumora_model::value::name::Name;
 use chrono::Utc;
 use futures::stream::{BoxStream, SelectAll};
@@ -182,7 +182,11 @@ impl ExternalAgentActor {
         // there in silence: refused here instead, once - and once more with
         // every request, should the channel have been lowered since.
         let classification = remote.classification().unwrap_or_else(|| channel.classification.clone());
-        if !may_answer_in(actor_runtime.security_manager().as_ref(), &security_context, ActorId::Agent(agent_id), &classification, &channel.classification).await {
+        // What it brings in itself - classified as its component declares,
+        // else as the channel - has to enter the channel: asked here, and
+        // before every exchange, as the channel may have been lowered since
+        // (issue 212).
+        if !actor_runtime.confidentiality().may_publish(&security_context, &classification, &channel.classification) {
             return Err(anyhow!(
                 "the answers of external agent {} are classified {}, which may not be published in channel {} ({})",
                 agent_id, classification, channel.id, channel.classification
@@ -360,7 +364,7 @@ impl ExternalAgentActor {
         // (issue 135).
         work.context.profile = self.remote.profile();
         let brought = self.remote.classification().unwrap_or_else(|| work.classification.clone());
-        if !may_answer_in(self.actor_runtime.security_manager().as_ref(), &work.security_context, self.id(), &brought, &work.classification).await {
+        if !self.actor_runtime.confidentiality().may_publish(&work.security_context, &brought, &work.classification) {
             return Ok(Ending::Failed(format!("its answers are classified {brought}, which may not be published in this channel ({})", work.classification)));
         }
         work.see(&brought);
@@ -614,12 +618,12 @@ impl ExternalAgentActor {
     }
 
     /// The channel's classification as it is now, if `work` - begun under
-    /// another - may no longer flow into it (`AccessQuestions::may_publish`,
+    /// another - may no longer flow into it (`ConfidentialityPolicy::may_publish`,
     /// in the work's name, as `AgentActor::turn_flow`): then it is given up
     /// (issue 212). `None` while it flows, or without a channel.
     async fn lowered(&self, work: &Work) -> Option<Classification> {
         let channel = self.actor_runtime.channel_loop()?.classification();
-        let flows = self.actor_runtime.security_manager().may_publish(&work.security_context, self.id(), &work.classification, &channel).await;
+        let flows = self.actor_runtime.confidentiality().may_publish(&work.security_context, &work.classification, &channel);
         (!flows).then_some(channel)
     }
 
@@ -867,15 +871,6 @@ fn answered(turn_id: Option<TurnId>, message: Option<Message>) -> Vec<ActorEvent
     complete.into_iter().chain(finished).collect()
 }
 
-/// Whether what a remote agent brings in itself - classified `brought`, as
-/// its component declares, else as the channel - may enter a channel
-/// classified `channel`, put there by `agent` in `security`
-/// (`AccessQuestions::may_publish`): asked when its actor is built, and
-/// before every exchange, as the channel may have been lowered since
-/// (issue 212).
-async fn may_answer_in(policy: &dyn SecurityManager, security: &SecurityContext, agent: ActorId, brought: &Classification, channel: &Classification) -> bool {
-    policy.may_publish(security, agent, brought, channel).await
-}
 
 #[async_trait]
 impl Actor for ExternalAgentActor {

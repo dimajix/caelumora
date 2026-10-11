@@ -12,7 +12,9 @@ use caelumora_model::value::text::{Briefing, Summary};
 use caelumora_model::digest::Digest;
 use caelumora_model::note::Note;
 use caelumora_model::privacy::SessionPrivacy;
-use caelumora_model::security::{AccessQuestions, ChannelReader, ChannelReading, Place, SecurityContext};
+use caelumora_model::confidentiality::Place;
+use caelumora_model::security::{AccessQuestions, SecurityContext};
+use super::{channel_reading, ChannelReader, ChannelReading};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::snapshot::{DeletedSnapshot, Detail, ParticipantSnapshot, SessionSnapshot};
 use caelumora_model::store::EntityKind;
@@ -159,8 +161,8 @@ impl SessionView {
     }
 
     /// How the viewer may read `channel`: as a whole, entry by entry, or
-    /// not at all (`None`) - asked as `AccessQuestions::channel_reading`
-    /// asks it, an agent reading from its place, a user by their roles.
+    /// not at all (`None`) - asked as `channel_reading` asks it, an agent
+    /// reading from its place, a user by the roles of their context.
     /// Whoever may not read the channel - its owner, its participants, an
     /// agent's owner or the agent itself (issue 264) - reads none of it
     /// (`GetChannel`).
@@ -170,7 +172,7 @@ impl SessionView {
             Some(from) => ChannelReader::From(from),
             None => ChannelReader::Cleared,
         };
-        self.views.security().channel_reading(self.views.context(), &channel.security_attributes, &at, reader).await
+        channel_reading(self.views.security().as_ref(), self.views.confidentiality().as_ref(), self.views.context(), &channel.security_attributes, &at, reader).await
     }
 
     /// The document of channel `id`, if the session has it, with its loop
@@ -241,7 +243,7 @@ impl SessionView {
             let mut notes = Vec::new();
             for note in state.private_notes.current() {
                 let from = Place { channel: channel.id, classification: note.classification.clone(), session: self.privacy() };
-                if self.views.may_copy_from(&from).await {
+                if self.views.may_copy_from(&from) {
                     notes.push(note);
                 }
             }

@@ -26,7 +26,8 @@ use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::session::SessionId;
 use crate::view::Views;
 use tracing::warn;
-use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Place, Reclassified, SecurityContext, SecurityManager};
+use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions, Place};
+use caelumora_model::security::{ActionType, Enforcement, Reclassified, SecurityContext, SecurityManager};
 
 /// An agent's memory as a turn sees it: every function takes the turn.
 pub struct AgentMemory;
@@ -34,8 +35,8 @@ pub struct AgentMemory;
 impl AgentMemory {
     /// What may be recalled in `turn`'s channel: entries written in a
     /// channel it may read, as the memory is now - without the turn's own
-    /// changes. Whether it may is asked of `security` in the work's context -
-    /// the agent's, with its owner's rights (`AccessQuestions::may_copy_information`,
+    /// changes. Whether it may is asked of `confidentiality` in the work's context -
+    /// the agent's, with its owner's rights (`ConfidentialityQuestions::may_copy_information`,
     /// issues 131, 255), once per
     /// channel, classification and session the entries come with; the
     /// turn's channel is judged by the classification the turn began with.
@@ -45,7 +46,7 @@ impl AgentMemory {
     /// now permit it - looked up through the turn's views. Of a session
     /// that is gone, the one it had decides; one that cannot be looked up
     /// recalls nothing. A turn in no session recalls nothing.
-    pub async fn recalled(work: &AgentWork<'_>, security: &dyn SecurityManager) -> Vec<Memory> {
+    pub async fn recalled(work: &AgentWork<'_>, confidentiality: &dyn ConfidentialityPolicy) -> Vec<Memory> {
         let context = work.security_context();
         let Some(own) = work.session() else { return Vec::new() };
         let Some(here) = own.views().viewer().place().cloned() else { return Vec::new() };
@@ -60,7 +61,7 @@ impl AgentMemory {
             let readable = match known {
                 Some(readable) => readable,
                 None => {
-                    let readable = Self::may_recall(&entry, &here, own.views(), &mut sessions, security, context).await;
+                    let readable = Self::may_recall(&entry, &here, own.views(), &mut sessions, confidentiality, context).await;
                     decided.push((entry.origin.clone(), entry.classification.clone(), readable));
                     readable
                 }
@@ -80,16 +81,16 @@ impl AgentMemory {
         here: &Place,
         views: &Views,
         sessions: &mut Vec<(SessionId, Option<SessionPrivacy>)>,
-        security: &dyn SecurityManager,
+        confidentiality: &dyn ConfidentialityPolicy,
         context: &SecurityContext,
     ) -> bool {
         let origin = &entry.origin;
         // Where it was written, with its session as privacy sees it then or now.
         let source = |session: SessionPrivacy| Place { channel: origin.channel, classification: entry.classification.clone(), session };
         if origin.session.id == here.session.id {
-            return security.may_copy_information(context, &source(here.session.clone()), here).await;
+            return confidentiality.may_copy_information(context, &source(here.session.clone()), here);
         }
-        if !security.may_copy_information(context, &source(origin.session.clone()), here).await {
+        if !confidentiality.may_copy_information(context, &source(origin.session.clone()), here) {
             return false;
         }
         let id = origin.session.id;
@@ -107,7 +108,7 @@ impl AgentMemory {
             },
         };
         match current {
-            Some(current) => security.may_copy_information(context, &source(current), here).await,
+            Some(current) => confidentiality.may_copy_information(context, &source(current), here),
             None => true,
         }
     }
@@ -148,14 +149,14 @@ impl AgentMemory {
     /// the agent's to change here: remembered earlier in this turn, or one
     /// that may be recalled here - asked of the policy for this entry alone,
     /// as in [`recalled`](Self::recalled).
-    pub async fn find(turn: &Turn<'_>, id: MemoryId, security: &dyn SecurityManager) -> Option<Memory> {
+    pub async fn find(turn: &Turn<'_>, id: MemoryId, confidentiality: &dyn ConfidentialityPolicy) -> Option<Memory> {
         let entry = Self::effective(turn).get(id)?.clone();
         let Some(stored) = turn.agent_state().current().memory.current().into_iter().find(|m| m.id == id) else {
             return Some(entry);
         };
         let own = turn.session()?;
         let here = own.views().viewer().place()?.clone();
-        Self::may_recall(&stored, &here, own.views(), &mut Vec::new(), security, turn.security_context()).await.then_some(entry)
+        Self::may_recall(&stored, &here, own.views(), &mut Vec::new(), confidentiality, turn.security_context()).await.then_some(entry)
     }
 
     /// Updates entry `id` - one the turn may change (see
@@ -163,8 +164,8 @@ impl AgentMemory {
     /// 302): classified as the turn has seen so far and written in its
     /// channel, as an entry it remembers is, and recalled from then on where
     /// one remembered here would be. Returns whether there was one.
-    pub async fn update(turn: &mut Turn<'_>, id: MemoryId, text: String, security: &dyn SecurityManager) -> bool {
-        if Self::find(turn, id, security).await.is_none() {
+    pub async fn update(turn: &mut Turn<'_>, id: MemoryId, text: String, confidentiality: &dyn ConfidentialityPolicy) -> bool {
+        if Self::find(turn, id, confidentiality).await.is_none() {
             return false;
         }
         let classification = turn.label();
@@ -176,8 +177,8 @@ impl AgentMemory {
     /// Forgets entry `id` - one the turn may change (see
     /// [`find`](Self::find)) - when the turn completes. Returns whether
     /// there was one.
-    pub async fn forget(turn: &mut Turn<'_>, id: MemoryId, security: &dyn SecurityManager) -> bool {
-        if Self::find(turn, id, security).await.is_none() {
+    pub async fn forget(turn: &mut Turn<'_>, id: MemoryId, confidentiality: &dyn ConfidentialityPolicy) -> bool {
+        if Self::find(turn, id, confidentiality).await.is_none() {
             return false;
         }
         let origin = Self::origin(turn);
@@ -195,18 +196,15 @@ impl AgentMemory {
     /// # Errors
     /// `InvalidParameter` if there is no such entry here, `PermissionDenied`
     /// if the policy refuses.
-    pub async fn reclassify(turn: &mut Turn<'_>, id: MemoryId, classification: Classification, security: &dyn SecurityManager) -> ToolResult<()> {
+    pub async fn reclassify(turn: &mut Turn<'_>, id: MemoryId, classification: Classification, security: &dyn SecurityManager, confidentiality: &dyn ConfidentialityPolicy) -> ToolResult<()> {
         let here = turn.classification();
-        let Some(current) = Self::find(turn, id, security).await.map(|m| m.classification) else {
+        if Self::find(turn, id, confidentiality).await.is_none() {
             return Err(ToolError::InvalidParameter(format!("there is no entry #{id} you remember here")));
-        };
-        let action = ActionType::Reclassify {
-            target: Reclassified::Memory { author: ActorId::Agent(turn.agent_id()) },
-            current: &current,
-            new: &classification,
-            channel: &here,
-        };
-        security.require(turn.security_context(), action, || ToolError::PermissionDenied(format!("reclassifying entry #{id} as {classification}"))).await?;
+        }
+        let refused = || ToolError::PermissionDenied(format!("reclassifying entry #{id} as {classification}"));
+        let action = ActionType::Reclassify(Reclassified::Memory { author: ActorId::Agent(turn.agent_id()) });
+        security.require(turn.security_context(), action, refused).await?;
+        confidentiality.require_publish(turn.security_context(), &classification, &here, refused)?;
         let origin = Self::origin(turn);
         turn.stage_memory(MemoryChange::Reclassify { id, classification }, origin);
         Ok(())

@@ -42,8 +42,16 @@ policy cannot be silently replaced by a default in one corner of the runtime.
 The configuration's `security` section chooses the policy:
 
 *   `ownership` - the default, `OwnershipSecurityManager` (see below);
-*   `allow_all` - `DummySecurityManager`, which allows everything to everybody; for tests and
-    development only.
+*   `allow_all` - `DummySecurityManager`, which allows every action to everybody; for tests and
+    development only. What may flow where is not its to decide: the confidentiality rules apply
+    beside it all the same (issue 304).
+
+What may flow where, and who is cleared for what, is decided apart from it, by one
+`ConfidentialityPolicy` per process, built from the `compartments` and `roles` sections and
+handed to the runtime beside the `SecurityManager` (issue
+[304](../issues/304-review-of-the-permission-concept.md), see
+[CONFIDENTIALITY.md](CONFIDENTIALITY.md#who-applies-the-rules)). The two are orthogonal: an act
+that moves information asks both, its own permission first.
 
 A policy defined outside the binary is [24](../issues/24-opa-security-manager.md).
 
@@ -152,14 +160,13 @@ themselves, an agent its owner (see [In whose name an agent acts](#in-whose-name
 *   The runtime acting on its own uses `SecurityContext::system()` (`ActorId::System`), which may do
     everything. This is deliberate and never a default: an empty context has no rights.
 
-The confidentiality actions (`CopyInformation`, `Classify`, `Reclassify`, `Publish`,
-`JoinChannel`) are decided by classifications, not by ownership: the ownership policy applies the
-`ConfidentialityRules` of the configured compartments and roles to them, and adds only what is about
-ownership - the actor putting a message into a channel is the one acting, a channel is reclassified
-by its owner. `CopyInformation` is decided by the rules alone: whether an agent may reach the
-channel it copies from at all is asked before, as `GetChannel` (issue 264). Another policy may apply
-other rules (issue
-[138](../issues/138-confidentiality-policy-in-ownership.md)); see
+What may flow where is not the ownership policy's to decide (issue 304, reversing issue
+[138](../issues/138-confidentiality-policy-in-ownership.md)): copying, publishing and the clearance
+at a channel's door are asked of the `ConfidentialityPolicy`. Of a reclassification the policy
+decides who may - a channel its owner, a message its author or the channel's owner, a note or
+memory entry its author (`Reclassify`) -, the `ConfidentialityPolicy` whether the new
+classification may be given there. Whether an agent may reach the channel it copies from at all is
+the policy's, asked before, as `GetChannel` (issue 264); see
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md#who-applies-the-rules).
 
 ### How stores check
@@ -284,7 +291,7 @@ something - they check the request, and carry it out with their own rights. In t
     server's token in `mcp_tool`, an external agent's through its endpoint) and the clearance it is
     judged by are its owner's, whoever asked - within its session too: it reaches another channel
     if its owner may read it or it takes part in it itself (`GetChannel`), and copies from it what
-    the flow rule lets into its own (`CopyInformation`); what it knows itself - its memory, its
+    the flow rule lets into its own (`may_copy`); what it knows itself - its memory, its
     private notes - it reaches through itself, by the flow rule alone (issue
     [264](../issues/264-agent-reads-channels-its-owner-may-not.md)). An agent must not see more than
     the person responsible for it (issue [142](../issues/142-roles.md)), and it passes on whatever
@@ -346,10 +353,14 @@ asked:
     the operation it counts for, with `Enforcement::require`.
 
 The questions are `may_read_channel`, `may_change_channel`, `may_change_session`,
-`may_copy_information`, `may_read_agent_context`, `may_read_agent_tools`, `may_approve`,
-`may_delete_agent`, `may_call_tool`, `may_publish`, `may_modify_message`, `may_revoke_message`,
-`may_reclassify`, `may_retry_message`, `may_cancel_channel`, `may_see_channel`, `may_restore` and
-`may_purge`.
+`may_read_agent_context`, `may_read_agent_tools`, `may_approve`, `may_delete_agent`,
+`may_call_tool`, `may_modify_message`, `may_revoke_message`, `may_reclassify`, `may_retry_message`,
+`may_cancel_channel`, `may_restore`, `may_purge` and the rest of the trait.
+
+The flow is asked alike of the `ConfidentialityPolicy`, through `ConfidentialityQuestions`: the
+`may_*` to decide what to offer - `may_copy_information`, `cleared_for` - and the `require_*` for
+an act - `require_publish`, `require_cleared`, `require_cleared_for`, `require_classifiable` -,
+answering a refusal with the act's own error and logging it alike (issue 304).
 
 `AccessQuestions` is an extension trait on every `SecurityManager`, by blanket implementation. Each
 question gets a name and one place, but only translates into an `ActionType`. The decision stays
@@ -476,8 +487,9 @@ A node is data the viewer was allowed to reach; it decides nothing, and it does 
 read, and offers nothing that changes something or acts in someone's name - not a terminal, not a
 command - which is its owner's, the manager's (issue 296). An operation never relies on a node: it
 checks its own permission when it acts. Where it acts in a channel, it asks first whether the
-caller may read the channel, as the views reach one: `AccessQuestions::channel_reading`, the one
-place that decides how a channel is read - an agent from its place, a user by their roles.
+caller may read the channel, as the views reach one: `view::channel_reading`, the one place that
+decides how a channel is read - `GetChannel`, then an agent from its place, a user by the roles of
+their context.
 
 ## Users
 

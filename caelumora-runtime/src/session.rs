@@ -10,10 +10,10 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::channel::{Channel, ChannelField};
 use caelumora_model::component::ComponentConfig;
-use caelumora_model::confidentiality::Classification;
+use caelumora_model::confidentiality::{Classification, ConfidentialityQuestions};
 use caelumora_model::value::language::Language;
 use caelumora_model::event::GlobalEvent;
-use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Grant, SecurityAttributes, SecurityContext, SecurityManager, Subject};
+use caelumora_model::security::{ActionType, Enforcement, Grant, SecurityAttributes, SecurityContext, SecurityManager, Subject};
 use crate::view::{Viewer, Views};
 use caelumora_model::privacy::{PrivacyConfig, SessionPrivacy};
 use caelumora_model::store::{EntityStore, StoreError, StoreResult, StoreResultExt};
@@ -48,8 +48,8 @@ pub enum SessionError {
     OwnerNotAUser(ActorId),
     #[error("Session {session} has no channel {channel}")]
     ChannelNotFound { session: SessionId, channel: ChannelId },
-    /// Refused by `ActionType::Classify`: a compartment that is not
-    /// configured, or one the policy does not let the creator give.
+    /// No classification that can be given (`require_classifiable`, issue
+    /// 304): it names a compartment that is not configured.
     #[error("A channel cannot be classified {0}: a compartment is not configured or may not be given")]
     ClassificationRefused(Classification),
     /// The workspace lies in another session's scope, and is used within
@@ -58,19 +58,19 @@ pub enum SessionError {
     WorkspaceOutOfScope(caelumora_model::workspace::WorkspaceId),
 }
 
-/// Nothing if `context` may give a channel `classification`
-/// (`ActionType::Classify`, issue 133) - asked before anything is stored.
-async fn require_classification(runtime_manager: &RuntimeManager, context: &SecurityContext, classification: &Classification) -> Result<()> {
-    runtime_manager.security_manager()
-        .require(context, ActionType::Classify(classification), || SessionError::ClassificationRefused(classification.clone())).await?;
+/// Nothing if a channel may be given `classification` at all - it names
+/// only configured compartments (issues 133, 304) - checked before anything
+/// is stored.
+fn require_classification(runtime_manager: &RuntimeManager, classification: &Classification) -> Result<()> {
+    runtime_manager.confidentiality().require_classifiable(classification, || SessionError::ClassificationRefused(classification.clone()))?;
     Ok(())
 }
 
 /// Nothing if the user `context` acts for is cleared for `channel` (issue
 /// 133); `refusal` otherwise - reading a channel one is not cleared for is
 /// the same as reading one that does not exist.
-async fn require_seen<E: Into<anyhow::Error> + Send>(runtime_manager: &RuntimeManager, context: &SecurityContext, channel: &Classification, refusal: impl FnOnce() -> E + Send) -> Result<()> {
-    if runtime_manager.security_manager().may_see_channel(context, channel).await {
+fn require_seen<E: Into<anyhow::Error> + Send>(runtime_manager: &RuntimeManager, context: &SecurityContext, channel: &Classification, refusal: impl FnOnce() -> E + Send) -> Result<()> {
+    if runtime_manager.confidentiality().cleared_for(context, channel) {
         Ok(())
     } else {
         Err(refusal().into())
@@ -328,7 +328,7 @@ impl SessionLoop {
         let channel = self.channel_by_id(channel_id).ok_or_else(not_found)?;
         self.security
             .require(context, ActionType::GetChannel(&channel.security_attributes()), not_found).await?;
-        require_seen(&self.runtime_manager, context, &channel.classification(), not_found).await?;
+        require_seen(&self.runtime_manager, context, &channel.classification(), not_found)?;
         Ok(channel)
     }
 
@@ -361,7 +361,7 @@ impl SessionLoop {
         let name = Name::new(&spec.name)?;
         let language = Language::optional(spec.language.as_deref())?;
         let classification = spec.classification.unwrap_or_default();
-        require_classification(&self.runtime_manager, context, &classification).await?;
+        require_classification(&self.runtime_manager, &classification)?;
         let language = match language {
             Some(language) => Some(language),
             None => preferred_language(self.entities.as_ref(), context).await?,
@@ -804,7 +804,7 @@ impl SessionManager {
         let _starting = start.lock().await;
 
         for channel in &channels {
-            require_classification(&self.runtime_manager, context, &channel.classification).await?;
+            require_classification(&self.runtime_manager, &channel.classification)?;
             crate::channel::require_admitted(&self.runtime_manager, context, channel).await?;
         }
         let store = &self.entities;
@@ -1138,22 +1138,23 @@ impl SessionManager {
 /// What tests of the runtime need to build it as a binary does.
 #[cfg(test)]
 pub(crate) mod testing {
-    use caelumora_model::confidentiality::ConfidentialityRules;
+    use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
     use caelumora_model::security::{OwnershipSecurityManager, SecurityManager};
     use caelumora_model::store::EntityStore;
     use caelumora_model::store::memberships::StoreMemberships;
     use caelumora_model::store::memory::MemoryStore;
     use std::sync::Arc;
 
-    /// A store under the ownership policy with `rules`, the policy learning
-    /// who takes part where from that store (issue 23).
-    pub(crate) fn owned_store(rules: ConfidentialityRules) -> (Arc<dyn SecurityManager>, Arc<MemoryStore>) {
+    /// A store under the ownership policy, which learns who belongs to a
+    /// group from that store (issue 23), and `rules` as the confidentiality
+    /// policy beside it (issue 304).
+    pub(crate) fn owned_store(rules: ConfidentialityRules) -> (Arc<dyn SecurityManager>, Arc<dyn ConfidentialityPolicy>, Arc<MemoryStore>) {
         let memberships = Arc::new(StoreMemberships::new());
-        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_rules(rules, Arc::<StoreMemberships>::clone(&memberships)));
+        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_memberships(Arc::<StoreMemberships>::clone(&memberships)));
         let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
         let entities: Arc<dyn EntityStore> = Arc::<MemoryStore>::clone(&store);
         memberships.bind(&entities);
-        (policy, store)
+        (policy, Arc::new(rules), store)
     }
 }
 
@@ -1183,7 +1184,7 @@ mod tests {
     fn test_runtime() -> Arc<RuntimeManager> {
         let store = Arc::new(MemoryStore::new());
         let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-        Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(DummySecurityManager::new()), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap())
+        Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(DummySecurityManager::new()), Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap())
     }
 
     fn make_session(name: &str) -> Session {
@@ -1775,9 +1776,9 @@ mod tests {
         use caelumora_model::actor::ActorId;
         use caelumora_model::user::{User, UserId};
 
-        let (policy, store) = super::testing::owned_store(Default::default());
+        let (policy, confidentiality, store) = super::testing::owned_store(Default::default());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::clone(&confidentiality), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let manager = SessionManager::new(runtime);
 
         let user = |name: &str| User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: Vec::new(), deleted: None };
@@ -1805,9 +1806,9 @@ mod tests {
         use caelumora_model::actor::ActorId;
         use caelumora_model::user::{User, UserId};
 
-        let (policy, store) = super::testing::owned_store(Default::default());
+        let (policy, confidentiality, store) = super::testing::owned_store(Default::default());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::clone(&confidentiality), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let manager = SessionManager::new(runtime);
         let user = |name: &str| User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: Vec::new(), deleted: None };
         let (alice, bob) = (user("alice"), user("bob"));
@@ -1832,9 +1833,9 @@ mod tests {
         use caelumora_model::session::SessionUpdateEvent;
         use caelumora_model::user::{User, UserId};
 
-        let (policy, store) = super::testing::owned_store(Default::default());
+        let (policy, confidentiality, store) = super::testing::owned_store(Default::default());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::clone(&confidentiality), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let user = |name: &str| User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: Vec::new(), deleted: None };
         let (alice, bob) = (user("alice"), user("bob"));
@@ -1867,9 +1868,9 @@ mod tests {
         use caelumora_model::user::{User, UserId};
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
-        let (policy, store) = super::testing::owned_store(ConfidentialityRules::new(compartments));
+        let (policy, confidentiality, store) = super::testing::owned_store(ConfidentialityRules::new(compartments));
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::clone(&confidentiality), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let manager = SessionManager::new(Arc::clone(&runtime));
 
         let user = |name: &str| User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: Vec::new(), deleted: None };
@@ -1890,14 +1891,13 @@ mod tests {
         let secret = session.create_channel(&alice_ctx, with("secret", classified(Confidentiality::Confidential, &[]), vec![])).await.unwrap();
         let hr = session.create_channel(&alice_ctx, with("hr", classified(Confidentiality::Internal, &["hr"]), vec![])).await.unwrap();
 
-        let security = runtime.security_manager();
+        let confidentiality = runtime.confidentiality();
         let may_read = |reader: &Arc<ChannelLoop>, source: &Arc<ChannelLoop>| {
-            let (reader, source, security, context) = (Arc::clone(reader), Arc::clone(source), Arc::clone(security), alice_ctx.clone());
+            let (reader, source, confidentiality, context) = (Arc::clone(reader), Arc::clone(source), Arc::clone(confidentiality), alice_ctx.clone());
             async move {
-                use caelumora_model::security::AccessQuestions;
-                use caelumora_model::security::Place;
+                use caelumora_model::confidentiality::{ConfidentialityQuestions, Place};
                 let place = |channel: &ChannelLoop| Place { channel: channel.id(), classification: channel.classification(), session: channel.session_loop().map(|s| s.privacy()).unwrap_or_default() };
-                security.may_copy_information(&context, &place(&source), &place(&reader)).await
+                confidentiality.may_copy_information(&context, &place(&source), &place(&reader))
             }
         };
         assert!(may_read(&secret, &secret).await, "a channel reads itself");
@@ -1919,9 +1919,9 @@ mod tests {
         use caelumora_model::privacy::PrivacyConfig;
         use caelumora_model::user::{User, UserId};
 
-        let (policy, store) = super::testing::owned_store(Default::default());
+        let (policy, confidentiality, store) = super::testing::owned_store(Default::default());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::clone(&confidentiality), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let manager = SessionManager::new(Arc::clone(&runtime));
         let user = |name: &str| User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: Vec::new(), deleted: None };
         let (alice, carol) = (user("alice"), user("carol"));
@@ -1961,9 +1961,9 @@ mod tests {
         use caelumora_model::user::{User, UserId};
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![]), (Compartment::new("finance"), vec![])]).unwrap();
-        let (policy, store) = super::testing::owned_store(ConfidentialityRules::new(compartments));
+        let (policy, confidentiality, store) = super::testing::owned_store(ConfidentialityRules::new(compartments));
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::clone(&confidentiality), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let alice = User { id: UserId::new(), username: Name::new("alice").unwrap(), email: String::new(), roles: Vec::new(), deleted: None };
         let alice_id = ActorId::User(alice.id);
@@ -2010,9 +2010,9 @@ mod tests {
         use caelumora_model::user::{User, UserId};
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![]), (Compartment::new("finance"), vec![])]).unwrap();
-        let (policy, store) = super::testing::owned_store(ConfidentialityRules::new(compartments));
+        let (policy, confidentiality, store) = super::testing::owned_store(ConfidentialityRules::new(compartments));
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::clone(&confidentiality), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let manager = SessionManager::new(Arc::clone(&runtime));
         let user = |name: &str| User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: Vec::new(), deleted: None };
         let (alice, bob) = (user("alice"), user("bob"));
@@ -2071,9 +2071,9 @@ mod tests {
             (RoleId::new(), "hr".to_string(), vec![Clearance { level: Confidentiality::Confidential, compartment: Some(Compartment::new("hr")) }]),
         ]).unwrap();
         let ids = roles.clone();
-        let (policy, store) = super::testing::owned_store(ConfidentialityRules::new(compartments).with_roles(roles));
+        let (policy, confidentiality, store) = super::testing::owned_store(ConfidentialityRules::new(compartments).with_roles(roles));
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::clone(&confidentiality), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let user = |name: &str, roles: &[&str]| User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: ids.ids_of(roles).unwrap(), deleted: None };
         let (alice, bob) = (user("alice", &["staff", "hr"]), user("bob", &["staff"]));
@@ -2124,9 +2124,9 @@ mod tests {
             (RoleId::new(), "hr".to_string(), vec![Clearance { level: Confidentiality::Confidential, compartment: Some(Compartment::new("hr")) }]),
         ]).unwrap();
         let ids = roles.clone();
-        let (policy, store) = super::testing::owned_store(ConfidentialityRules::new(compartments).with_roles(roles));
+        let (policy, confidentiality, store) = super::testing::owned_store(ConfidentialityRules::new(compartments).with_roles(roles));
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::clone(&confidentiality), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let system = SecurityContext::system();
         let user = |name: &str, roles: &[&str]| User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: ids.ids_of(roles).unwrap(), deleted: None };
@@ -2234,7 +2234,7 @@ mod tests {
         });
         let policy = Arc::new(DummySecurityManager::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig::default(), registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig::default(), registry).unwrap());
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let system = SecurityContext::system();
 
@@ -2313,7 +2313,7 @@ mod tests {
         );
         let policy = Arc::new(DummySecurityManager::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig::default(), registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig::default(), registry).unwrap());
         let manager = SessionManager::new(Arc::clone(&runtime));
         let system = SecurityContext::system();
 
@@ -2378,7 +2378,7 @@ mod tests {
         let entities = Arc::new(MemoryStore::new());
         let states = Arc::new(MemoryStore::new());
         let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&states), Arc::<MemoryStore>::clone(&entities), secret_manager, Arc::new(DummySecurityManager::new()), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&entities))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&states), Arc::<MemoryStore>::clone(&entities), secret_manager, Arc::new(DummySecurityManager::new()), Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&entities))).unwrap());
         let manager = SessionManager::new(runtime);
         let ctx = SecurityContext::default();
         let session = make_session("two-stores");
@@ -2524,9 +2524,9 @@ mod tests {
         use caelumora_model::store::EntityStore;
         use caelumora_model::user::UserId;
 
-        let (policy, store) = super::testing::owned_store(Default::default());
+        let (policy, confidentiality, store) = super::testing::owned_store(Default::default());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::clone(&confidentiality), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let manager = SessionManager::new(runtime);
         let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
         let as_user = |actor| SecurityContext::new(actor, Default::default(), Default::default());
@@ -2683,9 +2683,9 @@ mod tests {
         use caelumora_model::channel::HistoryAccess;
         use caelumora_model::user::{User, UserId};
 
-        let (policy, store) = super::testing::owned_store(Default::default());
+        let (policy, confidentiality, store) = super::testing::owned_store(Default::default());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::clone(&confidentiality), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let manager = SessionManager::new(runtime);
         let user = |name: &str| User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: Vec::new(), deleted: None };
         let (alice, bob, carol) = (user("alice"), user("bob"), user("carol"));
@@ -2714,9 +2714,9 @@ mod tests {
         use caelumora_model::actor::ActorId;
         use caelumora_model::user::UserId;
 
-        let (policy, store) = super::testing::owned_store(Default::default());
+        let (policy, confidentiality, store) = super::testing::owned_store(Default::default());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::clone(&confidentiality), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let manager = SessionManager::new(runtime);
 
         let as_user = |id| SecurityContext::new(ActorId::User(id), Default::default(), Default::default());

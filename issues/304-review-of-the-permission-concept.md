@@ -580,3 +580,26 @@ where they test the door.
   agents with a turn under way and of external agents with open tasks, whose `Work` stores a
   `SecurityContext` without the new fields. **2b** - the flow out of the `SecurityManager` - is
   next.
+- **2026-10-11** — **2b** done on the branch `issue-304-flow` (A5, A6 of the plan): the flow leaves
+  the `SecurityManager`. `ConfidentialityPolicy` (`caelumora_model::confidentiality`) decides
+  `may_publish`, `may_copy` and `cleared`, and names the configured compartments and roles;
+  `ConfidentialityRules` implements it. `ConfidentialityQuestions`, by blanket implementation, gives
+  the questions their names - `may_copy_information`, `cleared_for` - and the `require_*` that
+  answer a refusal with the act's own error and log it alike. `ActionType` loses `Publish`,
+  `CopyInformation`, `Classify` and `JoinChannel`; `Reclassify` keeps its security half;
+  `AccessQuestions` loses the flow questions, `channel_reading` moves with `ChannelReader` and
+  `ChannelReading` to the runtime's views, `Place` to `confidentiality`. The ownership policy holds
+  no rules (issue 138 reversed), the `SecurityManager` translates no role names (the policy's
+  `roles` do), `DummySecurityManager` carries nothing. The `RuntimeManager` takes the policy as a
+  constructor argument beside the `SecurityManager`, `AppConfig::create_confidentiality_policy`
+  builds it, and it is handed at construction to the `ChannelLoop`, the views, the `ToolExecutor`,
+  the workspace, skill and artifact managers and, as a declared service, to the components of notes
+  and memory. Where an act enforced a flow by asking `may_*`, it now asks `require_*`. Deviations
+  from the plan: the flow is a trait, not a function of the rules, so that a policy outside the
+  binary (issue 24) states it and the security suite records it - in the same list as the security
+  questions, under the old names, so that the order of an action's questions shows both; that only
+  who acts puts something into a channel, which `Publish` checked, is the channel's own check now
+  (`ChannelLoop::admits`). Changes of behaviour: `allow_all` no longer allows every flow; a
+  reclassification above the channel answers `ClassificationRefused` (400), not `Forbidden` (403),
+  as a modification above it already did; classifying is validation and no longer recorded as a
+  question. No stored data changes.
