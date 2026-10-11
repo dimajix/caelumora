@@ -180,37 +180,51 @@ impl ChannelView {
         self.views().security().may_change_channel(self.views().context(), &self.channel.security_attributes).await
     }
 
-    /// Its participants, in the order of the channel.
+    /// Its participants, in the order of the channel - but the deleted
+    /// agents resting in it (issue 314), which are former members.
     pub async fn members(&self) -> Vec<MemberView> {
         let mut members = Vec::with_capacity(self.channel.participants.len());
         for participant in &self.channel.participants {
-            members.push(MemberView::of(self.clone(), participant.clone()).await);
+            if self.takes_part(participant).await {
+                members.push(MemberView::of(self.clone(), participant.clone()).await);
+            }
         }
         members
     }
 
-    /// Who took part and left (issue 164), in the order they left: their
-    /// messages are in the history and an agent's state in the store, so
-    /// what it saw stays readable.
+    /// Who took part and left (issue 164), in the order they left, then the
+    /// deleted agents resting in the channel (issue 314), removed as their
+    /// mark says - not even that once they were purged: their messages are
+    /// in the history and an agent's state in the store, so what it saw
+    /// stays readable.
     pub async fn former_members(&self) -> Vec<MemberView> {
         let mut former = Vec::with_capacity(self.channel.former.len());
         for left in &self.channel.former {
             former.push(MemberView::of_former(self.clone(), left.participant.clone(), Some(left.left.clone())).await);
         }
+        for participant in &self.channel.participants {
+            if !self.takes_part(participant).await {
+                former.push(self.resting(participant).await);
+            }
+        }
         former
     }
 
     /// The member `actor` of the channel - or one that took part and left,
-    /// a former member (`MemberView::former`, issues 163, 164). An agent
-    /// that left before the channel kept who left is known by the messages
-    /// it left in the history the viewer sees.
+    /// a former member (`MemberView::former`, issues 163, 164), a deleted
+    /// agent resting in it among them (issue 314). An agent that left
+    /// before the channel kept who left is known by the messages it left in
+    /// the history the viewer sees.
     ///
     /// # Errors
     /// `MemberNotFound` if `actor` neither takes part in the channel nor
     /// left it; `Failed` if the history cannot be read.
     pub async fn member(&self, actor: ActorId) -> ViewResult<MemberView> {
         if let Some(participant) = self.channel.participants.iter().find(|p| p.actor_id() == actor) {
-            return Ok(MemberView::of(self.clone(), participant.clone()).await);
+            return Ok(match self.takes_part(participant).await {
+                true => MemberView::of(self.clone(), participant.clone()).await,
+                false => self.resting(participant).await,
+            });
         }
         if let Some(left) = self.channel.former.iter().find(|f| f.participant.actor_id() == actor) {
             return Ok(MemberView::of_former(self.clone(), left.participant.clone(), Some(left.left.clone())).await);
@@ -221,6 +235,25 @@ impl ChannelView {
             return Err(not_found());
         }
         Ok(MemberView::of_former(self.clone(), Participant::Agent(agent), None).await)
+    }
+
+    /// Whether `participant` takes part in the channel now: not an agent
+    /// that was deleted, which rests in it until it is restored (issue 314).
+    async fn takes_part(&self, participant: &Participant) -> bool {
+        match participant {
+            Participant::Agent(id) => self.views().agent_of(*id).await.is_some(),
+            _ => true,
+        }
+    }
+
+    /// `participant`, a deleted agent resting in the channel, as a former
+    /// member: removed as its mark says, unknown when once it was purged.
+    async fn resting(&self, participant: &Participant) -> MemberView {
+        let left = match participant {
+            Participant::Agent(id) => self.views().agent_removal(*id).await,
+            _ => None,
+        };
+        MemberView::of_former(self.clone(), participant.clone(), left).await
     }
 
     /// The history as the viewer sees it (issue 46): all of it, unless they

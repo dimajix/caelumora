@@ -5,6 +5,7 @@ use crate::channel::ChannelLoop;
 use crate::runtime::ChannelRuntime;
 use anyhow::Result;
 use caelumora_model::actor::ActorId;
+use caelumora_model::agent::AgentId;
 use caelumora_model::channel::Channel;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::confidentiality::{Classification, Place};
@@ -53,17 +54,12 @@ impl SessionLoop {
         self.session().channels.iter().filter_map(|c| self.channel_by_id(*c)).collect()
     }
 
-    /// Has `actor` leave every channel of the session it takes part in -
-    /// kept there as a former participant -, in the runtime's name: for an
-    /// agent that is deleted, which was permitted.
-    pub(crate) async fn leave_channels(&self, actor: ActorId) {
-        let system = SecurityContext::system();
+    /// Has every channel of the session follow whether its agents exist
+    /// (issue 314) - `only`, or every agent if `None`: a deleted one rests in
+    /// them, a restored one runs again (`ChannelLoop::follow_agents`).
+    pub(crate) async fn follow_agents(&self, only: Option<AgentId>) {
         for channel in self.channels() {
-            if channel.channel().participants.iter().any(|p| p.actor_id() == actor) {
-                if let Err(e) = channel.remove_participant(&system, actor).await {
-                    warn!("Deleted {} could not leave channel {}: {:#}", actor, channel.id(), e);
-                }
-            }
+            channel.follow_agents(only).await;
         }
     }
 

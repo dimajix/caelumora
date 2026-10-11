@@ -5,6 +5,8 @@ use caelumora_model::value::name::Name;
 use crate::actor::Actor;
 use anyhow::Result;
 use caelumora_model::actor::ActorId;
+use caelumora_model::agent::AgentId;
+use caelumora_model::channel::Participant;
 use caelumora_model::channel::HistoryAccess;
 use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::question::{QuestionError, Questions};
@@ -12,8 +14,9 @@ use caelumora_model::security::{ActionType, SecurityContext};
 use tracing::{info, warn};
 use std::collections::HashMap;
 use std::sync::Arc;
-use super::{ActorChange, Actors, ChannelActor, ChannelError, ChannelLoop, ChannelMember, LEAVE_GRACE};
+use super::{ActorChange, Actors, ChannelActor, ChannelError, ChannelLoop, ChannelMember, LEAVE_GRACE, Member};
 use super::history::history_start;
+use super::member::agent_exists;
 
 impl ChannelLoop {
     /// Adds `participant` - a participant of the session - to the channel on
@@ -85,6 +88,10 @@ impl ChannelLoop {
     /// and nothing of it follows the announcement (issues 162, 262).
     /// Its state is kept, for the record and for when it joins again.
     ///
+    /// A participant without an actor - a deleted agent resting in the
+    /// channel, one that cannot run - is removed from the document alone
+    /// (issue 314): restored, it does not come back here.
+    ///
     /// # Errors
     /// `ChannelError::ApproverStays` or `NotAParticipant`; a `StoreError` if
     /// `context` may not change the channel.
@@ -92,10 +99,86 @@ impl ChannelLoop {
         if matches!(participant, ActorId::Approver(_)) {
             return Err(ChannelError::ApproverStays { channel: self.id }.into());
         }
-        let Some(ChannelActor { actor, task, .. }) = self.actors.load().get(&participant).cloned() else {
+        let running = self.actors.load().get(&participant).cloned();
+        if running.is_none() && !self.channel().participants.iter().any(|p| p.actor_id() == participant) {
             return Err(ChannelError::NotAParticipant { participant, channel: self.id }.into());
-        };
+        }
         self.channel.remove_participant(context, participant).await?;
+        if let Some(running) = running {
+            self.stop_actor(participant, running, context);
+        }
+        info!("{} left channel {}, removed by {}", participant, self.id, context.caller_id);
+        Ok(())
+    }
+
+    /// Has the actors of the channel's agents follow whether the agents
+    /// exist (issue 314) - of `only`, or of every agent taking part if
+    /// `None`: a deleted agent rests in the channel, its actor stopped in the
+    /// runtime's name and the document unchanged; a restored one has its
+    /// actor built and started again, given the part of the history it may
+    /// see, as when it joined. Either is announced as a leave or a join. One
+    /// that cannot be read or run is logged and left as it is. Of a running
+    /// one only whether it exists is asked, not again whether it may run.
+    pub(crate) async fn follow_agents(&self, only: Option<AgentId>) {
+        let agents: Vec<Participant> = self.channel().participants.iter()
+            .filter(|p| matches!(p, Participant::Agent(id) if only.is_none_or(|only| only == *id)))
+            .cloned()
+            .collect();
+        for participant in agents {
+            let Participant::Agent(id) = participant else { continue };
+            let actor = participant.actor_id();
+            match self.actors.load().get(&actor).cloned() {
+                // Running: only whether it still exists matters.
+                Some(running) => match agent_exists(self.entities.as_ref(), id).await {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        self.stop_actor(actor, running, &SecurityContext::system());
+                        self.channel.announce_resting(id, true);
+                        info!("{} was deleted and rests in channel {}", actor, self.id);
+                    }
+                    Err(e) => warn!("Whether {} of channel {} exists cannot be read: {}", actor, self.id, e),
+                },
+                None => {
+                    let rejoined = match self.member_of(&participant).await {
+                        Ok(Some(member)) => self.rejoin(actor, member).await.map(|()| true),
+                        Ok(None) => Ok(false),
+                        Err(e) => Err(e),
+                    };
+                    match rejoined {
+                        Ok(true) => {
+                            self.channel.announce_resting(id, false);
+                            info!("{} was restored and takes part in channel {} again", actor, self.id);
+                        }
+                        Ok(false) => {}
+                        Err(e) => warn!("{} of channel {} cannot be run and is left out: {:#}", actor, self.id, e),
+                    }
+                }
+            }
+        }
+    }
+
+    /// Builds and starts the actor of `member`, the participant `id`, who
+    /// takes part in the channel but has none - an agent restored -, as
+    /// `add_participant` does but without changing the document.
+    ///
+    /// # Errors
+    /// `ChannelError::StillLeaving`, or what building it or catching it up
+    /// reports.
+    async fn rejoin(&self, id: ActorId, member: Member) -> Result<()> {
+        self.left(id).await?;
+        let actor = Self::create_actor(Arc::clone(&self.channel), &member, &self.runtime).await?;
+        actor.catch_up(self.visible_history(id).await.messages()).await?;
+        let adopted = self.adopt(Arc::from(actor), member).await;
+        let _ = self.changes_tx.send(ActorChange::Start(adopted));
+        Ok(())
+    }
+
+    /// Stops `running`, the actor of `participant`, and takes it out of the
+    /// channel's actors, the moderator and the mentions; `run` announces it
+    /// in the name of `remover` once its task has ended. The document is
+    /// the caller's.
+    fn stop_actor(&self, participant: ActorId, running: ChannelActor, remover: &SecurityContext) {
+        let ChannelActor { actor, task, .. } = running;
         self.leaving.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).insert(participant, task);
         self.actors.rcu(|actors| {
             let mut actors = HashMap::clone(actors);
@@ -105,9 +188,7 @@ impl ChannelLoop {
         self.moderator.remove_actor(participant);
         self.rebuild_mentions();
         actor.stop();
-        let _ = self.changes_tx.send(ActorChange::Stop(participant, context.clone()));
-        info!("{} left channel {}, removed by {}", participant, self.id, context.caller_id);
-        Ok(())
+        let _ = self.changes_tx.send(ActorChange::Stop(participant, remover.clone()));
     }
 
     /// Waits until the actor `participant` had in the channel before has

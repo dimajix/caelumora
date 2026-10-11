@@ -2294,27 +2294,28 @@ async fn deleting_an_agent_needs_owning_it() {
     assert_eq!(asked, checks(&["alice: GetAgent(alice's) yes", "alice: DeleteAgent(alice's) yes"]));
 }
 
-/// Deleting an agent through the session manager (issue 164): reading it
-/// and deleting it - its owner's alone - before anything happens, by the
-/// agent manager; it leaves its channels in the runtime's name. Restoring
-/// it is its owner's too, purging it not (issue 314: the agent manager's).
+/// Deleting an agent through the agent manager (issues 164, 314): reading
+/// it and deleting it - its owner's alone - before anything happens; the
+/// channels it rests in are changed by nobody. Restoring it is its owner's
+/// too, purging it not.
 #[tokio::test]
 async fn deleting_restoring_and_purging_an_agent_is_its_owners_but_purging() {
     let world = World::new().await;
     let shared = world.personality("shared", Some(world.bob), &[world.alice]).await;
     let helper = world.agent("helper", world.alice, &shared).await;
     let session = world.shared_session(&[], &[helper]).await;
-    let (_, asked) = world.asked(world.manager.delete_agent(&World::as_user(world.bob), helper)).await;
+    let agents = world.runtime.agent_manager();
+    let (deleted, asked) = world.asked(agents.delete(&World::as_user(world.bob), helper)).await;
+    assert!(!deleted.unwrap(), "not there for bob, though the personality is his");
     assert_eq!(asked, checks(&["bob: GetAgent(alice's) no"]));
-    let (deleted, asked) = world.asked(world.manager.delete_agent(&World::as_user(world.alice), helper)).await;
-    assert!(deleted.is_ok());
+    let (deleted, asked) = world.asked(agents.delete(&World::as_user(world.alice), helper)).await;
+    assert!(deleted.unwrap());
     assert_eq!(asked, checks(&[
         "alice: GetAgent(alice's) yes",
         "alice: DeleteAgent(alice's) yes",
         "alice: GetAgent(alice's) yes",
         "alice: DeleteAgent(alice's) yes",
-    ]), "asked by the agent manager before any channel is changed, and again by the store");
-    let agents = world.runtime.agent_manager();
+    ]), "asked by the agent manager before anything happens, and again by the store");
     let (refused, asked) = world.asked(agents.purge(&World::as_user(world.alice), helper)).await;
     assert!(refused.is_err());
     assert_eq!(asked, checks(&["alice: ReadDeleted(alice's) yes", "alice: Purge(alice's) no"]));

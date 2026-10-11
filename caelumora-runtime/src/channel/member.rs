@@ -6,14 +6,14 @@ use anyhow::Result;
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::{Channel, ChannelId, Participant};
 use crate::controller::{AgentController, ControllerManager, UserController};
-use caelumora_model::agent::{Personality, PersonalityKind};
+use caelumora_model::agent::{AgentId, Personality, PersonalityKind};
 use caelumora_model::approval::Approver;
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
 use caelumora_model::role::RoleId;
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::SessionId;
-use caelumora_model::store::{StoreError, StoreResultExt};
+use caelumora_model::store::{EntityStore, StoreError, StoreResult, StoreResultExt};
 use std::sync::Arc;
 use super::ChannelError;
 
@@ -32,7 +32,8 @@ pub(super) enum Member {
 impl Member {
     /// `participant` of `channel` with its controller - an agent also with
     /// its personality, read once, for its actor to be built from - or
-    /// `None` if its user or agent no longer exists. An agent runs only with
+    /// `None` if its user or agent no longer exists - an agent as
+    /// `agent_exists` says. An agent runs only with
     /// a personality it may read, in the channel, as `security` decides
     /// (`GetPersonality`): one whose owner lost it - a share withdrawn - is
     /// not run (issue 191).
@@ -41,14 +42,19 @@ impl Member {
     /// Whatever else the store reports when loading it - also that an
     /// agent's personality is gone - and `StoreError::PermissionDenied` if
     /// it is not the agent's to read: the agent exists, but cannot be run.
-    pub(super) async fn of(participant: &Participant, channel: &Channel, controllers: &ControllerManager, security: &dyn SecurityManager) -> Result<Option<Self>> {
+    pub(super) async fn of(participant: &Participant, channel: &Channel, entities: &dyn EntityStore, controllers: &ControllerManager, security: &dyn SecurityManager) -> Result<Option<Self>> {
         let agent = match participant {
             Participant::User(id) => return Ok(controllers.user_controller(*id).await.optional()?.map(Member::User)),
             Participant::Approver(approver) => return Ok(Some(Member::Approver(approver.clone()))),
-            Participant::Agent(id) => match controllers.agent_controller(*id).await.optional()? {
-                Some(agent) => agent,
-                None => return Ok(None),
-            },
+            Participant::Agent(id) => {
+                if !agent_exists(entities, *id).await? {
+                    return Ok(None);
+                }
+                match controllers.agent_controller(*id).await.optional()? {
+                    Some(agent) => agent,
+                    None => return Ok(None),
+                }
+            }
         };
         let personality = agent.personality().await?;
         let context = agent.security_context(channel.session_id, channel.id, personality.limiting_roles());
@@ -114,6 +120,17 @@ impl Member {
     }
 }
 
+/// Whether agent `id` exists - neither deleted nor purged -, asked of
+/// `entities` rather than of the controllers: the instance keeps the
+/// controller of an agent while an actor of it runs, also once it was
+/// deleted (issue 314).
+///
+/// # Errors
+/// Whatever the store reports but that there is none.
+pub(super) async fn agent_exists(entities: &dyn EntityStore, id: AgentId) -> StoreResult<bool> {
+    Ok(entities.get_agent(&SecurityContext::system(), id).await.optional()?.is_some())
+}
+
 /// Nothing if every participant of `channel` that still exists may take
 /// part in it - lies where it may (`Member::require_in_scope`) and is
 /// cleared for its classification (`Member::require_cleared`) - asked
@@ -124,7 +141,7 @@ impl Member {
 /// whatever reading a participant reports.
 pub(crate) async fn require_admitted(runtime: &RuntimeManager, context: &SecurityContext, channel: &Channel) -> Result<()> {
     for participant in &channel.participants {
-        if let Some(member) = Member::of(participant, channel, runtime.controller_manager(), runtime.security_manager().as_ref()).await? {
+        if let Some(member) = Member::of(participant, channel, runtime.entity_store().as_ref(), runtime.controller_manager(), runtime.security_manager().as_ref()).await? {
             member.require_in_scope(channel.session_id, channel.id)?;
             member.require_cleared(runtime.confidentiality().as_ref(), context, &channel.classification, channel.session_id, channel.id)?;
         }

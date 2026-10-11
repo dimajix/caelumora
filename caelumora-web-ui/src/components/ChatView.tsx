@@ -593,7 +593,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     }
   };
 
-  /** Deletes the agent `member` (issue 164): it leaves every channel, this one too. */
+  /** Deletes the agent `member` (issues 164, 314): it leaves every channel, this one too, until it is restored. */
   const deleteAgent = async (member: ChannelMember) => {
     const uuid = actorUuid(member.id);
     if (!uuid) return;
@@ -628,7 +628,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
       onSelect: () => void removeParticipant(member),
     }] : []),
     ...(member.can_delete ? [{
-      label: 'Delete agent', icon: Trash2, danger: true, confirm: 'Delete agent? It leaves every channel',
+      label: 'Delete agent', icon: Trash2, danger: true, confirm: 'Delete agent? It leaves every channel until it is restored',
       title: `${member.name} leaves every channel it takes part in, not only this one`,
       onSelect: () => void deleteAgent(member),
     }] : []),

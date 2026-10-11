@@ -3,6 +3,7 @@ use arc_swap::ArcSwap;
 use caelumora_model::value::language::Language;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::actor::ActorId;
+use caelumora_model::agent::AgentId;
 use caelumora_model::approval::ApprovalRule;
 use caelumora_model::channel::{Channel, ChannelId, ChannelUpdateEvent, FormerParticipant, HistoryLimit, HistoryStart, Participant};
 use caelumora_model::removal::Removal;
@@ -185,6 +186,17 @@ impl ChannelController {
     /// otherwise whatever the store reports; the channel is then unchanged.
     pub async fn update_description(&self, ctx: &SecurityContext, summary: Option<&str>, briefing: Option<&str>) -> StoreResult<()> {
         self.update(ctx, &ChannelUpdateEvent::DescriptionChanged { summary: summary.map(String::from), briefing: briefing.map(String::from) }).await
+    }
+
+    /// Announces that agent `agent` left the channel, or came back to it,
+    /// without the document changing (issue 314): deleted, it rests in the
+    /// channel as a former member; restored, it takes part again. Announced
+    /// as a leave or a join is, to whoever reads the channel.
+    pub(crate) fn announce_resting(&self, agent: AgentId, resting: bool) {
+        let attributes = self.channel.load().security_attributes.clone();
+        if let Some(event) = self.membership_event(ActorId::Agent(agent), !resting) {
+            self.event_publisher.publish(event, attributes);
+        }
     }
 
     /// The event announcing that `participant` joined or left.

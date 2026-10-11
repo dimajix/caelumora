@@ -695,6 +695,13 @@ impl Views {
         self.entities.get_deleted_agent(&SecurityContext::system(), id).await.ok().map(|agent| agent.name.to_string())
     }
 
+    /// Who deleted agent `id` and when, if it was deleted and not purged
+    /// (issue 314): when it left the channels it rests in. Read in the
+    /// runtime's name, like its name.
+    pub(super) async fn agent_removal(&self, id: AgentId) -> Option<Removal> {
+        self.entities.get_deleted_agent(&SecurityContext::system(), id).await.ok().and_then(|agent| agent.deleted)
+    }
+
     /// The document of agent `id` - its name, its attributes, its
     /// personality - or `None` if it no longer exists. Read in the
     /// runtime's name, like its name.

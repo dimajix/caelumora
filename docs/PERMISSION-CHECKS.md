@@ -88,7 +88,7 @@ SECURITY.md); "store" is the store layer, in the context the caller passes.
 | Purge (`purge_session`) | store `ReadDeleted`; store `ReadDeleted` + `Purge`; channels and scope in S | R1 | - | `NotFound`, `PermissionDenied` |
 | Rename, privacy, approval rules, description (`SessionLoop::update_*`) | store `GetSession` + `UpdateSession` (U,1) | R1 | - | `PermissionDenied` |
 | Attach a workspace (`set_workspace`) | `UpdateSession` (U,1); `GetWorkspace`, `UpdateWorkspace` (U,1), scope; store `UpdateSession`; sharing it as *Share* of a workspace | R2 + R1 | `UpdateSession` (pair); `UpdateWorkspace` three times | `PermissionDenied`, `NotFound`, `WorkspaceOutOfScope` |
-| Delete an agent (`SessionManager::delete_agent`, `AgentManager::delete`) | store `GetAgent`; `DeleteAgent` (U,1); store `DeleteAgent`; then it leaves its channels in S | R2 + R1 | `DeleteAgent` (pair) | `NotFound`, `PermissionDenied` |
+| Delete an agent (`AgentManager::delete`) | store `GetAgent`; `DeleteAgent` (U,1); store `DeleteAgent`; it rests in its channels, which follow it in S | R2 + R1 | `DeleteAgent` (pair) | `NotFound`, `PermissionDenied` |
 | Restore, purge an agent (`AgentManager::restore`, `purge`) | store only | R1 | - | `NotFound`, `PermissionDenied` |
 
 ### Channels

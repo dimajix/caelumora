@@ -27,17 +27,20 @@ pub async fn list_agents(State(state): State<Arc<AppState>>, Query(options): Que
     Ok(Json(agents.into_iter().map(AgentResponse::from).collect::<Vec<_>>()).into_response())
 }
 
-/// Deletes agent `id`: it leaves every channel it takes part in, as a
-/// former participant, and is kept marked until it is purged.
+/// Deletes agent `id`: it rests in the channels it takes part in, as a
+/// former member, and is kept marked until it is purged.
 pub async fn delete_agent(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
     let agent_id = AgentId(id);
-    state.session_manager.delete_agent(&user.security_context(), agent_id).await
-        .map_err(|e| ApiError::from_runtime(e, Subject::Agent, &format!("deleting agent {agent_id}")))?;
-    Ok(StatusCode::NO_CONTENT)
+    let deleted = state.runtime_manager.agent_manager().delete(&user.security_context(), agent_id).await
+        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Agent, &format!("deleting agent {agent_id}")))?;
+    match deleted {
+        true => Ok(StatusCode::NO_CONTENT),
+        false => Err(ApiError::not_found("agent_not_found", format!("There is no agent {agent_id}"))),
+    }
 }
 
-/// Restores the deleted agent `id`; it takes part in no channel until it is
-/// added again. `409` if another agent took its name meanwhile.
+/// Restores the deleted agent `id`; it takes part again in the channels it
+/// rested in. `409` if another agent took its name meanwhile.
 pub async fn restore_agent(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<Json<AgentResponse>, ApiError> {
     let agent_id = AgentId(id);
     state.runtime_manager.agent_manager().restore(&user.security_context(), agent_id).await
@@ -53,7 +56,10 @@ pub async fn restore_agent(State(state): State<Arc<AppState>>, Path(id): Path<Uu
 /// allows, by default the system's alone.
 pub async fn purge_agent(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
     let agent_id = AgentId(id);
-    state.runtime_manager.agent_manager().purge(&user.security_context(), agent_id).await
+    let purged = state.runtime_manager.agent_manager().purge(&user.security_context(), agent_id).await
         .map_err(|e| ApiError::from_runtime(e.into(), Subject::Agent, &format!("purging agent {agent_id}")))?;
-    Ok(StatusCode::NO_CONTENT)
+    match purged {
+        true => Ok(StatusCode::NO_CONTENT),
+        false => Err(ApiError::not_found("agent_not_found", format!("There is no deleted agent {agent_id}"))),
+    }
 }
