@@ -13,13 +13,15 @@ use caelumora_model::component::ComponentConfig;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::value::language::Language;
 use caelumora_model::event::GlobalEvent;
-use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Grant, Membership, SecurityAttributes, SecurityContext, SecurityManager, Subject};
+use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Grant, SecurityAttributes, SecurityContext, SecurityManager, Subject};
 use crate::view::{Viewer, Views};
 use caelumora_model::privacy::{PrivacyConfig, SessionPrivacy};
 use caelumora_model::store::{EntityStore, StoreError, StoreResult, StoreResultExt};
 use tracing::{info, warn};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::{ChannelId, Session, SessionField, SessionId};
+use caelumora_model::group::{Group, GroupId};
+use crate::group::{keep_participants, purge_participants};
 use caelumora_model::template::{ScopeTemplate, SessionTemplateId, WorkspaceTemplate};
 use caelumora_model::workspace::{WorkspaceChoice, WorkspaceId};
 use crate::scoped::{delete_scoped_in, purge_scoped_in, restore_scoped_in};
@@ -285,7 +287,7 @@ impl SessionLoop {
         }
         self.session_controller.update_workspace(context, workspace).await?;
         if let (Some(id), Some(grant)) = (workspace, share) {
-            self.runtime_manager.workspace_manager().share(context, id, Subject::MemberOf(Membership::Session(self.id)), grant).await?;
+            self.runtime_manager.workspace_manager().share(context, id, Subject::Group(GroupId::of_session(self.id)), grant).await?;
         }
         info!(session = %self.id, workspace = ?workspace, by = %context.caller_id, "Session's workspace changed");
         Ok(())
@@ -388,7 +390,11 @@ impl SessionLoop {
         crate::channel::require_admitted(&self.runtime_manager, context, &channel).await?;
         let store = &self.entities;
         store.create_channel(context, &channel).await?;
-        if let Err(error) = self.session_controller.add_channel(context, channel.id).await {
+        let added = match keep_participants(store.as_ref(), Group::of_channel(&channel)).await {
+            Ok(()) => self.session_controller.add_channel(context, channel.id).await,
+            Err(e) => Err(e),
+        };
+        if let Err(error) = added {
             self.discard_channel(channel.id).await;
             return Err(error.into());
         }
@@ -589,11 +595,17 @@ impl SessionLoop {
 }
 
 /// Removes the document of channel `channel_id` for good, in the runtime's
-/// name: marked deleted first if it is not - a channel of a session being
-/// purged, which is hidden with the session, or one whose creation failed
-/// - since only what was deleted is purged (issue 164).
+/// name, with the group of its participants: marked deleted first if it is
+/// not - a channel of a session being purged, which is hidden with the
+/// session, or one whose creation failed - since only what was deleted is
+/// purged (issue 164).
 async fn purge_channel_document(store: &dyn EntityStore, channel_id: ChannelId) -> StoreResult<bool> {
     let system = SecurityContext::system();
+    if let Err(e) = purge_participants(store, GroupId::of_channel(channel_id)).await {
+        if !matches!(e, StoreError::NotFound { .. }) {
+            return Err(e);
+        }
+    }
     store.delete_channel(&system, channel_id).await?;
     store.purge_channel(&system, channel_id).await
 }
@@ -767,7 +779,7 @@ impl SessionManager {
             Ok(session_loop) => {
                 // Shared once the session it is shared with exists (issue 23).
                 if let Some((chosen, Some(grant))) = existing {
-                    workspaces.share(context, chosen, Subject::MemberOf(Membership::Session(id)), grant).await?;
+                    workspaces.share(context, chosen, Subject::Group(GroupId::of_session(id)), grant).await?;
                 }
                 Ok(session_loop)
             }
@@ -798,19 +810,29 @@ impl SessionManager {
         }
         let store = &self.entities;
         store.create_session(context, &session).await?;
-        for (index, channel) in channels.iter().enumerate() {
-            if let Err(error) = store.create_channel(context, channel).await {
-                // Nothing half-made stays behind; the session's creation was
-                // permitted, so it is taken back in the runtime's name.
-                let system = SecurityContext::system();
-                for created in &channels[..index] {
-                    let _ = purge_channel_document(store.as_ref(), created.id).await;
-                }
-                if store.delete_session(&system, id).await.is_ok() {
-                    let _ = store.purge_session(&system, id).await;
-                }
-                return Err(error.into());
+        // Each with the group of its participants (issue 286), which it is
+        // read by.
+        let made = async {
+            keep_participants(store.as_ref(), Group::of_session(&session)).await?;
+            for channel in &channels {
+                store.create_channel(context, channel).await?;
+                keep_participants(store.as_ref(), Group::of_channel(channel)).await?;
             }
+            Ok::<_, StoreError>(())
+        }.await;
+        if let Err(error) = made {
+            // Nothing half-made stays behind; the session's creation was
+            // permitted, so it is taken back in the runtime's name - what
+            // was not made yet is not found, which is no matter.
+            let system = SecurityContext::system();
+            for channel in &channels {
+                let _ = purge_channel_document(store.as_ref(), channel.id).await;
+            }
+            let _ = purge_participants(store.as_ref(), GroupId::of_session(id)).await;
+            if store.delete_session(&system, id).await.is_ok() {
+                let _ = store.purge_session(&system, id).await;
+            }
+            return Err(error.into());
         }
 
         let event_bus = &self.events;

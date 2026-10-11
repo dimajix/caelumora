@@ -5,6 +5,7 @@ use crate::user::{UserId, UserProfile, UserUpdateEvent};
 use crate::workspace::{WorkspaceId, WorkspaceUpdateEvent};
 use crate::skill::{SkillId, SkillUpdateEvent};
 use crate::artifact::ArtifactId;
+use crate::group::{GroupId, GroupUpdateEvent};
 use crate::security::SecurityAttributes;
 use serde::{Deserialize, Serialize};
 
@@ -77,6 +78,13 @@ pub enum GlobalEvent {
     ArtifactUpdated(ArtifactId),
     ArtifactDeleted(ArtifactId),
     ArtifactRestored(ArtifactId),
+    /// About a team (issue 286). Published with the group's attributes: its
+    /// owner and its members receive them. The participants of a session or
+    /// channel are announced as they join and leave, not as a group.
+    GroupCreated(GroupId),
+    GroupUpdated(GroupId, GroupUpdateEvent),
+    GroupDeleted(GroupId),
+    GroupRestored(GroupId),
 }
 
 pub trait EventPublisher: Send + Sync + std::fmt::Debug {

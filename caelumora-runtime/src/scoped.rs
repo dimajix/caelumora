@@ -1,6 +1,7 @@
 //! What lies in a scope goes with what holds it (issue 178): the
-//! personalities, session templates, agents, workspaces, skills and
-//! artifacts of a session's scope - and of the scopes of its channels - are
+//! personalities, session templates, agents, workspaces, skills, artifacts
+//! and groups - the participants of the session and its channels, issue
+//! 286 - of a session's scope - and of the scopes of its channels - are
 //! deleted with the session, restored with it and purged with it, a
 //! workspace with its place (issue 251), an artifact with its content
 //! (issue 271); those of a channel's scope are deleted and restored with the
@@ -56,6 +57,9 @@ pub(crate) async fn delete_scoped_in(store: &dyn EntityStore, events: &EventBus,
         store.delete_artifact(&system, artifact.id).await?;
         events.publish(GlobalEvent::ArtifactDeleted(artifact.id), artifact.security_attributes.clone());
     }
+    for group in store.list_groups(&system, &within(holder)).await?.items {
+        store.delete_group(&system, group.id).await?;
+    }
     Ok(())
 }
 
@@ -96,6 +100,9 @@ pub(crate) async fn restore_scoped_in(store: &dyn EntityStore, events: &EventBus
             events.publish(GlobalEvent::ArtifactRestored(artifact.id), artifact.security_attributes.clone());
         }
     }
+    for group in deleted_since(store.list_deleted_groups(&system, &within(holder)).await?.items, since) {
+        unless_taken(store.restore_group(&system, group.id).await, "group", &group.name)?;
+    }
     Ok(())
 }
 
@@ -133,6 +140,9 @@ pub(crate) async fn purge_scoped_in(store: &dyn EntityStore, states: &dyn StateS
     }
     for skill in store.list_deleted_skills(&system, &within(holder)).await?.items {
         store.purge_skill(&system, skill.id).await?;
+    }
+    for group in store.list_deleted_groups(&system, &within(holder)).await?.items {
+        store.purge_group(&system, group.id).await?;
     }
     workspaces.purge_lying_in(holder).await?;
     artifacts.purge_lying_in(holder).await?;

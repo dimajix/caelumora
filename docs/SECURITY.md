@@ -42,25 +42,26 @@ A policy defined outside the binary is [24](../issues/24-opa-security-manager.md
 ## Ownership
 
 Every stored entity - session, channel, agent, personality, session template, workspace, skill,
-artifact, preconfigured component - carries `SecurityAttributes`: an `owner_id` and an access list,
-`acl` (issues 11, 23). This is the one place ownership and access are recorded; see
+artifact, group, preconfigured component - carries `SecurityAttributes`: an `owner_id` and an access
+list, `acl` (issues 11, 23). This is the one place ownership and access are recorded; see
 [Access lists](#access-lists).
 
 *   A session and its channels are owned by the user they were created for, and read by their
-    members: an entry `MemberOf` the session or the channel itself, matched against whoever takes
-    part in it at the time.
+    members: an entry naming the group of their participants (issue
+    [286](../issues/286-groups-as-subjects.md), see [Groups](#groups)), which follows whoever
+    takes part at the time.
 *   An agent is owned by whoever created it, and has an empty list: it reads its own definition as
     its owner, whose rights it acts with.
 *   A workspace is owned by the user it was made for, always a user (issue
     [253](../issues/253-workspace.md)); only its owner changes, shares, deletes and attaches it to a
-    session (`UpdateWorkspace`). Its files are read by whom its list grants reading
-    (`GetWorkspace`) and changed by whom it grants writing (`WriteWorkspace`, issue 23) - by the
-    workspace, wherever they act, cleared for its classification. One made for a session lets the
-    session's members read and write it; one of its owner's grants nobody anything until shared - as
-    it is attached, or by its list. An agent uses it through a channel besides, where the channel
-    uses it and the classifications let it (see [CHANNELS.md](CHANNELS.md#its-workspace)). A
-    command of its shell is seen only in the channel it was started in, and ended there by whom
-    may change the files there - who could have started it (`WriteWorkspace`, issue
+    session (`UpdateWorkspace`). Its files are read by whom its list grants reading (`GetWorkspace`)
+    and changed by whom it grants writing (`WriteWorkspace`, issue 23) - by the workspace, wherever
+    they act, cleared for its classification. One made for a session lets the group of the session's
+    participants read and write it; one of its owner's grants nobody anything until shared - as it
+    is attached, or by its list. An agent uses it through a channel besides, where the channel uses
+    it and the classifications let it (see [CHANNELS.md](CHANNELS.md#its-workspace)). A command of
+    its shell is seen only in the channel it was started in, and ended there by whom may change the
+    files there - who could have started it (`WriteWorkspace`, issue
     [294](../issues/294-user-ends-a-command.md)).
 *   A skill (issue [22](../issues/22-skill-management.md)) is owned by the user it was made for -
     by an agent's tool, its owner - or by the system for a skill of the seed; whom its list grants
@@ -70,13 +71,17 @@ artifact, preconfigured component - carries `SecurityAttributes`: an `owner_id` 
 *   An artifact is owned by the user the agent that published it acts for, always a user (issue
     [271](../issues/271-publishing-artifacts.md)); only its owner keeps, describes, shares and
     deletes it (`UpdateArtifact`, `DeleteArtifact`). Its own list grants the whole of it; each
-    version has a list of its own besides, which publishing gives the members of the channel it is
-    published in (issue 23). A version is read (`GetArtifact` with `Artifact::version_attributes`)
-    by whom either grants it, by the artifact, wherever they act and cleared for its
-    classification - so drafts published in a channel of few reach nobody who reads only the
-    version published to many. A version is added by whom the artifact's list grants `Write`
-    (`WriteArtifact`); a version's list grants reading alone. Whoever reads a version sees the
-    artifact's name and its owner's description, and of the versions only those they may read.
+    version has a list of its own besides, which publishing gives the group of the participants of
+    the channel it is published in (issue 23). A version is read (`GetArtifact` with
+    `Artifact::version_attributes`) by whom either grants it, by the artifact, wherever they act and
+    cleared for its classification - so drafts published in a channel of few reach nobody who reads
+    only the version published to many. A version is added by whom the artifact's list grants
+    `Write` (`WriteArtifact`); a version's list grants reading alone. Whoever reads a version sees
+    the artifact's name and its owner's description, and of the versions only those they may read.
+*   A team (issue 286) is owned by the user who made it; only its owner renames it, sets its
+    members and deletes it (`UpdateGroup`, `DeleteGroup`), and its members read it by an entry of
+    its own list that names it. The group of the participants of a session or channel is owned by
+    the session's owner and changed only by the runtime, as someone joins or leaves.
 *   Initial data belongs to the system.
 *   A `User` record belongs to the system, too (issue 94): only the user providers and the setup
     write it, so that nobody can grant themselves roles. What a user writes about themselves lives
@@ -199,20 +204,51 @@ union of the entries, no denial, no precedence. The owner needs no entry and can
     *   `Role` - by its `RoleId`. The roles that count for a user are their own; for an agent its
         owner's, narrowed by its personality's limiting roles wherever a role is matched - the one
         way an agent may do less than its owner.
-    *   `MemberOf` - the current participants of a session or a channel (`Membership`), users and
-        agents, not approvers. A member counts wherever they act, not only in that place.
-*   **What the policy learns.** Whether someone is a member, and which roles count for them, are
+    *   `Group` - by its `GroupId` (issue 286): a team, or the participants of a session or a
+        channel. A member counts wherever they act, not only in that place.
+*   **What the policy learns.** Who belongs to a group, and which roles count for someone, are
     facts the attributes do not carry. The policy asks a `Memberships` source it is made with,
-    only where an entry names one: `StoreMemberships` reads the one session, channel, user or
-    agent asked about from the entity store, in the system's name - also a deleted session or
-    channel, whose members are told of the deletion. The policy is made before the store, which
-    takes it, so a binary binds the store to the memberships afterwards; until then nobody is a
-    member of anything.
+    only where an entry names one: `StoreMemberships` reads the one group, user or agent asked
+    about from the entity store, in the system's name - never what an actor is a member of, which
+    may be thousands of places -, also a deleted group, whose members are told of the deletion of
+    the session or channel they took part in. The policy is made before the store, which takes it,
+    so a binary binds the store to the memberships afterwards; until then nobody is a member of
+    anything.
+*   **Who may name a group.** Whoever writes an access list names a group in it only if they read
+    the group (`GetGroup`) - naming one grants its members something, and nobody grants what they
+    cannot tell to whom. It is asked by `WorkspaceManager::set_access` and
+    `ArtifactManager::set_access` after their own permission to change the list, and only of a
+    group the list did not name before.
 *   **Roles by id.** What is stored names a role by its id - an entry, `User::roles`, a
     personality's `roles`; the configuration gives every role an `id` beside its `name`. What is
     written by hand names roles - the user providers' configuration, a seed - and is resolved when
     it is loaded; an unknown name is an error. The `SecurityManager` translates both ways
     (`role_id`, `role_name`).
+
+### Groups
+
+A group (`caelumora_model::group::Group`, issue [286](../issues/286-groups-as-subjects.md)) is a
+list of actors that access lists name as one subject, so that what is shared with a team or with a
+session's participants follows who belongs to it, without a copy of the members in every list.
+There are two kinds, told apart by where a group lies:
+
+*   **A team** is made by a user and lies in the global scope or its owner's; it holds users only
+    (an agent is reached through its owner, issue 255). Its one writer is the `GroupManager`, which
+    leaves every permission to the store.
+*   **The participants of a session or a channel** lie in its scope and have its id
+    (`GroupId::of_session`, `GroupId::of_channel`): a one-to-one relation by a shared key, so that
+    whoever names them needs nothing but the session's or channel's id. They hold users and
+    agents, not approvers. Their one writer is what changes the participants - the
+    `SessionManager` and `SessionLoop` as they make a session or a channel, the
+    `ChannelController` as someone joins or leaves -, writing in the runtime's name after the
+    change it follows, which is the act that was permitted. The group is derived anew from the
+    participants each time, so that a write that failed is corrected by the next. It is deleted,
+    restored and purged with its session or channel (`scoped`), and the `GroupManager` refuses to
+    change it (`GroupError::Participants`).
+
+The views list teams (`Views::groups`) and reach any group the viewer reads (`Views::group`). The
+REST API names the participants of a session or channel by the session's or channel's id
+(`kind: session`, `kind: channel`), a team by its own (`kind: group`).
 
 ### Not decided yet
 

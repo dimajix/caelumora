@@ -50,3 +50,8 @@ in. If the workspace is granted to a role, and the session admits only holders o
 - **2026-10-10** — Opened at the maintainer's request while step 2 of issue 23 was planned:
   attaching offers an entry `MemberOf(session)` for now; comparing the rules is to spare lists of
   single sessions.
+- **2026-10-11** — With groups (issue [286](286-groups-as-subjects.md)) the entry attaching
+  offers is `Group(session)`, the group of the session's participants, which has the session's id.
+  That does not resolve this issue, as the plan of issue 304 assumed: every attachment still adds
+  an entry of its own. Comparing the rules stays to be done; a team that holds the session's
+  members is now one more subject that may already cover them.

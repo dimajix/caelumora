@@ -28,6 +28,7 @@
 mod artifact;
 mod channel;
 mod context;
+mod group;
 mod member;
 mod session;
 mod skill;
@@ -36,6 +37,7 @@ mod workspace;
 pub use artifact::ArtifactView;
 pub use channel::{ChannelView, MemberView};
 pub use context::{AgentContextView, ContextError};
+pub use group::GroupView;
 pub use session::{PrivateNotesElsewhere, SessionView};
 pub use skill::SkillView;
 pub use workspace::WorkspaceView;
@@ -51,11 +53,12 @@ use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::removal::Removal;
-use caelumora_model::security::{AccessQuestions, Place, SecurityContext, SecurityManager, Subject};
+use caelumora_model::security::{AccessQuestions, AclEntry, Place, SecurityContext, SecurityManager, Subject};
 use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::snapshot::{AgentSnapshot, DeletedSnapshot};
+use caelumora_model::snapshot::{AccessSnapshot, AgentSnapshot, DeletedSnapshot};
 use caelumora_model::workspace::WorkspaceId;
 use caelumora_model::skill::SkillId;
+use caelumora_model::group::{Group, GroupId};
 use caelumora_model::scope::{found_from, Scope, Scoped};
 use caelumora_model::value::name::Name;
 use crate::workspace::WorkspaceManager;
@@ -119,6 +122,8 @@ pub enum ViewError {
     NoSkillNamed(String),
     #[error("There is no artifact {0}")]
     ArtifactNotFound(ArtifactId),
+    #[error("There is no group {0}")]
+    GroupNotFound(GroupId),
     /// Asked for by name, as an agent's tools do: no such channel, or
     /// nothing in it that can be read from where the viewer reads.
     #[error("there is no channel named \"{0}\" that can be read from here")]
@@ -492,22 +497,87 @@ impl Views {
 
     /// The entries `acl` with whom each names called by name (issue 23),
     /// read in the runtime's name: shown to the owner of what they are of,
-    /// who may name a session or user they cannot read themselves.
-    pub(crate) async fn access_snapshots(&self, acl: &[caelumora_model::security::AclEntry]) -> Vec<caelumora_model::snapshot::AccessSnapshot> {
-        use caelumora_model::security::{Membership, Subject};
+    /// who may name a session or user they cannot read themselves. A group
+    /// is called by its name - the group of the participants of a session or
+    /// channel by the session's or channel's -, and says where it lies.
+    pub(crate) async fn access_snapshots(&self, acl: &[AclEntry]) -> Vec<AccessSnapshot> {
         let system = SecurityContext::system();
         let mut access = Vec::with_capacity(acl.len());
         for entry in acl {
-            let name = match entry.subject {
-                Subject::Actor(ActorId::User(user)) => self.entities.get_user(&system, user).await.optional().ok().flatten().map(|u| u.username.to_string()),
-                Subject::Actor(_) => None,
-                Subject::Role(role) => self.security.role_name(role),
-                Subject::MemberOf(Membership::Session(session)) => self.entities.get_session(&system, session).await.optional().ok().flatten().map(|s| s.name.to_string()),
-                Subject::MemberOf(Membership::Channel(channel)) => self.entities.get_channel(&system, channel).await.optional().ok().flatten().map(|c| c.name.to_string()),
+            let (name, scope) = match entry.subject {
+                Subject::Actor(ActorId::User(user)) => (self.entities.get_user(&system, user).await.optional().ok().flatten().map(|u| u.username.to_string()), None),
+                Subject::Actor(_) => (None, None),
+                Subject::Role(role) => (self.security.role_name(role), None),
+                Subject::Group(group) => match self.entities.get_group(&system, group).await.optional().ok().flatten() {
+                    Some(group) => (self.group_name(&group).await, Some(group.name.scope)),
+                    None => (None, None),
+                },
             };
-            access.push(caelumora_model::snapshot::AccessSnapshot { subject: entry.subject, grant: entry.grant, name });
+            access.push(AccessSnapshot { subject: entry.subject, grant: entry.grant, name, scope });
         }
         access
+    }
+
+    /// How `group` is called: a team by its name, the participants of a
+    /// session or a channel by the session's or channel's, read in the
+    /// runtime's name.
+    async fn group_name(&self, group: &Group) -> Option<String> {
+        let system = SecurityContext::system();
+        match group.name.scope {
+            Scope::SessionScope { session_id } => self.entities.get_session(&system, session_id).await.optional().ok().flatten().map(|s| s.name.to_string()),
+            Scope::ChannelScope { channel_id, .. } => self.entities.get_channel(&system, channel_id).await.optional().ok().flatten().map(|c| c.name.to_string()),
+            _ => Some(group.name.to_string()),
+        }
+    }
+
+    /// The teams the viewer may read (`GetGroup`, issue 286): those they own
+    /// and those they belong to. The participants of a session or channel
+    /// are reached through it, not listed here.
+    ///
+    /// # Errors
+    /// `Failed` if the store fails.
+    pub async fn groups(&self) -> ViewResult<Vec<GroupView>> {
+        let groups = self.entities.list_groups(self.viewer.context(), &Query::all()).await.map(|page| page.items)
+            .map_err(|e| ViewError::failed(e, "listing the groups"))?;
+        Ok(groups.into_iter().filter(|group| !group.is_participants()).map(|group| GroupView::of(self.clone(), group)).collect())
+    }
+
+    /// Group `id`, if the viewer may read it (`GetGroup`) - a team, or the
+    /// participants of a session or channel.
+    ///
+    /// # Errors
+    /// `GroupNotFound` if there is none they may read, alike.
+    pub async fn group(&self, id: GroupId) -> ViewResult<GroupView> {
+        match self.entities.get_group(self.viewer.context(), id).await.optional() {
+            Ok(Some(group)) => Ok(GroupView::of(self.clone(), group)),
+            Ok(None) => Err(ViewError::GroupNotFound(id)),
+            Err(e) => Err(ViewError::failed(e, "reading a group")),
+        }
+    }
+
+    /// The teams the viewer deleted and may read as such: the trash of
+    /// groups. The participants of a session or channel are deleted and
+    /// restored with it.
+    ///
+    /// # Errors
+    /// `Failed` if the store fails.
+    pub async fn deleted_groups(&self) -> ViewResult<Vec<DeletedSnapshot<GroupId>>> {
+        let groups = self.entities.list_deleted_groups(self.viewer.context(), &Query::all()).await.map(|page| page.items)
+            .map_err(|e| ViewError::failed(e, "listing the deleted groups"))?;
+        let policy = &self.security;
+        let mut deleted = Vec::with_capacity(groups.len());
+        for group in groups.into_iter().filter(|group| !group.is_participants()) {
+            let Some(removal) = group.deleted.clone() else { continue };
+            let attributes = &group.security_attributes;
+            deleted.push(DeletedSnapshot {
+                id: group.id,
+                name: group.name.to_string(),
+                deleted: removal,
+                can_restore: policy.may_restore(self.viewer.context(), EntityKind::Group, attributes).await,
+                can_purge: policy.may_purge(self.viewer.context(), EntityKind::Group, attributes).await,
+            });
+        }
+        Ok(deleted)
     }
 
     /// The artifacts the viewer deleted and may read as such (issue 271):
@@ -842,7 +912,8 @@ mod tests {
     use caelumora_model::confidentiality::{Classification, ConfidentialityRules, Visibility};
     use caelumora_model::scope::Scope;
     use caelumora_model::secret::SecretManager;
-    use caelumora_model::security::{Grant, Membership, SecurityAttributes, Subject};
+    use caelumora_model::security::{Grant, SecurityAttributes, Subject};
+    use crate::group::keep_participants;
     use caelumora_model::session::Session;
     use caelumora_model::store::EntityStore;
     use caelumora_model::store::memory::MemoryStore;
@@ -879,6 +950,20 @@ mod tests {
         participants
     }
 
+    /// Stores `session` as the runtime does, with the group of its
+    /// participants (issue 286).
+    async fn stored_session(store: &MemoryStore, session: &Session) {
+        store.create_session(&SecurityContext::system(), session).await.unwrap();
+        keep_participants(store, Group::of_session(session)).await.unwrap();
+    }
+
+    /// Stores `channel` as the runtime does, with the group of its
+    /// participants.
+    async fn stored_channel(store: &MemoryStore, channel: &Channel) {
+        store.create_channel(&SecurityContext::system(), channel).await.unwrap();
+        keep_participants(store, Group::of_channel(channel)).await.unwrap();
+    }
+
     /// A session of `owner`, read by its members as one the runtime builds
     /// (issue 23); its participants are the test's to set.
     fn make_session(name: &str, owner: ActorId) -> Session {
@@ -895,7 +980,7 @@ mod tests {
             channels: vec![ChannelId::new()],
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
-            security_attributes: SecurityAttributes::owned_by(owner).granting(Subject::MemberOf(Membership::Session(id)), Grant::Read),
+            security_attributes: SecurityAttributes::owned_by(owner).granting(Subject::Group(GroupId::of_session(id)), Grant::Read),
             deleted: None,
         }
     }
@@ -913,7 +998,7 @@ mod tests {
             language: None,
             history_limits: Vec::new(),
             participants: session.participants.clone(),
-            security_attributes: SecurityAttributes::owned_by(session.security_attributes.owner_id).granting(Subject::MemberOf(Membership::Channel(session.channels[0])), Grant::Read),
+            security_attributes: SecurityAttributes::owned_by(session.security_attributes.owner_id).granting(Subject::Group(GroupId::of_channel(session.channels[0])), Grant::Read),
             deleted: None,
             former: Vec::new(),
         }
@@ -923,7 +1008,7 @@ mod tests {
     /// read by its own members.
     fn like(template: &Channel, name: &str) -> Channel {
         let id = ChannelId::new();
-        let security_attributes = SecurityAttributes::owned_by(template.security_attributes.owner_id).granting(Subject::MemberOf(Membership::Channel(id)), Grant::Read);
+        let security_attributes = SecurityAttributes::owned_by(template.security_attributes.owner_id).granting(Subject::Group(GroupId::of_channel(id)), Grant::Read);
         Channel { id, name: Name::new(name).unwrap(), security_attributes, ..template.clone() }
     }
 
@@ -964,9 +1049,8 @@ mod tests {
         session.participants = record_users(&store, &[&alice]).await;
         session.participants.push(Participant::Agent(remote.id));
         let channel = main_channel(&session);
-        let system = SecurityContext::system();
-        store.create_session(&system, &session).await.unwrap();
-        store.create_channel(&system, &channel).await.unwrap();
+        stored_session(&store, &session).await;
+        stored_channel(&store, &channel).await;
 
         let said = |t: &str| Message { id: MessageId::new(), content: Some(t.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
         let (question, answer) = (said("question"), Message { turn_id: Some(caelumora_model::work::TurnId::new()), ..said("answer") });
@@ -1073,8 +1157,8 @@ mod tests {
         session.participants = record_users(&store, &[&alice]).await;
         let mut channel = main_channel(&session);
         channel.participants.extend([Participant::User(gone), Participant::Approver(approver)]);
-        store.create_session(&SecurityContext::system(), &session).await.unwrap();
-        store.create_channel(&SecurityContext::system(), &channel).await.unwrap();
+        stored_session(&store, &session).await;
+        stored_channel(&store, &channel).await;
 
         let view = manager.views(as_user(alice.id)).session(session.id).await.unwrap().channel(channel.id).await.unwrap().snapshot(Detail::MEMBERS).await;
         let [alice, gone, approver] = view.members.as_slice() else { panic!("three members, in order: {view:?}") };
@@ -1093,8 +1177,8 @@ mod tests {
         (session.summary, session.briefing) = (Some(Summary::new("Release 2.0").unwrap()), Some(Briefing::new("Dates are in UTC.").unwrap()));
         let mut channel = main_channel(&session);
         (channel.summary, channel.briefing) = (Some(Summary::new("Planning").unwrap()), Some(Briefing::new("Be brief.").unwrap()));
-        store.create_session(&SecurityContext::system(), &session).await.unwrap();
-        store.create_channel(&SecurityContext::system(), &channel).await.unwrap();
+        stored_session(&store, &session).await;
+        stored_channel(&store, &channel).await;
 
         let view = manager.views(as_user(alice.id)).session(session.id).await.unwrap();
         let listed = view.snapshot(Detail::CHANNELS).await;
@@ -1127,8 +1211,8 @@ mod tests {
         let mut channel = main_channel(&session);
         channel.participants.push(Participant::Approver(approver));
         store.create_user_profile(&system, &UserProfile::new(alice.id, Some(caelumora_model::value::text::Introduction::new("I run the project.").unwrap()))).await.unwrap();
-        store.create_session(&system, &session).await.unwrap();
-        store.create_channel(&system, &channel).await.unwrap();
+        stored_session(&store, &session).await;
+        stored_channel(&store, &channel).await;
 
         let for_bob = manager.views(as_user(bob.id)).session(session.id).await.unwrap().channel(channel.id).await.unwrap();
         let plain = for_bob.snapshot(Detail::MEMBERS).await;
@@ -1163,8 +1247,7 @@ mod tests {
         session.participants = record_users(&store, &[&alice, &bob]).await;
         session.participants.push(Participant::Agent(helper.id));
         let mut channel = main_channel(&session);
-        let system = SecurityContext::system();
-        store.create_session(&system, &session).await.unwrap();
+        stored_session(&store, &session).await;
 
         // What was said, of which bob - who joined later - sees the end only.
         let said = |t: &str| Message { content: Some(t.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
@@ -1172,7 +1255,7 @@ mod tests {
         channel.history_limits.push(HistoryLimit { participant: ActorId::User(bob.id), start: HistoryStart::After(first.id) });
         // And so does the agent, though alice, for whom it acts, sees it all.
         channel.history_limits.push(HistoryLimit { participant: ActorId::Agent(helper.id), start: HistoryStart::After(first.id) });
-        store.create_channel(&system, &channel).await.unwrap();
+        stored_channel(&store, &channel).await;
         let mut state = ChannelState::new(channel.id);
         state.history.extend(vec![first.clone(), second.clone()]);
         store.put_channel_state(channel.id, &mut state).await.unwrap();
@@ -1241,10 +1324,9 @@ mod tests {
             ..template.clone()
         };
         session.channels = vec![team.id, hers.id];
-        let system = SecurityContext::system();
-        store.create_session(&system, &session).await.unwrap();
+        stored_session(&store, &session).await;
         for channel in [&team, &hers] {
-            store.create_channel(&system, channel).await.unwrap();
+            stored_channel(&store, channel).await;
         }
         // Classified as team is: the flow rule alone would let team read it all.
         let mut state = ChannelState::new(hers.id);
@@ -1333,10 +1415,9 @@ mod tests {
             channel
         };
         let (zeta, quiet, alpha) = (channel_of("zeta"), channel_of("quiet"), channel_of("alpha"));
-        let system = SecurityContext::system();
-        store.create_session(&system, &session).await.unwrap();
+        stored_session(&store, &session).await;
         for channel in [&zeta, &quiet, &alpha] {
-            store.create_channel(&system, channel).await.unwrap();
+            stored_channel(&store, channel).await;
         }
         for (channel, text) in [(&zeta, "noted in zeta"), (&alpha, "noted in alpha")] {
             let mut state = caelumora_model::agent::AgentChannelState::default();
@@ -1370,8 +1451,8 @@ mod tests {
         session.participants.push(Participant::Agent(helper.id));
         let channel = main_channel(&session);
         let system = SecurityContext::system();
-        store.create_session(&system, &session).await.unwrap();
-        store.create_channel(&system, &channel).await.unwrap();
+        stored_session(&store, &session).await;
+        stored_channel(&store, &channel).await;
         // What it kept while it ran: the same state, whatever its kind was
         // (issue 206).
         let mut kept = caelumora_model::agent::AgentChannelState::default();
@@ -1405,8 +1486,8 @@ use caelumora_model::turn::TurnState;
         session.participants = record_users(&store, &[&alice]).await;
         session.participants.push(Participant::Agent(helper.id));
         let channel = main_channel(&session);
-        store.create_session(&SecurityContext::system(), &session).await.unwrap();
-        store.create_channel(&SecurityContext::system(), &channel).await.unwrap();
+        stored_session(&store, &session).await;
+        stored_channel(&store, &channel).await;
 
         // The agent's turn waits for one call, the other was approved.
         let call = |name: &str| ToolCall { id: Some(name.to_string()), function_name: name.to_string(), arguments: serde_json::json!({}), visibility: Default::default(), presentation: Default::default() };
@@ -1444,8 +1525,8 @@ use caelumora_model::turn::TurnState;
         session.participants = record_users(&store, &[&alice]).await;
         session.participants.push(Participant::Agent(helper.id));
         let channel = main_channel(&session);
-        store.create_session(&SecurityContext::system(), &session).await.unwrap();
-        store.create_channel(&SecurityContext::system(), &channel).await.unwrap();
+        stored_session(&store, &session).await;
+        stored_channel(&store, &channel).await;
         // What the agent's call used, what it noted, and a call its turn
         // waits to have approved.
         let answer = Message {
@@ -1502,7 +1583,6 @@ use caelumora_model::turn::TurnState;
         session.participants.push(Participant::Agent(helper.id));
         let template = main_channel(&session);
         session.channels.clear();
-        let system = SecurityContext::system();
         let classified = |level, compartments: &[&str]| Classification::new(level, compartments.iter().map(|c| Compartment::new(*c))).unwrap();
         let mut channel_of = |name: &str, classification: Classification| {
             let channel = Channel { classification, ..like(&template, name) };
@@ -1513,9 +1593,9 @@ use caelumora_model::turn::TurnState;
         let team = channel_of("team", classified(Confidentiality::Internal, &[]));
         let secret = channel_of("secret", classified(Confidentiality::Confidential, &[]));
         let hr = channel_of("hr", classified(Confidentiality::Internal, &["hr"]));
-        store.create_session(&system, &session).await.unwrap();
+        stored_session(&store, &session).await;
         for channel in [&public, &team, &secret, &hr] {
-            store.create_channel(&system, channel).await.unwrap();
+            stored_channel(&store, channel).await;
         }
 
         // Said and noted in secret: one of each released to everyone.
@@ -1582,9 +1662,8 @@ use caelumora_model::turn::TurnState;
         session.participants = record_users(&store, &[&alice]).await;
         // The agent took part, said something, and was removed.
         let channel = main_channel(&session);
-        let system = SecurityContext::system();
-        store.create_session(&system, &session).await.unwrap();
-        store.create_channel(&system, &channel).await.unwrap();
+        stored_session(&store, &session).await;
+        stored_channel(&store, &channel).await;
         let mut state = ChannelState::new(channel.id);
         state.history.extend(vec![Message { id: MessageId::new(), sender_id: ActorId::Agent(helper.id), content: Some("I was here".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) }]);
         store.put_channel_state(channel.id, &mut state).await.unwrap();
@@ -1609,7 +1688,7 @@ use caelumora_model::turn::TurnState;
         let mut deleted = channel.clone();
         deleted.id = ChannelId::new();
         deleted.name = Name::new("deleted").unwrap();
-        store.create_channel(&system, &deleted).await.unwrap();
+        stored_channel(&store, &deleted).await;
         store.delete_channel(&alice_ctx, deleted.id).await.unwrap();
         match views.channel_of(session.id, deleted.id).await.unwrap() {
             Reached::Gone(removal) => assert_eq!(removal.by, ActorId::User(alice.id)),
@@ -1629,10 +1708,9 @@ use caelumora_model::turn::TurnState;
         session.participants = record_users(&store, &[&alice, &bob]).await;
         let channel = main_channel(&session);
         let side = like(&channel, "side");
-        let system = SecurityContext::system();
-        store.create_session(&system, &session).await.unwrap();
-        store.create_channel(&system, &channel).await.unwrap();
-        store.create_channel(&system, &side).await.unwrap();
+        stored_session(&store, &session).await;
+        stored_channel(&store, &channel).await;
+        stored_channel(&store, &side).await;
         let alice_ctx = as_user(alice.id).context().clone();
         store.delete_channel(&alice_ctx, side.id).await.unwrap();
 
@@ -1670,9 +1748,8 @@ use caelumora_model::turn::TurnState;
             FormerParticipant { participant: Participant::User(bob.id), left: removed.clone() },
             FormerParticipant { participant: Participant::Agent(helper.id), left: removed.clone() },
         ];
-        let system = SecurityContext::system();
-        store.create_session(&system, &session).await.unwrap();
-        store.create_channel(&system, &channel).await.unwrap();
+        stored_session(&store, &session).await;
+        stored_channel(&store, &channel).await;
 
         let reached = manager.views(as_user(alice.id)).channel_of(session.id, channel.id).await.unwrap().there().expect("there");
         let former = reached.member(ActorId::Agent(helper.id)).await.expect("kept as having left");

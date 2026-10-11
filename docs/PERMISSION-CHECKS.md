@@ -3,7 +3,8 @@
 This document is the map of every place where the runtime asks the `SecurityManager` a permission
 question: which operation asks, in whose name, which `ActionType`, which of the four concepts of
 permission decides it, and where the same question is asked again on the way. It records what the
-code does, as of 2026-10-11 (issue [304](../issues/304-review-of-the-permission-concept.md)); the
+code does, as of 2026-10-11 (issue [304](../issues/304-review-of-the-permission-concept.md)),
+with groups in place of `MemberOf` since issue [286](../issues/286-groups-as-subjects.md); the
 rules themselves are in [SECURITY.md](SECURITY.md) and [CONFIDENTIALITY.md](CONFIDENTIALITY.md),
 and what each action is expected to ask is asserted by the security suite
 (`caelumora-runtime/tests/security_suite.rs`, issue 198). A new action, or a change to what one
@@ -19,9 +20,9 @@ places in the code:
 | 1 | **Ownership and access lists**: who may read, use, change or delete a stored thing | `SecurityAttributes` (`owner_id`, `acl`) and the context's principal; `OwnershipSecurityManager::granted` | `Get*`, `Create*`, `Update*`, `Delete*`, `Write*`, `Use*`, `ReadDeleted`, `Restore`, and the acts in a conversation (`CancelChannel`, `WakeChannel`, `RetryMessage`, `AnswerQuestion`) |
 | 2 | **Flow rules and clearances**: whether information may go where the action takes it, and who is cleared for it | `ConfidentialityRules`: `flows_to`, `may_publish`, `may_copy`, `may_classify`, `cleared` | `Publish`, `CopyInformation`, `Classify`, `Reclassify`, `JoinChannel` |
 | 3 | **Rules of particular actions**: what is neither ownership nor flow | a rule written into the policy for the variant: authorship (`ModifyMessage`), who answers for an agent (`ApproveToolCall`, `*AgentCommand`), the system alone (`Purge`); or nothing, the action being governed outside the policy | `ModifyMessage`, `RevokeMessage`, `ApproveToolCall`, `ShowAgentCommand`, `ExecuteAgentCommand`, `Purge`; `CallTool`, `ReadSecret`, `ShowCommand`, `ExecuteCommand` |
-| 4 | **Reachability**: whether a thing can be reached at all from where one stands | three mechanisms: `MemberOf` entries of an access list (matched against the principal and, for reading, the caller - a member reaches what their session or channel shares); the navigation of the views, with `channel_reading`; `SessionPrivacy::permits` inside `CopyInformation` | no action of its own: it is `GetSession`/`GetChannel` answered "not found", the `MemberOf` subject, and the privacy half of `CopyInformation` |
+| 4 | **Reachability**: whether a thing can be reached at all from where one stands | three mechanisms: `Group` entries of an access list naming the participants of a session or channel (matched against the principal and, for reading, the caller - a member reaches what their session or channel shares; until issue 286 `MemberOf`); the navigation of the views, with `channel_reading`; `SessionPrivacy::permits` inside `CopyInformation` | no action of its own: it is `GetSession`/`GetChannel` answered "not found", the `Group` subject, and the privacy half of `CopyInformation` |
 
-Concept 4 is the one without a home: it is partly ownership (the `MemberOf` subject makes
+Concept 4 is the one without a home: it is partly ownership (the `Group` subject makes
 membership an access-list fact), partly confidentiality (privacy is asked inside the flow
 question), and partly a convention of the views and of the operations that repeat what the views
 ask (`channel_reading`) before they act in a channel.
@@ -34,7 +35,7 @@ user themselves, an agent its owner -, "caller" the one acting - the agent itsel
 
 | Actions | Rule | Concept |
 |---|---|---|
-| `GetPersonality`, `GetSessionTemplate`, `GetAgent`, `GetSession`, `GetChannel`, `GetComponents`, `GetUser`, `GetUserProfile`, `GetWorkspace`, `GetArtifact`, `GetSkill`, `UseSkill` | system-owned, or owned by the principal or the caller, or an entry grants `Read` to the principal or the caller (`Actor`, `MemberOf`, `Role`) | 1, with 4 inside: the caller-as-member rule (issue 264) and `MemberOf` |
+| `GetPersonality`, `GetSessionTemplate`, `GetAgent`, `GetSession`, `GetChannel`, `GetComponents`, `GetUser`, `GetUserProfile`, `GetWorkspace`, `GetArtifact`, `GetSkill`, `GetGroup`, `UseSkill` | system-owned, or owned by the principal or the caller, or an entry grants `Read` to the principal or the caller (`Actor`, `Group`, `Role`) | 1, with 4 inside: the caller-as-member rule (issue 264) and the groups of participants |
 | `WriteWorkspace`, `WriteArtifact` | as reading, with `Write` | 1 (+4) |
 | `CancelChannel`, `WakeChannel`, `RetryMessage`, `AnswerQuestion` | the principal reads the channel | 1: reading grants acting in the conversation |
 | `ReadAgentTools` | the principal reads the agent or the channel | 1, two objects |
@@ -167,7 +168,8 @@ channel, classified as its work is now - in the turn's context (concept 2 + 4), 
 | A user works in it directly (`WorkspaceManager::reached` ← `terminal`) | `GetWorkspace` (U, 1+4); `WriteWorkspace` for a change (U, 1); `JoinChannel` (U, 2) | - | `NotFound`; `ReadOnly` and `NotCleared`, which say the workspace exists |
 | In a channel (`usable_in_channel` ← `terminal_in`, `shell_in`, the tools, the prompt) | the caller takes part (no policy); `GetSession` (1+4); `channel_reading` (1+4, then 2 for a user; for an agent the copy into the same channel, answered yes); `GetWorkspace` as a filter (1+4); `Publish` of the workspace into the channel and of the channel into the workspace (2); `WriteWorkspace` for a change (1) | `may_run` asks the whole chain in every member's name for a running command | `NotUsableInChannel`, `ReadOnly` |
 | Create, reclassify (`require_classification`) | `Classify` (U, 2); `Publish` into the storage's destination (U, 2); `JoinChannel` with the principal's roles (U, 2); `CreateWorkspace`/`UpdateWorkspace` by the store (1) | - | `ClassificationRefused`, `StorageNotCleared`, `NotCleared` |
-| Share, rename, delete, restore, purge | the store's questions (1); `Purge` by the manager then by the store | `Purge` twice | - |
+| Share (`set_access`) | `GetWorkspace` (U, 1); `UpdateWorkspace` (U, 1); `GetGroup` of every group the list names newly (U, 1); `GetWorkspace` + `UpdateWorkspace` by the store | `UpdateWorkspace` again by the store | `NotFound`, `PermissionDenied`, `Validation` for a group the user cannot read |
+| Rename, delete, restore, purge | the store's questions (1); `Purge` by the manager then by the store | `Purge` twice | - |
 
 ### Artifacts
 
@@ -177,7 +179,18 @@ channel, classified as its work is now - in the turn's context (concept 2 + 4), 
 | Where a version was published (`ArtifactView::publication`) | reaching that channel as the views do (`GetSession`, `channel_reading`) | - | not named |
 | Publish (`ArtifactManager::publish` ← the artifact tool) | the workspace chain above for reading; `WriteArtifact` of an existing one or `CreateArtifact` (T, 1); `Publish` into the storage's destination (T, 2) | `CreateArtifact` again by the store; the existing one updated in S | `PermissionDenied`, `StorageNotCleared` |
 | Keep, describe | `GetArtifact`, `UpdateArtifact` (U, 1) | `UpdateArtifact` again by the store | `NotFound`, `PermissionDenied` |
-| Share, delete, restore, purge | the store's questions; `Purge` by the manager then by the store | `Purge` twice | - |
+| Share (`set_access`) | `GetArtifact`, `UpdateArtifact` (U, 1); `GetGroup` of every group the list names newly (U, 1); `GetArtifact` + `UpdateArtifact` by the store | `UpdateArtifact` again by the store | `NotFound`, `PermissionDenied`, `Validation` |
+| Delete, restore, purge | the store's questions; `Purge` by the manager then by the store | `Purge` twice | - |
+
+### Groups
+
+| Operation | Questions in order (whose name, concept) | Again | Refusal |
+|---|---|---|---|
+| A user lists or reaches groups (`Views::groups`, `group`) | `ListGroups` + `GetGroup` per item by the store (V, 1); the groups of participants are not listed | - | left out; `GroupNotFound` |
+| Make a team (`GroupManager::create`) | `CreateGroup` by the store (U, 1) | - | `PermissionDenied`, `NameTaken` |
+| Rename, set members, delete (`rename`, `set_members`, `delete`) | `GetGroup` (U, 1); `GetGroup` + `UpdateGroup`/`DeleteGroup` by the store (U, 1). The groups of participants are refused before the store is asked | `GetGroup` again by the store | `NotFound`, `PermissionDenied`, `Participants` |
+| Restore, purge | `ReadDeleted` (U, 1); `ReadDeleted` + `Restore`/`Purge` by the store - no `Purge` asked before by the manager | - | `NotFound`, `PermissionDenied` |
+| The participants of a session or channel change | nothing: written in the runtime's name after the change of the participants, which was permitted (`UpdateChannel`, `CreateChannel`, `CreateSession`) | - | - |
 
 ### Views, snapshots and events
 

@@ -1,6 +1,6 @@
 # 286 — A workspace or artifact cannot be shared with a team, only with people one by one
 
-**Status:** open
+**Status:** done
 **Area:** Identity and access management
 
 ## The problem
@@ -60,3 +60,37 @@ provider.
   `Subject::MemberOf`, and every session and channel keeps an internal group of its participants,
   written by its controller, in its session's scope, readable but not changeable through the group
   API. The conditions are recorded there.
+- **2026-10-11** — Done, on the branch `issue-286-groups`, as step 1 of issue 304:
+  - `caelumora_model::group::Group` with `GroupId`, its kind of store operations
+    (`EntityKind::Group`, `create_group` ... `find_group_by_name`, both stores, the store suite),
+    `ActionType::{Get, List, Create, Update, Delete}Group` decided by ownership, the events
+    `Group{Created, Updated, Deleted, Restored}`. A team holds users, lies in the global scope or
+    its owner's, and is read by its members through an entry of its own list naming it.
+  - `Subject::Group` replaces `Subject::MemberOf`; `Membership` is gone. `Memberships::members_of`
+    reads the one group named, also a deleted one.
+  - The participants of every session and channel are a group of their own, with the session's or
+    channel's id - a shared key instead of a field `group_id`, so that a workspace made for a
+    session and an artifact published in a channel name it without a lookup. The session, its
+    channels and what changes their participants write it in the runtime's name, *after* the
+    change - not before, as issue 304 planned: the change is the act that is permitted, and a
+    group written first would grant a participant who was then refused. It is derived anew each
+    time, so that a failed write is corrected by the next.
+  - `GroupManager` (create, rename, set the members, delete, restore, purge) for teams, refusing
+    the groups of participants (`GroupError::Participants`); `Views::groups`, `group`,
+    `deleted_groups`, `GroupView`; REST `/groups` and `/groups/{id}/members`; the access lists of
+    the REST API keep `session` and `channel` for the groups of participants and gain `group`.
+  - Decided on the way: who names a group in an access list must read it (`require_nameable`, in
+    both `set_access`), asked after their own permission to change the list. Nesting stays out.
+    `Scope::GroupScope` carries a `GroupId`; whether a team is a scope stays open.
+  - The security suite: G1 (a member, a former member, a stranger), G2 (naming a group one cannot
+    read), G3 (the group of a channel's participants follows them). `set_access` of workspaces and
+    artifacts now asks `UpdateWorkspace` / `UpdateArtifact` before the store does.
+  - Found on the way: an access list of a workspace or artifact that the store refused as invalid
+    was answered `500`; it is `400 validation_failed` now.
+  - Stored data to delete: every session, channel, workspace and artifact - their lists name
+    `member_of`, and sessions and channels have no group of their participants.
+  - The web UI: a "Teams" list in the sidebar with its trash, `NewGroupDialog`, `GroupPage`, and
+    teams offered in `AccessList`. The REST API lists no users, so a member is chosen from the
+    participants of one of the user's sessions - only someone they share a session with.
+  - Of "Done when": a skill has no access list a user writes (no `set_access`), so naming a team
+    in one is not possible yet; the policy would grant it as for a workspace.

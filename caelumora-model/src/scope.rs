@@ -11,13 +11,13 @@
 //! reads.
 
 use crate::actor::ActorId;
+use crate::group::GroupId;
 use crate::security::SecurityAttributes;
 use crate::session::{ChannelId, SessionId};
 use crate::user::UserId;
 use crate::value::name::{Name, ScopedName};
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
-use uuid::Uuid;
 use crate::store::query::{Field, FieldValue, Filter};
 
 /// Where a personality, a session template or an agent lies: the name
@@ -33,7 +33,7 @@ pub enum Scope {
     UserScope { user_id: UserId },
     /// Not yet a place anything is looked up from (issue 23): what lies in
     /// it is found from nowhere.
-    GroupScope { group_id: Uuid },
+    GroupScope { group_id: GroupId },
     #[default]
     GlobalScope
 }
@@ -234,12 +234,13 @@ pub fn found_from<'a, D: Scoped>(scoped: impl IntoIterator<Item = &'a D>, place:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
 
     #[test]
     fn test_global_scope_contains_all() {
         let global = Scope::GlobalScope;
         assert!(global.contains(&Scope::GlobalScope));
-        assert!(global.contains(&Scope::GroupScope { group_id: Uuid::new_v4() }));
+        assert!(global.contains(&Scope::GroupScope { group_id: GroupId::new() }));
         assert!(global.contains(&Scope::UserScope { user_id: UserId::new() }));
         assert!(global.contains(&Scope::SessionScope { session_id: SessionId::new() }));
         assert!(global.contains(&Scope::ChannelScope { session_id: SessionId::new(), channel_id: ChannelId::new() }));
@@ -247,8 +248,8 @@ mod tests {
 
     #[test]
     fn test_group_scope_contains() {
-        let id1 = Uuid::new_v4();
-        let id2 = Uuid::new_v4();
+        let id1 = GroupId::new();
+        let id2 = GroupId::new();
         let group1 = Scope::GroupScope { group_id: id1 };
         
         assert!(group1.contains(&Scope::GroupScope { group_id: id1 }));
@@ -345,11 +346,11 @@ mod tests {
         let items = [
             item("helper", Scope::SessionScope { session_id: SessionId::new() }, "another session's"),
             item("helper", Scope::ChannelScope { session_id: SessionId::new(), channel_id: ChannelId::new() }, "another channel's"),
-            item("helper", Scope::GroupScope { group_id: Uuid::new_v4() }, "a group's"),
+            item("helper", Scope::GroupScope { group_id: GroupId::new() }, "a group's"),
         ];
         assert_eq!(found(&items, "helper", &session, Some(UserId::new())), None);
 
-        let group = Scope::GroupScope { group_id: Uuid::new_v4() };
+        let group = Scope::GroupScope { group_id: GroupId::new() };
         let in_group = [item("helper", group.clone(), "the group's")];
         assert_eq!(found(&in_group, "helper", &group, None), None, "a group is no place yet (issue 23)");
     }
@@ -367,7 +368,7 @@ mod tests {
         assert!(channel.admits(&channel), "a channel's in it");
         assert!(!channel.admits(&Scope::ChannelScope { session_id, channel_id: other_channel }), "not in another channel of its session");
         assert!(!channel.admits(&session), "nor in its session at large");
-        for anywhere in [Scope::UserScope { user_id: UserId::new() }, Scope::GroupScope { group_id: Uuid::new_v4() }, Scope::GlobalScope] {
+        for anywhere in [Scope::UserScope { user_id: UserId::new() }, Scope::GroupScope { group_id: GroupId::new() }, Scope::GlobalScope] {
             assert!(anywhere.admits(&elsewhere), "{anywhere:?} only says where its name is found");
         }
     }
@@ -407,7 +408,7 @@ mod tests {
             Scope::GlobalScope, Scope::UserScope { user_id: alice }, Scope::UserScope { user_id: bob },
             Scope::SessionScope { session_id: s1 }, Scope::SessionScope { session_id: s2 },
             Scope::ChannelScope { session_id: s1, channel_id: c1 }, Scope::ChannelScope { session_id: s1, channel_id: c2 },
-            Scope::ChannelScope { session_id: s2, channel_id: ChannelId(Uuid::new_v4()) }, Scope::GroupScope { group_id: Uuid::new_v4() },
+            Scope::ChannelScope { session_id: s2, channel_id: ChannelId(Uuid::new_v4()) }, Scope::GroupScope { group_id: GroupId::new() },
         ];
         let document = |scope: &Scope| serde_json::json!({ "scope": scope });
         for holder in &scopes {
@@ -434,7 +435,7 @@ mod tests {
     fn a_scope_meets_exactly_the_scopes_equal_to_it() {
         let id = Uuid::new_v4();
         crate::store::query::meets_exactly_its_equals(&[
-            Scope::GlobalScope, Scope::UserScope { user_id: UserId(id) }, Scope::GroupScope { group_id: id },
+            Scope::GlobalScope, Scope::UserScope { user_id: UserId(id) }, Scope::GroupScope { group_id: GroupId(id) },
             Scope::SessionScope { session_id: SessionId(id) }, Scope::SessionScope { session_id: SessionId::new() },
             Scope::ChannelScope { session_id: SessionId(id), channel_id: ChannelId(id) },
             Scope::ChannelScope { session_id: SessionId(id), channel_id: ChannelId::new() },

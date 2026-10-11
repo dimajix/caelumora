@@ -1,17 +1,17 @@
-//! What the policy learns of actors from the store (issue 23): whether
-//! someone is a participant of a session or channel an access list names,
-//! and which roles count for them.
+//! What the policy learns of actors from the store (issues 23, 286): who
+//! belongs to a group an access list names, and which roles count for
+//! someone.
 
 use crate::actor::ActorId;
-use crate::channel::Participant;
+use crate::group::GroupId;
 use crate::role::{user_roles, RoleId};
-use crate::security::{Membership, Memberships, SecurityContext};
+use crate::security::{Memberships, SecurityContext};
 use crate::store::{EntityStore, StoreResult, StoreResultExt};
 use async_trait::async_trait;
 use std::sync::{Arc, OnceLock, Weak};
 
 /// `Memberships` read from the entity store in the system's name, each time
-/// - the one session, channel, agent or user asked about, never a scan.
+/// - the one group, agent or user asked about, never a scan.
 ///
 /// The policy is made before the store, which takes it, so the store is
 /// bound afterwards (`bind`) and held weakly: the store holds the policy,
@@ -44,19 +44,14 @@ impl StoreMemberships {
         store
     }
 
-    /// The participants of `place` - also of one that was deleted: who took
-    /// part does not change with it, and they are told of the deletion.
-    async fn participants(store: &dyn EntityStore, place: Membership) -> StoreResult<Vec<Participant>> {
+    /// The members of `group` - also of one that was deleted: who belonged
+    /// to it does not change with that, and the participants of a deleted
+    /// session or channel are told of the deletion.
+    async fn members(store: &dyn EntityStore, group: GroupId) -> StoreResult<Vec<ActorId>> {
         let system = SecurityContext::system();
-        Ok(match place {
-            Membership::Session(id) => match store.get_session(&system, id).await.optional()? {
-                Some(session) => session.participants,
-                None => store.get_deleted_session(&system, id).await.optional()?.map(|s| s.participants).unwrap_or_default(),
-            },
-            Membership::Channel(id) => match store.get_channel(&system, id).await.optional()? {
-                Some(channel) => channel.participants,
-                None => store.get_deleted_channel(&system, id).await.optional()?.map(|c| c.participants).unwrap_or_default(),
-            },
+        Ok(match store.get_group(&system, group).await.optional()? {
+            Some(group) => group.members,
+            None => store.get_deleted_group(&system, group).await.optional()?.map(|g| g.members).unwrap_or_default(),
         })
     }
 
@@ -77,15 +72,12 @@ impl StoreMemberships {
 
 #[async_trait]
 impl Memberships for StoreMemberships {
-    async fn is_member_of(&self, actor: ActorId, place: Membership) -> bool {
-        let Some(store) = self.store() else { return false };
-        match Self::participants(store.as_ref(), place).await {
-            Ok(participants) => participants.iter().any(|p| matches!(p, Participant::User(_) | Participant::Agent(_)) && p.actor_id() == actor),
-            Err(e) => {
-                tracing::warn!("Cannot read who takes part in {place:?}; nobody counts as a member: {e}");
-                false
-            }
-        }
+    async fn members_of(&self, group: GroupId) -> Vec<ActorId> {
+        let Some(store) = self.store() else { return Vec::new() };
+        Self::members(store.as_ref(), group).await.unwrap_or_else(|e| {
+            tracing::warn!("Cannot read who belongs to group {group}; nobody counts as a member: {e}");
+            Vec::new()
+        })
     }
 
     async fn roles_of(&self, actor: ActorId) -> Vec<RoleId> {
@@ -105,29 +97,26 @@ impl Memberships for StoreMemberships {
 mod tests {
     use super::*;
     use crate::agent::{Agent, Personality, PersonalityId, PersonalityKind};
-    use crate::channel::Channel;
-    use crate::confidentiality::Classification;
+    use crate::group::Group;
     use crate::security::SecurityAttributes;
     use crate::store::memory::MemoryStore;
     use crate::user::{User, UserId};
     use crate::value::name::{Name, ScopedName};
 
     #[tokio::test]
-    async fn a_member_is_who_takes_part_now_also_in_what_was_deleted() {
+    async fn the_members_of_a_group_are_read_also_of_one_that_was_deleted() {
         let memberships = StoreMemberships::new();
-        let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
-        assert!(!memberships.is_member_of(alice, Membership::Channel(Default::default())).await, "nobody before a store is bound");
+        let alice = UserId::new();
+        let bob = ActorId::User(UserId::new());
+        let team = Group { members: vec![bob], ..Group::team(ScopedName::new("project", Default::default()).unwrap(), alice) };
+        assert!(memberships.members_of(team.id).await.is_empty(), "nobody before a store is bound");
         let store: Arc<dyn EntityStore> = Arc::new(MemoryStore::new());
         memberships.bind(&store);
-        let channel = Channel::build(Default::default(), alice, Name::new("talk").unwrap(), Default::default(), Classification::CHANNEL_DEFAULT, None, vec![Participant::User(match bob { ActorId::User(id) => id, _ => unreachable!() })]);
-        store.create_channel(&SecurityContext::system(), &channel).await.unwrap();
-        let place = Membership::Channel(channel.id);
-        assert!(memberships.is_member_of(bob, place).await, "a participant");
-        assert!(!memberships.is_member_of(alice, place).await, "not its owner, who is none");
-        let approver = channel.participants.iter().find(|p| matches!(p, Participant::Approver(_))).map(Participant::actor_id).unwrap();
-        assert!(!memberships.is_member_of(approver, place).await, "nor its approver");
-        store.delete_channel(&SecurityContext::system(), channel.id).await.unwrap();
-        assert!(memberships.is_member_of(bob, place).await, "who took part in what was deleted still did");
+        store.create_group(&SecurityContext::system(), &team).await.unwrap();
+        assert_eq!(memberships.members_of(team.id).await, [bob]);
+        assert!(memberships.members_of(GroupId::new()).await.is_empty(), "nobody of a group that does not exist");
+        store.delete_group(&SecurityContext::system(), team.id).await.unwrap();
+        assert_eq!(memberships.members_of(team.id).await, [bob], "who belonged to what was deleted still did");
     }
 
     #[tokio::test]

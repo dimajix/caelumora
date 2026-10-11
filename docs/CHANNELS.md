@@ -107,8 +107,11 @@ A **channel** is one conversation within a session, such as a chat room. Its `Ch
 
 Every channel is built by `Channel::build`, either from a template (`ChannelTemplate::instantiate`)
 or on request. It adds an approver if the channel has none - a template may name its own, with its
-strategy - and lets its members read it: an entry `MemberOf` the channel itself in its access list,
-matched against whoever takes part in it at the time (issue 23).
+strategy - and lets its members read it: an entry in its access list naming the group of its
+participants (issue [286](../issues/286-groups-as-subjects.md)), which has the channel's id and
+follows whoever takes part in it at the time (issue 23). Whoever stores a channel stores that group
+with it (`Group::of_channel`), and the `ChannelController` keeps it as someone joins or leaves (see
+[SECURITY.md](SECURITY.md#groups)).
 
 The participants of a requested channel come from the session's participants, the creator always
 among them. Its moderator defaults to the `policy_moderator` with the `round_robin_policy` and its
@@ -187,9 +190,10 @@ takes it away. Announced as `WorkspaceChanged` of `SessionUpdateEvent`.
 **Attaching shares nothing by itself** (issue [23](../issues/23-acls-in-security-attributes.md)):
 who may use a workspace is its access list's to say (see
 [SECURITY.md](SECURITY.md#access-lists)). One made for a session lets the session's members read
-and write it (`MemberOf` the session, `Write`); one of its owner's grants nobody anything until they
-share it - when attaching it, chosen there (`share`, `read` or `write`: an entry `MemberOf` the
-session added, or one that grants less widened), or by its list afterwards
+and write it (the group of the session's participants, `Write`); one of its owner's grants nobody
+anything until they share it - when attaching it, chosen there (`share`, `read` or `write`: an
+entry naming the group of the session's participants added, or one that grants less widened), or
+by its list afterwards
 (`WorkspaceManager::set_access`). Taking it away leaves the list as it is: it is the workspace's.
 
 A person reaches the workspace's files by the workspace, wherever they act - never through a

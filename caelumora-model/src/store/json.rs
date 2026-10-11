@@ -5,13 +5,14 @@ use crate::removal::{Deletable, Removal, Stored};
 use crate::scope::Scoped;
 use crate::security::SecurityManager;
 use crate::value::name::ScopedName;
-use crate::store::access::{name_free, Access, Actions, AGENTS, ARTIFACTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, SKILLS, USERS, USER_PROFILES, WORKSPACES};
+use crate::store::access::{name_free, Access, Actions, AGENTS, ARTIFACTS, CHANNELS, COMPONENTS, GROUPS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, SKILLS, USERS, USER_PROFILES, WORKSPACES};
 use crate::session::{Session, SessionId};
 use crate::store::{ComponentStore, EntityKind, EntityStore, Journaled, StateStore, StoreError, StoreResult};
 use crate::template::{SessionTemplate, SessionTemplateId};
 use crate::user::{User, UserId, UserProfile};
 use crate::workspace::{Workspace, WorkspaceId};
 use crate::skill::{Skill, SkillId};
+use crate::group::{Group, GroupId};
 use crate::artifact::{Artifact, ArtifactId};
 use async_trait::async_trait;
 use tracing::{debug, info, warn};
@@ -63,7 +64,7 @@ impl JsonFileStore {
             root,
             security_manager,
             journal_floor: DEFAULT_JOURNAL_FLOOR,
-            name_locks: [EntityKind::Personality, EntityKind::SessionTemplate, EntityKind::Agent, EntityKind::Channel, EntityKind::User, EntityKind::Workspace, EntityKind::Skill, EntityKind::Artifact]
+            name_locks: [EntityKind::Personality, EntityKind::SessionTemplate, EntityKind::Agent, EntityKind::Channel, EntityKind::User, EntityKind::Workspace, EntityKind::Skill, EntityKind::Artifact, EntityKind::Group]
                 .into_iter().map(|kind| (kind, Mutex::new(()))).collect(),
         };
         store.ensure_layout()?;
@@ -93,6 +94,7 @@ impl JsonFileStore {
             self.workspaces_dir(),
             self.skills_dir(),
             self.artifacts_dir(),
+            self.groups_dir(),
             self.agent_states_dir(),
             self.agent_channel_states_dir(),
             self.channel_states_dir(),
@@ -135,6 +137,10 @@ impl JsonFileStore {
 
     fn artifacts_dir(&self) -> PathBuf {
         self.root.join("runtime").join("artifacts")
+    }
+
+    fn groups_dir(&self) -> PathBuf {
+        self.root.join("runtime").join("groups")
     }
 
     fn sessions_dir(&self) -> PathBuf {
@@ -200,6 +206,10 @@ impl JsonFileStore {
 
     fn artifact_path(&self, id: ArtifactId) -> PathBuf {
         self.artifacts_dir().join(format!("{id}.json"))
+    }
+
+    fn group_path(&self, id: GroupId) -> PathBuf {
+        self.groups_dir().join(format!("{id}.json"))
     }
 
     fn agent_channel_state_path(&self, agent_id: AgentId, channel_id: ChannelId) -> PathBuf {
@@ -897,6 +907,38 @@ impl EntityStore for JsonFileStore {
     }
     async fn find_artifact_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Artifact> {
         self.find_dir(ctx, &ARTIFACTS, self.artifacts_dir(), name).await
+    }
+
+    // Groups (issue 286)
+    async fn create_group(&self, ctx: &SecurityContext, value: &Group) -> StoreResult<()> {
+        self.create_named_file(ctx, &GROUPS, self.group_path(value.id), value.id.to_string(), value).await
+    }
+    async fn get_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group> {
+        self.get_file(ctx, &GROUPS, self.group_path(id), id.to_string()).await
+    }
+    async fn update_group(&self, ctx: &SecurityContext, value: &Group) -> StoreResult<()> {
+        self.update_named_file(ctx, &GROUPS, self.group_path(value.id), value.id.to_string(), value).await
+    }
+    async fn delete_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<bool> {
+        self.delete_file::<Group>(ctx, &GROUPS, self.group_path(id)).await
+    }
+    async fn list_groups(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Group>> {
+        self.list_dir(ctx, &GROUPS, self.groups_dir(), query).await
+    }
+    async fn restore_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<()> {
+        self.restore_named_file::<Group>(ctx, &GROUPS, self.group_path(id), id.to_string()).await
+    }
+    async fn purge_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<bool> {
+        self.purge_file::<Group>(ctx, &GROUPS, self.group_path(id)).await
+    }
+    async fn get_deleted_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group> {
+        self.get_deleted_file(ctx, &GROUPS, self.group_path(id), id.to_string()).await
+    }
+    async fn list_deleted_groups(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Group>> {
+        self.list_deleted_dir(ctx, &GROUPS, self.groups_dir(), query).await
+    }
+    async fn find_group_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Group> {
+        self.find_dir(ctx, &GROUPS, self.groups_dir(), name).await
     }
 }
 

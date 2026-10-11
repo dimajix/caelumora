@@ -557,3 +557,9 @@ where they test the door.
   plan of its own for admission at submission (a sender that admits, wrapped around the actor's
   transport), the reach function and the events; documents, tests, the stored data to delete;
   five branches in order; seven open decisions.
+- **2026-10-11** — Step 1 done with issue [286](286-groups-as-subjects.md), branch
+  `issue-286-groups`. Three deviations from the plan above, recorded there: the group of a
+  session's or channel's participants has its id instead of a field `group_id`; it is written after
+  the change of the participants, not before; and issue 289 is not resolved by it - attaching still
+  writes an entry of its own, now naming the session's group. Issue 287 shrinks to reading groups
+  and stays open.

@@ -25,6 +25,7 @@ mod sessions;
 mod templates;
 mod workspaces;
 mod skills;
+mod groups;
 
 pub async fn ensure_session(
     state: &Arc<AppState>,
@@ -142,6 +143,11 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/skills/{id}/classification", axum::routing::put(skills::reclassify_skill))
         .route("/skills/{id}/restore", post(skills::restore_skill))
         .route("/skills/{id}/purge", post(skills::purge_skill))
+        .route("/groups", get(groups::list_groups).post(groups::create_group))
+        .route("/groups/{id}", get(groups::get_group).patch(groups::rename_group).delete(groups::delete_group))
+        .route("/groups/{id}/members", axum::routing::put(groups::set_members))
+        .route("/groups/{id}/restore", post(groups::restore_group))
+        .route("/groups/{id}/purge", post(groups::purge_group))
         .route("/workspaces", get(workspaces::list_workspaces).post(workspaces::create_workspace))
         .route("/workspaces/storages", get(workspaces::list_storages))
         .route("/workspaces/{id}", get(workspaces::get_workspace).patch(workspaces::rename_workspace).delete(workspaces::delete_workspace))

@@ -21,6 +21,8 @@ use crate::actor::{ActorId, ActorState};
 use crate::agent::PersonalityKind;
 use crate::approval::{ApprovalRequest, ApprovalRule};
 use crate::confidentiality::Classification;
+use crate::group::GroupId;
+use crate::scope::Scope;
 use crate::value::language::Language;
 use crate::value::text::{Briefing, Summary};
 use crate::digest::Digest;
@@ -265,13 +267,32 @@ pub struct SkillSnapshot {
     pub id: crate::skill::SkillId,
     pub name: String,
     /// Where it lies: the global scope, its owner's or a session's.
-    pub scope: crate::scope::Scope,
+    pub scope: Scope,
     pub description: crate::value::text::Description,
     pub classification: Classification,
     /// Whose it is.
     pub owner: ActorId,
     /// Whether the viewer may change it - rename, describe, rewrite,
     /// reclassify - and delete it (`UpdateSkill`).
+    pub can_change: bool,
+}
+
+/// A group as the viewer sees it (issue 286): a team they own or belong
+/// to, or the participants of a session or channel they read.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GroupSnapshot {
+    pub id: GroupId,
+    pub name: String,
+    /// Where it lies: a team in the global scope or its owner's, the
+    /// participants of a session or channel in its scope.
+    pub scope: Scope,
+    /// Whose it is.
+    pub owner: ActorId,
+    /// Who belongs to it, each with their name where it is known.
+    pub members: Vec<(ActorId, Option<String>)>,
+    /// Whether the viewer may rename it, change its members and delete it
+    /// (`UpdateGroup`): the owner of a team. The participants of a session
+    /// or channel are changed by taking part, never here.
     pub can_change: bool,
 }
 
@@ -283,7 +304,7 @@ pub struct WorkspaceSnapshot {
     pub name: String,
     /// Where it lies (issue 251): a session's scope, its owner's or the
     /// global one.
-    pub scope: crate::scope::Scope,
+    pub scope: Scope,
     /// The storage its files lie in, by its configured name.
     pub storage: String,
     pub description: Option<crate::value::text::Description>,
@@ -309,6 +330,9 @@ pub struct AccessSnapshot {
     pub subject: crate::security::Subject,
     pub grant: crate::security::Grant,
     pub name: Option<String>,
+    /// For a group, where it lies (issue 286): the scope of the session or
+    /// channel whose participants it is, or a team's.
+    pub scope: Option<Scope>,
 }
 
 /// An artifact as the viewer sees it (issue 271): its owner, among their

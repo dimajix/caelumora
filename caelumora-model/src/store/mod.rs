@@ -21,6 +21,7 @@ use crate::user::{User, UserId, UserProfile};
 use crate::value::name::ScopedName;
 use crate::workspace::{Workspace, WorkspaceId};
 use crate::skill::{Skill, SkillId};
+use crate::group::{Group, GroupId};
 use crate::artifact::{Artifact, ArtifactField, ArtifactId};
 use crate::channel::ChannelField;
 use crate::scope::ScopeField;
@@ -111,6 +112,7 @@ pub enum EntityKind {
     Workspace,
     Skill,
     Artifact,
+    Group,
     Components,
 }
 
@@ -128,6 +130,7 @@ impl EntityKind {
             EntityKind::Workspace => "workspace",
             EntityKind::Skill => "skill",
             EntityKind::Artifact => "artifact",
+            EntityKind::Group => "group",
             EntityKind::Components => "components",
         }
     }
@@ -152,7 +155,7 @@ impl std::fmt::Display for EntityKind {
 /// over `list_x`.
 ///
 /// What is `Scoped` - personalities, session templates, agents, channels,
-/// users, workspaces, skills - has a name unique of its kind in its scope (issue
+/// users, workspaces, skills, artifacts, groups - has a name unique of its kind in its scope (issue
 /// 250): `create`,
 /// `update` and `restore` refuse one that another has there (`NameTaken`),
 /// checked against every one of the kind that is not deleted, also those
@@ -293,6 +296,19 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn get_deleted_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<Artifact>;
     async fn list_deleted_artifacts(&self, ctx: &SecurityContext, query: &Query<ArtifactField>) -> StoreResult<Page<Artifact>>;
     async fn find_artifact_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Artifact>;
+
+    // Groups (issue 286) - teams, and the participants of sessions and
+    // channels, kept by those.
+    async fn create_group(&self, ctx: &SecurityContext, value: &Group) -> StoreResult<()>;
+    async fn get_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group>;
+    async fn update_group(&self, ctx: &SecurityContext, value: &Group) -> StoreResult<()>;
+    async fn delete_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<bool>;
+    async fn list_groups(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Group>>;
+    async fn restore_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<()>;
+    async fn purge_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<bool>;
+    async fn get_deleted_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group>;
+    async fn list_deleted_groups(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Group>>;
+    async fn find_group_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Group>;
 }
 
 /// The preconfigured components: runtime configuration that personalities

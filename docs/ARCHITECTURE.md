@@ -10,10 +10,10 @@ that holds the details; the list at the end names them all.
 The project is a Rust workspace, with a web UI next to it:
 
 *   **`caelumora-model`** - the domain: entities (`Session`, `Channel`, `Agent`, `Personality`,
-    `User`, `SessionTemplate`, `Workspace`, `Skill`), the values with rules their fields hold
-    (`value`: `Name`, `Language`, free text such as `Summary`), messages and events, the traits of
-    the stores, the security and confidentiality model, and the configuration (`AppConfig`). It
-    holds data and rules, but runs nothing.
+    `User`, `SessionTemplate`, `Workspace`, `Skill`, `Artifact`, `Group`), the values with rules
+    their fields hold (`value`: `Name`, `Language`, free text such as `Summary`), messages and
+    events, the traits of the stores, the security and confidentiality model, and the configuration
+    (`AppConfig`). It holds data and rules, but runs nothing.
 *   **`caelumora-runtime`** - everything that runs: sessions, channels and their actors, the agent's
     cognitive cycle, components, the event bus, the controllers that keep entities live, and the
     store implementations.
@@ -214,11 +214,12 @@ Two questions are kept apart:
 
 *   **Who may do what** is decided by one `SecurityManager` per process, asked with an `ActionType`
     and the `SecurityAttributes` (owner and access list) of the entity concerned. The default policy
-    is ownership: owners do everything, whom the access list grants it read and use. What a client
-    may see, it reads through the runtime's **views** (see
-    [Reading what is there](#reading-what-is-there)), which ask the policy at every step for that
-    viewer; frontends never ask the policy themselves. Users come from a chain of user providers,
-    and the REST server authenticates them with a short-lived signed token.
+    is ownership: owners do everything, whom the access list grants it read and use - a user, a
+    role, or a group: a team users make, or the participants of a session or channel (issue 286),
+    which follow who belongs to it. What a client may see, it reads through the runtime's
+    **views** (see [Reading what is there](#reading-what-is-there)), which ask the policy at every
+    step for that viewer; frontends never ask the policy themselves. Users come from a chain of user
+    providers, and the REST server authenticates them with a short-lived signed token.
 *   **What may flow where** is decided by classifications, not by who takes part. Every channel has
     a classification - a level from `public` to `strictly_confidential` and an audience of
     compartments, which the administrator configures - and one flow rule decides whether a channel
