@@ -65,7 +65,8 @@ Sessions and channels hold their users and agents by reference - `Participant::U
 leaves out a participant whose record no longer exists, and runs without it. A deleted agent rests
 in its channels so: they keep it, show it as a former member and run it again once it is restored.
 Deleting, restoring and purging an agent are the `AgentManager`'s; what lies in a session's or a
-channel's scope goes with it. An approver has no record of its own and is held whole.
+channel's scope goes with it, deleted, restored and purged by the manager of its kind. An approver
+has no record of its own and is held whole.
 
 Details: [CHANNELS.md](CHANNELS.md).
 

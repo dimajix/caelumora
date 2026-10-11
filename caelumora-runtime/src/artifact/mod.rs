@@ -402,7 +402,7 @@ impl ArtifactManager {
         let _writing = self.writing.lock().await;
         for artifact in self.entities.list_artifacts(&system, &within(holder)).await?.items {
             self.entities.delete_artifact(&system, artifact.id).await?;
-            self.events.publish(GlobalEvent::ArtifactDeleted(artifact.id), artifact.security_attributes.clone());
+            self.events.publish(GlobalEvent::ArtifactDeleted(artifact.id), artifact.reader_attributes());
         }
         Ok(())
     }
@@ -420,7 +420,7 @@ impl ArtifactManager {
         let _writing = self.writing.lock().await;
         for artifact in deleted_since(self.entities.list_deleted_artifacts(&system, &within(holder)).await?.items, since) {
             if let Some(restored) = unless_taken(self.entities.restore_artifact(&system, artifact.id).await, "artifact", &artifact.name)? {
-                self.events.publish(GlobalEvent::ArtifactRestored(restored.id), restored.security_attributes);
+                self.events.publish(GlobalEvent::ArtifactRestored(restored.id), restored.reader_attributes());
             }
         }
         Ok(())

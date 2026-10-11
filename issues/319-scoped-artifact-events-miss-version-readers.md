@@ -1,6 +1,6 @@
 # 319 — An artifact deleted or restored with its scope is announced to its own readers only
 
-**Status:** open
+**Status:** done
 **Area:** Identity and access management
 
 ## The problem
@@ -57,3 +57,20 @@ The second is the clean one; the first fixes the symptom at once. Which one is t
   [318](318-restore-returns-nothing.md): `restore_scoped_in` announces a restored artifact with
   its own attributes, the `ArtifactManager` with its readers'; `delete_scoped_in` does the same on
   deleting.
+- **2026-10-11** — Decided with the maintainer: the second consideration, for every kind that has a
+  manager - agents, workspaces, skills, artifacts, groups -, not for artifacts alone. While
+  looking, a second case of the same cause turned up: `scoped.rs` deleted and restored the groups
+  of a session's or channel's participants without announcing them, though the `GroupManager`
+  announces `GroupDeleted` and `GroupRestored`. It was taken into this issue. Done in two steps:
+  - Restructured without a change of behaviour: each of the five managers deletes, restores and
+    purges what lies in a scope (`delete_lying_in`, `restore_lying_in`, `purge_lying_in`, the last
+    new for agents, skills and groups), under its own lock of writing, which `scoped.rs` used to
+    pass by. The free functions of `scoped.rs` became `ScopedEntities`, which the
+    `RuntimeManager` makes once and `SessionManager` and `SessionLoop` keep as a field; it marks
+    personalities and session templates, which have no manager, itself.
+  - Then the fix: an artifact deleted or restored with its scope is announced by
+    `reader_attributes`, and a group so deleted or restored is announced as a team is.
+  The security suite shows it
+  (`what_goes_and_comes_back_with_a_session_is_announced_to_whoever_reads_it`). That all of it is
+  done in the runtime's name was questioned on the way and became issue
+  [320](320-scoped-deletion-in-the-runtimes-name.md).

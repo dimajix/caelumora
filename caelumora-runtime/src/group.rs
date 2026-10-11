@@ -232,7 +232,7 @@ impl GroupManager {
 
     /// Deletes the groups that lie in `holder` or within it - the
     /// participants of a session or channel among them -, in the runtime's
-    /// name (`scoped`).
+    /// name (`scoped`), and announces them as `delete` does a team.
     ///
     /// # Errors
     /// Whatever the store reports; what was deleted before stays deleted.
@@ -241,13 +241,15 @@ impl GroupManager {
         let _writing = self.writing.lock().await;
         for group in self.entities.list_groups(&system, &within(holder)).await?.items {
             self.entities.delete_group(&system, group.id).await?;
+            self.events.publish(GlobalEvent::GroupDeleted(group.id), group.security_attributes);
         }
         Ok(())
     }
 
     /// Restores the groups that lie in `holder` or within it and were
-    /// deleted at `since` or later, in the runtime's name (`scoped`). One
-    /// whose name was taken meanwhile stays deleted.
+    /// deleted at `since` or later, in the runtime's name (`scoped`), and
+    /// announces them as `restore` does a team. One whose name was taken
+    /// meanwhile stays deleted.
     ///
     /// # Errors
     /// Whatever else the store reports; what was restored before stays
@@ -256,7 +258,9 @@ impl GroupManager {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         for group in deleted_since(self.entities.list_deleted_groups(&system, &within(holder)).await?.items, since) {
-            unless_taken(self.entities.restore_group(&system, group.id).await, "group", &group.name)?;
+            if let Some(restored) = unless_taken(self.entities.restore_group(&system, group.id).await, "group", &group.name)? {
+                self.events.publish(GlobalEvent::GroupRestored(restored.id), restored.security_attributes);
+            }
         }
         Ok(())
     }

@@ -33,6 +33,7 @@ use caelumora_model::value::text::{Description, Introduction};
 use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::scope::Scope;
 use caelumora_model::secret::SecretManager;
+use caelumora_model::event::GlobalEvent;
 use caelumora_model::group::{Group, GroupId};
 use caelumora_model::security::{AclEntry, ActionType, Grant, OwnershipSecurityManager, Reclassified, SecurityAttributes, SecurityContext, SecurityManager, Subject};
 use caelumora_model::snapshot::{Detail, PublicationSnapshot};
@@ -2967,6 +2968,50 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
     assert!(world.files.path().join("artifacts").join(artifact.id.to_string()).is_dir(), "with its content");
     assert!(world.store.get_deleted_artifact(&World::system(), left.id).await.is_err(), "what was not kept went with the session");
     assert!(!world.files.path().join("artifacts").join(left.id.to_string()).exists(), "its content too");
+}
+
+/// Waits until `events` has received each of `wanted`, in any order -
+/// compared as they are shown, since an event has no equality.
+async fn hears<const N: usize>(events: &mut caelumora_runtime::event::EventSubscription, wanted: [GlobalEvent; N]) {
+    let mut missing: Vec<String> = wanted.iter().map(|event| format!("{event:?}")).collect();
+    let _ = tokio::time::timeout(Duration::from_secs(5), async {
+        while !missing.is_empty() {
+            let Some(event) = events.recv().await else { break };
+            let shown = format!("{event:?}");
+            missing.retain(|wanted| *wanted != shown);
+        }
+    }).await;
+    assert!(missing.is_empty(), "not heard: {missing:?}");
+}
+
+/// Issue 319: what is said of an artifact as a whole reaches whoever reads
+/// anything of it, however it went or came back - here with its session, to
+/// a member of the channel a version was published in, who reads it by
+/// that version's list alone. And the groups of the participants, deleted
+/// and restored with the session, are announced as a team is.
+#[tokio::test]
+async fn what_goes_and_comes_back_with_a_session_is_announced_to_whoever_reads_it() {
+    let world = World::new().await;
+    let alice = World::as_user(world.alice);
+    let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
+    let session = world.shared_session(&[], &[]).await;
+    session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
+    let (session_id, main) = (session.id(), session.channels()[0].id());
+    let (_, terminal) = world.runtime.workspace_manager().terminal_in(&alice, session_id, main, Grant::Write).await.unwrap();
+    let at = WorkspacePath::parse("out/report.csv").unwrap();
+    terminal.write(&at, file("a,b"), 100).await.unwrap();
+    let (artifact, _) = publish(&world, &alice, session_id, main, &at, "report.csv", None).await.unwrap();
+    assert!(artifact.security_attributes.acl.is_empty(), "bob reads it by its version's list alone");
+    let id = artifact.id;
+    let (of_session, of_channel) = (GroupId::of_session(session_id), GroupId::of_channel(main));
+
+    let mut bobs = world.runtime.event_bus().subscribe_as(World::as_user(world.bob));
+    world.manager.stop_session(&alice, session_id).await.unwrap();
+    world.manager.delete_session(&alice, session_id).await.unwrap();
+    hears(&mut bobs, [GlobalEvent::ArtifactDeleted(id), GlobalEvent::GroupDeleted(of_session), GlobalEvent::GroupDeleted(of_channel)]).await;
+
+    world.manager.restore_session(&alice, session_id).await.unwrap();
+    hears(&mut bobs, [GlobalEvent::ArtifactRestored(id), GlobalEvent::GroupRestored(of_session), GlobalEvent::GroupRestored(of_channel)]).await;
 }
 
 /// Issue 23: a version is read by the members of the channel it was
