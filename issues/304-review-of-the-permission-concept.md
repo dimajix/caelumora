@@ -157,6 +157,34 @@ the flow, then anything about others - a participant's clearance, an agent's per
 of `Read` is "not found"; every refusal after it is "forbidden" and reveals nothing about objects
 the actor cannot read. The security suite asserts this order for every action it covers.
 
+**Who asks.** Decided on 2026-10-11 as well. Every question in the map has one of five reasons;
+a question with none is removed.
+
+1.  **The entity layer always asks.** The store asks `Read` on every read and the verb on every
+    write, uniformly, answering "not found" and "denied". It is the last line, and stays whether or
+    not an operation asked before.
+2.  **An operation asks before it stores only if it does something first** - looks at others,
+    stops actors, deletes files, sends something. Then it asks its own verb first (the order), and
+    the store asks again when it stores. That pair is the rule, not a double; no token tells the
+    store it was asked already.
+3.  **The channel decides what enters it, once, when it is submitted.** Admission moves from the
+    processing of an envelope to the point where an actor hands it to the channel:
+    `ChannelLoop::admit` asks in the envelope's context and answers the sender with the refusal
+    instead of dropping it. Actors ask nothing for what they send - a message, a modification, a
+    revocation, a reclassification, a retry, an answer, an approval by click, all alike.
+4.  **Every act has one owner, and only the owner asks, once.** A tool call the `ToolExecutor` when
+    it admits it, not again when it runs; a command the `CommandExecutor` when it admits it, not
+    again when it is carried out; an approval the approver when it counts the answer; a secret the
+    `SecretManager`; a skill the `SkillManager`. A component owns the acts on what it keeps -
+    reclassifying a note, forgetting a memory entry - and asks for those itself, in the turn's
+    context; it never asks for reading beyond its channel, which the views do, nor again what the
+    executor asked. The `SecurityManager` stays in the `ComponentContext` for that (issue 131).
+5.  **Offering is not permitting.** The views, a snapshot's flags, the filters of lists, the
+    approver's `approvers_of`, the visible commands and the event bus ask to decide what to show
+    or whom to wait for, never to permit; the act asks again when it is done, and that is no
+    double. The form tells them apart: **enforcing asks with `Enforcement::require`, offering
+    with `AccessQuestions::may_*`**, never the other way round.
+
 **Groups** (issue [286](286-groups-as-subjects.md), the first step). A `Group` is an entity of its
 own: `SecurityAttributes`, a list of actors - users and agents, no nesting - and a scope. Access
 lists name it as `Subject::Group(id)`; `Subject::MemberOf`, `Membership`, the `Memberships` trait
@@ -255,3 +283,8 @@ and `StoreMemberships` go. The rules:
   would be one thing, an observer impossible); the join writing an `Actor` entry (explicit, but a
   second mechanism beside teams); readers inherited from a scope (an automatism, `MemberOf` by
   another name). What each finding becomes, and the five steps, are listed above.
+- **2026-10-11** — Who asks, decided with the maintainer and written above as five rules: the
+  entity layer always, an operation before storing only if it acts first, the channel once at
+  submission with the actors asking nothing for what they send, one owner per act asking once -
+  a component included, for the acts on what it keeps -, and offering apart from permitting, told
+  apart by `require` against `may_*`. Applied in steps 3 and 4.
