@@ -176,6 +176,7 @@ published before anyone else can take it.
 | [316](316-store-checks-artifact-without-versions.md) | open | The store checks an artifact against its own access list only, not its versions', so the views list and read artifacts in the runtime's name and decide themselves who may read them.
 | [317](317-teams-listed-by-a-scan.md) | open | `Views::groups` lists the viewer's teams by reading every group and asking the policy of each, while `Views::artifacts` finds them by a query.
 | [319](319-scoped-artifact-events-miss-version-readers.md) | open | An artifact deleted or restored with its session or channel is announced by its own access list only, so whoever reads it by a version's list does not hear of it. |
+| [320](320-scoped-deletion-in-the-runtimes-name.md) | open | What lies in a session's or channel's scope is deleted and restored with it in the runtime's name, so the store asks nothing, another's things go without their owner being asked, and the deletion is recorded as the system's. |
 
 ## Tools and approvals
 
