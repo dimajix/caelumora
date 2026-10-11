@@ -40,8 +40,8 @@ pub async fn delete_agent(State(state): State<Arc<AppState>>, Path(id): Path<Uui
 /// added again. `409` if another agent took its name meanwhile.
 pub async fn restore_agent(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<Json<AgentResponse>, ApiError> {
     let agent_id = AgentId(id);
-    state.session_manager.restore_agent(&user.security_context(), agent_id).await
-        .map_err(|e| ApiError::from_runtime(e, Subject::Agent, &format!("restoring agent {agent_id}")))?;
+    state.runtime_manager.agent_manager().restore(&user.security_context(), agent_id).await
+        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Agent, &format!("restoring agent {agent_id}")))?;
     // As the list shows it: what the user may do with it is the views' to say.
     let agents = crate::routes::views(&state, &user).agents().await
         .map_err(|e| ApiError::from_runtime(e.into(), Subject::Agent, "listing the agents"))?;
@@ -53,7 +53,7 @@ pub async fn restore_agent(State(state): State<Arc<AppState>>, Path(id): Path<Uu
 /// allows, by default the system's alone.
 pub async fn purge_agent(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
     let agent_id = AgentId(id);
-    state.session_manager.purge_agent(&user.security_context(), agent_id).await
-        .map_err(|e| ApiError::from_runtime(e, Subject::Agent, &format!("purging agent {agent_id}")))?;
+    state.runtime_manager.agent_manager().purge(&user.security_context(), agent_id).await
+        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Agent, &format!("purging agent {agent_id}")))?;
     Ok(StatusCode::NO_CONTENT)
 }

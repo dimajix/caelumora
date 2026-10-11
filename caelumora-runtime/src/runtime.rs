@@ -24,6 +24,7 @@ use caelumora_model::session::Session;
 use caelumora_model::store::{EntityStore, StateStore};
 use caelumora_model::confidentiality::ConfidentialityPolicy;
 use std::sync::{Arc, OnceLock, Weak};
+use crate::agent::manager::AgentManager;
 use crate::group::GroupManager;
 
 #[derive(Debug)]
@@ -52,6 +53,8 @@ pub struct RuntimeManager {
     artifacts: Arc<crate::artifact::ArtifactManager>,
     /// The one writer of teams (issue 286).
     groups: Arc<GroupManager>,
+    /// The one owner of agents' lifecycle (issue 314).
+    agents: Arc<AgentManager>,
     /// The services components may use (issue 296), each given to the
     /// kinds that declare it (`ComponentKind::uses`).
     component_services: ComponentServices,
@@ -319,6 +322,7 @@ impl RuntimeManager {
         let skills = Arc::new(crate::skill::SkillManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus), Arc::clone(&confidentiality)));
         let artifacts = Arc::new(crate::artifact::ArtifactManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus), Arc::clone(&security_manager), Arc::clone(&confidentiality), &config.artifacts)?);
         let groups = Arc::new(GroupManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus)));
+        let agents = Arc::new(AgentManager::new(Arc::clone(&entity_store), Arc::clone(&state_store), Arc::clone(&event_bus), Arc::clone(&security_manager)));
 
         let component_services = ComponentServices::empty()
             .with(Arc::clone(&security_manager))
@@ -342,6 +346,7 @@ impl RuntimeManager {
             skills,
             artifacts,
             groups,
+            agents,
             component_services,
         })
     }
@@ -420,6 +425,11 @@ impl RuntimeManager {
     /// The one writer of teams (issue 286).
     pub fn group_manager(&self) -> &Arc<GroupManager> {
         &self.groups
+    }
+
+    /// The one owner of agents' lifecycle (issue 314).
+    pub fn agent_manager(&self) -> &Arc<AgentManager> {
+        &self.agents
     }
 
     pub fn new_recorder(&self) -> Result<Box<dyn Recorder>> {

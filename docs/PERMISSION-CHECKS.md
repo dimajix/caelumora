@@ -54,7 +54,7 @@ message, note or memory entry by the caller - an agent is judged as itself for w
 | Layer | Asks | Form | Refusal |
 |---|---|---|---|
 | **Store** (`caelumora-model/src/store/access.rs`), rule 1 | `Get*` on every read; `List*`, then `Get*` per item as a filter; `Create*` with the new attributes; `Get*` then `Update*`/`Delete*` on the stored ones; `ReadDeleted` then `Restore`/`Purge` - always Read before the verb | `require`; `check` as the list filter | `NotFound` for what may not be read, `PermissionDenied` for what may not be changed, `Ok(false)` for what cannot be deleted |
-| **Managers** (`SessionManager`, `SessionLoop`, `WorkspaceManager`, `ArtifactManager`, `SkillManager`, `GroupManager`, `SecretManager`), rules 2 and 4 | their verb before they act, where they act before they store; the flow of what they keep or make | `require`, `require_*` | the manager's error |
+| **Managers** (`SessionManager`, `SessionLoop`, `AgentManager`, `WorkspaceManager`, `ArtifactManager`, `SkillManager`, `GroupManager`, `SecretManager`), rules 2 and 4 | their verb before they act, where they act before they store; the flow of what they keep or make | `require`, `require_*` | the manager's error |
 | **Channel loop** (`ChannelLoop`), rules 2 and 3 | what changes the channel, who is admitted, and what enters it (`admission`) | `require`, `require_*` | `ChannelError::Forbidden`, `NotCleared`; `MessageRejected` to the sender |
 | **Owners of acts** (`ToolExecutor`, `CommandExecutor`, the agent carrying out a command, the approver, components on what they keep), rule 4 | the act's own question, once | `require` | the act's own answer: a forbidden result, `CommandFailed`, a left-out answer |
 | **Views** (`caelumora-runtime/src/view`), rule 5 and reach | reaching (concept 4) and the flags of a snapshot | `may_*`; `require` for reading a member's tools, components and context | `*NotFound`, a flag false, `Forbidden` |
@@ -88,8 +88,8 @@ SECURITY.md); "store" is the store layer, in the context the caller passes.
 | Purge (`purge_session`) | store `ReadDeleted`; store `ReadDeleted` + `Purge`; channels and scope in S | R1 | - | `NotFound`, `PermissionDenied` |
 | Rename, privacy, approval rules, description (`SessionLoop::update_*`) | store `GetSession` + `UpdateSession` (U,1) | R1 | - | `PermissionDenied` |
 | Attach a workspace (`set_workspace`) | `UpdateSession` (U,1); `GetWorkspace`, `UpdateWorkspace` (U,1), scope; store `UpdateSession`; sharing it as *Share* of a workspace | R2 + R1 | `UpdateSession` (pair); `UpdateWorkspace` three times | `PermissionDenied`, `NotFound`, `WorkspaceOutOfScope` |
-| Delete an agent (`delete_agent`) | store `GetAgent`; `DeleteAgent` (U,1); it leaves its channels in S; store `DeleteAgent` | R2 + R1 | `DeleteAgent` (pair) | `NotFound`, `PermissionDenied` |
-| Restore, purge an agent | store only | R1 | - | `NotFound`, `PermissionDenied` |
+| Delete an agent (`SessionManager::delete_agent`, `AgentManager::delete`) | store `GetAgent`; `DeleteAgent` (U,1); store `DeleteAgent`; then it leaves its channels in S | R2 + R1 | `DeleteAgent` (pair) | `NotFound`, `PermissionDenied` |
+| Restore, purge an agent (`AgentManager::restore`, `purge`) | store only | R1 | - | `NotFound`, `PermissionDenied` |
 
 ### Channels
 

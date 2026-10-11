@@ -28,7 +28,7 @@ use chrono::{DateTime, Utc};
 use tracing::warn;
 
 /// Deletes what lies in `holder` or within it, and announces the agents
-/// among it as `SessionManager::delete_agent` does. They leave no channel:
+/// among it as `AgentManager::delete` does. They leave no channel:
 /// they take part only within `holder` (`Scope::admits`).
 ///
 /// # Errors
@@ -120,7 +120,7 @@ fn unless_taken(restored: StoreResult<()>, kind: &str, name: &ScopedName) -> Sto
 }
 
 /// Purges what lies in `holder` or within it and is deleted, and the
-/// agents' state with them, as `SessionManager::purge_agent` does, the
+/// agents' state with them, as `AgentManager::purge` does, the
 /// workspaces' places and the artifacts' content.
 ///
 /// # Errors

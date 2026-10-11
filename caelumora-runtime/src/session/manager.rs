@@ -1,4 +1,5 @@
-//! `SessionManager`: starting, stopping, deleting, restoring and purging sessions, and agents.
+//! `SessionManager`: starting, stopping, deleting, restoring and purging sessions, and taking a deleted
+//! agent out of their channels.
 
 use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::value::name::Name;
@@ -6,7 +7,7 @@ use crate::runtime::RuntimeManager;
 use crate::event::EventBus;
 use anyhow::Result;
 use caelumora_model::actor::ActorId;
-use caelumora_model::agent::{Agent, AgentId};
+use caelumora_model::agent::AgentId;
 use caelumora_model::channel::{Channel, ChannelField};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{ActionType, Enforcement, SecurityAttributes, SecurityContext, SecurityManager, Subject};
@@ -21,6 +22,7 @@ use caelumora_model::template::{ScopeTemplate, SessionTemplateId, WorkspaceTempl
 use caelumora_model::workspace::WorkspaceChoice;
 use crate::scoped::{delete_scoped_in, purge_scoped_in, restore_scoped_in};
 use crate::workspace::WorkspaceManager;
+use crate::agent::manager::AgentManager;
 use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
@@ -42,6 +44,7 @@ pub struct SessionManager {
     entities: Arc<dyn EntityStore>,
     events: Arc<EventBus>,
     workspaces: Arc<WorkspaceManager>,
+    agents: Arc<AgentManager>,
 }
 
 /// A session as [`SessionManager::find`] found it for a context that may
@@ -74,6 +77,7 @@ impl SessionManager {
             entities: Arc::clone(runtime_manager.entity_store()),
             events: Arc::clone(runtime_manager.event_bus()),
             workspaces: Arc::clone(runtime_manager.workspace_manager()),
+            agents: Arc::clone(runtime_manager.agent_manager()),
             runtime_manager,
         }
     }
@@ -431,12 +435,11 @@ impl SessionManager {
         Ok(())
     }
 
-    /// Deletes agent `id` on behalf of `context` (issue 164): it leaves
-    /// every channel it takes part in - kept there as a former participant,
-    /// removed in the runtime's name, since deleting the agent was
-    /// permitted - and is marked deleted, with its state kept until it is
-    /// purged. What it said stays in the channels' histories. Asked about
-    /// before anything happens (`DeleteAgent`).
+    /// Deletes agent `id` on behalf of `context` (issue 164), as
+    /// `AgentManager::delete` does - asked about before anything happens -,
+    /// and makes it leave every channel it takes part in: kept there as a
+    /// former participant, removed in the runtime's name, since deleting the
+    /// agent was permitted.
     ///
     /// Only the channels of sessions it takes part in are looked at: an
     /// agent joins a channel only from its session. Those of deleted
@@ -444,14 +447,12 @@ impl SessionManager {
     /// any participant that no longer exists.
     ///
     /// # Errors
-    /// `StoreError::NotFound` if there is no such agent or `context` may
-    /// not read it, `StoreError::PermissionDenied` if they may but not
-    /// delete it.
+    /// What `AgentManager::delete` reports - then it leaves no channel -;
+    /// whatever the store reports when a stopped session's channels are
+    /// loaded.
     pub async fn delete_agent(&self, context: &SecurityContext, id: AgentId) -> Result<()> {
+        self.agents.delete(context, id).await?;
         let store = &self.entities;
-        let agent = store.get_agent(context, id).await?;
-        self.security
-            .require(context, ActionType::DeleteAgent(&agent.security_attributes), || StoreError::PermissionDenied).await?;
         let actor = ActorId::Agent(id);
         let system = SecurityContext::system();
         // The sessions it takes part in, which the store is asked for alone.
@@ -475,47 +476,6 @@ impl SessionManager {
                 }
             }
         }
-        store.delete_agent(context, id).await?;
-        self.events.publish(GlobalEvent::AgentDeleted(id), agent.security_attributes.clone());
-        info!("Agent {} deleted by {}", id, context.caller_id);
-        Ok(())
-    }
-
-    /// Restores the deleted agent `id` on behalf of `context` (issue 164):
-    /// its mark taken away, with its state. It takes part in no channel
-    /// again - it left them when it was deleted - until it is added.
-    ///
-    /// # Errors
-    /// `StoreError::NotFound` if there is no such deleted agent or
-    /// `context` may not see it, `StoreError::PermissionDenied` if they may
-    /// but not restore it, `StoreError::NameTaken` if another agent took its
-    /// name in its scope meanwhile (issue 250).
-    pub async fn restore_agent(&self, context: &SecurityContext, id: AgentId) -> Result<Agent> {
-        let store = &self.entities;
-        let deleted = store.get_deleted_agent(context, id).await?;
-        store.restore_agent(context, id).await?;
-        let agent = Agent { deleted: None, ..deleted };
-        self.events.publish(GlobalEvent::AgentRestored(id), agent.security_attributes.clone());
-        info!("Agent {} restored by {}", id, context.caller_id);
-        Ok(agent)
-    }
-
-    /// Removes the deleted agent `id` for good on behalf of `context` (issue
-    /// 164): its document, its own state and its state in every channel.
-    /// Only what was deleted is purged; the store asks `Purge`. What it
-    /// said stays in the channels' histories, by an agent that no longer
-    /// exists.
-    ///
-    /// # Errors
-    /// `StoreError::NotFound` if there is no such deleted agent or
-    /// `context` may not see it, `StoreError::PermissionDenied` if they may
-    /// but not purge it.
-    pub async fn purge_agent(&self, context: &SecurityContext, id: AgentId) -> Result<()> {
-        if !self.entities.purge_agent(context, id).await? {
-            return Err(StoreError::NotFound { entity: "agent", id: id.to_string() }.into());
-        }
-        self.runtime_manager.state_store().delete_agent_state(id).await?;
-        info!("Agent {} purged by {}", id, context.caller_id);
         Ok(())
     }
 
@@ -760,20 +720,21 @@ mod tests {
         let former = reached.member(actor).await.unwrap();
         assert!(former.former() && former.name() == Some("helper"), "what it said keeps its sender");
 
-        manager.restore_agent(&ctx, helper.id).await.expect("restored");
+        let agents = runtime.agent_manager();
+        agents.restore(&ctx, helper.id).await.expect("restored");
         assert!(store.get_agent(&system, helper.id).await.is_ok());
         assert!(left(&talk.channel()), "but into no channel");
-        assert!(manager.restore_agent(&ctx, helper.id).await.is_err(), "not deleted");
-        assert!(manager.purge_agent(&ctx, helper.id).await.is_err(), "only what was deleted is purged");
+        assert!(agents.restore(&ctx, helper.id).await.is_err(), "not deleted");
+        assert!(agents.purge(&ctx, helper.id).await.is_err(), "only what was deleted is purged");
 
         // Its name taken meanwhile: not restored.
         manager.delete_agent(&ctx, helper.id).await.unwrap();
         let again = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), &personality, ActorId::None);
         store.create_agent(&system, &again).await.unwrap();
-        let taken = manager.restore_agent(&ctx, helper.id).await.expect_err("its name is taken");
-        assert!(matches!(taken.downcast_ref::<StoreError>(), Some(StoreError::NameTaken { entity: "agent" })), "{taken}");
+        let taken = agents.restore(&ctx, helper.id).await.expect_err("its name is taken");
+        assert!(matches!(taken, StoreError::NameTaken { entity: "agent" }), "{taken}");
 
-        manager.purge_agent(&ctx, helper.id).await.expect("purged");
+        agents.purge(&ctx, helper.id).await.expect("purged");
         assert!(store.get_deleted_agent(&system, helper.id).await.is_err(), "nothing left to restore");
         manager.stop_session(&system, running.id()).await.unwrap();
     }

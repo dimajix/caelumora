@@ -2250,7 +2250,7 @@ async fn purging_a_session_is_not_its_owners() {
         "alice: ReadDeleted(alice's) yes",
         "alice: ReadDeleted(alice's) yes",
         "alice: Purge(alice's) no",
-    ]), "only what was deleted, asked by the session manager and again by the store");
+    ]), "only what was deleted, asked by the agent manager and again by the store");
 }
 
 /// Restoring a deleted channel: changing its session - its owner's alone
@@ -2295,9 +2295,9 @@ async fn deleting_an_agent_needs_owning_it() {
 }
 
 /// Deleting an agent through the session manager (issue 164): reading it
-/// and deleting it - its owner's alone - before anything happens; it leaves
-/// its channels in the runtime's name. Restoring it is its owner's too,
-/// purging it not.
+/// and deleting it - its owner's alone - before anything happens, by the
+/// agent manager; it leaves its channels in the runtime's name. Restoring
+/// it is its owner's too, purging it not (issue 314: the agent manager's).
 #[tokio::test]
 async fn deleting_restoring_and_purging_an_agent_is_its_owners_but_purging() {
     let world = World::new().await;
@@ -2313,17 +2313,18 @@ async fn deleting_restoring_and_purging_an_agent_is_its_owners_but_purging() {
         "alice: DeleteAgent(alice's) yes",
         "alice: GetAgent(alice's) yes",
         "alice: DeleteAgent(alice's) yes",
-    ]), "asked by the session manager before it changes any channel, and again by the store");
-    let (refused, asked) = world.asked(world.manager.purge_agent(&World::as_user(world.alice), helper)).await;
+    ]), "asked by the agent manager before any channel is changed, and again by the store");
+    let agents = world.runtime.agent_manager();
+    let (refused, asked) = world.asked(agents.purge(&World::as_user(world.alice), helper)).await;
     assert!(refused.is_err());
     assert_eq!(asked, checks(&["alice: ReadDeleted(alice's) yes", "alice: Purge(alice's) no"]));
-    let (restored, asked) = world.asked(world.manager.restore_agent(&World::as_user(world.alice), helper)).await;
+    let (restored, asked) = world.asked(agents.restore(&World::as_user(world.alice), helper)).await;
     assert!(restored.is_ok());
     assert_eq!(asked, checks(&[
         "alice: ReadDeleted(alice's) yes",
         "alice: ReadDeleted(alice's) yes",
         "alice: Restore(alice's) yes",
-    ]), "only what was deleted, asked by the session manager and again by the store");
+    ]), "only what was deleted, asked by the agent manager and again by the store");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
