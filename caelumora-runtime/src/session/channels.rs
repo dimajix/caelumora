@@ -13,7 +13,7 @@ use caelumora_model::value::language::Language;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext};
 use crate::view::{channel_reading, ChannelReader};
-use caelumora_model::store::{EntityKind, StoreError, StoreResultExt};
+use caelumora_model::store::{StoreError, StoreResultExt};
 use tracing::{info, warn};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::ChannelId;
@@ -21,6 +21,7 @@ use caelumora_model::group::Group;
 use crate::group::keep_participants;
 use std::sync::Arc;
 use super::{ChannelEntry, SessionError, SessionLoop, preferred_language, purge_channel_document, require_classification};
+use caelumora_model::removal::Stored;
 
 /// What a new channel should be (issue 09), as it was asked: its name and
 /// language are made from it by `create_channel` (issue 248).
@@ -140,7 +141,7 @@ impl SessionLoop {
         // others in it (issues 198, 312): who may not learns nothing of their
         // clearance. The store asks again as it stores.
         self.security
-            .require(context, ActionType::create(EntityKind::Channel, &channel.security_attributes), || StoreError::PermissionDenied).await?;
+            .require(context, ActionType::create(Channel::KIND, &channel.security_attributes), || StoreError::PermissionDenied).await?;
         crate::channel::require_admitted(&self.runtime_manager, context, &channel).await?;
         let store = &self.entities;
         store.create_channel(context, &channel).await?;
@@ -205,7 +206,7 @@ impl SessionLoop {
         let running = self.channel_for(context, channel_id).await?;
         // Not the guard itself: it would be held across the awaits below.
         let channel = Arc::clone(&running.channel());
-        self.security.require(context, ActionType::delete(EntityKind::Channel, &channel.security_attributes), || StoreError::PermissionDenied).await?;
+        self.security.require(context, ActionType::delete(Channel::KIND, &channel.security_attributes), || StoreError::PermissionDenied).await?;
         let scope = Scope::ChannelScope { session_id: self.id, channel_id };
         self.session_controller.remove_channel(context, channel_id).await?;
         // Marked before what lies in its scope, so that all of that is
@@ -262,7 +263,7 @@ impl SessionLoop {
             _ => return Err(not_found().into()),
         };
         self.security
-            .require(context, ActionType::restore(EntityKind::Channel, &channel.security_attributes), || StoreError::PermissionDenied).await?;
+            .require(context, ActionType::restore(Channel::KIND, &channel.security_attributes), || StoreError::PermissionDenied).await?;
         // As when it was created: its participants' clearance may have
         // changed while it was deleted.
         crate::channel::require_admitted(&self.runtime_manager, context, &channel).await?;

@@ -12,6 +12,14 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::sync::Arc;
+use crate::agent::Agent;
+use crate::artifact::Artifact;
+use crate::channel::Channel;
+use crate::group::Group;
+use crate::session::Session;
+use crate::skill::Skill;
+use crate::workspace::Workspace;
+use crate::removal::Stored;
 
 /// Everything the `SecurityManager` is asked about.
 ///
@@ -612,43 +620,43 @@ pub trait AccessQuestions {
 #[async_trait]
 impl<T: SecurityManager + ?Sized> AccessQuestions for T {
     async fn may_read_session(&self, context: &SecurityContext, session: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::get(EntityKind::Session, session)).await
+        self.check(context, ActionType::get(Session::KIND, session)).await
     }
 
     async fn may_read_channel(&self, context: &SecurityContext, channel: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::get(EntityKind::Channel, channel)).await
+        self.check(context, ActionType::get(Channel::KIND, channel)).await
     }
 
     async fn may_change_channel(&self, context: &SecurityContext, channel: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::update(EntityKind::Channel, channel)).await
+        self.check(context, ActionType::update(Channel::KIND, channel)).await
     }
 
     async fn may_change_session(&self, context: &SecurityContext, session: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::update(EntityKind::Session, session)).await
+        self.check(context, ActionType::update(Session::KIND, session)).await
     }
 
     async fn may_change_workspace(&self, context: &SecurityContext, workspace: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::update(EntityKind::Workspace, workspace)).await
+        self.check(context, ActionType::update(Workspace::KIND, workspace)).await
     }
 
     async fn may_write_workspace(&self, context: &SecurityContext, workspace: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::custom(EntityKind::Workspace, &WRITE, workspace)).await
+        self.check(context, ActionType::custom(Workspace::KIND, &WRITE, workspace)).await
     }
 
     async fn may_read_workspace(&self, context: &SecurityContext, workspace: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::get(EntityKind::Workspace, workspace)).await
+        self.check(context, ActionType::get(Workspace::KIND, workspace)).await
     }
 
     async fn may_change_artifact(&self, context: &SecurityContext, artifact: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::update(EntityKind::Artifact, artifact)).await
+        self.check(context, ActionType::update(Artifact::KIND, artifact)).await
     }
 
     async fn may_read_artifact(&self, context: &SecurityContext, artifact: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::get(EntityKind::Artifact, artifact)).await
+        self.check(context, ActionType::get(Artifact::KIND, artifact)).await
     }
 
     async fn may_write_artifact(&self, context: &SecurityContext, artifact: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::custom(EntityKind::Artifact, &WRITE, artifact)).await
+        self.check(context, ActionType::custom(Artifact::KIND, &WRITE, artifact)).await
     }
 
     async fn may_read_agent_context(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool {
@@ -668,7 +676,7 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
     }
 
     async fn may_delete_agent(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::delete(EntityKind::Agent, agent)).await
+        self.check(context, ActionType::delete(Agent::KIND, agent)).await
     }
 
     async fn may_retry_message(&self, context: &SecurityContext, channel: &SecurityAttributes) -> bool {
@@ -688,15 +696,15 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
     }
 
     async fn may_change_group(&self, context: &SecurityContext, group: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::update(EntityKind::Group, group)).await
+        self.check(context, ActionType::update(Group::KIND, group)).await
     }
 
     async fn may_change_skill(&self, context: &SecurityContext, skill: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::update(EntityKind::Skill, skill)).await
+        self.check(context, ActionType::update(Skill::KIND, skill)).await
     }
 
     async fn may_use_skill(&self, context: &SecurityContext, skill: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::custom(EntityKind::Skill, &skill::USE, skill)).await
+        self.check(context, ActionType::custom(Skill::KIND, &skill::USE, skill)).await
     }
 }
 
@@ -933,6 +941,7 @@ impl SecurityManager for OwnershipSecurityManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::template::SessionTemplate;
     use crate::group::Group;
     use crate::scope::Scope;
     use crate::value::name::ScopedName;
@@ -994,10 +1003,10 @@ mod tests {
         let hers = SecurityAttributes::owned_by(alice);
         let policy = OwnershipSecurityManager::new();
         let asked_by_bob = context(bob).next(agent, alice);
-        assert!(policy.check(&asked_by_bob, ActionType::get(EntityKind::Session, &hers)).await, "with alice's rights, whoever asked");
-        assert!(policy.check(&asked_by_bob, ActionType::update(EntityKind::Session, &hers)).await, "all of them");
+        assert!(policy.check(&asked_by_bob, ActionType::get(Session::KIND, &hers)).await, "with alice's rights, whoever asked");
+        assert!(policy.check(&asked_by_bob, ActionType::update(Session::KIND, &hers)).await, "all of them");
         let asked_by_alice = context(alice).next(agent, bob);
-        assert!(!policy.check(&asked_by_alice, ActionType::get(EntityKind::Session, &hers)).await, "asking lends nothing, not even the owner's own rights to another's agent");
+        assert!(!policy.check(&asked_by_alice, ActionType::get(Session::KIND, &hers)).await, "asking lends nothing, not even the owner's own rights to another's agent");
     }
 
     #[tokio::test]
@@ -1021,11 +1030,11 @@ mod tests {
         let (alice, bob, carol) = (user(), user(), user());
         let hers = shared(alice, &[bob]);
 
-        for action in [ActionType::get(EntityKind::Session, &hers), ActionType::update(EntityKind::Session, &hers), ActionType::delete(EntityKind::Session, &hers)] {
+        for action in [ActionType::get(Session::KIND, &hers), ActionType::update(Session::KIND, &hers), ActionType::delete(Session::KIND, &hers)] {
             assert!(allows(alice, action).await, "{action:?}");
             assert!(!allows(carol, action).await, "{action:?}");
         }
-        assert!(allows(bob, ActionType::get(EntityKind::Session, &hers)).await);
+        assert!(allows(bob, ActionType::get(Session::KIND, &hers)).await);
         assert!(allows(bob, ActionType::CancelChannel(&hers)).await, "a reader acts in it");
         assert!(allows(alice, ActionType::ReadAgentContext(&hers)).await);
         assert!(!allows(bob, ActionType::ReadAgentContext(&hers)).await, "what an agent saw is its owner's alone");
@@ -1064,13 +1073,13 @@ mod tests {
         assert!(!allows(bob, run(&members, &theirs)).await, "nobody else");
         assert!(allows(carol, run(&owners, &theirs)).await, "a command for the owners: whose channel it is");
         assert!(!allows(alice, run(&owners, &theirs)).await && !allows(alice, show(&owners, &theirs)).await, "not a member who does not own it");
-        assert!(!allows(bob, ActionType::update(EntityKind::Session, &hers)).await);
-        assert!(!allows(bob, ActionType::delete(EntityKind::Session, &hers)).await);
+        assert!(!allows(bob, ActionType::update(Session::KIND, &hers)).await);
+        assert!(!allows(bob, ActionType::delete(Session::KIND, &hers)).await);
         // A skill (issue 22) is used as it is read; changed by its owner.
-        assert!(allows(bob, ActionType::custom(EntityKind::Skill, &skill::USE, &hers)).await, "a reader uses it");
-        assert!(!allows(carol, ActionType::custom(EntityKind::Skill, &skill::USE, &hers)).await, "nobody else");
-        assert!(allows(carol, ActionType::custom(EntityKind::Skill, &skill::USE, &systems)).await, "the system's, everybody");
-        assert!(allows(bob, ActionType::get(EntityKind::Skill, &hers)).await && !allows(bob, ActionType::update(EntityKind::Skill, &hers)).await, "read, not changed");
+        assert!(allows(bob, ActionType::custom(Skill::KIND, &skill::USE, &hers)).await, "a reader uses it");
+        assert!(!allows(carol, ActionType::custom(Skill::KIND, &skill::USE, &hers)).await, "nobody else");
+        assert!(allows(carol, ActionType::custom(Skill::KIND, &skill::USE, &systems)).await, "the system's, everybody");
+        assert!(allows(bob, ActionType::get(Skill::KIND, &hers)).await && !allows(bob, ActionType::update(Skill::KIND, &hers)).await, "read, not changed");
     }
 
     #[tokio::test]
@@ -1080,11 +1089,11 @@ mod tests {
         let place = GroupId::of_channel(ChannelId::new());
         let alices = SecurityAttributes::owned_by(alice).granting(Subject::Group(place), Grant::Read);
         let policy = knowing(Known { members: vec![(member, place)] });
-        assert!(policy.check(&context(bob).next(hers, alice), ActionType::get(EntityKind::Channel, &alices)).await, "her agent, whoever asked");
-        assert!(!policy.check(&context(bob).next(his, bob), ActionType::get(EntityKind::Channel, &alices)).await, "not his: he may not read it");
-        assert!(policy.check(&context(bob).next(member, bob), ActionType::get(EntityKind::Channel, &alices)).await, "but an agent taking part in it");
-        assert!(policy.check(&context(bob).next(member, bob), ActionType::get(EntityKind::Session, &alices)).await, "so for every read");
-        assert!(!policy.check(&context(bob).next(member, bob), ActionType::update(EntityKind::Channel, &alices)).await, "changing stays its owner's");
+        assert!(policy.check(&context(bob).next(hers, alice), ActionType::get(Channel::KIND, &alices)).await, "her agent, whoever asked");
+        assert!(!policy.check(&context(bob).next(his, bob), ActionType::get(Channel::KIND, &alices)).await, "not his: he may not read it");
+        assert!(policy.check(&context(bob).next(member, bob), ActionType::get(Channel::KIND, &alices)).await, "but an agent taking part in it");
+        assert!(policy.check(&context(bob).next(member, bob), ActionType::get(Session::KIND, &alices)).await, "so for every read");
+        assert!(!policy.check(&context(bob).next(member, bob), ActionType::update(Channel::KIND, &alices)).await, "changing stays its owner's");
         assert!(!policy.check(&context(bob).next(member, bob), ActionType::CancelChannel(&alices)).await, "and so does acting on it");
     }
 
@@ -1117,19 +1126,19 @@ mod tests {
     async fn what_belongs_to_the_system_everybody_uses_and_only_the_system_changes() {
         let alice = user();
         for shared in [SecurityAttributes::default(), SecurityAttributes::owned_by(ActorId::System)] {
-            assert!(allows(alice, ActionType::get(EntityKind::SessionTemplate, &shared)).await, "stored without an owner, or the system's");
-            assert!(!allows(alice, ActionType::update(EntityKind::SessionTemplate, &shared)).await);
-            assert!(allows(ActorId::System, ActionType::update(EntityKind::SessionTemplate, &shared)).await);
+            assert!(allows(alice, ActionType::get(SessionTemplate::KIND, &shared)).await, "stored without an owner, or the system's");
+            assert!(!allows(alice, ActionType::update(SessionTemplate::KIND, &shared)).await);
+            assert!(allows(ActorId::System, ActionType::update(SessionTemplate::KIND, &shared)).await);
         }
     }
 
     #[tokio::test]
     async fn nobody_creates_in_someone_elses_name_and_no_one_at_all_creates() {
         let (alice, bob) = (user(), user());
-        assert!(allows(alice, ActionType::create(EntityKind::Session, &SecurityAttributes::owned_by(alice))).await);
-        assert!(!allows(bob, ActionType::create(EntityKind::Session, &SecurityAttributes::owned_by(alice))).await);
-        assert!(!allows(ActorId::None, ActionType::create(EntityKind::Session, &SecurityAttributes::default())).await, "an empty context has no rights");
-        assert!(!allows(ActorId::None, ActionType::update(EntityKind::Session, &SecurityAttributes::default())).await);
+        assert!(allows(alice, ActionType::create(Session::KIND, &SecurityAttributes::owned_by(alice))).await);
+        assert!(!allows(bob, ActionType::create(Session::KIND, &SecurityAttributes::owned_by(alice))).await);
+        assert!(!allows(ActorId::None, ActionType::create(Session::KIND, &SecurityAttributes::default())).await, "an empty context has no rights");
+        assert!(!allows(ActorId::None, ActionType::update(Session::KIND, &SecurityAttributes::default())).await);
     }
 
     #[tokio::test]
@@ -1139,11 +1148,11 @@ mod tests {
         let hers = SecurityAttributes::owned_by(alice).granting(Subject::Group(place), Grant::Read);
         let policy = knowing(Known { members: vec![(bob, place)] });
         let elsewhere = SecurityContext::new(bob, SessionId::new(), ChannelId::new());
-        assert!(policy.check(&elsewhere, ActionType::get(EntityKind::Session, &hers)).await, "a member, though he acts somewhere else");
-        assert!(!policy.check(&context(carol), ActionType::get(EntityKind::Session, &hers)).await, "not who is no member");
-        assert!(!policy.check(&context(bob), ActionType::update(EntityKind::Session, &hers)).await, "reading, not changing");
+        assert!(policy.check(&elsewhere, ActionType::get(Session::KIND, &hers)).await, "a member, though he acts somewhere else");
+        assert!(!policy.check(&context(carol), ActionType::get(Session::KIND, &hers)).await, "not who is no member");
+        assert!(!policy.check(&context(bob), ActionType::update(Session::KIND, &hers)).await, "reading, not changing");
         let other = SecurityAttributes::owned_by(alice).granting(Subject::Group(GroupId::new()), Grant::Read);
-        assert!(!policy.check(&context(bob), ActionType::get(EntityKind::Session, &other)).await, "a member of the group named, not of any");
+        assert!(!policy.check(&context(bob), ActionType::get(Session::KIND, &other)).await, "a member of the group named, not of any");
     }
 
     #[tokio::test]
@@ -1153,11 +1162,11 @@ mod tests {
         let team = Group::team(ScopedName::new("project", Scope::GlobalScope).unwrap(), alice_id);
         let policy = knowing(Known { members: vec![(bob, team.id)] });
         let theirs = &team.security_attributes;
-        assert!(policy.check(&context(alice), ActionType::get(EntityKind::Group, theirs)).await, "its owner");
-        assert!(policy.check(&context(bob), ActionType::get(EntityKind::Group, theirs)).await, "a member, by the group's own list");
-        assert!(!policy.check(&context(carol), ActionType::get(EntityKind::Group, theirs)).await, "not a stranger");
-        assert!(policy.check(&context(alice), ActionType::update(EntityKind::Group, theirs)).await && policy.check(&context(alice), ActionType::delete(EntityKind::Group, theirs)).await);
-        assert!(!policy.check(&context(bob), ActionType::update(EntityKind::Group, theirs)).await, "a member does not change it");
+        assert!(policy.check(&context(alice), ActionType::get(Group::KIND, theirs)).await, "its owner");
+        assert!(policy.check(&context(bob), ActionType::get(Group::KIND, theirs)).await, "a member, by the group's own list");
+        assert!(!policy.check(&context(carol), ActionType::get(Group::KIND, theirs)).await, "not a stranger");
+        assert!(policy.check(&context(alice), ActionType::update(Group::KIND, theirs)).await && policy.check(&context(alice), ActionType::delete(Group::KIND, theirs)).await);
+        assert!(!policy.check(&context(bob), ActionType::update(Group::KIND, theirs)).await, "a member does not change it");
     }
 
     #[tokio::test]
@@ -1171,11 +1180,11 @@ mod tests {
         let policy = OwnershipSecurityManager::new();
         let his_context = context(bob).with_roles(vec![hr, staff], None);
         let his_agents = context(bob).next(agent, bob).with_roles(vec![hr, staff], Some(vec![staff]));
-        assert!(policy.check(&his_context, ActionType::get(EntityKind::Skill, &hers)).await, "who holds the role");
-        assert!(!policy.check(&his_agents, ActionType::get(EntityKind::Skill, &hers)).await, "not his agent, limited below it");
-        assert!(!policy.check(&context(bob).next(agent, bob), ActionType::get(EntityKind::Skill, &hers)).await, "nor a context continued without roles: the initiator lends none");
+        assert!(policy.check(&his_context, ActionType::get(Skill::KIND, &hers)).await, "who holds the role");
+        assert!(!policy.check(&his_agents, ActionType::get(Skill::KIND, &hers)).await, "not his agent, limited below it");
+        assert!(!policy.check(&context(bob).next(agent, bob), ActionType::get(Skill::KIND, &hers)).await, "nor a context continued without roles: the initiator lends none");
         let his = SecurityAttributes::owned_by(alice).granting(Subject::Actor(bob), Grant::Read);
-        assert!(policy.check(&his_agents, ActionType::get(EntityKind::Skill, &his)).await, "what he is granted as a person, his agent is too");
+        assert!(policy.check(&his_agents, ActionType::get(Skill::KIND, &his)).await, "what he is granted as a person, his agent is too");
     }
 
     #[tokio::test]
@@ -1197,10 +1206,10 @@ mod tests {
     async fn a_workspaces_files_are_read_and_changed_as_its_list_grants() {
         let (alice, bob, carol) = (user(), user(), user());
         let theirs = SecurityAttributes::owned_by(alice).granting(Subject::Actor(bob), Grant::Read).granting(Subject::Actor(carol), Grant::Write);
-        assert!(allows(alice, ActionType::custom(EntityKind::Workspace, &WRITE, &theirs)).await, "its owner");
-        assert!(allows(bob, ActionType::get(EntityKind::Workspace, &theirs)).await && !allows(bob, ActionType::custom(EntityKind::Workspace, &WRITE, &theirs)).await, "a reader reads");
-        assert!(allows(carol, ActionType::get(EntityKind::Workspace, &theirs)).await && allows(carol, ActionType::custom(EntityKind::Workspace, &WRITE, &theirs)).await, "a writer both");
-        assert!(!allows(carol, ActionType::update(EntityKind::Workspace, &theirs)).await, "changing the workspace itself stays the owner's");
+        assert!(allows(alice, ActionType::custom(Workspace::KIND, &WRITE, &theirs)).await, "its owner");
+        assert!(allows(bob, ActionType::get(Workspace::KIND, &theirs)).await && !allows(bob, ActionType::custom(Workspace::KIND, &WRITE, &theirs)).await, "a reader reads");
+        assert!(allows(carol, ActionType::get(Workspace::KIND, &theirs)).await && allows(carol, ActionType::custom(Workspace::KIND, &WRITE, &theirs)).await, "a writer both");
+        assert!(!allows(carol, ActionType::update(Workspace::KIND, &theirs)).await, "changing the workspace itself stays the owner's");
     }
 
     #[test]
@@ -1229,7 +1238,7 @@ mod tests {
         let described = ActionType::CallTool(&call).describe();
         assert_eq!(described, "CallTool(web_search)");
         assert!(!described.contains("secret plans"), "no arguments in the log");
-        assert_eq!(ActionType::get(EntityKind::Session, &SecurityAttributes::default()).describe(), "GetSession");
+        assert_eq!(ActionType::get(Session::KIND, &SecurityAttributes::default()).describe(), "GetSession");
     }
 
     #[tokio::test]
@@ -1241,8 +1250,8 @@ mod tests {
         let hers = SecurityAttributes::owned_by(owner);
         let policy = OwnershipSecurityManager::new();
 
-        assert_eq!(policy.require(&context(owner), ActionType::delete(EntityKind::Session, &hers), || Refused).await, Ok(()));
-        assert_eq!(policy.require(&context(stranger), ActionType::delete(EntityKind::Session, &hers), || Refused).await, Err(Refused));
+        assert_eq!(policy.require(&context(owner), ActionType::delete(Session::KIND, &hers), || Refused).await, Ok(()));
+        assert_eq!(policy.require(&context(stranger), ActionType::delete(Session::KIND, &hers), || Refused).await, Err(Refused));
     }
 
     /// A subject as a query compares it (issue 293).

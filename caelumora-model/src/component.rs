@@ -69,7 +69,9 @@ impl StoredComponents {
 /// Deleted for good, not marked (issue 164): it is runtime configuration,
 /// reached only through the personalities and templates that refer to it,
 /// and hidden with them.
-impl crate::removal::Stored for StoredComponents {}
+impl crate::removal::Stored for StoredComponents {
+    const KIND: crate::store::EntityKind = crate::store::EntityKind::new("components");
+}
 
 impl Secured for StoredComponents {
     fn security_attributes(&self) -> &SecurityAttributes {

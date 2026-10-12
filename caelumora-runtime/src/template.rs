@@ -145,7 +145,7 @@ mod tests {
     use caelumora_model::agent::Personality;
     use caelumora_model::scope::Scope;
     use caelumora_model::security::{ActionType, SecurityManager, Verb};
-    use caelumora_model::store::EntityKind;
+    use caelumora_model::removal::Stored;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::template::{ParticipantTemplate, ScopeTemplate, SessionTemplateId, TemplateError};
     use caelumora_model::user::User;
@@ -159,7 +159,7 @@ mod tests {
     #[async_trait::async_trait]
     impl SecurityManager for NoAgentLookup {
         async fn check(&self, _context: &SecurityContext, action: ActionType<'_>) -> bool {
-            !matches!(action, ActionType::List(EntityKind::Agent))
+            !matches!(action, ActionType::List(Agent::KIND))
         }
     }
 
@@ -274,7 +274,7 @@ mod tests {
     impl SecurityManager for MadeMeanwhile {
         async fn check(&self, _context: &SecurityContext, action: ActionType<'_>) -> bool {
             use std::sync::atomic::Ordering;
-            if matches!(action, ActionType::Entity { kind: EntityKind::Agent, verb: Verb::Create, .. }) && !self.made.swap(true, Ordering::SeqCst) {
+            if matches!(action, ActionType::Entity { kind: Agent::KIND, verb: Verb::Create, .. }) && !self.made.swap(true, Ordering::SeqCst) {
                 let (Some(store), Some(personality)) = (self.store.get().and_then(std::sync::Weak::upgrade), self.personality.get()) else { return true };
                 let other = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), personality, ActorId::None);
                 store.create_agent(&SecurityContext::system(), &other).await.unwrap();

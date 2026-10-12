@@ -36,7 +36,7 @@ pub struct User {
 /// Derived rather than stored, so that no record can say otherwise.
 static SYSTEM_OWNED: SecurityAttributes = SecurityAttributes { owner_id: ActorId::System, acl: Vec::new() };
 
-crate::impl_deletable!(User, UserProfile);
+crate::impl_deletable!(User => "user", UserProfile => "user_profile");
 
 /// A username is unique everywhere (issue 250).
 impl Scoped for User {

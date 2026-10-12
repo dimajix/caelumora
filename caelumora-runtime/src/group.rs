@@ -31,7 +31,7 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::group::{Group, GroupId, GroupUpdateEvent};
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{AclEntry, ActionType, Enforcement, Grant, SecurityContext, SecurityManager, Subject};
-use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResult, StoreResultExt};
+use caelumora_model::store::{EntityStore, StoreError, StoreResult, StoreResultExt};
 use caelumora_model::user::UserId;
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::ValueError;
@@ -40,6 +40,7 @@ use std::fmt;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::info;
+use caelumora_model::removal::Stored;
 
 #[derive(Debug, thiserror::Error)]
 pub enum GroupError {
@@ -154,7 +155,7 @@ impl GroupManager {
             GroupUpdateEvent::MembersChanged => {}
         }
         if let Some(members) = members {
-            self.security.require(ctx, ActionType::update(EntityKind::Group, &group.security_attributes), || StoreError::PermissionDenied).await?;
+            self.security.require(ctx, ActionType::update(Group::KIND, &group.security_attributes), || StoreError::PermissionDenied).await?;
             let system = SecurityContext::system();
             let mut actors = Vec::with_capacity(members.len());
             for user in members {

@@ -17,9 +17,9 @@ use caelumora_model::security::{AccessQuestions, SecurityContext};
 use super::{channel_reading, ChannelReader, ChannelReading};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::snapshot::{DeletedSnapshot, Detail, ParticipantSnapshot, SessionSnapshot};
-use caelumora_model::store::EntityKind;
 use std::sync::Arc;
 use tracing::warn;
+use caelumora_model::removal::Stored;
 
 /// An agent's private notes in another channel of its session, as far as
 /// they may be read where it reads from (`SessionView::own_private_notes`):
@@ -303,7 +303,7 @@ impl SessionView {
                 id: channel.id,
                 name: channel.name.to_string(),
                 deleted: removal,
-                can_restore: may_change && views.security().may_restore(context, EntityKind::Channel, &channel.security_attributes).await,
+                can_restore: may_change && views.security().may_restore(context, Channel::KIND, &channel.security_attributes).await,
                 can_purge: false,
             });
         }

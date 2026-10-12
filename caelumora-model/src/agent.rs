@@ -129,7 +129,7 @@ impl Personality {
     }
 }
 
-crate::impl_deletable!(Personality, Agent);
+crate::impl_deletable!(Personality => "personality", Agent => "agent");
 
 impl Secured for Personality {
     fn security_attributes(&self) -> &SecurityAttributes {

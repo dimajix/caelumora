@@ -10,7 +10,7 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{ActionType, Enforcement, SecurityAttributes, SecurityContext, SecurityManager, Subject};
 use crate::view::{Viewer, Views};
-use caelumora_model::store::{EntityKind, EntityStore, StoreError};
+use caelumora_model::store::{EntityStore, StoreError};
 use tracing::{info, warn};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::{ChannelId, Session, SessionId};
@@ -24,6 +24,7 @@ use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 use super::{SessionError, SessionLoop, preferred_language, purge_channel_document, require_attachable, require_classification};
+use caelumora_model::removal::Stored;
 
 pub struct SessionManager {
     sessions: DashMap<SessionId, Arc<SessionLoop>>,
@@ -120,7 +121,7 @@ impl SessionManager {
             Some(session_loop) => {
                 let attributes = session_loop.session().security_attributes.clone();
                 self.security
-                    .require(context, ActionType::get(EntityKind::Session, &attributes), || StoreError::NotFound { entity: "session", id: id.to_string() }).await?;
+                    .require(context, ActionType::get(Session::KIND, &attributes), || StoreError::NotFound { entity: "session", id: id.to_string() }).await?;
                 Ok(Found::Running(session_loop))
             }
             None => Ok(Found::Stored(self.entities.get_session(context, id).await?)),
@@ -151,7 +152,7 @@ impl SessionManager {
         // Its own verb before anything of others is asked or anything is
         // found or made for it (issue 312): who may not create the session
         // learns nothing of the agents, the workspace or anyone's clearance.
-        self.security.require(context, ActionType::create(EntityKind::Session, &Session::attributes_of(id, owner)), || StoreError::PermissionDenied).await?;
+        self.security.require(context, ActionType::create(Session::KIND, &Session::attributes_of(id, owner)), || StoreError::PermissionDenied).await?;
         // One of the user's chosen is asked about before anything is made.
         let existing = match &workspace {
             Some(WorkspaceChoice::Existing { id: chosen, share }) => {
@@ -202,7 +203,7 @@ impl SessionManager {
     /// would: asks to create it (`CreateSession`) before anything else.
     #[cfg(test)]
     pub(crate) async fn create_session(&self, context: &SecurityContext, session: Session, channels: Vec<Channel>) -> Result<Arc<SessionLoop>> {
-        self.security.require(context, ActionType::create(EntityKind::Session, &session.security_attributes), || StoreError::PermissionDenied).await?;
+        self.security.require(context, ActionType::create(Session::KIND, &session.security_attributes), || StoreError::PermissionDenied).await?;
         self.establish(context, session, channels).await
     }
 
@@ -355,7 +356,7 @@ impl SessionManager {
         let _starting = start.lock().await;
         let session = self.find(context, id).await?.session();
         self.security
-            .require(context, ActionType::delete(EntityKind::Session, &session.security_attributes), || StoreError::PermissionDenied).await?;
+            .require(context, ActionType::delete(Session::KIND, &session.security_attributes), || StoreError::PermissionDenied).await?;
         // Captured before the runtime loop is torn down.
         // The events carry the attributes as they were: once deleted, the
         // session is nowhere to look them up (issue 39).

@@ -41,7 +41,7 @@ use crate::scope::Scoped;
 use crate::store::query::{self, Cursor, Field, Page, Query};
 use crate::confidentiality::{may_reach, ConfidentialityPolicy, ConfidentialityQuestions};
 use crate::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
-use crate::store::{EntityKind, StoreError, StoreResult};
+use crate::store::{StoreError, StoreResult};
 
 
 // Every method takes the kind of entity it asks about (issue 323): every
@@ -80,10 +80,10 @@ impl<'a> Access<'a> {
     }
 
     /// `found`, if it exists and the caller may read it; not found otherwise.
-    pub(crate) async fn read<T: Stored>(&self, found: Option<T>, kind: EntityKind, id: String) -> StoreResult<T> {
-        let not_found = || StoreError::NotFound { entity: kind.name(), id };
+    pub(crate) async fn read<T: Stored>(&self, found: Option<T>, id: String) -> StoreResult<T> {
+        let not_found = || StoreError::NotFound { entity: T::KIND.name(), id };
         let Some(value) = found.filter(present) else { return Err(not_found()) };
-        self.require(ActionType::get(kind, value.security_attributes()), not_found.clone()).await?;
+        self.require(ActionType::get(T::KIND, value.security_attributes()), not_found.clone()).await?;
         self.require_cleared(&value, not_found)?;
         Ok(value)
     }
@@ -95,15 +95,15 @@ impl<'a> Access<'a> {
     /// `load` judges, or is gone -, and of those the ones the caller may
     /// read - among what was deleted, if `deleted` -, until its limit. What
     /// follows the limit is not loaded.
-    pub(crate) async fn page<T, F, K, L, R>(&self, keys: Vec<(String, K)>, query: &Query<F>, kind: EntityKind, deleted: bool, mut load: L) -> StoreResult<Page<T>>
+    pub(crate) async fn page<T, F, K, L, R>(&self, keys: Vec<(String, K)>, query: &Query<F>, deleted: bool, mut load: L) -> StoreResult<Page<T>>
     where T: Stored, F: Field, L: FnMut(K) -> R, R: Future<Output = StoreResult<Option<T>>> {
         let mut items = Vec::new();
         let mut remaining = query::ordered_after(keys, query).peekable();
         while let Some((key, found_by)) = remaining.next() {
             let Some(candidate) = load(found_by).await? else { continue };
             let readable = match deleted {
-                true => self.readable_deleted(&candidate, kind).await,
-                false => self.readable(&candidate, kind).await,
+                true => self.readable_deleted(&candidate).await,
+                false => self.readable(&candidate).await,
             };
             if !readable {
                 continue;
@@ -119,8 +119,8 @@ impl<'a> Access<'a> {
 
     /// Whether the caller may read `value` among a list: it is present,
     /// they may read it (`Get`) and are cleared for it.
-    pub(crate) async fn readable<T: Stored>(&self, value: &T, kind: EntityKind) -> bool {
-        present(value) && self.reachable(value, ActionType::get(kind, value.security_attributes())).await
+    pub(crate) async fn readable<T: Stored>(&self, value: &T) -> bool {
+        present(value) && self.reachable(value, ActionType::get(T::KIND, value.security_attributes())).await
     }
 
     /// Whether the caller reaches `value`, asked as `read`: `may_reach`,
@@ -131,40 +131,40 @@ impl<'a> Access<'a> {
     }
 
     /// Whether the caller may create `value`.
-    pub(crate) async fn create<T: Stored>(&self, value: &T, kind: EntityKind) -> StoreResult<()> {
-        unmarked(value, kind)?;
+    pub(crate) async fn create<T: Stored>(&self, value: &T) -> StoreResult<()> {
+        unmarked(value)?;
         valid(value)?;
-        self.allow(ActionType::create(kind, value.security_attributes())).await
+        self.allow(ActionType::create(T::KIND, value.security_attributes())).await
     }
 
     /// Whether the caller may change `stored`, the entity as it is now, to
     /// `value`.
-    pub(crate) async fn change<T: Stored>(&self, stored: Option<&T>, value: &T, kind: EntityKind, id: String) -> StoreResult<()> {
-        let not_found = || StoreError::NotFound { entity: kind.name(), id };
+    pub(crate) async fn change<T: Stored>(&self, stored: Option<&T>, value: &T, id: String) -> StoreResult<()> {
+        let not_found = || StoreError::NotFound { entity: T::KIND.name(), id };
         let Some(stored) = stored.filter(|s| present(*s)) else { return Err(not_found()) };
-        self.require(ActionType::get(kind, stored.security_attributes()), not_found.clone()).await?;
+        self.require(ActionType::get(T::KIND, stored.security_attributes()), not_found.clone()).await?;
         self.require_cleared(stored, not_found)?;
-        self.allow(ActionType::update(kind, stored.security_attributes())).await?;
-        unmarked(value, kind)?;
+        self.allow(ActionType::update(T::KIND, stored.security_attributes())).await?;
+        unmarked(value)?;
         valid(value)
     }
 
     /// Whether to delete `stored`: `false` if there is nothing the caller
     /// could see to delete, an error if they may see but not delete it.
-    pub(crate) async fn delete<T: Stored>(&self, stored: Option<&T>, kind: EntityKind) -> StoreResult<bool> {
+    pub(crate) async fn delete<T: Stored>(&self, stored: Option<&T>) -> StoreResult<bool> {
         let Some(stored) = stored.filter(|s| present(*s)) else { return Ok(false) };
-        if self.require(ActionType::get(kind, stored.security_attributes()), || ()).await.is_err() || self.require_cleared(stored, || ()).is_err() {
+        if self.require(ActionType::get(T::KIND, stored.security_attributes()), || ()).await.is_err() || self.require_cleared(stored, || ()).is_err() {
             return Ok(false);
         }
-        self.allow(ActionType::delete(kind, stored.security_attributes())).await.map(|_| true)
+        self.allow(ActionType::delete(T::KIND, stored.security_attributes())).await.map(|_| true)
     }
 
     /// `found`, if it is marked deleted and the caller may read what was
-    /// deleted of its kind; not found otherwise.
-    pub(crate) async fn read_deleted<T: Stored>(&self, found: Option<T>, kind: EntityKind, id: String) -> StoreResult<T> {
-        let not_found = || StoreError::NotFound { entity: kind.name(), id };
+    /// deleted of its T::KIND; not found otherwise.
+    pub(crate) async fn read_deleted<T: Stored>(&self, found: Option<T>, id: String) -> StoreResult<T> {
+        let not_found = || StoreError::NotFound { entity: T::KIND.name(), id };
         let Some(value) = found.filter(|v| !present(v)) else { return Err(not_found()) };
-        self.require(ActionType::read_deleted(kind, value.security_attributes()), not_found.clone()).await?;
+        self.require(ActionType::read_deleted(T::KIND, value.security_attributes()), not_found.clone()).await?;
         self.require_cleared(&value, not_found)?;
         Ok(value)
     }
@@ -172,16 +172,16 @@ impl<'a> Access<'a> {
     /// Whether the caller may read `value` among a list of what was
     /// deleted: it is marked deleted, they may read it as such
     /// (`ReadDeleted`) and are cleared for it.
-    pub(crate) async fn readable_deleted<T: Stored>(&self, value: &T, kind: EntityKind) -> bool {
-        !present(value) && self.reachable(value, ActionType::read_deleted(kind, value.security_attributes())).await
+    pub(crate) async fn readable_deleted<T: Stored>(&self, value: &T) -> bool {
+        !present(value) && self.reachable(value, ActionType::read_deleted(T::KIND, value.security_attributes())).await
     }
 
     /// `stored`, if the caller may take its mark away: not found if it is
     /// not marked or they may not read it as deleted, refused if they may
     /// but not restore it.
-    pub(crate) async fn restore<T: Stored>(&self, stored: Option<T>, kind: EntityKind, id: String) -> StoreResult<T> {
-        let stored = self.read_deleted(stored, kind, id).await?;
-        self.allow(ActionType::restore(kind, stored.security_attributes())).await?;
+    pub(crate) async fn restore<T: Stored>(&self, stored: Option<T>, id: String) -> StoreResult<T> {
+        let stored = self.read_deleted(stored, id).await?;
+        self.allow(ActionType::restore(T::KIND, stored.security_attributes())).await?;
         Ok(stored)
     }
 
@@ -189,13 +189,13 @@ impl<'a> Access<'a> {
     /// deleted or the caller may not read it as deleted, an error if they
     /// may but not purge it. Only what was deleted is purged, so that a
     /// purge never removes what was restored meanwhile.
-    pub(crate) async fn purge<T: Stored>(&self, stored: Option<&T>, kind: EntityKind) -> StoreResult<bool> {
+    pub(crate) async fn purge<T: Stored>(&self, stored: Option<&T>) -> StoreResult<bool> {
         let Some(stored) = stored.filter(|s| !present(*s)) else { return Ok(false) };
         let attributes = stored.security_attributes();
-        if self.require(ActionType::read_deleted(kind, attributes), || ()).await.is_err() || self.require_cleared(stored, || ()).is_err() {
+        if self.require(ActionType::read_deleted(T::KIND, attributes), || ()).await.is_err() || self.require_cleared(stored, || ()).is_err() {
             return Ok(false);
         }
-        self.allow(ActionType::purge(kind, attributes)).await.map(|_| true)
+        self.allow(ActionType::purge(T::KIND, attributes)).await.map(|_| true)
     }
 }
 
@@ -207,25 +207,25 @@ fn present<T: Stored>(value: &T) -> bool {
 /// Refuses `value` if one of `others` that is not deleted has its name in
 /// its scope (issue 250). `others` may hold `value`'s own document only as
 /// it is stored: absent, deleted or under another name.
-pub(crate) fn name_free<'a, T: Stored + Scoped + 'a>(value: &T, others: impl IntoIterator<Item = &'a T>, kind: EntityKind) -> StoreResult<()> {
+pub(crate) fn name_free<'a, T: Stored + Scoped + 'a>(value: &T, others: impl IntoIterator<Item = &'a T>) -> StoreResult<()> {
     let name = value.scoped_name();
     match others.into_iter().filter(|other| present(*other)).any(|other| other.scoped_name() == name) {
         false => Ok(()),
-        true => Err(StoreError::NameTaken { entity: kind.name() }),
+        true => Err(StoreError::NameTaken { entity: T::KIND.name() }),
     }
 }
 
 /// Refuses `value` if it carries the mark of a deletion: only deleting
 /// sets it (issue 164), not whoever writes a document.
-fn unmarked<T: Stored>(value: &T, kind: EntityKind) -> StoreResult<()> {
+fn unmarked<T: Stored>(value: &T) -> StoreResult<()> {
     match value.deleted() {
         None => Ok(()),
-        Some(_) => Err(StoreError::Validation(format!("a {} is marked deleted only by deleting it", kind))),
+        Some(_) => Err(StoreError::Validation(format!("a {} is marked deleted only by deleting it", T::KIND))),
     }
 }
 
 /// Refuses `value` if it may not be stored as it is: its access list
-/// (`SecurityAttributes::validate`, issue 23), and what its kind says
+/// (`SecurityAttributes::validate`, issue 23), and what its T::KIND says
 /// (`Stored::validate`).
 fn valid<T: Stored>(value: &T) -> StoreResult<()> {
     value.security_attributes().validate().map_err(StoreError::Validation)?;
@@ -236,7 +236,7 @@ fn valid<T: Stored>(value: &T) -> StoreResult<()> {
 mod tests {
     use crate::actor::ActorId;
     use crate::security::{ActionType, SecurityAttributes, SecurityContext, SecurityManager, Verb};
-    use crate::store::EntityKind;
+    use crate::removal::Stored;
     use crate::session::{Session, SessionId};
     use crate::store::{EntityStore, StoreError};
     use crate::store::query::{NoField, Query};
@@ -256,8 +256,8 @@ mod tests {
         async fn check(&self, ctx: &SecurityContext, action: ActionType<'_>) -> bool {
             let me = ctx.principal_id;
             match action {
-                ActionType::Entity { kind: EntityKind::Session, verb: Verb::Get, attributes: a } => a.owner_id == me || a.acl.iter().any(|e| e.subject == crate::security::Subject::Actor(me)),
-                ActionType::Entity { kind: EntityKind::Session, verb: Verb::Create | Verb::Update | Verb::Delete, attributes: a } => a.owner_id == me,
+                ActionType::Entity { kind: Session::KIND, verb: Verb::Get, attributes: a } => a.owner_id == me || a.acl.iter().any(|e| e.subject == crate::security::Subject::Actor(me)),
+                ActionType::Entity { kind: Session::KIND, verb: Verb::Create | Verb::Update | Verb::Delete, attributes: a } => a.owner_id == me,
                 _ => true,
             }
         }
@@ -297,7 +297,7 @@ mod tests {
         let keys: Vec<(String, usize)> = ["a", "b", "c", "d"].into_iter().map(String::from).zip(0..).collect();
         let mut loaded = Vec::new();
         let page = super::Access::new(&OwnersAndContributors, &ConfidentialityRules::default(), &alice_ctx)
-            .page(keys, &Query::<NoField>::all().limited(2), EntityKind::Session, false, |n: usize| {
+            .page(keys, &Query::<NoField>::all().limited(2), false, |n: usize| {
                 loaded.push(n);
                 std::future::ready(Ok(Some(sessions[n].clone())))
             })

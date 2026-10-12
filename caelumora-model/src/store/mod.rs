@@ -97,42 +97,24 @@ pub trait Journaled: Serialize + DeserializeOwned + Send {
 }
 
 
-/// The kinds the stores keep - the entities of the `EntityStore` and the
+/// A kind the stores keep - of the entities of the `EntityStore` and the
 /// components of the `ComponentStore` (issue 164): what the actions that
-/// concern every kind alike are keyed by, and its name in errors.
+/// concern every kind alike are keyed by, and its name in errors. Open
+/// (issue 323): each stored type names its own (`Stored::KIND`), so that a
+/// kind is added without a change here. Its name is unique among the kinds;
+/// it is also what the JSON store keeps the kind's files under.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum EntityKind {
-    Personality,
-    SessionTemplate,
-    Agent,
-    Session,
-    Channel,
-    User,
-    UserProfile,
-    Workspace,
-    Skill,
-    Artifact,
-    Group,
-    Components,
-}
+pub struct EntityKind(&'static str);
 
 impl EntityKind {
+    /// The kind of `name`, written in `snake_case`.
+    pub const fn new(name: &'static str) -> Self {
+        Self(name)
+    }
+
     /// Its name, as errors give it.
     pub fn name(self) -> &'static str {
-        match self {
-            EntityKind::Personality => "personality",
-            EntityKind::SessionTemplate => "session_template",
-            EntityKind::Agent => "agent",
-            EntityKind::Session => "session",
-            EntityKind::Channel => "channel",
-            EntityKind::User => "user",
-            EntityKind::UserProfile => "user_profile",
-            EntityKind::Workspace => "workspace",
-            EntityKind::Skill => "skill",
-            EntityKind::Artifact => "artifact",
-            EntityKind::Group => "group",
-            EntityKind::Components => "components",
-        }
+        self.0
     }
 
     /// Its name as a type's is written - `SessionTemplate` -, as

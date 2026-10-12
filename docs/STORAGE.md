@@ -30,6 +30,13 @@ The `EntityStore` (in `caelumora-model`) stores the long-lived domain entities:
 There are two implementations: `MemoryStore`, for tests, and `JsonFileStore`, which keeps one JSON
 file per document.
 
+Every stored type says which kind it is, `Stored::KIND`, an `EntityKind` named by a string
+(`"skill"`) that is unique among the kinds (issue
+[323](../issues/323-kinds-enumerated-in-the-core.md)). The stores take it from the type they read
+and write: what is asked of the `SecurityManager` (`ActionType::get(T::KIND, …)`), the name in
+errors and logs, and the name lock of the JSON store. A new kind is added without a change to
+`EntityKind`.
+
 ### Artifact content
 
 The content of artifacts lies in the storages configured under `artifacts`, each an

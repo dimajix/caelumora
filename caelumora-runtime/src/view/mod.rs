@@ -62,9 +62,14 @@ use caelumora_model::scope::{found_from, Scope, Scoped};
 use caelumora_model::value::name::Name;
 use crate::workspace::WorkspaceManager;
 use crate::skill::SkillManager;
-use caelumora_model::store::{EntityKind, EntityStore, StateStore, StoreResultExt};
+use caelumora_model::store::{EntityStore, StateStore, StoreResultExt};
 use crate::component::ComponentRegistry;
 use std::sync::Arc;
+use caelumora_model::artifact::Artifact;
+use caelumora_model::session::Session;
+use caelumora_model::skill::Skill;
+use caelumora_model::workspace::Workspace;
+use caelumora_model::removal::Stored;
 
 /// Who navigates: in whose name every edge asks its question (issue 131),
 /// and - for an agent - from where.
@@ -396,8 +401,8 @@ impl Views {
                 id: agent.id,
                 name: agent.name.to_string(),
                 deleted: removal,
-                can_restore: policy.may_restore(self.viewer.context(), EntityKind::Agent, attributes).await,
-                can_purge: policy.may_purge(self.viewer.context(), EntityKind::Agent, attributes).await,
+                can_restore: policy.may_restore(self.viewer.context(), Agent::KIND, attributes).await,
+                can_purge: policy.may_purge(self.viewer.context(), Agent::KIND, attributes).await,
             });
         }
         Ok(deleted)
@@ -579,8 +584,8 @@ impl Views {
                 id: group.id,
                 name: group.name.to_string(),
                 deleted: removal,
-                can_restore: policy.may_restore(self.viewer.context(), EntityKind::Group, attributes).await,
-                can_purge: policy.may_purge(self.viewer.context(), EntityKind::Group, attributes).await,
+                can_restore: policy.may_restore(self.viewer.context(), Group::KIND, attributes).await,
+                can_purge: policy.may_purge(self.viewer.context(), Group::KIND, attributes).await,
             });
         }
         Ok(deleted)
@@ -603,8 +608,8 @@ impl Views {
                 id: artifact.id,
                 name: artifact.name.to_string(),
                 deleted: removal,
-                can_restore: policy.may_restore(self.viewer.context(), EntityKind::Artifact, attributes).await,
-                can_purge: policy.may_purge(self.viewer.context(), EntityKind::Artifact, attributes).await,
+                can_restore: policy.may_restore(self.viewer.context(), Artifact::KIND, attributes).await,
+                can_purge: policy.may_purge(self.viewer.context(), Artifact::KIND, attributes).await,
             });
         }
         Ok(deleted)
@@ -627,8 +632,8 @@ impl Views {
                 id: workspace.id,
                 name: workspace.name.to_string(),
                 deleted: removal,
-                can_restore: policy.may_restore(self.viewer.context(), EntityKind::Workspace, attributes).await,
-                can_purge: policy.may_purge(self.viewer.context(), EntityKind::Workspace, attributes).await,
+                can_restore: policy.may_restore(self.viewer.context(), Workspace::KIND, attributes).await,
+                can_purge: policy.may_purge(self.viewer.context(), Workspace::KIND, attributes).await,
             });
         }
         Ok(deleted)
@@ -651,8 +656,8 @@ impl Views {
                 id: session.id,
                 name: session.name.to_string(),
                 deleted: removal,
-                can_restore: policy.may_restore(self.viewer.context(), EntityKind::Session, attributes).await,
-                can_purge: policy.may_purge(self.viewer.context(), EntityKind::Session, attributes).await,
+                can_restore: policy.may_restore(self.viewer.context(), Session::KIND, attributes).await,
+                can_purge: policy.may_purge(self.viewer.context(), Session::KIND, attributes).await,
             });
         }
         Ok(deleted)
@@ -773,8 +778,8 @@ impl Views {
                 id: skill.id,
                 name: skill.name.to_string(),
                 deleted: removal,
-                can_restore: policy.may_restore(self.viewer.context(), EntityKind::Skill, attributes).await,
-                can_purge: policy.may_purge(self.viewer.context(), EntityKind::Skill, attributes).await,
+                can_restore: policy.may_restore(self.viewer.context(), Skill::KIND, attributes).await,
+                can_purge: policy.may_purge(self.viewer.context(), Skill::KIND, attributes).await,
             });
         }
         Ok(deleted)

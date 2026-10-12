@@ -11,13 +11,14 @@ use caelumora_model::channel::HistoryAccess;
 use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::question::{QuestionError, Questions};
 use caelumora_model::security::{ActionType, SecurityContext};
-use caelumora_model::store::EntityKind;
 use tracing::{info, warn};
 use std::collections::HashMap;
 use std::sync::Arc;
 use super::{ActorChange, Actors, ChannelActor, ChannelError, ChannelLoop, ChannelMember, LEAVE_GRACE, Member};
 use super::history::history_start;
 use super::member::agent_exists;
+use caelumora_model::channel::Channel;
+use caelumora_model::removal::Stored;
 
 impl ChannelLoop {
     /// Adds `participant` - a participant of the session - to the channel on
@@ -38,7 +39,7 @@ impl ChannelLoop {
         // is asked of the participant (issue 198, F2): who may not learns
         // nothing of its clearance or its personality.
         let attributes = self.security_attributes();
-        self.require(context, ActionType::update(EntityKind::Channel, &attributes), "adding a participant to").await?;
+        self.require(context, ActionType::update(Channel::KIND, &attributes), "adding a participant to").await?;
         if self.actors.load().contains_key(&participant) {
             return Err(ChannelError::AlreadyParticipant { participant, channel: self.id }.into());
         }
