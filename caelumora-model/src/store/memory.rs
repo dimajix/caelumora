@@ -2,7 +2,7 @@ use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, P
 use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::StoredComponents;
 use crate::session::{Session, SessionId};
-use crate::store::{ComponentStore, EntityKind, EntityStore, Journaled, StateStore, StoreError, StoreResult};
+use crate::store::{ComponentStore, EntityStore, Journaled, StateStore, StoreError, StoreResult};
 use crate::template::{SessionTemplate, SessionTemplateId};
 use async_trait::async_trait;
 use tracing::info;
@@ -125,27 +125,27 @@ fn unnamed<T>(_: &T, _: Others<'_, T>) -> StoreResult<()> {
     Ok(())
 }
 
-/// The operations of every kind (issues 93, 164), on the map that holds
-/// that kind and checked as its kind. Those that write come as
-/// three: the plain one, the one for a kind whose names are unique
+/// The operations of every T::KIND (issues 93, 164), on the map that holds
+/// that T::KIND and checked as its T::KIND. Those that write come as
+/// three: the plain one, the one for a T::KIND whose names are unique
 /// (`…_named_in`, issue 250), and what both are made of (`…_with`).
 impl MemoryStore {
-    async fn create_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: EntityKind, key: K, value: &T) -> StoreResult<()>
+    async fn create_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, key: K, value: &T) -> StoreResult<()>
     where K: Eq + Hash + Display + Send + Sync, T: Stored + Clone + Send + Sync {
-        self.create_with(ctx, map, kind, key, value, unnamed).await
+        self.create_with(ctx, map, key, value, unnamed).await
     }
 
-    async fn create_named_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: EntityKind, key: K, value: &T) -> StoreResult<()>
+    async fn create_named_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, key: K, value: &T) -> StoreResult<()>
     where K: Eq + Hash + Display + Send + Sync, T: Stored + Scoped + Clone + Send + Sync {
-        self.create_with(ctx, map, kind, key, value, |value, others| name_free(value, others, kind)).await
+        self.create_with(ctx, map, key, value, |value, others| name_free(value, others)).await
     }
 
-    async fn create_with<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: EntityKind, key: K, value: &T, others: impl FnOnce(&T, Others<'_, T>) -> StoreResult<()>) -> StoreResult<()>
+    async fn create_with<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, key: K, value: &T, others: impl FnOnce(&T, Others<'_, T>) -> StoreResult<()>) -> StoreResult<()>
     where K: Eq + Hash + Display + Send + Sync, T: Stored + Clone + Send + Sync {
-        self.access(ctx).create(value, kind).await?;
+        self.access(ctx).create(value).await?;
         self.write_lock(map, |v| {
             if v.contains_key(&key) {
-                return Err(StoreError::Conflict(format!("{} {} already exists", kind, key)));
+                return Err(StoreError::Conflict(format!("{} {} already exists", T::KIND, key)));
             }
             others(value, &mut v.values())?;
             v.insert(key, value.clone());
@@ -153,26 +153,26 @@ impl MemoryStore {
         })
     }
 
-    async fn get_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: EntityKind, key: &K) -> StoreResult<T>
+    async fn get_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, key: &K) -> StoreResult<T>
     where K: Eq + Hash + Display + Send + Sync, T: Stored + Clone + Send + Sync {
         let found = self.read_lock(map, |v| v.get(key).cloned());
-        self.access(ctx).read(found, kind, key.to_string()).await
+        self.access(ctx).read(found, key.to_string()).await
     }
 
-    async fn update_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: EntityKind, key: K, value: &T) -> StoreResult<()>
+    async fn update_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, key: K, value: &T) -> StoreResult<()>
     where K: Eq + Hash + Display + Send + Sync, T: Stored + Clone + Send + Sync {
-        self.update_with(ctx, map, kind, key, value, unnamed).await
+        self.update_with(ctx, map, key, value, unnamed).await
     }
 
-    async fn update_named_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: EntityKind, key: K, value: &T) -> StoreResult<()>
+    async fn update_named_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, key: K, value: &T) -> StoreResult<()>
     where K: Eq + Hash + Display + Send + Sync, T: Stored + Scoped + Clone + Send + Sync {
-        self.update_with(ctx, map, kind, key, value, |value, others| name_free(value, others, kind)).await
+        self.update_with(ctx, map, key, value, |value, others| name_free(value, others)).await
     }
 
-    async fn update_with<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: EntityKind, key: K, value: &T, others: impl FnOnce(&T, Others<'_, T>) -> StoreResult<()>) -> StoreResult<()>
+    async fn update_with<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, key: K, value: &T, others: impl FnOnce(&T, Others<'_, T>) -> StoreResult<()>) -> StoreResult<()>
     where K: Eq + Hash + Display + Send + Sync, T: Stored + Clone + Send + Sync {
         let stored = self.read_lock(map, |v| v.get(&key).cloned());
-        self.access(ctx).change(stored.as_ref(), value, kind, key.to_string()).await?;
+        self.access(ctx).change(stored.as_ref(), value, key.to_string()).await?;
         self.write_lock(map, |v| {
             others(value, &mut v.iter().filter(|(k, _)| **k != key).map(|(_, other)| other))?;
             v.insert(key, value.clone());
@@ -181,10 +181,10 @@ impl MemoryStore {
     }
 
     /// Marks the entity deleted, by the caller and now (issue 164).
-    async fn delete_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: EntityKind, key: K) -> StoreResult<bool>
+    async fn delete_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, key: K) -> StoreResult<bool>
     where K: Eq + Hash + Display + Send + Sync, T: Deletable + Clone + Send + Sync {
         let stored = self.read_lock(map, |v| v.get(&key).cloned());
-        if !self.access(ctx).delete(stored.as_ref(), kind).await? {
+        if !self.access(ctx).delete(stored.as_ref()).await? {
             return Ok(false);
         }
         let Some(mut marked) = stored else { return Ok(false) };
@@ -193,30 +193,30 @@ impl MemoryStore {
         Ok(true)
     }
 
-    /// Removes the entity for good: deleting a kind that is not marked.
-    async fn remove_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: EntityKind, key: &K) -> StoreResult<bool>
+    /// Removes the entity for good: deleting a T::KIND that is not marked.
+    async fn remove_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, key: &K) -> StoreResult<bool>
     where K: Eq + Hash + Display + Send + Sync, T: Stored + Clone + Send + Sync {
         let stored = self.read_lock(map, |v| v.get(key).cloned());
-        if !self.access(ctx).delete(stored.as_ref(), kind).await? {
+        if !self.access(ctx).delete(stored.as_ref()).await? {
             return Ok(false);
         }
         Ok(self.write_lock(map, |v| v.remove(key).is_some()))
     }
 
-    async fn restore_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: EntityKind, key: K) -> StoreResult<T>
+    async fn restore_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, key: K) -> StoreResult<T>
     where K: Eq + Hash + Display + Send + Sync, T: Deletable + Clone + Send + Sync {
-        self.restore_with(ctx, map, kind, key, unnamed).await
+        self.restore_with(ctx, map, key, unnamed).await
     }
 
-    async fn restore_named_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: EntityKind, key: K) -> StoreResult<T>
+    async fn restore_named_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, key: K) -> StoreResult<T>
     where K: Eq + Hash + Display + Send + Sync, T: Deletable + Scoped + Clone + Send + Sync {
-        self.restore_with(ctx, map, kind, key, |value, others| name_free(value, others, kind)).await
+        self.restore_with(ctx, map, key, |value, others| name_free(value, others)).await
     }
 
-    async fn restore_with<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: EntityKind, key: K, others: impl FnOnce(&T, Others<'_, T>) -> StoreResult<()>) -> StoreResult<T>
+    async fn restore_with<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, key: K, others: impl FnOnce(&T, Others<'_, T>) -> StoreResult<()>) -> StoreResult<T>
     where K: Eq + Hash + Display + Send + Sync, T: Deletable + Clone + Send + Sync {
         let stored = self.read_lock(map, |v| v.get(&key).cloned());
-        let mut restored = self.access(ctx).restore(stored, kind, key.to_string()).await?;
+        let mut restored = self.access(ctx).restore(stored, key.to_string()).await?;
         restored.set_deleted(None);
         self.write_lock(map, |v| {
             others(&restored, &mut v.iter().filter(|(k, _)| **k != key).map(|(_, other)| other))?;
@@ -225,10 +225,10 @@ impl MemoryStore {
         })
     }
 
-    async fn purge_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: EntityKind, key: &K) -> StoreResult<bool>
+    async fn purge_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, key: &K) -> StoreResult<bool>
     where K: Eq + Hash + Display + Send + Sync, T: Deletable + Clone + Send + Sync {
         let stored = self.read_lock(map, |v| v.get(key).cloned());
-        if !self.access(ctx).purge(stored.as_ref(), kind).await? {
+        if !self.access(ctx).purge(stored.as_ref()).await? {
             return Ok(false);
         }
         // Only if it is still marked: restored while the purge was asked
@@ -239,10 +239,10 @@ impl MemoryStore {
         }))
     }
 
-    async fn get_deleted_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: EntityKind, key: &K) -> StoreResult<T>
+    async fn get_deleted_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, key: &K) -> StoreResult<T>
     where K: Eq + Hash + Display + Send + Sync, T: Deletable + Clone + Send + Sync {
         let found = self.read_lock(map, |v| v.get(key).cloned());
-        self.access(ctx).read_deleted(found, kind, key.to_string()).await
+        self.access(ctx).read_deleted(found, key.to_string()).await
     }
 
     /// The keys of `map`, each as it orders a list and as it finds the
@@ -261,27 +261,27 @@ impl MemoryStore {
         }
     }
 
-    async fn list_deleted_in<K, T, F>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: EntityKind, query: &Query<F>) -> StoreResult<Page<T>>
+    async fn list_deleted_in<K, T, F>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, query: &Query<F>) -> StoreResult<Page<T>>
     where K: Eq + Hash + Display + Clone + Send + Sync, T: Deletable + Serialize + Clone + Send + Sync, F: Field {
         let access = self.access(ctx);
-        access.allow(ActionType::List(kind)).await?;
+        access.allow(ActionType::List(T::KIND)).await?;
         let filter = query.filter.as_ref();
-        access.page(self.keys(map), query, kind, true, |key: K| ready(self.meeting_in(map, &key, filter))).await
+        access.page(self.keys(map), query, true, |key: K| ready(self.meeting_in(map, &key, filter))).await
     }
 
-    async fn list_in<K, T, F>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: EntityKind, query: &Query<F>) -> StoreResult<Page<T>>
+    async fn list_in<K, T, F>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, query: &Query<F>) -> StoreResult<Page<T>>
     where K: Eq + Hash + Display + Clone + Send + Sync, T: Stored + Serialize + Clone + Send + Sync, F: Field {
         let access = self.access(ctx);
-        access.allow(ActionType::List(kind)).await?;
+        access.allow(ActionType::List(T::KIND)).await?;
         let filter = query.filter.as_ref();
-        access.page(self.keys(map), query, kind, false, |key: K| ready(self.meeting_in(map, &key, filter))).await
+        access.page(self.keys(map), query, false, |key: K| ready(self.meeting_in(map, &key, filter))).await
     }
 
     /// The one of `name`, in exactly its scope, among those listed.
-    async fn find_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: EntityKind, name: &ScopedName) -> StoreResult<T>
+    async fn find_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, name: &ScopedName) -> StoreResult<T>
     where K: Eq + Hash + Display + Clone + Send + Sync, T: Stored + Scoped + Serialize + Clone + Send + Sync {
-        let all = self.list_in(ctx, map, kind, &Query::<NoField>::all()).await?.items;
-        require_entity(all.into_iter().find(|d| d.scoped_name() == *name), kind.name(), name.to_string())
+        let all = self.list_in(ctx, map, &Query::<NoField>::all()).await?.items;
+        require_entity(all.into_iter().find(|d| d.scoped_name() == *name), T::KIND.name(), name.to_string())
     }
 }
 
@@ -296,348 +296,348 @@ use crate::user::{User, UserId, UserProfile};
 impl EntityStore for MemoryStore {
     // Personalities
     async fn create_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()> {
-        self.create_named_in(ctx, &self.personalities, EntityKind::Personality, value.id, value).await
+        self.create_named_in(ctx, &self.personalities, value.id, value).await
     }
     async fn get_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
-        self.get_in(ctx, &self.personalities, EntityKind::Personality, &id).await
+        self.get_in(ctx, &self.personalities, &id).await
     }
     async fn update_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()> {
-        self.update_named_in(ctx, &self.personalities, EntityKind::Personality, value.id, value).await
+        self.update_named_in(ctx, &self.personalities, value.id, value).await
     }
     async fn delete_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool> {
-        self.delete_in(ctx, &self.personalities, EntityKind::Personality, id).await
+        self.delete_in(ctx, &self.personalities, id).await
     }
     async fn list_personalities(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Personality>> {
-        self.list_in(ctx, &self.personalities, EntityKind::Personality, query).await
+        self.list_in(ctx, &self.personalities, query).await
     }
     async fn restore_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
-        self.restore_named_in(ctx, &self.personalities, EntityKind::Personality, id).await
+        self.restore_named_in(ctx, &self.personalities, id).await
     }
     async fn purge_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool> {
-        self.purge_in(ctx, &self.personalities, EntityKind::Personality, &id).await
+        self.purge_in(ctx, &self.personalities, &id).await
     }
     async fn get_deleted_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
-        self.get_deleted_in(ctx, &self.personalities, EntityKind::Personality, &id).await
+        self.get_deleted_in(ctx, &self.personalities, &id).await
     }
     async fn list_deleted_personalities(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Personality>> {
-        self.list_deleted_in(ctx, &self.personalities, EntityKind::Personality, query).await
+        self.list_deleted_in(ctx, &self.personalities, query).await
     }
     async fn find_personality_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Personality> {
-        self.find_in(ctx, &self.personalities, EntityKind::Personality, name).await
+        self.find_in(ctx, &self.personalities, name).await
     }
 
     // Session templates
     async fn create_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()> {
-        self.create_named_in(ctx, &self.session_templates, EntityKind::SessionTemplate, value.id, value).await
+        self.create_named_in(ctx, &self.session_templates, value.id, value).await
     }
     async fn get_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<SessionTemplate> {
-        self.get_in(ctx, &self.session_templates, EntityKind::SessionTemplate, &id).await
+        self.get_in(ctx, &self.session_templates, &id).await
     }
     async fn update_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()> {
-        self.update_named_in(ctx, &self.session_templates, EntityKind::SessionTemplate, value.id, value).await
+        self.update_named_in(ctx, &self.session_templates, value.id, value).await
     }
     async fn delete_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool> {
-        self.delete_in(ctx, &self.session_templates, EntityKind::SessionTemplate, id).await
+        self.delete_in(ctx, &self.session_templates, id).await
     }
     async fn list_session_templates(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<SessionTemplate>> {
-        self.list_in(ctx, &self.session_templates, EntityKind::SessionTemplate, query).await
+        self.list_in(ctx, &self.session_templates, query).await
     }
     async fn restore_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<SessionTemplate> {
-        self.restore_named_in(ctx, &self.session_templates, EntityKind::SessionTemplate, id).await
+        self.restore_named_in(ctx, &self.session_templates, id).await
     }
     async fn purge_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool> {
-        self.purge_in(ctx, &self.session_templates, EntityKind::SessionTemplate, &id).await
+        self.purge_in(ctx, &self.session_templates, &id).await
     }
     async fn get_deleted_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<SessionTemplate> {
-        self.get_deleted_in(ctx, &self.session_templates, EntityKind::SessionTemplate, &id).await
+        self.get_deleted_in(ctx, &self.session_templates, &id).await
     }
     async fn list_deleted_session_templates(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<SessionTemplate>> {
-        self.list_deleted_in(ctx, &self.session_templates, EntityKind::SessionTemplate, query).await
+        self.list_deleted_in(ctx, &self.session_templates, query).await
     }
     async fn find_session_template_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<SessionTemplate> {
-        self.find_in(ctx, &self.session_templates, EntityKind::SessionTemplate, name).await
+        self.find_in(ctx, &self.session_templates, name).await
     }
 
     // Agents
     async fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
-        self.create_named_in(ctx, &self.agents, EntityKind::Agent, value.id, value).await
+        self.create_named_in(ctx, &self.agents, value.id, value).await
     }
     async fn get_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
-        self.get_in(ctx, &self.agents, EntityKind::Agent, &id).await
+        self.get_in(ctx, &self.agents, &id).await
     }
     async fn update_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
-        self.update_named_in(ctx, &self.agents, EntityKind::Agent, value.id, value).await
+        self.update_named_in(ctx, &self.agents, value.id, value).await
     }
     async fn delete_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<bool> {
-        self.delete_in(ctx, &self.agents, EntityKind::Agent, id).await
+        self.delete_in(ctx, &self.agents, id).await
     }
     async fn list_agents(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Agent>> {
-        self.list_in(ctx, &self.agents, EntityKind::Agent, query).await
+        self.list_in(ctx, &self.agents, query).await
     }
     async fn restore_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
-        self.restore_named_in(ctx, &self.agents, EntityKind::Agent, id).await
+        self.restore_named_in(ctx, &self.agents, id).await
     }
     async fn purge_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<bool> {
-        self.purge_in(ctx, &self.agents, EntityKind::Agent, &id).await
+        self.purge_in(ctx, &self.agents, &id).await
     }
     async fn get_deleted_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
-        self.get_deleted_in(ctx, &self.agents, EntityKind::Agent, &id).await
+        self.get_deleted_in(ctx, &self.agents, &id).await
     }
     async fn list_deleted_agents(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Agent>> {
-        self.list_deleted_in(ctx, &self.agents, EntityKind::Agent, query).await
+        self.list_deleted_in(ctx, &self.agents, query).await
     }
     async fn find_agent_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Agent> {
-        self.find_in(ctx, &self.agents, EntityKind::Agent, name).await
+        self.find_in(ctx, &self.agents, name).await
     }
 
     // Sessions - their state is the `StateStore`'s, which may be another
     // store: whoever deletes a session deletes it there.
     async fn create_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
-        self.create_in(ctx, &self.sessions, EntityKind::Session, value.id, value).await
+        self.create_in(ctx, &self.sessions, value.id, value).await
     }
     async fn get_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session> {
-        self.get_in(ctx, &self.sessions, EntityKind::Session, &id).await
+        self.get_in(ctx, &self.sessions, &id).await
     }
     async fn update_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
-        self.update_in(ctx, &self.sessions, EntityKind::Session, value.id, value).await
+        self.update_in(ctx, &self.sessions, value.id, value).await
     }
     async fn delete_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool> {
-        self.delete_in(ctx, &self.sessions, EntityKind::Session, id).await
+        self.delete_in(ctx, &self.sessions, id).await
     }
     async fn list_sessions(&self, ctx: &SecurityContext, query: &Query<SessionField>) -> StoreResult<Page<Session>> {
-        self.list_in(ctx, &self.sessions, EntityKind::Session, query).await
+        self.list_in(ctx, &self.sessions, query).await
     }
     async fn restore_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session> {
-        self.restore_in(ctx, &self.sessions, EntityKind::Session, id).await
+        self.restore_in(ctx, &self.sessions, id).await
     }
     async fn purge_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool> {
-        self.purge_in(ctx, &self.sessions, EntityKind::Session, &id).await
+        self.purge_in(ctx, &self.sessions, &id).await
     }
     async fn get_deleted_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session> {
-        self.get_deleted_in(ctx, &self.sessions, EntityKind::Session, &id).await
+        self.get_deleted_in(ctx, &self.sessions, &id).await
     }
     async fn list_deleted_sessions(&self, ctx: &SecurityContext, query: &Query<SessionField>) -> StoreResult<Page<Session>> {
-        self.list_deleted_in(ctx, &self.sessions, EntityKind::Session, query).await
+        self.list_deleted_in(ctx, &self.sessions, query).await
     }
 
     // Channels (issue 70)
     async fn create_channel(&self, ctx: &SecurityContext, value: &Channel) -> StoreResult<()> {
-        self.create_named_in(ctx, &self.channels, EntityKind::Channel, value.id, value).await
+        self.create_named_in(ctx, &self.channels, value.id, value).await
     }
     async fn get_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel> {
-        self.get_in(ctx, &self.channels, EntityKind::Channel, &id).await
+        self.get_in(ctx, &self.channels, &id).await
     }
     async fn update_channel(&self, ctx: &SecurityContext, value: &Channel) -> StoreResult<()> {
-        self.update_named_in(ctx, &self.channels, EntityKind::Channel, value.id, value).await
+        self.update_named_in(ctx, &self.channels, value.id, value).await
     }
     async fn delete_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool> {
-        self.delete_in(ctx, &self.channels, EntityKind::Channel, id).await
+        self.delete_in(ctx, &self.channels, id).await
     }
     async fn list_channels(&self, ctx: &SecurityContext, query: &Query<ChannelField>) -> StoreResult<Page<Channel>> {
-        self.list_in(ctx, &self.channels, EntityKind::Channel, query).await
+        self.list_in(ctx, &self.channels, query).await
     }
     async fn restore_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel> {
-        self.restore_named_in(ctx, &self.channels, EntityKind::Channel, id).await
+        self.restore_named_in(ctx, &self.channels, id).await
     }
     async fn purge_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool> {
-        self.purge_in(ctx, &self.channels, EntityKind::Channel, &id).await
+        self.purge_in(ctx, &self.channels, &id).await
     }
     async fn get_deleted_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel> {
-        self.get_deleted_in(ctx, &self.channels, EntityKind::Channel, &id).await
+        self.get_deleted_in(ctx, &self.channels, &id).await
     }
     async fn list_deleted_channels(&self, ctx: &SecurityContext, query: &Query<ChannelField>) -> StoreResult<Page<Channel>> {
-        self.list_deleted_in(ctx, &self.channels, EntityKind::Channel, query).await
+        self.list_deleted_in(ctx, &self.channels, query).await
     }
 
     // Users - found by name as well, since a username is an identity
     // (issue 93).
     async fn create_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()> {
-        self.create_named_in(ctx, &self.users, EntityKind::User, value.id, value).await
+        self.create_named_in(ctx, &self.users, value.id, value).await
     }
     async fn get_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
-        self.get_in(ctx, &self.users, EntityKind::User, &id).await
+        self.get_in(ctx, &self.users, &id).await
     }
     async fn update_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()> {
-        self.update_named_in(ctx, &self.users, EntityKind::User, value.id, value).await
+        self.update_named_in(ctx, &self.users, value.id, value).await
     }
     async fn delete_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
-        self.delete_in(ctx, &self.users, EntityKind::User, id).await
+        self.delete_in(ctx, &self.users, id).await
     }
     async fn list_users(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<User>> {
-        self.list_in(ctx, &self.users, EntityKind::User, query).await
+        self.list_in(ctx, &self.users, query).await
     }
     async fn restore_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
-        self.restore_named_in(ctx, &self.users, EntityKind::User, id).await
+        self.restore_named_in(ctx, &self.users, id).await
     }
     async fn purge_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
-        self.purge_in(ctx, &self.users, EntityKind::User, &id).await
+        self.purge_in(ctx, &self.users, &id).await
     }
     async fn get_deleted_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
-        self.get_deleted_in(ctx, &self.users, EntityKind::User, &id).await
+        self.get_deleted_in(ctx, &self.users, &id).await
     }
     async fn list_deleted_users(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<User>> {
-        self.list_deleted_in(ctx, &self.users, EntityKind::User, query).await
+        self.list_deleted_in(ctx, &self.users, query).await
     }
     async fn find_user_by_name(&self, ctx: &SecurityContext, name: &str) -> StoreResult<User> {
-        let users = self.list_in(ctx, &self.users, EntityKind::User, &Query::<NoField>::all()).await?.items;
+        let users = self.list_in(ctx, &self.users, &Query::<NoField>::all()).await?.items;
         require_entity(users.into_iter().find(|u| u.username == name), "user", name.to_string())
     }
 
     // User profiles (issue 176)
     async fn create_user_profile(&self, ctx: &SecurityContext, value: &UserProfile) -> StoreResult<()> {
-        self.create_in(ctx, &self.user_profiles, EntityKind::UserProfile, value.user_id(), value).await
+        self.create_in(ctx, &self.user_profiles, value.user_id(), value).await
     }
     async fn get_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<UserProfile> {
-        self.get_in(ctx, &self.user_profiles, EntityKind::UserProfile, &id).await
+        self.get_in(ctx, &self.user_profiles, &id).await
     }
     async fn update_user_profile(&self, ctx: &SecurityContext, value: &UserProfile) -> StoreResult<()> {
-        self.update_in(ctx, &self.user_profiles, EntityKind::UserProfile, value.user_id(), value).await
+        self.update_in(ctx, &self.user_profiles, value.user_id(), value).await
     }
     async fn delete_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
-        self.delete_in(ctx, &self.user_profiles, EntityKind::UserProfile, id).await
+        self.delete_in(ctx, &self.user_profiles, id).await
     }
     async fn list_user_profiles(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<UserProfile>> {
-        self.list_in(ctx, &self.user_profiles, EntityKind::UserProfile, query).await
+        self.list_in(ctx, &self.user_profiles, query).await
     }
     async fn restore_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<UserProfile> {
-        self.restore_in(ctx, &self.user_profiles, EntityKind::UserProfile, id).await
+        self.restore_in(ctx, &self.user_profiles, id).await
     }
     async fn purge_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
-        self.purge_in(ctx, &self.user_profiles, EntityKind::UserProfile, &id).await
+        self.purge_in(ctx, &self.user_profiles, &id).await
     }
     async fn get_deleted_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<UserProfile> {
-        self.get_deleted_in(ctx, &self.user_profiles, EntityKind::UserProfile, &id).await
+        self.get_deleted_in(ctx, &self.user_profiles, &id).await
     }
     async fn list_deleted_user_profiles(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<UserProfile>> {
-        self.list_deleted_in(ctx, &self.user_profiles, EntityKind::UserProfile, query).await
+        self.list_deleted_in(ctx, &self.user_profiles, query).await
     }
 
     // Workspaces (issue 253)
     async fn create_workspace(&self, ctx: &SecurityContext, value: &Workspace) -> StoreResult<()> {
-        self.create_named_in(ctx, &self.workspaces, EntityKind::Workspace, value.id, value).await
+        self.create_named_in(ctx, &self.workspaces, value.id, value).await
     }
     async fn get_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace> {
-        self.get_in(ctx, &self.workspaces, EntityKind::Workspace, &id).await
+        self.get_in(ctx, &self.workspaces, &id).await
     }
     async fn update_workspace(&self, ctx: &SecurityContext, value: &Workspace) -> StoreResult<()> {
-        self.update_named_in(ctx, &self.workspaces, EntityKind::Workspace, value.id, value).await
+        self.update_named_in(ctx, &self.workspaces, value.id, value).await
     }
     async fn delete_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<bool> {
-        self.delete_in(ctx, &self.workspaces, EntityKind::Workspace, id).await
+        self.delete_in(ctx, &self.workspaces, id).await
     }
     async fn list_workspaces(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Workspace>> {
-        self.list_in(ctx, &self.workspaces, EntityKind::Workspace, query).await
+        self.list_in(ctx, &self.workspaces, query).await
     }
     async fn restore_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace> {
-        self.restore_named_in(ctx, &self.workspaces, EntityKind::Workspace, id).await
+        self.restore_named_in(ctx, &self.workspaces, id).await
     }
     async fn purge_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<bool> {
-        self.purge_in(ctx, &self.workspaces, EntityKind::Workspace, &id).await
+        self.purge_in(ctx, &self.workspaces, &id).await
     }
     async fn get_deleted_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace> {
-        self.get_deleted_in(ctx, &self.workspaces, EntityKind::Workspace, &id).await
+        self.get_deleted_in(ctx, &self.workspaces, &id).await
     }
     async fn list_deleted_workspaces(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Workspace>> {
-        self.list_deleted_in(ctx, &self.workspaces, EntityKind::Workspace, query).await
+        self.list_deleted_in(ctx, &self.workspaces, query).await
     }
     async fn find_workspace_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Workspace> {
-        self.find_in(ctx, &self.workspaces, EntityKind::Workspace, name).await
+        self.find_in(ctx, &self.workspaces, name).await
     }
 
     // Skills (issue 22)
     async fn create_skill(&self, ctx: &SecurityContext, value: &Skill) -> StoreResult<()> {
-        self.create_named_in(ctx, &self.skills, EntityKind::Skill, value.id, value).await
+        self.create_named_in(ctx, &self.skills, value.id, value).await
     }
     async fn get_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<Skill> {
-        self.get_in(ctx, &self.skills, EntityKind::Skill, &id).await
+        self.get_in(ctx, &self.skills, &id).await
     }
     async fn update_skill(&self, ctx: &SecurityContext, value: &Skill) -> StoreResult<()> {
-        self.update_named_in(ctx, &self.skills, EntityKind::Skill, value.id, value).await
+        self.update_named_in(ctx, &self.skills, value.id, value).await
     }
     async fn delete_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<bool> {
-        self.delete_in(ctx, &self.skills, EntityKind::Skill, id).await
+        self.delete_in(ctx, &self.skills, id).await
     }
     async fn list_skills(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Skill>> {
-        self.list_in(ctx, &self.skills, EntityKind::Skill, query).await
+        self.list_in(ctx, &self.skills, query).await
     }
     async fn restore_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<Skill> {
-        self.restore_named_in(ctx, &self.skills, EntityKind::Skill, id).await
+        self.restore_named_in(ctx, &self.skills, id).await
     }
     async fn purge_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<bool> {
-        self.purge_in(ctx, &self.skills, EntityKind::Skill, &id).await
+        self.purge_in(ctx, &self.skills, &id).await
     }
     async fn get_deleted_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<Skill> {
-        self.get_deleted_in(ctx, &self.skills, EntityKind::Skill, &id).await
+        self.get_deleted_in(ctx, &self.skills, &id).await
     }
     async fn list_deleted_skills(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Skill>> {
-        self.list_deleted_in(ctx, &self.skills, EntityKind::Skill, query).await
+        self.list_deleted_in(ctx, &self.skills, query).await
     }
     async fn find_skill_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Skill> {
-        self.find_in(ctx, &self.skills, EntityKind::Skill, name).await
+        self.find_in(ctx, &self.skills, name).await
     }
 
     // Artifacts (issue 271)
     async fn create_artifact(&self, ctx: &SecurityContext, value: &Artifact) -> StoreResult<()> {
-        self.create_named_in(ctx, &self.artifacts, EntityKind::Artifact, value.id, value).await
+        self.create_named_in(ctx, &self.artifacts, value.id, value).await
     }
     async fn get_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<Artifact> {
-        self.get_in(ctx, &self.artifacts, EntityKind::Artifact, &id).await
+        self.get_in(ctx, &self.artifacts, &id).await
     }
     async fn update_artifact(&self, ctx: &SecurityContext, value: &Artifact) -> StoreResult<()> {
-        self.update_named_in(ctx, &self.artifacts, EntityKind::Artifact, value.id, value).await
+        self.update_named_in(ctx, &self.artifacts, value.id, value).await
     }
     async fn delete_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<bool> {
-        self.delete_in(ctx, &self.artifacts, EntityKind::Artifact, id).await
+        self.delete_in(ctx, &self.artifacts, id).await
     }
     async fn list_artifacts(&self, ctx: &SecurityContext, query: &Query<ArtifactField>) -> StoreResult<Page<Artifact>> {
-        self.list_in(ctx, &self.artifacts, EntityKind::Artifact, query).await
+        self.list_in(ctx, &self.artifacts, query).await
     }
     async fn restore_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<Artifact> {
-        self.restore_named_in(ctx, &self.artifacts, EntityKind::Artifact, id).await
+        self.restore_named_in(ctx, &self.artifacts, id).await
     }
     async fn purge_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<bool> {
-        self.purge_in(ctx, &self.artifacts, EntityKind::Artifact, &id).await
+        self.purge_in(ctx, &self.artifacts, &id).await
     }
     async fn get_deleted_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<Artifact> {
-        self.get_deleted_in(ctx, &self.artifacts, EntityKind::Artifact, &id).await
+        self.get_deleted_in(ctx, &self.artifacts, &id).await
     }
     async fn list_deleted_artifacts(&self, ctx: &SecurityContext, query: &Query<ArtifactField>) -> StoreResult<Page<Artifact>> {
-        self.list_deleted_in(ctx, &self.artifacts, EntityKind::Artifact, query).await
+        self.list_deleted_in(ctx, &self.artifacts, query).await
     }
     async fn find_artifact_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Artifact> {
-        self.find_in(ctx, &self.artifacts, EntityKind::Artifact, name).await
+        self.find_in(ctx, &self.artifacts, name).await
     }
 
     // Groups (issue 286)
     async fn create_group(&self, ctx: &SecurityContext, value: &Group) -> StoreResult<()> {
-        self.create_named_in(ctx, &self.groups, EntityKind::Group, value.id, value).await
+        self.create_named_in(ctx, &self.groups, value.id, value).await
     }
     async fn get_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group> {
-        self.get_in(ctx, &self.groups, EntityKind::Group, &id).await
+        self.get_in(ctx, &self.groups, &id).await
     }
     async fn update_group(&self, ctx: &SecurityContext, value: &Group) -> StoreResult<()> {
-        self.update_named_in(ctx, &self.groups, EntityKind::Group, value.id, value).await
+        self.update_named_in(ctx, &self.groups, value.id, value).await
     }
     async fn delete_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<bool> {
-        self.delete_in(ctx, &self.groups, EntityKind::Group, id).await
+        self.delete_in(ctx, &self.groups, id).await
     }
     async fn list_groups(&self, ctx: &SecurityContext, query: &Query<GroupField>) -> StoreResult<Page<Group>> {
-        self.list_in(ctx, &self.groups, EntityKind::Group, query).await
+        self.list_in(ctx, &self.groups, query).await
     }
     async fn restore_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group> {
-        self.restore_named_in(ctx, &self.groups, EntityKind::Group, id).await
+        self.restore_named_in(ctx, &self.groups, id).await
     }
     async fn purge_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<bool> {
-        self.purge_in(ctx, &self.groups, EntityKind::Group, &id).await
+        self.purge_in(ctx, &self.groups, &id).await
     }
     async fn get_deleted_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group> {
-        self.get_deleted_in(ctx, &self.groups, EntityKind::Group, &id).await
+        self.get_deleted_in(ctx, &self.groups, &id).await
     }
     async fn list_deleted_groups(&self, ctx: &SecurityContext, query: &Query<GroupField>) -> StoreResult<Page<Group>> {
-        self.list_deleted_in(ctx, &self.groups, EntityKind::Group, query).await
+        self.list_deleted_in(ctx, &self.groups, query).await
     }
     async fn find_group_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Group> {
-        self.find_in(ctx, &self.groups, EntityKind::Group, name).await
+        self.find_in(ctx, &self.groups, name).await
     }
 }
 
@@ -645,19 +645,19 @@ impl EntityStore for MemoryStore {
 #[async_trait]
 impl ComponentStore for MemoryStore {
     async fn create_components(&self, ctx: &SecurityContext, value: &StoredComponents) -> StoreResult<()> {
-        self.create_in(ctx, &self.components, EntityKind::Components, value.id().to_string(), value).await
+        self.create_in(ctx, &self.components, value.id().to_string(), value).await
     }
     async fn get_components(&self, ctx: &SecurityContext, id: &str) -> StoreResult<StoredComponents> {
-        self.get_in(ctx, &self.components, EntityKind::Components, &id.to_string()).await
+        self.get_in(ctx, &self.components, &id.to_string()).await
     }
     async fn update_components(&self, ctx: &SecurityContext, value: &StoredComponents) -> StoreResult<()> {
-        self.update_in(ctx, &self.components, EntityKind::Components, value.id().to_string(), value).await
+        self.update_in(ctx, &self.components, value.id().to_string(), value).await
     }
     async fn delete_components(&self, ctx: &SecurityContext, id: &str) -> StoreResult<bool> {
-        self.remove_in(ctx, &self.components, EntityKind::Components, &id.to_string()).await
+        self.remove_in(ctx, &self.components, &id.to_string()).await
     }
     async fn list_components(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<StoredComponents>> {
-        self.list_in(ctx, &self.components, EntityKind::Components, query).await
+        self.list_in(ctx, &self.components, query).await
     }
 }
 

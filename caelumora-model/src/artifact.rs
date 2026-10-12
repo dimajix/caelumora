@@ -199,6 +199,8 @@ impl Artifact {
 }
 
 impl crate::removal::Stored for Artifact {
+    const KIND: crate::store::EntityKind = crate::store::EntityKind::new("artifact");
+
     fn deleted(&self) -> Option<&Removal> {
         self.deleted.as_ref()
     }

@@ -13,9 +13,10 @@ use caelumora_model::role::RoleId;
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::SessionId;
-use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResult, StoreResultExt};
+use caelumora_model::store::{EntityStore, StoreError, StoreResult, StoreResultExt};
 use std::sync::Arc;
 use super::ChannelError;
+use caelumora_model::removal::Stored;
 
 /// A participant with what its actor is built from: the instance's
 /// controller of its user or agent (issue 121), or the approver itself. An
@@ -58,7 +59,7 @@ impl Member {
         };
         let personality = agent.personality().await?;
         let context = agent.security_context(channel.session_id, channel.id, personality.limiting_roles());
-        security.require(&context, ActionType::get(EntityKind::Personality, &personality.security_attributes), || StoreError::PermissionDenied).await?;
+        security.require(&context, ActionType::get(Personality::KIND, &personality.security_attributes), || StoreError::PermissionDenied).await?;
         Ok(Some(match personality.kind {
             PersonalityKind::Internal => Member::Agent(agent, personality),
             PersonalityKind::External => Member::ExternalAgent(agent, personality),

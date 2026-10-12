@@ -38,7 +38,7 @@ use caelumora_model::group::{Group, GroupId};
 use caelumora_model::security::{AclEntry, ActionType, Grant, OwnershipSecurityManager, Reclassified, SecurityAttributes, SecurityContext, SecurityManager, Subject};
 use caelumora_model::snapshot::{Detail, PublicationSnapshot};
 use caelumora_model::session::{ChannelId, Session, SessionId};
-use caelumora_model::store::{ComponentStore, EntityKind, EntityStore, StateStore, StoreError};
+use caelumora_model::store::{ComponentStore, EntityStore, StateStore, StoreError};
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId, TemplateError, WorkspaceTemplate};
 use caelumora_model::user::{User, UserId, UserProfile};
@@ -54,6 +54,8 @@ use caelumora_runtime::workspace::WorkspaceError;
 use caelumora_runtime::artifact::ArtifactError;
 use caelumora_runtime::group::GroupError;
 use caelumora_model::workspace::{WorkspaceChoice, WorkspaceId};
+use caelumora_model::artifact::Artifact;
+use caelumora_model::removal::Stored;
 
 /// The ownership policy, recording every question it is asked - who acted
 /// with whose rights and for whom, what, of whose entity, and what it
@@ -2138,7 +2140,7 @@ async fn deleting_a_session_needs_owning_it() {
     assert_eq!(asked, checks(&["bob: GetSession(alice's) yes", "bob: DeleteSession(alice's) no"]));
     let (refused, asked) = world.asked(world.manager.delete_session(&alice, session.id())).await;
     let refused = refused.expect_err("bob's agent is left");
-    assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::ScopeNotEmpty { left, .. }) if *left == [(EntityKind::Agent, 1)]), "{refused}");
+    assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::ScopeNotEmpty { left, .. }) if *left == [(Agent::KIND, 1)]), "{refused}");
     assert_eq!(asked, checks(&[
         "alice: GetSession(alice's) yes",
         "alice: DeleteSession(alice's) yes",
@@ -3056,7 +3058,7 @@ async fn a_session_goes_with_what_lies_in_it_only_as_far_as_whoever_deletes_it_m
 
     let (refused, asked) = world.asked(world.manager.delete_session(&alice, session_id)).await;
     let refused = refused.expect_err("bob's artifact is left");
-    assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::ScopeNotEmpty { left, .. }) if *left == [(EntityKind::Artifact, 1)]), "{refused}");
+    assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::ScopeNotEmpty { left, .. }) if *left == [(Artifact::KIND, 1)]), "{refused}");
     assert!(refused.to_string().contains("1 artifact") && !refused.to_string().contains("his.csv"), "what is left, by kind, not by name: {refused}");
     let (session_checks, artifact_checks) = asked.split_at(4.min(asked.len()));
     assert_eq!(session_checks, checks(&[

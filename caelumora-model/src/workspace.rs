@@ -108,6 +108,8 @@ impl Workspace {
 }
 
 impl crate::removal::Stored for Workspace {
+    const KIND: crate::store::EntityKind = crate::store::EntityKind::new("workspace");
+
     fn deleted(&self) -> Option<&Removal> {
         self.deleted.as_ref()
     }

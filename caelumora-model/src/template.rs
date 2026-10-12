@@ -220,6 +220,8 @@ impl WorkspaceTemplate {
 /// session's or a channel's scope would make sessions that can never lie
 /// in it, so it is not stored.
 impl Stored for SessionTemplate {
+    const KIND: crate::store::EntityKind = crate::store::EntityKind::new("session_template");
+
     fn deleted(&self) -> Option<&Removal> {
         self.deleted.as_ref()
     }

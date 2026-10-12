@@ -21,7 +21,8 @@ use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::group::GroupId;
 use crate::group::purge_participants;
 use caelumora_model::security::Grant;
-use caelumora_model::workspace::WorkspaceId;
+use caelumora_model::workspace::{Workspace, WorkspaceId};
+use caelumora_model::removal::Stored;
 use crate::workspace::WorkspaceManager;
 use crate::controller::SessionController;
 use dashmap::DashMap;
@@ -174,7 +175,7 @@ async fn require_attachable(workspaces: &WorkspaceManager, security: &dyn Securi
     if !shared.name.scope.admits(&Scope::SessionScope { session_id }) {
         return Err(SessionError::WorkspaceOutOfScope(id).into());
     }
-    security.require(context, ActionType::update(EntityKind::Workspace, &shared.security_attributes), || StoreError::PermissionDenied).await?;
+    security.require(context, ActionType::update(Workspace::KIND, &shared.security_attributes), || StoreError::PermissionDenied).await?;
     Ok(())
 }
 

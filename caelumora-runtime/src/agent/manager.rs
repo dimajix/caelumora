@@ -18,11 +18,12 @@ use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
-use caelumora_model::store::{EntityKind, EntityStore, StateStore, StoreError, StoreResult, StoreResultExt};
+use caelumora_model::store::{EntityStore, StateStore, StoreError, StoreResult, StoreResultExt};
 use chrono::{DateTime, Utc};
 use std::fmt;
 use std::sync::Arc;
 use tracing::info;
+use caelumora_model::removal::Stored;
 
 /// The one owner of agents' lifecycle (issue 314).
 pub struct AgentManager {
@@ -60,7 +61,7 @@ impl AgentManager {
     pub async fn delete(&self, context: &SecurityContext, id: AgentId) -> StoreResult<bool> {
         let Some(agent) = self.entities.get_agent(context, id).await.optional()? else { return Ok(false) };
         self.security
-            .require(context, ActionType::delete(EntityKind::Agent, &agent.security_attributes), || StoreError::PermissionDenied).await?;
+            .require(context, ActionType::delete(Agent::KIND, &agent.security_attributes), || StoreError::PermissionDenied).await?;
         if !self.entities.delete_agent(context, id).await? {
             return Ok(false);
         }

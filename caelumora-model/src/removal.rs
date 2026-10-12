@@ -7,6 +7,7 @@
 use crate::actor::ActorId;
 use crate::confidentiality::Classification;
 use crate::security::Secured;
+use crate::store::EntityKind;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -31,6 +32,10 @@ impl Removal {
 /// besides `Secured`. Whether it was deleted is asked of every kind alike,
 /// so that every kind is read the same way; only a `Deletable` kind can be.
 pub trait Stored: Secured {
+    /// Its kind (issue 323), by which what is done with it is asked and
+    /// named.
+    const KIND: EntityKind;
+
     /// Whether, and by whom and when, it was deleted; never for a kind that
     /// is not `Deletable`.
     fn deleted(&self) -> Option<&Removal> {
@@ -63,11 +68,13 @@ pub trait Deletable: Stored {
 }
 
 /// Implements `Stored` and `Deletable` for types with a field
-/// `deleted: Option<Removal>`.
+/// `deleted: Option<Removal>`, each of the kind named after it.
 #[macro_export]
 macro_rules! impl_deletable {
-    ($($t:ty),+ $(,)?) => {$(
+    ($($t:ty => $kind:literal),+ $(,)?) => {$(
         impl $crate::removal::Stored for $t {
+            const KIND: $crate::store::EntityKind = $crate::store::EntityKind::new($kind);
+
             fn deleted(&self) -> Option<&$crate::removal::Removal> {
                 self.deleted.as_ref()
             }

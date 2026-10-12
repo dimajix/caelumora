@@ -541,3 +541,11 @@ before (`GetSession`, `UseSkill`), a listing as `List(session)`; the security su
 kind in `ReadDeleted`, `Restore` and `Purge` as well. The `Actions` tables of `store::access` are
 gone: the stores pass the `EntityKind`. `EntityKind` is still a closed enum (step 2), and
 `AccessQuestions` keeps `may_change_skill` and `may_use_skill` until step 10.
+
+**2026-10-12** — Step 2 done, on branch `issue-323-open-entity-kind`: `EntityKind` is a struct over
+its name, and every stored type names its kind as `Stored::KIND`, decided with the maintainer over
+an inherent constant or one per module, since the generic store of step 3 needs the kind from the
+type. The store's helpers take it from `T` and lost their `kind` parameter, so a kind can no longer
+be passed to the map of another; whoever names a kind writes `Skill::KIND`. Nothing stored changed:
+the names are those of before.
+

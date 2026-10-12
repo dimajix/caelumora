@@ -1,16 +1,24 @@
-use caelumora_model::agent::AgentId;
+use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::channel::ChannelId;
 use caelumora_model::confidentiality::{may_reach, Classification, ConfidentialityPolicy};
 use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::security::{ActionType, Secured, SecurityAttributes, SecurityContext, SecurityManager};
-use caelumora_model::store::EntityKind;
 use caelumora_model::session::SessionId;
-use caelumora_model::user::UserId;
+use caelumora_model::user::{User, UserId, UserProfile};
 use dashmap::DashMap;
 use tracing::warn;
 use std::sync::{Arc, Mutex, OnceLock};
 use tokio::sync::{broadcast, mpsc};
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
+use caelumora_model::artifact::Artifact;
+use caelumora_model::channel::Channel;
+use caelumora_model::group::Group;
+use caelumora_model::session::Session;
+use caelumora_model::skill::Skill;
+
+
+use caelumora_model::workspace::Workspace;
+use caelumora_model::removal::Stored;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SubscriptionTopic {
@@ -48,18 +56,18 @@ impl PublishedEvent {
     /// by the channel's attributes, as reading the channel (issue 304).
     fn read_action(&self) -> ActionType<'_> {
         let kind = match self.event {
-            GlobalEvent::AgentCreated(..) | GlobalEvent::AgentUpdated(..) | GlobalEvent::AgentDeleted(..) | GlobalEvent::AgentRestored(..) | GlobalEvent::AgentStateChanged(_) => EntityKind::Agent,
+            GlobalEvent::AgentCreated(..) | GlobalEvent::AgentUpdated(..) | GlobalEvent::AgentDeleted(..) | GlobalEvent::AgentRestored(..) | GlobalEvent::AgentStateChanged(_) => Agent::KIND,
             GlobalEvent::ChannelCreated(..) | GlobalEvent::ChannelUpdated(..) | GlobalEvent::ChannelDeleted(..) | GlobalEvent::ChannelRestored(..)
             | GlobalEvent::ChannelStarted(..) | GlobalEvent::ChannelStopped(..)
             | GlobalEvent::AgentChannelJoined(..) | GlobalEvent::AgentChannelLeft(..) | GlobalEvent::AgentChannelStateChanged(..)
-            | GlobalEvent::UserChannelJoined(..) | GlobalEvent::UserChannelLeft(..) => EntityKind::Channel,
-            GlobalEvent::UserCreated(_) | GlobalEvent::UserUpdated(..) | GlobalEvent::UserDeleted(_) => EntityKind::User,
-            GlobalEvent::UserProfileUpdated(..) => EntityKind::UserProfile,
-            GlobalEvent::WorkspaceCreated(_) | GlobalEvent::WorkspaceUpdated(..) | GlobalEvent::WorkspaceDeleted(_) | GlobalEvent::WorkspaceRestored(_) => EntityKind::Workspace,
-            GlobalEvent::SkillCreated(_) | GlobalEvent::SkillUpdated(..) | GlobalEvent::SkillDeleted(_) | GlobalEvent::SkillRestored(_) => EntityKind::Skill,
-            GlobalEvent::GroupCreated(_) | GlobalEvent::GroupUpdated(..) | GlobalEvent::GroupDeleted(_) | GlobalEvent::GroupRestored(_) => EntityKind::Group,
-            GlobalEvent::ArtifactPublished(..) | GlobalEvent::ArtifactUpdated(_) | GlobalEvent::ArtifactDeleted(_) | GlobalEvent::ArtifactRestored(_) => EntityKind::Artifact,
-            _ => EntityKind::Session,
+            | GlobalEvent::UserChannelJoined(..) | GlobalEvent::UserChannelLeft(..) => Channel::KIND,
+            GlobalEvent::UserCreated(_) | GlobalEvent::UserUpdated(..) | GlobalEvent::UserDeleted(_) => User::KIND,
+            GlobalEvent::UserProfileUpdated(..) => UserProfile::KIND,
+            GlobalEvent::WorkspaceCreated(_) | GlobalEvent::WorkspaceUpdated(..) | GlobalEvent::WorkspaceDeleted(_) | GlobalEvent::WorkspaceRestored(_) => Workspace::KIND,
+            GlobalEvent::SkillCreated(_) | GlobalEvent::SkillUpdated(..) | GlobalEvent::SkillDeleted(_) | GlobalEvent::SkillRestored(_) => Skill::KIND,
+            GlobalEvent::GroupCreated(_) | GlobalEvent::GroupUpdated(..) | GlobalEvent::GroupDeleted(_) | GlobalEvent::GroupRestored(_) => Group::KIND,
+            GlobalEvent::ArtifactPublished(..) | GlobalEvent::ArtifactUpdated(_) | GlobalEvent::ArtifactDeleted(_) | GlobalEvent::ArtifactRestored(_) => Artifact::KIND,
+            _ => Session::KIND,
         };
         ActionType::get(kind, self.security_attributes())
     }
@@ -416,7 +424,7 @@ mod tests {
         #[async_trait::async_trait]
         impl SecurityManager for ChannelsOnly {
             async fn check(&self, _context: &SecurityContext, action: ActionType<'_>) -> bool {
-                matches!(action, ActionType::Entity { kind: EntityKind::Channel, verb: Verb::Get, .. })
+                matches!(action, ActionType::Entity { kind: Channel::KIND, verb: Verb::Get, .. })
             }
         }
 

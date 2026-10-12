@@ -76,7 +76,7 @@ pub struct Session {
     pub deleted: Option<crate::removal::Removal>,
 }
 
-crate::impl_deletable!(Session);
+crate::impl_deletable!(Session => "session");
 
 impl Session {
     /// The attributes of a new session `id` of `owner`: read by its

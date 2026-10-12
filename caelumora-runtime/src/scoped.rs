@@ -37,12 +37,18 @@ use caelumora_model::removal::Stored;
 use caelumora_model::scope::{Scope, ScopedField};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::query::Query;
-use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResult};
+use caelumora_model::store::{EntityStore, StoreError, StoreResult};
 use caelumora_model::value::name::ScopedName;
 use chrono::{DateTime, Utc};
 use std::fmt;
 use std::sync::Arc;
 use tracing::{info, warn};
+use caelumora_model::agent::{Agent, Personality};
+use caelumora_model::artifact::Artifact;
+use caelumora_model::group::Group;
+use caelumora_model::template::SessionTemplate;
+use caelumora_model::skill::Skill;
+use caelumora_model::workspace::Workspace;
 
 /// Deletes, restores and purges what lies in a scope with what holds it
 /// (issue 178), each kind by its owner where it has one (issue 319).
@@ -100,18 +106,18 @@ impl ScopedEntities {
             templates += usize::from(!deleted_unless_refused(self.entities.delete_session_template(ctx, template.id).await)?);
         }
         let mut left = vec![
-            (EntityKind::Personality, personalities),
-            (EntityKind::SessionTemplate, templates),
-            (EntityKind::Agent, self.agents.delete_lying_in(ctx, holder).await?),
-            (EntityKind::Workspace, self.workspaces.delete_lying_in(ctx, holder).await?),
-            (EntityKind::Skill, self.skills.delete_lying_in(ctx, holder).await?),
-            (EntityKind::Artifact, self.artifacts.delete_lying_in(ctx, holder).await?),
+            (Personality::KIND, personalities),
+            (SessionTemplate::KIND, templates),
+            (Agent::KIND, self.agents.delete_lying_in(ctx, holder).await?),
+            (Workspace::KIND, self.workspaces.delete_lying_in(ctx, holder).await?),
+            (Skill::KIND, self.skills.delete_lying_in(ctx, holder).await?),
+            (Artifact::KIND, self.artifacts.delete_lying_in(ctx, holder).await?),
         ];
         left.retain(|(_, count)| *count > 0);
         if left.is_empty() {
             let groups = self.groups.delete_lying_in(ctx, holder).await?;
             if groups > 0 {
-                left.push((EntityKind::Group, groups));
+                left.push((Group::KIND, groups));
             }
         }
         if !left.is_empty() {

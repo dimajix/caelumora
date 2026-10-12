@@ -94,6 +94,8 @@ impl Skill {
 }
 
 impl crate::removal::Stored for Skill {
+    const KIND: crate::store::EntityKind = crate::store::EntityKind::new("skill");
+
     fn deleted(&self) -> Option<&Removal> {
         self.deleted.as_ref()
     }

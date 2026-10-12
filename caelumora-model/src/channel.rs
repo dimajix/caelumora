@@ -143,6 +143,8 @@ pub struct HistoryLimit {
 
 // `removal::Stored`, beside the `chain::Stored` of the channel's history.
 impl removal::Stored for Channel {
+    const KIND: crate::store::EntityKind = crate::store::EntityKind::new("channel");
+
     fn deleted(&self) -> Option<&Removal> {
         self.deleted.as_ref()
     }

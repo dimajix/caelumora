@@ -166,6 +166,8 @@ impl Group {
 }
 
 impl Stored for Group {
+    const KIND: crate::store::EntityKind = crate::store::EntityKind::new("group");
+
     fn deleted(&self) -> Option<&Removal> {
         self.deleted.as_ref()
     }
