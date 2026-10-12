@@ -253,6 +253,11 @@ impl Views {
         &self.stores.entities
     }
 
+    /// The stores of the entities, one per kind (issue 323).
+    pub(crate) fn stores(&self) -> &EntityStores {
+        &self.stores
+    }
+
     pub(crate) fn states(&self) -> &Arc<dyn StateStore> {
         &self.states
     }
@@ -461,7 +466,7 @@ impl Views {
             Filter::any(ArtifactField::Acl, named.clone()),
             Filter::any(ArtifactField::Versions, Filter::any(ArtifactField::VersionAcl, named)),
         ]);
-        let artifacts = self.stores.entities.list_artifacts(&SecurityContext::system(), &Query::filtered(theirs)).await.map_err(failed)?.items;
+        let artifacts = self.stores.artifacts.list(&SecurityContext::system(), &Query::filtered(theirs)).await.map_err(failed)?.items;
         let mut readable = Vec::new();
         for artifact in artifacts {
             if let Some(view) = self.readable_artifact(artifact).await {
@@ -478,7 +483,7 @@ impl Views {
     /// `ArtifactNotFound` if they may read nothing of it - one they are not
     /// cleared for is the same -; `Failed` if the store cannot read it.
     pub async fn artifact(&self, id: ArtifactId) -> ViewResult<ArtifactView> {
-        let found = self.stores.entities.get_artifact(&SecurityContext::system(), id).await.optional()
+        let found = self.stores.artifacts.get(&SecurityContext::system(), id).await.optional()
             .map_err(|e| ViewError::failed(e, "reading an artifact"))?;
         match found {
             Some(artifact) => self.readable_artifact(artifact).await.ok_or(ViewError::ArtifactNotFound(id)),
@@ -597,7 +602,7 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn deleted_artifacts(&self) -> ViewResult<Vec<DeletedSnapshot<ArtifactId>>> {
-        let artifacts = self.stores.entities.list_deleted_artifacts(self.viewer.context(), &Query::all()).await.map(|page| page.items)
+        let artifacts = self.stores.artifacts.list_deleted(self.viewer.context(), &Query::all()).await.map(|page| page.items)
             .map_err(|e| ViewError::failed(e, "listing the deleted artifacts"))?;
         let policy = &self.security;
         let mut deleted = Vec::with_capacity(artifacts.len());

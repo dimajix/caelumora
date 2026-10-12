@@ -89,7 +89,7 @@ impl ChannelView {
             Filter::eq(ArtifactField::VersionSession, session),
             Filter::eq(ArtifactField::VersionChannel, channel),
         ]);
-        let all = self.views().entities().list_artifacts(&SecurityContext::system(), &Query::filtered(Filter::any(ArtifactField::Versions, here))).await.map_err(failed)?.items;
+        let all = self.views().stores().artifacts.list(&SecurityContext::system(), &Query::filtered(Filter::any(ArtifactField::Versions, here))).await.map_err(failed)?.items;
         let mut published = Vec::new();
         for mut artifact in all {
             artifact.versions.retain(|version| version.session_id == session && version.channel_id == channel);

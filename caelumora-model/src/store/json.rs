@@ -1,5 +1,5 @@
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
-use crate::artifact::{Artifact, ArtifactField, ArtifactId};
+use crate::artifact::Artifact;
 use crate::channel::{Channel, ChannelField, ChannelId, ChannelState};
 use crate::component::StoredComponents;
 use crate::confidentiality::ConfidentialityPolicy;
@@ -56,7 +56,7 @@ pub struct JsonFileStore {
     user_profiles: JsonEntityStore<UserProfile>,
     workspaces: Arc<JsonEntityStore<Workspace>>,
     skills: Arc<JsonEntityStore<Skill>>,
-    artifacts: JsonEntityStore<Artifact>,
+    artifacts: Arc<JsonEntityStore<Artifact>>,
     groups: JsonEntityStore<Group>,
     components: JsonEntityStore<StoredComponents>,
 }
@@ -80,7 +80,7 @@ impl JsonFileStore {
             user_profiles: JsonEntityStore::new(&root, &policies)?,
             workspaces: Arc::new(JsonEntityStore::new(&root, &policies)?),
             skills: Arc::new(JsonEntityStore::new(&root, &policies)?),
-            artifacts: JsonEntityStore::new(&root, &policies)?,
+            artifacts: Arc::new(JsonEntityStore::new(&root, &policies)?),
             groups: JsonEntityStore::new(&root, &policies)?,
             components: JsonEntityStore::new(&root, &policies)?,
             root,
@@ -96,6 +96,7 @@ impl JsonFileStore {
             entities: Arc::<Self>::clone(self),
             skills: Arc::<JsonEntityStore<Skill>>::clone(&self.skills),
             workspaces: Arc::<JsonEntityStore<Workspace>>::clone(&self.workspaces),
+            artifacts: Arc::<JsonEntityStore<Artifact>>::clone(&self.artifacts),
         }
     }
 
@@ -725,36 +726,6 @@ impl Entities for JsonFileStore {
     }
     async fn list_deleted_user_profiles(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<UserProfile>> {
         self.user_profiles.list_deleted(ctx, query).await
-    }
-    async fn create_artifact(&self, ctx: &SecurityContext, value: &Artifact) -> StoreResult<()> {
-        self.artifacts.create(ctx, value).await
-    }
-    async fn get_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<Artifact> {
-        self.artifacts.get(ctx, id).await
-    }
-    async fn update_artifact(&self, ctx: &SecurityContext, value: &Artifact) -> StoreResult<()> {
-        self.artifacts.update(ctx, value).await
-    }
-    async fn delete_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<bool> {
-        self.artifacts.delete(ctx, id).await
-    }
-    async fn list_artifacts(&self, ctx: &SecurityContext, query: &Query<ArtifactField>) -> StoreResult<Page<Artifact>> {
-        self.artifacts.list(ctx, query).await
-    }
-    async fn restore_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<Artifact> {
-        self.artifacts.restore(ctx, id).await
-    }
-    async fn purge_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<bool> {
-        self.artifacts.purge(ctx, id).await
-    }
-    async fn get_deleted_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<Artifact> {
-        self.artifacts.get_deleted(ctx, id).await
-    }
-    async fn list_deleted_artifacts(&self, ctx: &SecurityContext, query: &Query<ArtifactField>) -> StoreResult<Page<Artifact>> {
-        self.artifacts.list_deleted(ctx, query).await
-    }
-    async fn find_artifact_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Artifact> {
-        self.artifacts.find_by_name(ctx, name).await
     }
     async fn create_group(&self, ctx: &SecurityContext, value: &Group) -> StoreResult<()> {
         self.groups.create(ctx, value).await

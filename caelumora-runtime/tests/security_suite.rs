@@ -2893,9 +2893,9 @@ async fn an_artifact_shared_with_a_team_is_among_its_members_artifacts() {
     let the_team = AclEntry { subject: Subject::Group(project.id), grant: Grant::Read };
     world.runtime.artifact_manager().set_access(&alice, whole.id, vec![the_team]).await.expect("shared with the team");
     // No operation shares a single version yet; its list is written as stored.
-    let mut stored = world.store.get_artifact(&World::system(), by_version.id).await.unwrap();
+    let mut stored = world.runtime.entity_stores().artifacts.get(&World::system(), by_version.id).await.unwrap();
     stored.versions[0].acl.push(the_team);
-    world.store.update_artifact(&World::system(), &stored).await.unwrap();
+    world.runtime.entity_stores().artifacts.update(&World::system(), &stored).await.unwrap();
 
     let mut both = vec![whole.id, by_version.id];
     both.sort_by_key(|id| id.to_string());
@@ -3020,9 +3020,9 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
     world.manager.stop_session(&alice, session_id).await.unwrap();
     world.manager.delete_session(&alice, session_id).await.unwrap();
     world.manager.purge_session(&World::system(), session_id).await.unwrap();
-    assert!(world.store.get_artifact(&alice, artifact.id).await.is_ok(), "what was kept stays");
+    assert!(world.runtime.entity_stores().artifacts.get(&alice, artifact.id).await.is_ok(), "what was kept stays");
     assert!(world.files.path().join("artifacts").join(artifact.id.to_string()).is_dir(), "with its content");
-    assert!(world.store.get_deleted_artifact(&World::system(), left.id).await.is_err(), "what was not kept went with the session");
+    assert!(world.runtime.entity_stores().artifacts.get_deleted(&World::system(), left.id).await.is_err(), "what was not kept went with the session");
     assert!(!world.files.path().join("artifacts").join(left.id.to_string()).exists(), "its content too");
 }
 
@@ -3077,13 +3077,13 @@ async fn a_session_goes_with_what_lies_in_it_only_as_far_as_whoever_deletes_it_m
         "asked in her name, who does not read bob's outside the channel: {artifact_checks:?}");
     assert!(world.store.get_session(&alice, session_id).await.is_ok(), "the session is kept");
     assert!(world.manager.views(Viewer::new(alice.clone())).session(session_id).await.is_ok(), "and runs on");
-    assert!(world.store.get_artifact(&bob, his.id).await.is_ok(), "bob's artifact stays");
-    let removal = world.store.get_deleted_artifact(&World::system(), hers.id).await.unwrap().deleted.expect("hers went");
+    assert!(world.runtime.entity_stores().artifacts.get(&bob, his.id).await.is_ok(), "bob's artifact stays");
+    let removal = world.runtime.entity_stores().artifacts.get_deleted(&World::system(), hers.id).await.unwrap().deleted.expect("hers went");
     assert_eq!(removal.by, ActorId::User(world.alice), "in her name");
 
     world.runtime.artifact_manager().keep(&bob, his.id, Scope::UserScope { user_id: world.bob }).await.expect("bob keeps his");
     assert!(world.manager.delete_session(&alice, session_id).await.expect("nothing of anybody else's is left"));
-    assert!(world.store.get_artifact(&bob, his.id).await.is_ok(), "what bob kept stays");
+    assert!(world.runtime.entity_stores().artifacts.get(&bob, his.id).await.is_ok(), "what bob kept stays");
 }
 
 /// Issue 320: what went with a session comes back with it in the name of
@@ -3101,8 +3101,8 @@ async fn a_session_comes_back_with_what_lies_in_it_as_far_as_whoever_restores_it
     let (restored, asked) = world.asked(world.manager.restore_session(&alice, session_id)).await;
     restored.expect("restored all the same");
     assert!(asked.contains(&"alice: ReadDeletedArtifact(bob's) no".to_string()), "asked in her name: {asked:?}");
-    assert!(world.store.get_artifact(&alice, hers.id).await.is_ok(), "hers comes back with it");
-    assert!(world.store.get_deleted_artifact(&World::system(), his.id).await.is_ok(), "bob's stays deleted: not hers to restore");
+    assert!(world.runtime.entity_stores().artifacts.get(&alice, hers.id).await.is_ok(), "hers comes back with it");
+    assert!(world.runtime.entity_stores().artifacts.get_deleted(&World::system(), his.id).await.is_ok(), "bob's stays deleted: not hers to restore");
     world.runtime.artifact_manager().restore(&bob, his.id).await.expect("bob restores his");
 }
 

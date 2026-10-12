@@ -581,3 +581,6 @@ still reads sessions, channels and groups through, and finds a workspace by name
 is made with `&EntityStores` and takes the stores it uses - the `WorkspaceManager` and the
 `SkillManager` alike -, so that its constructor does not grow with every kind that moves.
 
+Step 3d: artifacts on their own store. The `ArtifactManager` keeps it beside the facade, which it
+still reads groups through; the views reach the stores of the kinds as `Views::stores`.
+

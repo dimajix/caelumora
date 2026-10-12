@@ -1,5 +1,5 @@
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
-use crate::artifact::{Artifact, ArtifactField, ArtifactId};
+use crate::artifact::Artifact;
 use crate::channel::{Channel, ChannelField, ChannelId, ChannelState};
 use crate::component::StoredComponents;
 use crate::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
@@ -38,7 +38,7 @@ pub struct MemoryStore {
     user_profiles: MemoryEntityStore<UserProfile>,
     workspaces: Arc<MemoryEntityStore<Workspace>>,
     skills: Arc<MemoryEntityStore<Skill>>,
-    artifacts: MemoryEntityStore<Artifact>,
+    artifacts: Arc<MemoryEntityStore<Artifact>>,
     groups: MemoryEntityStore<Group>,
     components: MemoryEntityStore<StoredComponents>,
     agent_states: RwLock<HashMap<AgentId, AgentState>>,
@@ -74,7 +74,7 @@ impl MemoryStore {
             user_profiles: MemoryEntityStore::new(&policies),
             workspaces: Arc::new(MemoryEntityStore::new(&policies)),
             skills: Arc::new(MemoryEntityStore::new(&policies)),
-            artifacts: MemoryEntityStore::new(&policies),
+            artifacts: Arc::new(MemoryEntityStore::new(&policies)),
             groups: MemoryEntityStore::new(&policies),
             components: MemoryEntityStore::new(&policies),
             agent_states: Default::default(),
@@ -92,6 +92,7 @@ impl MemoryStore {
             entities: Arc::<Self>::clone(self),
             skills: Arc::<MemoryEntityStore<Skill>>::clone(&self.skills),
             workspaces: Arc::<MemoryEntityStore<Workspace>>::clone(&self.workspaces),
+            artifacts: Arc::<MemoryEntityStore<Artifact>>::clone(&self.artifacts),
         }
     }
 }
@@ -477,36 +478,6 @@ impl Entities for MemoryStore {
     async fn list_deleted_user_profiles(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<UserProfile>> {
         self.user_profiles.list_deleted(ctx, query).await
     }
-    async fn create_artifact(&self, ctx: &SecurityContext, value: &Artifact) -> StoreResult<()> {
-        self.artifacts.create(ctx, value).await
-    }
-    async fn get_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<Artifact> {
-        self.artifacts.get(ctx, id).await
-    }
-    async fn update_artifact(&self, ctx: &SecurityContext, value: &Artifact) -> StoreResult<()> {
-        self.artifacts.update(ctx, value).await
-    }
-    async fn delete_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<bool> {
-        self.artifacts.delete(ctx, id).await
-    }
-    async fn list_artifacts(&self, ctx: &SecurityContext, query: &Query<ArtifactField>) -> StoreResult<Page<Artifact>> {
-        self.artifacts.list(ctx, query).await
-    }
-    async fn restore_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<Artifact> {
-        self.artifacts.restore(ctx, id).await
-    }
-    async fn purge_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<bool> {
-        self.artifacts.purge(ctx, id).await
-    }
-    async fn get_deleted_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<Artifact> {
-        self.artifacts.get_deleted(ctx, id).await
-    }
-    async fn list_deleted_artifacts(&self, ctx: &SecurityContext, query: &Query<ArtifactField>) -> StoreResult<Page<Artifact>> {
-        self.artifacts.list_deleted(ctx, query).await
-    }
-    async fn find_artifact_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Artifact> {
-        self.artifacts.find_by_name(ctx, name).await
-    }
     async fn create_group(&self, ctx: &SecurityContext, value: &Group) -> StoreResult<()> {
         self.groups.create(ctx, value).await
     }
@@ -635,13 +606,13 @@ mod tests {
         use crate::confidentiality::Classification;
         use crate::scope::Scope;
         use crate::security::OwnershipSecurityManager;
-        let store = MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()));
+        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()))).entity_stores().artifacts;
         let (alice, bob) = (UserId::new(), UserId::new());
         let mut hers = Vec::new();
         for (index, owner) in [alice, bob, bob, alice, bob, alice].into_iter().enumerate() {
             let name = ScopedName::new(format!("a{index}.csv"), Scope::UserScope { user_id: owner }).unwrap();
             let artifact = Artifact::new(ArtifactId::new(), name, "files", Classification::CHANNEL_DEFAULT, owner, version(b"a,b", SessionId::new()));
-            store.create_artifact(&SecurityContext::system(), &artifact).await.unwrap();
+            store.create(&SecurityContext::system(), &artifact).await.unwrap();
             if owner == alice {
                 hers.push(artifact.id);
             }
@@ -651,7 +622,7 @@ mod tests {
         let mut read = Vec::new();
         let mut query = Query::all().limited(1);
         loop {
-            let page = store.list_artifacts(&ctx, &query).await.unwrap();
+            let page = store.list(&ctx, &query).await.unwrap();
             read.extend(page.items.iter().map(|a| a.id));
             match page.next {
                 Some(cursor) => {

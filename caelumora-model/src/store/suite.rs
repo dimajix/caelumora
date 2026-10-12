@@ -245,24 +245,24 @@ pub(crate) async fn queries_behave(stores: &EntityStores) {
             }
             _ => {}
         }
-        store.create_artifact(&ctx, &artifact).await.expect("an artifact");
+        stores.artifacts.create(&ctx, &artifact).await.expect("an artifact");
         made.push(artifact.id);
     }
     let ids = |page: &[Artifact]| page.iter().map(|a| a.id).collect::<Vec<_>>();
     let mut sorted = made.clone();
     sorted.sort_by_key(|id| id.to_string());
-    let listed = store.list_artifacts(&ctx, &Query::all()).await.expect("all of them");
+    let listed = stores.artifacts.list(&ctx, &Query::all()).await.expect("all of them");
     assert_eq!(ids(&listed.items), sorted, "in the order of their ids");
     assert!(listed.next.is_none());
 
     let owned = Filter::eq(ArtifactField::Owner, ActorId::User(bob));
-    let found = store.list_artifacts(&ctx, &Query::filtered(owned)).await.unwrap();
+    let found = stores.artifacts.list(&ctx, &Query::filtered(owned)).await.unwrap();
     let mut bobs_own = vec![made[2], made[4]];
     bobs_own.sort_by_key(|id| id.to_string());
     assert_eq!(ids(&found.items), bobs_own, "a field of the entity");
 
     let place = Filter::And(vec![Filter::eq(ArtifactField::VersionSession, session), Filter::eq(ArtifactField::VersionChannel, channel)]);
-    let published = store.list_artifacts(&ctx, &Query::filtered(Filter::any(ArtifactField::Versions, place))).await.unwrap();
+    let published = stores.artifacts.list(&ctx, &Query::filtered(Filter::any(ArtifactField::Versions, place))).await.unwrap();
     assert_eq!(ids(&published.items), [made[1]], "a version published in the channel, not one elsewhere in the session");
 
     let named = Filter::eq(ArtifactField::Subject, bobs);
@@ -272,12 +272,12 @@ pub(crate) async fn queries_behave(stores: &EntityStores) {
     ]);
     let mut with_bob = vec![made[3], made[4]];
     with_bob.sort_by_key(|id| id.to_string());
-    assert_eq!(ids(&store.list_artifacts(&ctx, &Query::filtered(shared)).await.unwrap().items), with_bob, "an entry of its list or of a version's");
+    assert_eq!(ids(&stores.artifacts.list(&ctx, &Query::filtered(shared)).await.unwrap().items), with_bob, "an entry of its list or of a version's");
 
     let mut paged = Vec::new();
     let mut query = Query::all().limited(2);
     loop {
-        let page = store.list_artifacts(&ctx, &query).await.unwrap();
+        let page = stores.artifacts.list(&ctx, &query).await.unwrap();
         assert!(page.items.len() <= 2, "at most its limit");
         paged.extend(ids(&page.items));
         match page.next {
@@ -392,8 +392,8 @@ pub(crate) async fn entity_store_behaves(stores: &EntityStores) {
         create, get, update, delete, list);
     lifecycle!(stores.skills.as_ref(), skill(UserId::new()), |v: &Skill| v.id, name.name, "skill",
         create, get, update, delete, list);
-    lifecycle!(store, artifact(UserId::new()), |v: &Artifact| v.id, name.name, "artifact",
-        create_artifact, get_artifact, update_artifact, delete_artifact, list_artifacts);
+    lifecycle!(stores.artifacts.as_ref(), artifact(UserId::new()), |v: &Artifact| v.id, name.name, "artifact",
+        create, get, update, delete, list);
     lifecycle!(store, group(UserId::new()), |v: &Group| v.id, name.name, "group",
         create_group, get_group, update_group, delete_group, list_groups);
 
@@ -439,9 +439,9 @@ pub(crate) async fn entity_store_behaves(stores: &EntityStores) {
     let stray = store.create_group(&ctx, &Group { name: ScopedName::new("participants", Scope::SessionScope { session_id: SessionId::new() }).unwrap(), ..group(UserId::new()) }).await;
     assert!(matches!(stray, Err(StoreError::Validation(_))), "group: one in a session's scope that is not its participants is not stored, got {stray:?}");
 
-    found_by_name!(store, artifact_named, "artifact",
-        create_artifact, delete_artifact, find_artifact_by_name);
-    let versionless = store.create_artifact(&ctx, &Artifact { versions: vec![], ..artifact(UserId::new()) }).await;
+    found_by_name!(stores.artifacts.as_ref(), artifact_named, "artifact",
+        create, delete, find_by_name);
+    let versionless = stores.artifacts.create(&ctx, &Artifact { versions: vec![], ..artifact(UserId::new()) }).await;
     assert!(matches!(versionless, Err(StoreError::Validation(_))), "artifact: one without a version is not stored, got {versionless:?}");
 }
 
@@ -511,10 +511,10 @@ pub(crate) async fn names_are_unique(stores: &EntityStores) {
         elsewhere: |name| Skill { name: in_scope(name, &Scope::UserScope { user_id: bob }), id: SkillId::new(), ..skill(bob) },
         rename: |value: Skill, name| Skill { name: in_scope(name, &value.name.scope), ..value }, "skill",
         create, update, delete, restore);
-    unique_by_name!(store, |name| Artifact { name: in_scope(name, &global), id: ArtifactId::new(), ..artifact(alice) },
+    unique_by_name!(stores.artifacts.as_ref(), |name| Artifact { name: in_scope(name, &global), id: ArtifactId::new(), ..artifact(alice) },
         elsewhere: |name| Artifact { name: in_scope(name, &Scope::UserScope { user_id: bob }), id: ArtifactId::new(), ..artifact(bob) },
         rename: |value: Artifact, name| Artifact { name: in_scope(name, &value.name.scope), ..value }, "artifact",
-        create_artifact, update_artifact, delete_artifact, restore_artifact);
+        create, update, delete, restore);
     unique_by_name!(store, |name| Group { name: in_scope(name, &global), id: GroupId::new(), ..group(alice) },
         elsewhere: |name| Group { name: in_scope(name, &Scope::UserScope { user_id: bob }), id: GroupId::new(), ..group(bob) },
         rename: |value: Group, name| Group { name: in_scope(name, &value.name.scope), ..value }, "group",

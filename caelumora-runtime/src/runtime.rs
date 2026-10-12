@@ -328,7 +328,7 @@ impl RuntimeManager {
         let agent_states = Arc::new(AgentStates::new(Arc::clone(&state_store), Arc::<EventBus>::clone(&event_bus)));
         let workspaces = WorkspaceManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&security_manager), Arc::clone(&confidentiality), Arc::clone(&controller_manager), &secret_manager, &config.workspaces)?;
         let skills = Arc::new(SkillManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&confidentiality)));
-        let artifacts = Arc::new(ArtifactManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus), Arc::clone(&security_manager), Arc::clone(&confidentiality), &config.artifacts)?);
+        let artifacts = Arc::new(ArtifactManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&security_manager), Arc::clone(&confidentiality), &config.artifacts)?);
         let groups = Arc::new(GroupManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus), Arc::clone(&security_manager)));
         let agents = Arc::new(AgentManager::new(Arc::clone(&entity_store), Arc::clone(&state_store), Arc::clone(&event_bus), Arc::clone(&security_manager)));
         let scoped = Arc::new(ScopedEntities::new(Arc::clone(&entity_store), Arc::clone(&agents), Arc::clone(&workspaces), Arc::clone(&skills), Arc::clone(&artifacts), Arc::clone(&groups)));

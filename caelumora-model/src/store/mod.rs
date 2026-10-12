@@ -24,7 +24,7 @@ use crate::value::name::ScopedName;
 use crate::workspace::Workspace;
 use crate::skill::Skill;
 use crate::group::{Group, GroupField, GroupId};
-use crate::artifact::{Artifact, ArtifactField, ArtifactId};
+use crate::artifact::Artifact;
 use crate::channel::ChannelField;
 use crate::scope::ScopeField;
 use crate::session::SessionField;
@@ -179,6 +179,7 @@ pub struct EntityStores {
     pub entities: Arc<dyn Entities>,
     pub skills: Arc<dyn EntityStore<Skill>>,
     pub workspaces: Arc<dyn EntityStore<Workspace>>,
+    pub artifacts: Arc<dyn EntityStore<Artifact>>,
 }
 
 /// Every kind's entities at once, as one store offered them before each
@@ -304,18 +305,6 @@ pub trait Entities : Debug + Sync + Send {
     async fn list_deleted_user_profiles(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<UserProfile>>;
 
 
-    // Artifacts (issue 271) - their content is no part of the document, and
-    // whoever purges one removes it.
-    async fn create_artifact(&self, ctx: &SecurityContext, value: &Artifact) -> StoreResult<()>;
-    async fn get_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<Artifact>;
-    async fn update_artifact(&self, ctx: &SecurityContext, value: &Artifact) -> StoreResult<()>;
-    async fn delete_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<bool>;
-    async fn list_artifacts(&self, ctx: &SecurityContext, query: &Query<ArtifactField>) -> StoreResult<Page<Artifact>>;
-    async fn restore_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<Artifact>;
-    async fn purge_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<bool>;
-    async fn get_deleted_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<Artifact>;
-    async fn list_deleted_artifacts(&self, ctx: &SecurityContext, query: &Query<ArtifactField>) -> StoreResult<Page<Artifact>>;
-    async fn find_artifact_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Artifact>;
 
     // Groups (issue 286) - teams, and the participants of sessions and
     // channels, kept by those.
