@@ -295,7 +295,7 @@ impl Terminal for LocalTerminal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terminal::CommandStatus;
+    use caelumora_model::workspace::CommandStatus;
     use bytes::Bytes;
 
     fn content(text: &'static str) -> ByteStream {

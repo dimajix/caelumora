@@ -15,9 +15,15 @@ it is described in [WEB-UI.md](WEB-UI.md), the policy behind the permissions in
 | `state.rs` | `AppState`: the `Auth`, the `RuntimeManager` and the `SessionManager` every handler reaches |
 | `auth.rs` | Login, logout, renewal, and the middleware `require_auth` and `require_stream_auth` |
 | `routes/` | The handlers, by resource |
-| `models.rs` | The request and response types, and their mapping from the runtime's views |
 | `error.rs` | `ApiError` and the problem details it answers with; the `Json` and `Path` extractors |
 | `sse.rs` | What both event streams have in common |
+
+The request and response types are not the server's: they lie in the crate `caelumora-rest-api`,
+one module per subject (`session`, `channel`, `workspace`, …), which depends on the model alone, so
+that a client reads them without the server (issue 323). A response is made there from the model's
+entities and snapshots, by `From` or an `of`. What only the runtime knows - the names of the places
+a message's knowledge was read in, a file of a workspace, a command of its shell - the handler puts
+into the response itself.
 
 ## How a handler works
 
@@ -38,7 +44,7 @@ A handler translates; it does not decide. Every handler derives its `SecurityCon
     and is refused with `403`. See [CHANNELS.md](CHANNELS.md#acting-in-a-channel).
 *   **It reads through the views.** What a client lists and offers - sessions, channels, members,
     `can_change`, `can_read_context` - a handler reaches through the runtime's views as the user and
-    answers with their snapshots, which `models.rs` maps to responses. The server asks the
+    answers with their snapshots, which `caelumora-rest-api` maps to responses. The server asks the
     `SecurityManager` nothing itself. See [SECURITY.md](SECURITY.md#views).
 
 ## Endpoints
@@ -107,7 +113,7 @@ Some rules hold across the endpoints:
 Renaming a channel (`ChannelLoop::update_name`) has no endpoint yet.
 
 When the REST API changes, `caelumora-web-ui` has to change with it: its types in `src/types` mirror
-`models.rs`.
+those of `caelumora-rest-api`.
 
 ## Authentication
 

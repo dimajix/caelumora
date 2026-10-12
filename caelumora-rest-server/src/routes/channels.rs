@@ -1,5 +1,10 @@
 use crate::auth::AuthenticatedUser;
-use crate::models::{AddParticipantRequest, DescriptionRequest, AgentToolsResponse, AgentComponentsResponse, DeletedResponse, ListOptions, ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CreateChannelRequest, KnowledgeRefResponse, CommandReplyResponse, ExecuteCommandRequest, HistoryItemResponse, HistoryMessageResponse, LabelCauses, MessageContextResponse, SeenItemResponse, PublishedNotesResponse, MessageRequest, TurnRequest, SendApprovalRequest, StreamOptions, AnswerQuestionsRequest};
+use caelumora_rest_api::channel::{AddParticipantRequest, AnswerQuestionsRequest, ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CommandReplyResponse, CreateChannelRequest, ExecuteCommandRequest, MessageRequest, PublishedNotesResponse, SendApprovalRequest, TurnRequest};
+use caelumora_rest_api::context::{AgentComponentsResponse, AgentToolsResponse, KnowledgeRefResponse, MessageContextResponse, SeenItemResponse};
+use caelumora_rest_api::history::{HistoryItemResponse, HistoryMessageResponse};
+use caelumora_rest_api::session::DescriptionRequest;
+use caelumora_rest_api::stream::StreamOptions;
+use caelumora_rest_api::trash::{DeletedResponse, ListOptions};
 use crate::state::AppState;
 use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response, Sse};
@@ -13,13 +18,13 @@ use caelumora_model::message_history::HistoryEntry;
 use caelumora_runtime::actor::user::UserActor;
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::session::ChannelSpec;
-use caelumora_runtime::view::{AgentContextView, ChannelView, MemberView, Viewer};
+use caelumora_runtime::view::{AgentContextView, ChannelView, MemberView, Reached, SessionView, Viewer};
 use caelumora_model::approval::{ApprovalId, ApprovalResponse, ApprovalRule};
 use caelumora_model::question::QuestionId;
 use caelumora_model::channel::moderation_components;
 use caelumora_model::command::{Command, CommandVisibility};
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::context::ContextItem;
+use caelumora_model::confidentiality::{Classification, LabelCauses};
+use caelumora_model::context::{ContextItem, KnowledgeRef, KnowledgeSource};
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{ChannelId, SessionId};
@@ -562,7 +567,7 @@ pub async fn message_context(
     let causes = LabelCauses::new(label, classified);
     let mut knowledge = Vec::with_capacity(seen.reference.knowledge.len());
     for read in &seen.reference.knowledge {
-        knowledge.push(KnowledgeRefResponse::describe(channel.session(), read, &causes).await);
+        knowledge.push(knowledge_response(channel.session(), read, &causes).await);
     }
     Ok(Json(MessageContextResponse {
         message_id: MessageId(mid),
@@ -573,6 +578,49 @@ pub async fn message_context(
         tools_digest: seen.reference.tools,
         tool_sets: seen.tool_sets,
     }))
+}
+
+/// `knowledge` with the names of its channel and agent, as far as `session`
+/// still has them, and whether it set the label of the message, which
+/// `causes` tells.
+async fn knowledge_response(session: &SessionView, knowledge: &KnowledgeRef, causes: &LabelCauses) -> KnowledgeRefResponse {
+    // Named only if the viewer may read it - of this session or another
+    // (issue 134) - and it is still there; by id alone otherwise.
+    let reached = session.views().channel_of(knowledge.session, knowledge.channel).await.unwrap_or_else(|e| {
+        tracing::warn!("Cannot reach channel {} of the knowledge read: {:#}", knowledge.channel, e);
+        Reached::Never
+    });
+    let channel_deleted = matches!(reached, Reached::Gone(_));
+    let channel = reached.there();
+    let (source, agent_id, digest, history_start) = match knowledge.source {
+        KnowledgeSource::Notes { agent, digest } => ("notes", Some(ActorId::Agent(agent)), digest, None),
+        KnowledgeSource::PrivateNotes { agent, digest } => ("private_notes", Some(ActorId::Agent(agent)), digest, None),
+        KnowledgeSource::History { digest, start } => ("history", None, digest, start),
+        KnowledgeSource::Memory { agent, digest } => ("memory", Some(ActorId::Agent(agent)), digest, None),
+        KnowledgeSource::Entity { kind, digest, .. } => (kind.name(), None, digest, None),
+    };
+    let entity_id = match knowledge.source {
+        KnowledgeSource::Entity { id, .. } => Some(id),
+        _ => None,
+    };
+    let agent_name = match (agent_id, &channel) {
+        (Some(id), Some(channel)) => channel.member(id).await.ok().and_then(|m| m.name().map(str::to_string)),
+        _ => None,
+    };
+    KnowledgeRefResponse {
+        session_id: knowledge.session,
+        channel_id: knowledge.channel,
+        channel_name: channel.map(|c| c.name().to_string()),
+        channel_deleted,
+        source,
+        entity_id,
+        agent_id,
+        agent_name,
+        digest,
+        history_start,
+        classification: knowledge.classification.clone(),
+        sets_label: causes.set_by(knowledge.classification.as_ref()),
+    }
 }
 
 /// `message` of the agent whose context `view` is, as its history shows it.

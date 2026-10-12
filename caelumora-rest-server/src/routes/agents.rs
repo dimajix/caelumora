@@ -4,7 +4,8 @@
 
 use crate::auth::AuthenticatedUser;
 use crate::error::{ApiError, Json, Path, Subject};
-use crate::models::{AgentResponse, DeletedResponse, ListOptions};
+use caelumora_rest_api::agent::AgentResponse;
+use caelumora_rest_api::trash::{DeletedResponse, ListOptions};
 use crate::state::AppState;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;

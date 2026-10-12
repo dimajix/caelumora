@@ -61,8 +61,8 @@ lives.
 
 *   **Model and runtime.** When you change `caelumora-model`, keep `caelumora-runtime` compatible
     with it.
-*   **REST and web UI.** When you change the REST API in `caelumora-rest-server`, keep
-    `caelumora-web-ui` compatible with it.
+*   **REST and web UI.** When you change the REST API - its routes in `caelumora-rest-server`, its
+    types in `caelumora-rest-api` -, keep `caelumora-web-ui` compatible with it.
 *   **Components.** A new component kind is registered in the `ComponentRegistry`; where it goes and
     how it is named is described in [COMPONENTS.md](COMPONENTS.md).
 

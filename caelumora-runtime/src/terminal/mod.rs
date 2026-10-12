@@ -29,7 +29,7 @@ pub(crate) use open_terminal::{DockerProvider, SharedProvider};
 use async_trait::async_trait;
 use bytes::Bytes;
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::workspace::WorkspaceId;
+use caelumora_model::workspace::{CommandStatus, WorkspaceId};
 use chrono::{DateTime, Utc};
 use futures::Stream;
 use std::fmt::Debug;
@@ -170,19 +170,6 @@ pub trait Terminal: Send + Sync + Debug {
     /// Its shell as `scope` sees it - the commands started under that scope
     /// alone (issue 296) -, if its storage has one.
     fn shell(&self, scope: &str) -> Option<Arc<dyn Shell>>;
-}
-
-/// Where a command stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CommandStatus {
-    Running,
-    /// Ended by itself, with its exit code if it has one.
-    Completed,
-    /// Ended because it was killed.
-    Killed,
-    /// Could not be run, or ended by a signal it was not sent.
-    Failed,
 }
 
 /// What a command printed since an offset, and where it stands.

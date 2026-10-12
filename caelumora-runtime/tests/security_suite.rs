@@ -48,12 +48,12 @@ use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegi
 use caelumora_runtime::external::{ExternalAgent, ExternalAgentResult, ExternalEvent, ExternalStream, OutboundMessage};
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::session::{ChannelSpec, SessionError, SessionLoop, SessionManager};
-use caelumora_runtime::terminal::{ByteStream, CommandStatus, Terminal, TerminalError, WorkspacePath};
+use caelumora_runtime::terminal::{ByteStream, Terminal, TerminalError, WorkspacePath};
 use caelumora_runtime::view::{ViewError, Viewer};
 use caelumora_runtime::workspace::WorkspaceError;
 use caelumora_runtime::artifact::ArtifactError;
 use caelumora_runtime::group::GroupError;
-use caelumora_model::workspace::{WorkspaceChoice, WorkspaceId};
+use caelumora_model::workspace::{CommandStatus, WorkspaceChoice, WorkspaceId};
 use caelumora_model::artifact::Artifact;
 use caelumora_model::removal::Stored;
 use caelumora_model::config::AppConfig;

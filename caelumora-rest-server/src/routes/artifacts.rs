@@ -6,7 +6,10 @@
 
 use crate::auth::AuthenticatedUser;
 use crate::error::{ApiError, Json, Path, Subject};
-use crate::models::{AccessEntry, ArtifactResponse, DeletedResponse, ItemDescriptionRequest, KeepArtifactRequest, ListOptions};
+use caelumora_rest_api::access::AccessEntry;
+use caelumora_rest_api::artifact::{ArtifactResponse, KeepArtifactRequest};
+use caelumora_rest_api::scope::ItemDescriptionRequest;
+use caelumora_rest_api::trash::{DeletedResponse, ListOptions};
 use crate::state::AppState;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;

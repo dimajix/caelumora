@@ -16,7 +16,8 @@
 //!   Caelumora ends is not killed by it.
 
 use super::commands::{locked, Commands, Kept};
-use super::{CommandState, CommandStatus, Shell, TerminalError, TerminalResult};
+use super::{CommandState, Shell, TerminalError, TerminalResult};
+use caelumora_model::workspace::CommandStatus;
 use async_trait::async_trait;
 use caelumora_model::workspace::WorkspaceId;
 use nix::sys::signal::{killpg, Signal};

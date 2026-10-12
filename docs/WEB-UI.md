@@ -32,7 +32,7 @@ The UI shows what the server says and repeats no rule of its own:
     `any-ascii` in the version the server's `any_ascii` crate has - both are pinned, so that their
     tables agree. What a command means and whom a mention addresses is decided by the server.
 *   **The types mirror the server.** `src/types` holds the request and response types of
-    `caelumora-rest-server/src/models.rs`; a change to the REST API changes them too.
+    the crate `caelumora-rest-api`; a change to the REST API changes them too.
 *   **What the server refuses is shown where it can be corrected.** A dialog shows the server's
     refusal - a name taken, a classification the user is not cleared for - next to the field; it
     does not check beforehand what the server decides.

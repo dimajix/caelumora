@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::extract::State;
 use crate::auth::AuthenticatedUser;
 use crate::error::{ApiError, Json};
-use crate::models::TemplateResponse;
+use caelumora_rest_api::template::TemplateResponse;
 use crate::state::AppState;
 
 /// The session templates the user may start a session from - what a client

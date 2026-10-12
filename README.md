@@ -17,6 +17,7 @@ The project is organized as a Rust workspace with the following crates:
 
 - **`caelumora-model`**: Core domain entities and data structures.
 - **`caelumora-runtime`**: The execution engine, handling event routing and agent cognitive cycles.
+- **`caelumora-rest-api`**: The request and response types of the REST interface.
 - **`caelumora-rest-server`**: REST interface for interacting with the system.
 - **`caelumora-tui`**: Terminal User Interface for Caelumora.
 - **`caelumora-client-api`**, **`caelumora-local-client`**, **`caelumora-rest-client`**: Reserved for a client interface and its implementations; empty so far.

@@ -17,9 +17,12 @@ The project is a Rust workspace, with a web UI next to it:
 *   **`caelumora-runtime`** - everything that runs: sessions, channels and their actors, the agent's
     cognitive cycle, components, the event bus, the controllers that keep entities live, and the
     store implementations.
+*   **`caelumora-rest-api`** - the wire of the REST API: the requests and responses, as `serde`
+    reads and writes them, made from the model's entities and snapshots. It depends on the model
+    alone, so that a client reads the API without the server (issue 323).
 *   **`caelumora-rest-server`** - the REST API and the server-sent event streams, with
-    authentication. It maps what the runtime answers to responses and decides nothing itself. See
-    [REST-SERVER.md](REST-SERVER.md).
+    authentication. It maps what the runtime answers to the responses of `caelumora-rest-api` and
+    decides nothing itself. See [REST-SERVER.md](REST-SERVER.md).
 *   **`caelumora-web-ui`** - the browser frontend (React, TypeScript), built on the REST server. See
     [WEB-UI.md](WEB-UI.md).
 *   **`caelumora-tui`** - a terminal frontend that runs the runtime in its own process.

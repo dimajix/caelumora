@@ -109,7 +109,8 @@ mod tests {
     use super::*;
     use caelumora_model::remote::RemoteAuthConfig;
     use crate::terminal::open_terminal::stand_in::{self, StandIn, KEY, MOUNT};
-    use crate::terminal::{ByteStream, CommandStatus, WorkspacePath};
+    use crate::terminal::{ByteStream, WorkspacePath};
+    use caelumora_model::workspace::CommandStatus;
     use bytes::Bytes;
     use caelumora_model::security::DummySecurityManager;
     use futures::StreamExt;

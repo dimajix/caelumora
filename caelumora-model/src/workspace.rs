@@ -170,6 +170,19 @@ pub enum WorkspaceChoice {
     New { storage: String, classification: Classification },
 }
 
+/// Where a command of a workspace's shell stands (issue 294).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandStatus {
+    Running,
+    /// Ended by itself, with its exit code if it has one.
+    Completed,
+    /// Ended because it was killed.
+    Killed,
+    /// Could not be run, or ended by a signal it was not sent.
+    Failed,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

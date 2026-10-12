@@ -687,3 +687,15 @@ entity by its kind as `source` and its `entity_id` in place of `workspace_id` an
 which the web UI did not read; it names a kind it does not know as such rather than as a history.
 Stored data: the state store has to be deleted - transcripts and histories hold `KnowledgeSource`
 in its old form.
+
+**2026-10-12** — Step 7, on branch `issue-323-rest-api`. The crate `caelumora-rest-api` holds the
+request and response types, one module per subject, and depends on the model alone; `models.rs`
+is gone. The plan had the conversions from the snapshots move into the server; they stay with the
+types, since the snapshots are the model's (`caelumora_model::snapshot`) and the server could
+implement `From` for neither side. What needs the runtime moved into the handlers: the knowledge
+of a message named after its channel and agent (`knowledge_response` in `routes::channels`), a
+file of a workspace and a command of its shell (`routes::workspaces`). Two things the wire named
+of the runtime moved to the model: `CommandStatus` (`caelumora_model::workspace`), a value a
+command's state and the API share, and `LabelCauses` (`caelumora_model::confidentiality`), the
+rule which classifications set a message's label. The JSON of the API is unchanged. Stored data:
+none.
