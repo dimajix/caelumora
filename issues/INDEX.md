@@ -399,6 +399,7 @@ published before anyone else can take it.
 | [315](315-view-and-session-test-fixtures.md) | done | The tests of the views and of sessions have fixtures of the same names and different signatures, so four tests of the views live with the sessions. |
 | [323](323-kinds-enumerated-in-the-core.md) | in progress | Every stored kind is enumerated in the core - `ActionType`, `EntityKind`, `EntityStore`, `GlobalEvent`, the scope, the seed, `ApiError` and the routes - so a subject such as skills cannot be moved into a crate of its own. |
 | [324](324-backends-enumerated-in-the-core.md) | open | The backends of a service - the storages of workspaces and of artifacts, the user and secret providers, the stores - are each a closed `enum` of the configuration, so none can be added from a crate of its own. |
+| [325](325-mcp-in-a-crate-of-its-own.md) | open | The MCP integration is part of the runtime crate, so `rmcp` is built into everything that uses the runtime, though the core knows `mcp_tool` only as a component kind. |
 
 ## Integrations
 
