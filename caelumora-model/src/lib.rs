@@ -35,6 +35,7 @@ pub mod scope;
 pub mod value;
 pub mod component;
 pub mod event;
+pub(crate) mod intern;
 pub mod security;
 pub mod actor;
 pub mod secret;

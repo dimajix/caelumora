@@ -12,6 +12,7 @@ use crate::store::query::Field;
 use crate::value::name::ScopedName;
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
+use std::str::FromStr;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -41,7 +42,7 @@ pub trait Stored: Secured {
     const KIND: EntityKind;
 
     /// What it is kept and found by.
-    type Id: Clone + Eq + Hash + Display + Debug + Send + Sync + 'static;
+    type Id: Clone + Eq + Hash + Display + FromStr + Debug + Send + Sync + 'static;
 
     /// The fields a query of its kind names (issue 293).
     type Field: Field;

@@ -205,6 +205,12 @@ impl Scoped for Agent {
 
 define_id!(AgentId);
 
+/// The agent's own state changed - its memory (issue 62), announced as
+/// `EntityChange::Custom` (issue 323) with the agent's attributes once the
+/// change is stored; without content, since the state is private: whoever
+/// may see it fetches it.
+pub const STATE_CHANGED: &str = "state_changed";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Agent {
     pub id: AgentId,

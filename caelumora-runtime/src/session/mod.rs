@@ -29,6 +29,8 @@ use std::sync::Arc;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::{AbortHandle, JoinSet};
+use caelumora_model::agent::Agent;
+use caelumora_model::event::EntityChange;
 
 mod channels;
 mod manager;
@@ -295,8 +297,8 @@ impl SessionLoop {
     }
 
     async fn handle_global_event(&self, global_event: &GlobalEvent) {
-        match global_event {
-            GlobalEvent::AgentDeleted(id) | GlobalEvent::AgentRestored(id) => self.follow_agents(Some(*id)).await,
+        match global_event.about::<Agent>() {
+            Some((id, EntityChange::Deleted | EntityChange::Restored)) => self.follow_agents(Some(id)).await,
             _ => self.session_controller.process_global_event(global_event),
         }
     }
@@ -333,6 +335,7 @@ mod tests {
 
     use crate::session::SessionManager;
     use crate::session::testing::*;
+    use caelumora_model::user::User;
 
     #[tokio::test]
     async fn a_renamed_user_is_renamed_in_every_channel_of_the_session() {
@@ -351,7 +354,7 @@ mod tests {
         // session takes it into the one controller both actors share.
         let renamed = async {
             loop {
-                runtime.event_bus().publish(GlobalEvent::UserUpdated(owner, UserUpdateEvent::NameChanged("renamed".to_string())), Default::default());
+                runtime.event_bus().publish(GlobalEvent::updated::<User>(&owner, &UserUpdateEvent::NameChanged("renamed".to_string())), Default::default());
                 let names: Vec<String> = [&first, &second].iter().map(|c| c.user_actor(owner).expect("takes part").name().to_string()).collect();
                 if names.iter().all(|n| n == "renamed") {
                     break;

@@ -14,6 +14,14 @@ macro_rules! define_id {
             }
         }
 
+        impl std::str::FromStr for $name {
+            type Err = uuid::Error;
+
+            fn from_str(text: &str) -> Result<Self, Self::Err> {
+                text.parse().map(Self)
+            }
+        }
+
         impl From<uuid::Uuid> for $name {
             fn from(uuid: uuid::Uuid) -> Self {
                 Self(uuid)

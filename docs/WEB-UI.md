@@ -113,7 +113,10 @@ reload shows the same.
 
 The sidebar lists the user's sessions with their channels and follows the global stream: it takes
 its state from the snapshot and fetches a session again on any event that changes it, its channels
-or their members. Starting and stopping are ignored.
+or their members. Starting and stopping are ignored. An event about an entity is read by its kind
+(`entityEvent` in `globalEvents.ts`): the lists of workspaces, skills, artifacts and teams are
+loaded again on any event of their kind, and the trash on any deletion or restoring, whatever the
+kind.
 
 A session's privacy is shown to everyone in it; its owner changes it (`PrivacyDialog`). Choosing a
 policy that lets other sessions read says that it holds for what is said from then on. The session's

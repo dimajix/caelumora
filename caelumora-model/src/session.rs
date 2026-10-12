@@ -34,6 +34,13 @@ pub enum SessionUpdateEvent {
 
 define_id!(SessionId);
 
+/// A session was started: its channels run (`EntityChange::Custom`, issue
+/// 323).
+pub const STARTED: &str = "started";
+
+/// A session was stopped for everyone in it (`EntityChange::Custom`).
+pub const STOPPED: &str = "stopped";
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {

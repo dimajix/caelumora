@@ -104,7 +104,6 @@ impl SessionLoop {
 mod tests {
 
     
-    use caelumora_model::event::GlobalEvent;
     use caelumora_model::security::SecurityContext;
     use crate::view::Viewer;
     use caelumora_model::store::StoreError;
@@ -113,6 +112,7 @@ mod tests {
     
 
     use crate::session::testing::*;
+    use caelumora_model::session::Session;
 
     #[tokio::test]
     async fn only_the_owner_changes_a_sessions_privacy_and_everyone_in_it_sees_it() {
@@ -139,7 +139,7 @@ mod tests {
         assert_eq!(session.privacy().policy, PrivacyConfig::SharedAudience);
         let stored = runtime.entity_stores().sessions.get(&SecurityContext::system(), session.id()).await.unwrap();
         assert_eq!(stored.privacy, PrivacyConfig::SharedAudience, "stored");
-        assert!(drain(&mut events).iter().any(|e| matches!(e, GlobalEvent::SessionUpdated(id, SessionUpdateEvent::PrivacyChanged(PrivacyConfig::SharedAudience)) if *id == session.id())),
+        assert!(drain(&mut events).iter().any(|e| matches!(e.about::<Session>(), Some((id, change)) if id == session.id() && matches!(change.update::<SessionUpdateEvent>(), Some(SessionUpdateEvent::PrivacyChanged(PrivacyConfig::SharedAudience))))),
                 "announced");
         let for_bob = manager.views(Viewer::new(as_user(bob.id))).session(session.id()).await.unwrap();
         assert_eq!(for_bob.privacy().policy, PrivacyConfig::SharedAudience, "shown to everyone who takes part");

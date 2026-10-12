@@ -104,8 +104,8 @@ pub trait UserProvider: Debug + Send + Sync {
 /// It is the one writer of user records (issue 306), which belong to the
 /// system (issue 94): what a provider answers at a login or on a renewal is
 /// compared with the record stored, stored in the system's name where it
-/// differs, and announced - a new user as `UserCreated`, a changed name or
-/// changed roles as `UserUpdated` -, so that every `UserController`, in every
+/// differs, and announced - a new user as created, a changed name or changed
+/// roles as a `UserUpdateEvent` -, so that every `UserController`, in every
 /// instance, holds them as they are.
 #[derive(Debug)]
 pub struct UserManager {
@@ -181,7 +181,7 @@ impl UserManager {
         let backend = |e: crate::store::StoreError| AuthError::Backend(e.to_string());
         let Some(stored) = self.store.get(&system, found.id).await.optional().map_err(backend)? else {
             self.store.create(&system, &found).await.map_err(backend)?;
-            self.events.publish(GlobalEvent::UserCreated(found.id), found.security_attributes().clone());
+            self.events.publish(GlobalEvent::created::<User>(&found.id), found.security_attributes().clone());
             return Ok(found);
         };
         let user = User { deleted: stored.deleted.clone(), ..found };
@@ -192,11 +192,11 @@ impl UserManager {
         }
         self.store.update(&system, &user).await.map_err(backend)?;
         if renamed {
-            self.events.publish(GlobalEvent::UserUpdated(user.id, UserUpdateEvent::NameChanged(user.username.to_string())), user.security_attributes().clone());
+            self.events.publish(GlobalEvent::updated::<User>(&user.id, &UserUpdateEvent::NameChanged(user.username.to_string())), user.security_attributes().clone());
         }
         if roles_changed {
             tracing::info!(user = %user.id, "The roles of the user changed");
-            self.events.publish(GlobalEvent::UserUpdated(user.id, UserUpdateEvent::RolesChanged(user.roles.clone())), user.security_attributes().clone());
+            self.events.publish(GlobalEvent::updated::<User>(&user.id, &UserUpdateEvent::RolesChanged(user.roles.clone())), user.security_attributes().clone());
         }
         Ok(user)
     }
@@ -212,6 +212,7 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Mutex;
     use crate::confidentiality::Classification;
+    use crate::event::EntityChange;
 
     /// What was announced.
     #[derive(Debug, Default)]
@@ -371,18 +372,18 @@ mod tests {
         let staff = RoleId::new();
         let alice = user("alice");
         answering(&alice).authenticate("alice", &Credential::Password("a")).await.unwrap();
-        assert!(matches!(announced.taken()[..], [GlobalEvent::UserCreated(id)] if id == alice.id), "a new user is made");
+        assert!(matches!(&announced.taken()[..], [event] if event.about::<User>() == Some((alice.id, &EntityChange::Created))), "a new user is made");
         answering(&alice).authenticate("alice", &Credential::Password("a")).await.unwrap();
         assert!(announced.taken().is_empty(), "nothing changed, nothing announced");
 
         let found = answering(&User { roles: vec![staff], ..alice.clone() }).get_user(alice.id).await.unwrap().unwrap();
         assert_eq!(found.roles, [staff], "on a renewal, as the provider answers");
-        assert!(matches!(&announced.taken()[..], [GlobalEvent::UserUpdated(id, UserUpdateEvent::RolesChanged(roles))] if *id == alice.id && *roles == [staff]));
+        assert!(matches!(&announced.taken()[..], [event] if matches!(event.about::<User>(), Some((id, change)) if id == alice.id && matches!(change.update::<UserUpdateEvent>(), Some(UserUpdateEvent::RolesChanged(roles)) if roles == [staff]))));
         let stored = store.get(&SecurityContext::system(), alice.id).await.unwrap();
         assert_eq!(stored.roles, [staff], "and stored");
 
         answering(&alice).authenticate("alice", &Credential::Password("a")).await.unwrap();
-        assert!(matches!(&announced.taken()[..], [GlobalEvent::UserUpdated(_, UserUpdateEvent::RolesChanged(roles))] if roles.is_empty()), "taken at a login");
+        assert!(matches!(&announced.taken()[..], [event] if matches!(event.about::<User>().and_then(|(_, change)| change.update::<UserUpdateEvent>()), Some(UserUpdateEvent::RolesChanged(roles)) if roles.is_empty())), "taken at a login");
     }
 
     #[test]

@@ -55,3 +55,9 @@ with concurrent writes detected rather than lost.
 - **2026-09-29** — Opened while working on issue 121, with the model agreed with the maintainer:
   sessions in exactly one instance, agents and users - with their state - in several, kept in step
   by global events.
+- **2026-10-12** — Issue 323, step 5: `GlobalEvent` is read back as it is written. An event about an
+  entity is `Entity { kind, id, change }` with an update as a JSON value, read by every instance
+  the same way, whether it was published there or not; the names of kinds and custom changes are
+  interned as they are read. The envelope that crosses the instances is `PublishedEvent` - the
+  event with its attributes and classifications, which are serializable already -, so that the
+  receiving bus decides who receives it. Versions, when they come, are a field of `Entity`.

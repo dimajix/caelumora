@@ -505,6 +505,8 @@ which shows whether the seams hold. Every step runs the tests and `cargo clippy 
 
 - Issues for workspaces, artifacts and groups as plugins, each citing what step 10 found.
 - 307 takes up `caelumora-rest-api` and `caelumora-rest-client`.
+- An issue for the events of channels and of their members, which stayed variants in step 5: how
+  a channel names its session in `GlobalEvent::Entity`, so that the web UI still finds it.
 
 ## Done when
 
@@ -642,3 +644,28 @@ nothing else is left, is the scope's. Groups are now purged after all others too
 skills and workspaces; nothing purged depends on that order. `restored_unless_refused` takes what
 was deleted and logs its kind and id instead of a kind written out by each caller. Nothing stored
 changed.
+
+**2026-10-12** — Step 5 decided with the maintainer, on branch `issue-323-entity-event`. The plan
+named the kinds that may become plugins; that line said nothing about the events, and the
+maintainer asked why agents and users were left out. The line drawn instead is the event's own:
+every kind whose events name it by its own id - sessions, agents, users, user profiles,
+workspaces, skills, artifacts, groups - is announced as `GlobalEvent::Entity { kind, id, change }`;
+channels and the events of their members keep their variants, since they name the session too. A
+custom change (`EntityChange::Custom`, as `Verb::Custom` for actions) carries what is particular to
+a kind - `session::STARTED` and `STOPPED`, `agent::STATE_CHANGED` - so that a session's events are
+not split over two forms, and a plugin can announce what is no lifecycle event without option B of
+cut 5. Since the events are what instances will tell each other (issue 122), `GlobalEvent` stays
+`Serialize` and `Deserialize`: an update is carried as a JSON value, read the same way whether it
+was published here or elsewhere (`change.update::<UserUpdateEvent>()`), and the name of a kind and
+of a custom change are interned as they are read. A typed payload behind a trait was weighed and
+dropped for that reason; `typetag` too, since an event would be unreadable as a whole wherever one
+type is not registered.
+
+Done: `GlobalEvent::created`, `updated`, `deleted`, `restored` and `custom` make an event by its
+kind, `about::<T>()` reads it back, with the id parsed from its text (`Stored::Id: FromStr`, which
+`define_id!` now gives). `read_action` is one rule for every entity, the channel's for the rest;
+the topics of sessions, agents and users are found by `about`. Artifacts announce their first
+version as created and the others, their access, scope and description as an
+`ArtifactUpdateEvent`, as the other kinds do. The controllers, the session loop and
+`changes_who_may_run` read the new form; the web UI reads an entity event by its kind
+(`entityEvent`), and its trash follows a deletion or restoring of any kind. Nothing stored changed.

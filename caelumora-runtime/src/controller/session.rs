@@ -112,7 +112,7 @@ impl SessionController {
         self.sessions.update(ctx, &session).await?;
         let attributes = session.security_attributes.clone();
         self.session.store(Arc::new(session));
-        self.event_publisher.publish(GlobalEvent::SessionUpdated(self.id, event), attributes);
+        self.event_publisher.publish(GlobalEvent::updated::<Session>(&self.id, &event), attributes);
         Ok(())
     }
 
@@ -150,14 +150,13 @@ impl SessionController {
     /// Takes over a change made elsewhere - already stored there - once it
     /// is announced.
     pub fn process_global_event(&self, event: &GlobalEvent) {
-        if let GlobalEvent::SessionUpdated(sid, update) = event {
-            if *sid == self.id {
-                // Checked where it was made; one that does not fit here is
-                // left out rather than taken over half.
-                match self.apply(update) {
-                    Ok(session) => self.session.store(Arc::new(session)),
-                    Err(e) => tracing::warn!(session = %self.id, error = %e, "A change of the session made elsewhere does not fit it"),
-                }
+        let update = event.about::<Session>().filter(|(sid, _)| *sid == self.id).and_then(|(_, change)| change.update::<SessionUpdateEvent>());
+        if let Some(update) = update {
+            // Checked where it was made; one that does not fit here is left
+            // out rather than taken over half.
+            match self.apply(&update) {
+                Ok(session) => self.session.store(Arc::new(session)),
+                Err(e) => tracing::warn!(session = %self.id, error = %e, "A change of the session made elsewhere does not fit it"),
             }
         }
     }
@@ -252,7 +251,7 @@ mod tests {
         controller.update_description(&ctx, Some("Release 2.0"), Some("")).await.unwrap();
         let stored = store.entity_stores().sessions.get(&ctx, session.id).await.unwrap();
         assert_eq!((stored.summary.as_ref().map(|s| s.as_str()), stored.briefing), (Some("Release 2.0"), None), "empty is none");
-        assert!(matches!(announced.0.lock().unwrap().as_slice(), [GlobalEvent::SessionUpdated(_, SessionUpdateEvent::DescriptionChanged { .. })]), "announced");
+        assert!(matches!(announced.0.lock().unwrap().as_slice(), [event] if matches!(event.about::<Session>().and_then(|(_, change)| change.update::<SessionUpdateEvent>()), Some(SessionUpdateEvent::DescriptionChanged { .. }))), "announced");
 
         let refused = controller.update_description(&ctx, Some("two\nlines"), None).await;
         assert!(matches!(&refused, Err(StoreError::Invalid(ValueError::LineBreak { field: "summary" }))), "{refused:?}");

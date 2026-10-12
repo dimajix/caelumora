@@ -14,7 +14,7 @@
 
 use anyhow::{Context, Result};
 use arc_swap::ArcSwap;
-use caelumora_model::agent::{AgentId, AgentState};
+use caelumora_model::agent::{Agent, AgentId, AgentState};
 use caelumora_model::memory::{MemoryChange, MemoryId, MemoryOrigin};
 use caelumora_model::message::MessageId;
 use caelumora_model::event::{EventPublisher, GlobalEvent};
@@ -25,6 +25,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Weak};
 use tokio::sync::Mutex;
 use tracing::debug;
+use caelumora_model::agent;
 
 /// The state of one agent, shared by all its actors.
 #[derive(Debug)]
@@ -73,9 +74,8 @@ impl AgentStateHandle {
 
     /// Applies `changes` to the memory, each made at its origin in a turn
     /// that ended with message `after`, to the state as it is, stores it,
-    /// makes it the current state, and announces it as
-    /// `GlobalEvent::AgentStateChanged`. Nothing is changed if storing
-    /// fails.
+    /// makes it the current state, and announces it as the agent's
+    /// `agent::STATE_CHANGED`. Nothing is changed if storing fails.
     ///
     /// # Errors
     /// Whatever the `StateStore` reports.
@@ -92,7 +92,7 @@ impl AgentStateHandle {
         self.state_store.put_agent_state(self.agent_id, &mut state).await
             .with_context(|| format!("Cannot store the state of agent {}", self.agent_id))?;
         self.current.store(Arc::new(state));
-        self.events.publish(GlobalEvent::AgentStateChanged(self.agent_id), self.attributes.clone());
+        self.events.publish(GlobalEvent::custom::<Agent>(&self.agent_id, agent::STATE_CHANGED, &()), self.attributes.clone());
         debug!("Applied {} changes to the state of agent {}", count, self.agent_id);
         Ok(())
     }
@@ -138,6 +138,8 @@ mod tests {
     use super::*;
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::store::memory::MemoryStore;
+    use caelumora_model::event::EntityChange;
+    use caelumora_model::agent;
 
     fn remember(id: MemoryId, text: &str) -> (MemoryChange, MemoryOrigin) {
         (MemoryChange::Add { id, text: text.to_string(), classification: Classification::CHANNEL_DEFAULT }, MemoryOrigin::default())
@@ -206,6 +208,6 @@ mod tests {
         let id = handle.reserve_memory_id();
         handle.apply(vec![remember(id, "secret")], MessageId::new()).await.unwrap();
         let events = announced.0.lock().unwrap();
-        assert!(matches!(events.as_slice(), [GlobalEvent::AgentStateChanged(a)] if *a == agent), "{events:?}");
+        assert!(matches!(events.as_slice(), [event] if matches!(event.about::<Agent>(), Some((a, EntityChange::Custom { name: agent::STATE_CHANGED, .. })) if a == agent)), "{events:?}");
     }
 }

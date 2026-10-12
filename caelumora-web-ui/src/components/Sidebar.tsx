@@ -17,10 +17,10 @@ import {
   Users,
   UsersRound
 } from 'lucide-react';
-import type {ArtifactResponse, ChannelResponse, GroupResponse, SessionSnapshot, SkillResponse, UserResponse, WorkspaceResponse} from '../types';
+import type {ArtifactResponse, ChannelResponse, GlobalEvent, GroupResponse, SessionSnapshot, SkillResponse, UserResponse, WorkspaceResponse} from '../types';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
-import {dispatchGlobalEvent, sessionChange} from '../globalEvents';
+import {dispatchGlobalEvent, entityEvent, sessionChange} from '../globalEvents';
 import {openEventStream} from '../stream';
 import {ActionMenu} from './ActionMenu';
 import {ResizeHandle} from './ResizeHandle';
@@ -52,17 +52,17 @@ function channelName(channel: ChannelResponse): string {
   return channel.name || `Channel ${channel.id?.slice?.(0, 8) || channel.id}`;
 }
 
-/** Whether `event` may change what the trash holds (issue 164). */
-function trashChangedBy(event: Record<string, unknown>): boolean {
+/** Whether `event` may change what the trash holds (issue 164): a deletion or restoring of whatever kind. */
+function trashChangedBy(event: GlobalEvent): boolean {
+  const change = entityEvent(event)?.change;
+  if (change === 'Deleted' || change === 'Restored') return true;
   const kind = Object.keys(event)[0];
-  return kind === 'SessionDeleted' || kind === 'SessionRestored' || kind === 'ChannelDeleted' || kind === 'ChannelRestored'
-    || kind === 'WorkspaceDeleted' || kind === 'WorkspaceRestored' || kind === 'SkillDeleted' || kind === 'SkillRestored'
-    || kind === 'ArtifactDeleted' || kind === 'ArtifactRestored' || kind === 'GroupDeleted' || kind === 'GroupRestored';
+  return kind === 'ChannelDeleted' || kind === 'ChannelRestored';
 }
 
-/** Whether `event` is about something whose events are named `prefix…` - `Workspace`, `Skill`, `Artifact`, `Group`. */
-function isAbout(event: Record<string, unknown>, prefix: string): boolean {
-  return Object.keys(event)[0]?.startsWith(prefix) ?? false;
+/** Whether `event` is about an entity of `kind` - `workspace`, `skill`, `artifact`, `group`. */
+function isAbout(event: GlobalEvent, kind: string): boolean {
+  return entityEvent(event)?.kind === kind;
 }
 
 /** `sessions` with `session` added, or replacing the one with its id. */
@@ -74,7 +74,7 @@ function upsert(sessions: SessionSnapshot[], session: SessionSnapshot): SessionS
 
 /**
  * Fetches one session with its channels, or `null` if it is gone again -
- * its `SessionDeleted` then follows or has already arrived.
+ * its deletion then follows or has already arrived.
  */
 async function fetchSession(sessionId: string): Promise<SessionSnapshot | null> {
   try {
@@ -201,10 +201,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
         }
         dispatchGlobalEvent(event);
         if (trashChangedBy(event)) trashChangedFromStream();
-        if (isAbout(event, 'Workspace')) workspacesChangedFromStream();
-        if (isAbout(event, 'Skill')) skillsChangedFromStream();
-        if (isAbout(event, 'Artifact')) artifactsChangedFromStream();
-        if (isAbout(event, 'Group')) groupsChangedFromStream();
+        if (isAbout(event, 'workspace')) workspacesChangedFromStream();
+        if (isAbout(event, 'skill')) skillsChangedFromStream();
+        if (isAbout(event, 'artifact')) artifactsChangedFromStream();
+        if (isAbout(event, 'group')) groupsChangedFromStream();
         const change = sessionChange(event);
         if (change.kind === 'remove') {
           removeSessionFromStream(change.sessionId);

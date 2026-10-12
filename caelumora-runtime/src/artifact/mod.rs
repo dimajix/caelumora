@@ -26,7 +26,7 @@ use crate::scoped::{ScopeMember, deleted_since, deleted_unless_refused, restored
 use crate::terminal::ByteStream;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
-use caelumora_model::artifact::{Artifact, ArtifactId, ArtifactVersion};
+use caelumora_model::artifact::{Artifact, ArtifactId, ArtifactUpdateEvent, ArtifactVersion};
 use caelumora_model::config::{ArtifactStorageConfig, ArtifactsConfig};
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
 use caelumora_model::digest::ContentDigest;
@@ -251,7 +251,8 @@ impl ArtifactManager {
             }
         };
         let readers = artifact.version(number).map_or_else(|| artifact.security_attributes.clone(), |version| artifact.version_attributes(version));
-        self.events.publish_classified(GlobalEvent::ArtifactPublished(id, number), readers, std::slice::from_ref(&artifact.classification));
+        let event = if number == 1 { GlobalEvent::created::<Artifact>(&id) } else { GlobalEvent::updated::<Artifact>(&id, &ArtifactUpdateEvent::VersionPublished(number)) };
+        self.events.publish_classified(event, readers, std::slice::from_ref(&artifact.classification));
         info!(artifact = %id, version = number, by = %ctx.caller_id, "Artifact published");
         Ok((artifact, number))
     }
@@ -298,7 +299,7 @@ impl ArtifactManager {
         artifact.security_attributes.acl = acl;
         artifact.updated_at = Utc::now();
         self.artifacts.update(ctx, &artifact).await?;
-        self.events.publish_classified(GlobalEvent::ArtifactUpdated(id), artifact.reader_attributes(), std::slice::from_ref(&artifact.classification));
+        self.events.publish_classified(GlobalEvent::updated::<Artifact>(&id, &ArtifactUpdateEvent::AccessChanged), artifact.reader_attributes(), std::slice::from_ref(&artifact.classification));
         info!(artifact = %id, by = %ctx.caller_id, "Artifact's access changed");
         Ok(artifact)
     }
@@ -323,7 +324,7 @@ impl ArtifactManager {
         artifact.name.scope = scope;
         artifact.updated_at = Utc::now();
         self.artifacts.update(ctx, &artifact).await?;
-        self.events.publish_classified(GlobalEvent::ArtifactUpdated(id), artifact.reader_attributes(), std::slice::from_ref(&artifact.classification));
+        self.events.publish_classified(GlobalEvent::updated::<Artifact>(&id, &ArtifactUpdateEvent::ScopeChanged(artifact.name.scope.clone())), artifact.reader_attributes(), std::slice::from_ref(&artifact.classification));
         info!(artifact = %id, by = %ctx.caller_id, "Artifact kept");
         Ok(artifact)
     }
@@ -340,7 +341,7 @@ impl ArtifactManager {
         artifact.description = Description::optional(description)?;
         artifact.updated_at = Utc::now();
         self.artifacts.update(ctx, &artifact).await?;
-        self.events.publish_classified(GlobalEvent::ArtifactUpdated(id), artifact.reader_attributes(), std::slice::from_ref(&artifact.classification));
+        self.events.publish_classified(GlobalEvent::updated::<Artifact>(&id, &ArtifactUpdateEvent::DescriptionChanged(artifact.description.as_ref().map(ToString::to_string))), artifact.reader_attributes(), std::slice::from_ref(&artifact.classification));
         Ok(artifact)
     }
 
@@ -355,7 +356,7 @@ impl ArtifactManager {
         if !self.artifacts.delete(ctx, id).await? {
             return Ok(false);
         }
-        self.events.publish_classified(GlobalEvent::ArtifactDeleted(id), artifact.reader_attributes(), std::slice::from_ref(&artifact.classification));
+        self.events.publish_classified(GlobalEvent::deleted::<Artifact>(&id), artifact.reader_attributes(), std::slice::from_ref(&artifact.classification));
         info!(artifact = %id, by = %ctx.caller_id, "Artifact deleted");
         Ok(true)
     }
@@ -369,7 +370,7 @@ impl ArtifactManager {
     pub async fn restore(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<Artifact> {
         let _writing = self.writing.lock().await;
         let artifact = self.artifacts.restore(ctx, id).await.map_err(store_error(id))?;
-        self.events.publish_classified(GlobalEvent::ArtifactRestored(id), artifact.reader_attributes(), std::slice::from_ref(&artifact.classification));
+        self.events.publish_classified(GlobalEvent::restored::<Artifact>(&id), artifact.reader_attributes(), std::slice::from_ref(&artifact.classification));
         info!(artifact = %id, by = %ctx.caller_id, "Artifact restored");
         Ok(artifact)
     }
@@ -412,7 +413,7 @@ impl ScopeMember for ArtifactManager {
         let mut left = 0;
         for artifact in self.artifacts.list(&system, &within(holder)).await?.items {
             if deleted_unless_refused(self.artifacts.delete(ctx, artifact.id).await)? {
-                self.events.publish_classified(GlobalEvent::ArtifactDeleted(artifact.id), artifact.reader_attributes(), std::slice::from_ref(&artifact.classification));
+                self.events.publish_classified(GlobalEvent::deleted::<Artifact>(&artifact.id), artifact.reader_attributes(), std::slice::from_ref(&artifact.classification));
             } else {
                 left += 1;
             }
@@ -433,7 +434,7 @@ impl ScopeMember for ArtifactManager {
         let _writing = self.writing.lock().await;
         for artifact in deleted_since(self.artifacts.list_deleted(&system, &within(holder)).await?.items, since) {
             if let Some(restored) = restored_unless_refused(self.artifacts.restore(ctx, artifact.id).await, &artifact)? {
-                self.events.publish_classified(GlobalEvent::ArtifactRestored(restored.id), restored.reader_attributes(), std::slice::from_ref(&restored.classification));
+                self.events.publish_classified(GlobalEvent::restored::<Artifact>(&restored.id), restored.reader_attributes(), std::slice::from_ref(&restored.classification));
             }
         }
         Ok(())

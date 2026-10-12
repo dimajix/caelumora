@@ -208,7 +208,7 @@ An agent may run in several channels and sessions at once, each with its own act
 them is handed the same `AgentStateHandle`, so that there is one owner of the agent's state per
 process. A turn does not hold the state: it reads a snapshot and stages changes. When it completes,
 `Turn::commit` applies the staged changes to the state as it is at that moment, under the handle's
-lock, stores it and announces `AgentStateChanged` without content. No actor thus overwrites
+lock, stores it and announces `agent::STATE_CHANGED` without content. No actor thus overwrites
 another's changes, and every next turn sees them. Numbers for new memory entries are handed out by
 the handle at once, since turns in several channels may remember at the same time.
 

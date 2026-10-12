@@ -11,7 +11,7 @@ use crate::actor::ActorId;
 use crate::confidentiality::Classification;
 use crate::digest::Digest;
 use crate::removal::{Deletable, Removal, Stored};
-use crate::scope::{Scoped, ScopedField};
+use crate::scope::{Scope, Scoped, ScopedField};
 use crate::security::{AclEntry, Grant, Secured, SecurityAttributes};
 use crate::session::{ChannelId, SessionId};
 use crate::store::query::Field;
@@ -23,6 +23,20 @@ use serde::{Deserialize, Serialize};
 use crate::store::EntityKind;
 
 define_id!(ArtifactId);
+
+/// A change of an artifact other than its first version, which makes it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ArtifactUpdateEvent {
+    /// A version after the first was published.
+    VersionPublished(u32),
+    /// Its access list changed. Without the list: only its owner sees it.
+    AccessChanged,
+    /// Kept in another scope, beyond the session it was published in.
+    ScopeChanged(Scope),
+    /// What it is, as its owner describes it, as it now stands; `None`
+    /// takes the description away.
+    DescriptionChanged(Option<String>),
+}
 
 /// What a query of artifacts may name (issue 293), each where it lies in
 /// an artifact as it is stored. Those of a version lie within an element of

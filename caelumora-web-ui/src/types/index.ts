@@ -500,9 +500,11 @@ export interface GlobalSnapshot {
 }
 
 /**
- * An event of the global stream, serialized as `{ "<Variant>": value }`: the
- * value is the session's id, or an array starting with it, e.g.
- * `{"SessionUpdated": ["<id>", {"NameChanged": "new name"}]}`.
+ * An event of the global stream, serialized as `{ "<Variant>": value }`: an
+ * event about an entity as `{"Entity": {"kind": "session", "id": "<id>",
+ * "change": {"Updated": {"NameChanged": "new name"}}}}` (`globalEvents.ts`),
+ * one of a channel or its members with an array of the session's id, the
+ * channel's and more, e.g. `{"ChannelDeleted": ["<session id>", "<channel id>"]}`.
  */
 export type GlobalEvent = Record<string, unknown>;
 

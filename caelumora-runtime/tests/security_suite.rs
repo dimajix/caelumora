@@ -3143,10 +3143,10 @@ async fn what_goes_and_comes_back_with_a_session_is_announced_to_whoever_reads_i
     let mut bobs = world.runtime.event_bus().subscribe_as(World::as_user(world.bob));
     world.manager.stop_session(&alice, session_id).await.unwrap();
     world.manager.delete_session(&alice, session_id).await.unwrap();
-    hears(&mut bobs, [GlobalEvent::ArtifactDeleted(id), GlobalEvent::GroupDeleted(of_session), GlobalEvent::GroupDeleted(of_channel)]).await;
+    hears(&mut bobs, [GlobalEvent::deleted::<Artifact>(&id), GlobalEvent::deleted::<Group>(&of_session), GlobalEvent::deleted::<Group>(&of_channel)]).await;
 
     world.manager.restore_session(&alice, session_id).await.unwrap();
-    hears(&mut bobs, [GlobalEvent::ArtifactRestored(id), GlobalEvent::GroupRestored(of_session), GlobalEvent::GroupRestored(of_channel)]).await;
+    hears(&mut bobs, [GlobalEvent::restored::<Artifact>(&id), GlobalEvent::restored::<Group>(&of_session), GlobalEvent::restored::<Group>(&of_channel)]).await;
 }
 
 /// Issue 23: a version is read by the members of the channel it was
