@@ -3068,15 +3068,20 @@ async fn a_session_goes_with_what_lies_in_it_only_as_far_as_whoever_deletes_it_m
     let refused = refused.expect_err("bob's artifact is left");
     assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::ScopeNotEmpty { left, .. }) if *left == [(EntityKind::Artifact, 1)]), "{refused}");
     assert!(refused.to_string().contains("1 artifact") && !refused.to_string().contains("his.csv"), "what is left, by kind, not by name: {refused}");
-    assert_eq!(asked, checks(&[
+    let (session_checks, artifact_checks) = asked.split_at(4.min(asked.len()));
+    assert_eq!(session_checks, checks(&[
         "alice: GetSession(alice's) yes",
         "alice: DeleteSession(alice's) yes",
         "alice: GetSession(alice's) yes",
         "alice: DeleteSession(alice's) yes",
-        "alice: GetArtifact(bob's) no",
-        "alice: GetArtifact(alice's) yes",
-        "alice: DeleteArtifact(alice's) yes",
-    ]), "asked in her name, who does not read bob's outside the channel");
+    ]), "asked in her name");
+    // The artifacts in the order the store lists them, which is by id: hers
+    // read, her clearance for it (issue 322) and deleted; bob's not read
+    // outside the channel.
+    let his_checks = checks(&["alice: GetArtifact(bob's) no"]);
+    let her_checks = checks(&["alice: GetArtifact(alice's) yes", "alice: JoinChannel(alice) yes", "alice: DeleteArtifact(alice's) yes"]);
+    assert!(artifact_checks == [his_checks.clone(), her_checks.clone()].concat() || artifact_checks == [her_checks, his_checks].concat(),
+        "asked in her name, who does not read bob's outside the channel: {artifact_checks:?}");
     assert!(world.store.get_session(&alice, session_id).await.is_ok(), "the session is kept");
     assert!(world.manager.views(Viewer::new(alice.clone())).session(session_id).await.is_ok(), "and runs on");
     assert!(world.store.get_artifact(&bob, his.id).await.is_ok(), "bob's artifact stays");
