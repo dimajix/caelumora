@@ -31,8 +31,8 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::group::{Group, GroupId, GroupUpdateEvent};
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{AclEntry, ActionType, Enforcement, Grant, SecurityContext, SecurityManager, Subject};
-use caelumora_model::store::{Entities, EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt};
-use caelumora_model::user::UserId;
+use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt};
+use caelumora_model::user::{User, UserId};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::ValueError;
 use chrono::{DateTime, Utc};
@@ -75,7 +75,7 @@ fn store_error(id: GroupId) -> impl FnOnce(StoreError) -> GroupError {
 
 /// The one writer of teams (issue 286).
 pub struct GroupManager {
-    entities: Arc<dyn Entities>,
+    users: Arc<dyn EntityStore<User>>,
     groups: Arc<dyn EntityStore<Group>>,
     /// Asked where the manager asks before the store does (issue 312).
     security: Arc<dyn SecurityManager>,
@@ -92,7 +92,7 @@ impl fmt::Debug for GroupManager {
 
 impl GroupManager {
     pub(crate) fn new(stores: &EntityStores, events: Arc<EventBus>, security: Arc<dyn SecurityManager>) -> Self {
-        Self { entities: Arc::clone(&stores.entities), groups: Arc::clone(&stores.groups), security, events, writing: Mutex::new(()) }
+        Self { users: Arc::clone(&stores.users), groups: Arc::clone(&stores.groups), security, events, writing: Mutex::new(()) }
     }
 
     /// Makes a team of the user `ctx` acts for, of `name` in `scope` - the
@@ -160,7 +160,7 @@ impl GroupManager {
             let system = SecurityContext::system();
             let mut actors = Vec::with_capacity(members.len());
             for user in members {
-                if self.entities.get_user(&system, user).await.optional()?.is_none() {
+                if self.users.get(&system, user).await.optional()?.is_none() {
                     return Err(GroupError::UnknownMember(user));
                 }
                 if !actors.contains(&ActorId::User(user)) {

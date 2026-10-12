@@ -129,7 +129,7 @@ impl ControllerManager {
         if let Some(controller) = users.get(&id).and_then(Weak::upgrade) {
             return Ok(controller);
         }
-        let user = self.stores.entities.get_user(&SecurityContext::system(), id).await?;
+        let user = self.stores.users.get(&SecurityContext::system(), id).await?;
         let profile = self.stores.user_profiles.get(&SecurityContext::system(), id).await.optional()?;
         let controller = Arc::new(UserController::new(user, profile, Arc::<EventBus>::clone(&self.event_bus), Arc::clone(&self.stores.user_profiles)));
         remember(&mut users, id, &controller);
@@ -241,9 +241,9 @@ mod tests {
         agent
     }
 
-    async fn user_in(store: &MemoryStore) -> User {
+    async fn user_in(store: &Arc<MemoryStore>) -> User {
         let user = User { id: UserId::new(), username: Name::new("alice").unwrap(), email: String::new(), roles: Vec::new(), deleted: None };
-        store.create_user(&SecurityContext::system(), &user).await.unwrap();
+        store.entity_stores().users.create(&SecurityContext::system(), &user).await.unwrap();
         user
     }
 

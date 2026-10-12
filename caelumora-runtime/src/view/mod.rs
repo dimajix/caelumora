@@ -521,7 +521,7 @@ impl Views {
         let mut access = Vec::with_capacity(acl.len());
         for entry in acl {
             let (name, scope) = match entry.subject {
-                Subject::Actor(ActorId::User(user)) => (self.stores.entities.get_user(&system, user).await.optional().ok().flatten().map(|u| u.username.to_string()), None),
+                Subject::Actor(ActorId::User(user)) => (self.stores.users.get(&system, user).await.optional().ok().flatten().map(|u| u.username.to_string()), None),
                 Subject::Actor(_) => (None, None),
                 Subject::Role(role) => (self.confidentiality.roles().and_then(|roles| roles.name_of(role)).map(str::to_string), None),
                 Subject::Group(group) => match self.stores.groups.get(&system, group).await.optional().ok().flatten() {
@@ -686,7 +686,7 @@ impl Views {
     /// 244).
     async fn name_of(&self, actor: ActorId) -> Option<String> {
         match actor {
-            ActorId::User(id) => self.stores.entities.get_user(&SecurityContext::system(), id).await.ok().map(|user| user.username.to_string()),
+            ActorId::User(id) => self.stores.users.get(&SecurityContext::system(), id).await.ok().map(|user| user.username.to_string()),
             ActorId::Agent(id) => match self.agent_of(id).await {
                 Some(agent) => Some(agent.name.to_string()),
                 None => self.deleted_agent_name(id).await,
@@ -1194,7 +1194,7 @@ mod tests {
         let system = SecurityContext::system();
         let (alice, bob, carol) = (user("alice"), user("bob"), user("carol"));
         // Carol owns the agent but takes no part in the session.
-        store.create_user(&system, &carol).await.unwrap();
+        store.entity_stores().users.create(&system, &carol).await.unwrap();
         let remote = an_agent_of_kind(&store, ActorId::User(carol.id), PersonalityKind::External).await;
         let mut personality = store.entity_stores().personalities.get(&system, remote.personality_id).await.unwrap();
         personality.introduction = Some(Introduction::new("Answers questions about the weather.").unwrap());

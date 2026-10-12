@@ -298,7 +298,7 @@ mod tests {
 
         let (kaya, bob) = (User { id: UserId::new(), username: Name::new("Kaya").unwrap(), email: String::new(), roles: Vec::new(), deleted: None }, User { id: UserId::new(), username: Name::new("Bob").unwrap(), email: String::new(), roles: Vec::new(), deleted: None });
         for user in [&kaya, &bob] {
-            store.create_user(&system, user).await.unwrap();
+            store.entity_stores().users.create(&system, user).await.unwrap();
         }
         store.entity_stores().user_profiles.create(&system, &UserProfile::new(kaya.id, Some(Introduction::new("I run the budget.").unwrap()))).await.unwrap();
         let quiz_master = personality(&store, Some("A quiz master.")).await;

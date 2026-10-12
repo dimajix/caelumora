@@ -23,7 +23,6 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 
 use caelumora_model::value::name::ScopedName;
-use caelumora_model::store::Entities;
 use crate::command::CommandExecutor;
 use crate::command::help_command::HelpCommandProvider;
 use crate::command::wakeup_command::WakeupCommandProvider;
@@ -50,7 +49,7 @@ pub(super) async fn channel_with(users: &[&User], security: Arc<dyn SecurityMana
     let store = Arc::new(MemoryStore::new());
     let mut participants = Vec::new();
     for user in users {
-        store.create_user(&SecurityContext::system(), user).await.unwrap();
+        store.entity_stores().users.create(&SecurityContext::system(), user).await.unwrap();
         participants.push(Participant::User(user.id));
     }
     channel_of(store, participants, security).await
@@ -95,7 +94,7 @@ async fn channel_built(store: Arc<MemoryStore>, participants: Vec<Participant>, 
 async fn a_participant_that_no_longer_exists_is_left_out() {
     let alice = user("alice");
     let store = Arc::new(MemoryStore::new());
-    store.create_user(&SecurityContext::system(), &alice).await.unwrap();
+    store.entity_stores().users.create(&SecurityContext::system(), &alice).await.unwrap();
     let (gone_user, gone_agent) = (UserId::new(), AgentId::new());
 
     let channel = channel_of(
@@ -144,7 +143,7 @@ pub(super) async fn channel_moderated_by(users: &[&User], moderator: Arc<dyn cra
     let store = Arc::new(MemoryStore::new());
     let mut participants = Vec::new();
     for user in users {
-        store.create_user(&SecurityContext::system(), user).await.unwrap();
+        store.entity_stores().users.create(&SecurityContext::system(), user).await.unwrap();
         participants.push(Participant::User(user.id));
     }
     let mut registry = ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
@@ -264,8 +263,7 @@ async fn with_an_agent_under(security: Arc<dyn SecurityManager>, model: Arc<dyn 
 pub(super) async fn agent_channel(security: Arc<dyn SecurityManager>, model: Arc<dyn LLMClient>, components: ComponentConfig) -> (Arc<ChannelLoop>, SecurityContext, AgentId, UserId) {
     use caelumora_model::agent::{Agent, Personality, PersonalityId};
     use caelumora_model::scope::Scope;
-    use caelumora_model::store::Entities;
-
+    
     let store = Arc::new(MemoryStore::new());
     let personality = Personality {
         description: None,
@@ -284,7 +282,7 @@ pub(super) async fn agent_channel(security: Arc<dyn SecurityManager>, model: Arc
     let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
     let agent = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), &personality, context.initiator_id);
     let agent_id = agent.id;
-    store.create_user(&SecurityContext::system(), &alice).await.unwrap();
+    store.entity_stores().users.create(&SecurityContext::system(), &alice).await.unwrap();
     store.create_agent(&SecurityContext::system(), &agent).await.unwrap();
 
     let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&security)));

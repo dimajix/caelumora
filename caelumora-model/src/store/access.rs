@@ -417,31 +417,33 @@ mod tests {
     #[tokio::test]
     async fn users_are_read_by_everybody_and_changed_by_the_system_alone() {
         use crate::security::OwnershipSecurityManager;
+        use crate::scope::Scope;
         use crate::user::User;
+        use crate::value::name::ScopedName;
 
-        let store = MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()));
+        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()))).entity_stores().users;
         let system = SecurityContext::system();
         let alice_id = UserId::new();
         let alice_ctx = SecurityContext::new(ActorId::User(alice_id), Default::default(), Default::default());
         let (_, bob_ctx) = user();
         let record = User { id: alice_id, username: Name::new("alice").unwrap(), email: String::new(), roles: vec![crate::role::RoleId::new()], deleted: None };
 
-        let own = store.create_user(&alice_ctx, &record).await;
+        let own = store.create(&alice_ctx, &record).await;
         assert!(matches!(own, Err(StoreError::PermissionDenied)), "nobody records themselves, got {own:?}");
-        store.create_user(&system, &record).await.expect("the system records users");
+        store.create(&system, &record).await.expect("the system records users");
 
-        assert_eq!(store.get_user(&bob_ctx, alice_id).await.expect("another user reads her").username, "alice");
-        assert_eq!(store.find_user_by_name(&bob_ctx, "alice").await.expect("and finds her by name").id, alice_id);
-        assert_eq!(store.list_users(&bob_ctx, &Query::all()).await.map(|page| page.items).expect("and lists her").len(), 1);
+        assert_eq!(store.get(&bob_ctx, alice_id).await.expect("another user reads her").username, "alice");
+        assert_eq!(store.find_by_name(&bob_ctx, &ScopedName::new("alice", Scope::GlobalScope).unwrap()).await.expect("and finds her by name").id, alice_id);
+        assert_eq!(store.list(&bob_ctx, &Query::all()).await.map(|page| page.items).expect("and lists her").len(), 1);
 
         let promoted = User { roles: vec![crate::role::RoleId::new()], ..record.clone() };
         for ctx in [&alice_ctx, &bob_ctx] {
-            let update = store.update_user(ctx, &promoted).await;
+            let update = store.update(ctx, &promoted).await;
             assert!(matches!(update, Err(StoreError::PermissionDenied)), "not even she changes her roles, got {update:?}");
-            let delete = store.delete_user(ctx, alice_id).await;
+            let delete = store.delete(ctx, alice_id).await;
             assert!(matches!(delete, Err(StoreError::PermissionDenied)), "nor deletes her, got {delete:?}");
         }
-        store.update_user(&system, &promoted).await.expect("the system changes users");
-        assert!(store.delete_user(&system, alice_id).await.expect("the system deletes users"));
+        store.update(&system, &promoted).await.expect("the system changes users");
+        assert!(store.delete(&system, alice_id).await.expect("the system deletes users"));
     }
 }

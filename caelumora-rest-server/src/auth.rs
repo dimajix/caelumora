@@ -449,14 +449,14 @@ mod tests {
         let stores = store.entity_stores();
         let events = Arc::new(EventBus::new(Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default())));
         let controllers = Arc::new(ControllerManager::new(stores.clone(), Arc::<EventBus>::clone(&events)));
-        Arc::new(Auth { tokens: tokens(), users: Arc::new(UserManager::new(providers, stores.entities, events)), controllers })
+        Arc::new(Auth { tokens: tokens(), users: Arc::new(UserManager::new(providers, Arc::clone(&stores.users), events)), controllers })
     }
 
     /// Auth that accepts anybody, finding and recording users in one store.
     fn accepting_any() -> Arc<Auth> {
         let store = Arc::new(MemoryStore::new());
-        let entities = Arc::clone(&store.entity_stores().entities);
-        auth(store, vec![Arc::new(AcceptAnyUserProvider::new(entities))])
+        let users = Arc::clone(&store.entity_stores().users);
+        auth(store, vec![Arc::new(AcceptAnyUserProvider::new(users))])
     }
 
     fn set_cookie(response: &Response, name: &str) -> Option<String> {

@@ -51,7 +51,6 @@ async fn main() -> anyhow::Result<()> {
     let confidentiality = config.create_confidentiality_policy();
     let state_store = config.create_state_store(Arc::clone(&security_manager), Arc::clone(&confidentiality))?;
     let entity_stores = config.create_entity_stores(Arc::clone(&security_manager), Arc::clone(&confidentiality))?;
-    let entity_store = Arc::clone(&entity_stores.entities);
     memberships.bind(&entity_stores.groups);
     let component_store = config.create_component_store(Arc::clone(&security_manager), Arc::clone(&confidentiality))?;
     let secret_manager = config.create_secret_manager(Arc::clone(&security_manager))?;
@@ -67,7 +66,7 @@ async fn main() -> anyhow::Result<()> {
     let session_manager = Arc::new(SessionManager::new(Arc::clone(&runtime_manager)));
     // Users are recorded and their changes announced on the runtime's event
     // bus (issue 306), so the user manager comes after the runtime.
-    let user_manager = config.create_user_manager(Arc::clone(&entity_store), Arc::<EventBus>::clone(runtime_manager.event_bus()))?;
+    let user_manager = config.create_user_manager(Arc::clone(&entity_stores.users), Arc::<EventBus>::clone(runtime_manager.event_bus()))?;
     if user_manager.is_empty() {
         tracing::warn!("No user providers configured (`users` section): nobody can log in. \
             See examples/config.yaml.");

@@ -606,3 +606,9 @@ agent's personality from it, and `template::resolve_participants` takes `&Entity
 the personality an agent is made of. Many tests made personalities through the store they had at
 hand; they take the store of personalities now.
 
+Step 3i: users on their own store. The `UserManager` and the `accept_any` provider keep it, given
+by the configuration (`create_user_manager`); a provider finds a user by name as the name in the
+global scope, which a username is (issue 250), and one that is no valid name is nobody's. The
+`GroupManager` checks the users it is given against it and no longer needs the facade; the views,
+the templates and the terminal frontend read users from it.
+

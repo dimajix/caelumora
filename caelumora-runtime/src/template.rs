@@ -33,7 +33,7 @@ pub(crate) async fn resolve_participants(stores: &EntityStores, context: &Securi
             ParticipantRequest::User(id) => {
                 // Only to find out that the user exists: the participant is
                 // the reference (issue 120).
-                stores.entities.get_user(context, id).await?;
+                stores.users.get(context, id).await?;
                 Participant::User(id)
             }
             ParticipantRequest::Agent { name: agent_name, personality_id } => {
@@ -349,7 +349,7 @@ mod tests {
         let missing = resolve_participants(&store.entity_stores(), &as_user(owner), &template, SessionId::new(), owner).await.expect_err("no such user");
         assert!(matches!(missing.downcast_ref::<StoreError>(), Some(StoreError::NotFound { entity: "user", .. })), "{missing}");
 
-        store.create_user(&SecurityContext::system(), &User { id: owner, username: Name::new("alice").unwrap(), email: String::new(), roles: Vec::new(), deleted: None }).await.unwrap();
+        store.entity_stores().users.create(&SecurityContext::system(), &User { id: owner, username: Name::new("alice").unwrap(), email: String::new(), roles: Vec::new(), deleted: None }).await.unwrap();
         let participants = resolve_participants(&store.entity_stores(), &as_user(owner), &template, SessionId::new(), owner).await.unwrap();
         assert!(matches!(participants[0], (ref name, Participant::User(id)) if name == "user" && id == owner));
         assert!(matches!(participants[1], (ref name, Participant::Approver(_)) if name == "approval"));

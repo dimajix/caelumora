@@ -225,7 +225,7 @@ impl World {
 
     async fn user(&self, name: &str) -> UserId {
         let user = User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: vec![*STAFF], deleted: None };
-        self.store.create_user(&Self::system(), &user).await.unwrap();
+        self.runtime.entity_stores().users.create(&Self::system(), &user).await.unwrap();
         self.policy.names.lock().unwrap().insert(ActorId::User(user.id), name.to_string());
         user.id
     }
@@ -2010,9 +2010,9 @@ async fn a_profile_is_written_by_its_user_alone_and_read_by_who_shares_a_session
     let carols = UserProfile::new(world.carol, Some(Introduction::new("hello").unwrap()));
     assert!(world.runtime.entity_stores().user_profiles.create(&bob, &carols).await.is_err(), "nor anyone else's");
 
-    let mut promoted = world.store.get_user(&alice, world.alice).await.expect("everyone reads a user");
+    let mut promoted = world.runtime.entity_stores().users.get(&alice, world.alice).await.expect("everyone reads a user");
     promoted.roles.push(RoleId::new());
-    assert!(world.store.update_user(&alice, &promoted).await.is_err(), "nobody grants themselves roles");
+    assert!(world.runtime.entity_stores().users.update(&alice, &promoted).await.is_err(), "nobody grants themselves roles");
 
     let session = world.shared_session(&[], &[]).await;
     let channel = session.channels()[0].id();

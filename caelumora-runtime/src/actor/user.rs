@@ -719,7 +719,7 @@ mod tests {
         };
         let channel_loop = crate::channel::ChannelLoop::new(channel.clone(), channel_runtime.clone()).await.unwrap();
         let actor_runtime = channel_runtime.new_actor_runtime(ActorId::User(user.id), channel.session_id, channel.id);
-        runtime.entity_store().create_user(&SecurityContext::system(), &user).await.unwrap();
+        runtime.entity_stores().users.create(&SecurityContext::system(), &user).await.unwrap();
         let actor = UserActor::new(runtime.controller_manager().new_channel_controller(channel.clone()), runtime.controller_manager().user_controller(user.id).await.unwrap(), actor_runtime).await.unwrap();
         (actor, channel_loop)
     }

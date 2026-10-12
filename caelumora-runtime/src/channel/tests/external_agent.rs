@@ -63,7 +63,7 @@ async fn external_channel(remote: Arc<crate::external::testing::ScriptedExternal
     let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
     let agent = Agent::new(ScopedName::new("hermes", Scope::GlobalScope).unwrap(), &personality, context.initiator_id);
     let agent_id = agent.id;
-    store.create_user(&SecurityContext::system(), &alice).await.unwrap();
+    store.entity_stores().users.create(&SecurityContext::system(), &alice).await.unwrap();
     store.create_agent(&SecurityContext::system(), &agent).await.unwrap();
 
     let security: Arc<dyn SecurityManager> = Arc::new(caelumora_model::security::DummySecurityManager::new());

@@ -384,8 +384,8 @@ pub(crate) async fn entity_store_behaves(stores: &EntityStores) {
         create_session, get_session, update_session, delete_session, list_sessions);
     lifecycle!(store, channel(), |v: &Channel| v.id, name, "channel",
         create_channel, get_channel, update_channel, delete_channel, list_channels);
-    lifecycle!(store, user("alice"), |v: &User| v.id, username, "user",
-        create_user, get_user, update_user, delete_user, list_users);
+    lifecycle!(stores.users.as_ref(), user("alice"), |v: &User| v.id, username, "user",
+        create, get, update, delete, list);
     lifecycle!(stores.user_profiles.as_ref(), UserProfile::new(UserId::new(), None), |v: &UserProfile| v.user_id(), introduction = Some(Introduction::new("renamed").unwrap()), "user_profile",
         create, get, update, delete, list);
     lifecycle!(stores.workspaces.as_ref(), workspace(UserId::new()), |v: &Workspace| v.id, name.name, "workspace",
@@ -399,11 +399,11 @@ pub(crate) async fn entity_store_behaves(stores: &EntityStores) {
 
     let ctx = SecurityContext::default();
     let alice = user("alice");
-    store.create_user(&ctx, &alice).await.expect("create user");
-    store.create_user(&ctx, &user("bob")).await.expect("create user");
-    let found = store.find_user_by_name(&ctx, "alice").await.expect("alice is found by name");
+    stores.users.create(&ctx, &alice).await.expect("create user");
+    stores.users.create(&ctx, &user("bob")).await.expect("create user");
+    let found = stores.users.find_by_name(&ctx, &scoped("alice")).await.expect("alice is found by name");
     assert_eq!(found.id, alice.id);
-    let missing = store.find_user_by_name(&ctx, "carol").await;
+    let missing = stores.users.find_by_name(&ctx, &scoped("carol")).await;
     assert!(matches!(missing, Err(StoreError::NotFound { entity: "user", .. })), "an unknown name is NotFound, got {missing:?}");
 
     // A template that would make sessions it can never lie in (issue 178).
@@ -500,8 +500,8 @@ pub(crate) async fn names_are_unique(stores: &EntityStores) {
         elsewhere: |name| Channel { name: Name::new(name).unwrap(), session_id: other_session, id: ChannelId::new(), ..channel() },
         rename: |value: Channel, name| Channel { name: Name::new(name).unwrap(), ..value }, "channel",
         create_channel, update_channel, delete_channel, restore_channel);
-    unique_by_name!(store, user, rename: |value: User, name| User { username: Name::new(name).unwrap(), ..value }, "user",
-        create_user, update_user, delete_user, restore_user);
+    unique_by_name!(stores.users.as_ref(), user, rename: |value: User, name| User { username: Name::new(name).unwrap(), ..value }, "user",
+        create, update, delete, restore);
     let (alice, bob) = (UserId::new(), UserId::new());
     unique_by_name!(stores.workspaces.as_ref(), |name| Workspace { name: in_scope(name, &global), id: WorkspaceId::new(), ..workspace(alice) },
         elsewhere: |name| Workspace { name: in_scope(name, &Scope::UserScope { user_id: bob }), id: WorkspaceId::new(), ..workspace(bob) },
@@ -663,8 +663,8 @@ pub(crate) async fn deleting_marks(stores: &EntityStores) {
     store.create_session(&system, &gone).await.expect("its id is free again");
 
     let carol = user("carol");
-    store.create_user(&system, &carol).await.expect("create user");
-    assert!(store.delete_user(&system, carol.id).await.expect("delete user"));
-    let found = store.find_user_by_name(&system, "carol").await;
+    stores.users.create(&system, &carol).await.expect("create user");
+    assert!(stores.users.delete(&system, carol.id).await.expect("delete user"));
+    let found = stores.users.find_by_name(&system, &scoped("carol")).await;
     assert!(matches!(found, Err(StoreError::NotFound { .. })), "not found by name: {found:?}");
 }

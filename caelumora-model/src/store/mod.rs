@@ -19,7 +19,7 @@ use crate::removal::Deletable;
 use crate::security::SecurityContext;
 use crate::session::{Session, SessionId};
 use crate::template::SessionTemplate;
-use crate::user::{User, UserId, UserProfile};
+use crate::user::{User, UserProfile};
 use crate::value::name::ScopedName;
 use crate::workspace::Workspace;
 use crate::skill::Skill;
@@ -184,6 +184,7 @@ pub struct EntityStores {
     pub session_templates: Arc<dyn EntityStore<SessionTemplate>>,
     pub user_profiles: Arc<dyn EntityStore<UserProfile>>,
     pub personalities: Arc<dyn EntityStore<Personality>>,
+    pub users: Arc<dyn EntityStore<User>>,
 }
 
 /// Every kind's entities at once, as one store offered them before each
@@ -260,18 +261,6 @@ pub trait Entities : Debug + Sync + Send {
     async fn get_deleted_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel>;
     async fn list_deleted_channels(&self, ctx: &SecurityContext, query: &Query<ChannelField>) -> StoreResult<Page<Channel>>;
 
-    // Users - they belong to the system: everybody reads them, only the
-    // system changes them (issue 94).
-    async fn create_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()>;
-    async fn get_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User>;
-    async fn update_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()>;
-    async fn delete_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool>;
-    async fn list_users(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<User>>;
-    async fn restore_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User>;
-    async fn purge_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool>;
-    async fn get_deleted_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User>;
-    async fn list_deleted_users(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<User>>;
-    async fn find_user_by_name(&self, ctx: &SecurityContext, name: &str) -> StoreResult<User>;
 
 
 

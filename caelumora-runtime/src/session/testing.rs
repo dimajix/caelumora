@@ -50,10 +50,10 @@ pub(crate) fn user(name: &str) -> User {
 /// `users` as participants, recorded in the store the session reads
 /// them from (issue 120).
 pub(crate) async fn record_users(manager: &SessionManager, users: &[&User]) -> Vec<Participant> {
-    let store = manager.runtime_manager.entity_store();
+    let store = &manager.runtime_manager.entity_stores().users;
     let mut participants = Vec::new();
     for user in users {
-        store.create_user(&SecurityContext::system(), user).await.unwrap();
+        store.create(&SecurityContext::system(), user).await.unwrap();
         participants.push(Participant::User(user.id));
     }
     participants

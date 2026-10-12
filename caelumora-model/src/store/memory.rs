@@ -5,7 +5,7 @@ use crate::component::StoredComponents;
 use crate::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
 use crate::group::Group;
 use crate::removal::{Deletable, Removal, Stored};
-use crate::scope::{Scope, ScopeField};
+use crate::scope::ScopeField;
 use crate::security::{ActionType, DummySecurityManager, SecurityContext, SecurityManager};
 use crate::session::{Session, SessionField, SessionId};
 use crate::skill::Skill;
@@ -13,7 +13,7 @@ use crate::store::access::{name_free, Access};
 use crate::store::query::{self, Filter, NoField, Page, Query};
 use crate::store::{ComponentStore, Entities, EntityStore, EntityStores, Journaled, StateStore, StoreError, StoreResult};
 use crate::template::SessionTemplate;
-use crate::user::{User, UserId, UserProfile};
+use crate::user::{User, UserProfile};
 use crate::value::name::ScopedName;
 use crate::workspace::Workspace;
 use async_trait::async_trait;
@@ -34,7 +34,7 @@ pub struct MemoryStore {
     agents: MemoryEntityStore<Agent>,
     sessions: MemoryEntityStore<Session>,
     channels: MemoryEntityStore<Channel>,
-    users: MemoryEntityStore<User>,
+    users: Arc<MemoryEntityStore<User>>,
     user_profiles: Arc<MemoryEntityStore<UserProfile>>,
     workspaces: Arc<MemoryEntityStore<Workspace>>,
     skills: Arc<MemoryEntityStore<Skill>>,
@@ -70,7 +70,7 @@ impl MemoryStore {
             agents: MemoryEntityStore::new(&policies),
             sessions: MemoryEntityStore::new(&policies),
             channels: MemoryEntityStore::new(&policies),
-            users: MemoryEntityStore::new(&policies),
+            users: Arc::new(MemoryEntityStore::new(&policies)),
             user_profiles: Arc::new(MemoryEntityStore::new(&policies)),
             workspaces: Arc::new(MemoryEntityStore::new(&policies)),
             skills: Arc::new(MemoryEntityStore::new(&policies)),
@@ -97,6 +97,7 @@ impl MemoryStore {
             session_templates: Arc::<MemoryEntityStore<SessionTemplate>>::clone(&self.session_templates),
             user_profiles: Arc::<MemoryEntityStore<UserProfile>>::clone(&self.user_profiles),
             personalities: Arc::<MemoryEntityStore<Personality>>::clone(&self.personalities),
+            users: Arc::<MemoryEntityStore<User>>::clone(&self.users),
         }
     }
 }
@@ -363,38 +364,6 @@ impl Entities for MemoryStore {
     async fn list_deleted_channels(&self, ctx: &SecurityContext, query: &Query<ChannelField>) -> StoreResult<Page<Channel>> {
         self.channels.list_deleted(ctx, query).await
     }
-    async fn create_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()> {
-        self.users.create(ctx, value).await
-    }
-    async fn get_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
-        self.users.get(ctx, id).await
-    }
-    async fn update_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()> {
-        self.users.update(ctx, value).await
-    }
-    async fn delete_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
-        self.users.delete(ctx, id).await
-    }
-    async fn list_users(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<User>> {
-        self.users.list(ctx, query).await
-    }
-    async fn restore_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
-        self.users.restore(ctx, id).await
-    }
-    async fn purge_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
-        self.users.purge(ctx, id).await
-    }
-    async fn get_deleted_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
-        self.users.get_deleted(ctx, id).await
-    }
-    async fn list_deleted_users(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<User>> {
-        self.users.list_deleted(ctx, query).await
-    }
-    async fn find_user_by_name(&self, ctx: &SecurityContext, name: &str) -> StoreResult<User> {
-        let not_found = || StoreError::NotFound { entity: User::KIND.name(), id: name.to_string() };
-        let name = ScopedName::new(name, Scope::GlobalScope).map_err(|_| not_found())?;
-        self.users.find_by_name(ctx, &name).await
-    }
 }
 
 /// Preconfigured components, kept like the entities (issue 164).
@@ -470,6 +439,7 @@ impl StateStore for MemoryStore {
 mod tests {
     use super::*;
     use crate::store::suite;
+    use crate::user::UserId;
     use crate::confidentiality::ConfidentialityRules;
     use crate::security::OwnershipSecurityManager;
 

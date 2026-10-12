@@ -82,7 +82,7 @@ pub(super) trait MemberState: Send + Sync + Debug {
 /// may see.
 pub(super) async fn member_state(views: &Views, participant: &Participant, channel: ChannelId) -> Arc<dyn MemberState> {
     match participant {
-        Participant::User(id) => match views.entities().get_user(&SecurityContext::system(), *id).await {
+        Participant::User(id) => match views.stores().users.get(&SecurityContext::system(), *id).await {
             Ok(user) => Arc::new(UserMember { id: *id, name: user.username.to_string(), profiles: Arc::clone(&views.stores().user_profiles), introduction: OnceCell::new() }),
             Err(StoreError::NotFound { .. }) => Arc::new(GoneMember { name: None }),
             Err(e) => {

@@ -47,7 +47,7 @@ impl GroupView {
         let mut members = Vec::with_capacity(self.group.members.len());
         for member in &self.group.members {
             let name = match member {
-                ActorId::User(user) => self.views.entities().get_user(&system, *user).await.optional().ok().flatten().map(|u| u.username.to_string()),
+                ActorId::User(user) => self.views.stores().users.get(&system, *user).await.optional().ok().flatten().map(|u| u.username.to_string()),
                 ActorId::Agent(agent) => self.views.entities().get_agent(&system, *agent).await.optional().ok().flatten().map(|a| a.name.to_string()),
                 _ => None,
             };

@@ -5,7 +5,7 @@ use crate::component::StoredComponents;
 use crate::confidentiality::ConfidentialityPolicy;
 use crate::group::Group;
 use crate::removal::{Deletable, Removal, Stored};
-use crate::scope::{Scope, ScopeField};
+use crate::scope::ScopeField;
 use crate::security::{ActionType, SecurityManager};
 use crate::session::{Session, SessionField, SessionId};
 use crate::skill::Skill;
@@ -13,7 +13,7 @@ use crate::store::access::{name_free, Access};
 use crate::store::query::{Field, Filter, NoField, Page, Query};
 use crate::store::{ComponentStore, Entities, EntityStore, EntityStores, Journaled, StateStore, StoreError, StoreResult};
 use crate::template::SessionTemplate;
-use crate::user::{User, UserId, UserProfile};
+use crate::user::{User, UserProfile};
 use crate::value::name::ScopedName;
 use crate::workspace::Workspace;
 use async_trait::async_trait;
@@ -52,7 +52,7 @@ pub struct JsonFileStore {
     agents: JsonEntityStore<Agent>,
     sessions: JsonEntityStore<Session>,
     channels: JsonEntityStore<Channel>,
-    users: JsonEntityStore<User>,
+    users: Arc<JsonEntityStore<User>>,
     user_profiles: Arc<JsonEntityStore<UserProfile>>,
     workspaces: Arc<JsonEntityStore<Workspace>>,
     skills: Arc<JsonEntityStore<Skill>>,
@@ -76,7 +76,7 @@ impl JsonFileStore {
             agents: JsonEntityStore::new(&root, &policies)?,
             sessions: JsonEntityStore::new(&root, &policies)?,
             channels: JsonEntityStore::new(&root, &policies)?,
-            users: JsonEntityStore::new(&root, &policies)?,
+            users: Arc::new(JsonEntityStore::new(&root, &policies)?),
             user_profiles: Arc::new(JsonEntityStore::new(&root, &policies)?),
             workspaces: Arc::new(JsonEntityStore::new(&root, &policies)?),
             skills: Arc::new(JsonEntityStore::new(&root, &policies)?),
@@ -101,6 +101,7 @@ impl JsonFileStore {
             session_templates: Arc::<JsonEntityStore<SessionTemplate>>::clone(&self.session_templates),
             user_profiles: Arc::<JsonEntityStore<UserProfile>>::clone(&self.user_profiles),
             personalities: Arc::<JsonEntityStore<Personality>>::clone(&self.personalities),
+            users: Arc::<JsonEntityStore<User>>::clone(&self.users),
         }
     }
 
@@ -611,38 +612,6 @@ impl Entities for JsonFileStore {
     }
     async fn list_deleted_channels(&self, ctx: &SecurityContext, query: &Query<ChannelField>) -> StoreResult<Page<Channel>> {
         self.channels.list_deleted(ctx, query).await
-    }
-    async fn create_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()> {
-        self.users.create(ctx, value).await
-    }
-    async fn get_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
-        self.users.get(ctx, id).await
-    }
-    async fn update_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()> {
-        self.users.update(ctx, value).await
-    }
-    async fn delete_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
-        self.users.delete(ctx, id).await
-    }
-    async fn list_users(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<User>> {
-        self.users.list(ctx, query).await
-    }
-    async fn restore_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
-        self.users.restore(ctx, id).await
-    }
-    async fn purge_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
-        self.users.purge(ctx, id).await
-    }
-    async fn get_deleted_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
-        self.users.get_deleted(ctx, id).await
-    }
-    async fn list_deleted_users(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<User>> {
-        self.users.list_deleted(ctx, query).await
-    }
-    async fn find_user_by_name(&self, ctx: &SecurityContext, name: &str) -> StoreResult<User> {
-        let not_found = || StoreError::NotFound { entity: User::KIND.name(), id: name.to_string() };
-        let name = ScopedName::new(name, Scope::GlobalScope).map_err(|_| not_found())?;
-        self.users.find_by_name(ctx, &name).await
     }
 }
 

@@ -9,7 +9,7 @@ use crate::secret::SecretManager;
 use crate::secret::env::EnvSecretProvider;
 use crate::secret::file::FileSecretProvider;
 use crate::security::{DummySecurityManager, Memberships, OwnershipSecurityManager, SecurityManager};
-use crate::store::{ComponentStore, Entities, EntityStores, StateStore, StoreError};
+use crate::store::{ComponentStore, EntityStore, EntityStores, StateStore, StoreError};
 use crate::store::json::JsonFileStore;
 use crate::store::memory::MemoryStore;
 use crate::user_provider::{UserManager, UserProvider};
@@ -19,6 +19,7 @@ use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use crate::user::User;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -655,9 +656,9 @@ impl AppConfig {
     }
 
     /// The chain of user providers from the `users` section, keeping the
-    /// user records in `entity_store` and announcing their changes through
+    /// user records in `users` and announcing their changes through
     /// `events` (issue 306).
-    pub fn create_user_manager(&self, entity_store: Arc<dyn Entities>, events: Arc<dyn EventPublisher>) -> ConfigResult<Arc<UserManager>> {
+    pub fn create_user_manager(&self, users: Arc<dyn EntityStore<User>>, events: Arc<dyn EventPublisher>) -> ConfigResult<Arc<UserManager>> {
         let providers = self.users.providers.iter()
             .map(|config| match config {
                 UserProviderConfig::AcceptAny { roles, default_roles } => {
@@ -667,12 +668,12 @@ impl AppConfig {
                         .map(|(user, names)| Ok((user.clone(), self.role_ids(names)?)))
                         .collect::<ConfigResult<BTreeMap<_, _>>>()?;
                     let default_roles = self.role_ids(default_roles)?;
-                    Ok(Arc::new(AcceptAnyUserProvider::with_roles(Arc::clone(&entity_store), roles, default_roles)) as Arc<dyn UserProvider>)
+                    Ok(Arc::new(AcceptAnyUserProvider::with_roles(Arc::clone(&users), roles, default_roles)) as Arc<dyn UserProvider>)
                 }
             })
             .collect::<ConfigResult<Vec<_>>>()?;
 
-        Ok(Arc::new(UserManager::new(providers, entity_store, events)))
+        Ok(Arc::new(UserManager::new(providers, users, events)))
     }
 }
 
@@ -853,7 +854,7 @@ auth:
 
     #[tokio::test]
     async fn test_create_user_manager_without_config_accepts_nobody() {
-        let store: Arc<dyn Entities> = Arc::new(MemoryStore::new());
+        let store = Arc::new(MemoryStore::new()).entity_stores().users;
         let manager = AppConfig::default().create_user_manager(store, Arc::new(())).unwrap();
 
         let result = manager.authenticate("user", &crate::user_provider::Credential::Password("x")).await;
@@ -868,7 +869,7 @@ users:
     - type: accept_any
 "#;
         let config = AppConfig::from_yaml(yaml).unwrap();
-        let store: Arc<dyn Entities> = Arc::new(MemoryStore::new());
+        let store = Arc::new(MemoryStore::new()).entity_stores().users;
         let manager = config.create_user_manager(store, Arc::new(())).unwrap();
 
         let user = manager.authenticate("alice", &crate::user_provider::Credential::Password("x")).await

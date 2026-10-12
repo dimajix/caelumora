@@ -460,7 +460,6 @@ async fn main() -> anyhow::Result<()> {
     let confidentiality = config.create_confidentiality_policy();
     let state_store = config.create_state_store(Arc::clone(&security_manager), Arc::clone(&confidentiality))?;
     let entity_stores = config.create_entity_stores(Arc::clone(&security_manager), Arc::clone(&confidentiality))?;
-    let entity_store = Arc::clone(&entity_stores.entities);
     memberships.bind(&entity_stores.groups);
     let component_store = config.create_component_store(Arc::clone(&security_manager), Arc::clone(&confidentiality))?;
     let secret_manager = config.create_secret_manager(Arc::clone(&security_manager))?;
@@ -479,8 +478,8 @@ async fn main() -> anyhow::Result<()> {
     let owner = UserId::default();
     // Users belong to the system (issue 94), so the system records this one.
     let system = SecurityContext::system();
-    if entity_store.get_user(&system, owner).await.is_err() {
-        entity_store.create_user(&system, &User {
+    if entity_stores.users.get(&system, owner).await.is_err() {
+        entity_stores.users.create(&system, &User {
             id: owner,
             username: Name::new("user")?,
             email: "user@example.com".to_string(),

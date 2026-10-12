@@ -805,7 +805,7 @@ mod tests {
         let manager = SessionManager::new(Arc::clone(&runtime));
         let store = runtime.entity_store();
         let owner = UserId::new();
-        store.create_user(&SecurityContext::system(), &User { id: owner, username: Name::new("alice").unwrap(), email: String::new(), roles: Vec::new(), deleted: None }).await.unwrap();
+        runtime.entity_stores().users.create(&SecurityContext::system(), &User { id: owner, username: Name::new("alice").unwrap(), email: String::new(), roles: Vec::new(), deleted: None }).await.unwrap();
         let template = SessionTemplate {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
