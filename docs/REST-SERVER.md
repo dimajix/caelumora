@@ -14,7 +14,8 @@ frontend built on it is described in [WEB-UI.md](WEB-UI.md), the policy behind t
 |---|---|
 | `state.rs` | `AppState`: the `Auth`, the `RuntimeManager` and the `SessionManager` every handler reaches |
 | `auth.rs` | Login, logout, renewal, and the middleware `require_auth` and `require_stream_auth` |
-| `routes/` | The handlers, by resource, and `routes::core`, the router of all of them |
+| `routes/` | The handlers, by resource, and `routes::api`, the router of all of them and of the plugins' routes |
+| `plugin.rs` | `RestPlugin`, a plugin that serves routes of its own |
 | `error.rs` | `ApiError` and the problem details it answers with; the `Json` and `Path` extractors |
 | `sse.rs` | What both event streams have in common |
 
@@ -27,11 +28,12 @@ into the response itself.
 
 ### The program
 
-`caelumora-app` is the composition root: its `main.rs` reads the configuration, makes the stores,
-the runtime and the `AppState`, and serves:
+`caelumora-app` is the composition root: its `main.rs` reads the configuration, lists the plugins
+(`plugins()`), builds the runtime with them (`RuntimeBuilder`), makes the `AppState`, and serves:
 
-*   the API under `/api` - `routes::core` nested there, every path of this document below it, and a
-    path no route takes answered as a problem (`404 not_found`) like every other error;
+*   the API under `/api` - `routes::api` nested there, with the routes of the plugins, every path of
+    this document below it, and a path no route takes answered as a problem (`404 not_found`) like
+    every other error;
 *   the web UI everywhere else, with the feature `web-ui` (on by default): the files `npm run build`
     made in `caelumora-web-ui/dist`, embedded in a release build and read from there in a debug
     build. A path that names no file is answered with `index.html`, which is never cached; the files
@@ -43,9 +45,18 @@ fails, saying how to build it; with `CAELUMORA_BUILD_UI=1` it runs `npm ci` and 
 itself. Node is a requirement of a build with the UI built in, not of every `cargo build`.
 
 The request span and the request id (`error::request_id`) are layers the program puts around
-everything it serves. Routes beyond the core's are merged beside `routes::core` where the program
-nests the API; a handler builds on the public modules of this library - `auth`, `error`, `state`,
-`sse`.
+everything it serves.
+
+### The routes of a plugin
+
+A plugin that serves routes of its own (issue 323) implements `RestPlugin`, a `Plugin` with
+`routes(state)`: a `Router` built with the `AppState`, from which the plugin takes what its handlers
+need - its manager among the runtime's services - into a state of their own, so that a handler does
+not reach it through the runtime at every request. `routes::api` merges the routes of every plugin
+the program lists behind the same login as the core's (`require_auth`). A handler builds on the
+public modules of this library - `auth`, `error`, `state`, `sse` -, answers its errors as the core's
+do (a plugin implements `From<…> for ApiError` for its own error types, see [Errors](#errors)), and
+its paths are the plugin's to choose, as long as no core route has them.
 
 ## How a handler works
 

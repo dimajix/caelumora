@@ -14,10 +14,12 @@
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::{ComponentStore, StoreError};
+use caelumora_model::type_map::{TypeKey, TypeMap};
+use crate::runtime::Services;
 use futures::future::BoxFuture;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
-use std::any::{Any, TypeId};
+use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::ops::Deref;
@@ -94,24 +96,6 @@ pub fn config_of_params<T: DeserializeOwned>(params: &serde_json::Value) -> Comp
     result.map_err(|e| ComponentError::InvalidConfig(format!("invalid parameters: {e}")))
 }
 
-/// A type, by its id and - for messages - its name: of a facet a component
-/// provides, or of a service it uses.
-#[derive(Debug, Clone, Copy)]
-struct TypeKey {
-    id: TypeId,
-    name: &'static str,
-}
-
-impl TypeKey {
-    fn of<T: ?Sized + 'static>() -> Self {
-        // The trait's name without its path: `dyn crate::context::PromptProvider`
-        // is shown as `PromptProvider`.
-        let full = std::any::type_name::<T>();
-        let name = full.rfind("::").map_or(full, |at| &full[at + 2..]);
-        Self { id: TypeId::of::<T>(), name }
-    }
-}
-
 /// What a component is built with: the environment of the whole graph - the
 /// security context it is built under, the services of the runtime it uses
 /// (`service`) - and, while it is built, the other components of its graph,
@@ -124,7 +108,7 @@ pub struct ComponentContext {
     pub security_context: SecurityContext,
     /// The services of the runtime: all of them in the context a graph is
     /// built with, those its kind uses in the one a component is given.
-    services: ComponentServices,
+    services: Services,
     /// The graph being built and the component this context was given to;
     /// set by `ComponentContainer::from_config`.
     building: Option<(Arc<Graph>, String)>,
@@ -145,7 +129,7 @@ impl ComponentContext {
     /// the runtime: `ComponentContainer::from_config` gives each component
     /// this context, with the services its kind uses, through which it
     /// reaches the others.
-    pub fn new(security_context: SecurityContext, services: ComponentServices) -> Self {
+    pub fn new(security_context: SecurityContext, services: Services) -> Self {
         Self { security_context, services, building: None }
     }
 
@@ -195,55 +179,8 @@ impl ComponentContext {
     }
 }
 
-/// Values by their type, each an `Arc<T>` of a trait object or a type: the
-/// facets a component provides (`ComponentFacets`), the services of the
-/// runtime (`ComponentServices`).
-#[derive(Default, Debug, Clone)]
-pub struct TypeMap {
-    map: HashMap<TypeId, (&'static str, Arc<dyn Any + Send + Sync>)>,
-}
-
 /// The facets a component provides, by type.
 pub type ComponentFacets = TypeMap;
-
-/// The services of the runtime a component may use, by type (issue 296).
-pub type ComponentServices = TypeMap;
-
-impl TypeMap {
-    pub fn empty() -> Self {
-        Self::default()
-    }
-
-    pub fn insert<T: ?Sized + Send + Sync + 'static>(&mut self, value: Arc<T>) {
-        let key = TypeKey::of::<T>();
-        self.map.insert(key.id, (key.name, Arc::new(value) as Arc<dyn Any + Send + Sync>));
-    }
-
-    /// It with `value` besides.
-    pub fn with<T: ?Sized + Send + Sync + 'static>(mut self, value: Arc<T>) -> Self {
-        self.insert(value);
-        self
-    }
-
-    pub fn get<T: ?Sized + Send + Sync + 'static>(&self) -> Option<&Arc<T>> {
-        self.map
-            .get(&TypeId::of::<T>())
-            .and_then(|(_, boxed)| boxed.downcast_ref::<Arc<T>>())
-    }
-
-    /// It with the values of `keys` alone.
-    fn only(&self, keys: &[TypeKey]) -> Self {
-        let map = keys.iter().filter_map(|key| self.map.get(&key.id).map(|value| (key.id, value.clone()))).collect();
-        Self { map }
-    }
-
-    /// The names of the values' types, sorted - for messages.
-    fn names(&self) -> Vec<&'static str> {
-        let mut names: Vec<_> = self.map.values().map(|(name, _)| *name).collect();
-        names.sort_unstable();
-        names
-    }
-}
 
 /// A component kind as it is registered: its name and the facets it
 /// provides, whatever its parameters - which is how components that provide
@@ -863,7 +800,7 @@ mod tests {
     }
 
     fn context_with_session(session_id: SessionId) -> ComponentContext {
-        let services = ComponentServices::empty().with(Arc::new(DummySecurityManager::new()) as Arc<dyn SecurityManager>);
+        let services = Services::empty().with(Arc::new(DummySecurityManager::new()) as Arc<dyn SecurityManager>);
         ComponentContext::new(SecurityContext { session_id, ..SecurityContext::default() }, services)
     }
 

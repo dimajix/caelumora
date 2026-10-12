@@ -13,10 +13,9 @@ use caelumora_model::turn::GivenUpReason;
 use caelumora_model::user::{User, UserId};
 use caelumora_model::value::name::Name;
 use caelumora_model::work::TurnId;
-use caelumora_runtime::component::ComponentRegistry;
 use caelumora_runtime::channel::ChannelLoop;
-use caelumora_runtime::runtime::RuntimeManager;
-use caelumora_runtime::seed;
+use caelumora_runtime::plugin::Plugin;
+use caelumora_runtime::runtime::RuntimeBuilder;
 use caelumora_runtime::session::SessionManager;
 use caelumora_runtime::view::Viewer;
 use clap::Parser;
@@ -30,7 +29,6 @@ use std::sync::Arc;
 use std::thread;
 use tokio::sync::mpsc;
 use uuid::Uuid;
-use caelumora_model::store::memberships::StoreMemberships;
 
 fn render_content(message: &Message, content: &str, handles: &HashMap<ActorId, String>) -> String {
     let mentioned: Vec<&String> = message.mentions.iter().filter_map(|id| handles.get(id)).collect();
@@ -439,6 +437,11 @@ struct Args {
     template: String,
 }
 
+/// The plugins the terminal builds its runtime with (issue 323): none yet.
+fn plugins() -> Vec<Box<dyn Plugin>> {
+    Vec::new()
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
@@ -453,28 +456,13 @@ async fn main() -> anyhow::Result<()> {
     // Into a file by default: log lines on the terminal would break the prompt.
     logging::init(&config.logging, LogTarget::File(PathBuf::from("local/tui.log")), "info")?;
 
-    // The policy learns who takes part where from the store it guards
-    // (issue 23): made before the store, bound to it once it exists.
-    let memberships = Arc::new(StoreMemberships::new());
-    let security_manager = config.create_security_manager(Arc::<StoreMemberships>::clone(&memberships));
-    // What may flow where, decided apart from who may do what (issue 304).
-    let confidentiality = config.create_confidentiality_policy();
-    let state_store = config.create_state_store(Arc::clone(&security_manager), Arc::clone(&confidentiality))?;
-    let entity_stores = config.create_entity_stores(Arc::clone(&security_manager), Arc::clone(&confidentiality))?;
-    memberships.bind(&entity_stores.groups);
-    let component_store = config.create_component_store(Arc::clone(&security_manager), Arc::clone(&confidentiality))?;
-    let secret_manager = config.create_secret_manager(Arc::clone(&security_manager))?;
-
-    let runtime = Arc::new(RuntimeManager::new(
-        Arc::clone(&state_store),
-        entity_stores.clone(),
-        secret_manager,
-        Arc::clone(&security_manager),
-        Arc::clone(&confidentiality),
-        &config,
-        ComponentRegistry::built_in(Arc::clone(&component_store)),
-    )?);
-    seed::load(&entity_stores, component_store.as_ref(), confidentiality.as_ref(), &config.seed).await?;
+    let mut builder = RuntimeBuilder::from_config(&config)?;
+    for plugin in plugins() {
+        builder.plugin(plugin.as_ref())?;
+    }
+    let runtime = Arc::new(builder.build()?);
+    runtime.seed(&config.seed).await?;
+    let entity_stores = runtime.entity_stores();
 
     let owner = UserId::default();
     // Users belong to the system (issue 94), so the system records this one.

@@ -79,9 +79,9 @@ async fn start_test_server() -> (SocketAddr, tokio::task::JoinHandle<()>) {
 async fn build_container(params: serde_json::Value) -> ComponentContainer {
     let store = Arc::new(MemoryStore::new());
     let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-    let runtime_manager = RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store.entity_stores(), secret_manager, Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap();
+    let runtime_manager = RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap();
     let registry = runtime_manager.component_registry();
-    let context = ComponentContext::new(SecurityContext::default(), runtime_manager.component_services().clone());
+    let context = ComponentContext::new(SecurityContext::default(), runtime_manager.services().clone());
 
     let config = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
@@ -101,7 +101,7 @@ async fn build_container(params: serde_json::Value) -> ComponentContainer {
 fn detached_views() -> ViewsFactory {
     let store = Arc::new(MemoryStore::new());
     let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-    let runtime_manager = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store.entity_stores(), secret_manager, Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+    let runtime_manager = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
     let now = chrono::Utc::now();
     let session = Session {
         summary: None, briefing: None,
@@ -217,9 +217,9 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
         .await
         .unwrap();
 
-    let runtime_manager = RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store.entity_stores(), secret_manager, Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap();
+    let runtime_manager = RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap();
     let registry = runtime_manager.component_registry();
-    let context = ComponentContext::new(SecurityContext::default(), runtime_manager.component_services().clone());
+    let context = ComponentContext::new(SecurityContext::default(), runtime_manager.services().clone());
 
     let ref_config = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {

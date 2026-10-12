@@ -16,7 +16,8 @@ use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality};
 use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::StoredComponents;
 use crate::removal::Deletable;
-use crate::security::{Refused, SecurityContext};
+use crate::confidentiality::ConfidentialityPolicy;
+use crate::security::{Refused, SecurityContext, SecurityManager};
 use crate::session::Session;
 use crate::template::SessionTemplate;
 use crate::user::{User, UserProfile};
@@ -26,14 +27,20 @@ use crate::skill::Skill;
 use crate::group::Group;
 use crate::intern::intern;
 use crate::artifact::Artifact;
+use crate::store::json::JsonFileStore;
+use crate::store::memory::MemoryStore;
 use crate::store::query::{NoField, Page, Query};
+use crate::type_map::TypeKey;
+use std::collections::HashMap;
+use std::sync::{Mutex, PoisonError};
 
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
     #[error("not found: {entity} {id}")]
     NotFound { entity: &'static str, id: String },
-    /// An id that is taken.
+    /// An id that is taken - of an entity, or the name of a kind (issue
+    /// 323).
     #[error("conflict: {0}")]
     Conflict(String),
     /// A name that another of the kind has in its name space (issue 250):
@@ -54,6 +61,10 @@ pub enum StoreError {
 }
 
 pub type StoreResult<T> = Result<T, StoreError>;
+
+/// The `SecurityManager` and the `ConfidentialityPolicy` every store of a
+/// backend asks.
+pub(crate) type Policies = (Arc<dyn SecurityManager>, Arc<dyn ConfidentialityPolicy>);
 
 /// What a lookup answers when what it looks for may no longer exist
 /// (issue 192).
@@ -169,7 +180,7 @@ impl std::fmt::Display for EntityKind {
 /// `purge` removes what was deleted for good (`Purge`) - only what is
 /// marked, so that a purge never takes what was restored.
 #[async_trait]
-pub trait EntityStore<T: Deletable + Send + Sync + 'static>: Debug + Send + Sync {
+pub trait EntityStore<T: Deletable>: Debug + Send + Sync {
     async fn create(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()>;
     async fn get(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T>;
     async fn update(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()>;
@@ -184,9 +195,24 @@ pub trait EntityStore<T: Deletable + Send + Sync + 'static>: Debug + Send + Sync
     async fn find_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<T>;
 }
 
+/// What opens the store of any kind (issue 323): a backend, which opens
+/// each kind once - asked again, it gives the same store, so that the core
+/// and every plugin asking for a kind share its store.
+pub trait EntityStoreFactory {
+    /// What opening a store can fail with.
+    type Error;
+
+    /// The store of the entities of `T`.
+    ///
+    /// # Errors
+    /// If the store cannot be opened.
+    fn entity_store<T: Deletable>(&self) -> Result<Arc<dyn EntityStore<T>>, Self::Error>;
+}
+
 /// The stores of the entities (issue 323), one per kind of the core,
 /// which the runtime is given and hands to the managers that keep each
-/// kind.
+/// kind. A plugin's kinds are not among them: it asks for their stores
+/// itself (`EntityStoreFactory`).
 #[derive(Debug, Clone)]
 pub struct EntityStores {
     pub skills: Arc<dyn EntityStore<Skill>>,
@@ -200,6 +226,111 @@ pub struct EntityStores {
     pub agents: Arc<dyn EntityStore<Agent>>,
     pub channels: Arc<dyn EntityStore<Channel>>,
     pub sessions: Arc<dyn EntityStore<Session>>,
+}
+
+impl EntityStores {
+    /// The stores of the core's kinds, as `factory` opens them.
+    ///
+    /// # Errors
+    /// If one cannot be opened.
+    pub fn open<F: EntityStoreFactory>(factory: &F) -> Result<Self, F::Error> {
+        Ok(Self {
+            skills: factory.entity_store()?,
+            workspaces: factory.entity_store()?,
+            artifacts: factory.entity_store()?,
+            groups: factory.entity_store()?,
+            session_templates: factory.entity_store()?,
+            user_profiles: factory.entity_store()?,
+            personalities: factory.entity_store()?,
+            users: factory.entity_store()?,
+            agents: factory.entity_store()?,
+            channels: factory.entity_store()?,
+            sessions: factory.entity_store()?,
+        })
+    }
+}
+
+/// The store of the configured backend (issue 323): of the entities of
+/// every kind, of the preconfigured components and of the states. It opens
+/// the store of a kind for whoever asks - the core, a plugin - and refuses a
+/// kind whose name another kind has already, since the name is what a kind
+/// is kept, asked about and announced by (`EntityKind`).
+#[derive(Debug, Clone)]
+pub struct StoreBackend {
+    store: Backend,
+    /// The kinds opened, by name.
+    kinds: Arc<Mutex<HashMap<EntityKind, TypeKey>>>,
+}
+
+#[derive(Debug, Clone)]
+enum Backend {
+    Memory(Arc<MemoryStore>),
+    Json(Arc<JsonFileStore>),
+}
+
+impl StoreBackend {
+    fn of(store: Backend) -> Self {
+        Self { store, kinds: Default::default() }
+    }
+
+    /// The stores of the core's kinds.
+    ///
+    /// # Errors
+    /// If one cannot be opened.
+    pub fn entity_stores(&self) -> StoreResult<EntityStores> {
+        EntityStores::open(self)
+    }
+
+    /// The store of the preconfigured components, kept where the entities
+    /// are.
+    pub fn component_store(&self) -> Arc<dyn ComponentStore> {
+        match &self.store {
+            Backend::Memory(store) => Arc::<MemoryStore>::clone(store),
+            Backend::Json(store) => Arc::<JsonFileStore>::clone(store),
+        }
+    }
+
+    /// The store of the states.
+    pub fn state_store(&self) -> Arc<dyn StateStore> {
+        match &self.store {
+            Backend::Memory(store) => Arc::<MemoryStore>::clone(store),
+            Backend::Json(store) => Arc::<JsonFileStore>::clone(store),
+        }
+    }
+}
+
+impl From<Arc<MemoryStore>> for StoreBackend {
+    fn from(store: Arc<MemoryStore>) -> Self {
+        Self::of(Backend::Memory(store))
+    }
+}
+
+impl From<Arc<JsonFileStore>> for StoreBackend {
+    fn from(store: Arc<JsonFileStore>) -> Self {
+        Self::of(Backend::Json(store))
+    }
+}
+
+impl EntityStoreFactory for StoreBackend {
+    type Error = StoreError;
+
+    /// # Errors
+    /// `StoreError::Conflict` if another kind has the name of `T`; whatever
+    /// opening it fails with.
+    fn entity_store<T: Deletable>(&self) -> StoreResult<Arc<dyn EntityStore<T>>> {
+        let kind = TypeKey::of::<T>();
+        {
+            let mut kinds = self.kinds.lock().unwrap_or_else(PoisonError::into_inner);
+            let named = *kinds.entry(T::KIND).or_insert(kind);
+            if named.id != kind.id {
+                return Err(StoreError::Conflict(format!("the kinds {} and {} are both named '{}'", named.name, kind.name, T::KIND)));
+            }
+        }
+        match &self.store {
+            Backend::Memory(store) => store.entity_store().map_err(|never| match never {}),
+            Backend::Json(store) => store.entity_store(),
+        }
+    }
 }
 
 /// The preconfigured components: runtime configuration that personalities
@@ -256,6 +387,9 @@ mod tests {
     use crate::session::SessionId;
     use super::*;
     use crate::security::{SecurityAttributes, SecurityContext};
+    use crate::confidentiality::ConfidentialityRules;
+    use crate::removal::{Removal, Stored};
+    use crate::security::{DummySecurityManager, Secured};
     use crate::store::memory::MemoryStore;
     use std::sync::Arc;
     use uuid::Uuid;
@@ -313,5 +447,85 @@ mod tests {
         assert_eq!(sessions.len(), 2);
         assert!(sessions.iter().any(|s| s.id == session1.id));
         assert!(sessions.iter().any(|s| s.id == session2.id));
+    }
+
+    define_id!(NoteId);
+
+    /// A kind of a plugin's (issue 323).
+    #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+    struct Note {
+        id: NoteId,
+        security_attributes: SecurityAttributes,
+        deleted: Option<Removal>,
+    }
+
+    impl Secured for Note {
+        fn security_attributes(&self) -> &SecurityAttributes {
+            &self.security_attributes
+        }
+    }
+
+    impl Stored for Note {
+        const KIND: EntityKind = EntityKind::new("note");
+        type Id = NoteId;
+        type Field = NoField;
+
+        fn id(&self) -> NoteId {
+            self.id
+        }
+
+        fn deleted(&self) -> Option<&Removal> {
+            self.deleted.as_ref()
+        }
+    }
+
+    impl Deletable for Note {
+        fn set_deleted(&mut self, deleted: Option<Removal>) {
+            self.deleted = deleted;
+        }
+    }
+
+    /// A kind named as the core's groups are.
+    #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+    struct Impostor(Note);
+
+    impl Secured for Impostor {
+        fn security_attributes(&self) -> &SecurityAttributes {
+            &self.0.security_attributes
+        }
+    }
+
+    impl Stored for Impostor {
+        const KIND: EntityKind = Group::KIND;
+        type Id = NoteId;
+        type Field = NoField;
+
+        fn id(&self) -> NoteId {
+            self.0.id
+        }
+    }
+
+    impl Deletable for Impostor {
+        fn set_deleted(&mut self, _deleted: Option<Removal>) {}
+    }
+
+    #[tokio::test]
+    async fn a_backend_opens_a_kind_once_for_everybody_and_no_two_kinds_of_one_name() {
+        let memory = Arc::new(MemoryStore::new());
+        let backend = StoreBackend::from(Arc::clone(&memory));
+        let notes = backend.entity_store::<Note>().unwrap();
+        let note = Note { id: NoteId::new(), security_attributes: SecurityAttributes::default(), deleted: None };
+        notes.create(&SecurityContext::system(), &note).await.unwrap();
+        let again = backend.entity_store::<Note>().unwrap();
+        assert!(again.get(&SecurityContext::system(), note.id).await.is_ok(), "the same store, asked again");
+        let core = backend.entity_stores().unwrap();
+        assert!(Arc::ptr_eq(&core.groups, &memory.entity_stores().groups), "the core's kinds, too");
+        let refused = backend.entity_store::<Impostor>().expect_err("named as the groups are");
+        assert!(matches!(&refused, StoreError::Conflict(why) if why.contains("'group'")), "{refused}");
+
+        let dir = tempfile::tempdir().unwrap();
+        let json = StoreBackend::from(Arc::new(JsonFileStore::new(dir.path(), Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default())).unwrap()));
+        json.entity_store::<Note>().unwrap().create(&SecurityContext::system(), &note).await.unwrap();
+        assert!(dir.path().join("entities/note").join(format!("{}.json", note.id)).is_file(), "kept under its name");
     }
 }

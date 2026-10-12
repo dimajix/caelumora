@@ -439,6 +439,7 @@ dependencies = [
  "bollard",
  "bytes",
  "caelumora-model",
+ "caelumora-runtime",
  "chrono",
  "dashmap",
  "futures",

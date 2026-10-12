@@ -1,20 +1,14 @@
-use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality};
-use crate::artifact::Artifact;
-use crate::channel::{Channel, ChannelId, ChannelState};
+use crate::agent::{AgentChannelState, AgentId, AgentState};
+use crate::channel::{ChannelId, ChannelState};
 use crate::component::StoredComponents;
 use crate::confidentiality::ConfidentialityPolicy;
-use crate::group::Group;
 use crate::removal::{Deletable, Removal, Stored};
 use crate::security::{ActionType, SecurityManager};
-use crate::session::Session;
-use crate::skill::Skill;
 use crate::store::access::{name_free, Access};
 use crate::store::query::{Field, Filter, NoField, Page, Query};
-use crate::store::{ComponentStore, EntityStore, EntityStores, Journaled, StateStore, StoreError, StoreResult};
-use crate::template::SessionTemplate;
-use crate::user::{User, UserProfile};
+use crate::store::{ComponentStore, EntityStore, EntityStoreFactory, EntityStores, Journaled, Policies, StateStore, StoreError, StoreResult};
+use crate::type_map::TypeMap;
 use crate::value::name::ScopedName;
-use crate::workspace::Workspace;
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -23,7 +17,7 @@ use std::fmt::{self, Debug, Display};
 use std::fs;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError, RwLock};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex, MutexGuard};
 use tracing::{debug, info, warn};
@@ -46,17 +40,9 @@ pub const DEFAULT_JOURNAL_FLOOR: u64 = 64 * 1024;
 pub struct JsonFileStore {
     root: PathBuf,
     journal_floor: u64,
-    personalities: Arc<JsonEntityStore<Personality>>,
-    session_templates: Arc<JsonEntityStore<SessionTemplate>>,
-    agents: Arc<JsonEntityStore<Agent>>,
-    sessions: Arc<JsonEntityStore<Session>>,
-    channels: Arc<JsonEntityStore<Channel>>,
-    users: Arc<JsonEntityStore<User>>,
-    user_profiles: Arc<JsonEntityStore<UserProfile>>,
-    workspaces: Arc<JsonEntityStore<Workspace>>,
-    skills: Arc<JsonEntityStore<Skill>>,
-    artifacts: Arc<JsonEntityStore<Artifact>>,
-    groups: Arc<JsonEntityStore<Group>>,
+    policies: Policies,
+    /// The store of every kind asked for, by its type.
+    kinds: RwLock<TypeMap>,
     components: JsonEntityStore<StoredComponents>,
 }
 
@@ -70,39 +56,24 @@ impl JsonFileStore {
         let policies = (security_manager, confidentiality);
         let store = Self {
             journal_floor: DEFAULT_JOURNAL_FLOOR,
-            personalities: Arc::new(JsonEntityStore::new(&root, &policies)?),
-            session_templates: Arc::new(JsonEntityStore::new(&root, &policies)?),
-            agents: Arc::new(JsonEntityStore::new(&root, &policies)?),
-            sessions: Arc::new(JsonEntityStore::new(&root, &policies)?),
-            channels: Arc::new(JsonEntityStore::new(&root, &policies)?),
-            users: Arc::new(JsonEntityStore::new(&root, &policies)?),
-            user_profiles: Arc::new(JsonEntityStore::new(&root, &policies)?),
-            workspaces: Arc::new(JsonEntityStore::new(&root, &policies)?),
-            skills: Arc::new(JsonEntityStore::new(&root, &policies)?),
-            artifacts: Arc::new(JsonEntityStore::new(&root, &policies)?),
-            groups: Arc::new(JsonEntityStore::new(&root, &policies)?),
             components: JsonEntityStore::new(&root, &policies)?,
+            policies,
+            kinds: Default::default(),
             root,
         };
         store.ensure_layout()?;
+        // The directories of the core's kinds, made now, so that a store
+        // that cannot keep them is not opened at all.
+        EntityStores::open(&store)?;
         Ok(store)
     }
 
-    /// The stores of the entities, one per kind (issue 323).
-    pub fn entity_stores(self: &Arc<Self>) -> EntityStores {
-        EntityStores {
-            skills: Arc::<JsonEntityStore<Skill>>::clone(&self.skills),
-            workspaces: Arc::<JsonEntityStore<Workspace>>::clone(&self.workspaces),
-            artifacts: Arc::<JsonEntityStore<Artifact>>::clone(&self.artifacts),
-            groups: Arc::<JsonEntityStore<Group>>::clone(&self.groups),
-            session_templates: Arc::<JsonEntityStore<SessionTemplate>>::clone(&self.session_templates),
-            user_profiles: Arc::<JsonEntityStore<UserProfile>>::clone(&self.user_profiles),
-            personalities: Arc::<JsonEntityStore<Personality>>::clone(&self.personalities),
-            users: Arc::<JsonEntityStore<User>>::clone(&self.users),
-            agents: Arc::<JsonEntityStore<Agent>>::clone(&self.agents),
-            channels: Arc::<JsonEntityStore<Channel>>::clone(&self.channels),
-            sessions: Arc::<JsonEntityStore<Session>>::clone(&self.sessions),
-        }
+    /// The stores of the core's entities, one per kind (issue 323).
+    ///
+    /// # Errors
+    /// If the directory of one cannot be made.
+    pub fn entity_stores(&self) -> StoreResult<EntityStores> {
+        EntityStores::open(self)
     }
 
     /// With a journal folded into its snapshot once it is `bytes` large, if
@@ -344,6 +315,16 @@ async fn name_free_in<T: Stored + DeserializeOwned>(dir: &Path, value: &T) -> St
     Ok(())
 }
 
+/// Opens a kind in the directory of its name.
+impl EntityStoreFactory for JsonFileStore {
+    type Error = StoreError;
+
+    fn entity_store<T: Deletable>(&self) -> StoreResult<Arc<dyn EntityStore<T>>> {
+        let mut kinds = self.kinds.write().unwrap_or_else(PoisonError::into_inner);
+        kinds.get_or_try_insert(|| Ok(Arc::new(JsonEntityStore::<T>::new(&self.root, &self.policies)?) as Arc<dyn EntityStore<T>>))
+    }
+}
+
 /// The entities of one kind as JSON files (issue 323), one per document in
 /// the kind's directory, `entities/<kind>`, named by its id; checked as
 /// every kind is (`store::access`). A write of a kind whose names are
@@ -366,13 +347,13 @@ impl<T: Stored> Debug for JsonEntityStore<T> {
     }
 }
 
-impl<T: Stored + Serialize + DeserializeOwned + Send + Sync> JsonEntityStore<T> {
+impl<T: Stored> JsonEntityStore<T> {
     /// The store of the kind's documents under `root`, asking the
     /// `SecurityManager` and the `ConfidentialityPolicy` of `policies`.
     ///
     /// # Errors
     /// If its directory cannot be made.
-    fn new(root: &Path, policies: &(Arc<dyn SecurityManager>, Arc<dyn ConfidentialityPolicy>)) -> StoreResult<Self> {
+    fn new(root: &Path, policies: &Policies) -> StoreResult<Self> {
         let dir = root.join("entities").join(T::KIND.name());
         fs::create_dir_all(&dir).map_err(to_backend_error)?;
         Ok(Self { dir, security_manager: Arc::clone(&policies.0), confidentiality: Arc::clone(&policies.1), names: Mutex::new(()), kind: PhantomData })
@@ -449,7 +430,7 @@ impl<T: Stored + Serialize + DeserializeOwned + Send + Sync> JsonEntityStore<T> 
 }
 
 #[async_trait]
-impl<T: Deletable + Serialize + DeserializeOwned + Send + Sync + 'static> EntityStore<T> for JsonEntityStore<T> {
+impl<T: Deletable> EntityStore<T> for JsonEntityStore<T> {
     async fn create(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()> {
         JsonEntityStore::create(self, ctx, value).await
     }
@@ -640,7 +621,7 @@ impl StateStore for JsonFileStore {
 
 #[cfg(test)]
 mod tests {
-    use crate::session::SessionId;
+    use crate::session::{Session, SessionId};
     use super::*;
     use chrono::Utc;
     use crate::security::SecurityAttributes;
@@ -654,16 +635,22 @@ mod tests {
         JsonFileStore::new(dir, Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default())).unwrap()
     }
 
+    /// The store of the kind `T` in the files of `store`, with what only it
+    /// has: where its documents lie.
+    fn of_kind<T: Stored>(store: &JsonFileStore) -> JsonEntityStore<T> {
+        JsonEntityStore::new(&store.root, &store.policies).unwrap()
+    }
+
     #[tokio::test]
     async fn behaves_as_an_entity_store() {
         let dir = tempdir().unwrap();
-        suite::entity_store_behaves(&Arc::new(store(dir.path())).entity_stores()).await;
+        suite::entity_store_behaves(&Arc::new(store(dir.path())).entity_stores().unwrap()).await;
     }
 
     #[tokio::test]
     async fn answers_queries() {
         let dir = tempdir().unwrap();
-        suite::queries_behave(&Arc::new(store(dir.path())).entity_stores()).await;
+        suite::queries_behave(&Arc::new(store(dir.path())).entity_stores().unwrap()).await;
     }
 
     #[tokio::test]
@@ -681,22 +668,22 @@ mod tests {
     #[tokio::test]
     async fn keeps_what_is_deleted_marked() {
         let dir = tempdir().unwrap();
-        suite::deleting_marks(&Arc::new(store(dir.path())).entity_stores()).await;
+        suite::deleting_marks(&Arc::new(store(dir.path())).entity_stores().unwrap()).await;
     }
 
     #[tokio::test]
     async fn keeps_names_unique() {
         let dir = tempdir().unwrap();
-        suite::names_are_unique(&Arc::new(store(dir.path())).entity_stores()).await;
+        suite::names_are_unique(&Arc::new(store(dir.path())).entity_stores().unwrap()).await;
         let dir = tempdir().unwrap();
         let owners = JsonFileStore::new(dir.path(), Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default())).unwrap();
-        suite::names_are_unique_beyond_what_is_read(&Arc::new(owners).entity_stores()).await;
+        suite::names_are_unique_beyond_what_is_read(&Arc::new(owners).entity_stores().unwrap()).await;
     }
 
     #[tokio::test]
     async fn a_document_stored_before_marks_existed_loads_and_one_not_deleted_is_written_without() {
         let dir = tempdir().unwrap();
-        let store = store(dir.path());
+        let sessions = of_kind::<Session>(&store(dir.path()));
         let system = SecurityContext::system();
         let session = Session {
             summary: None, briefing: None,
@@ -706,10 +693,10 @@ mod tests {
             commands: Default::default(), privacy: Default::default(), created_at: Utc::now(), updated_at: Utc::now(),
             security_attributes: SecurityAttributes::default(), deleted: None,
         };
-        store.sessions.create(&system, &session).await.unwrap();
-        let text = tokio::fs::read_to_string(store.sessions.path(&session.id)).await.unwrap();
+        sessions.create(&system, &session).await.unwrap();
+        let text = tokio::fs::read_to_string(sessions.path(&session.id)).await.unwrap();
         assert!(!text.contains("deleted"), "{text}");
-        assert!(store.sessions.get(&system, session.id).await.unwrap().deleted.is_none());
+        assert!(sessions.get(&system, session.id).await.unwrap().deleted.is_none());
     }
 
     #[tokio::test]
@@ -718,7 +705,7 @@ mod tests {
         // change one (issue 62); a state has one writer (issue 215).
         use crate::agent::{Personality, PersonalityId};
         let dir = tempdir().unwrap();
-        let store = Arc::new(store(dir.path()));
+        let personalities = Arc::new(of_kind::<Personality>(&store(dir.path())));
         let system = SecurityContext::system();
         let personality = Personality {
             id: PersonalityId::new(), name: crate::value::name::ScopedName::new("plain", Default::default()).unwrap(),
@@ -726,24 +713,24 @@ mod tests {
             components: Default::default(), security_attributes: Default::default(), reasoning_visibility: Default::default(),
             deleted: None,
         };
-        store.personalities.create(&system, &personality).await.unwrap();
+        personalities.create(&system, &personality).await.unwrap();
 
         let mut writes = tokio::task::JoinSet::new();
         for i in 0..16 {
-            let (store, system) = (Arc::clone(&store), system.clone());
+            let (personalities, system) = (Arc::clone(&personalities), system.clone());
             let changed = Personality { description: Some(crate::value::text::Description::new(format!("version {i}")).unwrap()), ..personality.clone() };
-            writes.spawn(async move { store.personalities.update(&system, &changed).await });
+            writes.spawn(async move { personalities.update(&system, &changed).await });
         }
         while let Some(result) = writes.join_next().await {
             result.unwrap().expect("no writer loses its temporary file to another");
         }
 
-        let path = store.personalities.path(&personality.id);
+        let path = personalities.path(&personality.id);
         let names: Vec<String> = std::fs::read_dir(path.parent().unwrap()).unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
         assert_eq!(names, [path.file_name().unwrap().to_string_lossy().into_owned()], "only the file itself");
-        let stored = store.personalities.get(&system, personality.id).await.expect("readable");
+        let stored = personalities.get(&system, personality.id).await.expect("readable");
         assert!(stored.description.as_ref().map(|d| d.as_str()).unwrap_or_default().starts_with("version "), "one of the writes, whole");
     }
 
@@ -754,7 +741,7 @@ mod tests {
         use crate::actor::ActorId;
         use crate::agent::{Agent, Personality, PersonalityId};
         let dir = tempdir().unwrap();
-        let store = Arc::new(store(dir.path()));
+        let agents = Arc::new(of_kind::<Agent>(&store(dir.path())));
         let system = SecurityContext::system();
         let personality = Personality {
             id: PersonalityId::new(), name: crate::value::name::ScopedName::new("plain", Default::default()).unwrap(),
@@ -765,9 +752,9 @@ mod tests {
 
         let mut writes = tokio::task::JoinSet::new();
         for _ in 0..16 {
-            let (store, system) = (Arc::clone(&store), system.clone());
+            let (agents, system) = (Arc::clone(&agents), system.clone());
             let agent = Agent::new(crate::value::name::ScopedName::new("Helper", Default::default()).unwrap(), &personality, ActorId::None);
-            writes.spawn(async move { store.agents.create(&system, &agent).await });
+            writes.spawn(async move { agents.create(&system, &agent).await });
         }
         let mut made = 0;
         while let Some(result) = writes.join_next().await {
@@ -777,7 +764,7 @@ mod tests {
             }
         }
         assert_eq!(made, 1);
-        assert_eq!(store.agents.list(&system, &Query::all()).await.map(|page| page.items).unwrap().len(), 1);
+        assert_eq!(agents.list(&system, &Query::all()).await.map(|page| page.items).unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -787,6 +774,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let security_manager = Arc::new(crate::security::DummySecurityManager::new());
         let store = JsonFileStore::new(dir.path(), security_manager, Arc::new(ConfidentialityRules::default())).unwrap();
+        let sessions = of_kind::<Session>(&store);
         let ctx = SecurityContext::default();
 
         let session_id = SessionId(Uuid::new_v4());
@@ -822,7 +810,7 @@ mod tests {
             security_attributes: SecurityAttributes::default(),
             deleted: None,
         };
-        store.sessions.create(&ctx, &session).await.unwrap();
+        sessions.create(&ctx, &session).await.unwrap();
 
         // Write out channel state so we can assert it gets removed.
         let agent_id = AgentId(Uuid::new_v4());
@@ -831,14 +819,14 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(store.sessions.path(&session_id).exists());
+        assert!(sessions.path(&session_id).exists());
         assert!(store.agent_channel_state_dir(channel_id).exists());
 
-        assert!(store.sessions.delete(&ctx, session_id).await.unwrap());
-        assert!(store.sessions.path(&session_id).exists(), "deleting marks the file");
+        assert!(sessions.delete(&ctx, session_id).await.unwrap());
+        assert!(sessions.path(&session_id).exists(), "deleting marks the file");
         assert!(store.agent_channel_state_dir(channel_id).exists(), "the state is the state store's");
-        assert!(store.sessions.purge(&ctx, session_id).await.unwrap());
-        assert!(!store.sessions.path(&session_id).exists(), "purging removes it");
+        assert!(sessions.purge(&ctx, session_id).await.unwrap());
+        assert!(!sessions.path(&session_id).exists(), "purging removes it");
 
         store.put_channel_state(channel_id, &mut ChannelState::new(channel_id)).await.unwrap();
         store.delete_channel_state(channel_id).await.unwrap();
@@ -847,9 +835,9 @@ mod tests {
         store.delete_channel_state(channel_id).await.expect("nothing to delete is no error");
 
         // Deleting or purging again reports that nothing was there.
-        assert!(!store.sessions.delete(&ctx, session_id).await.unwrap());
-        assert!(!store.sessions.purge(&ctx, session_id).await.unwrap());
-        let err = store.sessions.get(&ctx, session_id).await.unwrap_err();
+        assert!(!sessions.delete(&ctx, session_id).await.unwrap());
+        assert!(!sessions.purge(&ctx, session_id).await.unwrap());
+        let err = sessions.get(&ctx, session_id).await.unwrap_err();
         assert!(matches!(err, StoreError::NotFound { entity: "session", .. }));
     }
 
@@ -858,6 +846,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let security_manager = Arc::new(crate::security::DummySecurityManager::new());
         let store = JsonFileStore::new(dir.path(), security_manager, Arc::new(ConfidentialityRules::default())).unwrap();
+        let sessions = of_kind::<Session>(&store);
         let ctx = SecurityContext::default();
 
         let s1 = Session {
@@ -875,14 +864,14 @@ mod tests {
             security_attributes: SecurityAttributes::default(),
             deleted: None,
         };
-        store.sessions.create(&ctx, &s1).await.unwrap();
+        sessions.create(&ctx, &s1).await.unwrap();
 
         // Create a corrupted JSON file
-        let corrupted_path = store.sessions.dir.join("corrupted.json");
+        let corrupted_path = sessions.dir.join("corrupted.json");
         fs::write(corrupted_path, "invalid json").unwrap();
 
         // This should NOT fail, it should return s1 and log a warning
-        let sessions = store.sessions.list(&ctx, &Query::all()).await.map(|page| page.items).unwrap();
+        let sessions = sessions.list(&ctx, &Query::all()).await.map(|page| page.items).unwrap();
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].id, s1.id);
     }

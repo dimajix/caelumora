@@ -264,7 +264,7 @@ impl ChannelLoop {
         let components = ComponentContainer::from_config(
             &channel.components,
             runtime.component_registry(),
-            &ComponentContext::new(security_context, runtime.component_services().clone()),
+            &ComponentContext::new(security_context, runtime.services().clone()),
         )
         .await
         .map_err(SessionError::InvalidModerator)?;

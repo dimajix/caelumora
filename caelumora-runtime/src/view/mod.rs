@@ -44,7 +44,7 @@ pub use workspace::WorkspaceView;
 
 use caelumora_model::artifact::{ArtifactField, ArtifactId};
 use caelumora_model::store::query::{Filter, Query};
-use crate::runtime::{ActorRuntime, RuntimeManager};
+use crate::runtime::{ActorRuntime, RuntimeManager, Services};
 use crate::session::{Found, SessionLoop, SessionManager};
 use crate::tool::ToolError;
 use caelumora_model::actor::ActorId;
@@ -194,8 +194,13 @@ impl RunningSessions for OwnSession {
 
 /// The root of the navigation: every session the viewer may read. Holds
 /// the services every edge uses, taken from the runtime once (issue 229).
+/// A plugin's views are an extension trait on it (issue 323), built from
+/// what it opens: the viewer's `context`, the `security` and
+/// `confidentiality` policies, the runtime's `service`s - among them the
+/// plugin's manager - and `channel_reading`.
 #[derive(Clone)]
 pub struct Views {
+    services: Services,
     security: Arc<dyn SecurityManager>,
     confidentiality: Arc<dyn ConfidentialityPolicy>,
     stores: EntityStores,
@@ -211,6 +216,7 @@ pub struct Views {
 impl Views {
     pub(crate) fn new(runtime: &RuntimeManager, running: Arc<dyn RunningSessions>, viewer: Viewer) -> Self {
         Self {
+            services: runtime.services().clone(),
             security: Arc::clone(runtime.security_manager()),
             confidentiality: Arc::clone(runtime.confidentiality()),
             stores: runtime.entity_stores().clone(),
@@ -235,18 +241,24 @@ impl Views {
     }
 
     /// The viewer's context: in whose name every edge asks.
-    pub(crate) fn context(&self) -> &SecurityContext {
+    pub fn context(&self) -> &SecurityContext {
         self.viewer.context()
     }
 
     /// The policy every edge asks, in the viewer's `context`.
-    pub(crate) fn security(&self) -> &Arc<dyn SecurityManager> {
+    pub fn security(&self) -> &Arc<dyn SecurityManager> {
         &self.security
     }
 
     /// What may flow where, and who is cleared for what (issue 304).
-    pub(crate) fn confidentiality(&self) -> &Arc<dyn ConfidentialityPolicy> {
+    pub fn confidentiality(&self) -> &Arc<dyn ConfidentialityPolicy> {
         &self.confidentiality
+    }
+
+    /// The service `T` of the runtime (`Services`) - a plugin's manager,
+    /// which its views read through.
+    pub fn service<T: ?Sized + Send + Sync + 'static>(&self) -> Option<&Arc<T>> {
+        self.services.get::<T>()
     }
 
     /// The stores of the entities, one per kind (issue 323).
@@ -855,7 +867,7 @@ pub enum ChannelReader<'a> {
 /// entry otherwise; a user reads it as a whole if they are cleared for its
 /// classification, and not at all otherwise. What the views reach a channel
 /// by, and what an operation in a channel asks before it acts there.
-pub(crate) async fn channel_reading(security: &dyn SecurityManager, confidentiality: &dyn ConfidentialityPolicy, context: &SecurityContext, channel: &SecurityAttributes, at: &Place, reader: ChannelReader<'_>) -> Option<ChannelReading> {
+pub async fn channel_reading(security: &dyn SecurityManager, confidentiality: &dyn ConfidentialityPolicy, context: &SecurityContext, channel: &SecurityAttributes, at: &Place, reader: ChannelReader<'_>) -> Option<ChannelReading> {
     if !security.may_read_channel(context, channel).await {
         return None;
     }
@@ -1943,7 +1955,7 @@ use caelumora_model::turn::TurnState;
         });
         let policy = Arc::new(DummySecurityManager::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store.entity_stores(), secrets, policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), registry).unwrap());
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let system = SecurityContext::system();
 

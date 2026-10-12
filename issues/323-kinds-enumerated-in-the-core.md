@@ -586,6 +586,45 @@ its tests passing:
   and the extension traits; a plugin's tests in the suite).
 - Stored data: none.
 
+Decided with the maintainer before the step was begun, each the recommended option:
+
+- **Stores: the backend opens a kind's store generically.** `Stored` requires what every store
+  needs of a kind (`Clone`, `Serialize`, `DeserializeOwned`, `Send`, `Sync`), so that a backend
+  can open the store of any kind: `EntityStoreFactory::entity_store::<T>()`, implemented by
+  `MemoryStore` and `JsonFileStore`, each opening a kind once and giving the same store whenever
+  it is asked again - the core and every plugin share it. `EntityStores` keeps its fields for the
+  core's kinds and is opened by the same method (`EntityStores::open`). The configured backend
+  is `StoreBackend`, an enum of the two, which replaces the private `trait Store` of `config.rs`
+  and gives the entity stores, the component store and the state store; the component store is no
+  longer a second instance of the backend. `TypeMap` moves into the model, which keeps the
+  opened stores in one. A plugin asks `RuntimeBuilder::entity_store::<T>()`, which refuses a kind
+  whose name another kind has. Stores of a kind's own - tables and queries of a database - and a
+  policy that a database can put into its query are issue [332](332-policy-as-a-predicate.md),
+  not this step.
+- **Services: one type map of the runtime.** `ComponentServices` becomes the runtime's
+  `Services`: the policy, the secrets, the managers of the core that components use, and what a
+  plugin `provide`s. Components reach a service as before (`ComponentKind::uses`,
+  `ComponentContext::service`), the views by `Views::service`, a plugin's routes when they are
+  built.
+- **Sections: at the top level, an unclaimed one is an error.** `AppConfig` and `Seed` lose
+  `deny_unknown_fields` and collect every key they do not know in a map (`serde(flatten)`). A
+  plugin claims its configuration section while it registers (`RuntimeBuilder::config::<C>`);
+  `build` refuses a section that nobody claimed, so that a misspelt section is still found. A
+  plugin claims its seed section with a `SeedSection`, which is given the section's value;
+  seeding refuses a section nobody claimed. Files keep their form.
+- **Tests: a feature `test-support` of `caelumora-runtime`.** The `World` of the security suite,
+  its recording policy and helpers move to `caelumora_runtime::testing`, public behind the
+  feature; the suite and a plugin's tests use it as a dev-dependency with the feature.
+- **Composition.** `RuntimeBuilder::new` makes what the core's managers need and the managers;
+  a plugin's `register` adds its component kinds, services, scope members and sections; `build`
+  sets the component defaults - which may name a plugin's kind -, checks the sections and makes
+  the `RuntimeManager`. `RuntimeBuilder::from_config` makes everything the two programs made by
+  hand from the configuration (the policy, the memberships, the stores, the secrets, the built-in
+  registry); `RuntimeManager::new` stays as the builder without plugins. Seeding becomes
+  `RuntimeManager::seed`, which knows the plugins' seed sections. `RestPlugin: Plugin` adds
+  routes, built with the `AppState`; `routes::api` merges them behind the same authentication as
+  the core's.
+
 ### Step 10 - `caelumora-skills`
 
 - The crate with the features of cut 11; moved into it: `skill.rs`, `SkillBody`, `SkillSnapshot`,
@@ -830,3 +869,33 @@ against the program: an unknown session and template (`404 session_not_found`,
 name (`400 invalid_value`), an unknown command. `context_forbidden` and `agent_forbidden` are
 covered by tests only: making a user who may not read an agent's context a member of its channel
 needs a template that names them. Stored data: none.
+
+**2026-10-12** — Step 9, on branch `issue-323-plugin`, after the decisions recorded under the
+step. The store: `Stored` requires `Clone`, `Serialize`, `DeserializeOwned`, `Send` and `Sync`;
+`TypeMap` moved into the model (`type_map`); `MemoryStore` and `JsonFileStore` open the store of a
+kind when it is first asked for (`EntityStoreFactory`) and keep it in a type map, so that their
+eleven fields per kind are gone and `EntityStores::open` makes the core's stores the same way;
+`StoreBackend` replaces the private `trait Store` of `config.rs`, gives the entity, component and
+state stores and refuses a kind whose name another kind has; `AppConfig::open_entity_store`
+replaces `create_entity_stores` and `create_component_store`, so that the component store is no
+second instance of the backend. The runtime: `Plugin` (`plugin.rs`); `RuntimeBuilder` in
+`runtime.rs` with `new`, `from_config`, `plugin`, `entity_store`, `provide`, `service`,
+`components`, `scope_member`, `config`, `seed_section` and `build`; `RuntimeManager::new` builds
+without plugins and returns `anyhow::Result`; `ComponentServices` is `Services`
+(`RuntimeManager::services`); `ScopeMember` and the module `scoped` are public; seeding is
+`RuntimeManager::seed`, and a `SeedSection` seeds a plugin's section. `AppConfig::plugins` and
+`Seed::plugins` collect the sections nobody else knows; one that no plugin claims is refused when
+the runtime is built or the seed applied. `Views` opens `context`, `security`, `confidentiality`,
+`service` and `channel_reading`; the stores by kind, which the plan named, are not opened: a
+plugin's views read through its manager, the one owner of its kind. The server: `RestPlugin` and
+`routes::api`, which replaces `routes::core` and serves a plugin's routes behind `require_auth`.
+`caelumora-app` and `caelumora-tui` build through `RuntimeBuilder::from_config` with an empty list
+of plugins. The world of the security suite is `caelumora_runtime::testing` behind the feature
+`test-support`, which the runtime takes as a dev-dependency of itself. `define_id!` writes its
+`Display` out, so that a plugin using it needs no `derive_more`. Tests: a plugin with a kind of its
+own, its manager as a service reached by a component and the views, its sections of the
+configuration and of the seed, a section nobody claims, one claimed twice, a kind named as the
+groups; a plugin's route behind the login; the backend's stores per kind. Checked against the
+program: the API and the UI under the live configuration, a session made, deleted and restored, a
+misspelt section of the configuration and an unclaimed section of a seed refused at startup, the
+TUI started. Stored data: none.

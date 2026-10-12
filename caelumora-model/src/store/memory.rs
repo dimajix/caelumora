@@ -1,23 +1,17 @@
-use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality};
-use crate::artifact::Artifact;
-use crate::channel::{Channel, ChannelId, ChannelState};
+use crate::agent::{AgentChannelState, AgentId, AgentState};
+use crate::channel::{ChannelId, ChannelState};
 use crate::component::StoredComponents;
 use crate::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
-use crate::group::Group;
 use crate::removal::{Deletable, Removal, Stored};
 use crate::security::{ActionType, DummySecurityManager, SecurityContext, SecurityManager};
-use crate::session::Session;
-use crate::skill::Skill;
 use crate::store::access::{name_free, Access};
 use crate::store::query::{self, Filter, NoField, Page, Query};
-use crate::store::{ComponentStore, EntityStore, EntityStores, Journaled, StateStore, StoreError, StoreResult};
-use crate::template::SessionTemplate;
-use crate::user::{User, UserProfile};
+use crate::store::{ComponentStore, EntityStore, EntityStoreFactory, EntityStores, Journaled, Policies, StateStore, StoreError, StoreResult};
+use crate::type_map::TypeMap;
 use crate::value::name::ScopedName;
-use crate::workspace::Workspace;
 use async_trait::async_trait;
-use serde::Serialize;
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::fmt::{self, Debug};
 use std::future::ready;
 use std::sync::{Arc, RwLock};
@@ -25,20 +19,12 @@ use tracing::info;
 
 /// Every kind's entities, the preconfigured components and the runtime
 /// state, in memory: a store per kind (`MemoryEntityStore`, issue 323),
-/// and maps for the states.
+/// opened when it is first asked for, and maps for the states.
 #[derive(Debug)]
 pub struct MemoryStore {
-    personalities: Arc<MemoryEntityStore<Personality>>,
-    session_templates: Arc<MemoryEntityStore<SessionTemplate>>,
-    agents: Arc<MemoryEntityStore<Agent>>,
-    sessions: Arc<MemoryEntityStore<Session>>,
-    channels: Arc<MemoryEntityStore<Channel>>,
-    users: Arc<MemoryEntityStore<User>>,
-    user_profiles: Arc<MemoryEntityStore<UserProfile>>,
-    workspaces: Arc<MemoryEntityStore<Workspace>>,
-    skills: Arc<MemoryEntityStore<Skill>>,
-    artifacts: Arc<MemoryEntityStore<Artifact>>,
-    groups: Arc<MemoryEntityStore<Group>>,
+    policies: Policies,
+    /// The store of every kind asked for, by its type.
+    kinds: RwLock<TypeMap>,
     components: MemoryEntityStore<StoredComponents>,
     agent_states: RwLock<HashMap<AgentId, AgentState>>,
     agent_channel_states: RwLock<HashMap<(AgentId, ChannelId), AgentChannelState>>,
@@ -64,41 +50,30 @@ impl MemoryStore {
         info!("Creating memory store");
         let policies = (security_manager, confidentiality);
         Self {
-            personalities: Arc::new(MemoryEntityStore::new(&policies)),
-            session_templates: Arc::new(MemoryEntityStore::new(&policies)),
-            agents: Arc::new(MemoryEntityStore::new(&policies)),
-            sessions: Arc::new(MemoryEntityStore::new(&policies)),
-            channels: Arc::new(MemoryEntityStore::new(&policies)),
-            users: Arc::new(MemoryEntityStore::new(&policies)),
-            user_profiles: Arc::new(MemoryEntityStore::new(&policies)),
-            workspaces: Arc::new(MemoryEntityStore::new(&policies)),
-            skills: Arc::new(MemoryEntityStore::new(&policies)),
-            artifacts: Arc::new(MemoryEntityStore::new(&policies)),
-            groups: Arc::new(MemoryEntityStore::new(&policies)),
             components: MemoryEntityStore::new(&policies),
+            policies,
+            kinds: Default::default(),
             agent_states: Default::default(),
             agent_channel_states: Default::default(),
             channel_states: Default::default(),
         }
     }
+
+    /// The stores of the core's entities, one per kind (issue 323).
+    pub fn entity_stores(&self) -> EntityStores {
+        match EntityStores::open(self) {
+            Ok(stores) => stores,
+            Err(never) => match never {},
+        }
+    }
 }
 
-impl MemoryStore {
-    /// The stores of the entities, one per kind (issue 323).
-    pub fn entity_stores(self: &Arc<Self>) -> EntityStores {
-        EntityStores {
-            skills: Arc::<MemoryEntityStore<Skill>>::clone(&self.skills),
-            workspaces: Arc::<MemoryEntityStore<Workspace>>::clone(&self.workspaces),
-            artifacts: Arc::<MemoryEntityStore<Artifact>>::clone(&self.artifacts),
-            groups: Arc::<MemoryEntityStore<Group>>::clone(&self.groups),
-            session_templates: Arc::<MemoryEntityStore<SessionTemplate>>::clone(&self.session_templates),
-            user_profiles: Arc::<MemoryEntityStore<UserProfile>>::clone(&self.user_profiles),
-            personalities: Arc::<MemoryEntityStore<Personality>>::clone(&self.personalities),
-            users: Arc::<MemoryEntityStore<User>>::clone(&self.users),
-            agents: Arc::<MemoryEntityStore<Agent>>::clone(&self.agents),
-            channels: Arc::<MemoryEntityStore<Channel>>::clone(&self.channels),
-            sessions: Arc::<MemoryEntityStore<Session>>::clone(&self.sessions),
-        }
+/// Opens a kind in memory, which cannot fail.
+impl EntityStoreFactory for MemoryStore {
+    type Error = Infallible;
+
+    fn entity_store<T: Deletable>(&self) -> Result<Arc<dyn EntityStore<T>>, Infallible> {
+        write_lock(&self.kinds, |kinds| kinds.get_or_try_insert(|| Ok(Arc::new(MemoryEntityStore::<T>::new(&self.policies)) as Arc<dyn EntityStore<T>>)))
     }
 }
 
@@ -139,10 +114,10 @@ impl<T: Stored> Debug for MemoryEntityStore<T> {
     }
 }
 
-impl<T: Stored + Clone + Serialize + Send + Sync> MemoryEntityStore<T> {
+impl<T: Stored> MemoryEntityStore<T> {
     /// An empty store that asks the `SecurityManager` and the
     /// `ConfidentialityPolicy` of `policies`.
-    fn new(policies: &(Arc<dyn SecurityManager>, Arc<dyn ConfidentialityPolicy>)) -> Self {
+    fn new(policies: &Policies) -> Self {
         Self { security_manager: Arc::clone(&policies.0), confidentiality: Arc::clone(&policies.1), entities: Default::default() }
     }
 
@@ -215,7 +190,7 @@ impl<T: Stored + Clone + Serialize + Send + Sync> MemoryEntityStore<T> {
 }
 
 #[async_trait]
-impl<T: Deletable + Clone + Serialize + Send + Sync + 'static> EntityStore<T> for MemoryEntityStore<T> {
+impl<T: Deletable> EntityStore<T> for MemoryEntityStore<T> {
     async fn create(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()> {
         MemoryEntityStore::create(self, ctx, value).await
     }

@@ -64,7 +64,7 @@ pub(crate) async fn record_users(manager: &SessionManager, users: &[&User]) -> V
 pub(crate) fn owned_runtime(rules: ConfidentialityRules) -> (Arc<MemoryStore>, Arc<SessionManager>) {
     let (policy, confidentiality, store) = owned_store(rules);
     let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store.entity_stores(), secrets, policy, confidentiality, &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, confidentiality, &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
     (store, Arc::new(SessionManager::new(runtime)))
 }
 
@@ -72,7 +72,7 @@ pub(crate) fn owned_runtime(rules: ConfidentialityRules) -> (Arc<MemoryStore>, A
 pub(crate) fn test_runtime() -> Arc<RuntimeManager> {
     let store = Arc::new(MemoryStore::new());
     let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-    Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store.entity_stores(), secret_manager, Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap())
+    Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap())
 }
 
 /// A session that holds nothing but its id `session_id`: what a channel

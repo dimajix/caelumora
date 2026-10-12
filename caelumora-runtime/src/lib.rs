@@ -20,6 +20,7 @@ pub mod message;
 pub mod component;
 pub mod component_impl;
 pub mod context;
+pub mod plugin;
 pub mod seed;
 pub mod view;
 pub mod terminal;
@@ -28,4 +29,6 @@ pub mod skill;
 pub mod artifact;
 pub mod group;
 mod template;
-mod scoped;
+pub mod scoped;
+#[cfg(feature = "test-support")]
+pub mod testing;

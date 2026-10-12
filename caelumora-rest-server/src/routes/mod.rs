@@ -1,5 +1,6 @@
 use crate::auth::{require_auth, require_stream_auth, AuthenticatedUser};
 use crate::error::ApiError;
+use crate::plugin::RestPlugin;
 use caelumora_rest_api::channel::ChannelResponse;
 use caelumora_rest_api::session::SessionSnapshot;
 use crate::state::AppState;
@@ -115,10 +116,11 @@ pub fn change_error(error: anyhow::Error, code: &'static str) -> ApiError {
     }
 }
 
-/// The routes of the core, as the API serves them below the path the
-/// application nests them at (issue 323). Everything except `/auth/login`
-/// and `/auth/logout` requires a session (see `crate::auth`).
-pub fn core(state: Arc<AppState>) -> Router {
+/// The routes of the API: the core's and those of `plugins`, as the API
+/// serves them below the path the application nests them at (issue 323).
+/// Everything except `/auth/login` and `/auth/logout` requires a session
+/// (see `crate::auth`), the plugins' routes too.
+pub fn api(state: Arc<AppState>, plugins: &[Box<dyn RestPlugin>]) -> Router {
     let protected = Router::new()
         .route("/templates", get(templates::list_templates))
         .route("/compartments", get(compartments::list_compartments))
@@ -223,12 +225,84 @@ pub fn core(state: Arc<AppState>) -> Router {
         .route_layer(axum::middleware::from_fn_with_state(Arc::clone(&state.auth), require_stream_auth))
         .with_state(Arc::clone(&state));
 
-    crate::auth::router(Arc::clone(&state.auth)).merge(protected).merge(streams)
+    let mut api = crate::auth::router(Arc::clone(&state.auth)).merge(protected).merge(streams);
+    for plugin in plugins {
+        let routes = plugin.routes(Arc::clone(&state))
+            .route_layer(axum::middleware::from_fn_with_state(Arc::clone(&state.auth), require_auth));
+        api = api.merge(routes);
+    }
+    api
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::{Auth, TokenService, SESSION_COOKIE};
+    use axum::body::Body;
+    use axum::http::header::{COOKIE, SET_COOKIE};
+    use axum::http::Request;
+    use caelumora_model::config::{AppConfig, AuthConfig};
+    use caelumora_model::confidentiality::ConfidentialityRules;
+    use caelumora_model::secret::SecretManager;
+    use caelumora_model::security::DummySecurityManager;
+    use caelumora_model::store::memory::MemoryStore;
+    use caelumora_model::user_provider::UserManager;
+    use caelumora_model::user_provider::accept_any::AcceptAnyUserProvider;
+    use caelumora_runtime::component::ComponentRegistry;
+    use caelumora_runtime::event::EventBus;
+    use caelumora_runtime::plugin::Plugin;
+    use caelumora_runtime::runtime::{RuntimeBuilder, RuntimeManager};
+    use caelumora_runtime::session::SessionManager;
+    use tower::ServiceExt;
+
+    /// A plugin answering who asks.
+    struct Hello;
+
+    impl Plugin for Hello {
+        fn name(&self) -> &'static str {
+            "hello"
+        }
+
+        fn register(&self, _runtime: &mut RuntimeBuilder) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl RestPlugin for Hello {
+        fn routes(&self, _state: Arc<AppState>) -> Router {
+            Router::new().route("/hello", get(|user: AuthenticatedUser| async move { user.security_context().caller_id.to_string() }))
+        }
+    }
+
+    /// The API with `plugins`, which lets anybody log in.
+    fn api_with(plugins: &[Box<dyn RestPlugin>]) -> Router {
+        let store = Arc::new(MemoryStore::new());
+        let security = Arc::new(DummySecurityManager::new());
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&security)));
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, security, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let users = Arc::clone(&runtime.entity_stores().users);
+        let auth = Arc::new(Auth {
+            tokens: TokenService::new(b"0123456789abcdef0123456789abcdef", &AuthConfig::default()).unwrap(),
+            users: Arc::new(UserManager::new(vec![Arc::new(AcceptAnyUserProvider::new(Arc::clone(&users)))], users, Arc::<EventBus>::clone(runtime.event_bus()))),
+            controllers: Arc::clone(runtime.controller_manager()),
+        });
+        let session_manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
+        api(Arc::new(AppState { auth, runtime_manager: runtime, session_manager, compartments: Default::default() }), plugins)
+    }
+
+    #[tokio::test]
+    async fn a_plugins_routes_are_served_behind_the_login() {
+        let api = api_with(&[Box::new(Hello)]);
+        let anonymous = api.clone().oneshot(Request::get("/hello").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+
+        let login = Request::post("/auth/login").header("content-type", "application/json").body(Body::from(r#"{"username":"alice","password":"x"}"#)).unwrap();
+        let logged_in = api.clone().oneshot(login).await.unwrap();
+        let cookie = logged_in.headers().get(SET_COOKIE).and_then(|v| v.to_str().ok()).and_then(|v| v.split(';').next()).unwrap().to_string();
+        assert!(cookie.starts_with(SESSION_COOKIE), "{cookie}");
+        let asked = api.oneshot(Request::get("/hello").header(COOKIE, cookie).body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(asked.status(), StatusCode::OK);
+    }
 
     #[test]
     fn a_download_is_named_plainly_and_as_it_is() {

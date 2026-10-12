@@ -9,7 +9,7 @@ use crate::secret::SecretManager;
 use crate::secret::env::EnvSecretProvider;
 use crate::secret::file::FileSecretProvider;
 use crate::security::{DummySecurityManager, Memberships, OwnershipSecurityManager, SecurityManager};
-use crate::store::{ComponentStore, EntityStore, EntityStores, StateStore, StoreError};
+use crate::store::{EntityStore, StateStore, StoreBackend, StoreError};
 use crate::store::json::JsonFileStore;
 use crate::store::memory::MemoryStore;
 use crate::user_provider::{UserManager, UserProvider};
@@ -57,37 +57,17 @@ pub enum PersistenceBackend {
 impl PersistenceBackend {
     /// Opens the store this backend describes. Both kinds of store serve
     /// as entity and as state store; the caller picks the face it needs.
-    fn open(&self, security_manager: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> ConfigResult<Arc<dyn Store>> {
+    fn open(&self, security_manager: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> ConfigResult<StoreBackend> {
         Ok(match self {
-            Self::Memory => Arc::new(MemoryStore::with_policies(security_manager, confidentiality)),
+            Self::Memory => Arc::new(MemoryStore::with_policies(security_manager, confidentiality)).into(),
             Self::Json { path, journal_floor } => {
                 let store = JsonFileStore::new(path, security_manager, confidentiality)?;
                 Arc::new(match journal_floor {
                     Some(bytes) => store.with_journal_floor(*bytes),
                     None => store,
-                })
+                }).into()
             }
         })
-    }
-}
-
-/// What `PersistenceBackend::open` returns: a store with every face, so
-/// that one match serves `create_entity_stores`, `create_component_store`
-/// and `create_state_store`.
-trait Store: ComponentStore + StateStore {
-    /// Its stores of the entities, one per kind (issue 323).
-    fn entity_stores(self: Arc<Self>) -> EntityStores;
-}
-
-impl Store for MemoryStore {
-    fn entity_stores(self: Arc<Self>) -> EntityStores {
-        MemoryStore::entity_stores(&self)
-    }
-}
-
-impl Store for JsonFileStore {
-    fn entity_stores(self: Arc<Self>) -> EntityStores {
-        JsonFileStore::entity_stores(&self)
     }
 }
 
@@ -236,11 +216,13 @@ pub struct LoggingConfig {
 }
 
 /// The configuration of a binary. Every section may be left out and then
-/// takes its default; a key the configuration does not know is an error
-/// rather than ignored, so that a misspelt section doesn't silently fall
-/// back to its default.
+/// takes its default. A key the configuration does not know is a section
+/// of a plugin's (`plugins`, issue 323); one that no plugin claims is an
+/// error when the runtime is built, rather than ignored, so that a misspelt
+/// section doesn't silently fall back to its default. Within a section, a
+/// key it does not know is an error when it is read.
 #[derive(Debug, Deserialize, Clone)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct AppConfig {
     pub persistence: PersistenceConfig,
     pub secrets: SecretsConfig,
@@ -282,6 +264,10 @@ pub struct AppConfig {
     /// Where the content of published artifacts lies (issue 271). No
     /// storage unless configured: then no artifact can be published.
     pub artifacts: ArtifactsConfig,
+    /// The sections of the plugins, by name, as they were written: each
+    /// read by the plugin that claims it (issue 323).
+    #[serde(flatten)]
+    pub plugins: BTreeMap<String, serde_json::Value>,
 }
 
 /// The storages workspaces are made in (issue 253), each by the name a
@@ -514,6 +500,7 @@ impl Default for AppConfig {
             approvals: ApprovalsConfig::default(),
             workspaces: WorkspacesConfig::default(),
             artifacts: ArtifactsConfig::default(),
+            plugins: BTreeMap::new(),
         }
     }
 }
@@ -616,23 +603,13 @@ impl AppConfig {
         })
     }
 
-    /// The stores of the entities, as configured under
-    /// `persistence.entity_store`.
+    /// The store of the entities and of the preconfigured components, as
+    /// configured under `persistence.entity_store` (issue 323).
     ///
     /// # Errors
     /// `ConfigError::Store` if the store cannot be opened.
-    pub fn create_entity_stores(&self, security_manager: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> ConfigResult<EntityStores> {
-        Ok(self.persistence.entity_store.open(security_manager, confidentiality)?.entity_stores())
-    }
-
-    /// The component store: kept where the entity store is, under
-    /// `persistence.entity_store`, as the preconfigured components were
-    /// before they had a store of their own.
-    ///
-    /// # Errors
-    /// `ConfigError::Store` if the store cannot be opened.
-    pub fn create_component_store(&self, security_manager: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> ConfigResult<Arc<dyn ComponentStore>> {
-        Ok(self.persistence.entity_store.open(security_manager, confidentiality)?)
+    pub fn open_entity_store(&self, security_manager: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> ConfigResult<StoreBackend> {
+        self.persistence.entity_store.open(security_manager, confidentiality)
     }
 
     /// The state store, as configured under `persistence.state_store`.
@@ -640,7 +617,7 @@ impl AppConfig {
     /// # Errors
     /// `ConfigError::Store` if the store cannot be opened.
     pub fn create_state_store(&self, security_manager: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> ConfigResult<Arc<dyn StateStore>> {
-        Ok(self.persistence.state_store.open(security_manager, confidentiality)?)
+        Ok(self.persistence.state_store.open(security_manager, confidentiality)?.state_store())
     }
 
     /// The chain of secret providers from the `secrets` section.
@@ -773,7 +750,6 @@ persistence:
         for yaml in [
             "persistence:\n  entity_stor:\n    type: memory\n",
             "persistence:\n  entity_store:\n    type: json\n    pth: local\n",
-            "secret:\n  providers: []\n",
             "auth:\n  token_lifetime: 60\n",
         ] {
             let message = AppConfig::from_yaml(yaml).expect_err(yaml).to_string();
@@ -781,6 +757,10 @@ persistence:
         }
         let message = AppConfig::from_yaml("persistence:\n  state_store:\n    type: file\n").expect_err("unknown backend").to_string();
         assert!(message.contains("unknown variant"), "gave: {message}");
+        // A section it does not know is a plugin's, refused by the runtime
+        // if no plugin claims it.
+        let config = AppConfig::from_yaml("secret:\n  providers: []\n").unwrap();
+        assert_eq!(config.plugins.get("secret"), Some(&serde_json::json!({"providers": []})));
     }
 
     #[test]

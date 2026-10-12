@@ -64,7 +64,7 @@ async fn channel_of(store: Arc<MemoryStore>, participants: Vec<Participant>, sec
 /// A channel of `participants` with `components`, built by `registry`.
 async fn channel_built(store: Arc<MemoryStore>, participants: Vec<Participant>, security: Arc<dyn SecurityManager>, registry: ComponentRegistry, components: ComponentConfig) -> Arc<ChannelLoop> {
     let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&security)));
-    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store.entity_stores(), secrets, security, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), registry).unwrap());
+    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, security, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), registry).unwrap());
     let channel = Channel {
         summary: None, briefing: None,
         approval_rules: Vec::new(),
@@ -309,7 +309,7 @@ pub(super) async fn agent_channel(security: Arc<dyn SecurityManager>, model: Arc
             fail_policy: Default::default(),
         }],
     };
-    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store.entity_stores(), secrets, security, Arc::new(ConfidentialityRules::default()), &AppConfig { component_defaults: defaults, ..Default::default() }, registry).unwrap());
+    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, security, Arc::new(ConfidentialityRules::default()), &AppConfig { component_defaults: defaults, ..Default::default() }, registry).unwrap());
     let channel = Channel {
         summary: None, briefing: None,
         approval_rules: Vec::new(),
