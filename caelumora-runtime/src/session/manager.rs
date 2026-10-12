@@ -114,18 +114,18 @@ impl SessionManager {
     /// being in memory is no way around the policy (issue 11).
     ///
     /// # Errors
-    /// `StoreError::NotFound` if there is no such session or `context` may
-    /// not read it, alike whether it runs.
+    /// `SessionError::NotFound` if there is no such session or `context`
+    /// may not read it, alike whether it runs.
     pub(crate) async fn find(&self, context: &SecurityContext, id: SessionId) -> Result<Found> {
         let running = self.sessions.get(&id).map(|entry| entry.clone());
         match running {
             Some(session_loop) => {
                 let attributes = session_loop.session().security_attributes.clone();
                 self.security
-                    .require(context, ActionType::get(Session::KIND, &attributes), || StoreError::NotFound { entity: "session", id: id.to_string() }).await?;
+                    .require(context, ActionType::get(Session::KIND, &attributes), |_| SessionError::NotFound(id)).await?;
                 Ok(Found::Running(session_loop))
             }
-            None => Ok(Found::Stored(self.stores.sessions.get(context, id).await?)),
+            None => Ok(Found::Stored(self.stores.sessions.get(context, id).await.map_err(store_error(id))?)),
         }
     }
 
@@ -147,12 +147,15 @@ impl SessionManager {
         let owner = context.principal_id.as_user_id().ok_or(SessionError::OwnerNotAUser(context.principal_id))?;
         // Before anything is found or made for it.
         let name = Name::optional(name)?;
-        let template = self.stores.session_templates.get(context, template_id).await?;
+        let template = self.stores.session_templates.get(context, template_id).await.map_err(|e| match e {
+            StoreError::NotFound { .. } => SessionError::TemplateNotFound(template_id).into(),
+            e => anyhow::Error::new(e),
+        })?;
         let id = SessionId::new();
         // Its own verb before anything of others is asked or anything is
         // found or made for it (issue 312): who may not create the session
         // learns nothing of the agents, the workspace or anyone's clearance.
-        self.security.require(context, ActionType::create(Session::KIND, &Session::attributes_of(id, owner)), || StoreError::PermissionDenied).await?;
+        self.security.require(context, ActionType::create(Session::KIND, &Session::attributes_of(id, owner)), StoreError::PermissionDenied).await?;
         // One of the user's chosen is asked about before anything is made.
         let existing = match &workspace {
             Some(WorkspaceChoice::Existing { id: chosen, share }) => {
@@ -202,7 +205,7 @@ impl SessionManager {
     /// would: asks to create it (`CreateSession`) before anything else.
     #[cfg(test)]
     pub(crate) async fn create_session(&self, context: &SecurityContext, session: Session, channels: Vec<Channel>) -> Result<Arc<SessionLoop>> {
-        self.security.require(context, ActionType::create(Session::KIND, &session.security_attributes), || StoreError::PermissionDenied).await?;
+        self.security.require(context, ActionType::create(Session::KIND, &session.security_attributes), StoreError::PermissionDenied).await?;
         self.establish(context, session, channels).await
     }
 
@@ -312,7 +315,7 @@ impl SessionManager {
         let found = self.find(context, id).await?;
         let attributes = found.session().security_attributes;
         self.security
-            .require(context, ActionType::StopSession(&attributes), || StoreError::PermissionDenied).await?;
+            .require(context, ActionType::StopSession(&attributes), StoreError::PermissionDenied).await?;
         Ok(matches!(found, Found::Running(_)) && self.stop_running(id).await.is_some())
     }
 
@@ -353,7 +356,7 @@ impl SessionManager {
         let _starting = start.lock().await;
         let session = self.find(context, id).await?.session();
         self.security
-            .require(context, ActionType::delete(Session::KIND, &session.security_attributes), || StoreError::PermissionDenied).await?;
+            .require(context, ActionType::delete(Session::KIND, &session.security_attributes), StoreError::PermissionDenied).await?;
         // Captured before the runtime loop is torn down.
         // The events carry the attributes as they were: once deleted, the
         // session is nowhere to look them up (issue 39).
@@ -399,7 +402,7 @@ impl SessionManager {
     /// session.
     ///
     /// # Errors
-    /// `StoreError::NotFound` if there is no such deleted session or
+    /// `SessionError::NotFound` if there is no such deleted session or
     /// `context` may not see it (`ReadDeleted`, asked first, issue 304),
     /// `StoreError::PermissionDenied` if they may but not restore it.
     pub async fn restore_session(&self, context: &SecurityContext, id: SessionId) -> Result<Session> {
@@ -410,8 +413,8 @@ impl SessionManager {
         // When it was deleted, read before the mark goes - as `context`, so
         // that whoever may not see it learns nothing more: what was deleted
         // with it comes back with it (issue 178).
-        let deleted_at = self.stores.sessions.get_deleted(context, id).await?.deleted.map(|removal| removal.at);
-        let session = self.stores.sessions.restore(context, id).await?;
+        let deleted_at = self.stores.sessions.get_deleted(context, id).await.map_err(store_error(id))?.deleted.map(|removal| removal.at);
+        let session = self.stores.sessions.restore(context, id).await.map_err(store_error(id))?;
         if let Some(since) = deleted_at {
             if let Err(e) = self.scoped.restore_lying_in(context, &Scope::SessionScope { session_id: id }, since).await {
                 warn!("Session {} was restored, but not what lies in its scope: {}", id, e);
@@ -431,15 +434,15 @@ impl SessionManager {
     /// purged.
     ///
     /// # Errors
-    /// `StoreError::NotFound` if there is no such deleted session or
+    /// `SessionError::NotFound` if there is no such deleted session or
     /// `context` may not see it, `StoreError::PermissionDenied` if they may
     /// but not purge it.
     pub async fn purge_session(&self, context: &SecurityContext, id: SessionId) -> Result<()> {
         let start = self.start_lock(id);
         let _starting = start.lock().await;
-        let session = self.stores.sessions.get_deleted(context, id).await?;
+        let session = self.stores.sessions.get_deleted(context, id).await.map_err(store_error(id))?;
         if !self.stores.sessions.purge(context, id).await? {
-            return Err(StoreError::NotFound { entity: "session", id: id.to_string() }.into());
+            return Err(SessionError::NotFound(id).into());
         }
         let mut channels = session.channels.clone();
         let of_it = Query::filtered(Filter::eq(ChannelField::Session, id));
@@ -467,6 +470,16 @@ impl SessionManager {
     /// The loop of session `id`, if it runs.
     pub(crate) fn running(&self, id: SessionId) -> Option<Arc<SessionLoop>> {
         self.sessions.get(&id).map(|entry| entry.clone())
+    }
+}
+
+/// `error` of the store about session `id`: that there is none - or none
+/// the caller may see - is the session's own error, what the request named
+/// and did not find (issue 323).
+fn store_error(id: SessionId) -> impl FnOnce(StoreError) -> anyhow::Error {
+    move |error| match error {
+        StoreError::NotFound { .. } => SessionError::NotFound(id).into(),
+        error => error.into(),
     }
 }
 
@@ -845,7 +858,7 @@ mod tests {
         manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
 
         let missing = manager.create_from_template(&hers, SessionTemplateId::new(), None, None).await.expect_err("no such template");
-        assert!(crate::error::is_not_found(&missing, "session_template"), "{missing}");
+        assert!(matches!(missing.downcast_ref::<SessionError>(), Some(SessionError::TemplateNotFound(_))), "{missing}");
         let not_a_user = manager.create_from_template(&SecurityContext::system(), template.id, None, None).await.expect_err("the system owns no session");
         assert!(matches!(not_a_user.downcast_ref::<SessionError>(), Some(SessionError::OwnerNotAUser(_))), "{not_a_user}");
     }
@@ -969,7 +982,7 @@ mod tests {
         create(&manager, &as_user(alice), session).await.expect("alice creates her own session");
 
         let refused = manager.open_session(&as_user(carol), id).await.expect_err("carol may not see it");
-        assert!(crate::error::is_not_found(&refused, "session"), "not refused - absent: {refused}");
+        assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::NotFound(_))), "not refused - absent: {refused}");
         manager.open_session(&as_user(bob), id).await.expect("a contributor opens it");
 
         let refused = manager.delete_session(&as_user(bob), id).await.expect_err("a contributor may not delete it");
@@ -977,7 +990,7 @@ mod tests {
         assert!(manager.sessions.contains_key(&id), "a refused deletion must not stop the session on the way");
 
         let refused = manager.stop_session(&as_user(carol), id).await.expect_err("carol may not see it");
-        assert!(crate::error::is_not_found(&refused, "session"), "not refused - absent: {refused}");
+        assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::NotFound(_))), "not refused - absent: {refused}");
         let refused = manager.stop_session(&as_user(bob), id).await.expect_err("a contributor may not stop it");
         assert!(crate::error::is_forbidden(&refused), "{refused}");
         assert!(manager.sessions.contains_key(&id), "it runs on");

@@ -62,7 +62,7 @@ impl AgentManager {
     pub async fn delete(&self, context: &SecurityContext, id: AgentId) -> StoreResult<bool> {
         let Some(agent) = self.agents.get(context, id).await.optional()? else { return Ok(false) };
         self.security
-            .require(context, ActionType::delete(Agent::KIND, &agent.security_attributes), || StoreError::PermissionDenied).await?;
+            .require(context, ActionType::delete(Agent::KIND, &agent.security_attributes), StoreError::PermissionDenied).await?;
         if !self.agents.delete(context, id).await? {
             return Ok(false);
         }

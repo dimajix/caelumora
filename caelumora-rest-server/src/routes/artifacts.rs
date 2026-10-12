@@ -5,7 +5,7 @@
 //! attachment (`routes::attachment_response`), named as its artifact.
 
 use crate::auth::AuthenticatedUser;
-use crate::error::{ApiError, Json, Path, Subject};
+use crate::error::{ApiError, Json, Path};
 use caelumora_rest_api::access::AccessEntry;
 use caelumora_rest_api::artifact::{ArtifactResponse, KeepArtifactRequest};
 use caelumora_rest_api::scope::ItemDescriptionRequest;
@@ -17,13 +17,8 @@ use axum::response::{IntoResponse, Response};
 use caelumora_model::artifact::ArtifactId;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::snapshot::Detail;
-use caelumora_runtime::artifact::ArtifactError;
 use std::sync::Arc;
 use uuid::Uuid;
-
-fn failed(error: ArtifactError, action: &str) -> ApiError {
-    ApiError::from_runtime(error.into(), Subject::Artifact, action)
-}
 
 /// The artifacts the user may read anything of - their own and those
 /// shared with them - or, with `?deleted=true`, those they deleted, the
@@ -31,12 +26,10 @@ fn failed(error: ArtifactError, action: &str) -> ApiError {
 pub async fn list_artifacts(State(state): State<Arc<AppState>>, Query(options): Query<ListOptions>, user: AuthenticatedUser) -> Result<Response, ApiError> {
     let views = crate::routes::views(&state, &user);
     if options.deleted {
-        let deleted = views.deleted_artifacts().await
-            .map_err(|e| ApiError::from_runtime(e.into(), Subject::Artifact, "listing the deleted artifacts"))?;
+        let deleted = views.deleted_artifacts().await?;
         return Ok(Json(deleted.into_iter().map(DeletedResponse::from).collect::<Vec<_>>()).into_response());
     }
-    let artifacts = views.artifacts().await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Artifact, "listing the artifacts"))?;
+    let artifacts = views.artifacts().await?;
     let mut listed = Vec::with_capacity(artifacts.len());
     for artifact in artifacts {
         listed.push(ArtifactResponse::from(artifact.snapshot(Detail::empty()).await));
@@ -53,10 +46,8 @@ pub async fn get_artifact(State(state): State<Arc<AppState>>, Path(id): Path<Uui
 /// lets read it (issue 23).
 pub async fn download_version(State(state): State<Arc<AppState>>, Path((id, number)): Path<(Uuid, u32)>, user: AuthenticatedUser) -> Result<Response, ApiError> {
     let id = ArtifactId(id);
-    let artifact = crate::routes::views(&state, &user).artifact(id).await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Artifact, &format!("reading artifact {id}")))?;
-    let (size, content) = artifact.content(number).await
-        .map_err(|e| failed(e, &format!("reading version {number} of artifact {id}")))?;
+    let artifact = crate::routes::views(&state, &user).artifact(id).await?;
+    let (size, content) = artifact.content(number).await?;
     Ok(crate::routes::attachment_response(size, content, artifact.artifact().name.as_str()))
 }
 
@@ -66,24 +57,21 @@ pub async fn keep_artifact(State(state): State<Arc<AppState>>, Path(id): Path<Uu
     let id = ArtifactId(id);
     let scope = request.scope.of_user(user.id)
         .ok_or_else(|| ApiError::new(StatusCode::BAD_REQUEST, "invalid_scope", "An artifact is kept in its owner's scope or the global one"))?;
-    state.runtime_manager.artifact_manager().keep(&user.security_context(), id, scope).await
-        .map_err(|e| failed(e, &format!("keeping artifact {id}")))?;
+    state.runtime_manager.artifact_manager().keep(&user.security_context(), id, scope).await?;
     Ok(Json(owned(&state, &user, id).await?))
 }
 
 /// Says what the artifact is; `null` or empty takes it away.
 pub async fn describe_artifact(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser, Json(request): Json<ItemDescriptionRequest>) -> Result<Json<ArtifactResponse>, ApiError> {
     let id = ArtifactId(id);
-    state.runtime_manager.artifact_manager().describe(&user.security_context(), id, request.description.as_deref()).await
-        .map_err(|e| failed(e, &format!("describing artifact {id}")))?;
+    state.runtime_manager.artifact_manager().describe(&user.security_context(), id, request.description.as_deref()).await?;
     Ok(Json(owned(&state, &user, id).await?))
 }
 
 /// Deletes the artifact: kept, with its content, until it is purged.
 pub async fn delete_artifact(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
     let id = ArtifactId(id);
-    let deleted = state.runtime_manager.artifact_manager().delete(&user.security_context(), id).await
-        .map_err(|e| failed(e, &format!("deleting artifact {id}")))?;
+    let deleted = state.runtime_manager.artifact_manager().delete(&user.security_context(), id).await?;
     match deleted {
         true => Ok(StatusCode::NO_CONTENT),
         false => Err(ApiError::not_found("artifact_not_found", format!("There is no artifact {id}"))),
@@ -93,8 +81,7 @@ pub async fn delete_artifact(State(state): State<Arc<AppState>>, Path(id): Path<
 /// Restores the deleted artifact; `409` if another took its name meanwhile.
 pub async fn restore_artifact(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<Json<ArtifactResponse>, ApiError> {
     let id = ArtifactId(id);
-    state.runtime_manager.artifact_manager().restore(&user.security_context(), id).await
-        .map_err(|e| failed(e, &format!("restoring artifact {id}")))?;
+    state.runtime_manager.artifact_manager().restore(&user.security_context(), id).await?;
     Ok(Json(owned(&state, &user, id).await?))
 }
 
@@ -102,8 +89,7 @@ pub async fn restore_artifact(State(state): State<Arc<AppState>>, Path(id): Path
 /// policy allows, by default the system's alone.
 pub async fn purge_artifact(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
     let id = ArtifactId(id);
-    let purged = state.runtime_manager.artifact_manager().purge(&user.security_context(), id).await
-        .map_err(|e| failed(e, &format!("purging artifact {id}")))?;
+    let purged = state.runtime_manager.artifact_manager().purge(&user.security_context(), id).await?;
     match purged {
         true => Ok(StatusCode::NO_CONTENT),
         false => Err(ApiError::not_found("artifact_not_found", format!("There is no deleted artifact {id}"))),
@@ -114,8 +100,7 @@ pub async fn purge_artifact(State(state): State<Arc<AppState>>, Path(id): Path<U
 /// versions, as a reader of the channel sees them.
 pub async fn channel_artifacts(State(state): State<Arc<AppState>>, Path((id, cid)): Path<(Uuid, Uuid)>, user: AuthenticatedUser) -> Result<Json<Vec<ArtifactResponse>>, ApiError> {
     let channel = crate::routes::channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let artifacts = channel.artifacts().await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Artifact, "listing the channel's artifacts"))?;
+    let artifacts = channel.artifacts().await?;
     let mut listed = Vec::with_capacity(artifacts.len());
     for artifact in artifacts {
         listed.push(ArtifactResponse::from(artifact.snapshot(Detail::empty()).await));
@@ -128,15 +113,13 @@ pub async fn channel_artifacts(State(state): State<Arc<AppState>>, Path((id, cid
 pub async fn set_access(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser, Json(entries): Json<Vec<AccessEntry>>) -> Result<Json<ArtifactResponse>, ApiError> {
     let id = ArtifactId(id);
     let acl = entries.into_iter().map(AccessEntry::into_acl).collect();
-    state.runtime_manager.artifact_manager().set_access(&user.security_context(), id, acl).await
-        .map_err(|e| failed(e, &format!("sharing artifact {id}")))?;
+    state.runtime_manager.artifact_manager().set_access(&user.security_context(), id, acl).await?;
     Ok(Json(owned(&state, &user, id).await?))
 }
 
 /// Artifact `id`, as the user sees it, with where its versions were
 /// published.
 async fn owned(state: &Arc<AppState>, user: &AuthenticatedUser, id: ArtifactId) -> Result<ArtifactResponse, ApiError> {
-    let artifact = crate::routes::views(state, user).artifact(id).await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Artifact, &format!("reading artifact {id}")))?;
+    let artifact = crate::routes::views(state, user).artifact(id).await?;
     Ok(ArtifactResponse::from(artifact.snapshot(Detail::PUBLICATIONS).await))
 }

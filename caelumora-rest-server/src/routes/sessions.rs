@@ -1,5 +1,5 @@
 use crate::auth::AuthenticatedUser;
-use crate::error::{ApiError, Subject};
+use crate::error::ApiError;
 use caelumora_rest_api::session::{CreateSessionRequest, DescriptionRequest, PrivateNotesResponse, RenameSessionRequest, SessionPrivacyRequest, SessionResponse, SessionSnapshot};
 use caelumora_rest_api::trash::{DeletedResponse, ListOptions};
 use crate::state::AppState;
@@ -21,8 +21,7 @@ pub async fn create_session(
 ) -> Result<Json<SessionResponse>, ApiError> {
     // The logged-in user owns the session and is its template's "user".
     let template_id = SessionTemplateId(payload.template_id);
-    let session_loop = state.session_manager.create_from_template(&user.security_context(), template_id, payload.name.as_deref(), payload.workspace.map(Into::into)).await
-        .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("creating a session from template {template_id}")))?;
+    let session_loop = state.session_manager.create_from_template(&user.security_context(), template_id, payload.name.as_deref(), payload.workspace.map(Into::into)).await?;
 
     Ok(Json(SessionResponse::from(&**session_loop.session())))
 }
@@ -66,10 +65,8 @@ pub async fn agent_private_notes(
     user: AuthenticatedUser,
 ) -> Result<Json<Vec<PrivateNotesResponse>>, ApiError> {
     let session_id = SessionId(id);
-    let session = crate::routes::views(&state, &user).session(session_id).await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Session, &format!("loading session {session_id}")))?;
-    let found = session.private_notes_of(AgentId(aid)).await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Context, "reading the private notes"))?;
+    let session = crate::routes::views(&state, &user).session(session_id).await?;
+    let found = session.private_notes_of(AgentId(aid)).await?;
     Ok(Json(found.into_iter().map(|(channel, notes, digest)| PrivateNotesResponse {
         channel_id: channel.id(),
         channel_name: channel.name().to_string(),
@@ -82,8 +79,7 @@ pub async fn agent_private_notes(
 /// does. It is not started; opening it starts it.
 pub async fn restore_session(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<Json<SessionSnapshot>, ApiError> {
     let session_id = SessionId(id);
-    state.session_manager.restore_session(&user.security_context(), session_id).await
-        .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("restoring session {session_id}")))?;
+    state.session_manager.restore_session(&user.security_context(), session_id).await?;
     Ok(Json(crate::routes::session_view(&state, &user, session_id).await?))
 }
 
@@ -91,8 +87,7 @@ pub async fn restore_session(State(state): State<Arc<AppState>>, Path(id): Path<
 /// state (issue 164) - as the policy allows, by default the system's alone.
 pub async fn purge_session(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
     let session_id = SessionId(id);
-    state.session_manager.purge_session(&user.security_context(), session_id).await
-        .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("purging session {session_id}")))?;
+    state.session_manager.purge_session(&user.security_context(), session_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -101,10 +96,8 @@ pub async fn delete_session(State(state): State<Arc<AppState>>, Path(id): Path<U
     // `delete_session` stops the running loop, marks the session deleted -
     // kept with its channels until it is purged (issue 164) - and emits the
     // corresponding lifecycle events.
-    match state.session_manager.delete_session(&user.security_context(), session_id).await {
-        Ok(_) => Ok(StatusCode::NO_CONTENT),
-        Err(e) => Err(ApiError::from_runtime(e, Subject::Session, &format!("deleting session {session_id}"))),
-    }
+    state.session_manager.delete_session(&user.security_context(), session_id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn rename_session(
@@ -116,8 +109,7 @@ pub async fn rename_session(
     let session_id = SessionId(id);
     let session_loop = crate::routes::ensure_session(&state, &user, session_id).await?;
 
-    session_loop.update_name(&user.security_context(), &payload.name).await
-        .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("renaming session {session_id}")))?;
+    session_loop.update_name(&user.security_context(), &payload.name).await?;
 
     Ok(Json(SessionResponse::from(&**session_loop.session())))
 }
@@ -133,8 +125,7 @@ pub async fn update_session_privacy(
     let session_id = SessionId(id);
     let session_loop = crate::routes::ensure_session(&state, &user, session_id).await?;
 
-    session_loop.update_privacy(&user.security_context(), payload.privacy).await
-        .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("changing the privacy of session {session_id}")))?;
+    session_loop.update_privacy(&user.security_context(), payload.privacy).await?;
 
     Ok(Json(crate::routes::session_view(&state, &user, session_id).await?))
 }
@@ -154,7 +145,7 @@ pub async fn update_session_approval_rules(
     let session_loop = crate::routes::ensure_session(&state, &user, session_id).await?;
 
     session_loop.update_approval_rules(&user.security_context(), rules).await
-        .map_err(|e| crate::routes::change_error(e, "invalid_rule", Subject::Session, &format!("changing the approval rules of session {session_id}")))?;
+        .map_err(|e| crate::routes::change_error(e, "invalid_rule"))?;
 
     Ok(Json(crate::routes::session_view(&state, &user, session_id).await?))
 }
@@ -172,8 +163,7 @@ pub async fn update_session_description(
     let session_id = SessionId(id);
     let session_loop = crate::routes::ensure_session(&state, &user, session_id).await?;
 
-    session_loop.update_description(&user.security_context(), payload.summary.as_deref(), payload.briefing.as_deref()).await
-        .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("changing the description of session {session_id}")))?;
+    session_loop.update_description(&user.security_context(), payload.summary.as_deref(), payload.briefing.as_deref()).await?;
 
     Ok(Json(crate::routes::session_view(&state, &user, session_id).await?))
 }

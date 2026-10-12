@@ -71,7 +71,7 @@ fn failed(error: ArtifactError) -> ToolError {
     match error {
         ArtifactError::Invalid(_) | ArtifactError::ClassifiedOtherwise(_) | ArtifactError::TooLarge { .. } | ArtifactError::Changed => ToolError::InvalidParameter(error.to_string()),
         ArtifactError::Store(StoreError::NameTaken { .. }) => ToolError::InvalidParameter("an artifact of that name in this session is someone else's: publish under another name".to_string()),
-        ArtifactError::Store(StoreError::PermissionDenied) => ToolError::PermissionDenied("publishing an artifact here".to_string()),
+        ArtifactError::Store(StoreError::PermissionDenied(_)) => ToolError::PermissionDenied("publishing an artifact here".to_string()),
         error => ToolError::ExecutionFailed(error.to_string()),
     }
 }

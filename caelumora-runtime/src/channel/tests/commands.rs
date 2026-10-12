@@ -1,6 +1,7 @@
 //! Commands and nudges in a running channel.
 
 use super::*;
+use crate::command::CommandError;
 
 /// Decides by a rule over the action alone, to refuse one thing and
 /// allow the rest.
@@ -14,7 +15,7 @@ impl SecurityManager for Policy {
     }
 }
 
-fn command_error(error: &anyhow::Error) -> &crate::command::CommandError {
+fn command_error(error: &anyhow::Error) -> &CommandError {
     error.downcast_ref().unwrap_or_else(|| panic!("expected a CommandError, got {error:#}"))
 }
 
@@ -37,9 +38,9 @@ async fn help_answers_the_issuer_alone_and_lists_what_they_may_see() {
     assert_eq!(names, vec!["help"]);
 
     let error = actor.execute_command("wakeup", "").await.expect_err("hidden");
-    assert!(matches!(command_error(&error), crate::command::CommandError::Unknown(_)), "a hidden command looks unknown: {error}");
+    assert!(matches!(command_error(&error), CommandError::Unknown(_)), "a hidden command looks unknown: {error}");
     let error = actor.execute_command("help", "wakeup").await.expect_err("hidden");
-    assert!(matches!(command_error(&error), crate::command::CommandError::Unknown(_)), "/help does not describe it either: {error}");
+    assert!(matches!(command_error(&error), CommandError::Unknown(_)), "/help does not describe it either: {error}");
 
     let quiet = tokio::time::timeout(std::time::Duration::from_millis(200), events.recv()).await;
     assert!(quiet.is_err(), "a private answer is not sent into the channel: {quiet:?}");
@@ -84,23 +85,23 @@ async fn wakeup_reports_refusals_and_unknown_agents() {
     let channel = channel_with(&[&alice], Arc::new(refuse_waking)).await;
     let actor = channel.user_actor(alice.id).unwrap();
     let error = actor.execute_command("wakeup", "").await.expect_err("waking is refused");
-    assert!(matches!(command_error(&error), crate::command::CommandError::Forbidden(_)), "{error}");
+    assert!(matches!(command_error(&error), CommandError::Forbidden { .. }), "{error}");
     assert!(crate::error::is_forbidden(&error), "{error}");
 
     let refuse_running = Policy(|action| !matches!(action, ActionType::ExecuteCommand { command, .. } if command.name == "wakeup"));
     let channel = channel_with(&[&alice], Arc::new(refuse_running)).await;
     let actor = channel.user_actor(alice.id).unwrap();
     let error = actor.execute_command("wakeup", "").await.expect_err("running it is refused");
-    assert!(matches!(command_error(&error), crate::command::CommandError::Forbidden(_)), "visible but not runnable: {error}");
+    assert!(matches!(command_error(&error), CommandError::Forbidden { .. }), "visible but not runnable: {error}");
 
     let channel = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
     let actor = channel.user_actor(alice.id).unwrap();
     let error = actor.execute_command("wakeup", "@nobody").await.expect_err("no such agent");
-    assert!(matches!(command_error(&error), crate::command::CommandError::InvalidArguments { .. }), "{error}");
+    assert!(matches!(command_error(&error), CommandError::InvalidArguments { .. }), "{error}");
     let error = actor.execute_command("", "").await.expect_err("empty");
-    assert!(matches!(command_error(&error), crate::command::CommandError::Empty), "{error}");
+    assert!(matches!(command_error(&error), CommandError::Empty), "{error}");
     let error = actor.execute_command("nonsense", "").await.expect_err("unknown");
-    assert!(matches!(command_error(&error), crate::command::CommandError::Unknown(_)), "{error}");
+    assert!(matches!(command_error(&error), CommandError::Unknown(_)), "{error}");
 }
 
 #[tokio::test]
@@ -115,7 +116,7 @@ async fn wakeup_wakes_the_agent_named_and_refuses_an_ambiguous_name() {
     assert_eq!(reply.output.as_deref(), Some("Woke Dr. Who."));
 
     let error = actor.execute_command("wakeup", "@dr-who").await.expect_err("ambiguous");
-    assert!(matches!(command_error(&error), crate::command::CommandError::InvalidArguments { reason, .. } if reason.contains("Dr-Who and Dr. Who")), "{error}");
+    assert!(matches!(command_error(&error), CommandError::InvalidArguments { reason, .. } if reason.contains("Dr-Who and Dr. Who")), "{error}");
     assert!(!sleepers[2].woken.load(Ordering::SeqCst), "nobody is picked");
 }
 
@@ -240,13 +241,13 @@ async fn a_command_of_an_agent_names_its_agent() {
     let error = |result: Result<crate::command::CommandReply>| result.expect_err("refused");
 
     let unnamed = error(actor.execute_command("mark", "twice").await);
-    assert!(matches!(command_error(&unnamed), crate::command::CommandError::InvalidArguments { reason, .. } if reason.contains("@helper") && reason.contains("@all")), "{unnamed}");
+    assert!(matches!(command_error(&unnamed), CommandError::InvalidArguments { reason, .. } if reason.contains("@helper") && reason.contains("@all")), "{unnamed}");
     let named = actor.execute_command("mark", "@Helper twice").await.expect("named regardless of case (issue 277)");
     assert!(named.span_id.is_some(), "it is asked: {named:?}");
     let nobody = error(actor.execute_command("mark", "@nobody twice").await);
-    assert!(matches!(command_error(&nobody), crate::command::CommandError::InvalidArguments { reason, .. } if reason.contains("@helper")), "{nobody}");
+    assert!(matches!(command_error(&nobody), CommandError::InvalidArguments { reason, .. } if reason.contains("@helper")), "{nobody}");
     let unknown = error(actor.execute_command("nonsense", "@helper").await);
-    assert!(matches!(command_error(&unknown), crate::command::CommandError::Unknown(name) if name == "nonsense"), "{unknown}");
+    assert!(matches!(command_error(&unknown), CommandError::Unknown(name) if name == "nonsense"), "{unknown}");
     let all = actor.execute_command("mark", "@all").await.expect("every agent that carries it out");
     assert!(all.span_id.is_some() && all.output.is_none(), "all of them asked: {all:?}");
     running.abort();
@@ -356,7 +357,7 @@ async fn only_someone_else_in_the_channel_is_nudged() {
 
     for args in ["", "@nobody", "alice"] {
         let error = nudge(&channel, alice, args).await.expect_err("names nobody else here");
-        assert!(matches!(error, crate::command::CommandError::InvalidArguments { .. }), "{args:?}: {error}");
+        assert!(matches!(error, CommandError::InvalidArguments { .. }), "{args:?}: {error}");
     }
     let actor = channel.user_actor(alice).unwrap();
     let error = actor.request_response(ActorId::User(alice)).await.expect_err("herself");

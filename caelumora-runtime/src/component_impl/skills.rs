@@ -170,7 +170,7 @@ fn tool_error(error: SkillError) -> ToolError {
     match error {
         SkillError::Invalid(e) => ToolError::InvalidParameter(e.to_string()),
         SkillError::Store(StoreError::NameTaken { .. }) => ToolError::InvalidParameter("a skill of that name exists there already; update it instead".to_string()),
-        SkillError::Store(StoreError::PermissionDenied) => ToolError::PermissionDenied("you may write only skills of your owner's".to_string()),
+        SkillError::Store(StoreError::PermissionDenied(_)) => ToolError::PermissionDenied("you may write only skills of your owner's".to_string()),
         SkillError::NotFound(_) => ToolError::InvalidParameter("there is no such skill you may change".to_string()),
         SkillError::OwnerNotAUser => ToolError::InvalidParameter("a skill belongs to a user, and your owner is none".to_string()),
         SkillError::ClassificationRefused | SkillError::NotCleared => ToolError::PermissionDenied("the skill may not be classified as what you have seen".to_string()),

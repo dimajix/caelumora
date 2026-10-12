@@ -383,7 +383,11 @@ An operation that checks its permission as part of what it does - `ChannelLoop::
 Such an operation checks with `Enforcement::require(context, action, refusal)`, another extension
 trait on every `SecurityManager`. It answers a refusal with the operation's own error and logs every
 refusal alike, at `debug!`, naming the action and what identifies its object, never content such as
-a tool call's arguments.
+a tool call's arguments. `refusal` is handed what was refused, a `Refused` (`ActionType::refused`:
+what the action is about - the kind of an entity, or `context`, `agent`, `command`, … for the core's
+own actions - and the action as the log names it). The operation's error carries it as its source,
+so that whoever answers the error finds it in the chain, whatever wraps it (issue 323); an
+operation that answers a refusal as absent, so as not to tell that the object exists, drops it.
 
 **The order.** An operation reaches its object first; what tells the actor only about their own
 request may follow; their own permission comes before anything of others and before anything is

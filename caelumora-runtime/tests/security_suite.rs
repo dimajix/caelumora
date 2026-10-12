@@ -48,6 +48,7 @@ use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegi
 use caelumora_runtime::external::{ExternalAgent, ExternalAgentResult, ExternalEvent, ExternalStream, OutboundMessage};
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::session::{ChannelSpec, SessionError, SessionLoop, SessionManager};
+use caelumora_runtime::error::refusal;
 use caelumora_runtime::terminal::{ByteStream, Terminal, TerminalError, WorkspacePath};
 use caelumora_runtime::view::{ViewError, Viewer};
 use caelumora_runtime::workspace::WorkspaceError;
@@ -383,11 +384,12 @@ fn quiet() -> caelumora_model::component::ComponentConfig {
 fn not_found(error: &Error) -> bool {
     matches!(error.downcast_ref::<StoreError>(), Some(StoreError::NotFound { .. }))
         || matches!(error.downcast_ref::<WorkspaceError>(), Some(WorkspaceError::NotFound(_)))
+        || matches!(error.downcast_ref::<SessionError>(), Some(SessionError::NotFound(_) | SessionError::TemplateNotFound(_)))
 }
 
+/// A refusal, with what was refused (issue 323).
 fn denied(error: &Error) -> bool {
-    matches!(error.downcast_ref::<StoreError>(), Some(StoreError::PermissionDenied))
-        || matches!(error.downcast_ref::<ChannelError>(), Some(ChannelError::Forbidden { .. }))
+    refusal(error).is_some()
 }
 
 // --- Personalities and agents ---------------------------------------------
@@ -2484,7 +2486,7 @@ async fn a_workspace_is_its_owners_alone() {
     assert_eq!(asked, checks(&["alice: ReadDeletedWorkspace(alice's) yes", "alice: JoinChannel(alice) yes", "alice: RestoreWorkspace(alice's) yes"]), "reached by the store (issue 322), and not read back (issue 318)");
     assert!(workspaces.delete(&alice, docs.id).await.unwrap());
     let (purged, asked) = world.asked(workspaces.purge(&alice, docs.id)).await;
-    assert!(matches!(purged, Err(WorkspaceError::Store(StoreError::PermissionDenied))), "the owner does not purge: {purged:?}");
+    assert!(matches!(purged, Err(WorkspaceError::Store(StoreError::PermissionDenied(_)))), "the owner does not purge: {purged:?}");
     assert_eq!(asked, checks(&["alice: ReadDeletedWorkspace(alice's) yes", "alice: JoinChannel(alice) yes", "alice: PurgeWorkspace(alice's) no"]));
     assert!(world.files.path().join(docs.id.to_string()).is_dir(), "and the files stay");
     assert!(workspaces.purge(&World::system(), docs.id).await.unwrap(), "the system does");
@@ -2622,7 +2624,7 @@ async fn a_workspace_is_used_in_a_channel_by_its_members_as_its_list_lets_them_w
     assert!(asked.ends_with(&checks(&["bob: GetWorkspace(alice's) yes", "bob: Publish yes", "bob: Publish yes"])), "its list, then both ways: {asked:?}");
     assert_eq!(bobs.id(), docs.id);
     let his = |need| workspaces.terminal_in(&bob, session_id, main, need);
-    assert!(matches!(his(Grant::Write).await, Err(WorkspaceError::ReadOnly(_))), "reading, not changing, where it grants reading");
+    assert!(matches!(his(Grant::Write).await, Err(WorkspaceError::ReadOnly { .. })), "reading, not changing, where it grants reading");
     workspaces.share(&alice, docs.id, Subject::Group(GroupId::of_session(session_id)), Grant::Write).await.unwrap();
     let (_, terminal) = his(Grant::Write).await.expect("and reaches its files");
     terminal.write(&WorkspacePath::parse("notes/a.md").unwrap(), file("from bob"), 100).await.unwrap();
@@ -2722,7 +2724,7 @@ async fn a_command_is_ended_in_its_channel_by_who_may_change_the_workspace_there
     let elsewhere = other.start("sleep 30").await.unwrap();
 
     let (refused, asked) = world.asked(workspaces.kill_command(&bob, session_id, main, &started, 0)).await;
-    assert!(matches!(refused, Err(WorkspaceError::ReadOnly(_))), "not by who only reads its files: {refused:?}");
+    assert!(matches!(refused, Err(WorkspaceError::ReadOnly { .. })), "not by who only reads its files: {refused:?}");
     // Asked as it is now, as the views ask it: the session, the channel and
     // whether he is cleared for it, the workspace as the channel offers it,
     // then whether he may change its files.
@@ -2765,14 +2767,14 @@ async fn a_workspace_is_reached_by_its_list_wherever_one_acts() {
     let elsewhere = SecurityContext::new(ActorId::User(world.bob), SessionId::new(), ChannelId::new()).with_roles(vec![*STAFF], None);
     let his = views(&elsewhere).workspace(docs.id).await.expect("he reads it, wherever he acts");
     workspaces.terminal(&elsewhere, docs.id, Grant::Read).await.expect("its files");
-    assert!(matches!(workspaces.terminal(&elsewhere, docs.id, Grant::Write).await, Err(WorkspaceError::ReadOnly(_))), "not to change them");
+    assert!(matches!(workspaces.terminal(&elsewhere, docs.id, Grant::Write).await, Err(WorkspaceError::ReadOnly { .. })), "not to change them");
     let seen = his.snapshot().await;
     assert!(!seen.can_write && !seen.can_change && seen.access.is_empty(), "nor whom else it is shared with");
     let listed: Vec<WorkspaceId> = views(&bob).workspaces().await.unwrap().iter().map(|w| w.id()).collect();
     assert_eq!(listed, [docs.id], "listed among his");
     let owners = views(&alice).workspace(docs.id).await.unwrap().snapshot().await;
     assert_eq!(owners.access.iter().map(|e| e.name.as_deref()).collect::<Vec<_>>(), [Some("bob")], "its owner sees whom, by name");
-    assert!(matches!(workspaces.set_access(&bob, docs.id, Vec::new()).await, Err(WorkspaceError::Store(StoreError::PermissionDenied))), "a reader does not change the list");
+    assert!(matches!(workspaces.set_access(&bob, docs.id, Vec::new()).await, Err(WorkspaceError::Store(StoreError::PermissionDenied(_)))), "a reader does not change the list");
     assert!(matches!(views(&carol).workspace(docs.id).await, Err(ViewError::WorkspaceNotFound(_))), "nor is it there for carol");
 
     let writers = SecurityAttributes::owned_by(ActorId::User(world.alice)).granting(Subject::Actor(ActorId::User(world.bob)), Grant::Write).acl;
@@ -2799,7 +2801,7 @@ async fn what_is_shared_with_a_team_is_read_by_its_members_while_they_are_member
     assert_eq!(asked, checks(&["alice: GetGroup(alice's) yes", "alice: UpdateGroup(alice's) yes", "alice: GetGroup(alice's) yes", "alice: UpdateGroup(alice's) yes"]),
         "read, changed - before whether its members exist is asked (issue 312) -, then changed as stored");
     let (refused, asked) = world.asked(groups.set_members(&bob, project.id, vec![world.bob, world.carol])).await;
-    assert!(matches!(refused, Err(GroupError::Store(StoreError::PermissionDenied))), "a member reads it but changes nothing: {refused:?}");
+    assert!(matches!(refused, Err(GroupError::Store(StoreError::PermissionDenied(_)))), "a member reads it but changes nothing: {refused:?}");
     assert_eq!(asked, checks(&["bob: GetGroup(alice's) yes", "bob: UpdateGroup(alice's) no"]), "refused before he learns whether carol exists");
     assert!(matches!(views(&carol).group(project.id).await, Err(ViewError::GroupNotFound(_))), "a stranger does not find it");
     let listed: Vec<GroupId> = views(&bob).groups().await.unwrap().iter().map(|g| g.id()).collect();
@@ -2995,7 +2997,7 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
 
     assert!(in_main(&bob).await.workspace().await.unwrap().is_some(), "bob uses it too");
     let refused = publish(&world, &bob, session_id, main, &at, "report.csv", None).await;
-    assert!(matches!(refused, Err(ArtifactError::Store(StoreError::PermissionDenied))), "nor adds to alice's artifact of that name: {refused:?}");
+    assert!(matches!(refused, Err(ArtifactError::Store(StoreError::PermissionDenied(_)))), "nor adds to alice's artifact of that name: {refused:?}");
     let listed = |ctx: &SecurityContext| {
         let views = world.manager.views(Viewer::new(ctx.clone()));
         async move { views.artifacts().await.unwrap().iter().map(|a| a.artifact().id).collect::<Vec<_>>() }
@@ -3011,7 +3013,7 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
     let (added, third) = publish(&world, &bob, session_id, main, &at, "report.csv", None).await.expect("whom it is shared with to write adds a version");
     assert_eq!((third, added.owner()), (3, Some(world.alice)), "hers still");
     assert!(matches!(artifacts.keep(&bob, artifact.id, Scope::UserScope { user_id: world.bob }).await, Err(ArtifactError::InvalidScope)), "not in his scope, whose it is not");
-    assert!(matches!(artifacts.keep(&bob, artifact.id, Scope::GlobalScope).await, Err(ArtifactError::Store(StoreError::PermissionDenied))), "nor keeps it at all");
+    assert!(matches!(artifacts.keep(&bob, artifact.id, Scope::GlobalScope).await, Err(ArtifactError::Store(StoreError::PermissionDenied(_)))), "nor keeps it at all");
     let kept_one = artifacts.keep(&alice, artifact.id, Scope::UserScope { user_id: world.alice }).await.expect("its owner keeps it");
     assert_eq!(kept_one.name.scope, Scope::UserScope { user_id: world.alice });
     let (left, _) = publish(&world, &alice, session_id, main, &at, "draft.csv", None).await.unwrap();

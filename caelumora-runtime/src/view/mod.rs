@@ -52,7 +52,7 @@ use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions, Place};
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::removal::Removal;
-use caelumora_model::security::{AccessQuestions, AclEntry, SecurityAttributes, SecurityContext, SecurityManager, Subject};
+use caelumora_model::security::{AccessQuestions, AclEntry, Refused, SecurityAttributes, SecurityContext, SecurityManager, Subject};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::snapshot::{AccessSnapshot, AgentSnapshot, DeletedSnapshot};
 use caelumora_model::workspace::WorkspaceId;
@@ -62,7 +62,7 @@ use caelumora_model::scope::{found_from, Scope, Scoped};
 use caelumora_model::value::name::Name;
 use crate::workspace::WorkspaceManager;
 use crate::skill::SkillManager;
-use caelumora_model::store::{EntityStores, StateStore, StoreResultExt};
+use caelumora_model::store::{EntityStores, StateStore, StoreError, StoreResultExt};
 use crate::component::ComponentRegistry;
 use std::sync::Arc;
 use caelumora_model::artifact::Artifact;
@@ -137,7 +137,7 @@ pub enum ViewError {
     /// Reached, but not the viewer's to read: what an agent saw, which
     /// tools it has.
     #[error("You are not permitted to read this of {actor}")]
-    Forbidden { actor: ActorId },
+    Forbidden { actor: ActorId, #[source] refused: Refused },
     /// Only agents have a context.
     #[error("There is nothing {actor} saw: it is no agent, or no longer exists")]
     NoContext { actor: ActorId },
@@ -311,8 +311,7 @@ impl Views {
                 Found::Running(session_loop)
             }
             None => Found::Stored(self.stores.sessions.get(self.viewer.context(), id).await.map_err(|e| {
-                let e = anyhow::Error::new(e);
-                if crate::error::is_not_found(&e, "session") || crate::error::is_forbidden(&e) { not_found() } else { ViewError::Failed(e) }
+                if matches!(e, StoreError::NotFound { .. } | StoreError::PermissionDenied(_)) { not_found() } else { ViewError::Failed(e.into()) }
             })?),
         };
         Ok(SessionView::of(self.clone(), found))

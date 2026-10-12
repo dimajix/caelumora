@@ -204,7 +204,7 @@ impl AgentMemory {
         let refused = || ToolError::PermissionDenied(format!("reclassifying entry #{id} as {classification}"));
         let attributes = turn.work().channel_attributes();
         let action = ActionType::Reclassify(Reclassified::Memory { author: ActorId::Agent(turn.agent_id()), attributes: &attributes });
-        security.require(turn.security_context(), action, refused).await?;
+        security.require(turn.security_context(), action, |_| refused()).await?;
         confidentiality.require_publish(turn.security_context(), &classification, &here, refused)?;
         let origin = Self::origin(turn).await;
         turn.stage_memory(MemoryChange::Reclassify { id, classification }, origin);

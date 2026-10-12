@@ -39,7 +39,7 @@ use crate::removal::Stored;
 use std::future::Future;
 use crate::store::query::{self, Cursor, Field, Page, Query};
 use crate::confidentiality::{may_reach, ConfidentialityPolicy, ConfidentialityQuestions};
-use crate::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
+use crate::security::{ActionType, Enforcement, Refused, SecurityContext, SecurityManager};
 use crate::store::{StoreError, StoreResult};
 
 
@@ -58,8 +58,9 @@ impl<'a> Access<'a> {
         Self { manager, confidentiality, ctx }
     }
 
-    /// `action`, or `refusal()` if the caller may not.
-    async fn require<E: Send>(&self, action: ActionType<'_>, refusal: impl FnOnce() -> E + Send) -> Result<(), E> {
+    /// `action`, or the error `refusal` makes of what was refused if the
+    /// caller may not.
+    async fn require<E: Send>(&self, action: ActionType<'_>, refusal: impl FnOnce(Refused) -> E + Send) -> Result<(), E> {
         self.manager.require(self.ctx, action, refusal).await
     }
 
@@ -75,14 +76,14 @@ impl<'a> Access<'a> {
 
     /// An action that concerns no single entity, such as listing.
     pub(crate) async fn allow(&self, action: ActionType<'_>) -> StoreResult<()> {
-        self.manager.require(self.ctx, action, || StoreError::PermissionDenied).await
+        self.manager.require(self.ctx, action, StoreError::PermissionDenied).await
     }
 
     /// `found`, if it exists and the caller may read it; not found otherwise.
     pub(crate) async fn read<T: Stored>(&self, found: Option<T>, id: String) -> StoreResult<T> {
         let not_found = || StoreError::NotFound { entity: T::KIND.name(), id };
         let Some(value) = found.filter(present) else { return Err(not_found()) };
-        self.require(ActionType::get(T::KIND, value.security_attributes()), not_found.clone()).await?;
+        self.require(ActionType::get(T::KIND, value.security_attributes()), |_| not_found.clone()()).await?;
         self.require_cleared(&value, not_found)?;
         Ok(value)
     }
@@ -141,7 +142,7 @@ impl<'a> Access<'a> {
     pub(crate) async fn change<T: Stored>(&self, stored: Option<&T>, value: &T, id: String) -> StoreResult<()> {
         let not_found = || StoreError::NotFound { entity: T::KIND.name(), id };
         let Some(stored) = stored.filter(|s| present(*s)) else { return Err(not_found()) };
-        self.require(ActionType::get(T::KIND, stored.security_attributes()), not_found.clone()).await?;
+        self.require(ActionType::get(T::KIND, stored.security_attributes()), |_| not_found.clone()()).await?;
         self.require_cleared(stored, not_found)?;
         self.allow(ActionType::update(T::KIND, stored.security_attributes())).await?;
         unmarked(value)?;
@@ -152,7 +153,7 @@ impl<'a> Access<'a> {
     /// could see to delete, an error if they may see but not delete it.
     pub(crate) async fn delete<T: Stored>(&self, stored: Option<&T>) -> StoreResult<bool> {
         let Some(stored) = stored.filter(|s| present(*s)) else { return Ok(false) };
-        if self.require(ActionType::get(T::KIND, stored.security_attributes()), || ()).await.is_err() || self.require_cleared(stored, || ()).is_err() {
+        if self.require(ActionType::get(T::KIND, stored.security_attributes()), |_| ()).await.is_err() || self.require_cleared(stored, || ()).is_err() {
             return Ok(false);
         }
         self.allow(ActionType::delete(T::KIND, stored.security_attributes())).await.map(|_| true)
@@ -163,7 +164,7 @@ impl<'a> Access<'a> {
     pub(crate) async fn read_deleted<T: Stored>(&self, found: Option<T>, id: String) -> StoreResult<T> {
         let not_found = || StoreError::NotFound { entity: T::KIND.name(), id };
         let Some(value) = found.filter(|v| !present(v)) else { return Err(not_found()) };
-        self.require(ActionType::read_deleted(T::KIND, value.security_attributes()), not_found.clone()).await?;
+        self.require(ActionType::read_deleted(T::KIND, value.security_attributes()), |_| not_found.clone()()).await?;
         self.require_cleared(&value, not_found)?;
         Ok(value)
     }
@@ -191,7 +192,7 @@ impl<'a> Access<'a> {
     pub(crate) async fn purge<T: Stored>(&self, stored: Option<&T>) -> StoreResult<bool> {
         let Some(stored) = stored.filter(|s| !present(*s)) else { return Ok(false) };
         let attributes = stored.security_attributes();
-        if self.require(ActionType::read_deleted(T::KIND, attributes), || ()).await.is_err() || self.require_cleared(stored, || ()).is_err() {
+        if self.require(ActionType::read_deleted(T::KIND, attributes), |_| ()).await.is_err() || self.require_cleared(stored, || ()).is_err() {
             return Ok(false);
         }
         self.allow(ActionType::purge(T::KIND, attributes)).await.map(|_| true)
@@ -372,11 +373,11 @@ mod tests {
         assert!(matches!(store.update(&carol_ctx, &forged).await, Err(StoreError::NotFound { .. })));
         let mut forged = hers.clone();
         forged.security_attributes.owner_id = bob;
-        assert!(matches!(store.update(&bob_ctx, &forged).await, Err(StoreError::PermissionDenied)), "a contributor may read, not change");
+        assert!(matches!(store.update(&bob_ctx, &forged).await, Err(StoreError::PermissionDenied(_))), "a contributor may read, not change");
         assert!(store.update(&alice_ctx, &hers).await.is_ok());
 
         assert!(!store.delete(&carol_ctx, hers.id).await.unwrap(), "nothing carol could see to delete");
-        assert!(matches!(store.delete(&bob_ctx, hers.id).await, Err(StoreError::PermissionDenied)));
+        assert!(matches!(store.delete(&bob_ctx, hers.id).await, Err(StoreError::PermissionDenied(_))));
         assert!(store.delete(&alice_ctx, hers.id).await.unwrap());
     }
 
@@ -399,7 +400,7 @@ mod tests {
         assert!(!store.purge(&bob_ctx, hers.id).await.unwrap(), "nothing bob could see to purge");
 
         let purged = store.purge(&alice_ctx, hers.id).await;
-        assert!(matches!(purged, Err(StoreError::PermissionDenied)), "the owner does not purge: {purged:?}");
+        assert!(matches!(purged, Err(StoreError::PermissionDenied(_))), "the owner does not purge: {purged:?}");
         assert_eq!(store.list_deleted(&alice_ctx, &Query::all()).await.map(|page| page.items).unwrap().len(), 1, "the owner sees her trash");
         store.restore(&alice_ctx, hers.id).await.expect("and restores from it");
         assert!(store.delete(&alice_ctx, hers.id).await.unwrap());
@@ -411,7 +412,7 @@ mod tests {
         let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnersAndContributors), Arc::new(ConfidentialityRules::default()))).entity_stores().sessions;
         let (alice, _) = user();
         let (_, bob_ctx) = user();
-        assert!(matches!(store.create(&bob_ctx, &session(alice, Vec::new())).await, Err(StoreError::PermissionDenied)));
+        assert!(matches!(store.create(&bob_ctx, &session(alice, Vec::new())).await, Err(StoreError::PermissionDenied(_))));
     }
 
     #[tokio::test]
@@ -429,7 +430,7 @@ mod tests {
         let record = User { id: alice_id, username: Name::new("alice").unwrap(), email: String::new(), roles: vec![crate::role::RoleId::new()], deleted: None };
 
         let own = store.create(&alice_ctx, &record).await;
-        assert!(matches!(own, Err(StoreError::PermissionDenied)), "nobody records themselves, got {own:?}");
+        assert!(matches!(own, Err(StoreError::PermissionDenied(_))), "nobody records themselves, got {own:?}");
         store.create(&system, &record).await.expect("the system records users");
 
         assert_eq!(store.get(&bob_ctx, alice_id).await.expect("another user reads her").username, "alice");
@@ -439,9 +440,9 @@ mod tests {
         let promoted = User { roles: vec![crate::role::RoleId::new()], ..record.clone() };
         for ctx in [&alice_ctx, &bob_ctx] {
             let update = store.update(ctx, &promoted).await;
-            assert!(matches!(update, Err(StoreError::PermissionDenied)), "not even she changes her roles, got {update:?}");
+            assert!(matches!(update, Err(StoreError::PermissionDenied(_))), "not even she changes her roles, got {update:?}");
             let delete = store.delete(ctx, alice_id).await;
-            assert!(matches!(delete, Err(StoreError::PermissionDenied)), "nor deletes her, got {delete:?}");
+            assert!(matches!(delete, Err(StoreError::PermissionDenied(_))), "nor deletes her, got {delete:?}");
         }
         store.update(&system, &promoted).await.expect("the system changes users");
         assert!(store.delete(&system, alice_id).await.expect("the system deletes users"));

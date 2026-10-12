@@ -87,7 +87,7 @@ impl SessionLoop {
     /// whatever else storing reports.
     pub async fn set_workspace(&self, context: &SecurityContext, workspace: Option<WorkspaceId>, share: Option<Grant>) -> Result<()> {
         let session = self.session();
-        self.security.require(context, ActionType::update(Session::KIND, &session.security_attributes), || StoreError::PermissionDenied).await?;
+        self.security.require(context, ActionType::update(Session::KIND, &session.security_attributes), StoreError::PermissionDenied).await?;
         if let Some(id) = workspace {
             require_attachable(self.runtime_manager.workspace_manager(), self.security.as_ref(), context, id, self.id).await?;
         }
@@ -132,7 +132,7 @@ mod tests {
         let mut events = runtime.event_bus().subscribe_all();
 
         let refused = session.update_privacy(&as_user(bob.id), PrivacyConfig::SharedAudience).await.expect_err("a participant may not");
-        assert!(matches!(refused.downcast_ref::<StoreError>(), Some(StoreError::PermissionDenied)), "{refused}");
+        assert!(matches!(refused.downcast_ref::<StoreError>(), Some(StoreError::PermissionDenied(_))), "{refused}");
         assert_eq!(session.privacy().policy, PrivacyConfig::Private, "unchanged");
 
         session.update_privacy(&as_user(alice.id), PrivacyConfig::SharedAudience).await.expect("the owner may");

@@ -138,7 +138,7 @@ impl SessionLoop {
         // others in it (issues 198, 312): who may not learns nothing of their
         // clearance. The store asks again as it stores.
         self.security
-            .require(context, ActionType::create(Channel::KIND, &channel.security_attributes), || StoreError::PermissionDenied).await?;
+            .require(context, ActionType::create(Channel::KIND, &channel.security_attributes), StoreError::PermissionDenied).await?;
         crate::channel::require_admitted(&self.runtime_manager, context, &channel).await?;
         self.stores.channels.create(context, &channel).await?;
         let added = match keep_participants(self.stores.groups.as_ref(), Group::of_channel(&channel)).await {
@@ -202,7 +202,7 @@ impl SessionLoop {
         let running = self.channel_for(context, channel_id).await?;
         // Not the guard itself: it would be held across the awaits below.
         let channel = Arc::clone(&running.channel());
-        self.security.require(context, ActionType::delete(Channel::KIND, &channel.security_attributes), || StoreError::PermissionDenied).await?;
+        self.security.require(context, ActionType::delete(Channel::KIND, &channel.security_attributes), StoreError::PermissionDenied).await?;
         let scope = Scope::ChannelScope { session_id: self.id, channel_id };
         self.session_controller.remove_channel(context, channel_id).await?;
         // Marked before what lies in its scope, so that all of that is
@@ -258,7 +258,7 @@ impl SessionLoop {
             _ => return Err(not_found().into()),
         };
         self.security
-            .require(context, ActionType::restore(Channel::KIND, &channel.security_attributes), || StoreError::PermissionDenied).await?;
+            .require(context, ActionType::restore(Channel::KIND, &channel.security_attributes), StoreError::PermissionDenied).await?;
         // As when it was created: its participants' clearance may have
         // changed while it was deleted.
         crate::channel::require_admitted(&self.runtime_manager, context, &channel).await?;

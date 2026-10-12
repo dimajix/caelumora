@@ -576,7 +576,7 @@ impl ToolExecutor {
         }
         // The one question of the call's permission (issue 304, rule 4):
         // asked as it is admitted, not again when it runs.
-        if self.security_manager.require(turn.security_context(), ActionType::CallTool(call), || ()).await.is_err() {
+        if self.security_manager.require(turn.security_context(), ActionType::CallTool(call), |_| ()).await.is_err() {
             info!("Tool call '{}' by agent {} forbidden by the security manager", call.function_name, agent);
             return Admission::Answered(ToolCallResult::of(call, ToolResultStatus::Forbidden, forbidden_result(), turn.label()));
         }

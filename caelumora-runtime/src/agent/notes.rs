@@ -132,7 +132,7 @@ impl AgentNotes {
         let refused = || ToolError::PermissionDenied(format!("reclassifying note #{id} as {classification}"));
         let attributes = turn.work().channel_attributes();
         let action = ActionType::Reclassify(Reclassified::Note { author: ActorId::Agent(turn.agent_id()), attributes: &attributes });
-        security.require(turn.security_context(), action, refused).await?;
+        security.require(turn.security_context(), action, |_| refused()).await?;
         confidentiality.require_publish(turn.security_context(), &classification, &channel, refused)?;
         turn.stage_note(kind, NoteChange::Reclassify { id, classification });
         Ok(())

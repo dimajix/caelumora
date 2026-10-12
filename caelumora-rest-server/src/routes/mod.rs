@@ -1,5 +1,5 @@
 use crate::auth::{require_auth, require_stream_auth, AuthenticatedUser};
-use crate::error::{ApiError, Subject};
+use crate::error::ApiError;
 use caelumora_rest_api::channel::ChannelResponse;
 use caelumora_rest_api::session::SessionSnapshot;
 use crate::state::AppState;
@@ -35,11 +35,7 @@ pub async fn ensure_session(
 ) -> Result<Arc<SessionLoop>, ApiError> {
     // The running session, or loaded from the store and started - either way
     // only if this user may read it (issue 11).
-    state
-        .session_manager
-        .open_session(&user.security_context(), session_id)
-        .await
-        .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("opening session {session_id}")))
+    Ok(state.session_manager.open_session(&user.security_context(), session_id).await?)
 }
 
 /// Session `session_id` and its channel `channel_id`, as `user` may read
@@ -48,8 +44,7 @@ pub async fn ensure_session(
 /// the runtime decides that (`SessionLoop::channel_for`).
 pub async fn open_channel(state: &Arc<AppState>, user: &AuthenticatedUser, session_id: SessionId, channel_id: ChannelId) -> Result<(Arc<SessionLoop>, Arc<ChannelLoop>), ApiError> {
     let session = ensure_session(state, user, session_id).await?;
-    let channel = session.channel_for(&user.security_context(), channel_id).await
-        .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("opening channel {channel_id}")))?;
+    let channel = session.channel_for(&user.security_context(), channel_id).await?;
     Ok((session, channel))
 }
 
@@ -64,19 +59,15 @@ pub async fn channel_view(state: &Arc<AppState>, user: &AuthenticatedUser, sessi
 /// members and the briefings (issue 245) - what `GET` of one session and
 /// every change of one answer.
 pub async fn session_view(state: &Arc<AppState>, user: &AuthenticatedUser, session_id: SessionId) -> Result<SessionSnapshot, ApiError> {
-    let session = views(state, user).session(session_id).await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Session, &format!("loading session {session_id}")))?;
+    let session = views(state, user).session(session_id).await?;
     Ok(session.snapshot(Detail::CHANNELS | Detail::MEMBERS | Detail::BRIEFING).await.into())
 }
 
 /// Channel `channel_id` of session `session_id` as `user` reaches it
 /// (issue 163) - what a handler reads a channel through, running or not.
 pub async fn channel_of(state: &Arc<AppState>, user: &AuthenticatedUser, session_id: SessionId, channel_id: ChannelId) -> Result<ChannelView, ApiError> {
-    let reaching = || format!("reaching channel {channel_id}");
-    let session = views(state, user).session(session_id).await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Session, &reaching()))?;
-    session.channel(channel_id).await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Session, &reaching()))
+    let session = views(state, user).session(session_id).await?;
+    Ok(session.channel(channel_id).await?)
 }
 
 /// The views as `user` navigates them (issue 163): what a handler reads
@@ -116,11 +107,11 @@ fn attachment(name: &str) -> String {
 /// What changing a place failed with, as the API answers it: `400` with
 /// `code` - `invalid_rule` for an approval rule the place may not keep
 /// (issue 13) - and why, for what the place refused to keep; otherwise as
-/// `from_runtime` answers.
-pub fn change_error(error: anyhow::Error, code: &'static str, subject: Subject, action: &str) -> ApiError {
+/// the error answers itself.
+pub fn change_error(error: anyhow::Error, code: &'static str) -> ApiError {
     match error.downcast_ref::<StoreError>() {
         Some(StoreError::Validation(reason)) => ApiError::new(StatusCode::BAD_REQUEST, code, reason.clone()),
-        _ => ApiError::from_runtime(error, subject, action),
+        _ => error.into(),
     }
 }
 

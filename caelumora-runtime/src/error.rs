@@ -18,6 +18,7 @@ use crate::channel::ChannelError;
 use crate::terminal::TerminalError;
 use crate::workspace::WorkspaceError;
 use crate::skill::SkillError;
+use caelumora_model::security::Refused;
 use caelumora_model::store::StoreError;
 use caelumora_model::template::TemplateError;
 use caelumora_model::value::ValueError;
@@ -92,22 +93,17 @@ fn store_message(error: &StoreError) -> Option<String> {
     }
 }
 
-/// Whether `error` is a refusal by the `SecurityManager` - which a caller
-/// answers with "not allowed", not with "something broke".
-pub fn is_forbidden(error: &anyhow::Error) -> bool {
-    error.chain().any(|e| {
-        matches!(e.downcast_ref::<ChannelError>(), Some(ChannelError::Forbidden { .. }))
-            || matches!(e.downcast_ref::<CommandError>(), Some(CommandError::Forbidden(_)))
-            || matches!(e.downcast_ref::<StoreError>(), Some(StoreError::PermissionDenied))
-    })
+/// What the `SecurityManager` refused, if `error` is a refusal - which a
+/// caller answers with "not allowed", not with "something broke". Found
+/// wherever in its chain it is (issue 323): every error that ends in a
+/// refusal carries it as its source.
+pub fn refusal(error: &anyhow::Error) -> Option<&Refused> {
+    error.chain().find_map(|e| e.downcast_ref::<Refused>())
 }
 
-/// Whether `error` means that an entity of kind `entity` (e.g. "session")
-/// does not exist. The kind matters: loading a session can fail because its
-/// agent's personality is missing, and that is not "session not found".
-pub fn is_not_found(error: &anyhow::Error, entity: &str) -> bool {
-    let matches = |e: &StoreError| matches!(e, StoreError::NotFound { entity: kind, .. } if *kind == entity);
-    error.chain().any(|e| e.downcast_ref::<StoreError>().is_some_and(matches))
+/// Whether `error` is a refusal by the `SecurityManager`.
+pub fn is_forbidden(error: &anyhow::Error) -> bool {
+    refusal(error).is_some()
 }
 
 #[cfg(test)]
@@ -148,10 +144,12 @@ mod tests {
     }
 
     #[test]
-    fn not_found_is_recognised_through_wrappers() {
-        let not_found = |entity| StoreError::NotFound { entity, id: "42".to_string() };
-        assert!(is_not_found(&anyhow::Error::new(not_found("session")).context("loading"), "session"));
-        assert!(!is_not_found(&anyhow::Error::new(not_found("personality")), "session"), "another entity is missing");
-        assert!(!is_not_found(&anyhow::Error::new(StoreError::Backend("x".to_string())), "session"));
+    fn a_refusal_is_found_through_wrappers_whatever_their_type() {
+        let refused = Refused { subject: "skill", action: "UpdateSkill".to_string() };
+        // Transparent around the store's error, which holds the refusal as
+        // its source - as a plugin's error does, in the core's `anyhow`.
+        let error = anyhow::Error::new(SkillError::Store(StoreError::PermissionDenied(refused.clone()))).context("deleting what lies in the scope");
+        assert_eq!(refusal(&error), Some(&refused));
+        assert!(!is_forbidden(&anyhow::Error::new(StoreError::Backend("x".to_string()))));
     }
 }

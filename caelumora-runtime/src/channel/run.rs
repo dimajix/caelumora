@@ -268,7 +268,7 @@ impl ChannelLoop {
         }
         let classification = self.classification();
         let channel = self.security_attributes();
-        let forbidden = || Rejection::Forbidden;
+        let forbidden = |_| Rejection::Forbidden;
         match &event.event {
             ActorEvent::MessageModified(modified) => {
                 let mut message = self.message(modified.id).await.ok_or(Rejection::MessageNotFound)?;

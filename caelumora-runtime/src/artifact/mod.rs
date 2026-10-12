@@ -189,7 +189,7 @@ impl ArtifactManager {
         let existing = self.artifacts.find_by_name(&SecurityContext::system(), &name).await.optional()?;
         let (id, number, storage_name) = match &existing {
             Some(artifact) => {
-                self.security.require(ctx, ActionType::custom(Artifact::KIND, &WRITE, &artifact.security_attributes), || StoreError::PermissionDenied).await?;
+                self.security.require(ctx, ActionType::custom(Artifact::KIND, &WRITE, &artifact.security_attributes), StoreError::PermissionDenied).await?;
                 if artifact.classification != *classification {
                     return Err(ArtifactError::ClassifiedOtherwise(artifact.name.name.to_string()));
                 }
@@ -197,7 +197,7 @@ impl ArtifactManager {
             }
             None => {
                 let attributes = SecurityAttributes::owned_by(ActorId::User(owner));
-                self.security.require(ctx, ActionType::create(Artifact::KIND, &attributes), || StoreError::PermissionDenied).await?;
+                self.security.require(ctx, ActionType::create(Artifact::KIND, &attributes), StoreError::PermissionDenied).await?;
                 (ArtifactId::new(), 1, self.publish_to.clone().ok_or(ArtifactError::NotConfigured)?)
             }
         };
@@ -386,7 +386,7 @@ impl ArtifactManager {
     pub async fn purge(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<bool> {
         let _writing = self.writing.lock().await;
         let Some(artifact) = self.artifacts.get_deleted(ctx, id).await.optional()? else { return Ok(false) };
-        self.security.require(ctx, ActionType::purge(Artifact::KIND, &artifact.security_attributes), || StoreError::PermissionDenied).await?;
+        self.security.require(ctx, ActionType::purge(Artifact::KIND, &artifact.security_attributes), StoreError::PermissionDenied).await?;
         self.storage(&artifact.storage)?.remove(id).await?;
         let purged = self.artifacts.purge(ctx, id).await?;
         info!(artifact = %id, by = %ctx.caller_id, "Artifact purged");

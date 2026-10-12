@@ -201,6 +201,45 @@ impl<'a> ActionType<'a> {
             ActionType::ReadSecret(key) => format!("ReadSecret({key})"),
         }
     }
+
+    /// This action as refused (issue 323): named by what it is about - the
+    /// kind of an entity, or what one of the core's own actions concerns -
+    /// and described as the log describes it.
+    pub fn refused(&self) -> Refused {
+        let subject = match self {
+            ActionType::Entity { kind, .. } | ActionType::List(kind) => kind.name(),
+            ActionType::ReadAgentContext(_) => "context",
+            ActionType::ReadAgentTools { .. } | ActionType::ReadAgentComponents(_) => "agent",
+            ActionType::ApproveToolCall { .. } => "approval",
+            ActionType::StopSession(_) => "session",
+            ActionType::CancelChannel(_) => "cancel",
+            ActionType::WakeChannel(_) => "channel",
+            ActionType::RetryMessage(_) | ActionType::ModifyMessage { .. } | ActionType::RevokeMessage { .. } => "message",
+            ActionType::AnswerQuestion(_) => "question",
+            ActionType::Reclassify(_) => "classification",
+            ActionType::ShowCommand { .. } | ActionType::ExecuteCommand { .. }
+            | ActionType::ShowAgentCommand { .. } | ActionType::ExecuteAgentCommand { .. } => "command",
+            ActionType::CallTool(_) => "tool",
+            ActionType::ReadSecret(_) => "secret",
+        };
+        Refused { subject, action: self.describe() }
+    }
+}
+
+/// An action refused (issue 323): what it was, without the attributes it
+/// was asked with. Made where the permission is checked
+/// (`Enforcement::require`) and carried by the error the refusal ends in,
+/// as its source, so that whoever answers the error - the REST server -
+/// finds it there and says what was refused, wherever the error went.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{action} is not permitted")]
+pub struct Refused {
+    /// What it is about, as the REST API names it in its codes
+    /// (`skill_forbidden`): the kind of an entity, or `context`, `agent`,
+    /// `command`, … for the core's own actions.
+    pub subject: &'static str,
+    /// The action as `ActionType::describe` names it.
+    pub action: String,
 }
 
 /// What is done with a stored entity (`ActionType::Entity`, issue 323):
@@ -718,12 +757,14 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
 /// like those.
 #[async_trait]
 pub trait Enforcement {
-    /// Nothing if `context` may do `action`; `refusal()` - the caller's
-    /// error, which may deliberately say less, such as "not found" - if not.
+    /// Nothing if `context` may do `action`; the caller's error made by
+    /// `refusal` of what was refused if not. The error carries the
+    /// [`Refused`] as its source, unless it deliberately says less, such as
+    /// "not found".
     async fn require<E, F>(&self, context: &SecurityContext, action: ActionType<'_>, refusal: F) -> Result<(), E>
     where
         E: Send,
-        F: FnOnce() -> E + Send;
+        F: FnOnce(Refused) -> E + Send;
 }
 
 #[async_trait]
@@ -731,13 +772,14 @@ impl<T: SecurityManager + ?Sized> Enforcement for T {
     async fn require<E, F>(&self, context: &SecurityContext, action: ActionType<'_>, refusal: F) -> Result<(), E>
     where
         E: Send,
-        F: FnOnce() -> E + Send,
+        F: FnOnce(Refused) -> E + Send,
     {
         if self.check(context, action).await {
             return Ok(());
         }
-        tracing::debug!("Refused {} for {}", action.describe(), context.principal_id);
-        Err(refusal())
+        let refused = action.refused();
+        tracing::debug!("Refused {} for {}", refused.action, context.principal_id);
+        Err(refusal(refused))
     }
 }
 
@@ -1244,14 +1286,15 @@ mod tests {
     #[tokio::test]
     async fn require_answers_a_refusal_with_the_callers_error() {
         #[derive(Debug, PartialEq)]
-        struct Refused;
+        struct Denied(Refused);
         let (owner, stranger) = (user(), user());
         let context = |actor| SecurityContext::new(actor, Default::default(), Default::default());
         let hers = SecurityAttributes::owned_by(owner);
         let policy = OwnershipSecurityManager::new();
 
-        assert_eq!(policy.require(&context(owner), ActionType::delete(Session::KIND, &hers), || Refused).await, Ok(()));
-        assert_eq!(policy.require(&context(stranger), ActionType::delete(Session::KIND, &hers), || Refused).await, Err(Refused));
+        assert_eq!(policy.require(&context(owner), ActionType::delete(Session::KIND, &hers), Denied).await, Ok(()));
+        let refused = Refused { subject: "session", action: "DeleteSession".to_string() };
+        assert_eq!(policy.require(&context(stranger), ActionType::delete(Session::KIND, &hers), Denied).await, Err(Denied(refused)), "what was refused, named by its kind");
     }
 
     /// A subject as a query compares it (issue 293).

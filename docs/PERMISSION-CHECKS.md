@@ -49,7 +49,8 @@ a stored entity is decided by the verb, never by the kind (issue
 
 Most variants are decided by the principal; `ModifyMessage`, `RevokeMessage` and `Reclassify` of a
 message, note or memory entry by the caller - an agent is judged as itself for what it said.
-`Enforcement::require` logs a refusal with the principal either way. The flow is not the
+`Enforcement::require` logs a refusal with the principal either way, and hands the operation's
+error what was refused (`Refused`, see [SECURITY.md](SECURITY.md)). The flow is not the
 `SecurityManager`'s at all (issue 304, reversing 138).
 
 ## The layers

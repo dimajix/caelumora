@@ -41,7 +41,7 @@ use caelumora_model::scope::Scope;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions, Place};
-use caelumora_model::security::{AccessQuestions, AclEntry, ActionType, Enforcement, Grant, SecurityContext, SecurityManager, Subject, WRITE};
+use caelumora_model::security::{AccessQuestions, AclEntry, ActionType, Enforcement, Grant, Refused, SecurityContext, SecurityManager, Subject, WRITE};
 use crate::view::{channel_reading, ChannelReader};
 use caelumora_model::channel::Participant;
 use caelumora_model::session::{Channel, ChannelId, Session, SessionId};
@@ -85,8 +85,8 @@ pub enum WorkspaceError {
     NotCleared,
     /// What its access list grants the caller is reading, not changing its
     /// files (issue 23).
-    #[error("you may read the workspace {0}, not change its files")]
-    ReadOnly(WorkspaceId),
+    #[error("you may read the workspace {id}, not change its files")]
+    ReadOnly { id: WorkspaceId, #[source] refused: Refused },
     /// No workspace the caller may use in the channel they act in: none is
     /// attached, the channel does not use it, they may not read the channel
     /// or the workspace, or the two do not flow both ways - one case, so
@@ -409,7 +409,7 @@ impl WorkspaceManager {
     pub async fn purge(&self, ctx: &SecurityContext, id: WorkspaceId) -> WorkspaceResult<bool> {
         let _writing = self.writing.lock().await;
         let Some(workspace) = self.workspaces.get_deleted(ctx, id).await.optional()? else { return Ok(false) };
-        self.security.require(ctx, ActionType::purge(Workspace::KIND, &workspace.security_attributes), || StoreError::PermissionDenied).await?;
+        self.security.require(ctx, ActionType::purge(Workspace::KIND, &workspace.security_attributes), StoreError::PermissionDenied).await?;
         self.provider(&workspace)?.remove(id).await?;
         let purged = self.workspaces.purge(ctx, id).await?;
         info!(workspace = %id, by = %ctx.caller_id, "Workspace purged");
@@ -440,7 +440,7 @@ impl WorkspaceManager {
     pub(crate) async fn reached(&self, ctx: &SecurityContext, id: WorkspaceId, need: Grant) -> WorkspaceResult<Workspace> {
         let workspace = self.workspaces.get(ctx, id).await.map_err(store_error(id))?;
         if need == Grant::Write {
-            self.security.require(ctx, ActionType::custom(Workspace::KIND, &WRITE, &workspace.security_attributes), || WorkspaceError::ReadOnly(id)).await?;
+            self.security.require(ctx, ActionType::custom(Workspace::KIND, &WRITE, &workspace.security_attributes), |refused| WorkspaceError::ReadOnly { id, refused }).await?;
         }
         Ok(workspace)
     }
@@ -569,7 +569,7 @@ impl WorkspaceManager {
         }
         let workspace = self.usable_in(ctx, &session, &channel).await?.ok_or(WorkspaceError::NotUsableInChannel)?;
         if need == Grant::Write {
-            self.security.require(ctx, ActionType::custom(Workspace::KIND, &WRITE, &workspace.security_attributes), || WorkspaceError::ReadOnly(workspace.id)).await?;
+            self.security.require(ctx, ActionType::custom(Workspace::KIND, &WRITE, &workspace.security_attributes), |refused| WorkspaceError::ReadOnly { id: workspace.id, refused }).await?;
         }
         Ok(workspace)
     }
@@ -632,7 +632,7 @@ impl WorkspaceManager {
             let ctx = SecurityContext { initiator_id: ActorId::System, ..member };
             match self.usable_in_channel(&ctx, channel.session_id, channel.id, Grant::Write).await {
                 Ok(usable) if usable.id == *workspace => return Ok(true),
-                Ok(_) | Err(WorkspaceError::NotUsableInChannel | WorkspaceError::ReadOnly(_)) => {}
+                Ok(_) | Err(WorkspaceError::NotUsableInChannel | WorkspaceError::ReadOnly { .. }) => {}
                 Err(e) => return Err(e),
             }
         }

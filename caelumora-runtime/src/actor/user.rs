@@ -1,4 +1,5 @@
 use crate::actor::Actor;
+use crate::channel::ChannelError;
 use crate::command::{CommandContext, CommandError, CommandReply};
 use crate::runtime::ActorRuntime;
 use crate::transport::{EventReceiver, EventSender, TransportError};
@@ -12,7 +13,7 @@ use caelumora_model::command::{Command, CommandVisibility};
 use caelumora_model::message::{Message, MessageId, MessageRole};
 use caelumora_model::question::{QuestionError, QuestionId, QuestionRequest, Response};
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::security::{AccessQuestions, SecurityContext, SecurityManager};
+use caelumora_model::security::{AccessQuestions, ActionType, SecurityContext, SecurityManager};
 use caelumora_model::session::SessionId;
 use caelumora_model::value::name::Name;
 use crate::controller::{ChannelController, ControllerManager, UserController};
@@ -221,7 +222,8 @@ impl UserActor {
             .ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))?;
         let original = self.message_to_change(&channel_loop, message).await?;
         if original.sender_id != self.id {
-            return Err(crate::channel::ChannelError::Forbidden { action: "modifying a message of", channel: self.channel_id }.into());
+            let refused = ActionType::ModifyMessage { author: original.sender_id, channel: &channel_loop.security_attributes() }.refused();
+            return Err(ChannelError::Forbidden { action: "modifying a message of", channel: self.channel_id, refused }.into());
         }
         let classification = classification.unwrap_or_else(|| original.classification.clone());
         let modified = Message {

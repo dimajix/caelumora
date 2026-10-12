@@ -5,7 +5,7 @@
 //! participants of a session or a channel are a group too, read here but
 //! changed only by taking part.
 use crate::auth::AuthenticatedUser;
-use crate::error::{ApiError, Json, Path, Subject};
+use crate::error::{ApiError, Json, Path};
 use caelumora_rest_api::group::{CreateGroupRequest, GroupResponse, RenameGroupRequest};
 use caelumora_rest_api::trash::{DeletedResponse, ListOptions};
 use crate::state::AppState;
@@ -22,12 +22,10 @@ use uuid::Uuid;
 pub async fn list_groups(State(state): State<Arc<AppState>>, Query(options): Query<ListOptions>, user: AuthenticatedUser) -> Result<Response, ApiError> {
     let views = crate::routes::views(&state, &user);
     if options.deleted {
-        let deleted = views.deleted_groups().await
-            .map_err(|e| ApiError::from_runtime(e.into(), Subject::Group, "listing the deleted groups"))?;
+        let deleted = views.deleted_groups().await?;
         return Ok(Json(deleted.into_iter().map(DeletedResponse::from).collect::<Vec<_>>()).into_response());
     }
-    let groups = views.groups().await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Group, "listing the groups"))?;
+    let groups = views.groups().await?;
     let mut listed = Vec::with_capacity(groups.len());
     for group in groups {
         listed.push(GroupResponse::from(group.snapshot().await));
@@ -40,8 +38,7 @@ pub async fn create_group(State(state): State<Arc<AppState>>, user: Authenticate
     let scope = request.scope.of_user(user.id)
         .ok_or_else(|| ApiError::new(StatusCode::BAD_REQUEST, "invalid_scope", "A group of a session's scope is its participants, made with it"))?;
     let made = state.runtime_manager.group_manager()
-        .create(&user.security_context(), &request.name, scope).await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Group, "creating the group"))?;
+        .create(&user.security_context(), &request.name, scope).await?;
     Ok((StatusCode::CREATED, Json(readable(&state, &user, made.id).await?)))
 }
 
@@ -52,8 +49,7 @@ pub async fn get_group(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>,
 
 pub async fn rename_group(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser, Json(request): Json<RenameGroupRequest>) -> Result<Json<GroupResponse>, ApiError> {
     let id = GroupId(id);
-    state.runtime_manager.group_manager().rename(&user.security_context(), id, &request.name).await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Group, &format!("renaming group {id}")))?;
+    state.runtime_manager.group_manager().rename(&user.security_context(), id, &request.name).await?;
     Ok(Json(readable(&state, &user, id).await?))
 }
 
@@ -62,8 +58,7 @@ pub async fn rename_group(State(state): State<Arc<AppState>>, Path(id): Path<Uui
 pub async fn set_members(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser, Json(members): Json<Vec<Uuid>>) -> Result<Json<GroupResponse>, ApiError> {
     let id = GroupId(id);
     let members = members.into_iter().map(UserId).collect();
-    state.runtime_manager.group_manager().set_members(&user.security_context(), id, members).await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Group, &format!("changing the members of group {id}")))?;
+    state.runtime_manager.group_manager().set_members(&user.security_context(), id, members).await?;
     Ok(Json(readable(&state, &user, id).await?))
 }
 
@@ -71,8 +66,7 @@ pub async fn set_members(State(state): State<Arc<AppState>>, Path(id): Path<Uuid
 /// through it reads it no longer.
 pub async fn delete_group(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
     let id = GroupId(id);
-    let deleted = state.runtime_manager.group_manager().delete(&user.security_context(), id).await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Group, &format!("deleting group {id}")))?;
+    let deleted = state.runtime_manager.group_manager().delete(&user.security_context(), id).await?;
     match deleted {
         true => Ok(StatusCode::NO_CONTENT),
         false => Err(ApiError::not_found("group_not_found", format!("There is no group {id}"))),
@@ -82,8 +76,7 @@ pub async fn delete_group(State(state): State<Arc<AppState>>, Path(id): Path<Uui
 /// Restores the deleted team; `409` if another took its name meanwhile.
 pub async fn restore_group(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<Json<GroupResponse>, ApiError> {
     let id = GroupId(id);
-    state.runtime_manager.group_manager().restore(&user.security_context(), id).await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Group, &format!("restoring group {id}")))?;
+    state.runtime_manager.group_manager().restore(&user.security_context(), id).await?;
     Ok(Json(readable(&state, &user, id).await?))
 }
 
@@ -91,8 +84,7 @@ pub async fn restore_group(State(state): State<Arc<AppState>>, Path(id): Path<Uu
 /// system's alone.
 pub async fn purge_group(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
     let id = GroupId(id);
-    let purged = state.runtime_manager.group_manager().purge(&user.security_context(), id).await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Group, &format!("purging group {id}")))?;
+    let purged = state.runtime_manager.group_manager().purge(&user.security_context(), id).await?;
     match purged {
         true => Ok(StatusCode::NO_CONTENT),
         false => Err(ApiError::not_found("group_not_found", format!("There is no deleted group {id}"))),
@@ -101,7 +93,6 @@ pub async fn purge_group(State(state): State<Arc<AppState>>, Path(id): Path<Uuid
 
 /// Group `id` as the user sees it.
 async fn readable(state: &Arc<AppState>, user: &AuthenticatedUser, id: GroupId) -> Result<GroupResponse, ApiError> {
-    let group = crate::routes::views(state, user).group(id).await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Group, &format!("reading group {id}")))?;
+    let group = crate::routes::views(state, user).group(id).await?;
     Ok(group.snapshot().await.into())
 }

@@ -18,7 +18,23 @@ use axum::http::header::CONTENT_TYPE;
 use axum::http::{HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use caelumora_model::question::QuestionError;
+use caelumora_model::security::Refused;
+use caelumora_model::store::StoreError;
+use caelumora_model::template::TemplateError;
+use caelumora_model::value::ValueError;
+use caelumora_runtime::artifact::ArtifactError;
+use caelumora_runtime::channel::ChannelError;
+use caelumora_runtime::command::CommandError;
+use caelumora_runtime::error::{refusal, user_message};
+use caelumora_runtime::group::GroupError;
+use caelumora_runtime::session::SessionError;
+use caelumora_runtime::skill::SkillError;
+use caelumora_runtime::terminal::TerminalError;
+use caelumora_runtime::view::{ContextError, ViewError};
+use caelumora_runtime::workspace::WorkspaceError;
 use serde::Serialize;
+use std::borrow::Cow;
 use uuid::Uuid;
 
 tokio::task_local! {
@@ -45,7 +61,7 @@ pub async fn request_id(request: Request, next: Next) -> Response {
 #[derive(Debug)]
 pub struct ApiError {
     status: StatusCode,
-    code: &'static str,
+    code: Cow<'static, str>,
     detail: String,
 }
 
@@ -62,40 +78,40 @@ struct ProblemDetails<'a> {
 }
 
 impl ApiError {
-    pub fn new(status: StatusCode, code: &'static str, detail: impl Into<String>) -> Self {
-        Self { status, code, detail: detail.into() }
+    pub fn new(status: StatusCode, code: impl Into<Cow<'static, str>>, detail: impl Into<String>) -> Self {
+        Self { status, code: code.into(), detail: detail.into() }
     }
 
-    pub fn not_found(code: &'static str, detail: impl Into<String>) -> Self {
+    pub fn not_found(code: impl Into<Cow<'static, str>>, detail: impl Into<String>) -> Self {
         Self::new(StatusCode::NOT_FOUND, code, detail)
     }
 
-    pub fn unauthorized(code: &'static str, detail: impl Into<String>) -> Self {
+    pub fn unauthorized(code: impl Into<Cow<'static, str>>, detail: impl Into<String>) -> Self {
         Self::new(StatusCode::UNAUTHORIZED, code, detail)
     }
 
-    pub fn conflict(code: &'static str, detail: impl Into<String>) -> Self {
+    pub fn conflict(code: impl Into<Cow<'static, str>>, detail: impl Into<String>) -> Self {
         Self::new(StatusCode::CONFLICT, code, detail)
     }
 
     /// A text of the request that does not fit the field it was to be
     /// written into (issue 248): `400 invalid_value`, saying which field and
     /// why.
-    pub fn invalid_value(error: &caelumora_model::value::ValueError) -> Self {
+    pub fn invalid_value(error: &ValueError) -> Self {
         Self::new(StatusCode::BAD_REQUEST, "invalid_value", error.to_string())
     }
 
     /// The caller is logged in, but may not do this.
-    pub fn forbidden(code: &'static str, detail: impl Into<String>) -> Self {
+    pub fn forbidden(code: impl Into<Cow<'static, str>>, detail: impl Into<String>) -> Self {
         Self::new(StatusCode::FORBIDDEN, code, detail)
     }
 
     /// A server error caused by `error` while doing `action` (e.g. "loading
     /// the session"). Logs the full error chain; the response discloses only
     /// what `user_message` allows.
-    pub fn internal(code: &'static str, action: &str, error: &anyhow::Error) -> Self {
+    pub fn internal(code: impl Into<Cow<'static, str>>, action: &str, error: &anyhow::Error) -> Self {
         tracing::error!("{} failed: {:#}", action, error);
-        let detail = match caelumora_runtime::error::user_message(error) {
+        let detail = match user_message(error) {
             Some(message) => format!("{} failed: {}", capitalize(action), message),
             None => format!("{} failed; the details are in the server log", capitalize(action)),
         };
@@ -104,7 +120,7 @@ impl ApiError {
 
     /// Like `internal`, but for a backend that is unavailable rather than
     /// broken.
-    pub fn unavailable(code: &'static str, detail: impl Into<String>) -> Self {
+    pub fn unavailable(code: impl Into<Cow<'static, str>>, detail: impl Into<String>) -> Self {
         Self::new(StatusCode::SERVICE_UNAVAILABLE, code, detail)
     }
 
@@ -116,266 +132,185 @@ impl ApiError {
 
     /// Its code - for tests, like `status`.
     #[cfg(test)]
-    pub fn code(&self) -> &'static str {
-        self.code
+    pub fn code(&self) -> &str {
+        &self.code
     }
 }
 
-/// What a request acted on: names the codes of its refusal and its failure
-/// (`session_forbidden`, `command_failed`, ...) in [`ApiError::from_runtime`].
-#[derive(Debug, Clone, Copy)]
-pub enum Subject {
-    Session,
-    Agent,
-    Participant,
-    Cancel,
-    Command,
-    Context,
-    Workspace,
-    Skill,
-    Artifact,
-    Group,
-}
+// Every error a handler meets answers itself (issue 323): what was refused,
+// what was not found, what conflicts, by its type and its variant - not by
+// what the handler says it was doing. An error type that reaches a handler
+// implements `From<…> for ApiError` here, or, for a plugin's, in its crate.
 
-impl Subject {
-    fn forbidden(self) -> &'static str {
-        match self {
-            Subject::Session => "session_forbidden",
-            Subject::Agent => "agent_forbidden",
-            Subject::Participant => "participant_forbidden",
-            Subject::Cancel => "cancel_forbidden",
-            Subject::Command => "command_forbidden",
-            Subject::Context => "context_forbidden",
-            Subject::Workspace => "workspace_forbidden",
-            Subject::Skill => "skill_forbidden",
-            Subject::Artifact => "artifact_forbidden",
-            Subject::Group => "group_forbidden",
-        }
-    }
-
-    fn failed(self) -> &'static str {
-        match self {
-            Subject::Session => "session_failed",
-            Subject::Agent => "agent_failed",
-            Subject::Participant => "participant_failed",
-            Subject::Cancel => "cancel_failed",
-            Subject::Command => "command_failed",
-            Subject::Context => "context_failed",
-            Subject::Workspace => "workspace_failed",
-            Subject::Skill => "skill_failed",
-            Subject::Artifact => "artifact_failed",
-            Subject::Group => "group_failed",
-        }
+impl From<Refused> for ApiError {
+    /// `403 <subject>_forbidden`, saying what was refused and not why.
+    fn from(refused: Refused) -> Self {
+        Self::refused(&refused, refused.to_string())
     }
 }
 
 impl ApiError {
-    /// The answer for `error`, reported by the runtime while `action` (e.g.
-    /// "renaming session …") on `subject` (issue 103) - the one place a
-    /// domain error becomes a status and a code, so that a new variant has
-    /// one place to go:
-    ///
-    /// - a request that cannot be met is the client's: `404` for a session,
-    ///   template, channel, participant or context that is not there (or may
-    ///   not be seen, which is answered the same), `409` for one that is
-    ///   there already - or still leaving, or kept by what is left in its
-    ///   scope -, `400` for any other `SessionError`, `ChannelError`,
-    ///   `CommandError` or `TemplateError`;
-    /// - a refusal (`is_forbidden`, or a refused context) is `403`,
-    ///   `<subject>_forbidden`, saying what was refused and not why;
-    /// - anything else is a server error, `<subject>_failed`.
-    pub fn from_runtime(error: anyhow::Error, subject: Subject, action: &str) -> Self {
-        use caelumora_runtime::channel::ChannelError;
-        use caelumora_runtime::command::CommandError;
-        use caelumora_runtime::error::{is_forbidden, is_not_found, user_message};
-        use caelumora_runtime::session::SessionError;
-        use caelumora_runtime::view::{ContextError, ViewError};
-        use caelumora_model::template::TemplateError;
-        use caelumora_model::store::StoreError;
-        use caelumora_runtime::terminal::TerminalError;
-        use caelumora_runtime::workspace::WorkspaceError;
-        use caelumora_runtime::skill::SkillError;
-        use caelumora_runtime::artifact::ArtifactError;
-        use caelumora_runtime::group::GroupError;
+    /// `refused`, told as `detail` - the words of the error that carries it.
+    fn refused(refused: &Refused, detail: String) -> Self {
+        Self::new(StatusCode::FORBIDDEN, format!("{}_forbidden", refused.subject), detail)
+    }
 
+    fn bad_request(code: impl Into<Cow<'static, str>>, detail: impl Into<String>) -> Self {
+        Self::new(StatusCode::BAD_REQUEST, code, detail)
+    }
+}
+
+impl From<ValueError> for ApiError {
+    fn from(error: ValueError) -> Self {
+        Self::invalid_value(&error)
+    }
+}
+
+impl From<StoreError> for ApiError {
+    /// A store's error as an operation passed it on: not found is what the
+    /// request named, unlike one met on the way (`From<anyhow::Error>`).
+    fn from(error: StoreError) -> Self {
         let detail = error.to_string();
-        let bad_request = |code| Self::new(StatusCode::BAD_REQUEST, code, detail.clone());
-        // Wherever it was found out - the model, a controller, a loop.
-        if let Some(e) = error.chain().find_map(|e| e.downcast_ref::<caelumora_model::value::ValueError>()) {
-            return Self::invalid_value(e);
+        match error {
+            StoreError::NotFound { entity, .. } => Self::not_found(format!("{entity}_not_found"), detail),
+            error => Self::of_store(error),
         }
-        if let Some(e) = error.downcast_ref::<ContextError>() {
-            match e {
-                ContextError::NotRecorded { .. } => return Self::not_found("context_not_recorded", detail),
-                ContextError::Unavailable { .. } => return Self::not_found("context_unavailable", detail),
-            }
-        }
-        if let Some(e) = error.downcast_ref::<ViewError>() {
-            match e {
-                ViewError::SessionNotFound(_) => return Self::not_found("session_not_found", detail),
-                ViewError::ChannelNotFound { .. } | ViewError::NoChannelNamed(_) => return Self::not_found("channel_not_found", detail),
-                ViewError::MemberNotFound { .. } => return Self::not_found("actor_not_found", detail),
-                ViewError::WorkspaceNotFound(_) => return Self::not_found("workspace_not_found", detail),
-                ViewError::SkillNotFound(_) | ViewError::NoSkillNamed(_) => return Self::not_found("skill_not_found", detail),
-                ViewError::GroupNotFound(_) => return Self::not_found("group_not_found", detail),
-                ViewError::ArtifactNotFound(_) => return Self::not_found("artifact_not_found", detail),
-                ViewError::NoContext { .. } => return Self::not_found("context_not_recorded", detail),
-                ViewError::Forbidden { .. } => return Self::forbidden(subject.forbidden(), detail),
-                ViewError::Failed(_) => {}
-            }
-        }
-        if let Some(e) = error.downcast_ref::<WorkspaceError>() {
-            match e {
-                WorkspaceError::NotFound(_) => return Self::not_found("workspace_not_found", detail),
-                WorkspaceError::UnknownStorage(_) => return bad_request("unknown_storage"),
-                WorkspaceError::StorageNotCleared(_) => return bad_request("storage_not_cleared"),
-                WorkspaceError::ClassificationRefused => return bad_request("invalid_classification"),
-                WorkspaceError::NotCleared => return Self::forbidden("not_cleared", detail),
-                WorkspaceError::ReadOnly(_) => return Self::forbidden("read_only", detail),
-                WorkspaceError::NotUsableInChannel => return Self::not_found("workspace_not_found", detail),
-                WorkspaceError::Invalid(e) => return Self::invalid_value(e),
-                WorkspaceError::Terminal(e) => return Self::of_terminal(e),
-                WorkspaceError::Store(StoreError::NotFound { .. }) => return Self::not_found("workspace_not_found", detail),
-                WorkspaceError::Store(StoreError::NameTaken { .. }) => return Self::conflict("name_taken", detail),
-                WorkspaceError::Store(StoreError::PermissionDenied) => return Self::forbidden(subject.forbidden(), format!("{} is not permitted", capitalize(action))),
-                // A scope it does not lie in, an access list that names whom
-                // it may not (issue 286): the client's request.
-                WorkspaceError::Store(StoreError::Validation(_)) => return bad_request("validation_failed"),
-                // A caller that is no user, or the store broke: not the
-                // client's request.
-                WorkspaceError::OwnerNotAUser | WorkspaceError::Store(_) => {}
-            }
-        }
-        if let Some(e) = error.downcast_ref::<SkillError>() {
-            match e {
-                SkillError::NotFound(_) | SkillError::Store(StoreError::NotFound { .. }) => return Self::not_found("skill_not_found", detail),
-                SkillError::ClassificationRefused => return bad_request("invalid_classification"),
-                SkillError::NotCleared => return Self::forbidden("not_cleared", detail),
-                SkillError::Invalid(e) => return Self::invalid_value(e),
-                SkillError::Store(StoreError::NameTaken { .. }) => return Self::conflict("name_taken", detail),
-                SkillError::Store(StoreError::Validation(_)) => return bad_request("invalid_scope"),
-                SkillError::Store(StoreError::PermissionDenied) => return Self::forbidden(subject.forbidden(), format!("{} is not permitted", capitalize(action))),
-                // A caller that is no user, or the store broke: not the
-                // client's request.
-                SkillError::OwnerNotAUser | SkillError::Store(_) => {}
-            }
-        }
-        if let Some(e) = error.downcast_ref::<GroupError>() {
-            match e {
-                GroupError::NotFound(_) | GroupError::Store(StoreError::NotFound { .. }) => return Self::not_found("group_not_found", detail),
-                GroupError::Participants(_) => return Self::conflict("group_of_participants", detail),
-                GroupError::UnknownMember(_) => return bad_request("unknown_member"),
-                GroupError::Invalid(e) => return Self::invalid_value(e),
-                GroupError::Store(StoreError::NameTaken { .. }) => return Self::conflict("name_taken", detail),
-                GroupError::Store(StoreError::Validation(_)) => return bad_request("invalid_scope"),
-                GroupError::Store(StoreError::PermissionDenied) => return Self::forbidden(subject.forbidden(), format!("{} is not permitted", capitalize(action))),
-                // A caller that is no user, or the store broke: not the
-                // client's request.
-                GroupError::OwnerNotAUser | GroupError::Store(_) => {}
-            }
-        }
-        if let Some(e) = error.downcast_ref::<ArtifactError>() {
-            match e {
-                ArtifactError::NotFound(_) | ArtifactError::Store(StoreError::NotFound { .. }) => return Self::not_found("artifact_not_found", detail),
-                ArtifactError::VersionNotFound { .. } => return Self::not_found("version_not_found", detail),
-                ArtifactError::NotConfigured => return bad_request("artifacts_not_configured"),
-                ArtifactError::UnknownStorage(_) => return bad_request("unknown_storage"),
-                ArtifactError::StorageNotCleared(_) => return bad_request("storage_not_cleared"),
-                ArtifactError::ClassifiedOtherwise(_) => return Self::conflict("classified_otherwise", detail),
-                ArtifactError::TooLarge { .. } => return bad_request("too_large"),
-                ArtifactError::Changed => return Self::conflict("changed", detail),
-                ArtifactError::InvalidScope => return bad_request("invalid_scope"),
-                ArtifactError::Invalid(e) => return Self::invalid_value(e),
-                ArtifactError::Store(StoreError::NameTaken { .. }) => return Self::conflict("name_taken", detail),
-                ArtifactError::Store(StoreError::PermissionDenied) => return Self::forbidden(subject.forbidden(), format!("{} is not permitted", capitalize(action))),
-                ArtifactError::Store(StoreError::Validation(_)) => return bad_request("validation_failed"),
-                // A caller that is no user, the workspace's own failure, the
-                // storage or the store broke: not the client's request.
-                ArtifactError::OwnerNotAUser | ArtifactError::Unavailable(_) | ArtifactError::Store(_) => {}
-            }
-        }
-        if let Some(e) = error.downcast_ref::<TerminalError>() {
-            return Self::of_terminal(e);
-        }
-        if let Some(e) = error.downcast_ref::<SessionError>() {
-            match e {
-                SessionError::ChannelNotFound { .. } => return Self::not_found("channel_not_found", detail),
-                SessionError::InvalidModerator(_) | SessionError::NotAParticipant { .. }
-                | SessionError::ClassificationRefused(_) => return bad_request("invalid_channel"),
-                SessionError::WorkspaceOutOfScope(_) => return bad_request("workspace_out_of_scope"),
-                SessionError::ScopeNotEmpty { .. } => return Self::conflict("scope_not_empty", detail),
-                // A caller that is no user: not the client's request.
-                SessionError::OwnerNotAUser(_) => {}
-            }
-        }
-        if let Some(e) = error.downcast_ref::<ChannelError>() {
-            match e {
-                ChannelError::AlreadyParticipant { .. } => return Self::conflict("already_participant", detail),
-                ChannelError::StillLeaving { .. } => return Self::conflict("still_leaving", detail),
-                ChannelError::AlreadyResponding { .. } => return Self::conflict("already_responding", detail),
-                ChannelError::NudgesItself { .. } => return bad_request("nudges_itself"),
-                ChannelError::NotAParticipant { .. } | ChannelError::ParticipantGone { .. } => return Self::not_found("participant_not_found", detail),
-                ChannelError::NotInSession { .. } | ChannelError::OutOfScope { .. } | ChannelError::ApproverStays { .. } => return bad_request("invalid_participant"),
-                ChannelError::ClassificationRefused { .. } => return bad_request("invalid_classification"),
-                ChannelError::MessageNotFound { .. } => return Self::not_found("message_not_found", detail),
-                ChannelError::MessageRevoked { .. } => return Self::conflict("message_revoked", detail),
-                ChannelError::NotAnAgentsMessage { .. } => return Self::conflict("not_an_agents_message", detail),
-                ChannelError::TurnNotRetryable { .. } => return Self::conflict("turn_not_retryable", detail),
-                ChannelError::ToolCallNotRunning { .. } => return Self::conflict("tool_call_not_running", detail),
-                ChannelError::NotCleared { .. } => return Self::forbidden("not_cleared", detail),
-                ChannelError::Question { reason: caelumora_model::question::QuestionError::NotOpen, .. } => return Self::not_found("question_not_found", detail),
-                ChannelError::Question { reason: caelumora_model::question::QuestionError::NotAsked, .. } => return Self::forbidden("not_asked", detail),
-                ChannelError::Question { .. } => return bad_request("invalid_answer"),
-                ChannelError::Forbidden { .. } => {}
-            }
-        }
-        if let Some(e) = error.downcast_ref::<CommandError>() {
-            match e {
-                CommandError::Empty | CommandError::Unknown(_) => return bad_request("unknown_command"),
-                CommandError::InvalidArguments { .. } => return bad_request("invalid_command_arguments"),
-                _ => {}
-            }
-        }
-        if error.downcast_ref::<TemplateError>().is_some() {
-            return bad_request("template_invalid");
-        }
-        if is_not_found(&error, "session") {
-            return Self::not_found("session_not_found", user_message(&error).unwrap_or(detail));
-        }
-        if is_not_found(&error, "agent") {
-            return Self::not_found("agent_not_found", user_message(&error).unwrap_or(detail));
-        }
-        if is_not_found(&error, "workspace") {
-            return Self::not_found("workspace_not_found", user_message(&error).unwrap_or(detail));
-        }
-        // Of every kind alike (issue 250), wherever it was found out.
-        if error.chain().any(|e| matches!(e.downcast_ref(), Some(caelumora_model::store::StoreError::NameTaken { .. }))) {
-            return Self::conflict("name_taken", user_message(&error).unwrap_or(detail));
-        }
-        if let Some(caelumora_model::store::StoreError::Conflict(_)) = error.downcast_ref() {
-            return Self::conflict("already_exists", detail);
-        }
-        if is_not_found(&error, "session_template") {
-            return Self::not_found("template_not_found", user_message(&error).unwrap_or(detail));
-        }
-        if is_forbidden(&error) {
-            let detail = user_message(&error).unwrap_or_else(|| format!("{} is not permitted", capitalize(action)));
-            return Self::forbidden(subject.forbidden(), detail);
-        }
-        Self::internal(subject.failed(), action, &error)
     }
 }
 
 impl ApiError {
+    /// A store's error other than not found, wherever it was met.
+    fn of_store(error: StoreError) -> Self {
+        let detail = error.to_string();
+        match error {
+            StoreError::PermissionDenied(refused) => refused.into(),
+            StoreError::NameTaken { .. } => Self::conflict("name_taken", detail),
+            StoreError::Conflict(_) => Self::conflict("already_exists", detail),
+            StoreError::Validation(_) => Self::bad_request("validation_failed", detail),
+            StoreError::Invalid(e) => e.into(),
+            StoreError::NotFound { .. } | StoreError::Backend(_) => Self::internal("internal_error", "the request", &error.into()),
+        }
+    }
+}
+
+impl From<TemplateError> for ApiError {
+    fn from(error: TemplateError) -> Self {
+        Self::bad_request("template_invalid", error.to_string())
+    }
+}
+
+impl From<ContextError> for ApiError {
+    fn from(error: ContextError) -> Self {
+        let detail = error.to_string();
+        match error {
+            ContextError::NotRecorded { .. } => Self::not_found("context_not_recorded", detail),
+            ContextError::Unavailable { .. } => Self::not_found("context_unavailable", detail),
+        }
+    }
+}
+
+impl From<ViewError> for ApiError {
+    fn from(error: ViewError) -> Self {
+        let detail = error.to_string();
+        match error {
+            ViewError::SessionNotFound(_) => Self::not_found("session_not_found", detail),
+            ViewError::ChannelNotFound { .. } | ViewError::NoChannelNamed(_) => Self::not_found("channel_not_found", detail),
+            ViewError::MemberNotFound { .. } => Self::not_found("actor_not_found", detail),
+            ViewError::WorkspaceNotFound(_) => Self::not_found("workspace_not_found", detail),
+            ViewError::SkillNotFound(_) | ViewError::NoSkillNamed(_) => Self::not_found("skill_not_found", detail),
+            ViewError::GroupNotFound(_) => Self::not_found("group_not_found", detail),
+            ViewError::ArtifactNotFound(_) => Self::not_found("artifact_not_found", detail),
+            ViewError::NoContext { .. } => Self::not_found("context_not_recorded", detail),
+            ViewError::Forbidden { ref refused, .. } => Self::refused(refused, detail),
+            ViewError::Failed(e) => e.into(),
+        }
+    }
+}
+
+impl From<WorkspaceError> for ApiError {
+    fn from(error: WorkspaceError) -> Self {
+        let detail = error.to_string();
+        match error {
+            WorkspaceError::NotFound(_) | WorkspaceError::NotUsableInChannel | WorkspaceError::Store(StoreError::NotFound { .. }) => Self::not_found("workspace_not_found", detail),
+            WorkspaceError::UnknownStorage(_) => Self::bad_request("unknown_storage", detail),
+            WorkspaceError::StorageNotCleared(_) => Self::bad_request("storage_not_cleared", detail),
+            WorkspaceError::ClassificationRefused => Self::bad_request("invalid_classification", detail),
+            WorkspaceError::NotCleared => Self::forbidden("not_cleared", detail),
+            WorkspaceError::ReadOnly { .. } => Self::forbidden("read_only", detail),
+            WorkspaceError::Invalid(e) => e.into(),
+            WorkspaceError::Terminal(e) => e.into(),
+            // A scope it does not lie in, an access list that names whom it
+            // may not (issue 286): the client's request.
+            WorkspaceError::Store(e) => Self::of_store(e),
+            // A caller that is no user: not the client's request.
+            WorkspaceError::OwnerNotAUser => Self::internal("internal_error", "the request", &error.into()),
+        }
+    }
+}
+
+impl From<SkillError> for ApiError {
+    fn from(error: SkillError) -> Self {
+        let detail = error.to_string();
+        match error {
+            SkillError::NotFound(_) | SkillError::Store(StoreError::NotFound { .. }) => Self::not_found("skill_not_found", detail),
+            SkillError::ClassificationRefused => Self::bad_request("invalid_classification", detail),
+            SkillError::NotCleared => Self::forbidden("not_cleared", detail),
+            SkillError::Invalid(e) => e.into(),
+            SkillError::Store(StoreError::Validation(_)) => Self::bad_request("invalid_scope", detail),
+            SkillError::Store(e) => Self::of_store(e),
+            // A caller that is no user: not the client's request.
+            SkillError::OwnerNotAUser => Self::internal("internal_error", "the request", &error.into()),
+        }
+    }
+}
+
+impl From<GroupError> for ApiError {
+    fn from(error: GroupError) -> Self {
+        let detail = error.to_string();
+        match error {
+            GroupError::NotFound(_) | GroupError::Store(StoreError::NotFound { .. }) => Self::not_found("group_not_found", detail),
+            GroupError::Participants(_) => Self::conflict("group_of_participants", detail),
+            GroupError::UnknownMember(_) => Self::bad_request("unknown_member", detail),
+            GroupError::Invalid(e) => e.into(),
+            GroupError::Store(StoreError::Validation(_)) => Self::bad_request("invalid_scope", detail),
+            GroupError::Store(e) => Self::of_store(e),
+            // A caller that is no user: not the client's request.
+            GroupError::OwnerNotAUser => Self::internal("internal_error", "the request", &error.into()),
+        }
+    }
+}
+
+impl From<ArtifactError> for ApiError {
+    fn from(error: ArtifactError) -> Self {
+        let detail = error.to_string();
+        match error {
+            ArtifactError::NotFound(_) | ArtifactError::Store(StoreError::NotFound { .. }) => Self::not_found("artifact_not_found", detail),
+            ArtifactError::VersionNotFound { .. } => Self::not_found("version_not_found", detail),
+            ArtifactError::NotConfigured => Self::bad_request("artifacts_not_configured", detail),
+            ArtifactError::UnknownStorage(_) => Self::bad_request("unknown_storage", detail),
+            ArtifactError::StorageNotCleared(_) => Self::bad_request("storage_not_cleared", detail),
+            ArtifactError::ClassifiedOtherwise(_) => Self::conflict("classified_otherwise", detail),
+            ArtifactError::TooLarge { .. } => Self::bad_request("too_large", detail),
+            ArtifactError::Changed => Self::conflict("changed", detail),
+            ArtifactError::InvalidScope => Self::bad_request("invalid_scope", detail),
+            ArtifactError::Invalid(e) => e.into(),
+            ArtifactError::Store(e) => Self::of_store(e),
+            // A caller that is no user, the storage broke: not the client's
+            // request.
+            ArtifactError::OwnerNotAUser | ArtifactError::Unavailable(_) => Self::internal("internal_error", "the request", &error.into()),
+        }
+    }
+}
+
+impl From<TerminalError> for ApiError {
     /// What working on the files of a workspace failed with (issue 253): a
     /// path or a file that does not fit is the client's; a storage that
     /// failed is unavailable. Every message names no more of a path than
     /// the client wrote.
-    fn of_terminal(error: &caelumora_runtime::terminal::TerminalError) -> Self {
-        use caelumora_runtime::terminal::TerminalError;
+    fn from(error: TerminalError) -> Self {
         let detail = error.to_string();
         match error {
-            TerminalError::InvalidPath(_) => Self::new(StatusCode::BAD_REQUEST, "invalid_path", detail),
+            TerminalError::InvalidPath(_) => Self::bad_request("invalid_path", detail),
             TerminalError::NotFound(_) => Self::not_found("file_not_found", detail),
             TerminalError::Exists(_) => Self::conflict("file_exists", detail),
             TerminalError::IsADirectory(_) => Self::conflict("is_a_directory", detail),
@@ -384,6 +319,96 @@ impl ApiError {
             TerminalError::TooLarge { .. } => Self::new(StatusCode::PAYLOAD_TOO_LARGE, "file_too_large", detail),
             TerminalError::Unavailable(_) => Self::unavailable("storage_unavailable", detail),
             TerminalError::UnknownCommand(_) => Self::not_found("command_not_found", detail),
+        }
+    }
+}
+
+impl From<SessionError> for ApiError {
+    fn from(error: SessionError) -> Self {
+        let detail = error.to_string();
+        match error {
+            SessionError::NotFound(_) => Self::not_found("session_not_found", detail),
+            SessionError::TemplateNotFound(_) => Self::not_found("template_not_found", detail),
+            SessionError::ChannelNotFound { .. } => Self::not_found("channel_not_found", detail),
+            SessionError::InvalidModerator(_) | SessionError::NotAParticipant { .. } | SessionError::ClassificationRefused(_) => Self::bad_request("invalid_channel", detail),
+            SessionError::WorkspaceOutOfScope(_) => Self::bad_request("workspace_out_of_scope", detail),
+            SessionError::ScopeNotEmpty { .. } => Self::conflict("scope_not_empty", detail),
+            // A caller that is no user: not the client's request.
+            SessionError::OwnerNotAUser(_) => Self::internal("internal_error", "the request", &error.into()),
+        }
+    }
+}
+
+impl From<ChannelError> for ApiError {
+    fn from(error: ChannelError) -> Self {
+        let detail = error.to_string();
+        match error {
+            ChannelError::Forbidden { ref refused, .. } => Self::refused(refused, detail),
+            ChannelError::AlreadyParticipant { .. } => Self::conflict("already_participant", detail),
+            ChannelError::StillLeaving { .. } => Self::conflict("still_leaving", detail),
+            ChannelError::AlreadyResponding { .. } => Self::conflict("already_responding", detail),
+            ChannelError::NudgesItself { .. } => Self::bad_request("nudges_itself", detail),
+            ChannelError::NotAParticipant { .. } | ChannelError::ParticipantGone { .. } => Self::not_found("participant_not_found", detail),
+            ChannelError::NotInSession { .. } | ChannelError::OutOfScope { .. } | ChannelError::ApproverStays { .. } => Self::bad_request("invalid_participant", detail),
+            ChannelError::ClassificationRefused { .. } => Self::bad_request("invalid_classification", detail),
+            ChannelError::MessageNotFound { .. } => Self::not_found("message_not_found", detail),
+            ChannelError::MessageRevoked { .. } => Self::conflict("message_revoked", detail),
+            ChannelError::NotAnAgentsMessage { .. } => Self::conflict("not_an_agents_message", detail),
+            ChannelError::TurnNotRetryable { .. } => Self::conflict("turn_not_retryable", detail),
+            ChannelError::ToolCallNotRunning { .. } => Self::conflict("tool_call_not_running", detail),
+            ChannelError::NotCleared { .. } => Self::forbidden("not_cleared", detail),
+            ChannelError::Question { reason: QuestionError::NotOpen, .. } => Self::not_found("question_not_found", detail),
+            ChannelError::Question { reason: QuestionError::NotAsked, .. } => Self::forbidden("not_asked", detail),
+            ChannelError::Question { .. } => Self::bad_request("invalid_answer", detail),
+        }
+    }
+}
+
+impl From<CommandError> for ApiError {
+    fn from(error: CommandError) -> Self {
+        let detail = error.to_string();
+        match error {
+            CommandError::Empty | CommandError::Unknown(_) => Self::bad_request("unknown_command", detail),
+            CommandError::InvalidArguments { .. } => Self::bad_request("invalid_command_arguments", detail),
+            CommandError::Forbidden { ref refused, .. } => Self::refused(refused, detail),
+            // Its reason is written to be read by users.
+            CommandError::Failed { .. } => Self::new(StatusCode::INTERNAL_SERVER_ERROR, "command_failed", detail),
+        }
+    }
+}
+
+impl From<anyhow::Error> for ApiError {
+    /// What an operation that answers `anyhow` failed with: an invalid
+    /// value wherever in the chain it is; otherwise the outermost error of
+    /// a type the core knows, as it answers itself; otherwise a name taken
+    /// or a refusal wherever in the chain they are - also in an error of a
+    /// type unknown here, such as a plugin's. A `StoreError::NotFound` met on
+    /// the way - a personality missing while a session is loaded - is no
+    /// answer to what the request named, and so a server error; whatever
+    /// else is not known is one too.
+    fn from(error: anyhow::Error) -> Self {
+        if let Some(e) = error.chain().find_map(|e| e.downcast_ref::<ValueError>()) {
+            return Self::invalid_value(e);
+        }
+        macro_rules! answer_as {
+            ($error:ident, $($kind:ty),*) => {$(
+                let $error = match $error.downcast::<$kind>() {
+                    Ok(e) => return e.into(),
+                    Err(error) => error,
+                };
+            )*};
+        }
+        answer_as!(error, ContextError, ViewError, WorkspaceError, SkillError, GroupError, ArtifactError, TerminalError, SessionError, ChannelError, CommandError, TemplateError);
+        if error.chain().any(|e| matches!(e.downcast_ref(), Some(StoreError::NameTaken { .. }))) {
+            return Self::conflict("name_taken", user_message(&error).unwrap_or_else(|| error.to_string()));
+        }
+        if let Some(refused) = refusal(&error) {
+            return Self::refused(refused, user_message(&error).unwrap_or_else(|| refused.to_string()));
+        }
+        match error.downcast::<StoreError>() {
+            Ok(e @ StoreError::NotFound { .. }) => Self::internal("internal_error", "the request", &e.into()),
+            Ok(e) => Self::of_store(e),
+            Err(error) => Self::internal("internal_error", "the request", &error),
         }
     }
 }
@@ -403,7 +428,7 @@ impl IntoResponse for ApiError {
             title: self.status.canonical_reason().unwrap_or("Error"),
             status: self.status.as_u16(),
             detail: &self.detail,
-            code: self.code,
+            code: &self.code,
             request_id: REQUEST_ID.try_with(|id| *id).ok(),
         };
         let json = serde_json::to_vec(&body).unwrap_or_default();
@@ -446,10 +471,17 @@ impl From<axum::extract::rejection::PathRejection> for ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::artifact::Artifact;
+    use caelumora_model::actor::ActorId;
+    use caelumora_model::artifact::{Artifact, ArtifactId};
+    use caelumora_model::confidentiality::Classification;
+    use caelumora_model::message::MessageId;
+    use caelumora_model::question::QuestionId;
     use caelumora_model::removal::Stored;
     use caelumora_model::scope::Scope;
-    use caelumora_model::store::StoreError;
+    use caelumora_model::session::{ChannelId, SessionId};
+    use caelumora_model::template::SessionTemplateId;
+    use caelumora_model::work::TurnId;
+    use caelumora_model::workspace::WorkspaceId;
 
     async fn body_of(error: ApiError) -> (StatusCode, String, serde_json::Value) {
         let response = REQUEST_ID.scope(Uuid::nil(), async { error.into_response() }).await;
@@ -515,92 +547,114 @@ mod tests {
         assert!(detail.contains("server log"));
     }
 
+    fn answer(error: impl Into<ApiError>) -> (u16, String) {
+        let e = error.into();
+        (e.status.as_u16(), e.code.into_owned())
+    }
+
+    fn refused(subject: &'static str) -> Refused {
+        Refused { subject, action: "Something".to_string() }
+    }
+
     #[test]
-    fn runtime_errors_map_to_status_and_code_in_one_place() {
-        use caelumora_model::actor::ActorId;
-        use caelumora_model::session::{ChannelId, SessionId};
-        use caelumora_runtime::channel::ChannelError;
-        use caelumora_runtime::session::SessionError;
+    fn a_refusal_is_named_by_what_was_refused_wherever_it_is_found() {
+        let channel = ChannelId::new();
+        assert_eq!(answer(refused("skill")), (403, "skill_forbidden".to_string()));
+        assert_eq!(answer(StoreError::PermissionDenied(refused("session"))), (403, "session_forbidden".to_string()));
+        let channel_refused = ChannelError::Forbidden { action: "adding a participant to", channel, refused: refused("channel") };
+        let e = ApiError::from(channel_refused);
+        assert_eq!((e.status.as_u16(), e.code.as_ref()), (403, "channel_forbidden"));
+        assert!(e.detail.starts_with("adding a participant to channel"), "in the runtime's words: {}", e.detail);
+        assert_eq!(answer(ViewError::Forbidden { actor: ActorId::None, refused: refused("context") }), (403, "context_forbidden".to_string()), "as the web UI reads it");
+        assert_eq!(answer(ViewError::Forbidden { actor: ActorId::None, refused: refused("agent") }), (403, "agent_forbidden".to_string()), "as the web UI reads it");
+        // A plugin's error, unknown here, inside the core's `anyhow`, below
+        // a context: found by the refusal it carries.
+        #[derive(Debug)]
+        struct PluginError(Refused);
+        impl std::fmt::Display for PluginError {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("not yours")
+            }
+        }
+        impl std::error::Error for PluginError {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+        let inside = anyhow::Error::new(PluginError(refused("skill"))).context("deleting what lies in the session's scope");
+        assert_eq!(answer(inside), (403, "skill_forbidden".to_string()));
+        assert_eq!(answer(anyhow::Error::new(StoreError::PermissionDenied(refused("session"))).context("renaming")), (403, "session_forbidden".to_string()));
+    }
+
+    #[test]
+    fn what_a_request_named_and_was_not_found_is_told_by_its_kind() {
+        assert_eq!(answer(SessionError::NotFound(SessionId::new())), (404, "session_not_found".to_string()));
+        assert_eq!(answer(anyhow::Error::new(SessionError::TemplateNotFound(SessionTemplateId::new()))), (404, "template_not_found".to_string()));
+        assert_eq!(answer(StoreError::NotFound { entity: "agent", id: "1".to_string() }), (404, "agent_not_found".to_string()), "as an operation passed it on");
+        let personality = anyhow::Error::new(StoreError::NotFound { entity: "personality", id: "p1".to_string() });
+        assert_eq!(answer(personality), (500, "internal_error".to_string()), "met on the way, no answer to what was asked");
+        assert_eq!(answer(anyhow::anyhow!("broken")), (500, "internal_error".to_string()));
+    }
+
+    #[test]
+    fn the_core_s_errors_answer_with_status_and_code() {
         let (session, channel, someone) = (SessionId::new(), ChannelId::new(), ActorId::None);
-        let answer = |error: anyhow::Error, subject| {
-            let e = ApiError::from_runtime(error, subject, "doing it");
-            (e.status().as_u16(), e.code())
-        };
-        let not_found = |entity| anyhow::Error::new(StoreError::NotFound { entity, id: "1".to_string() });
+        assert_eq!(answer(SessionError::ChannelNotFound { session, channel }), (404, "channel_not_found".to_string()));
+        assert_eq!(answer(anyhow::Error::new(StoreError::NameTaken { entity: "agent" }).context("renaming")), (409, "name_taken".to_string()), "of every kind, also below a context");
+        let channel_error = |e: ChannelError| answer(e).1;
+        assert_eq!(channel_error(ChannelError::AlreadyParticipant { participant: someone, channel }), "already_participant");
+        assert_eq!(channel_error(ChannelError::StillLeaving { participant: someone, channel }), "still_leaving");
+        assert_eq!(channel_error(ChannelError::ParticipantGone { participant: someone, channel }), "participant_not_found");
+        assert_eq!(channel_error(ChannelError::ApproverStays { channel }), "invalid_participant");
+        assert_eq!(channel_error(ChannelError::OutOfScope { participant: someone, channel }), "invalid_participant");
+        assert_eq!(channel_error(ChannelError::ClassificationRefused { classification: Classification::CHANNEL_DEFAULT, channel }), "invalid_classification");
+        let message = MessageId::new();
+        assert_eq!(channel_error(ChannelError::MessageNotFound { message, channel }), "message_not_found");
+        assert_eq!(channel_error(ChannelError::MessageRevoked { message, channel }), "message_revoked");
+        assert_eq!(channel_error(ChannelError::NotAnAgentsMessage { message, channel }), "not_an_agents_message");
+        assert_eq!(channel_error(ChannelError::TurnNotRetryable { turn: TurnId::new(), channel }), "turn_not_retryable");
+        assert_eq!(answer(ChannelError::ToolCallNotRunning { call: "1".to_string(), turn: TurnId::new(), channel }), (409, "tool_call_not_running".to_string()));
+        assert_eq!(answer(ChannelError::NotCleared { participant: someone, channel }), (403, "not_cleared".to_string()));
+        let question = |reason| answer(ChannelError::Question { question: QuestionId::new(), channel, reason });
+        assert_eq!(question(QuestionError::NotOpen), (404, "question_not_found".to_string()));
+        assert_eq!(question(QuestionError::NotAsked), (403, "not_asked".to_string()));
+        assert_eq!(question(QuestionError::ResponseCount(2)), (400, "invalid_answer".to_string()));
+        assert_eq!(answer(TemplateError::UnsupportedScope("group")), (400, "template_invalid".to_string()));
+        assert_eq!(answer(SessionError::WorkspaceOutOfScope(WorkspaceId::new())), (400, "workspace_out_of_scope".to_string()));
+        let left = vec![(Artifact::KIND, 1)];
+        assert_eq!(answer(SessionError::ScopeNotEmpty { holder: Scope::SessionScope { session_id: session }, left }), (409, "scope_not_empty".to_string()), "what is left is the others' to take away (issue 320)");
+    }
 
-        assert_eq!(answer(not_found("session"), Subject::Session), (404, "session_not_found"));
-        assert_eq!(answer(not_found("session_template"), Subject::Session), (404, "template_not_found"));
-        assert_eq!(answer(anyhow::Error::new(SessionError::ChannelNotFound { session, channel }), Subject::Session), (404, "channel_not_found"));
-        assert_eq!(answer(anyhow::Error::new(StoreError::NameTaken { entity: "channel" }), Subject::Session), (409, "name_taken"));
-        assert_eq!(answer(anyhow::Error::new(StoreError::NameTaken { entity: "agent" }).context("renaming"), Subject::Agent), (409, "name_taken"), "of every kind, also below a context");
-        assert_eq!(answer(anyhow::Error::new(ChannelError::AlreadyParticipant { participant: someone, channel }), Subject::Participant), (409, "already_participant"));
-        assert_eq!(answer(anyhow::Error::new(ChannelError::StillLeaving { participant: someone, channel }), Subject::Participant), (409, "still_leaving"));
-        assert_eq!(answer(anyhow::Error::new(ChannelError::ParticipantGone { participant: someone, channel }), Subject::Participant), (404, "participant_not_found"));
-        assert_eq!(answer(anyhow::Error::new(ChannelError::ApproverStays { channel }), Subject::Participant), (400, "invalid_participant"));
-        assert_eq!(answer(anyhow::Error::new(ChannelError::OutOfScope { participant: someone, channel }), Subject::Participant), (400, "invalid_participant"));
-        let classification = caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT;
-        assert_eq!(answer(anyhow::Error::new(ChannelError::ClassificationRefused { classification, channel }), Subject::Session), (400, "invalid_classification"));
-        let message = caelumora_model::message::MessageId::new();
-        assert_eq!(answer(anyhow::Error::new(ChannelError::MessageNotFound { message, channel }), Subject::Session), (404, "message_not_found"));
-        assert_eq!(answer(anyhow::Error::new(ChannelError::MessageRevoked { message, channel }), Subject::Session), (409, "message_revoked"));
-        assert_eq!(answer(anyhow::Error::new(ChannelError::NotAnAgentsMessage { message, channel }), Subject::Session), (409, "not_an_agents_message"));
-        assert_eq!(answer(anyhow::Error::new(ChannelError::TurnNotRetryable { turn: caelumora_model::work::TurnId::new(), channel }), Subject::Session), (409, "turn_not_retryable"));
-        assert_eq!(answer(anyhow::Error::new(ChannelError::ToolCallNotRunning { call: "1".to_string(), turn: caelumora_model::work::TurnId::new(), channel }), Subject::Cancel), (409, "tool_call_not_running"));
-        assert_eq!(answer(anyhow::Error::new(ChannelError::NotCleared { participant: someone, channel }), Subject::Participant), (403, "not_cleared"));
-        {
-            use caelumora_runtime::terminal::TerminalError;
-            use caelumora_runtime::workspace::WorkspaceError;
-            let id = caelumora_model::workspace::WorkspaceId::new();
-            let workspace = |e: WorkspaceError| answer(anyhow::Error::new(e), Subject::Workspace);
-            assert_eq!(workspace(WorkspaceError::NotFound(id)), (404, "workspace_not_found"));
-            assert_eq!(workspace(WorkspaceError::UnknownStorage("nfs".to_string())), (400, "unknown_storage"));
-            assert_eq!(workspace(WorkspaceError::NotCleared), (403, "not_cleared"));
-            assert_eq!(workspace(WorkspaceError::Store(StoreError::NameTaken { entity: "workspace" })), (409, "name_taken"), "a store error inside, though transparent");
-            assert_eq!(workspace(WorkspaceError::Store(StoreError::PermissionDenied)), (403, "workspace_forbidden"));
-            assert_eq!(workspace(WorkspaceError::Terminal(TerminalError::TooLarge { limit: 1 })), (413, "file_too_large"));
-            let file = |e: TerminalError| answer(anyhow::Error::new(e), Subject::Workspace);
-            assert_eq!(file(TerminalError::InvalidPath("../x".to_string())), (400, "invalid_path"));
-            assert_eq!(file(TerminalError::NotFound("a".to_string())), (404, "file_not_found"));
-            assert_eq!(file(TerminalError::NotEmpty("a".to_string())), (409, "directory_not_empty"));
-            assert_eq!(file(TerminalError::Unavailable("permission denied".to_string())), (503, "storage_unavailable"));
-            assert_eq!(workspace(WorkspaceError::ReadOnly(id)), (403, "read_only"), "a command ended where the files are only read (issue 294)");
-            assert_eq!(workspace(WorkspaceError::Terminal(TerminalError::UnknownCommand("7".to_string()))), (404, "command_not_found"), "nor one not started in the channel");
-            assert_eq!(answer(not_found("workspace"), Subject::Session), (404, "workspace_not_found"), "as attaching reports it");
-            assert_eq!(answer(anyhow::Error::new(SessionError::WorkspaceOutOfScope(id)), Subject::Session), (400, "workspace_out_of_scope"));
-            let left = vec![(Artifact::KIND, 1)];
-            assert_eq!(answer(anyhow::Error::new(SessionError::ScopeNotEmpty { holder: Scope::SessionScope { session_id: session }, left }), Subject::Session), (409, "scope_not_empty"), "what is left is the others' to take away (issue 320)");
-        {
-            use caelumora_runtime::artifact::ArtifactError;
-            let artifact = caelumora_model::artifact::ArtifactId::new();
-            assert_eq!(answer(anyhow::Error::new(ArtifactError::NotFound(artifact)), Subject::Artifact), (404, "artifact_not_found"));
-            assert_eq!(answer(anyhow::Error::new(ArtifactError::VersionNotFound { artifact, version: 2 }), Subject::Artifact), (404, "version_not_found"));
-            assert_eq!(answer(anyhow::Error::new(ArtifactError::ClassifiedOtherwise("r.csv".to_string())), Subject::Artifact), (409, "classified_otherwise"));
-            assert_eq!(answer(anyhow::Error::new(ArtifactError::Store(StoreError::PermissionDenied)), Subject::Artifact), (403, "artifact_forbidden"));
-            assert_eq!(answer(anyhow::Error::new(ArtifactError::Store(StoreError::NameTaken { entity: "artifact" })), Subject::Artifact), (409, "name_taken"));
-            assert_eq!(answer(anyhow::Error::new(ArtifactError::Unavailable("broken".to_string())), Subject::Artifact).0, 500, "the storage's failure is not the client's");
-        }
-        }
-        use caelumora_model::question::{QuestionError, QuestionId};
-        let question = |reason| anyhow::Error::new(ChannelError::Question { question: QuestionId::new(), channel, reason });
-        assert_eq!(answer(question(QuestionError::NotOpen), Subject::Session), (404, "question_not_found"));
-        assert_eq!(answer(question(QuestionError::NotAsked), Subject::Session), (403, "not_asked"));
-        assert_eq!(answer(question(QuestionError::ResponseCount(2)), Subject::Session), (400, "invalid_answer"));
-        assert_eq!(answer(anyhow::Error::new(caelumora_model::template::TemplateError::UnsupportedScope("group")), Subject::Session), (400, "template_invalid"));
-        // A text that does not fit its field, wherever it was found out (issue 248).
-        let blank = || caelumora_model::value::ValueError::Blank { field: "summary" };
-        assert_eq!(answer(anyhow::Error::new(blank()), Subject::Session), (400, "invalid_value"));
-        assert_eq!(answer(anyhow::Error::new(StoreError::from(blank())), Subject::Session), (400, "invalid_value"), "by a controller, too");
-        assert_eq!(ApiError::from_runtime(anyhow::Error::new(StoreError::from(blank())), Subject::Session, "doing it").detail, "the summary must not consist of whitespace alone", "naming the field");
+    #[test]
+    fn a_text_that_does_not_fit_its_field_is_invalid_wherever_it_was_found_out() {
+        let blank = || ValueError::Blank { field: "summary" };
+        assert_eq!(answer(blank()), (400, "invalid_value".to_string()));
+        assert_eq!(answer(anyhow::Error::new(StoreError::from(blank()))), (400, "invalid_value".to_string()), "by a controller, too");
+        assert_eq!(ApiError::from(anyhow::Error::new(StoreError::from(blank()))).detail, "the summary must not consist of whitespace alone", "naming the field");
+    }
 
-        // A refusal is named after what was refused, whichever layer refused it.
-        let refused = || anyhow::Error::new(ChannelError::Forbidden { action: "adding a participant to", channel });
-        assert_eq!(answer(refused(), Subject::Participant), (403, "participant_forbidden"));
-        assert_eq!(answer(anyhow::Error::new(StoreError::PermissionDenied), Subject::Participant), (403, "participant_forbidden"));
-        assert_eq!(answer(refused(), Subject::Cancel), (403, "cancel_forbidden"));
-        assert_eq!(answer(anyhow::Error::new(StoreError::PermissionDenied).context("renaming"), Subject::Session), (403, "session_forbidden"));
-
-        // Anything else is the server's, and named after the subject too.
-        assert_eq!(answer(anyhow::anyhow!("broken"), Subject::Session), (500, "session_failed"));
-        assert_eq!(answer(not_found("personality"), Subject::Session), (500, "session_failed"), "a missing personality is no missing session");
+    #[test]
+    fn workspaces_their_files_and_artifacts_answer_with_status_and_code() {
+        let id = WorkspaceId::new();
+        assert_eq!(answer(WorkspaceError::NotFound(id)), (404, "workspace_not_found".to_string()));
+        assert_eq!(answer(WorkspaceError::UnknownStorage("nfs".to_string())), (400, "unknown_storage".to_string()));
+        assert_eq!(answer(WorkspaceError::NotCleared), (403, "not_cleared".to_string()));
+        assert_eq!(answer(WorkspaceError::Store(StoreError::NameTaken { entity: "workspace" })), (409, "name_taken".to_string()), "a store error inside, though transparent");
+        assert_eq!(answer(WorkspaceError::Store(StoreError::PermissionDenied(refused("workspace")))), (403, "workspace_forbidden".to_string()));
+        assert_eq!(answer(WorkspaceError::ReadOnly { id, refused: refused("workspace") }), (403, "read_only".to_string()), "a command ended where the files are only read (issue 294)");
+        assert_eq!(answer(anyhow::Error::new(WorkspaceError::ReadOnly { id, refused: refused("workspace") })), (403, "read_only".to_string()), "by its type before by the refusal it carries");
+        assert_eq!(answer(WorkspaceError::Terminal(TerminalError::TooLarge { limit: 1 })), (413, "file_too_large".to_string()));
+        assert_eq!(answer(TerminalError::InvalidPath("../x".to_string())), (400, "invalid_path".to_string()));
+        assert_eq!(answer(TerminalError::NotFound("a".to_string())), (404, "file_not_found".to_string()));
+        assert_eq!(answer(TerminalError::NotEmpty("a".to_string())), (409, "directory_not_empty".to_string()));
+        assert_eq!(answer(TerminalError::Unavailable("permission denied".to_string())), (503, "storage_unavailable".to_string()));
+        assert_eq!(answer(TerminalError::UnknownCommand("7".to_string())), (404, "command_not_found".to_string()), "nor one not started in the channel");
+        let artifact = ArtifactId::new();
+        assert_eq!(answer(ArtifactError::NotFound(artifact)), (404, "artifact_not_found".to_string()));
+        assert_eq!(answer(ArtifactError::VersionNotFound { artifact, version: 2 }), (404, "version_not_found".to_string()));
+        assert_eq!(answer(ArtifactError::ClassifiedOtherwise("r.csv".to_string())), (409, "classified_otherwise".to_string()));
+        assert_eq!(answer(ArtifactError::Store(StoreError::PermissionDenied(refused("artifact")))), (403, "artifact_forbidden".to_string()));
+        assert_eq!(answer(ArtifactError::Store(StoreError::NameTaken { entity: "artifact" })), (409, "name_taken".to_string()));
+        assert_eq!(answer(ArtifactError::Unavailable("broken".to_string())).0, 500, "the storage's failure is not the client's");
     }
 }

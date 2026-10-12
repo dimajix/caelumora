@@ -8,7 +8,7 @@ use caelumora_rest_api::trash::{DeletedResponse, ListOptions};
 use crate::state::AppState;
 use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response, Sse};
-use crate::error::{ApiError, Subject};
+use crate::error::ApiError;
 use axum::{extract::{Query, State}, http::StatusCode};
 use crate::error::{Json, Path};
 use caelumora_model::snapshot::Detail;
@@ -44,11 +44,9 @@ pub async fn list_channels(
     let session_id = SessionId(id);
     // Only the channels the user may read (issue 70), as they see them
     // (issue 80).
-    let session = crate::routes::views(&state, &user).session(session_id).await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Session, &format!("listing the channels of session {session_id}")))?;
+    let session = crate::routes::views(&state, &user).session(session_id).await?;
     if options.deleted {
-        let deleted = session.deleted_channels().await
-            .map_err(|e| ApiError::from_runtime(e.into(), Subject::Session, &format!("listing the deleted channels of session {session_id}")))?;
+        let deleted = session.deleted_channels().await?;
         return Ok(Json(deleted.into_iter().map(DeletedResponse::from).collect::<Vec<_>>()).into_response());
     }
     let mut channels: Vec<ChannelResponse> = Vec::new();
@@ -68,8 +66,7 @@ pub async fn restore_channel(
 ) -> Result<Json<ChannelResponse>, ApiError> {
     let session_id = SessionId(id);
     let session = crate::routes::ensure_session(&state, &user, session_id).await?;
-    session.restore_channel(&user.security_context(), ChannelId(cid)).await
-        .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("restoring channel {cid} of session {session_id}")))?;
+    session.restore_channel(&user.security_context(), ChannelId(cid)).await?;
     Ok(Json(crate::routes::channel_view(&state, &user, session_id, ChannelId(cid)).await?))
 }
 
@@ -87,8 +84,7 @@ pub async fn create_channel(
 
     let components = moderation_components(payload.moderator.as_deref(), payload.responder_policy.as_deref());
     let spec = ChannelSpec { name: payload.name, components, participants: payload.participants, classification: payload.classification, language: payload.language, uses_workspace: payload.uses_workspace };
-    let channel = session.create_channel(&context, spec).await
-        .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("creating a channel in session {session_id}")))?;
+    let channel = session.create_channel(&context, spec).await?;
     Ok(Json(crate::routes::channel_view(&state, &user, session_id, channel.id()).await?))
 }
 
@@ -101,8 +97,7 @@ pub async fn delete_channel(
     let session_id = SessionId(id);
     let session = crate::routes::ensure_session(&state, &user, session_id).await?;
 
-    session.delete_channel(&user.security_context(), ChannelId(cid)).await
-        .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("deleting a channel of session {session_id}")))?;
+    session.delete_channel(&user.security_context(), ChannelId(cid)).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -129,8 +124,7 @@ pub async fn get_channel_history(
     user: AuthenticatedUser,
 ) -> Result<Json<Vec<HistoryItemResponse<Message>>>, ApiError> {
     let channel = crate::routes::channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let history = channel.history().await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Session, &format!("reading the history of channel {cid}")))?;
+    let history = channel.history().await?;
     Ok(Json(items(history.items)))
 }
 
@@ -223,8 +217,7 @@ pub async fn add_participant(
 ) -> Result<Json<ChannelResponse>, ApiError> {
     let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let context = user.security_context();
-    channel.add_participant(&context, payload.participant, payload.history).await
-        .map_err(|e| ApiError::from_runtime(e, Subject::Participant, &format!("adding a participant to channel {cid}")))?;
+    channel.add_participant(&context, payload.participant, payload.history).await?;
     Ok(Json(crate::routes::channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?))
 }
 
@@ -253,8 +246,7 @@ pub async fn remove_participant(
     let context = user.security_context();
     let participant = actor_in(&channel, aid)
         .ok_or_else(|| ApiError::not_found("participant_not_found", format!("{} takes no part in channel {}", aid, cid)))?;
-    channel.remove_participant(&context, participant).await
-        .map_err(|e| ApiError::from_runtime(e, Subject::Participant, &format!("removing a participant from channel {cid}")))?;
+    channel.remove_participant(&context, participant).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -267,8 +259,7 @@ pub async fn send_message(
 ) -> Result<StatusCode, ApiError> {
     let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let user_actor = user_actor_of(&channel, &user)?;
-    let span_id = user_actor.send_message(payload.content, payload.classification).await
-        .map_err(|e| ApiError::from_runtime(e, Subject::Session, "sending the message"))?;
+    let span_id = user_actor.send_message(payload.content, payload.classification).await?;
     tracing::Span::current().record("span_id", tracing::field::display(span_id));
     Ok(StatusCode::OK)
 }
@@ -284,8 +275,7 @@ pub async fn modify_message(
 ) -> Result<StatusCode, ApiError> {
     let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let user_actor = user_actor_of(&channel, &user)?;
-    let span_id = user_actor.modify_message(MessageId(mid), payload.content, payload.classification).await
-        .map_err(|e| ApiError::from_runtime(e, Subject::Session, "modifying the message"))?;
+    let span_id = user_actor.modify_message(MessageId(mid), payload.content, payload.classification).await?;
     tracing::Span::current().record("span_id", tracing::field::display(span_id));
     Ok(StatusCode::OK)
 }
@@ -302,8 +292,7 @@ pub async fn retry_message(
 ) -> Result<StatusCode, ApiError> {
     let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let user_actor = user_actor_of(&channel, &user)?;
-    let span_id = user_actor.request_retry(MessageId(mid)).await
-        .map_err(|e| ApiError::from_runtime(e, Subject::Session, "asking for another answer"))?;
+    let span_id = user_actor.request_retry(MessageId(mid)).await?;
     tracing::Span::current().record("span_id", tracing::field::display(span_id));
     Ok(StatusCode::OK)
 }
@@ -324,8 +313,7 @@ pub async fn retry_turn(
     let user_actor = user_actor_of(&channel, &user)?;
     let participant = actor_in(&channel, aid)
         .ok_or_else(|| ApiError::not_found("participant_not_found", format!("{} takes no part in channel {}", aid, cid)))?;
-    let span_id = user_actor.request_retry_of_turn(participant, payload.turn_id).await
-        .map_err(|e| ApiError::from_runtime(e, Subject::Session, "asking for another answer"))?;
+    let span_id = user_actor.request_retry_of_turn(participant, payload.turn_id).await?;
     tracing::Span::current().record("span_id", tracing::field::display(span_id));
     Ok(StatusCode::OK)
 }
@@ -340,8 +328,7 @@ pub async fn revoke_message(
 ) -> Result<StatusCode, ApiError> {
     let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let user_actor = user_actor_of(&channel, &user)?;
-    let span_id = user_actor.revoke_message(MessageId(mid)).await
-        .map_err(|e| ApiError::from_runtime(e, Subject::Session, "taking back the message"))?;
+    let span_id = user_actor.revoke_message(MessageId(mid)).await?;
     tracing::Span::current().record("span_id", tracing::field::display(span_id));
     Ok(StatusCode::NO_CONTENT)
 }
@@ -362,8 +349,7 @@ async fn member_of(channel: &ChannelView, id: Uuid) -> Result<MemberView, ApiErr
     }
     // An agent that left before the channel kept who left is known by what
     // it said.
-    channel.member(ActorId::Agent(AgentId(id))).await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Participant, "finding the member"))
+    Ok(channel.member(ActorId::Agent(AgentId(id))).await?)
 }
 
 /// The actor the authenticated user acts through in `channel` (issue 30).
@@ -385,8 +371,7 @@ pub async fn cancel_channel(
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
     let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    channel.cancel(&user.security_context()).await
-        .map_err(|e| ApiError::from_runtime(e, Subject::Cancel, "cancelling the channel"))?;
+    channel.cancel(&user.security_context()).await?;
     Ok(StatusCode::OK)
 }
 
@@ -401,8 +386,7 @@ pub async fn cancel_participant(
     let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let participant = actor_in(&channel, aid)
         .ok_or_else(|| ApiError::not_found("participant_not_found", format!("{} takes no part in channel {}", aid, cid)))?;
-    channel.cancel_actor(&user.security_context(), participant).await
-        .map_err(|e| ApiError::from_runtime(e, Subject::Cancel, &format!("cancelling a participant of channel {cid}")))?;
+    channel.cancel_actor(&user.security_context(), participant).await?;
     Ok(StatusCode::OK)
 }
 
@@ -420,8 +404,7 @@ pub async fn interrupt_tool_call(
     let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let participant = actor_in(&channel, aid)
         .ok_or_else(|| ApiError::not_found("participant_not_found", format!("{} takes no part in channel {}", aid, cid)))?;
-    channel.interrupt_tool_call(&user.security_context(), participant, payload.turn_id, &call_id).await
-        .map_err(|e| ApiError::from_runtime(e, Subject::Cancel, &format!("interrupting a tool call in channel {cid}")))?;
+    channel.interrupt_tool_call(&user.security_context(), participant, payload.turn_id, &call_id).await?;
     Ok(StatusCode::OK)
 }
 
@@ -434,8 +417,7 @@ pub async fn reclassify_channel(
     Json(classification): Json<Classification>,
 ) -> Result<Json<ChannelResponse>, ApiError> {
     let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    channel.reclassify(&user.security_context(), classification).await
-        .map_err(|e| ApiError::from_runtime(e, Subject::Session, "reclassifying the channel"))?;
+    channel.reclassify(&user.security_context(), classification).await?;
     Ok(Json(crate::routes::channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?))
 }
 
@@ -450,8 +432,7 @@ pub async fn set_channel_language(
     Json(language): Json<Option<String>>,
 ) -> Result<Json<ChannelResponse>, ApiError> {
     let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    channel.update_language(&user.security_context(), language.as_deref()).await
-        .map_err(|e| ApiError::from_runtime(e, Subject::Session, "changing the language of the channel"))?;
+    channel.update_language(&user.security_context(), language.as_deref()).await?;
     Ok(Json(crate::routes::channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?))
 }
 
@@ -468,7 +449,7 @@ pub async fn update_channel_approval_rules(
 ) -> Result<Json<ChannelResponse>, ApiError> {
     let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     channel.update_approval_rules(&user.security_context(), rules).await
-        .map_err(|e| crate::routes::change_error(e, "invalid_rule", Subject::Session, "changing the approval rules of the channel"))?;
+        .map_err(|e| crate::routes::change_error(e, "invalid_rule"))?;
     Ok(Json(crate::routes::channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?))
 }
 
@@ -483,8 +464,7 @@ pub async fn update_channel_description(
     Json(payload): Json<DescriptionRequest>,
 ) -> Result<Json<ChannelResponse>, ApiError> {
     let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    channel.update_description(&user.security_context(), payload.summary.as_deref(), payload.briefing.as_deref()).await
-        .map_err(|e| ApiError::from_runtime(e, Subject::Session, "changing the description of the channel"))?;
+    channel.update_description(&user.security_context(), payload.summary.as_deref(), payload.briefing.as_deref()).await?;
     Ok(Json(crate::routes::channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?))
 }
 
@@ -500,8 +480,7 @@ pub async fn reclassify_message(
 ) -> Result<StatusCode, ApiError> {
     let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let user_actor = user_actor_of(&channel, &user)?;
-    let span_id = user_actor.reclassify_message(MessageId(mid), classification).await
-        .map_err(|e| ApiError::from_runtime(e, Subject::Session, "reclassifying a message"))?;
+    let span_id = user_actor.reclassify_message(MessageId(mid), classification).await?;
     tracing::Span::current().record("span_id", tracing::field::display(span_id));
     Ok(StatusCode::OK)
 }
@@ -529,8 +508,7 @@ pub async fn execute_command(
 ) -> Result<Json<CommandReplyResponse>, ApiError> {
     let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let user_actor = user_actor_of(&channel, &user)?;
-    let reply = user_actor.execute_command(&payload.name, &payload.args).await
-        .map_err(|e| ApiError::from_runtime(e, Subject::Command, &format!("running /{}", payload.name)))?;
+    let reply = user_actor.execute_command(&payload.name, &payload.args).await?;
     // An answer for the whole channel reaches this client on the channel's
     // stream, like everybody else; returning it here as well would show it twice.
     let output = reply.output.filter(|_| reply.visibility == CommandVisibility::Private);
@@ -548,10 +526,8 @@ pub async fn message_context(
 ) -> Result<Json<MessageContextResponse>, ApiError> {
     let channel = crate::routes::channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let member = member_of(&channel, aid).await?;
-    let view = member.context().await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Context, "reading the context"))?;
-    let seen = view.context_of(MessageId(mid))
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Context, "reading the context"))?;
+    let view = member.context().await?;
+    let seen = view.context_of(MessageId(mid))?;
     // What set the message's label, of the parts classified (issue 170).
     let label = view.classification_of(MessageId(mid)).unwrap_or_default();
     let mut classified: Vec<&Classification> = seen.reference.knowledge.iter().filter_map(|k| k.classification.as_ref()).collect();
@@ -638,8 +614,7 @@ pub async fn agent_history(
     user: AuthenticatedUser,
 ) -> Result<Json<Vec<HistoryItemResponse<HistoryMessageResponse>>>, ApiError> {
     let channel = crate::routes::channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let view = member_of(&channel, aid).await?.context().await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Context, "reading the history"))?;
+    let view = member_of(&channel, aid).await?.context().await?;
     let history = view.history().into_iter()
         .filter_map(|entry| HistoryItemResponse::of(entry, |message| history_message(&view, message)))
         .collect();
@@ -654,8 +629,7 @@ pub async fn agent_tools(
     user: AuthenticatedUser,
 ) -> Result<Json<AgentToolsResponse>, ApiError> {
     let channel = crate::routes::channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let tool_sets = member_of(&channel, aid).await?.tool_sets().await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Agent, "reading the tools"))?;
+    let tool_sets = member_of(&channel, aid).await?.tool_sets().await?;
     Ok(Json(AgentToolsResponse { tool_sets }))
 }
 
@@ -668,8 +642,7 @@ pub async fn agent_components(
     user: AuthenticatedUser,
 ) -> Result<Json<AgentComponentsResponse>, ApiError> {
     let channel = crate::routes::channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let components = member_of(&channel, aid).await?.components().await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Agent, "reading the components"))?;
+    let components = member_of(&channel, aid).await?.components().await?;
     Ok(Json(AgentComponentsResponse { components }))
 }
 
@@ -703,8 +676,7 @@ pub async fn answer_questions(
     };
     let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let user_actor = user_actor_of(&channel, &user)?;
-    let span_id = user_actor.answer_questions(QuestionId(qid), responses).await
-        .map_err(|e| ApiError::from_runtime(e, Subject::Session, "answering the questions"))?;
+    let span_id = user_actor.answer_questions(QuestionId(qid), responses).await?;
     tracing::Span::current().record("span_id", tracing::field::display(span_id));
     Ok(StatusCode::OK)
 }
@@ -713,9 +685,11 @@ pub async fn answer_questions(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_runtime::channel::ChannelError;
     use caelumora_runtime::view::{ContextError, ViewError};
     use caelumora_runtime::command::CommandError;
     use caelumora_model::message::MessageId;
+    use caelumora_model::security::Refused;
 
     fn history(count: usize) -> Vec<HistoryEntry> {
         (0..count).map(|i| HistoryEntry::Said { message: Message {
@@ -757,26 +731,27 @@ mod tests {
 
     #[test]
     fn a_command_that_does_not_run_is_answered_with_what_the_user_did() {
-        let status = |error: CommandError| ApiError::from_runtime(anyhow::Error::new(error), Subject::Command, "running /x").status();
+        let status = |error: CommandError| ApiError::from(error).status();
         assert_eq!(status(CommandError::Unknown("x".to_string())), StatusCode::BAD_REQUEST);
         assert_eq!(status(CommandError::Empty), StatusCode::BAD_REQUEST);
         assert_eq!(status(CommandError::InvalidArguments { command: "x".to_string(), reason: "y".to_string() }), StatusCode::BAD_REQUEST);
-        assert_eq!(status(CommandError::Forbidden("x".to_string())), StatusCode::FORBIDDEN);
+        let refused = Refused { subject: "command", action: "ExecuteCommand(/x)".to_string() };
+        assert_eq!(status(CommandError::Forbidden { name: "x".to_string(), refused: refused.clone() }), StatusCode::FORBIDDEN);
         assert_eq!(status(CommandError::Failed { command: "x".to_string(), reason: "y".to_string() }), StatusCode::INTERNAL_SERVER_ERROR);
 
-        let refused = anyhow::Error::new(caelumora_runtime::channel::ChannelError::Forbidden { action: "waking the agents of", channel: ChannelId::default() });
-        assert_eq!(ApiError::from_runtime(refused, Subject::Command, "running /wakeup").status(), StatusCode::FORBIDDEN);
+        let refused = anyhow::Error::new(ChannelError::Forbidden { action: "waking the agents of", channel: ChannelId::default(), refused });
+        assert_eq!(ApiError::from(refused).status(), StatusCode::FORBIDDEN);
     }
 
     #[test]
     fn a_context_that_cannot_be_shown_says_why() {
-        let actor = caelumora_model::actor::ActorId::None;
+        let actor = ActorId::None;
         let message = MessageId::new();
-        let status = |error: anyhow::Error| ApiError::from_runtime(error, Subject::Context, "reading the context");
-        assert_eq!(status(ViewError::Forbidden { actor }.into()).status(), StatusCode::FORBIDDEN);
-        assert_eq!(status(ViewError::NoContext { actor }.into()).code(), "context_not_recorded");
-        assert_eq!(status(ContextError::NotRecorded { actor, message }.into()).code(), "context_not_recorded");
-        assert_eq!(status(ContextError::Unavailable { actor, message }.into()).code(), "context_unavailable");
-        assert_eq!(status(ViewError::Failed(anyhow::anyhow!("disk")).into()).status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let refused = Refused { subject: "context", action: "ReadAgentContext".to_string() };
+        assert_eq!(ApiError::from(ViewError::Forbidden { actor, refused }).code(), "context_forbidden");
+        assert_eq!(ApiError::from(ViewError::NoContext { actor }).code(), "context_not_recorded");
+        assert_eq!(ApiError::from(ContextError::NotRecorded { actor, message }).code(), "context_not_recorded");
+        assert_eq!(ApiError::from(ContextError::Unavailable { actor, message }).code(), "context_unavailable");
+        assert_eq!(ApiError::from(ViewError::Failed(anyhow::anyhow!("disk"))).status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 }
