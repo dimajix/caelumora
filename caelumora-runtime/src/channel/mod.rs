@@ -23,7 +23,7 @@ use caelumora_model::message::{Message, MessageId};
 use caelumora_model::work::TurnId;
 use caelumora_model::security::{ActionType, Enforcement, SecurityAttributes, SecurityContext, SecurityManager};
 use caelumora_model::session::SessionId;
-use caelumora_model::store::{EntityStore, StateStore, StoreError, StoreResultExt};
+use caelumora_model::store::{Entities, StateStore, StoreError, StoreResultExt};
 use caelumora_model::user::UserId;
 use tracing::{info, warn};
 use std::any::Any;
@@ -204,7 +204,7 @@ pub struct ChannelLoop {
     /// The services it works with, taken from `runtime` once (issue 229).
     security: Arc<dyn SecurityManager>,
     confidentiality: Arc<dyn ConfidentialityPolicy>,
-    entities: Arc<dyn EntityStore>,
+    entities: Arc<dyn Entities>,
     controllers: Arc<ControllerManager>,
     /// The actors of the participants, each with what it was built from -
     /// what a reclassification asks its clearances of; replaced as a whole

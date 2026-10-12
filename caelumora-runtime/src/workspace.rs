@@ -44,7 +44,7 @@ use caelumora_model::security::{AccessQuestions, AclEntry, ActionType, Enforceme
 use crate::view::{channel_reading, ChannelReader};
 use caelumora_model::channel::Participant;
 use caelumora_model::session::{Channel, ChannelId, Session, SessionId};
-use caelumora_model::store::{EntityStore, StoreError, StoreResultExt};
+use caelumora_model::store::{Entities, StoreError, StoreResultExt};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;
@@ -112,7 +112,7 @@ fn store_error(id: WorkspaceId) -> impl FnOnce(StoreError) -> WorkspaceError {
 }
 
 pub struct WorkspaceManager {
-    entities: Arc<dyn EntityStore>,
+    entities: Arc<dyn Entities>,
     events: Arc<EventBus>,
     security: Arc<dyn SecurityManager>,
     /// What may flow where, and who is cleared for what (issue 304).
@@ -144,7 +144,7 @@ impl WorkspaceManager {
     /// `ComponentError::InvalidConfig` for a storage whose provider cannot
     /// be made, naming it, or for a storage with a shell outside a Tokio
     /// runtime.
-    pub(crate) fn new(entities: Arc<dyn EntityStore>, events: Arc<EventBus>, security: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>, controllers: Arc<ControllerManager>, secrets: &Arc<SecretManager>, config: &WorkspacesConfig) -> ComponentResult<Arc<Self>> {
+    pub(crate) fn new(entities: Arc<dyn Entities>, events: Arc<EventBus>, security: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>, controllers: Arc<ControllerManager>, secrets: &Arc<SecretManager>, config: &WorkspacesConfig) -> ComponentResult<Arc<Self>> {
         let storages: BTreeMap<String, Arc<dyn TerminalProvider>> = config.storage.iter()
             .map(|(name, storage)| {
                 let invalid = |e: TerminalError| ComponentError::InvalidConfig(format!("the storage '{name}' of workspaces: {e}"));
@@ -758,7 +758,7 @@ pub(crate) mod testing {
     use caelumora_model::secret::SecretManager;
     use caelumora_model::security::{DummySecurityManager, SecurityContext};
     use caelumora_model::session::{Session, SessionId};
-    use caelumora_model::store::EntityStore;
+    use caelumora_model::store::Entities;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::{Name, ScopedName};

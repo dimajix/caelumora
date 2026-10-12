@@ -37,7 +37,7 @@ use caelumora_model::removal::Stored;
 use caelumora_model::scope::{Scope, ScopedField};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::query::Query;
-use caelumora_model::store::{EntityStore, StoreError, StoreResult};
+use caelumora_model::store::{Entities, StoreError, StoreResult};
 use caelumora_model::value::name::ScopedName;
 use chrono::{DateTime, Utc};
 use std::fmt;
@@ -53,7 +53,7 @@ use caelumora_model::workspace::Workspace;
 /// Deletes, restores and purges what lies in a scope with what holds it
 /// (issue 178), each kind by its owner where it has one (issue 319).
 pub(crate) struct ScopedEntities {
-    entities: Arc<dyn EntityStore>,
+    entities: Arc<dyn Entities>,
     agents: Arc<AgentManager>,
     workspaces: Arc<WorkspaceManager>,
     skills: Arc<SkillManager>,
@@ -69,7 +69,7 @@ impl fmt::Debug for ScopedEntities {
 
 impl ScopedEntities {
     pub(crate) fn new(
-        entities: Arc<dyn EntityStore>,
+        entities: Arc<dyn Entities>,
         agents: Arc<AgentManager>,
         workspaces: Arc<WorkspaceManager>,
         skills: Arc<SkillManager>,

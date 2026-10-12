@@ -6,7 +6,7 @@ use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::session::{ChannelId, Session, SessionId, SessionUpdateEvent};
 use caelumora_model::value::name::Name;
 use caelumora_model::value::ValueError;
-use caelumora_model::store::{EntityStore, StoreError, StoreResult};
+use caelumora_model::store::{Entities, StoreError, StoreResult};
 use chrono::Utc;
 use std::sync::Arc;
 use super::check_restricting;
@@ -17,14 +17,14 @@ pub struct SessionController {
     id: SessionId,
     session: ArcSwap<Session>,
     event_publisher: Arc<dyn EventPublisher>,
-    entity_store: Arc<dyn EntityStore>,
+    entity_store: Arc<dyn Entities>,
     /// Held while the session is changed and stored, so that two changes -
     /// say a rename and a new channel - cannot overwrite each other.
     write_lock: tokio::sync::Mutex<()>,
 }
 
 impl SessionController {
-    pub fn new(session: Session, event_publisher: Arc<dyn EventPublisher>, entity_store: Arc<dyn EntityStore>) -> Self {
+    pub fn new(session: Session, event_publisher: Arc<dyn EventPublisher>, entity_store: Arc<dyn Entities>) -> Self {
         Self {
             id: session.id,
             session: ArcSwap::from_pointee(session),

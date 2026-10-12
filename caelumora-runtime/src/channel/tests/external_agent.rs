@@ -10,7 +10,7 @@ use anyhow::Result;
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::Channel;
 use caelumora_model::security::{SecurityAttributes, SecurityContext, SecurityManager};
-use caelumora_model::store::EntityStore;
+use caelumora_model::store::Entities;
 use caelumora_model::session::{ChannelId, SessionId};
 use std::sync::Arc;
 use caelumora_model::value::name::ScopedName;
@@ -1120,7 +1120,7 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_since() 
     use caelumora_model::agent::{Agent, Personality, PersonalityId, PersonalityKind};
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::scope::Scope;
-    use caelumora_model::store::EntityStore;
+    use caelumora_model::store::Entities;
 
     let answer = |text: &str| vec![Ok(ExternalEvent::Message(text.to_string())), Ok(ExternalEvent::Completed)];
     let remote = Arc::new(ScriptedExternalAgent::answering(vec![answer("Hello."), answer("Hi, bob.")]));

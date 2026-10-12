@@ -14,7 +14,7 @@ use crate::scope::Scope::{GlobalScope, SessionScope, UserScope};
 use crate::value::name::{Name, ScopedName};
 use crate::value::text::{Briefing, Description, Summary};
 use crate::removal::{Deletable, Removal, Stored};
-use crate::scope::{Scoped, Scope};
+use crate::scope::{Scope, ScopeField, Scoped};
 use crate::privacy::PrivacyConfig;
 use crate::session::{Session, SessionId};
 use chrono::Utc;
@@ -23,6 +23,7 @@ use uuid::Uuid;
 use crate::actor::ActorId;
 use crate::security::{Secured, SecurityAttributes};
 use crate::user::UserId;
+use crate::store::EntityKind;
 
 /// A template that cannot be made into a session. The messages are meant
 /// for users (see `caelumora_runtime::error::user_message`).
@@ -220,7 +221,17 @@ impl WorkspaceTemplate {
 /// session's or a channel's scope would make sessions that can never lie
 /// in it, so it is not stored.
 impl Stored for SessionTemplate {
-    const KIND: crate::store::EntityKind = crate::store::EntityKind::new("session_template");
+    const KIND: EntityKind = EntityKind::new("session_template");
+    type Id = SessionTemplateId;
+    type Field = ScopeField;
+
+    fn id(&self) -> SessionTemplateId {
+        self.id
+    }
+
+    fn unique_name(&self) -> Option<ScopedName> {
+        Some(Scoped::scoped_name(self))
+    }
 
     fn deleted(&self) -> Option<&Removal> {
         self.deleted.as_ref()

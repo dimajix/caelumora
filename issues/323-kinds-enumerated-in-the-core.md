@@ -549,3 +549,21 @@ type. The store's helpers take it from `T` and lost their `kind` parameter, so a
 be passed to the map of another; whoever names a kind writes `Skill::KIND`. Nothing stored changed:
 the names are those of before.
 
+**2026-10-12** — Step 3 decided with the maintainer: every kind moves to the generic store in this
+step (option A), by way of the old trait as a facade over the stores of the kinds (option B), kind
+by kind in commits of their own, the facade deleted at the end. The runtime is handed a struct with
+a field per kind of the core, a plugin makes its store through a factory; the JSON store's
+directory of a kind is named after the kind. The `ComponentStore` was to become an
+`EntityStore<StoredComponents>` as well; it stays a trait of its own, since a component is removed
+when deleted, and a permanent delete in the generic trait would let any kind be removed past its
+trash, with `Delete` alone instead of `Purge`.
+
+Step 3a, on branch `issue-323-generic-store`: `Stored` says the id, the query fields and the unique
+name of its kind (`unique_name`, from `Scoped`), so that a store needs nothing else of a kind; the
+`impl_deletable!` macro is gone. `EntityStore<T>` is the generic trait, implemented by
+`MemoryEntityStore<T>` and `JsonEntityStore<T>`; the old trait is `Entities` for the transition,
+implemented by `MemoryStore` and `JsonFileStore` over one store per kind. The JSON store keeps a
+kind's documents in `entities/<kind>/`: stored entities move there (`templates/agents` to
+`entities/personality`, `templates/sessions` to `entities/session_template`, `templates/components`
+to `entities/components`, `runtime/<kind>s` to `entities/<kind>`), or are deleted.
+

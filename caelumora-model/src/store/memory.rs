@@ -1,53 +1,49 @@
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
-use crate::channel::{Channel, ChannelId, ChannelState};
+use crate::artifact::{Artifact, ArtifactField, ArtifactId};
+use crate::channel::{Channel, ChannelField, ChannelId, ChannelState};
 use crate::component::StoredComponents;
-use crate::session::{Session, SessionId};
-use crate::store::{ComponentStore, EntityStore, Journaled, StateStore, StoreError, StoreResult};
-use crate::template::{SessionTemplate, SessionTemplateId};
-use async_trait::async_trait;
-use tracing::info;
-use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
-use crate::removal::{Deletable, Removal, Stored};
-use crate::scope::Scoped;
-use crate::value::name::ScopedName;
 use crate::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
-use crate::security::{ActionType, DummySecurityManager, SecurityManager};
-use crate::store::access::{name_free, Access};
-use crate::workspace::{Workspace, WorkspaceId};
-use crate::skill::{Skill, SkillId};
 use crate::group::{Group, GroupField, GroupId};
-use crate::artifact::{Artifact, ArtifactId};
-use std::fmt::Display;
-use std::hash::Hash;
-use crate::store::query::{self, Field, Filter, NoField, Page, Query};
-use std::future::ready;
+use crate::removal::{Deletable, Removal, Stored};
+use crate::scope::{Scope, ScopeField};
+use crate::security::{ActionType, DummySecurityManager, SecurityContext, SecurityManager};
+use crate::session::{Session, SessionField, SessionId};
+use crate::skill::{Skill, SkillId};
+use crate::store::access::{name_free, Access};
+use crate::store::query::{self, Filter, NoField, Page, Query};
+use crate::store::{ComponentStore, Entities, EntityStore, Journaled, StateStore, StoreError, StoreResult};
+use crate::template::{SessionTemplate, SessionTemplateId};
+use crate::user::{User, UserId, UserProfile};
+use crate::value::name::ScopedName;
+use crate::workspace::{Workspace, WorkspaceId};
+use async_trait::async_trait;
 use serde::Serialize;
-use crate::artifact::ArtifactField;
-use crate::channel::ChannelField;
-use crate::scope::ScopeField;
-use crate::session::SessionField;
+use std::collections::HashMap;
+use std::fmt::{self, Debug};
+use std::future::ready;
+use std::sync::{Arc, RwLock};
+use tracing::info;
 
+/// Every kind's entities, the preconfigured components and the runtime
+/// state, in memory: a store per kind (`MemoryEntityStore`, issue 323),
+/// and maps for the states.
 #[derive(Debug)]
 pub struct MemoryStore {
-    security_manager: Arc<dyn SecurityManager>,
-    /// Who is cleared for what is reached by clearance (issue 322).
-    confidentiality: Arc<dyn ConfidentialityPolicy>,
-    personalities: RwLock<HashMap<PersonalityId, Personality>>,
-    session_templates: RwLock<HashMap<SessionTemplateId, SessionTemplate>>,
-    agents: RwLock<HashMap<AgentId, Agent>>,
-    sessions: RwLock<HashMap<SessionId, Session>>,
-    channels: RwLock<HashMap<ChannelId, Channel>>,
-    users: RwLock<HashMap<UserId, User>>,
-    user_profiles: RwLock<HashMap<UserId, UserProfile>>,
-    workspaces: RwLock<HashMap<WorkspaceId, Workspace>>,
-    skills: RwLock<HashMap<SkillId, Skill>>,
-    artifacts: RwLock<HashMap<ArtifactId, Artifact>>,
-    groups: RwLock<HashMap<GroupId, Group>>,
+    personalities: MemoryEntityStore<Personality>,
+    session_templates: MemoryEntityStore<SessionTemplate>,
+    agents: MemoryEntityStore<Agent>,
+    sessions: MemoryEntityStore<Session>,
+    channels: MemoryEntityStore<Channel>,
+    users: MemoryEntityStore<User>,
+    user_profiles: MemoryEntityStore<UserProfile>,
+    workspaces: MemoryEntityStore<Workspace>,
+    skills: MemoryEntityStore<Skill>,
+    artifacts: MemoryEntityStore<Artifact>,
+    groups: MemoryEntityStore<Group>,
+    components: MemoryEntityStore<StoredComponents>,
     agent_states: RwLock<HashMap<AgentId, AgentState>>,
     agent_channel_states: RwLock<HashMap<(AgentId, ChannelId), AgentChannelState>>,
     channel_states: RwLock<HashMap<ChannelId, ChannelState>>,
-    components: RwLock<HashMap<String, StoredComponents>>,
 }
 
 impl Default for MemoryStore {
@@ -67,577 +63,527 @@ impl MemoryStore {
     /// is reached by clearance.
     pub fn with_policies(security_manager: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> Self {
         info!("Creating memory store");
+        let policies = (security_manager, confidentiality);
         Self {
-            security_manager,
-            confidentiality,
-            personalities: Default::default(),
-            session_templates: Default::default(),
-            agents: Default::default(),
-            sessions: Default::default(),
-            channels: Default::default(),
-            users: Default::default(),
-            user_profiles: Default::default(),
-            workspaces: Default::default(),
-            skills: Default::default(),
-            artifacts: Default::default(),
-            groups: Default::default(),
+            personalities: MemoryEntityStore::new(&policies),
+            session_templates: MemoryEntityStore::new(&policies),
+            agents: MemoryEntityStore::new(&policies),
+            sessions: MemoryEntityStore::new(&policies),
+            channels: MemoryEntityStore::new(&policies),
+            users: MemoryEntityStore::new(&policies),
+            user_profiles: MemoryEntityStore::new(&policies),
+            workspaces: MemoryEntityStore::new(&policies),
+            skills: MemoryEntityStore::new(&policies),
+            artifacts: MemoryEntityStore::new(&policies),
+            groups: MemoryEntityStore::new(&policies),
+            components: MemoryEntityStore::new(&policies),
             agent_states: Default::default(),
             agent_channel_states: Default::default(),
             channel_states: Default::default(),
-            components: Default::default(),
         }
+    }
+}
+
+// A poisoned lock is used anyway: the locks are held only by the closures
+// passed here, none of which can leave a map half-changed.
+fn read_lock<T, F, R>(lock: &RwLock<T>, f: F) -> R
+where
+    F: FnOnce(&T) -> R,
+{
+    match lock.read() {
+        Ok(guard) => f(&guard),
+        Err(poisoned) => f(poisoned.get_ref()),
+    }
+}
+
+fn write_lock<T, F, R>(lock: &RwLock<T>, f: F) -> R
+where
+    F: FnOnce(&mut T) -> R,
+{
+    match lock.write() {
+        Ok(mut guard) => f(&mut guard),
+        Err(mut poisoned) => f(poisoned.get_mut()),
+    }
+}
+
+/// The entities of one kind in memory (issue 323), checked as every kind is
+/// (`store::access`).
+pub struct MemoryEntityStore<T: Stored> {
+    security_manager: Arc<dyn SecurityManager>,
+    /// Who is cleared for what is reached by clearance (issue 322).
+    confidentiality: Arc<dyn ConfidentialityPolicy>,
+    entities: RwLock<HashMap<T::Id, T>>,
+}
+
+impl<T: Stored> Debug for MemoryEntityStore<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MemoryEntityStore").field("kind", &T::KIND).finish_non_exhaustive()
+    }
+}
+
+impl<T: Stored + Clone + Serialize + Send + Sync> MemoryEntityStore<T> {
+    /// An empty store that asks the `SecurityManager` and the
+    /// `ConfidentialityPolicy` of `policies`.
+    fn new(policies: &(Arc<dyn SecurityManager>, Arc<dyn ConfidentialityPolicy>)) -> Self {
+        Self { security_manager: Arc::clone(&policies.0), confidentiality: Arc::clone(&policies.1), entities: Default::default() }
     }
 
     fn access<'a>(&'a self, ctx: &'a SecurityContext) -> Access<'a> {
         Access::new(self.security_manager.as_ref(), self.confidentiality.as_ref(), ctx)
     }
 
-    // A poisoned lock is used anyway: the locks are held only by the
-    // closures passed here, none of which can leave a map half-changed.
-    fn read_lock<T, F, R>(&self, lock: &RwLock<T>, f: F) -> R
-    where
-        F: FnOnce(&T) -> R,
-    {
-        match lock.read() {
-            Ok(guard) => f(&guard),
-            Err(poisoned) => f(poisoned.get_ref()),
-        }
+    fn stored(&self, id: &T::Id) -> Option<T> {
+        read_lock(&self.entities, |v| v.get(id).cloned())
     }
 
-    fn write_lock<T, F, R>(&self, lock: &RwLock<T>, f: F) -> R
-    where
-        F: FnOnce(&mut T) -> R,
-    {
-        match lock.write() {
-            Ok(mut guard) => f(&mut guard),
-            Err(mut poisoned) => f(poisoned.get_mut()),
-        }
-    }
-}
-
-/// What a write checks of the other entities of its kind, inside the lock
-/// that writes: the entity as it is to be written, and the others.
-type Others<'a, T> = &'a mut dyn Iterator<Item = &'a T>;
-
-/// A write of a kind whose names are not unique checks nothing of the
-/// others.
-fn unnamed<T>(_: &T, _: Others<'_, T>) -> StoreResult<()> {
-    Ok(())
-}
-
-/// The operations of every T::KIND (issues 93, 164), on the map that holds
-/// that T::KIND and checked as its T::KIND. Those that write come as
-/// three: the plain one, the one for a T::KIND whose names are unique
-/// (`…_named_in`, issue 250), and what both are made of (`…_with`).
-impl MemoryStore {
-    async fn create_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, key: K, value: &T) -> StoreResult<()>
-    where K: Eq + Hash + Display + Send + Sync, T: Stored + Clone + Send + Sync {
-        self.create_with(ctx, map, key, value, unnamed).await
+    /// Stores `value` as `update` and `restore` do: the others of its kind
+    /// checked for its name and it written, in one step.
+    fn write(&self, value: &T) -> StoreResult<()> {
+        let id = value.id();
+        write_lock(&self.entities, |v| {
+            name_free(value, v.iter().filter(|(other, _)| **other != id).map(|(_, other)| other))?;
+            v.insert(id, value.clone());
+            Ok(())
+        })
     }
 
-    async fn create_named_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, key: K, value: &T) -> StoreResult<()>
-    where K: Eq + Hash + Display + Send + Sync, T: Stored + Scoped + Clone + Send + Sync {
-        self.create_with(ctx, map, key, value, |value, others| name_free(value, others)).await
-    }
-
-    async fn create_with<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, key: K, value: &T, others: impl FnOnce(&T, Others<'_, T>) -> StoreResult<()>) -> StoreResult<()>
-    where K: Eq + Hash + Display + Send + Sync, T: Stored + Clone + Send + Sync {
+    async fn create(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()> {
         self.access(ctx).create(value).await?;
-        self.write_lock(map, |v| {
-            if v.contains_key(&key) {
-                return Err(StoreError::Conflict(format!("{} {} already exists", T::KIND, key)));
+        let id = value.id();
+        write_lock(&self.entities, |v| {
+            if v.contains_key(&id) {
+                return Err(StoreError::Conflict(format!("{} {} already exists", T::KIND, id)));
             }
-            others(value, &mut v.values())?;
-            v.insert(key, value.clone());
+            name_free(value, v.values())?;
+            v.insert(id, value.clone());
             Ok(())
         })
     }
 
-    async fn get_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, key: &K) -> StoreResult<T>
-    where K: Eq + Hash + Display + Send + Sync, T: Stored + Clone + Send + Sync {
-        let found = self.read_lock(map, |v| v.get(key).cloned());
-        self.access(ctx).read(found, key.to_string()).await
+    async fn get(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T> {
+        self.access(ctx).read(self.stored(&id), id.to_string()).await
     }
 
-    async fn update_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, key: K, value: &T) -> StoreResult<()>
-    where K: Eq + Hash + Display + Send + Sync, T: Stored + Clone + Send + Sync {
-        self.update_with(ctx, map, key, value, unnamed).await
+    async fn update(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()> {
+        let id = value.id();
+        self.access(ctx).change(self.stored(&id).as_ref(), value, id.to_string()).await?;
+        self.write(value)
     }
 
-    async fn update_named_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, key: K, value: &T) -> StoreResult<()>
-    where K: Eq + Hash + Display + Send + Sync, T: Stored + Scoped + Clone + Send + Sync {
-        self.update_with(ctx, map, key, value, |value, others| name_free(value, others)).await
-    }
-
-    async fn update_with<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, key: K, value: &T, others: impl FnOnce(&T, Others<'_, T>) -> StoreResult<()>) -> StoreResult<()>
-    where K: Eq + Hash + Display + Send + Sync, T: Stored + Clone + Send + Sync {
-        let stored = self.read_lock(map, |v| v.get(&key).cloned());
-        self.access(ctx).change(stored.as_ref(), value, key.to_string()).await?;
-        self.write_lock(map, |v| {
-            others(value, &mut v.iter().filter(|(k, _)| **k != key).map(|(_, other)| other))?;
-            v.insert(key, value.clone());
-            Ok(())
-        })
-    }
-
-    /// Marks the entity deleted, by the caller and now (issue 164).
-    async fn delete_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, key: K) -> StoreResult<bool>
-    where K: Eq + Hash + Display + Send + Sync, T: Deletable + Clone + Send + Sync {
-        let stored = self.read_lock(map, |v| v.get(&key).cloned());
-        if !self.access(ctx).delete(stored.as_ref()).await? {
+    /// Removes the entity for good: deleting a kind that is not marked.
+    async fn remove(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<bool> {
+        if !self.access(ctx).delete(self.stored(&id).as_ref()).await? {
             return Ok(false);
         }
-        let Some(mut marked) = stored else { return Ok(false) };
-        marked.set_deleted(Some(Removal::now(ctx.caller_id)));
-        self.write_lock(map, |v| v.insert(key, marked));
-        Ok(true)
+        Ok(write_lock(&self.entities, |v| v.remove(&id).is_some()))
     }
 
-    /// Removes the entity for good: deleting a T::KIND that is not marked.
-    async fn remove_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, key: &K) -> StoreResult<bool>
-    where K: Eq + Hash + Display + Send + Sync, T: Stored + Clone + Send + Sync {
-        let stored = self.read_lock(map, |v| v.get(key).cloned());
-        if !self.access(ctx).delete(stored.as_ref()).await? {
-            return Ok(false);
-        }
-        Ok(self.write_lock(map, |v| v.remove(key).is_some()))
-    }
-
-    async fn restore_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, key: K) -> StoreResult<T>
-    where K: Eq + Hash + Display + Send + Sync, T: Deletable + Clone + Send + Sync {
-        self.restore_with(ctx, map, key, unnamed).await
-    }
-
-    async fn restore_named_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, key: K) -> StoreResult<T>
-    where K: Eq + Hash + Display + Send + Sync, T: Deletable + Scoped + Clone + Send + Sync {
-        self.restore_with(ctx, map, key, |value, others| name_free(value, others)).await
-    }
-
-    async fn restore_with<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, key: K, others: impl FnOnce(&T, Others<'_, T>) -> StoreResult<()>) -> StoreResult<T>
-    where K: Eq + Hash + Display + Send + Sync, T: Deletable + Clone + Send + Sync {
-        let stored = self.read_lock(map, |v| v.get(&key).cloned());
-        let mut restored = self.access(ctx).restore(stored, key.to_string()).await?;
-        restored.set_deleted(None);
-        self.write_lock(map, |v| {
-            others(&restored, &mut v.iter().filter(|(k, _)| **k != key).map(|(_, other)| other))?;
-            v.insert(key, restored.clone());
-            Ok(restored)
-        })
-    }
-
-    async fn purge_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, key: &K) -> StoreResult<bool>
-    where K: Eq + Hash + Display + Send + Sync, T: Deletable + Clone + Send + Sync {
-        let stored = self.read_lock(map, |v| v.get(key).cloned());
-        if !self.access(ctx).purge(stored.as_ref()).await? {
-            return Ok(false);
-        }
-        // Only if it is still marked: restored while the purge was asked
-        // about, it stays.
-        Ok(self.write_lock(map, |v| {
-            let marked = v.get(key).is_some_and(|value| value.deleted().is_some());
-            marked && v.remove(key).is_some()
-        }))
-    }
-
-    async fn get_deleted_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, key: &K) -> StoreResult<T>
-    where K: Eq + Hash + Display + Send + Sync, T: Deletable + Clone + Send + Sync {
-        let found = self.read_lock(map, |v| v.get(key).cloned());
-        self.access(ctx).read_deleted(found, key.to_string()).await
-    }
-
-    /// The keys of `map`, each as it orders a list and as it finds the
-    /// entity, in no order.
-    fn keys<K, T>(&self, map: &RwLock<HashMap<K, T>>) -> Vec<(String, K)>
-    where K: Display + Clone {
-        self.read_lock(map, |v| v.keys().map(|key| (key.to_string(), key.clone())).collect())
-    }
-
-    /// The entity of `key` in `map`, if it is there and meets `filter`.
-    fn meeting_in<K, T, F>(&self, map: &RwLock<HashMap<K, T>>, key: &K, filter: Option<&Filter<F>>) -> StoreResult<Option<T>>
-    where K: Eq + Hash, T: Serialize + Clone, F: Field {
-        match self.read_lock(map, |v| v.get(key).cloned()) {
+    /// The entity of `id`, if it is there and meets `filter`.
+    fn meeting(&self, id: &T::Id, filter: Option<&Filter<T::Field>>) -> StoreResult<Option<T>> {
+        match self.stored(id) {
             Some(value) => query::meeting(value, filter),
             None => Ok(None),
         }
     }
 
-    async fn list_deleted_in<K, T, F>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, query: &Query<F>) -> StoreResult<Page<T>>
-    where K: Eq + Hash + Display + Clone + Send + Sync, T: Deletable + Serialize + Clone + Send + Sync, F: Field {
+    /// The page `query` asks for, among what is deleted if `deleted`.
+    async fn page(&self, ctx: &SecurityContext, query: &Query<T::Field>, deleted: bool) -> StoreResult<Page<T>> {
         let access = self.access(ctx);
         access.allow(ActionType::List(T::KIND)).await?;
+        let keys = read_lock(&self.entities, |v| v.keys().map(|id| (id.to_string(), id.clone())).collect());
         let filter = query.filter.as_ref();
-        access.page(self.keys(map), query, true, |key: K| ready(self.meeting_in(map, &key, filter))).await
-    }
-
-    async fn list_in<K, T, F>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, query: &Query<F>) -> StoreResult<Page<T>>
-    where K: Eq + Hash + Display + Clone + Send + Sync, T: Stored + Serialize + Clone + Send + Sync, F: Field {
-        let access = self.access(ctx);
-        access.allow(ActionType::List(T::KIND)).await?;
-        let filter = query.filter.as_ref();
-        access.page(self.keys(map), query, false, |key: K| ready(self.meeting_in(map, &key, filter))).await
-    }
-
-    /// The one of `name`, in exactly its scope, among those listed.
-    async fn find_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, name: &ScopedName) -> StoreResult<T>
-    where K: Eq + Hash + Display + Clone + Send + Sync, T: Stored + Scoped + Serialize + Clone + Send + Sync {
-        let all = self.list_in(ctx, map, &Query::<NoField>::all()).await?.items;
-        require_entity(all.into_iter().find(|d| d.scoped_name() == *name), T::KIND.name(), name.to_string())
+        access.page(keys, query, deleted, |id: T::Id| ready(self.meeting(&id, filter))).await
     }
 }
-
-fn require_entity<T>(value: Option<T>, entity: &'static str, id: String) -> StoreResult<T> {
-    value.ok_or(StoreError::NotFound { entity, id })
-}
-
-use crate::security::SecurityContext;
-use crate::user::{User, UserId, UserProfile};
 
 #[async_trait]
-impl EntityStore for MemoryStore {
-    // Personalities
+impl<T: Deletable + Clone + Serialize + Send + Sync + 'static> EntityStore<T> for MemoryEntityStore<T> {
+    async fn create(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()> {
+        MemoryEntityStore::create(self, ctx, value).await
+    }
+
+    async fn get(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T> {
+        MemoryEntityStore::get(self, ctx, id).await
+    }
+
+    async fn update(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()> {
+        MemoryEntityStore::update(self, ctx, value).await
+    }
+
+    /// Marks the entity deleted, by the caller and now (issue 164).
+    async fn delete(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<bool> {
+        let stored = self.stored(&id);
+        if !self.access(ctx).delete(stored.as_ref()).await? {
+            return Ok(false);
+        }
+        let Some(mut marked) = stored else { return Ok(false) };
+        marked.set_deleted(Some(Removal::now(ctx.caller_id)));
+        write_lock(&self.entities, |v| v.insert(id, marked));
+        Ok(true)
+    }
+
+    async fn list(&self, ctx: &SecurityContext, query: &Query<T::Field>) -> StoreResult<Page<T>> {
+        self.page(ctx, query, false).await
+    }
+
+    async fn restore(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T> {
+        let mut restored = self.access(ctx).restore(self.stored(&id), id.to_string()).await?;
+        restored.set_deleted(None);
+        self.write(&restored)?;
+        Ok(restored)
+    }
+
+    async fn purge(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<bool> {
+        if !self.access(ctx).purge(self.stored(&id).as_ref()).await? {
+            return Ok(false);
+        }
+        // Only if it is still marked: restored while the purge was asked
+        // about, it stays.
+        Ok(write_lock(&self.entities, |v| {
+            let marked = v.get(&id).is_some_and(|value| value.deleted().is_some());
+            marked && v.remove(&id).is_some()
+        }))
+    }
+
+    async fn get_deleted(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T> {
+        self.access(ctx).read_deleted(self.stored(&id), id.to_string()).await
+    }
+
+    async fn list_deleted(&self, ctx: &SecurityContext, query: &Query<T::Field>) -> StoreResult<Page<T>> {
+        self.page(ctx, query, true).await
+    }
+
+    async fn find_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<T> {
+        let all = self.page(ctx, &Query::all(), false).await?.items;
+        all.into_iter().find(|value| value.unique_name().as_ref() == Some(name))
+            .ok_or_else(|| StoreError::NotFound { entity: T::KIND.name(), id: name.to_string() })
+    }
+}
+
+#[async_trait]
+impl Entities for MemoryStore {
     async fn create_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()> {
-        self.create_named_in(ctx, &self.personalities, value.id, value).await
+        self.personalities.create(ctx, value).await
     }
     async fn get_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
-        self.get_in(ctx, &self.personalities, &id).await
+        self.personalities.get(ctx, id).await
     }
     async fn update_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()> {
-        self.update_named_in(ctx, &self.personalities, value.id, value).await
+        self.personalities.update(ctx, value).await
     }
     async fn delete_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool> {
-        self.delete_in(ctx, &self.personalities, id).await
+        self.personalities.delete(ctx, id).await
     }
     async fn list_personalities(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Personality>> {
-        self.list_in(ctx, &self.personalities, query).await
+        self.personalities.list(ctx, query).await
     }
     async fn restore_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
-        self.restore_named_in(ctx, &self.personalities, id).await
+        self.personalities.restore(ctx, id).await
     }
     async fn purge_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool> {
-        self.purge_in(ctx, &self.personalities, &id).await
+        self.personalities.purge(ctx, id).await
     }
     async fn get_deleted_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
-        self.get_deleted_in(ctx, &self.personalities, &id).await
+        self.personalities.get_deleted(ctx, id).await
     }
     async fn list_deleted_personalities(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Personality>> {
-        self.list_deleted_in(ctx, &self.personalities, query).await
+        self.personalities.list_deleted(ctx, query).await
     }
     async fn find_personality_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Personality> {
-        self.find_in(ctx, &self.personalities, name).await
+        self.personalities.find_by_name(ctx, name).await
     }
-
-    // Session templates
     async fn create_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()> {
-        self.create_named_in(ctx, &self.session_templates, value.id, value).await
+        self.session_templates.create(ctx, value).await
     }
     async fn get_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<SessionTemplate> {
-        self.get_in(ctx, &self.session_templates, &id).await
+        self.session_templates.get(ctx, id).await
     }
     async fn update_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()> {
-        self.update_named_in(ctx, &self.session_templates, value.id, value).await
+        self.session_templates.update(ctx, value).await
     }
     async fn delete_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool> {
-        self.delete_in(ctx, &self.session_templates, id).await
+        self.session_templates.delete(ctx, id).await
     }
     async fn list_session_templates(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<SessionTemplate>> {
-        self.list_in(ctx, &self.session_templates, query).await
+        self.session_templates.list(ctx, query).await
     }
     async fn restore_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<SessionTemplate> {
-        self.restore_named_in(ctx, &self.session_templates, id).await
+        self.session_templates.restore(ctx, id).await
     }
     async fn purge_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool> {
-        self.purge_in(ctx, &self.session_templates, &id).await
+        self.session_templates.purge(ctx, id).await
     }
     async fn get_deleted_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<SessionTemplate> {
-        self.get_deleted_in(ctx, &self.session_templates, &id).await
+        self.session_templates.get_deleted(ctx, id).await
     }
     async fn list_deleted_session_templates(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<SessionTemplate>> {
-        self.list_deleted_in(ctx, &self.session_templates, query).await
+        self.session_templates.list_deleted(ctx, query).await
     }
     async fn find_session_template_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<SessionTemplate> {
-        self.find_in(ctx, &self.session_templates, name).await
+        self.session_templates.find_by_name(ctx, name).await
     }
-
-    // Agents
     async fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
-        self.create_named_in(ctx, &self.agents, value.id, value).await
+        self.agents.create(ctx, value).await
     }
     async fn get_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
-        self.get_in(ctx, &self.agents, &id).await
+        self.agents.get(ctx, id).await
     }
     async fn update_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
-        self.update_named_in(ctx, &self.agents, value.id, value).await
+        self.agents.update(ctx, value).await
     }
     async fn delete_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<bool> {
-        self.delete_in(ctx, &self.agents, id).await
+        self.agents.delete(ctx, id).await
     }
     async fn list_agents(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Agent>> {
-        self.list_in(ctx, &self.agents, query).await
+        self.agents.list(ctx, query).await
     }
     async fn restore_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
-        self.restore_named_in(ctx, &self.agents, id).await
+        self.agents.restore(ctx, id).await
     }
     async fn purge_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<bool> {
-        self.purge_in(ctx, &self.agents, &id).await
+        self.agents.purge(ctx, id).await
     }
     async fn get_deleted_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
-        self.get_deleted_in(ctx, &self.agents, &id).await
+        self.agents.get_deleted(ctx, id).await
     }
     async fn list_deleted_agents(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Agent>> {
-        self.list_deleted_in(ctx, &self.agents, query).await
+        self.agents.list_deleted(ctx, query).await
     }
     async fn find_agent_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Agent> {
-        self.find_in(ctx, &self.agents, name).await
+        self.agents.find_by_name(ctx, name).await
     }
-
-    // Sessions - their state is the `StateStore`'s, which may be another
-    // store: whoever deletes a session deletes it there.
     async fn create_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
-        self.create_in(ctx, &self.sessions, value.id, value).await
+        self.sessions.create(ctx, value).await
     }
     async fn get_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session> {
-        self.get_in(ctx, &self.sessions, &id).await
+        self.sessions.get(ctx, id).await
     }
     async fn update_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
-        self.update_in(ctx, &self.sessions, value.id, value).await
+        self.sessions.update(ctx, value).await
     }
     async fn delete_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool> {
-        self.delete_in(ctx, &self.sessions, id).await
+        self.sessions.delete(ctx, id).await
     }
     async fn list_sessions(&self, ctx: &SecurityContext, query: &Query<SessionField>) -> StoreResult<Page<Session>> {
-        self.list_in(ctx, &self.sessions, query).await
+        self.sessions.list(ctx, query).await
     }
     async fn restore_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session> {
-        self.restore_in(ctx, &self.sessions, id).await
+        self.sessions.restore(ctx, id).await
     }
     async fn purge_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool> {
-        self.purge_in(ctx, &self.sessions, &id).await
+        self.sessions.purge(ctx, id).await
     }
     async fn get_deleted_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session> {
-        self.get_deleted_in(ctx, &self.sessions, &id).await
+        self.sessions.get_deleted(ctx, id).await
     }
     async fn list_deleted_sessions(&self, ctx: &SecurityContext, query: &Query<SessionField>) -> StoreResult<Page<Session>> {
-        self.list_deleted_in(ctx, &self.sessions, query).await
+        self.sessions.list_deleted(ctx, query).await
     }
-
-    // Channels (issue 70)
     async fn create_channel(&self, ctx: &SecurityContext, value: &Channel) -> StoreResult<()> {
-        self.create_named_in(ctx, &self.channels, value.id, value).await
+        self.channels.create(ctx, value).await
     }
     async fn get_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel> {
-        self.get_in(ctx, &self.channels, &id).await
+        self.channels.get(ctx, id).await
     }
     async fn update_channel(&self, ctx: &SecurityContext, value: &Channel) -> StoreResult<()> {
-        self.update_named_in(ctx, &self.channels, value.id, value).await
+        self.channels.update(ctx, value).await
     }
     async fn delete_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool> {
-        self.delete_in(ctx, &self.channels, id).await
+        self.channels.delete(ctx, id).await
     }
     async fn list_channels(&self, ctx: &SecurityContext, query: &Query<ChannelField>) -> StoreResult<Page<Channel>> {
-        self.list_in(ctx, &self.channels, query).await
+        self.channels.list(ctx, query).await
     }
     async fn restore_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel> {
-        self.restore_named_in(ctx, &self.channels, id).await
+        self.channels.restore(ctx, id).await
     }
     async fn purge_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool> {
-        self.purge_in(ctx, &self.channels, &id).await
+        self.channels.purge(ctx, id).await
     }
     async fn get_deleted_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel> {
-        self.get_deleted_in(ctx, &self.channels, &id).await
+        self.channels.get_deleted(ctx, id).await
     }
     async fn list_deleted_channels(&self, ctx: &SecurityContext, query: &Query<ChannelField>) -> StoreResult<Page<Channel>> {
-        self.list_deleted_in(ctx, &self.channels, query).await
+        self.channels.list_deleted(ctx, query).await
     }
-
-    // Users - found by name as well, since a username is an identity
-    // (issue 93).
     async fn create_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()> {
-        self.create_named_in(ctx, &self.users, value.id, value).await
+        self.users.create(ctx, value).await
     }
     async fn get_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
-        self.get_in(ctx, &self.users, &id).await
+        self.users.get(ctx, id).await
     }
     async fn update_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()> {
-        self.update_named_in(ctx, &self.users, value.id, value).await
+        self.users.update(ctx, value).await
     }
     async fn delete_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
-        self.delete_in(ctx, &self.users, id).await
+        self.users.delete(ctx, id).await
     }
     async fn list_users(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<User>> {
-        self.list_in(ctx, &self.users, query).await
+        self.users.list(ctx, query).await
     }
     async fn restore_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
-        self.restore_named_in(ctx, &self.users, id).await
+        self.users.restore(ctx, id).await
     }
     async fn purge_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
-        self.purge_in(ctx, &self.users, &id).await
+        self.users.purge(ctx, id).await
     }
     async fn get_deleted_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
-        self.get_deleted_in(ctx, &self.users, &id).await
+        self.users.get_deleted(ctx, id).await
     }
     async fn list_deleted_users(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<User>> {
-        self.list_deleted_in(ctx, &self.users, query).await
+        self.users.list_deleted(ctx, query).await
     }
     async fn find_user_by_name(&self, ctx: &SecurityContext, name: &str) -> StoreResult<User> {
-        let users = self.list_in(ctx, &self.users, &Query::<NoField>::all()).await?.items;
-        require_entity(users.into_iter().find(|u| u.username == name), "user", name.to_string())
+        let not_found = || StoreError::NotFound { entity: User::KIND.name(), id: name.to_string() };
+        let name = ScopedName::new(name, Scope::GlobalScope).map_err(|_| not_found())?;
+        self.users.find_by_name(ctx, &name).await
     }
-
-    // User profiles (issue 176)
     async fn create_user_profile(&self, ctx: &SecurityContext, value: &UserProfile) -> StoreResult<()> {
-        self.create_in(ctx, &self.user_profiles, value.user_id(), value).await
+        self.user_profiles.create(ctx, value).await
     }
     async fn get_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<UserProfile> {
-        self.get_in(ctx, &self.user_profiles, &id).await
+        self.user_profiles.get(ctx, id).await
     }
     async fn update_user_profile(&self, ctx: &SecurityContext, value: &UserProfile) -> StoreResult<()> {
-        self.update_in(ctx, &self.user_profiles, value.user_id(), value).await
+        self.user_profiles.update(ctx, value).await
     }
     async fn delete_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
-        self.delete_in(ctx, &self.user_profiles, id).await
+        self.user_profiles.delete(ctx, id).await
     }
     async fn list_user_profiles(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<UserProfile>> {
-        self.list_in(ctx, &self.user_profiles, query).await
+        self.user_profiles.list(ctx, query).await
     }
     async fn restore_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<UserProfile> {
-        self.restore_in(ctx, &self.user_profiles, id).await
+        self.user_profiles.restore(ctx, id).await
     }
     async fn purge_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
-        self.purge_in(ctx, &self.user_profiles, &id).await
+        self.user_profiles.purge(ctx, id).await
     }
     async fn get_deleted_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<UserProfile> {
-        self.get_deleted_in(ctx, &self.user_profiles, &id).await
+        self.user_profiles.get_deleted(ctx, id).await
     }
     async fn list_deleted_user_profiles(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<UserProfile>> {
-        self.list_deleted_in(ctx, &self.user_profiles, query).await
+        self.user_profiles.list_deleted(ctx, query).await
     }
-
-    // Workspaces (issue 253)
     async fn create_workspace(&self, ctx: &SecurityContext, value: &Workspace) -> StoreResult<()> {
-        self.create_named_in(ctx, &self.workspaces, value.id, value).await
+        self.workspaces.create(ctx, value).await
     }
     async fn get_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace> {
-        self.get_in(ctx, &self.workspaces, &id).await
+        self.workspaces.get(ctx, id).await
     }
     async fn update_workspace(&self, ctx: &SecurityContext, value: &Workspace) -> StoreResult<()> {
-        self.update_named_in(ctx, &self.workspaces, value.id, value).await
+        self.workspaces.update(ctx, value).await
     }
     async fn delete_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<bool> {
-        self.delete_in(ctx, &self.workspaces, id).await
+        self.workspaces.delete(ctx, id).await
     }
     async fn list_workspaces(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Workspace>> {
-        self.list_in(ctx, &self.workspaces, query).await
+        self.workspaces.list(ctx, query).await
     }
     async fn restore_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace> {
-        self.restore_named_in(ctx, &self.workspaces, id).await
+        self.workspaces.restore(ctx, id).await
     }
     async fn purge_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<bool> {
-        self.purge_in(ctx, &self.workspaces, &id).await
+        self.workspaces.purge(ctx, id).await
     }
     async fn get_deleted_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace> {
-        self.get_deleted_in(ctx, &self.workspaces, &id).await
+        self.workspaces.get_deleted(ctx, id).await
     }
     async fn list_deleted_workspaces(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Workspace>> {
-        self.list_deleted_in(ctx, &self.workspaces, query).await
+        self.workspaces.list_deleted(ctx, query).await
     }
     async fn find_workspace_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Workspace> {
-        self.find_in(ctx, &self.workspaces, name).await
+        self.workspaces.find_by_name(ctx, name).await
     }
-
-    // Skills (issue 22)
     async fn create_skill(&self, ctx: &SecurityContext, value: &Skill) -> StoreResult<()> {
-        self.create_named_in(ctx, &self.skills, value.id, value).await
+        self.skills.create(ctx, value).await
     }
     async fn get_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<Skill> {
-        self.get_in(ctx, &self.skills, &id).await
+        self.skills.get(ctx, id).await
     }
     async fn update_skill(&self, ctx: &SecurityContext, value: &Skill) -> StoreResult<()> {
-        self.update_named_in(ctx, &self.skills, value.id, value).await
+        self.skills.update(ctx, value).await
     }
     async fn delete_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<bool> {
-        self.delete_in(ctx, &self.skills, id).await
+        self.skills.delete(ctx, id).await
     }
     async fn list_skills(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Skill>> {
-        self.list_in(ctx, &self.skills, query).await
+        self.skills.list(ctx, query).await
     }
     async fn restore_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<Skill> {
-        self.restore_named_in(ctx, &self.skills, id).await
+        self.skills.restore(ctx, id).await
     }
     async fn purge_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<bool> {
-        self.purge_in(ctx, &self.skills, &id).await
+        self.skills.purge(ctx, id).await
     }
     async fn get_deleted_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<Skill> {
-        self.get_deleted_in(ctx, &self.skills, &id).await
+        self.skills.get_deleted(ctx, id).await
     }
     async fn list_deleted_skills(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Skill>> {
-        self.list_deleted_in(ctx, &self.skills, query).await
+        self.skills.list_deleted(ctx, query).await
     }
     async fn find_skill_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Skill> {
-        self.find_in(ctx, &self.skills, name).await
+        self.skills.find_by_name(ctx, name).await
     }
-
-    // Artifacts (issue 271)
     async fn create_artifact(&self, ctx: &SecurityContext, value: &Artifact) -> StoreResult<()> {
-        self.create_named_in(ctx, &self.artifacts, value.id, value).await
+        self.artifacts.create(ctx, value).await
     }
     async fn get_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<Artifact> {
-        self.get_in(ctx, &self.artifacts, &id).await
+        self.artifacts.get(ctx, id).await
     }
     async fn update_artifact(&self, ctx: &SecurityContext, value: &Artifact) -> StoreResult<()> {
-        self.update_named_in(ctx, &self.artifacts, value.id, value).await
+        self.artifacts.update(ctx, value).await
     }
     async fn delete_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<bool> {
-        self.delete_in(ctx, &self.artifacts, id).await
+        self.artifacts.delete(ctx, id).await
     }
     async fn list_artifacts(&self, ctx: &SecurityContext, query: &Query<ArtifactField>) -> StoreResult<Page<Artifact>> {
-        self.list_in(ctx, &self.artifacts, query).await
+        self.artifacts.list(ctx, query).await
     }
     async fn restore_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<Artifact> {
-        self.restore_named_in(ctx, &self.artifacts, id).await
+        self.artifacts.restore(ctx, id).await
     }
     async fn purge_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<bool> {
-        self.purge_in(ctx, &self.artifacts, &id).await
+        self.artifacts.purge(ctx, id).await
     }
     async fn get_deleted_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<Artifact> {
-        self.get_deleted_in(ctx, &self.artifacts, &id).await
+        self.artifacts.get_deleted(ctx, id).await
     }
     async fn list_deleted_artifacts(&self, ctx: &SecurityContext, query: &Query<ArtifactField>) -> StoreResult<Page<Artifact>> {
-        self.list_deleted_in(ctx, &self.artifacts, query).await
+        self.artifacts.list_deleted(ctx, query).await
     }
     async fn find_artifact_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Artifact> {
-        self.find_in(ctx, &self.artifacts, name).await
+        self.artifacts.find_by_name(ctx, name).await
     }
-
-    // Groups (issue 286)
     async fn create_group(&self, ctx: &SecurityContext, value: &Group) -> StoreResult<()> {
-        self.create_named_in(ctx, &self.groups, value.id, value).await
+        self.groups.create(ctx, value).await
     }
     async fn get_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group> {
-        self.get_in(ctx, &self.groups, &id).await
+        self.groups.get(ctx, id).await
     }
     async fn update_group(&self, ctx: &SecurityContext, value: &Group) -> StoreResult<()> {
-        self.update_named_in(ctx, &self.groups, value.id, value).await
+        self.groups.update(ctx, value).await
     }
     async fn delete_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<bool> {
-        self.delete_in(ctx, &self.groups, id).await
+        self.groups.delete(ctx, id).await
     }
     async fn list_groups(&self, ctx: &SecurityContext, query: &Query<GroupField>) -> StoreResult<Page<Group>> {
-        self.list_in(ctx, &self.groups, query).await
+        self.groups.list(ctx, query).await
     }
     async fn restore_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group> {
-        self.restore_named_in(ctx, &self.groups, id).await
+        self.groups.restore(ctx, id).await
     }
     async fn purge_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<bool> {
-        self.purge_in(ctx, &self.groups, &id).await
+        self.groups.purge(ctx, id).await
     }
     async fn get_deleted_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group> {
-        self.get_deleted_in(ctx, &self.groups, &id).await
+        self.groups.get_deleted(ctx, id).await
     }
     async fn list_deleted_groups(&self, ctx: &SecurityContext, query: &Query<GroupField>) -> StoreResult<Page<Group>> {
-        self.list_deleted_in(ctx, &self.groups, query).await
+        self.groups.list_deleted(ctx, query).await
     }
     async fn find_group_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Group> {
-        self.find_in(ctx, &self.groups, name).await
+        self.groups.find_by_name(ctx, name).await
     }
 }
 
@@ -645,66 +591,66 @@ impl EntityStore for MemoryStore {
 #[async_trait]
 impl ComponentStore for MemoryStore {
     async fn create_components(&self, ctx: &SecurityContext, value: &StoredComponents) -> StoreResult<()> {
-        self.create_in(ctx, &self.components, value.id().to_string(), value).await
+        self.components.create(ctx, value).await
     }
     async fn get_components(&self, ctx: &SecurityContext, id: &str) -> StoreResult<StoredComponents> {
-        self.get_in(ctx, &self.components, &id.to_string()).await
+        self.components.get(ctx, id.to_string()).await
     }
     async fn update_components(&self, ctx: &SecurityContext, value: &StoredComponents) -> StoreResult<()> {
-        self.update_in(ctx, &self.components, value.id().to_string(), value).await
+        self.components.update(ctx, value).await
     }
     async fn delete_components(&self, ctx: &SecurityContext, id: &str) -> StoreResult<bool> {
-        self.remove_in(ctx, &self.components, &id.to_string()).await
+        self.components.remove(ctx, id.to_string()).await
     }
     async fn list_components(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<StoredComponents>> {
-        self.list_in(ctx, &self.components, query).await
+        self.components.page(ctx, query, false).await
     }
 }
 
 #[async_trait]
 impl StateStore for MemoryStore {
     async fn get_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId) -> StoreResult<AgentChannelState> {
-        Ok(self.read_lock(&self.agent_channel_states, |v| v.get(&(agent_id, channel_id)).cloned()).unwrap_or_default())
+        Ok(read_lock(&self.agent_channel_states, |v| v.get(&(agent_id, channel_id)).cloned()).unwrap_or_default())
     }
 
     async fn put_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId, state: &mut AgentChannelState) -> StoreResult<()> {
         // Marked first: the copy kept is the state as stored, with nothing pending.
         state.mark_stored();
-        self.write_lock(&self.agent_channel_states, |v| v.insert((agent_id, channel_id), state.clone()));
+        write_lock(&self.agent_channel_states, |v| v.insert((agent_id, channel_id), state.clone()));
         Ok(())
     }
 
     async fn get_agent_state(&self, agent_id: AgentId) -> StoreResult<AgentState> {
-        Ok(self.read_lock(&self.agent_states, |v| v.get(&agent_id).cloned()).unwrap_or_default())
+        Ok(read_lock(&self.agent_states, |v| v.get(&agent_id).cloned()).unwrap_or_default())
     }
 
     async fn put_agent_state(&self, agent_id: AgentId, state: &mut AgentState) -> StoreResult<()> {
         // Marked first: the copy kept is the state as stored, with nothing pending.
         state.mark_stored();
-        self.write_lock(&self.agent_states, |v| v.insert(agent_id, state.clone()));
+        write_lock(&self.agent_states, |v| v.insert(agent_id, state.clone()));
         Ok(())
     }
 
     async fn get_channel_state(&self, channel_id: ChannelId) -> StoreResult<ChannelState> {
-        require_entity(self.read_lock(&self.channel_states, |v| v.get(&channel_id).cloned()), "channel_state", channel_id.to_string())
+        read_lock(&self.channel_states, |v| v.get(&channel_id).cloned()).ok_or_else(|| StoreError::NotFound { entity: "channel_state", id: channel_id.to_string() })
     }
 
     async fn put_channel_state(&self, channel_id: ChannelId, state: &mut ChannelState) -> StoreResult<()> {
         // Marked first: the copy kept is the state as stored, with nothing pending.
         state.mark_stored();
-        self.write_lock(&self.channel_states, |v| v.insert(channel_id, state.clone()));
+        write_lock(&self.channel_states, |v| v.insert(channel_id, state.clone()));
         Ok(())
     }
 
     async fn delete_channel_state(&self, channel_id: ChannelId) -> StoreResult<()> {
-        self.write_lock(&self.channel_states, |v| v.remove(&channel_id));
-        self.write_lock(&self.agent_channel_states, |v| v.retain(|(_, cid), _| *cid != channel_id));
+        write_lock(&self.channel_states, |v| v.remove(&channel_id));
+        write_lock(&self.agent_channel_states, |v| v.retain(|(_, cid), _| *cid != channel_id));
         Ok(())
     }
 
     async fn delete_agent_state(&self, agent_id: AgentId) -> StoreResult<()> {
-        self.write_lock(&self.agent_states, |v| v.remove(&agent_id));
-        self.write_lock(&self.agent_channel_states, |v| v.retain(|(aid, _), _| *aid != agent_id));
+        write_lock(&self.agent_states, |v| v.remove(&agent_id));
+        write_lock(&self.agent_channel_states, |v| v.retain(|(aid, _), _| *aid != agent_id));
         Ok(())
     }
 

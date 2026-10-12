@@ -12,7 +12,7 @@ use caelumora_model::skill::Skill;
 use caelumora_model::config::parse_yaml;
 use caelumora_model::confidentiality::ConfidentialityPolicy;
 use caelumora_model::security::{SecurityAttributes, SecurityContext};
-use caelumora_model::store::{ComponentStore, EntityStore, StoreResultExt};
+use caelumora_model::store::{ComponentStore, Entities, StoreResultExt};
 use caelumora_model::template::SessionTemplate;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -82,7 +82,7 @@ impl Seed {
     /// # Errors
     /// A role that is not configured; whatever the stores report. What was
     /// stored before stays.
-    pub async fn apply(&self, store: &dyn EntityStore, components: &dyn ComponentStore, confidentiality: &dyn ConfidentialityPolicy) -> anyhow::Result<()> {
+    pub async fn apply(&self, store: &dyn Entities, components: &dyn ComponentStore, confidentiality: &dyn ConfidentialityPolicy) -> anyhow::Result<()> {
         let system = SecurityContext::system();
         for component in &self.components {
             if components.get_components(&system, component.id()).await.optional()?.is_none() {
@@ -121,7 +121,7 @@ impl Seed {
 ///
 /// # Errors
 /// As `Seed::read` and `Seed::apply`.
-pub async fn load(store: &dyn EntityStore, components: &dyn ComponentStore, confidentiality: &dyn ConfidentialityPolicy, paths: &[PathBuf]) -> anyhow::Result<()> {
+pub async fn load(store: &dyn Entities, components: &dyn ComponentStore, confidentiality: &dyn ConfidentialityPolicy, paths: &[PathBuf]) -> anyhow::Result<()> {
     for path in paths {
         Seed::read(path)?.apply(store, components, confidentiality).await
             .with_context(|| format!("Cannot seed the stores from {}", path.display()))?;

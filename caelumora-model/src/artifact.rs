@@ -10,7 +10,7 @@
 use crate::actor::ActorId;
 use crate::confidentiality::Classification;
 use crate::digest::Digest;
-use crate::removal::Removal;
+use crate::removal::{Deletable, Removal, Stored};
 use crate::scope::{Scoped, ScopedField};
 use crate::security::{AclEntry, Grant, Secured, SecurityAttributes};
 use crate::session::{ChannelId, SessionId};
@@ -20,6 +20,7 @@ use crate::value::name::ScopedName;
 use crate::value::text::Description;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use crate::store::EntityKind;
 
 define_id!(ArtifactId);
 
@@ -198,8 +199,18 @@ impl Artifact {
     }
 }
 
-impl crate::removal::Stored for Artifact {
-    const KIND: crate::store::EntityKind = crate::store::EntityKind::new("artifact");
+impl Stored for Artifact {
+    const KIND: EntityKind = EntityKind::new("artifact");
+    type Id = ArtifactId;
+    type Field = ArtifactField;
+
+    fn id(&self) -> ArtifactId {
+        self.id
+    }
+
+    fn unique_name(&self) -> Option<ScopedName> {
+        Some(self.scoped_name())
+    }
 
     fn deleted(&self) -> Option<&Removal> {
         self.deleted.as_ref()
@@ -230,7 +241,7 @@ impl crate::removal::Stored for Artifact {
     }
 }
 
-impl crate::removal::Deletable for Artifact {
+impl Deletable for Artifact {
     fn set_deleted(&mut self, deleted: Option<Removal>) {
         self.deleted = deleted;
     }
@@ -251,7 +262,7 @@ impl Scoped for Artifact {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::removal::Stored;
+    use Stored;
     use crate::scope::Scope;
 
     /// A version of `content`, published in a channel of `session_id`.

@@ -19,7 +19,7 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::skill::{Skill, SkillId, SkillUpdateEvent};
-use caelumora_model::store::{EntityStore, StoreError, StoreResultExt};
+use caelumora_model::store::{Entities, StoreError, StoreResultExt};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::{Description, SkillBody};
 use caelumora_model::value::ValueError;
@@ -59,7 +59,7 @@ fn store_error(id: SkillId) -> impl FnOnce(StoreError) -> SkillError {
 }
 
 pub struct SkillManager {
-    entities: Arc<dyn EntityStore>,
+    entities: Arc<dyn Entities>,
     events: Arc<EventBus>,
     /// What may flow where, and who is cleared for what (issue 304).
     confidentiality: Arc<dyn ConfidentialityPolicy>,
@@ -77,7 +77,7 @@ impl SkillManager {
     /// Who may do what is asked by the store `entities`, which every write
     /// goes through - the clearance for a skill reached included (issue
     /// 322); the manager asks the flow alone (issue 304).
-    pub(crate) fn new(entities: Arc<dyn EntityStore>, events: Arc<EventBus>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> Self {
+    pub(crate) fn new(entities: Arc<dyn Entities>, events: Arc<EventBus>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> Self {
         Self { entities, events, confidentiality, writing: Mutex::new(()) }
     }
 

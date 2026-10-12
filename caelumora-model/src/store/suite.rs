@@ -16,7 +16,7 @@ use crate::value::text::Introduction;
 use crate::scope::{Scoped, Scope};
 use crate::security::SecurityContext;
 use crate::session::{Session, SessionId};
-use crate::store::{ComponentStore, EntityStore, Journaled, StateStore, StoreError};
+use crate::store::{ComponentStore, Entities, Journaled, StateStore, StoreError};
 use crate::template::{ChannelTemplate, ParticipantTemplate, SessionTemplate, SessionTemplateId};
 use crate::removal::{Deletable, Removal};
 use crate::user::{User, UserId, UserProfile};
@@ -223,7 +223,7 @@ fn component() -> StoredComponents {
 /// filter - fields of the entity, of an element of a collection in it, of
 /// an element of a collection in that -, in the order of their ids, in pages
 /// of its limit, each going on after the cursor the one before handed out.
-pub(crate) async fn queries_behave(store: &dyn EntityStore) {
+pub(crate) async fn queries_behave(store: &dyn Entities) {
     use crate::security::{AclEntry, Grant, Subject};
     let ctx = SecurityContext::system();
     let (alice, bob) = (UserId::new(), UserId::new());
@@ -371,7 +371,7 @@ fn component_id(value: &StoredComponents) -> &str {
 
 /// Every kind of entity goes through the same life; users are also found
 /// by name, and so are definitions in their scope.
-pub(crate) async fn entity_store_behaves(store: &dyn EntityStore) {
+pub(crate) async fn entity_store_behaves(store: &dyn Entities) {
     lifecycle!(store, personality(), |v: &Personality| v.id, name.name, "personality",
         create_personality, get_personality, update_personality, delete_personality, list_personalities);
     lifecycle!(store, session_template(), |v: &SessionTemplate| v.id, name.name, "session_template",
@@ -476,7 +476,7 @@ macro_rules! unique_by_name {
 
 /// Names are unique per kind in their name space (issue 250), for every
 /// kind that is `Scoped`.
-pub(crate) async fn names_are_unique(store: &dyn EntityStore) {
+pub(crate) async fn names_are_unique(store: &dyn Entities) {
     let user_id = UserId::new();
     let in_scope = |name: &str, scope: &Scope| ScopedName::new(name, scope.clone()).unwrap();
     let (global, users) = (Scope::GlobalScope, Scope::UserScope { user_id });
@@ -532,7 +532,7 @@ pub(crate) async fn names_are_unique(store: &dyn EntityStore) {
 
 /// A name is taken also by what the caller may not read (issue 250): the
 /// store must ask an `OwnershipSecurityManager`.
-pub(crate) async fn names_are_unique_beyond_what_is_read(store: &dyn EntityStore) {
+pub(crate) async fn names_are_unique_beyond_what_is_read(store: &dyn Entities) {
     let as_user = |id: UserId| SecurityContext::new(crate::actor::ActorId::User(id), Default::default(), Default::default());
     let (alice, bob) = (UserId::new(), UserId::new());
     let owned_by = |name: &str, owner: UserId| Agent::new(ScopedName::new(name, Scope::GlobalScope).unwrap(), &personality(), crate::actor::ActorId::User(owner));
@@ -609,7 +609,7 @@ fn marked<T: Deletable>(mut value: T) -> T {
 /// five operations, also not for the system, and its id stays taken;
 /// nothing created or changed may carry the mark. What was deleted is
 /// read, restored and purged by operations of its own.
-pub(crate) async fn deleting_marks(store: &dyn EntityStore) {
+pub(crate) async fn deleting_marks(store: &dyn Entities) {
     let system = SecurityContext::system();
     let kept = session();
     store.create_session(&system, &kept).await.expect("create");

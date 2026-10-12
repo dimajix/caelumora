@@ -672,6 +672,8 @@ mod tests {
     use caelumora_model::agent::{AgentChannelState, AgentId};
 
     use caelumora_model::security::{DummySecurityManager, SecurityContext};
+    use caelumora_model::session::Session;
+    use caelumora_model::store::Entities;
     use caelumora_model::tool::ToolResultStatus;
     use serde_json::json;
 
@@ -828,7 +830,7 @@ mod tests {
         let session = crate::session::testing::bare_session(caelumora_model::session::SessionId::new());
         let mut channel = caelumora_model::channel::Channel::build(session.id, ActorId::None, caelumora_model::value::name::Name::new("main").unwrap(), Default::default(), Classification::CHANNEL_DEFAULT, None, Vec::new());
         channel.approval_rules = places.channel;
-        let session = Arc::new(SessionController::new(caelumora_model::session::Session { approval_rules: places.session, ..session }, Arc::new(()), Arc::clone(&store) as Arc<dyn caelumora_model::store::EntityStore>));
+        let session = Arc::new(SessionController::new(Session { approval_rules: places.session, ..session }, Arc::new(()), Arc::clone(&store) as Arc<dyn Entities>));
         let channel = Arc::new(ChannelController::new(channel, Arc::new(()), store));
         let executor = ToolExecutor::new(security, confidentiality, providers, places.system.into(), Arc::clone(&session), Arc::clone(&channel), Default::default()).unwrap();
         (executor, session, channel)

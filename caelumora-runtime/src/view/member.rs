@@ -24,7 +24,7 @@ use caelumora_model::mention::handle_of;
 use caelumora_model::note::Note;
 use caelumora_model::security::{SecurityAttributes, SecurityContext};
 use caelumora_model::session::ChannelId;
-use caelumora_model::store::{EntityStore, StateStore, StoreError, StoreResultExt};
+use caelumora_model::store::{Entities, StateStore, StoreError, StoreResultExt};
 use caelumora_model::user::UserId;
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -110,7 +110,7 @@ pub(super) async fn member_state(views: &Views, participant: &Participant, chann
 struct UserMember {
     id: UserId,
     name: String,
-    store: Arc<dyn EntityStore>,
+    store: Arc<dyn Entities>,
     introduction: OnceCell<Option<String>>,
 }
 
@@ -189,7 +189,7 @@ impl StateRef {
 struct AgentMemberState {
     agent: Agent,
     member: AgentMember,
-    store: Arc<dyn EntityStore>,
+    store: Arc<dyn Entities>,
     personality: OnceCell<Option<Personality>>,
 }
 

@@ -219,7 +219,7 @@ mod tests {
     #[tokio::test]
     async fn renaming_a_channel_is_stored_and_only_the_owner_may() {
         use caelumora_model::actor::ActorId;
-        use caelumora_model::store::EntityStore;
+        use caelumora_model::store::Entities;
 
         let (store, manager) = owned_runtime(Default::default());
         let users = (user("alice"), user("bob"));

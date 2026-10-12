@@ -13,6 +13,8 @@ use crate::value::text::{Briefing, Summary};
 use crate::value::ValueError;
 use crate::workspace::WorkspaceId;
 use serde::{Deserialize, Serialize};
+use crate::removal::{Deletable, Removal, Stored};
+use crate::store::EntityKind;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SessionUpdateEvent {
@@ -73,10 +75,28 @@ pub struct Session {
     /// Set when it was deleted (issue 164): it stays stored, hidden from
     /// every read but those for what was deleted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub deleted: Option<crate::removal::Removal>,
+    pub deleted: Option<Removal>,
 }
 
-crate::impl_deletable!(Session => "session");
+impl Stored for Session {
+    const KIND: EntityKind = EntityKind::new("session");
+    type Id = SessionId;
+    type Field = SessionField;
+
+    fn id(&self) -> SessionId {
+        self.id
+    }
+
+    fn deleted(&self) -> Option<&Removal> {
+        self.deleted.as_ref()
+    }
+}
+
+impl Deletable for Session {
+    fn set_deleted(&mut self, deleted: Option<Removal>) {
+        self.deleted = deleted;
+    }
+}
 
 impl Session {
     /// The attributes of a new session `id` of `owner`: read by its

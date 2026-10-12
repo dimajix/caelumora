@@ -37,7 +37,6 @@
 
 use crate::removal::Stored;
 use std::future::Future;
-use crate::scope::Scoped;
 use crate::store::query::{self, Cursor, Field, Page, Query};
 use crate::confidentiality::{may_reach, ConfidentialityPolicy, ConfidentialityQuestions};
 use crate::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
@@ -207,9 +206,9 @@ fn present<T: Stored>(value: &T) -> bool {
 /// Refuses `value` if one of `others` that is not deleted has its name in
 /// its scope (issue 250). `others` may hold `value`'s own document only as
 /// it is stored: absent, deleted or under another name.
-pub(crate) fn name_free<'a, T: Stored + Scoped + 'a>(value: &T, others: impl IntoIterator<Item = &'a T>) -> StoreResult<()> {
-    let name = value.scoped_name();
-    match others.into_iter().filter(|other| present(*other)).any(|other| other.scoped_name() == name) {
+pub(crate) fn name_free<'a, T: Stored + 'a>(value: &T, others: impl IntoIterator<Item = &'a T>) -> StoreResult<()> {
+    let Some(name) = value.unique_name() else { return Ok(()) };
+    match others.into_iter().filter(|other| present(*other)).any(|other| other.unique_name().as_ref() == Some(&name)) {
         false => Ok(()),
         true => Err(StoreError::NameTaken { entity: T::KIND.name() }),
     }
@@ -235,10 +234,10 @@ fn valid<T: Stored>(value: &T) -> StoreResult<()> {
 #[cfg(test)]
 mod tests {
     use crate::actor::ActorId;
-    use crate::security::{ActionType, SecurityAttributes, SecurityContext, SecurityManager, Verb};
+    use crate::security::{ActionType, SecurityAttributes, SecurityContext, SecurityManager, Subject, Verb};
     use crate::removal::Stored;
     use crate::session::{Session, SessionId};
-    use crate::store::{EntityStore, StoreError};
+    use crate::store::{Entities, StoreError};
     use crate::store::query::{NoField, Query};
     use crate::store::memory::MemoryStore;
     use crate::user::UserId;
@@ -256,7 +255,7 @@ mod tests {
         async fn check(&self, ctx: &SecurityContext, action: ActionType<'_>) -> bool {
             let me = ctx.principal_id;
             match action {
-                ActionType::Entity { kind: Session::KIND, verb: Verb::Get, attributes: a } => a.owner_id == me || a.acl.iter().any(|e| e.subject == crate::security::Subject::Actor(me)),
+                ActionType::Entity { kind: Session::KIND, verb: Verb::Get, attributes: a } => a.owner_id == me || a.acl.iter().any(|e| e.subject == Subject::Actor(me)),
                 ActionType::Entity { kind: Session::KIND, verb: Verb::Create | Verb::Update | Verb::Delete, attributes: a } => a.owner_id == me,
                 _ => true,
             }

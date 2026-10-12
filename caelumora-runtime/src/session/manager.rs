@@ -10,7 +10,7 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{ActionType, Enforcement, SecurityAttributes, SecurityContext, SecurityManager, Subject};
 use crate::view::{Viewer, Views};
-use caelumora_model::store::{EntityStore, StoreError};
+use caelumora_model::store::{Entities, StoreError};
 use tracing::{info, warn};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::{ChannelId, Session, SessionId};
@@ -39,7 +39,7 @@ pub struct SessionManager {
     /// The services it works with, taken from `runtime_manager` once (issue
     /// 229).
     security: Arc<dyn SecurityManager>,
-    entities: Arc<dyn EntityStore>,
+    entities: Arc<dyn Entities>,
     events: Arc<EventBus>,
     workspaces: Arc<WorkspaceManager>,
     /// What goes with a session deleted, restored or purged (issue 178).
@@ -867,7 +867,7 @@ mod tests {
 
         manager.delete_session(&ctx, id).await.unwrap();
 
-        use caelumora_model::store::EntityStore;
+        use caelumora_model::store::Entities;
         assert!(entities.get_session(&ctx, id).await.is_err(), "not there");
         assert!(states.get_channel_state(channel_id).await.is_ok(), "but kept, with its channels' state (issue 164)");
         manager.restore_session(&ctx, id).await.expect("restored");

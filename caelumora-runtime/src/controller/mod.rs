@@ -36,7 +36,7 @@ use caelumora_model::channel::Channel;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::Session;
-use caelumora_model::store::{EntityStore, StoreError, StoreResult, StoreResultExt};
+use caelumora_model::store::{Entities, StoreError, StoreResult, StoreResultExt};
 use caelumora_model::user::UserId;
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -63,7 +63,7 @@ type Registry<K, C> = Arc<Mutex<HashMap<K, Weak<C>>>>;
 ///   and fallible.
 #[derive(Debug)]
 pub struct ControllerManager {
-    entity_store: Arc<dyn EntityStore>,
+    entity_store: Arc<dyn Entities>,
     event_bus: Arc<EventBus>,
     agents: Registry<AgentId, AgentController>,
     users: Registry<UserId, UserController>,
@@ -73,7 +73,7 @@ pub struct ControllerManager {
 }
 
 impl ControllerManager {
-    pub fn new(entity_store: Arc<dyn EntityStore>, event_bus: Arc<EventBus>) -> Self {
+    pub fn new(entity_store: Arc<dyn Entities>, event_bus: Arc<EventBus>) -> Self {
         Self {
             entity_store,
             event_bus,

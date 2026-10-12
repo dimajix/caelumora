@@ -9,7 +9,7 @@ use caelumora_model::channel::Participant;
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
-use caelumora_model::store::{EntityStore, StoreError, StoreResultExt};
+use caelumora_model::store::{Entities, StoreError, StoreResultExt};
 use caelumora_model::template::{ParticipantRequest, SessionTemplate, TemplateError, TemplateResult, WorkspaceTemplate};
 use caelumora_model::user::UserId;
 use caelumora_model::workspace::WorkspaceId;
@@ -23,7 +23,7 @@ use crate::workspace::{WorkspaceError, WorkspaceManager};
 /// if an agent it names exists with another personality; a `StoreError` if
 /// a user or personality it names does not exist, or the store refuses or
 /// fails - never a second agent because a lookup failed.
-pub(crate) async fn resolve_participants(store: &dyn EntityStore, context: &SecurityContext, template: &SessionTemplate, session_id: SessionId, owner: UserId) -> anyhow::Result<Vec<(String, Participant)>> {
+pub(crate) async fn resolve_participants(store: &dyn Entities, context: &SecurityContext, template: &SessionTemplate, session_id: SessionId, owner: UserId) -> anyhow::Result<Vec<(String, Participant)>> {
     let requests = template.participants.iter()
         .map(|p| p.request(session_id, owner).map(|request| (p.name().to_string(), request)))
         .collect::<TemplateResult<Vec<_>>>()?;
@@ -59,7 +59,7 @@ pub(crate) async fn resolve_participants(store: &dyn EntityStore, context: &Secu
 /// session's or a channel's scope the agent would not;
 /// `StoreError::NameTaken` if the agent of `name` lies where `context` may
 /// not read it; whatever else the store reports.
-async fn agent(store: &dyn EntityStore, context: &SecurityContext, name: ScopedName, personality_id: PersonalityId) -> anyhow::Result<AgentId> {
+async fn agent(store: &dyn Entities, context: &SecurityContext, name: ScopedName, personality_id: PersonalityId) -> anyhow::Result<AgentId> {
     if let Some(found) = existing_agent(store, context, &name, personality_id).await? {
         return Ok(found);
     }
@@ -86,7 +86,7 @@ async fn agent(store: &dyn EntityStore, context: &SecurityContext, name: ScopedN
 /// whatever the store reports. Only "there is none" means "make one": a
 /// lookup that failed or was refused is an error, not a reason for a second
 /// agent of that name (issue 77).
-async fn existing_agent(store: &dyn EntityStore, context: &SecurityContext, name: &ScopedName, personality_id: PersonalityId) -> anyhow::Result<Option<AgentId>> {
+async fn existing_agent(store: &dyn Entities, context: &SecurityContext, name: &ScopedName, personality_id: PersonalityId) -> anyhow::Result<Option<AgentId>> {
     match store.find_agent_by_name(context, name).await.optional()? {
         Some(agent) if agent.personality_id == personality_id => Ok(Some(agent.id)),
         Some(_) => Err(TemplateError::AgentNameTaken(name.name.clone()).into()),
@@ -105,7 +105,7 @@ async fn existing_agent(store: &dyn EntityStore, context: &SecurityContext, name
 /// another storage, `UnsupportedScope` for a group scope; a
 /// `WorkspaceError` of making it - `NameTaken` if the one of its name lies
 /// where `context` may not read it; whatever else the store reports.
-pub(crate) async fn resolve_workspace(workspaces: &WorkspaceManager, store: &dyn EntityStore, context: &SecurityContext, template: &WorkspaceTemplate, session_id: SessionId, owner: UserId) -> anyhow::Result<(WorkspaceId, bool)> {
+pub(crate) async fn resolve_workspace(workspaces: &WorkspaceManager, store: &dyn Entities, context: &SecurityContext, template: &WorkspaceTemplate, session_id: SessionId, owner: UserId) -> anyhow::Result<(WorkspaceId, bool)> {
     let name = template.scoped_name(session_id, owner)?;
     if let Some(found) = existing_workspace(store, context, &name, template).await? {
         return Ok((found, false));
@@ -127,7 +127,7 @@ pub(crate) async fn resolve_workspace(workspaces: &WorkspaceManager, store: &dyn
 /// # Errors
 /// `TemplateError::WorkspaceNameTaken` if it is in another storage;
 /// whatever the store reports - never "none" for a lookup that failed.
-async fn existing_workspace(store: &dyn EntityStore, context: &SecurityContext, name: &ScopedName, template: &WorkspaceTemplate) -> anyhow::Result<Option<WorkspaceId>> {
+async fn existing_workspace(store: &dyn Entities, context: &SecurityContext, name: &ScopedName, template: &WorkspaceTemplate) -> anyhow::Result<Option<WorkspaceId>> {
     match store.find_workspace_by_name(context, name).await.optional()? {
         Some(workspace) if workspace.storage == template.storage => Ok(Some(workspace.id)),
         Some(_) => Err(TemplateError::WorkspaceNameTaken(name.name.clone()).into()),

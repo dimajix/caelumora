@@ -38,7 +38,7 @@ use caelumora_model::group::{Group, GroupId};
 use caelumora_model::security::{AclEntry, ActionType, Grant, OwnershipSecurityManager, Reclassified, SecurityAttributes, SecurityContext, SecurityManager, Subject};
 use caelumora_model::snapshot::{Detail, PublicationSnapshot};
 use caelumora_model::session::{ChannelId, Session, SessionId};
-use caelumora_model::store::{ComponentStore, EntityStore, StateStore, StoreError};
+use caelumora_model::store::{ComponentStore, Entities, StateStore, StoreError};
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId, TemplateError, WorkspaceTemplate};
 use caelumora_model::user::{User, UserId, UserProfile};
@@ -194,7 +194,7 @@ impl World {
         let recorder = Arc::new(Recorder { policy: OwnershipSecurityManager::with_memberships(Arc::<StoreMemberships>::clone(&memberships)), rules, asked: Mutex::new(Vec::new()), names: Mutex::new(HashMap::new()) });
         let policy: Arc<dyn SecurityManager> = Arc::<Recorder>::clone(&recorder);
         let store = Arc::new(MemoryStore::with_policies(Arc::clone(&policy), Arc::<Recorder>::clone(&recorder)));
-        let entities: Arc<dyn EntityStore> = Arc::<MemoryStore>::clone(&store);
+        let entities: Arc<dyn Entities> = Arc::<MemoryStore>::clone(&store);
         memberships.bind(&entities);
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
         let mut registry = ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));

@@ -4,7 +4,7 @@
 use crate::actor::ActorId;
 use crate::group::GroupId;
 use crate::security::{Memberships, SecurityContext};
-use crate::store::{EntityStore, StoreResult, StoreResultExt};
+use crate::store::{Entities, StoreResult, StoreResultExt};
 use async_trait::async_trait;
 use std::sync::{Arc, OnceLock, Weak};
 
@@ -17,7 +17,7 @@ use std::sync::{Arc, OnceLock, Weak};
 /// a member of anything - the policy refuses rather than grants.
 #[derive(Debug, Default)]
 pub struct StoreMemberships {
-    store: OnceLock<Weak<dyn EntityStore>>,
+    store: OnceLock<Weak<dyn Entities>>,
 }
 
 impl StoreMemberships {
@@ -27,13 +27,13 @@ impl StoreMemberships {
 
     /// Reads from `store` from now on. Bound once; binding again is
     /// ignored, with an error in the log.
-    pub fn bind(&self, store: &Arc<dyn EntityStore>) {
+    pub fn bind(&self, store: &Arc<dyn Entities>) {
         if self.store.set(Arc::downgrade(store)).is_err() {
             tracing::error!("The memberships were bound to an entity store twice; the first stays");
         }
     }
 
-    fn store(&self) -> Option<Arc<dyn EntityStore>> {
+    fn store(&self) -> Option<Arc<dyn Entities>> {
         let store = self.store.get().and_then(Weak::upgrade);
         if store.is_none() {
             tracing::error!("Memberships were asked for before an entity store was bound; nobody is a member");
@@ -44,7 +44,7 @@ impl StoreMemberships {
     /// The members of `group` - also of one that was deleted: who belonged
     /// to it does not change with that, and the participants of a deleted
     /// session or channel are told of the deletion.
-    async fn members(store: &dyn EntityStore, group: GroupId) -> StoreResult<Vec<ActorId>> {
+    async fn members(store: &dyn Entities, group: GroupId) -> StoreResult<Vec<ActorId>> {
         let system = SecurityContext::system();
         Ok(match store.get_group(&system, group).await.optional()? {
             Some(group) => group.members,
@@ -79,7 +79,7 @@ mod tests {
         let bob = ActorId::User(UserId::new());
         let team = Group { members: vec![bob], ..Group::team(ScopedName::new("project", Default::default()).unwrap(), alice) };
         assert!(memberships.members_of(team.id).await.is_empty(), "nobody before a store is bound");
-        let store: Arc<dyn EntityStore> = Arc::new(MemoryStore::new());
+        let store: Arc<dyn Entities> = Arc::new(MemoryStore::new());
         memberships.bind(&store);
         store.create_group(&SecurityContext::system(), &team).await.unwrap();
         assert_eq!(memberships.members_of(team.id).await, [bob]);

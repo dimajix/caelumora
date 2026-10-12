@@ -13,7 +13,7 @@ use caelumora_model::role::RoleId;
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::SessionId;
-use caelumora_model::store::{EntityStore, StoreError, StoreResult, StoreResultExt};
+use caelumora_model::store::{Entities, StoreError, StoreResult, StoreResultExt};
 use std::sync::Arc;
 use super::ChannelError;
 use caelumora_model::removal::Stored;
@@ -43,7 +43,7 @@ impl Member {
     /// Whatever else the store reports when loading it - also that an
     /// agent's personality is gone - and `StoreError::PermissionDenied` if
     /// it is not the agent's to read: the agent exists, but cannot be run.
-    pub(super) async fn of(participant: &Participant, channel: &Channel, entities: &dyn EntityStore, controllers: &ControllerManager, security: &dyn SecurityManager) -> Result<Option<Self>> {
+    pub(super) async fn of(participant: &Participant, channel: &Channel, entities: &dyn Entities, controllers: &ControllerManager, security: &dyn SecurityManager) -> Result<Option<Self>> {
         let agent = match participant {
             Participant::User(id) => return Ok(controllers.user_controller(*id).await.optional()?.map(Member::User)),
             Participant::Approver(approver) => return Ok(Some(Member::Approver(approver.clone()))),
@@ -128,7 +128,7 @@ impl Member {
 ///
 /// # Errors
 /// Whatever the store reports but that there is none.
-pub(super) async fn agent_exists(entities: &dyn EntityStore, id: AgentId) -> StoreResult<bool> {
+pub(super) async fn agent_exists(entities: &dyn Entities, id: AgentId) -> StoreResult<bool> {
     Ok(entities.get_agent(&SecurityContext::system(), id).await.optional()?.is_some())
 }
 
@@ -176,7 +176,7 @@ mod tests {
         use caelumora_model::role::{RoleId, Roles};
         use caelumora_model::value::name::ScopedName;
         use caelumora_model::scope::Scope;
-        use caelumora_model::store::EntityStore;
+        use caelumora_model::store::Entities;
         use caelumora_model::user::{User, UserId};
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();

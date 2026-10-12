@@ -15,7 +15,7 @@ use crate::value::ValueError;
 use crate::group::GroupId;
 use crate::security::{Grant, Secured, SecurityAttributes, Subject};
 use crate::session::SessionId;
-use crate::store::Journaled;
+use crate::store::{EntityKind, Journaled};
 use crate::store::query::Field;
 use crate::user::UserId;
 use serde::{Deserialize, Serialize};
@@ -107,7 +107,7 @@ pub struct Channel {
     /// Set when it was deleted (issue 164): it stays stored, hidden from
     /// every read but those for what was deleted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub deleted: Option<crate::removal::Removal>,
+    pub deleted: Option<Removal>,
 }
 
 /// How much of a channel's history a new participant may see, as asked for
@@ -143,7 +143,17 @@ pub struct HistoryLimit {
 
 // `removal::Stored`, beside the `chain::Stored` of the channel's history.
 impl removal::Stored for Channel {
-    const KIND: crate::store::EntityKind = crate::store::EntityKind::new("channel");
+    const KIND: EntityKind = EntityKind::new("channel");
+    type Id = ChannelId;
+    type Field = ChannelField;
+
+    fn id(&self) -> ChannelId {
+        self.id
+    }
+
+    fn unique_name(&self) -> Option<ScopedName> {
+        Some(self.scoped_name())
+    }
 
     fn deleted(&self) -> Option<&Removal> {
         self.deleted.as_ref()
@@ -242,7 +252,7 @@ impl Channel {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FormerParticipant {
     pub participant: Participant,
-    pub left: crate::removal::Removal,
+    pub left: Removal,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -9,7 +9,7 @@ use crate::secret::SecretManager;
 use crate::secret::env::EnvSecretProvider;
 use crate::secret::file::FileSecretProvider;
 use crate::security::{DummySecurityManager, Memberships, OwnershipSecurityManager, SecurityManager};
-use crate::store::{ComponentStore, EntityStore, StateStore, StoreError};
+use crate::store::{ComponentStore, Entities, StateStore, StoreError};
 use crate::store::json::JsonFileStore;
 use crate::store::memory::MemoryStore;
 use crate::user_provider::{UserManager, UserProvider};
@@ -73,8 +73,8 @@ impl PersistenceBackend {
 /// What `PersistenceBackend::open` returns: a store with every face, so
 /// that one match serves `create_entity_store`, `create_component_store`
 /// and `create_state_store`.
-trait Store: EntityStore + ComponentStore + StateStore {}
-impl<T: EntityStore + ComponentStore + StateStore> Store for T {}
+trait Store: Entities + ComponentStore + StateStore {}
+impl<T: Entities + ComponentStore + StateStore> Store for T {}
 
 #[derive(Debug, Deserialize, Default, Clone)]
 #[serde(default, deny_unknown_fields)]
@@ -605,7 +605,7 @@ impl AppConfig {
     ///
     /// # Errors
     /// `ConfigError::Store` if the store cannot be opened.
-    pub fn create_entity_store(&self, security_manager: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> ConfigResult<Arc<dyn EntityStore>> {
+    pub fn create_entity_store(&self, security_manager: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> ConfigResult<Arc<dyn Entities>> {
         Ok(self.persistence.entity_store.open(security_manager, confidentiality)?)
     }
 
@@ -642,7 +642,7 @@ impl AppConfig {
     /// The chain of user providers from the `users` section, keeping the
     /// user records in `entity_store` and announcing their changes through
     /// `events` (issue 306).
-    pub fn create_user_manager(&self, entity_store: Arc<dyn EntityStore>, events: Arc<dyn EventPublisher>) -> ConfigResult<Arc<UserManager>> {
+    pub fn create_user_manager(&self, entity_store: Arc<dyn Entities>, events: Arc<dyn EventPublisher>) -> ConfigResult<Arc<UserManager>> {
         let providers = self.users.providers.iter()
             .map(|config| match config {
                 UserProviderConfig::AcceptAny { roles, default_roles } => {
@@ -838,7 +838,7 @@ auth:
 
     #[tokio::test]
     async fn test_create_user_manager_without_config_accepts_nobody() {
-        let store: Arc<dyn EntityStore> = Arc::new(MemoryStore::new());
+        let store: Arc<dyn Entities> = Arc::new(MemoryStore::new());
         let manager = AppConfig::default().create_user_manager(store, Arc::new(())).unwrap();
 
         let result = manager.authenticate("user", &crate::user_provider::Credential::Password("x")).await;
@@ -853,7 +853,7 @@ users:
     - type: accept_any
 "#;
         let config = AppConfig::from_yaml(yaml).unwrap();
-        let store: Arc<dyn EntityStore> = Arc::new(MemoryStore::new());
+        let store: Arc<dyn Entities> = Arc::new(MemoryStore::new());
         let manager = config.create_user_manager(store, Arc::new(())).unwrap();
 
         let user = manager.authenticate("alice", &crate::user_provider::Credential::Password("x")).await

@@ -11,7 +11,7 @@ pub mod accept_any;
 
 use crate::event::{EventPublisher, GlobalEvent};
 use crate::security::{Secured, SecurityContext};
-use crate::store::{EntityStore, StoreResultExt};
+use crate::store::{Entities, StoreResultExt};
 use crate::user::{User, UserId, UserUpdateEvent};
 use async_trait::async_trait;
 use std::fmt;
@@ -110,12 +110,12 @@ pub trait UserProvider: Debug + Send + Sync {
 #[derive(Debug)]
 pub struct UserManager {
     providers: Vec<Arc<dyn UserProvider>>,
-    store: Arc<dyn EntityStore>,
+    store: Arc<dyn Entities>,
     events: Arc<dyn EventPublisher>,
 }
 
 impl UserManager {
-    pub fn new(providers: Vec<Arc<dyn UserProvider>>, store: Arc<dyn EntityStore>, events: Arc<dyn EventPublisher>) -> Self {
+    pub fn new(providers: Vec<Arc<dyn UserProvider>>, store: Arc<dyn Entities>, events: Arc<dyn EventPublisher>) -> Self {
         Self { providers, store, events }
     }
 
@@ -364,7 +364,7 @@ mod tests {
     /// announced, nothing written where nothing changed.
     #[tokio::test]
     async fn the_manager_keeps_and_announces_the_records_the_providers_answer() {
-        let store: Arc<dyn EntityStore> = Arc::new(MemoryStore::new());
+        let store: Arc<dyn Entities> = Arc::new(MemoryStore::new());
         let announced = Arc::new(Announced::default());
         // A manager whose one provider knows `user` with the password "a".
         let answering = |user: &User| UserManager::new(vec![Arc::new(MapUserProvider::new(&[(user, "a")]))], Arc::clone(&store), Arc::<Announced>::clone(&announced));

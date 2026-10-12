@@ -442,7 +442,7 @@ mod tests {
     use caelumora_model::secret::SecretManager;
     use caelumora_model::security::{OwnershipSecurityManager, SecurityManager};
     use caelumora_model::session::SessionId;
-    use caelumora_model::store::EntityStore;
+    use caelumora_model::store::Entities;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::tool::ToolCall;
     use caelumora_model::user::{User, UserId};

@@ -4,7 +4,7 @@
 
 use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
 use caelumora_model::security::{OwnershipSecurityManager, SecurityManager};
-use caelumora_model::store::EntityStore;
+use caelumora_model::store::Entities;
 use caelumora_model::store::memberships::StoreMemberships;
 use caelumora_model::store::memory::MemoryStore;
 use std::sync::Arc;
@@ -37,7 +37,7 @@ pub(crate) fn owned_store(rules: ConfidentialityRules) -> (Arc<dyn SecurityManag
     let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_memberships(Arc::<StoreMemberships>::clone(&memberships)));
     let confidentiality: Arc<dyn ConfidentialityPolicy> = Arc::new(rules);
     let store = Arc::new(MemoryStore::with_policies(Arc::clone(&policy), Arc::clone(&confidentiality)));
-    let entities: Arc<dyn EntityStore> = Arc::<MemoryStore>::clone(&store);
+    let entities: Arc<dyn Entities> = Arc::<MemoryStore>::clone(&store);
     memberships.bind(&entities);
     (policy, confidentiality, store)
 }

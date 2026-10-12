@@ -12,7 +12,7 @@ use tracing::error;
 use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::security::{Grant, SecurityContext, Subject};
 use caelumora_model::session::SessionId;
-use caelumora_model::store::{EntityStore, StoreError, StoreResult};
+use caelumora_model::store::{Entities, StoreError, StoreResult};
 use std::sync::Arc;
 use super::check_restricting;
 
@@ -25,14 +25,14 @@ pub struct ChannelController {
     session_id: SessionId,
     channel: ArcSwap<Channel>,
     event_publisher: Arc<dyn EventPublisher>,
-    entity_store: Arc<dyn EntityStore>,
+    entity_store: Arc<dyn Entities>,
     /// Held while the channel is changed and stored, so that two changes
     /// cannot overwrite each other.
     write_lock: tokio::sync::Mutex<()>,
 }
 
 impl ChannelController {
-    pub fn new(channel: Channel, event_publisher: Arc<dyn EventPublisher>, entity_store: Arc<dyn EntityStore>) -> Self {
+    pub fn new(channel: Channel, event_publisher: Arc<dyn EventPublisher>, entity_store: Arc<dyn Entities>) -> Self {
         let id = channel.id;
         let session_id = channel.session_id;
         Self {

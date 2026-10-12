@@ -21,7 +21,7 @@ use caelumora_model::config::AppConfig;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{SecurityContext, SecurityManager};
 use caelumora_model::session::Session;
-use caelumora_model::store::{EntityStore, StateStore};
+use caelumora_model::store::{Entities, StateStore};
 use caelumora_model::confidentiality::ConfidentialityPolicy;
 use std::sync::{Arc, OnceLock, Weak};
 use crate::agent::manager::AgentManager;
@@ -34,7 +34,7 @@ pub struct RuntimeManager {
     /// beside the `SecurityManager`, never by it.
     confidentiality: Arc<dyn ConfidentialityPolicy>,
     state_store: Arc<dyn StateStore>,
-    entity_store: Arc<dyn EntityStore>,
+    entity_store: Arc<dyn Entities>,
     secret_manager: Arc<SecretManager>,
     component_registry: Arc<ComponentRegistry>,
     event_bus: Arc<EventBus>,
@@ -133,7 +133,7 @@ impl ChannelRuntime {
 
     /// The entities - for what a channel checks of its participants (issue
     /// 191).
-    pub fn entity_store(&self) -> &Arc<dyn EntityStore> { self.runtime_manager.entity_store() }
+    pub fn entity_store(&self) -> &Arc<dyn Entities> { self.runtime_manager.entity_store() }
 
     pub fn new_recorder(&self) -> Result<Box<dyn Recorder>> { self.runtime_manager.new_recorder() }
 
@@ -309,7 +309,7 @@ impl RuntimeManager {
     /// then.
     pub fn new(
         state_store: Arc<dyn StateStore>,
-        entity_store: Arc<dyn EntityStore>,
+        entity_store: Arc<dyn Entities>,
         secret_manager: Arc<SecretManager>,
         security_manager: Arc<dyn SecurityManager>,
         confidentiality: Arc<dyn ConfidentialityPolicy>,
@@ -388,7 +388,7 @@ impl RuntimeManager {
 
     pub fn state_store(&self) -> &Arc<dyn StateStore> { &self.state_store }
 
-    pub fn entity_store(&self) -> &Arc<dyn EntityStore> { &self.entity_store }
+    pub fn entity_store(&self) -> &Arc<dyn Entities> { &self.entity_store }
 
     pub fn secret_manager(&self) -> &Arc<SecretManager> { &self.secret_manager }
 

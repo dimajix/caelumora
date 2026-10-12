@@ -31,7 +31,7 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::group::{Group, GroupId, GroupUpdateEvent};
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{AclEntry, ActionType, Enforcement, Grant, SecurityContext, SecurityManager, Subject};
-use caelumora_model::store::{EntityStore, StoreError, StoreResult, StoreResultExt};
+use caelumora_model::store::{Entities, StoreError, StoreResult, StoreResultExt};
 use caelumora_model::user::UserId;
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::ValueError;
@@ -75,7 +75,7 @@ fn store_error(id: GroupId) -> impl FnOnce(StoreError) -> GroupError {
 
 /// The one writer of teams (issue 286).
 pub struct GroupManager {
-    entities: Arc<dyn EntityStore>,
+    entities: Arc<dyn Entities>,
     /// Asked where the manager asks before the store does (issue 312).
     security: Arc<dyn SecurityManager>,
     events: Arc<EventBus>,
@@ -90,7 +90,7 @@ impl fmt::Debug for GroupManager {
 }
 
 impl GroupManager {
-    pub(crate) fn new(entities: Arc<dyn EntityStore>, events: Arc<EventBus>, security: Arc<dyn SecurityManager>) -> Self {
+    pub(crate) fn new(entities: Arc<dyn Entities>, events: Arc<EventBus>, security: Arc<dyn SecurityManager>) -> Self {
         Self { entities, security, events, writing: Mutex::new(()) }
     }
 
@@ -301,7 +301,7 @@ impl GroupManager {
 /// # Errors
 /// `StoreError::Validation` naming the first group `ctx` may not read, or
 /// whatever else the store reports.
-pub(crate) async fn require_nameable(store: &dyn EntityStore, ctx: &SecurityContext, before: &[AclEntry], entries: &[AclEntry]) -> StoreResult<()> {
+pub(crate) async fn require_nameable(store: &dyn Entities, ctx: &SecurityContext, before: &[AclEntry], entries: &[AclEntry]) -> StoreResult<()> {
     for entry in entries {
         let Subject::Group(group) = entry.subject else { continue };
         if before.iter().any(|named| named.subject == entry.subject) {
@@ -320,7 +320,7 @@ pub(crate) async fn require_nameable(store: &dyn EntityStore, ctx: &SecurityCont
 ///
 /// # Errors
 /// Whatever the store reports.
-pub(crate) async fn keep_participants(store: &dyn EntityStore, participants: Group) -> StoreResult<()> {
+pub(crate) async fn keep_participants(store: &dyn Entities, participants: Group) -> StoreResult<()> {
     let system = SecurityContext::system();
     match store.get_group(&system, participants.id).await {
         Ok(mut stored) => {
@@ -343,7 +343,7 @@ pub(crate) async fn keep_participants(store: &dyn EntityStore, participants: Gro
 ///
 /// # Errors
 /// Whatever the store reports.
-pub(crate) async fn purge_participants(store: &dyn EntityStore, id: GroupId) -> StoreResult<bool> {
+pub(crate) async fn purge_participants(store: &dyn Entities, id: GroupId) -> StoreResult<bool> {
     let system = SecurityContext::system();
     store.delete_group(&system, id).await?;
     store.purge_group(&system, id).await

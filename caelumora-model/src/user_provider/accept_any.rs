@@ -1,6 +1,6 @@
 use crate::role::RoleId;
 use crate::security::SecurityContext;
-use crate::store::{EntityStore, StoreError, StoreResultExt};
+use crate::store::{Entities, StoreError, StoreResultExt};
 use crate::user::{User, UserId};
 use crate::user_provider::{AuthError, AuthResult, Credential, UserProvider};
 use crate::value::name::Name;
@@ -27,7 +27,7 @@ use std::sync::Arc;
 /// stand-in.
 #[derive(Debug)]
 pub struct AcceptAnyUserProvider {
-    store: Arc<dyn EntityStore>,
+    store: Arc<dyn Entities>,
     /// The roles of the users named (issue 142), by their ids (issue 23).
     roles: BTreeMap<String, Vec<RoleId>>,
     /// The roles of everybody else.
@@ -36,13 +36,13 @@ pub struct AcceptAnyUserProvider {
 
 impl AcceptAnyUserProvider {
     /// A provider that gives nobody a role.
-    pub fn new(store: Arc<dyn EntityStore>) -> Self {
+    pub fn new(store: Arc<dyn Entities>) -> Self {
         Self::with_roles(store, BTreeMap::new(), Vec::new())
     }
 
     /// A provider that gives the users named in `roles` theirs, and
     /// everybody else `default_roles`.
-    pub fn with_roles(store: Arc<dyn EntityStore>, roles: BTreeMap<String, Vec<RoleId>>, default_roles: Vec<RoleId>) -> Self {
+    pub fn with_roles(store: Arc<dyn Entities>, roles: BTreeMap<String, Vec<RoleId>>, default_roles: Vec<RoleId>) -> Self {
         Self { store, roles, default_roles }
     }
 
@@ -109,11 +109,11 @@ mod tests {
 
     /// The provider in a chain of its own, whose manager keeps the records
     /// in `store`.
-    fn chain(store: &Arc<dyn EntityStore>, provider: AcceptAnyUserProvider) -> UserManager {
+    fn chain(store: &Arc<dyn Entities>, provider: AcceptAnyUserProvider) -> UserManager {
         UserManager::new(vec![Arc::new(provider)], Arc::clone(store), Arc::new(()))
     }
 
-    fn store() -> Arc<dyn EntityStore> {
+    fn store() -> Arc<dyn Entities> {
         Arc::new(MemoryStore::new())
     }
 

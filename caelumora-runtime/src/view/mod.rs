@@ -62,7 +62,7 @@ use caelumora_model::scope::{found_from, Scope, Scoped};
 use caelumora_model::value::name::Name;
 use crate::workspace::WorkspaceManager;
 use crate::skill::SkillManager;
-use caelumora_model::store::{EntityStore, StateStore, StoreResultExt};
+use caelumora_model::store::{Entities, StateStore, StoreResultExt};
 use crate::component::ComponentRegistry;
 use std::sync::Arc;
 use caelumora_model::artifact::Artifact;
@@ -198,7 +198,7 @@ impl RunningSessions for OwnSession {
 pub struct Views {
     security: Arc<dyn SecurityManager>,
     confidentiality: Arc<dyn ConfidentialityPolicy>,
-    entities: Arc<dyn EntityStore>,
+    entities: Arc<dyn Entities>,
     states: Arc<dyn StateStore>,
     components: Arc<ComponentRegistry>,
     workspaces: Arc<WorkspaceManager>,
@@ -249,7 +249,7 @@ impl Views {
         &self.confidentiality
     }
 
-    pub(crate) fn entities(&self) -> &Arc<dyn EntityStore> {
+    pub(crate) fn entities(&self) -> &Arc<dyn Entities> {
         &self.entities
     }
 
@@ -972,7 +972,7 @@ mod tests {
     use caelumora_model::security::{Grant, SecurityAttributes, Subject};
     use crate::group::keep_participants;
     use caelumora_model::session::Session;
-    use caelumora_model::store::EntityStore;
+    use caelumora_model::store::Entities;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::user::UserId;
 
@@ -1932,7 +1932,7 @@ use caelumora_model::turn::TurnState;
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         use caelumora_model::scope::Scope;
         use caelumora_model::snapshot::Detail;
-        use caelumora_model::store::EntityStore;
+        use caelumora_model::store::Entities;
         
 
         let store = Arc::new(MemoryStore::new());

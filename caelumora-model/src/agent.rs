@@ -16,13 +16,13 @@ use crate::turn::GivenUpReason;
 use crate::turn::{CommandRequest, TurnState};
 use crate::work::{TurnId, Work};
 use crate::note::{NoteChain, NoteChange, NoteOrigin, Notes};
-use crate::removal::Removal;
+use crate::removal::{self, Deletable, Removal};
 use crate::role::RoleId;
-use crate::scope::Scoped;
+use crate::scope::{ScopeField, Scoped};
 use crate::value::name::ScopedName;
 use crate::value::text::{Description, Introduction};
 use crate::security::{Secured, SecurityAttributes, SecurityContext};
-use crate::store::Journaled;
+use crate::store::{EntityKind, Journaled};
 use crate::tool::{RecordedToolSets, Tool, ToolSet};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -129,7 +129,54 @@ impl Personality {
     }
 }
 
-crate::impl_deletable!(Personality => "personality", Agent => "agent");
+// `removal::Stored`, beside the `chain::Stored` of an agent's state.
+impl removal::Stored for Personality {
+    const KIND: EntityKind = EntityKind::new("personality");
+    type Id = PersonalityId;
+    type Field = ScopeField;
+
+    fn id(&self) -> PersonalityId {
+        self.id
+    }
+
+    fn deleted(&self) -> Option<&Removal> {
+        self.deleted.as_ref()
+    }
+
+    fn unique_name(&self) -> Option<ScopedName> {
+        Some(self.scoped_name())
+    }
+}
+
+impl Deletable for Personality {
+    fn set_deleted(&mut self, deleted: Option<Removal>) {
+        self.deleted = deleted;
+    }
+}
+
+impl removal::Stored for Agent {
+    const KIND: EntityKind = EntityKind::new("agent");
+    type Id = AgentId;
+    type Field = ScopeField;
+
+    fn id(&self) -> AgentId {
+        self.id
+    }
+
+    fn deleted(&self) -> Option<&Removal> {
+        self.deleted.as_ref()
+    }
+
+    fn unique_name(&self) -> Option<ScopedName> {
+        Some(self.scoped_name())
+    }
+}
+
+impl Deletable for Agent {
+    fn set_deleted(&mut self, deleted: Option<Removal>) {
+        self.deleted = deleted;
+    }
+}
 
 impl Secured for Personality {
     fn security_attributes(&self) -> &SecurityAttributes {

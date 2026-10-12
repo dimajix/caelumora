@@ -14,6 +14,7 @@ use std::fmt::Debug;
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
 use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::StoredComponents;
+use crate::removal::Deletable;
 use crate::security::SecurityContext;
 use crate::session::{Session, SessionId};
 use crate::template::{SessionTemplate, SessionTemplateId};
@@ -133,6 +134,45 @@ impl std::fmt::Display for EntityKind {
     }
 }
 
+/// The entities of one kind (issues 93, 323): every kind has the same
+/// operations, checked the same way (`store::access`), and is kept by a
+/// store of its own. `create` refuses an entity that exists (`Conflict`),
+/// `update` one that does not (`NotFound`); `delete` says whether there was
+/// one to delete. What has a name unique of its kind in its scope
+/// (`Stored::unique_name`, issue 250) is created, renamed and restored only
+/// under a name no other one of its kind that is not deleted has there,
+/// also one the caller may not read (`NameTaken`), and is found by it
+/// (`find_by_name`) - `NotFound` for a kind without one.
+///
+/// Deleting marks (issue 164): `delete` sets the mark - who, when - and
+/// keeps the entity. What is marked is not there for `get`, `list`,
+/// `update` and `delete`, also not for the system, and its id is not free
+/// for `create`; nothing new or changed may carry the mark (`Validation`).
+/// What was deleted is reached by four operations of its own:
+/// `get_deleted` and `list_deleted` read it (`ReadDeleted`), `restore`
+/// takes the mark away (`Restore`) and returns what it restored, and
+/// `purge` removes what was deleted for good (`Purge`) - only what is
+/// marked, so that a purge never takes what was restored.
+#[async_trait]
+pub trait EntityStore<T: Deletable + Send + Sync + 'static>: Debug + Send + Sync {
+    async fn create(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()>;
+    async fn get(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T>;
+    async fn update(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()>;
+    async fn delete(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<bool>;
+    async fn list(&self, ctx: &SecurityContext, query: &Query<T::Field>) -> StoreResult<Page<T>>;
+    async fn restore(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T>;
+    async fn purge(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<bool>;
+    async fn get_deleted(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T>;
+    async fn list_deleted(&self, ctx: &SecurityContext, query: &Query<T::Field>) -> StoreResult<Page<T>>;
+    /// The one of `name`, in exactly that scope, among what the caller may
+    /// read (issue 178).
+    async fn find_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<T>;
+}
+
+/// Every kind's entities at once, as one store offered them before each
+/// kind had its own (issue 323): implemented over the stores of the kinds,
+/// and gone once every caller uses the store of its kind.
+///
 /// The durable entities (issue 93): every kind has the same five
 /// operations - `create`, `get`, `update`, `delete`, `list` - by id, and
 /// every one of them is checked the same way (`store::access`).
@@ -165,7 +205,7 @@ impl std::fmt::Display for EntityKind {
 /// only what is marked, so that what is deleted is deleted first, and a
 /// purge never takes what was restored.
 #[async_trait]
-pub trait EntityStore : Debug + Sync + Send {
+pub trait Entities : Debug + Sync + Send {
     // Personalities
     async fn create_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()>;
     async fn get_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality>;

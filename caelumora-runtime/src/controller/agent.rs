@@ -7,7 +7,7 @@ use caelumora_model::role::RoleId;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{ChannelId, SessionId};
 use super::UserController;
-use caelumora_model::store::{EntityStore, StoreResult};
+use caelumora_model::store::{Entities, StoreResult};
 use std::sync::Arc;
 
 /// The one writer of an agent's document in this instance, shared by all
@@ -20,7 +20,7 @@ pub struct AgentController {
     /// 304); none for an agent of the system, or of an owner who is gone.
     owner: Option<Arc<UserController>>,
     event_publisher: Arc<dyn EventPublisher>,
-    entity_store: Arc<dyn EntityStore>,
+    entity_store: Arc<dyn Entities>,
     /// Held while the agent is changed and stored, like the other
     /// controllers.
     write_lock: tokio::sync::Mutex<()>,
@@ -29,7 +29,7 @@ pub struct AgentController {
 impl AgentController {
     /// The live `agent`, owned by the user `owner` holds, if any. Made by
     /// the `ControllerManager`, which keeps one per agent.
-    pub(crate) fn new(agent: Agent, owner: Option<Arc<UserController>>, event_publisher: Arc<dyn EventPublisher>, entity_store: Arc<dyn EntityStore>) -> Self {
+    pub(crate) fn new(agent: Agent, owner: Option<Arc<UserController>>, event_publisher: Arc<dyn EventPublisher>, entity_store: Arc<dyn Entities>) -> Self {
         Self {
             id: agent.id,
             agent: ArcSwap::from_pointee(agent),

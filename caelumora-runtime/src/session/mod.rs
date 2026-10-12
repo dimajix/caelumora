@@ -15,7 +15,7 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
 use crate::view::{Viewer, Views};
 use caelumora_model::privacy::SessionPrivacy;
-use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResult, StoreResultExt};
+use caelumora_model::store::{EntityKind, Entities, StoreError, StoreResult, StoreResultExt};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::group::GroupId;
@@ -102,7 +102,7 @@ fn require_classification(runtime_manager: &RuntimeManager, classification: &Cla
 ///
 /// # Errors
 /// Whatever reading their profile reports, except that there is none.
-async fn preferred_language(store: &dyn EntityStore, context: &SecurityContext) -> StoreResult<Option<Language>> {
+async fn preferred_language(store: &dyn Entities, context: &SecurityContext) -> StoreResult<Option<Language>> {
     let Some(user) = context.principal_id.as_user_id() else { return Ok(None) };
     let profile = store.get_user_profile(context, user).await.optional()?;
     Ok(profile.and_then(|profile| profile.preferred_language))
@@ -125,7 +125,7 @@ pub struct SessionLoop {
     /// 229).
     security: Arc<dyn SecurityManager>,
     confidentiality: Arc<dyn ConfidentialityPolicy>,
-    entities: Arc<dyn EntityStore>,
+    entities: Arc<dyn Entities>,
     events: Arc<EventBus>,
     /// What goes with a channel deleted or restored (issue 178).
     scoped: Arc<ScopedEntities>,
@@ -148,7 +148,7 @@ pub struct SessionLoop {
 /// not - a channel of a session being purged, which is hidden with the
 /// session, or one whose creation failed - since only what was deleted is
 /// purged (issue 164).
-async fn purge_channel_document(store: &dyn EntityStore, channel_id: ChannelId) -> StoreResult<bool> {
+async fn purge_channel_document(store: &dyn Entities, channel_id: ChannelId) -> StoreResult<bool> {
     let system = SecurityContext::system();
     if let Err(e) = purge_participants(store, GroupId::of_channel(channel_id)).await {
         if !matches!(e, StoreError::NotFound { .. }) {

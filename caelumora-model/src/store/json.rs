@@ -1,37 +1,33 @@
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
-use crate::channel::{Channel, ChannelId, ChannelState};
+use crate::artifact::{Artifact, ArtifactField, ArtifactId};
+use crate::channel::{Channel, ChannelField, ChannelId, ChannelState};
 use crate::component::StoredComponents;
-use crate::removal::{Deletable, Removal, Stored};
-use crate::scope::Scoped;
 use crate::confidentiality::ConfidentialityPolicy;
+use crate::group::{Group, GroupField, GroupId};
+use crate::removal::{Deletable, Removal, Stored};
+use crate::scope::{Scope, ScopeField};
 use crate::security::{ActionType, SecurityManager};
-use crate::value::name::ScopedName;
+use crate::session::{Session, SessionField, SessionId};
+use crate::skill::{Skill, SkillId};
 use crate::store::access::{name_free, Access};
-use crate::session::{Session, SessionId};
-use crate::store::{ComponentStore, EntityKind, EntityStore, Journaled, StateStore, StoreError, StoreResult};
+use crate::store::query::{Field, Filter, NoField, Page, Query};
+use crate::store::{ComponentStore, Entities, EntityStore, Journaled, StateStore, StoreError, StoreResult};
 use crate::template::{SessionTemplate, SessionTemplateId};
 use crate::user::{User, UserId, UserProfile};
+use crate::value::name::ScopedName;
 use crate::workspace::{Workspace, WorkspaceId};
-use crate::skill::{Skill, SkillId};
-use crate::group::{Group, GroupField, GroupId};
-use crate::artifact::{Artifact, ArtifactId};
 use async_trait::async_trait;
-use tracing::{debug, info, warn};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::ffi::OsString;
-use std::fmt::Display;
+use std::fmt::{self, Debug, Display};
 use std::fs;
-use std::collections::HashMap;
+use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex, MutexGuard};
-use crate::store::query::{Field, Filter, NoField, Page, Query};
-use crate::artifact::ArtifactField;
-use crate::channel::ChannelField;
-use crate::scope::ScopeField;
-use crate::session::SessionField;
+use tracing::{debug, info, warn};
 
 /// A journal is folded into its snapshot once it is at least as large as
 /// the snapshot, and at least this large (issue 193): small states are not
@@ -50,13 +46,19 @@ pub const DEFAULT_JOURNAL_FLOOR: u64 = 64 * 1024;
 #[derive(Debug)]
 pub struct JsonFileStore {
     root: PathBuf,
-    security_manager: Arc<dyn SecurityManager>,
-    /// Who is cleared for what is reached by clearance (issue 322).
-    confidentiality: Arc<dyn ConfidentialityPolicy>,
     journal_floor: u64,
-    /// One per kind whose names are unique (issue 250), held by its writes:
-    /// within this process, which is the only one that writes the files.
-    name_locks: HashMap<EntityKind, Mutex<()>>,
+    personalities: JsonEntityStore<Personality>,
+    session_templates: JsonEntityStore<SessionTemplate>,
+    agents: JsonEntityStore<Agent>,
+    sessions: JsonEntityStore<Session>,
+    channels: JsonEntityStore<Channel>,
+    users: JsonEntityStore<User>,
+    user_profiles: JsonEntityStore<UserProfile>,
+    workspaces: JsonEntityStore<Workspace>,
+    skills: JsonEntityStore<Skill>,
+    artifacts: JsonEntityStore<Artifact>,
+    groups: JsonEntityStore<Group>,
+    components: JsonEntityStore<StoredComponents>,
 }
 
 impl JsonFileStore {
@@ -66,13 +68,22 @@ impl JsonFileStore {
     pub fn new(root: impl Into<PathBuf>, security_manager: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> StoreResult<Self> {
         let root = root.into();
         info!("Creating JSON file store at {:?}", root);
+        let policies = (security_manager, confidentiality);
         let store = Self {
-            root,
-            security_manager,
-            confidentiality,
             journal_floor: DEFAULT_JOURNAL_FLOOR,
-            name_locks: [Personality::KIND, SessionTemplate::KIND, Agent::KIND, Channel::KIND, User::KIND, Workspace::KIND, Skill::KIND, Artifact::KIND, Group::KIND]
-                .into_iter().map(|kind| (kind, Mutex::new(()))).collect(),
+            personalities: JsonEntityStore::new(&root, &policies)?,
+            session_templates: JsonEntityStore::new(&root, &policies)?,
+            agents: JsonEntityStore::new(&root, &policies)?,
+            sessions: JsonEntityStore::new(&root, &policies)?,
+            channels: JsonEntityStore::new(&root, &policies)?,
+            users: JsonEntityStore::new(&root, &policies)?,
+            user_profiles: JsonEntityStore::new(&root, &policies)?,
+            workspaces: JsonEntityStore::new(&root, &policies)?,
+            skills: JsonEntityStore::new(&root, &policies)?,
+            artifacts: JsonEntityStore::new(&root, &policies)?,
+            groups: JsonEntityStore::new(&root, &policies)?,
+            components: JsonEntityStore::new(&root, &policies)?,
+            root,
         };
         store.ensure_layout()?;
         Ok(store)
@@ -85,77 +96,11 @@ impl JsonFileStore {
         self
     }
 
-    fn access<'a>(&'a self, ctx: &'a SecurityContext) -> Access<'a> {
-        Access::new(self.security_manager.as_ref(), self.confidentiality.as_ref(), ctx)
-    }
-
     fn ensure_layout(&self) -> StoreResult<()> {
-        let dirs = [
-            self.personality_dir(),
-            self.session_templates_dir(),
-            self.agents_dir(),
-            self.sessions_dir(),
-            self.channels_dir(),
-            self.users_dir(),
-            self.user_profiles_dir(),
-            self.workspaces_dir(),
-            self.skills_dir(),
-            self.artifacts_dir(),
-            self.groups_dir(),
-            self.agent_states_dir(),
-            self.agent_channel_states_dir(),
-            self.channel_states_dir(),
-            self.components_dir(),
-        ];
-
-        for dir in dirs {
+        for dir in [self.agent_states_dir(), self.agent_channel_states_dir(), self.channel_states_dir()] {
             fs::create_dir_all(dir).map_err(to_backend_error)?;
         }
         Ok(())
-    }
-
-    fn personality_dir(&self) -> PathBuf {
-        self.root.join("templates").join("agents")
-    }
-
-    fn session_templates_dir(&self) -> PathBuf {
-        self.root.join("templates").join("sessions")
-    }
-
-    fn agents_dir(&self) -> PathBuf {
-        self.root.join("runtime").join("agents")
-    }
-
-    fn users_dir(&self) -> PathBuf {
-        self.root.join("runtime").join("users")
-    }
-
-    fn user_profiles_dir(&self) -> PathBuf {
-        self.root.join("runtime").join("user_profiles")
-    }
-
-    fn workspaces_dir(&self) -> PathBuf {
-        self.root.join("runtime").join("workspaces")
-    }
-
-    fn skills_dir(&self) -> PathBuf {
-        self.root.join("runtime").join("skills")
-    }
-
-    fn artifacts_dir(&self) -> PathBuf {
-        self.root.join("runtime").join("artifacts")
-    }
-
-    fn groups_dir(&self) -> PathBuf {
-        self.root.join("runtime").join("groups")
-    }
-
-    fn sessions_dir(&self) -> PathBuf {
-        self.root.join("runtime").join("sessions")
-    }
-
-    fn channels_dir(&self) -> PathBuf {
-        self.root.join("runtime").join("channels")
     }
 
     fn agent_states_dir(&self) -> PathBuf {
@@ -169,54 +114,6 @@ impl JsonFileStore {
 
     fn channel_states_dir(&self) -> PathBuf {
         self.root.join("runtime").join("channel_state")
-    }
-
-    fn components_dir(&self) -> PathBuf {
-        self.root.join("templates").join("components")
-    }
-
-    fn personality_path(&self, id: PersonalityId) -> PathBuf {
-        self.personality_dir().join(format!("{id}.json"))
-    }
-
-    fn session_template_path(&self, id: SessionTemplateId) -> PathBuf {
-        self.session_templates_dir().join(format!("{id}.json"))
-    }
-
-    fn agent_path(&self, id: AgentId) -> PathBuf {
-        self.agents_dir().join(format!("{id}.json"))
-    }
-
-    fn session_path(&self, id: SessionId) -> PathBuf {
-        self.sessions_dir().join(format!("{id}.json"))
-    }
-
-    fn channel_path(&self, id: ChannelId) -> PathBuf {
-        self.channels_dir().join(format!("{id}.json"))
-    }
-
-    fn user_path(&self, id: UserId) -> PathBuf {
-        self.users_dir().join(format!("{id}.json"))
-    }
-
-    fn user_profile_path(&self, id: UserId) -> PathBuf {
-        self.user_profiles_dir().join(format!("{id}.json"))
-    }
-
-    fn workspace_path(&self, id: WorkspaceId) -> PathBuf {
-        self.workspaces_dir().join(format!("{id}.json"))
-    }
-
-    fn skill_path(&self, id: SkillId) -> PathBuf {
-        self.skills_dir().join(format!("{id}.json"))
-    }
-
-    fn artifact_path(&self, id: ArtifactId) -> PathBuf {
-        self.artifacts_dir().join(format!("{id}.json"))
-    }
-
-    fn group_path(&self, id: GroupId) -> PathBuf {
-        self.groups_dir().join(format!("{id}.json"))
     }
 
     fn agent_channel_state_path(&self, agent_id: AgentId, channel_id: ChannelId) -> PathBuf {
@@ -238,10 +135,6 @@ impl JsonFileStore {
         self.channel_states_dir().join(format!("{id}.json"))
     }
 
-    fn component_path(&self, id: &str) -> PathBuf {
-        self.components_dir()
-            .join(format!("{}.json", sanitize_file_component(id)))
-    }
 }
 
 /// Writes `value` to `path` atomically: into a temporary file beside it,
@@ -276,10 +169,6 @@ async fn read_json_opt<T: DeserializeOwned>(path: &Path) -> StoreResult<Option<T
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(err) => Err(to_backend_error(err)),
     }
-}
-
-fn require_entity<T>(value: Option<T>, entity: &'static str, id: String) -> StoreResult<T> {
-    value.ok_or(StoreError::NotFound { entity, id })
 }
 
 /// The documents in `dir` - every `*.json` file -, each with its key, the
@@ -429,14 +318,8 @@ fn sanitize_file_component(value: &str) -> String {
 
 use crate::security::SecurityContext;
 
-/// The directory of the document at `path`: where the others of its kind
-/// are.
-fn dir_of(path: &Path) -> StoreResult<PathBuf> {
-    path.parent().map(Path::to_path_buf).ok_or_else(|| StoreError::Backend(format!("invalid path: {}", path.display())))
-}
-
 /// Refuses `value` if another document in `dir` has its name (issue 250).
-async fn name_free_in<T: Stored + Scoped + DeserializeOwned>(dir: &Path, value: &T) -> StoreResult<()> {
+async fn name_free_in<T: Stored + DeserializeOwned>(dir: &Path, value: &T) -> StoreResult<()> {
     for (_, path) in documents_in_dir(dir).await? {
         if let Some(other) = read_meeting::<T, NoField>(path, None).await? {
             name_free(value, [&other])?;
@@ -445,76 +328,128 @@ async fn name_free_in<T: Stored + Scoped + DeserializeOwned>(dir: &Path, value: 
     Ok(())
 }
 
-/// The operations of every T::KIND (issues 93, 164), each document a file at
-/// `path` and checked as its T::KIND. Those that write come as
-/// three: the plain one, the one for a T::KIND whose names are unique
-/// (`…_named_file`, issue 250), which holds the T::KIND's lock from reading
-/// what is stored to writing and checks the others of the T::KIND, and what
-/// both are made of (`…_file_with`), which asks `others` once the access
-/// is granted.
-impl JsonFileStore {
-    /// Held by a write of a T::KIND whose names are unique, so that no two
-    /// writes take one name.
-    async fn names_lock<T: Stored>(&self) -> StoreResult<MutexGuard<'_, ()>> {
-        let lock = self.name_locks.get(&T::KIND)
-            .ok_or_else(|| StoreError::Backend(format!("the names of a {} are not kept", T::KIND)))?;
-        Ok(lock.lock().await)
+/// The entities of one kind as JSON files (issue 323), one per document in
+/// the kind's directory, `entities/<kind>`, named by its id; checked as
+/// every kind is (`store::access`). A write of a kind whose names are
+/// unique holds the kind's lock from reading what is stored to writing,
+/// and checks the others of the kind.
+pub struct JsonEntityStore<T> {
+    dir: PathBuf,
+    security_manager: Arc<dyn SecurityManager>,
+    /// Who is cleared for what is reached by clearance (issue 322).
+    confidentiality: Arc<dyn ConfidentialityPolicy>,
+    /// Held by the writes that may take a name, so that no two take one:
+    /// within this process, which is the only one that writes the files.
+    names: Mutex<()>,
+    kind: PhantomData<fn() -> T>,
+}
+
+impl<T: Stored> Debug for JsonEntityStore<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("JsonEntityStore").field("kind", &T::KIND).field("dir", &self.dir).finish_non_exhaustive()
+    }
+}
+
+impl<T: Stored + Serialize + DeserializeOwned + Send + Sync> JsonEntityStore<T> {
+    /// The store of the kind's documents under `root`, asking the
+    /// `SecurityManager` and the `ConfidentialityPolicy` of `policies`.
+    ///
+    /// # Errors
+    /// If its directory cannot be made.
+    fn new(root: &Path, policies: &(Arc<dyn SecurityManager>, Arc<dyn ConfidentialityPolicy>)) -> StoreResult<Self> {
+        let dir = root.join("entities").join(T::KIND.name());
+        fs::create_dir_all(&dir).map_err(to_backend_error)?;
+        Ok(Self { dir, security_manager: Arc::clone(&policies.0), confidentiality: Arc::clone(&policies.1), names: Mutex::new(()), kind: PhantomData })
     }
 
-    async fn create_file<T: Stored + Serialize + Sync>(&self, ctx: &SecurityContext, path: PathBuf, id: String, value: &T) -> StoreResult<()> {
-        self.create_file_with(ctx, path, id, value, async |_| Ok(())).await
+    fn access<'a>(&'a self, ctx: &'a SecurityContext) -> Access<'a> {
+        Access::new(self.security_manager.as_ref(), self.confidentiality.as_ref(), ctx)
     }
 
-    async fn create_named_file<T: Stored + Scoped + Serialize + DeserializeOwned + Sync>(&self, ctx: &SecurityContext, path: PathBuf, id: String, value: &T) -> StoreResult<()> {
-        let dir = dir_of(&path)?;
-        let _names = self.names_lock::<T>().await?;
-        self.create_file_with(ctx, path, id, value, async |value| name_free_in(&dir, value).await).await
+    /// Where the document of `id` is.
+    fn path(&self, id: &T::Id) -> PathBuf {
+        self.dir.join(format!("{}.json", sanitize_file_component(&id.to_string())))
     }
 
-    async fn create_file_with<T: Stored + Serialize + Sync>(&self, ctx: &SecurityContext, path: PathBuf, id: String, value: &T, others: impl AsyncFnOnce(&T) -> StoreResult<()>) -> StoreResult<()> {
+    /// The kind's lock for names, if `value` has one to take.
+    async fn names_lock(&self, value: &T) -> Option<MutexGuard<'_, ()>> {
+        match value.unique_name() {
+            Some(_) => Some(self.names.lock().await),
+            None => None,
+        }
+    }
+
+    async fn create(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()> {
+        let id = value.id();
+        let path = self.path(&id);
+        let _names = self.names_lock(value).await;
         self.access(ctx).create(value).await?;
         if tokio::fs::try_exists(&path).await.map_err(to_backend_error)? {
             return Err(StoreError::Conflict(format!("{} {} already exists", T::KIND, id)));
         }
-        others(value).await?;
+        name_free_in(&self.dir, value).await?;
         debug!("Writing {} {} to {}", T::KIND, id, path.display());
         write_json_atomic(&path, value).await
     }
 
-    async fn get_file<T: Stored + DeserializeOwned + Send>(&self, ctx: &SecurityContext, path: PathBuf, id: String) -> StoreResult<T> {
-        let found = read_json_opt::<T>(&path).await?;
-        self.access(ctx).read(found, id).await
+    async fn get(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T> {
+        let found = read_json_opt::<T>(&self.path(&id)).await?;
+        self.access(ctx).read(found, id.to_string()).await
     }
 
-    async fn update_file<T: Stored + Serialize + DeserializeOwned + Send + Sync>(&self, ctx: &SecurityContext, path: PathBuf, id: String, value: &T) -> StoreResult<()> {
-        self.update_file_with(ctx, path, id, value, async |_, _| Ok(())).await
-    }
-
-    /// Reads the others of the T::KIND only if `value` is named otherwise than
+    /// Reads the others of the kind only if `value` is named otherwise than
     /// it is stored: whatever else changes takes nobody's name.
-    async fn update_named_file<T: Stored + Scoped + Serialize + DeserializeOwned + Send + Sync>(&self, ctx: &SecurityContext, path: PathBuf, id: String, value: &T) -> StoreResult<()> {
-        let dir = dir_of(&path)?;
-        let _names = self.names_lock::<T>().await?;
-        self.update_file_with(ctx, path, id, value, async |stored, value| match stored.scoped_name() == value.scoped_name() {
-            true => Ok(()),
-            false => name_free_in(&dir, value).await,
-        }).await
-    }
-
-    /// `others` is asked with the entity as stored and as it is to be.
-    async fn update_file_with<T: Stored + Serialize + DeserializeOwned + Send + Sync>(&self, ctx: &SecurityContext, path: PathBuf, id: String, value: &T, others: impl AsyncFnOnce(&T, &T) -> StoreResult<()>) -> StoreResult<()> {
+    async fn update(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()> {
+        let id = value.id();
+        let path = self.path(&id);
+        let _names = self.names_lock(value).await;
         let stored = read_json_opt::<T>(&path).await?;
-        self.access(ctx).change(stored.as_ref(), value, id.clone()).await?;
-        if let Some(stored) = &stored {
-            others(stored, value).await?;
+        self.access(ctx).change(stored.as_ref(), value, id.to_string()).await?;
+        if stored.is_some_and(|stored| stored.unique_name() != value.unique_name()) {
+            name_free_in(&self.dir, value).await?;
         }
         debug!("Writing {} {} to {}", T::KIND, id, path.display());
         write_json_atomic(&path, value).await
     }
 
+    /// Removes the document for good: deleting a kind that is not marked.
+    async fn remove(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<bool> {
+        let path = self.path(&id);
+        let stored = read_json_opt::<T>(&path).await?;
+        if !self.access(ctx).delete(stored.as_ref()).await? {
+            return Ok(false);
+        }
+        debug!("Deleting {} at {}", T::KIND, path.display());
+        delete_if_exists(&path).await
+    }
+
+    /// The page `query` asks for, among what is deleted if `deleted`.
+    async fn page(&self, ctx: &SecurityContext, query: &Query<T::Field>, deleted: bool) -> StoreResult<Page<T>> {
+        let access = self.access(ctx);
+        access.allow(ActionType::List(T::KIND)).await?;
+        let filter = query.filter.as_ref();
+        access.page(documents_in_dir(&self.dir).await?, query, deleted, |path| read_meeting::<T, T::Field>(path, filter)).await
+    }
+}
+
+#[async_trait]
+impl<T: Deletable + Serialize + DeserializeOwned + Send + Sync + 'static> EntityStore<T> for JsonEntityStore<T> {
+    async fn create(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()> {
+        JsonEntityStore::create(self, ctx, value).await
+    }
+
+    async fn get(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T> {
+        JsonEntityStore::get(self, ctx, id).await
+    }
+
+    async fn update(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()> {
+        JsonEntityStore::update(self, ctx, value).await
+    }
+
     /// Marks the document deleted, by the caller and now (issue 164),
     /// rewriting it where it is.
-    async fn delete_file<T: Deletable + Serialize + DeserializeOwned + Send + Sync>(&self, ctx: &SecurityContext, path: PathBuf) -> StoreResult<bool> {
+    async fn delete(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<bool> {
+        let path = self.path(&id);
         let stored = read_json_opt::<T>(&path).await?;
         if !self.access(ctx).delete(stored.as_ref()).await? {
             return Ok(false);
@@ -526,37 +461,25 @@ impl JsonFileStore {
         Ok(true)
     }
 
-    /// Removes the document for good: deleting a T::KIND that is not marked.
-    async fn remove_file<T: Stored + DeserializeOwned + Send + Sync>(&self, ctx: &SecurityContext, path: PathBuf) -> StoreResult<bool> {
+    async fn list(&self, ctx: &SecurityContext, query: &Query<T::Field>) -> StoreResult<Page<T>> {
+        self.page(ctx, query, false).await
+    }
+
+    async fn restore(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T> {
+        let path = self.path(&id);
+        // Taken before reading: what is restored may take a name.
+        let _names = self.names.lock().await;
         let stored = read_json_opt::<T>(&path).await?;
-        if !self.access(ctx).delete(stored.as_ref()).await? {
-            return Ok(false);
-        }
-        debug!("Deleting {} at {}", T::KIND, path.display());
-        delete_if_exists(&path).await
-    }
-
-    async fn restore_file<T: Deletable + Serialize + DeserializeOwned + Send + Sync>(&self, ctx: &SecurityContext, path: PathBuf, id: String) -> StoreResult<T> {
-        self.restore_file_with::<T>(ctx, path, id, async |_| Ok(())).await
-    }
-
-    async fn restore_named_file<T: Deletable + Scoped + Serialize + DeserializeOwned + Send + Sync>(&self, ctx: &SecurityContext, path: PathBuf, id: String) -> StoreResult<T> {
-        let dir = dir_of(&path)?;
-        let _names = self.names_lock::<T>().await?;
-        self.restore_file_with::<T>(ctx, path, id, async |value| name_free_in(&dir, value).await).await
-    }
-
-    async fn restore_file_with<T: Deletable + Serialize + DeserializeOwned + Send + Sync>(&self, ctx: &SecurityContext, path: PathBuf, id: String, others: impl AsyncFnOnce(&T) -> StoreResult<()>) -> StoreResult<T> {
-        let stored = read_json_opt::<T>(&path).await?;
-        let mut restored = self.access(ctx).restore(stored, id).await?;
+        let mut restored = self.access(ctx).restore(stored, id.to_string()).await?;
         restored.set_deleted(None);
-        others(&restored).await?;
+        name_free_in(&self.dir, &restored).await?;
         debug!("Restoring {} at {}", T::KIND, path.display());
         write_json_atomic(&path, &restored).await?;
         Ok(restored)
     }
 
-    async fn purge_file<T: Deletable + DeserializeOwned + Send + Sync>(&self, ctx: &SecurityContext, path: PathBuf) -> StoreResult<bool> {
+    async fn purge(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<bool> {
+        let path = self.path(&id);
         let stored = read_json_opt::<T>(&path).await?;
         if !self.access(ctx).purge(stored.as_ref()).await? {
             return Ok(false);
@@ -572,380 +495,346 @@ impl JsonFileStore {
         delete_if_exists(&path).await
     }
 
-    async fn get_deleted_file<T: Deletable + DeserializeOwned + Send>(&self, ctx: &SecurityContext, path: PathBuf, id: String) -> StoreResult<T> {
-        let found = read_json_opt::<T>(&path).await?;
-        self.access(ctx).read_deleted(found, id).await
+    async fn get_deleted(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T> {
+        let found = read_json_opt::<T>(&self.path(&id)).await?;
+        self.access(ctx).read_deleted(found, id.to_string()).await
     }
 
-    async fn list_deleted_dir<T: Deletable + DeserializeOwned + Send, F: Field>(&self, ctx: &SecurityContext, dir: PathBuf, query: &Query<F>) -> StoreResult<Page<T>> {
-        let access = self.access(ctx);
-        access.allow(ActionType::List(T::KIND)).await?;
-        let filter = query.filter.as_ref();
-        access.page(documents_in_dir(&dir).await?, query, true, |path| read_meeting::<T, F>(path, filter)).await
+    async fn list_deleted(&self, ctx: &SecurityContext, query: &Query<T::Field>) -> StoreResult<Page<T>> {
+        self.page(ctx, query, true).await
     }
 
-    async fn list_dir<T: Stored + DeserializeOwned + Send, F: Field>(&self, ctx: &SecurityContext, dir: PathBuf, query: &Query<F>) -> StoreResult<Page<T>> {
-        let access = self.access(ctx);
-        access.allow(ActionType::List(T::KIND)).await?;
-        let filter = query.filter.as_ref();
-        access.page(documents_in_dir(&dir).await?, query, false, |path| read_meeting::<T, F>(path, filter)).await
-    }
-
-    /// The one of `name`, in exactly its scope, among those listed.
-    async fn find_dir<T: Stored + Scoped + DeserializeOwned + Send>(&self, ctx: &SecurityContext, dir: PathBuf, name: &ScopedName) -> StoreResult<T> {
-        let all: Vec<T> = self.list_dir(ctx, dir, &Query::<NoField>::all()).await?.items;
-        require_entity(all.into_iter().find(|d| d.scoped_name() == *name), T::KIND.name(), name.to_string())
+    async fn find_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<T> {
+        let all = self.page(ctx, &Query::all(), false).await?.items;
+        all.into_iter().find(|value| value.unique_name().as_ref() == Some(name))
+            .ok_or_else(|| StoreError::NotFound { entity: T::KIND.name(), id: name.to_string() })
     }
 }
 
 #[async_trait]
-impl EntityStore for JsonFileStore {
-    // Personalities
+impl Entities for JsonFileStore {
     async fn create_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()> {
-        self.create_named_file(ctx, self.personality_path(value.id), value.id.to_string(), value).await
+        self.personalities.create(ctx, value).await
     }
     async fn get_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
-        self.get_file(ctx, self.personality_path(id), id.to_string()).await
+        self.personalities.get(ctx, id).await
     }
     async fn update_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()> {
-        self.update_named_file(ctx, self.personality_path(value.id), value.id.to_string(), value).await
+        self.personalities.update(ctx, value).await
     }
     async fn delete_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool> {
-        self.delete_file::<Personality>(ctx, self.personality_path(id)).await
+        self.personalities.delete(ctx, id).await
     }
     async fn list_personalities(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Personality>> {
-        self.list_dir(ctx, self.personality_dir(), query).await
+        self.personalities.list(ctx, query).await
     }
     async fn restore_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
-        self.restore_named_file::<Personality>(ctx, self.personality_path(id), id.to_string()).await
+        self.personalities.restore(ctx, id).await
     }
     async fn purge_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool> {
-        self.purge_file::<Personality>(ctx, self.personality_path(id)).await
+        self.personalities.purge(ctx, id).await
     }
     async fn get_deleted_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
-        self.get_deleted_file(ctx, self.personality_path(id), id.to_string()).await
+        self.personalities.get_deleted(ctx, id).await
     }
     async fn list_deleted_personalities(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Personality>> {
-        self.list_deleted_dir(ctx, self.personality_dir(), query).await
+        self.personalities.list_deleted(ctx, query).await
     }
     async fn find_personality_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Personality> {
-        self.find_dir(ctx, self.personality_dir(), name).await
+        self.personalities.find_by_name(ctx, name).await
     }
-
-    // Session templates
     async fn create_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()> {
-        self.create_named_file(ctx, self.session_template_path(value.id), value.id.to_string(), value).await
+        self.session_templates.create(ctx, value).await
     }
     async fn get_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<SessionTemplate> {
-        self.get_file(ctx, self.session_template_path(id), id.to_string()).await
+        self.session_templates.get(ctx, id).await
     }
     async fn update_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()> {
-        self.update_named_file(ctx, self.session_template_path(value.id), value.id.to_string(), value).await
+        self.session_templates.update(ctx, value).await
     }
     async fn delete_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool> {
-        self.delete_file::<SessionTemplate>(ctx, self.session_template_path(id)).await
+        self.session_templates.delete(ctx, id).await
     }
     async fn list_session_templates(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<SessionTemplate>> {
-        self.list_dir(ctx, self.session_templates_dir(), query).await
+        self.session_templates.list(ctx, query).await
     }
     async fn restore_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<SessionTemplate> {
-        self.restore_named_file::<SessionTemplate>(ctx, self.session_template_path(id), id.to_string()).await
+        self.session_templates.restore(ctx, id).await
     }
     async fn purge_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool> {
-        self.purge_file::<SessionTemplate>(ctx, self.session_template_path(id)).await
+        self.session_templates.purge(ctx, id).await
     }
     async fn get_deleted_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<SessionTemplate> {
-        self.get_deleted_file(ctx, self.session_template_path(id), id.to_string()).await
+        self.session_templates.get_deleted(ctx, id).await
     }
     async fn list_deleted_session_templates(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<SessionTemplate>> {
-        self.list_deleted_dir(ctx, self.session_templates_dir(), query).await
+        self.session_templates.list_deleted(ctx, query).await
     }
     async fn find_session_template_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<SessionTemplate> {
-        self.find_dir(ctx, self.session_templates_dir(), name).await
+        self.session_templates.find_by_name(ctx, name).await
     }
-
-    // Agents
     async fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
-        self.create_named_file(ctx, self.agent_path(value.id), value.id.to_string(), value).await
+        self.agents.create(ctx, value).await
     }
     async fn get_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
-        self.get_file(ctx, self.agent_path(id), id.to_string()).await
+        self.agents.get(ctx, id).await
     }
     async fn update_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
-        self.update_named_file(ctx, self.agent_path(value.id), value.id.to_string(), value).await
+        self.agents.update(ctx, value).await
     }
     async fn delete_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<bool> {
-        self.delete_file::<Agent>(ctx, self.agent_path(id)).await
+        self.agents.delete(ctx, id).await
     }
     async fn list_agents(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Agent>> {
-        self.list_dir(ctx, self.agents_dir(), query).await
+        self.agents.list(ctx, query).await
     }
     async fn restore_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
-        self.restore_named_file::<Agent>(ctx, self.agent_path(id), id.to_string()).await
+        self.agents.restore(ctx, id).await
     }
     async fn purge_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<bool> {
-        self.purge_file::<Agent>(ctx, self.agent_path(id)).await
+        self.agents.purge(ctx, id).await
     }
     async fn get_deleted_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
-        self.get_deleted_file(ctx, self.agent_path(id), id.to_string()).await
+        self.agents.get_deleted(ctx, id).await
     }
     async fn list_deleted_agents(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Agent>> {
-        self.list_deleted_dir(ctx, self.agents_dir(), query).await
+        self.agents.list_deleted(ctx, query).await
     }
     async fn find_agent_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Agent> {
-        self.find_dir(ctx, self.agents_dir(), name).await
+        self.agents.find_by_name(ctx, name).await
     }
-
-    // Sessions - their state is the `StateStore`'s, which may be another
-    // store: whoever deletes a session deletes it there.
     async fn create_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
-        self.create_file(ctx, self.session_path(value.id), value.id.to_string(), value).await
+        self.sessions.create(ctx, value).await
     }
     async fn get_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session> {
-        self.get_file(ctx, self.session_path(id), id.to_string()).await
+        self.sessions.get(ctx, id).await
     }
     async fn update_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
-        self.update_file(ctx, self.session_path(value.id), value.id.to_string(), value).await
+        self.sessions.update(ctx, value).await
     }
     async fn delete_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool> {
-        self.delete_file::<Session>(ctx, self.session_path(id)).await
+        self.sessions.delete(ctx, id).await
     }
     async fn list_sessions(&self, ctx: &SecurityContext, query: &Query<SessionField>) -> StoreResult<Page<Session>> {
-        self.list_dir(ctx, self.sessions_dir(), query).await
+        self.sessions.list(ctx, query).await
     }
     async fn restore_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session> {
-        self.restore_file::<Session>(ctx, self.session_path(id), id.to_string()).await
+        self.sessions.restore(ctx, id).await
     }
     async fn purge_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool> {
-        self.purge_file::<Session>(ctx, self.session_path(id)).await
+        self.sessions.purge(ctx, id).await
     }
     async fn get_deleted_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session> {
-        self.get_deleted_file(ctx, self.session_path(id), id.to_string()).await
+        self.sessions.get_deleted(ctx, id).await
     }
     async fn list_deleted_sessions(&self, ctx: &SecurityContext, query: &Query<SessionField>) -> StoreResult<Page<Session>> {
-        self.list_deleted_dir(ctx, self.sessions_dir(), query).await
+        self.sessions.list_deleted(ctx, query).await
     }
-
-    // Channels (issue 70) - their state likewise.
     async fn create_channel(&self, ctx: &SecurityContext, value: &Channel) -> StoreResult<()> {
-        self.create_named_file(ctx, self.channel_path(value.id), value.id.to_string(), value).await
+        self.channels.create(ctx, value).await
     }
     async fn get_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel> {
-        self.get_file(ctx, self.channel_path(id), id.to_string()).await
+        self.channels.get(ctx, id).await
     }
     async fn update_channel(&self, ctx: &SecurityContext, value: &Channel) -> StoreResult<()> {
-        self.update_named_file(ctx, self.channel_path(value.id), value.id.to_string(), value).await
+        self.channels.update(ctx, value).await
     }
     async fn delete_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool> {
-        self.delete_file::<Channel>(ctx, self.channel_path(id)).await
+        self.channels.delete(ctx, id).await
     }
     async fn list_channels(&self, ctx: &SecurityContext, query: &Query<ChannelField>) -> StoreResult<Page<Channel>> {
-        self.list_dir(ctx, self.channels_dir(), query).await
+        self.channels.list(ctx, query).await
     }
     async fn restore_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel> {
-        self.restore_named_file::<Channel>(ctx, self.channel_path(id), id.to_string()).await
+        self.channels.restore(ctx, id).await
     }
     async fn purge_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool> {
-        self.purge_file::<Channel>(ctx, self.channel_path(id)).await
+        self.channels.purge(ctx, id).await
     }
     async fn get_deleted_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel> {
-        self.get_deleted_file(ctx, self.channel_path(id), id.to_string()).await
+        self.channels.get_deleted(ctx, id).await
     }
     async fn list_deleted_channels(&self, ctx: &SecurityContext, query: &Query<ChannelField>) -> StoreResult<Page<Channel>> {
-        self.list_deleted_dir(ctx, self.channels_dir(), query).await
+        self.channels.list_deleted(ctx, query).await
     }
-
-    // Users - found by name as well, since a username is an identity
-    // (issue 93).
     async fn create_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()> {
-        self.create_named_file(ctx, self.user_path(value.id), value.id.to_string(), value).await
+        self.users.create(ctx, value).await
     }
     async fn get_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
-        self.get_file(ctx, self.user_path(id), id.to_string()).await
+        self.users.get(ctx, id).await
     }
     async fn update_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()> {
-        self.update_named_file(ctx, self.user_path(value.id), value.id.to_string(), value).await
+        self.users.update(ctx, value).await
     }
     async fn delete_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
-        self.delete_file::<User>(ctx, self.user_path(id)).await
+        self.users.delete(ctx, id).await
     }
     async fn list_users(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<User>> {
-        self.list_dir(ctx, self.users_dir(), query).await
+        self.users.list(ctx, query).await
     }
     async fn restore_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
-        self.restore_named_file::<User>(ctx, self.user_path(id), id.to_string()).await
+        self.users.restore(ctx, id).await
     }
     async fn purge_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
-        self.purge_file::<User>(ctx, self.user_path(id)).await
+        self.users.purge(ctx, id).await
     }
     async fn get_deleted_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
-        self.get_deleted_file(ctx, self.user_path(id), id.to_string()).await
+        self.users.get_deleted(ctx, id).await
     }
     async fn list_deleted_users(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<User>> {
-        self.list_deleted_dir(ctx, self.users_dir(), query).await
+        self.users.list_deleted(ctx, query).await
     }
     async fn find_user_by_name(&self, ctx: &SecurityContext, name: &str) -> StoreResult<User> {
-        let users: Vec<User> = self.list_dir(ctx, self.users_dir(), &Query::<NoField>::all()).await?.items;
-        require_entity(users.into_iter().find(|u| u.username == name), "user", name.to_string())
+        let not_found = || StoreError::NotFound { entity: User::KIND.name(), id: name.to_string() };
+        let name = ScopedName::new(name, Scope::GlobalScope).map_err(|_| not_found())?;
+        self.users.find_by_name(ctx, &name).await
     }
-
-    // User profiles (issue 176)
     async fn create_user_profile(&self, ctx: &SecurityContext, value: &UserProfile) -> StoreResult<()> {
-        self.create_file(ctx, self.user_profile_path(value.user_id()), value.user_id().to_string(), value).await
+        self.user_profiles.create(ctx, value).await
     }
     async fn get_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<UserProfile> {
-        self.get_file(ctx, self.user_profile_path(id), id.to_string()).await
+        self.user_profiles.get(ctx, id).await
     }
     async fn update_user_profile(&self, ctx: &SecurityContext, value: &UserProfile) -> StoreResult<()> {
-        self.update_file(ctx, self.user_profile_path(value.user_id()), value.user_id().to_string(), value).await
+        self.user_profiles.update(ctx, value).await
     }
     async fn delete_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
-        self.delete_file::<UserProfile>(ctx, self.user_profile_path(id)).await
+        self.user_profiles.delete(ctx, id).await
     }
     async fn list_user_profiles(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<UserProfile>> {
-        self.list_dir(ctx, self.user_profiles_dir(), query).await
+        self.user_profiles.list(ctx, query).await
     }
     async fn restore_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<UserProfile> {
-        self.restore_file::<UserProfile>(ctx, self.user_profile_path(id), id.to_string()).await
+        self.user_profiles.restore(ctx, id).await
     }
     async fn purge_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
-        self.purge_file::<UserProfile>(ctx, self.user_profile_path(id)).await
+        self.user_profiles.purge(ctx, id).await
     }
     async fn get_deleted_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<UserProfile> {
-        self.get_deleted_file(ctx, self.user_profile_path(id), id.to_string()).await
+        self.user_profiles.get_deleted(ctx, id).await
     }
     async fn list_deleted_user_profiles(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<UserProfile>> {
-        self.list_deleted_dir(ctx, self.user_profiles_dir(), query).await
+        self.user_profiles.list_deleted(ctx, query).await
     }
-
-    // Workspaces (issue 253) - the documents; their files lie in their
-    // storage.
     async fn create_workspace(&self, ctx: &SecurityContext, value: &Workspace) -> StoreResult<()> {
-        self.create_named_file(ctx, self.workspace_path(value.id), value.id.to_string(), value).await
+        self.workspaces.create(ctx, value).await
     }
     async fn get_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace> {
-        self.get_file(ctx, self.workspace_path(id), id.to_string()).await
+        self.workspaces.get(ctx, id).await
     }
     async fn update_workspace(&self, ctx: &SecurityContext, value: &Workspace) -> StoreResult<()> {
-        self.update_named_file(ctx, self.workspace_path(value.id), value.id.to_string(), value).await
+        self.workspaces.update(ctx, value).await
     }
     async fn delete_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<bool> {
-        self.delete_file::<Workspace>(ctx, self.workspace_path(id)).await
+        self.workspaces.delete(ctx, id).await
     }
     async fn list_workspaces(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Workspace>> {
-        self.list_dir(ctx, self.workspaces_dir(), query).await
+        self.workspaces.list(ctx, query).await
     }
     async fn restore_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace> {
-        self.restore_named_file::<Workspace>(ctx, self.workspace_path(id), id.to_string()).await
+        self.workspaces.restore(ctx, id).await
     }
     async fn purge_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<bool> {
-        self.purge_file::<Workspace>(ctx, self.workspace_path(id)).await
+        self.workspaces.purge(ctx, id).await
     }
     async fn get_deleted_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace> {
-        self.get_deleted_file(ctx, self.workspace_path(id), id.to_string()).await
+        self.workspaces.get_deleted(ctx, id).await
     }
     async fn list_deleted_workspaces(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Workspace>> {
-        self.list_deleted_dir(ctx, self.workspaces_dir(), query).await
+        self.workspaces.list_deleted(ctx, query).await
     }
     async fn find_workspace_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Workspace> {
-        self.find_dir(ctx, self.workspaces_dir(), name).await
+        self.workspaces.find_by_name(ctx, name).await
     }
-
-    // Skills (issue 22)
     async fn create_skill(&self, ctx: &SecurityContext, value: &Skill) -> StoreResult<()> {
-        self.create_named_file(ctx, self.skill_path(value.id), value.id.to_string(), value).await
+        self.skills.create(ctx, value).await
     }
     async fn get_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<Skill> {
-        self.get_file(ctx, self.skill_path(id), id.to_string()).await
+        self.skills.get(ctx, id).await
     }
     async fn update_skill(&self, ctx: &SecurityContext, value: &Skill) -> StoreResult<()> {
-        self.update_named_file(ctx, self.skill_path(value.id), value.id.to_string(), value).await
+        self.skills.update(ctx, value).await
     }
     async fn delete_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<bool> {
-        self.delete_file::<Skill>(ctx, self.skill_path(id)).await
+        self.skills.delete(ctx, id).await
     }
     async fn list_skills(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Skill>> {
-        self.list_dir(ctx, self.skills_dir(), query).await
+        self.skills.list(ctx, query).await
     }
     async fn restore_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<Skill> {
-        self.restore_named_file::<Skill>(ctx, self.skill_path(id), id.to_string()).await
+        self.skills.restore(ctx, id).await
     }
     async fn purge_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<bool> {
-        self.purge_file::<Skill>(ctx, self.skill_path(id)).await
+        self.skills.purge(ctx, id).await
     }
     async fn get_deleted_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<Skill> {
-        self.get_deleted_file(ctx, self.skill_path(id), id.to_string()).await
+        self.skills.get_deleted(ctx, id).await
     }
     async fn list_deleted_skills(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Skill>> {
-        self.list_deleted_dir(ctx, self.skills_dir(), query).await
+        self.skills.list_deleted(ctx, query).await
     }
     async fn find_skill_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Skill> {
-        self.find_dir(ctx, self.skills_dir(), name).await
+        self.skills.find_by_name(ctx, name).await
     }
-
-    // Artifacts (issue 271) - the documents; their content lies in their
-    // storage.
     async fn create_artifact(&self, ctx: &SecurityContext, value: &Artifact) -> StoreResult<()> {
-        self.create_named_file(ctx, self.artifact_path(value.id), value.id.to_string(), value).await
+        self.artifacts.create(ctx, value).await
     }
     async fn get_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<Artifact> {
-        self.get_file(ctx, self.artifact_path(id), id.to_string()).await
+        self.artifacts.get(ctx, id).await
     }
     async fn update_artifact(&self, ctx: &SecurityContext, value: &Artifact) -> StoreResult<()> {
-        self.update_named_file(ctx, self.artifact_path(value.id), value.id.to_string(), value).await
+        self.artifacts.update(ctx, value).await
     }
     async fn delete_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<bool> {
-        self.delete_file::<Artifact>(ctx, self.artifact_path(id)).await
+        self.artifacts.delete(ctx, id).await
     }
     async fn list_artifacts(&self, ctx: &SecurityContext, query: &Query<ArtifactField>) -> StoreResult<Page<Artifact>> {
-        self.list_dir(ctx, self.artifacts_dir(), query).await
+        self.artifacts.list(ctx, query).await
     }
     async fn restore_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<Artifact> {
-        self.restore_named_file::<Artifact>(ctx, self.artifact_path(id), id.to_string()).await
+        self.artifacts.restore(ctx, id).await
     }
     async fn purge_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<bool> {
-        self.purge_file::<Artifact>(ctx, self.artifact_path(id)).await
+        self.artifacts.purge(ctx, id).await
     }
     async fn get_deleted_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<Artifact> {
-        self.get_deleted_file(ctx, self.artifact_path(id), id.to_string()).await
+        self.artifacts.get_deleted(ctx, id).await
     }
     async fn list_deleted_artifacts(&self, ctx: &SecurityContext, query: &Query<ArtifactField>) -> StoreResult<Page<Artifact>> {
-        self.list_deleted_dir(ctx, self.artifacts_dir(), query).await
+        self.artifacts.list_deleted(ctx, query).await
     }
     async fn find_artifact_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Artifact> {
-        self.find_dir(ctx, self.artifacts_dir(), name).await
+        self.artifacts.find_by_name(ctx, name).await
     }
-
-    // Groups (issue 286)
     async fn create_group(&self, ctx: &SecurityContext, value: &Group) -> StoreResult<()> {
-        self.create_named_file(ctx, self.group_path(value.id), value.id.to_string(), value).await
+        self.groups.create(ctx, value).await
     }
     async fn get_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group> {
-        self.get_file(ctx, self.group_path(id), id.to_string()).await
+        self.groups.get(ctx, id).await
     }
     async fn update_group(&self, ctx: &SecurityContext, value: &Group) -> StoreResult<()> {
-        self.update_named_file(ctx, self.group_path(value.id), value.id.to_string(), value).await
+        self.groups.update(ctx, value).await
     }
     async fn delete_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<bool> {
-        self.delete_file::<Group>(ctx, self.group_path(id)).await
+        self.groups.delete(ctx, id).await
     }
     async fn list_groups(&self, ctx: &SecurityContext, query: &Query<GroupField>) -> StoreResult<Page<Group>> {
-        self.list_dir(ctx, self.groups_dir(), query).await
+        self.groups.list(ctx, query).await
     }
     async fn restore_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group> {
-        self.restore_named_file::<Group>(ctx, self.group_path(id), id.to_string()).await
+        self.groups.restore(ctx, id).await
     }
     async fn purge_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<bool> {
-        self.purge_file::<Group>(ctx, self.group_path(id)).await
+        self.groups.purge(ctx, id).await
     }
     async fn get_deleted_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group> {
-        self.get_deleted_file(ctx, self.group_path(id), id.to_string()).await
+        self.groups.get_deleted(ctx, id).await
     }
     async fn list_deleted_groups(&self, ctx: &SecurityContext, query: &Query<GroupField>) -> StoreResult<Page<Group>> {
-        self.list_deleted_dir(ctx, self.groups_dir(), query).await
+        self.groups.list_deleted(ctx, query).await
     }
     async fn find_group_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Group> {
-        self.find_dir(ctx, self.groups_dir(), name).await
+        self.groups.find_by_name(ctx, name).await
     }
 }
 
@@ -953,19 +842,19 @@ impl EntityStore for JsonFileStore {
 #[async_trait]
 impl ComponentStore for JsonFileStore {
     async fn create_components(&self, ctx: &SecurityContext, value: &StoredComponents) -> StoreResult<()> {
-        self.create_file(ctx, self.component_path(value.id()), value.id().to_string(), value).await
+        self.components.create(ctx, value).await
     }
     async fn get_components(&self, ctx: &SecurityContext, id: &str) -> StoreResult<StoredComponents> {
-        self.get_file(ctx, self.component_path(id), id.to_string()).await
+        self.components.get(ctx, id.to_string()).await
     }
     async fn update_components(&self, ctx: &SecurityContext, value: &StoredComponents) -> StoreResult<()> {
-        self.update_file(ctx, self.component_path(value.id()), value.id().to_string(), value).await
+        self.components.update(ctx, value).await
     }
     async fn delete_components(&self, ctx: &SecurityContext, id: &str) -> StoreResult<bool> {
-        self.remove_file::<StoredComponents>(ctx, self.component_path(id)).await
+        self.components.remove(ctx, id.to_string()).await
     }
     async fn list_components(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<StoredComponents>> {
-        self.list_dir(ctx, self.components_dir(), query).await
+        self.components.page(ctx, query, false).await
     }
 }
 
@@ -1128,7 +1017,7 @@ mod tests {
             security_attributes: SecurityAttributes::default(), deleted: None,
         };
         store.create_session(&system, &session).await.unwrap();
-        let text = tokio::fs::read_to_string(store.session_path(session.id)).await.unwrap();
+        let text = tokio::fs::read_to_string(store.sessions.path(&session.id)).await.unwrap();
         assert!(!text.contains("deleted"), "{text}");
         assert!(store.get_session(&system, session.id).await.unwrap().deleted.is_none());
     }
@@ -1159,7 +1048,7 @@ mod tests {
             result.unwrap().expect("no writer loses its temporary file to another");
         }
 
-        let path = store.personality_path(personality.id);
+        let path = store.personalities.path(&personality.id);
         let names: Vec<String> = std::fs::read_dir(path.parent().unwrap()).unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
@@ -1252,14 +1141,14 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(store.session_path(session_id).exists());
+        assert!(store.sessions.path(&session_id).exists());
         assert!(store.agent_channel_state_dir(channel_id).exists());
 
         assert!(store.delete_session(&ctx, session_id).await.unwrap());
-        assert!(store.session_path(session_id).exists(), "deleting marks the file");
+        assert!(store.sessions.path(&session_id).exists(), "deleting marks the file");
         assert!(store.agent_channel_state_dir(channel_id).exists(), "the state is the state store's");
         assert!(store.purge_session(&ctx, session_id).await.unwrap());
-        assert!(!store.session_path(session_id).exists(), "purging removes it");
+        assert!(!store.sessions.path(&session_id).exists(), "purging removes it");
 
         store.put_channel_state(channel_id, &mut ChannelState::new(channel_id)).await.unwrap();
         store.delete_channel_state(channel_id).await.unwrap();
@@ -1299,7 +1188,7 @@ mod tests {
         store.create_session(&ctx, &s1).await.unwrap();
 
         // Create a corrupted JSON file
-        let corrupted_path = store.sessions_dir().join("corrupted.json");
+        let corrupted_path = store.sessions.dir.join("corrupted.json");
         fs::write(corrupted_path, "invalid json").unwrap();
 
         // This should NOT fail, it should return s1 and log a warning

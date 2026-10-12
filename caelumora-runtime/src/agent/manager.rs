@@ -18,7 +18,7 @@ use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
-use caelumora_model::store::{EntityStore, StateStore, StoreError, StoreResult, StoreResultExt};
+use caelumora_model::store::{Entities, StateStore, StoreError, StoreResult, StoreResultExt};
 use chrono::{DateTime, Utc};
 use std::fmt;
 use std::sync::Arc;
@@ -27,7 +27,7 @@ use caelumora_model::removal::Stored;
 
 /// The one owner of agents' lifecycle (issue 314).
 pub struct AgentManager {
-    entities: Arc<dyn EntityStore>,
+    entities: Arc<dyn Entities>,
     states: Arc<dyn StateStore>,
     events: Arc<EventBus>,
     security: Arc<dyn SecurityManager>,
@@ -40,7 +40,7 @@ impl fmt::Debug for AgentManager {
 }
 
 impl AgentManager {
-    pub(crate) fn new(entities: Arc<dyn EntityStore>, states: Arc<dyn StateStore>, events: Arc<EventBus>, security: Arc<dyn SecurityManager>) -> Self {
+    pub(crate) fn new(entities: Arc<dyn Entities>, states: Arc<dyn StateStore>, events: Arc<EventBus>, security: Arc<dyn SecurityManager>) -> Self {
         Self { entities, states, events, security }
     }
 

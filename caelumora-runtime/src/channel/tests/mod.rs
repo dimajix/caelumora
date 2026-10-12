@@ -23,7 +23,7 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 
 use caelumora_model::value::name::ScopedName;
-use caelumora_model::store::EntityStore;
+use caelumora_model::store::Entities;
 use crate::command::CommandExecutor;
 use crate::command::help_command::HelpCommandProvider;
 use crate::command::wakeup_command::WakeupCommandProvider;
@@ -260,7 +260,7 @@ async fn with_an_agent_under(security: Arc<dyn SecurityManager>, model: Arc<dyn 
 pub(super) async fn agent_channel(security: Arc<dyn SecurityManager>, model: Arc<dyn crate::llm::LLMClient>, components: caelumora_model::component::ComponentConfig) -> (Arc<ChannelLoop>, SecurityContext, caelumora_model::agent::AgentId, UserId) {
     use caelumora_model::agent::{Agent, Personality, PersonalityId};
     use caelumora_model::scope::Scope;
-    use caelumora_model::store::EntityStore;
+    use caelumora_model::store::Entities;
 
     let store = Arc::new(MemoryStore::new());
     let personality = Personality {

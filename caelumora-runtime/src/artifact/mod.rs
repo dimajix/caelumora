@@ -35,7 +35,7 @@ use caelumora_model::scope::Scope;
 use caelumora_model::security::{AclEntry, ActionType, Enforcement, Grant, SecurityAttributes, SecurityContext, SecurityManager, Subject, WRITE};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::group::GroupId;
-use caelumora_model::store::{EntityStore, StoreError, StoreResultExt};
+use caelumora_model::store::{Entities, StoreError, StoreResultExt};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;
@@ -112,7 +112,7 @@ pub(crate) trait ArtifactStorage: Send + Sync + fmt::Debug {
 }
 
 pub struct ArtifactManager {
-    entities: Arc<dyn EntityStore>,
+    entities: Arc<dyn Entities>,
     events: Arc<EventBus>,
     security: Arc<dyn SecurityManager>,
     /// What may flow where (issue 304): into a storage that keeps it.
@@ -133,7 +133,7 @@ impl fmt::Debug for ArtifactManager {
 }
 
 impl ArtifactManager {
-    pub(crate) fn new(entities: Arc<dyn EntityStore>, events: Arc<EventBus>, security: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>, config: &ArtifactsConfig) -> ComponentResult<Self> {
+    pub(crate) fn new(entities: Arc<dyn Entities>, events: Arc<EventBus>, security: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>, config: &ArtifactsConfig) -> ComponentResult<Self> {
         config.check().map_err(|why| ComponentError::InvalidConfig(format!("artifacts: {why}")))?;
         let storages = config.storage.iter()
             .map(|(name, storage)| {

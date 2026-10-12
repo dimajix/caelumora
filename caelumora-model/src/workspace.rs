@@ -7,8 +7,8 @@
 
 use crate::actor::ActorId;
 use crate::confidentiality::Classification;
-use crate::removal::Removal;
-use crate::scope::{Scope, Scoped};
+use crate::removal::{Deletable, Removal, Stored};
+use crate::scope::{Scope, ScopeField, Scoped};
 use crate::group::GroupId;
 use crate::security::{Grant, Secured, SecurityAttributes, Subject};
 use crate::user::UserId;
@@ -16,6 +16,7 @@ use crate::value::name::ScopedName;
 use crate::value::text::Description;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use crate::store::EntityKind;
 
 define_id!(WorkspaceId);
 
@@ -107,8 +108,18 @@ impl Workspace {
     }
 }
 
-impl crate::removal::Stored for Workspace {
-    const KIND: crate::store::EntityKind = crate::store::EntityKind::new("workspace");
+impl Stored for Workspace {
+    const KIND: EntityKind = EntityKind::new("workspace");
+    type Id = WorkspaceId;
+    type Field = ScopeField;
+
+    fn id(&self) -> WorkspaceId {
+        self.id
+    }
+
+    fn unique_name(&self) -> Option<ScopedName> {
+        Some(self.scoped_name())
+    }
 
     fn deleted(&self) -> Option<&Removal> {
         self.deleted.as_ref()
@@ -126,7 +137,7 @@ impl crate::removal::Stored for Workspace {
     }
 }
 
-impl crate::removal::Deletable for Workspace {
+impl Deletable for Workspace {
     fn set_deleted(&mut self, deleted: Option<Removal>) {
         self.deleted = deleted;
     }
@@ -162,7 +173,7 @@ pub enum WorkspaceChoice {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::removal::Stored;
+    use Stored;
     use crate::scope::Scope;
     use crate::security::AclEntry;
     use crate::session::{ChannelId, SessionId};

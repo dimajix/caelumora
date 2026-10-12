@@ -6,7 +6,7 @@ use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::value::language::Language;
 use caelumora_model::value::name::Name;
 use caelumora_model::security::{Secured, SecurityContext};
-use caelumora_model::store::{EntityStore, StoreError, StoreResult};
+use caelumora_model::store::{Entities, StoreError, StoreResult};
 use caelumora_model::user::{User, UserId, UserProfile, UserUpdateEvent};
 use std::sync::Arc;
 
@@ -23,7 +23,7 @@ pub struct UserController {
     /// they never wrote one.
     profile: ArcSwap<UserProfile>,
     event_publisher: Arc<dyn EventPublisher>,
-    entity_store: Arc<dyn EntityStore>,
+    entity_store: Arc<dyn Entities>,
     /// Held while the profile is changed and stored, like the other
     /// controllers.
     write_lock: tokio::sync::Mutex<()>,
@@ -32,7 +32,7 @@ pub struct UserController {
 impl UserController {
     /// The live `user` with their `profile`, `None` if they have none yet.
     /// Made by the `ControllerManager`, which keeps one per user.
-    pub(crate) fn new(user: User, profile: Option<UserProfile>, event_publisher: Arc<dyn EventPublisher>, entity_store: Arc<dyn EntityStore>) -> Self {
+    pub(crate) fn new(user: User, profile: Option<UserProfile>, event_publisher: Arc<dyn EventPublisher>, entity_store: Arc<dyn Entities>) -> Self {
         let id = user.id;
         Self {
             id,
