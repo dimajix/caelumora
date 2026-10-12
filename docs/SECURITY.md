@@ -23,7 +23,19 @@ Security is a context that travels with every operation, and explicit checks aga
     them: the initiator lends none.
 *   **`SecurityManager`** authorizes actions: `check(context, action)`.
 *   **`ActionType`** enumerates every securable action. An action on a stored entity carries the
-    entity's `SecurityAttributes`, not the entity itself.
+    entity's `SecurityAttributes`, not the entity itself, and is asked alike for every kind
+    (issue [323](../issues/323-kinds-enumerated-in-the-core.md)): `ActionType::Entity`, by the
+    entity's kind and a `Verb` - `Get`, `Create`, `Update`, `Delete`, `ReadDeleted`, `Restore`,
+    `Purge` - and `ActionType::List` by the kind alone. It is named by both in the log and in this
+    documentation: `GetSession`, `DeleteWorkspace`; a listing as `List(session)`.
+*   **A kind's own verb** - using a skill (`skill::USE`), writing a workspace's files or adding an
+    artifact's version (`WRITE`) - is a `CustomVerb`, named likewise (`UseSkill`,
+    `WriteWorkspace`). It says what it *requires*, in a right every policy knows: what an entry
+    grants (`Read`, `Write`), or owning the entity. A policy decides it by that, so a kind can map
+    a verb onto a right but never invent one; a policy that decides one verb of one kind otherwise
+    tells it by its kind and name. The verbs every kind has, and the actions of the core that
+    concern no single stored entity, a policy decides one by one, so that a policy that forgets one
+    does not compile.
 
 ### Three decisions
 
@@ -127,7 +139,7 @@ themselves, an agent its owner (see [In whose name an agent acts](#in-whose-name
     session, cancel or wake a channel, ask an agent in it to answer again (`RetryMessage`), answer
     the questions of an agent's call (`AnswerQuestion` - whether they were asked is the agent's to
     check, not the policy's). What belongs to the system, everybody may read and use.
-*   An agent reads (`Get*`) what its owner may read, and what it takes part in itself - as the
+*   An agent reads (`Get`) what its owner may read, and what it takes part in itself - as the
     caller, a member of the channel or session. Everything else it does, it does as its owner:
     changing, deleting, cancelling and the rest are the principal's.
 *   Creating is only allowed with oneself as owner; changing and deleting only for the owner.

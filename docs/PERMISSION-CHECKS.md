@@ -26,23 +26,25 @@ Who may do what is decided by four concepts. Since issue 304 each has its own fu
 
 From `OwnershipSecurityManager::check` (`caelumora-model/src/security.rs`). The system principal
 is allowed everything before any variant is looked at. "Principal" is the context's principal - a
-user themselves, an agent its owner -, "caller" the one acting - the agent itself.
+user themselves, an agent its owner -, "caller" the one acting - the agent itself. What is done with
+a stored entity is decided by the verb, never by the kind (issue
+[323](../issues/323-kinds-enumerated-in-the-core.md)); a kind's own verb by what it requires.
 
 | Actions | Rule | Concept |
 |---|---|---|
-| `GetPersonality`, `GetSessionTemplate`, `GetAgent`, `GetSession`, `GetChannel`, `GetComponents`, `GetUser`, `GetUserProfile`, `GetWorkspace`, `GetArtifact`, `GetSkill`, `GetGroup`, `UseSkill` | system-owned, or owned by the principal or the caller, or an entry grants `Read` to the principal or the caller (`Actor`, `Group`, `Role`) - the caller for an agent reading what it takes part in (issue 264) | 1 |
-| `WriteWorkspace`, `WriteArtifact` | as reading, with `Write` | 1 |
+| `Get` of every kind (`GetSession`, `GetSkill`, …); a kind's own verb requiring `Read` (`UseSkill`) | system-owned, or owned by the principal or the caller, or an entry grants `Read` to the principal or the caller (`Actor`, `Group`, `Role`) - the caller for an agent reading what it takes part in (issue 264) | 1 |
+| a kind's own verb requiring `Write` (`WriteWorkspace`, `WriteArtifact`) | as reading, with `Write` | 1 |
 | `CancelChannel`, `WakeChannel`, `RetryMessage`, `AnswerQuestion` | the principal reads the channel | 1: reading grants acting in the conversation |
 | `ReadAgentTools` | the principal reads the agent or the channel | 1, two objects |
 | `ApproveToolCall` | `answers_for`: the principal reads the agent; for an agent of the system, owns the channel | 3, built from 1 |
 | `ShowAgentCommand`, `ExecuteAgentCommand` | `owners_only`: `answers_for`; else the principal reads the channel | 3, built from 1 |
 | `ShowCommand`, `ExecuteCommand` | `owners_only`: the principal owns the channel; else reads it | 3, built from 1 |
-| `Create*` (12) | the new entity's owner is the principal | 1 |
-| `Update*`, `Delete*`, `ReadAgentContext`, `ReadAgentComponents`, `StopSession`, `ReadDeleted`, `Restore` | the principal owns it | 1 |
+| `Create` of every kind | the new entity's owner is the principal | 1 |
+| `Update`, `Delete`, `ReadDeleted`, `Restore` of every kind; a kind's own verb requiring `Owner`; `ReadAgentContext`, `ReadAgentComponents`, `StopSession` | the principal owns it | 1 |
 | `Reclassify` | a channel its owner; a message the channel's owner or its author (the caller); a note or memory entry its author. Whether the new classification may be given there is the flow's | 1 or 3 |
 | `ModifyMessage`, `RevokeMessage` | the author is the caller | 3: authorship, not ownership |
-| `Purge` | nobody but the system (issue 125) | 3 |
-| `List*` (12) | always; the store filters each item with `Get*` | 1 per item |
+| `Purge` of every kind | nobody but the system (issue 125) | 3 |
+| `List` of every kind | always; the store filters each item with `Get` | 1 per item |
 | `CallTool`, `ReadSecret` | always: hooks for another policy (issue 24); a call is decided by the tools offered and the rules of its place, a secret has no owner yet (issue [310](../issues/310-secrets-have-no-owner.md)) | 3, decided elsewhere |
 
 Most variants are decided by the principal; `ModifyMessage`, `RevokeMessage` and `Reclassify` of a

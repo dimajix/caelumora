@@ -100,7 +100,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 
 | No. | Status | Issue |
 |---|---|---|
-| [323](323-kinds-enumerated-in-the-core.md) | open | Every stored kind is enumerated in the core - `ActionType`, `EntityKind`, `EntityStore`, `GlobalEvent`, the scope, the seed, `ApiError` and the routes - so a subject such as skills cannot be moved into a crate of its own. |
+| [323](323-kinds-enumerated-in-the-core.md) | in progress | Every stored kind is enumerated in the core - `ActionType`, `EntityKind`, `EntityStore`, `GlobalEvent`, the scope, the seed, `ApiError` and the routes - so a subject such as skills cannot be moved into a crate of its own. |
 
 ## Open architecture questions
 

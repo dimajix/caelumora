@@ -8,13 +8,21 @@ use crate::actor::ActorId;
 use crate::confidentiality::Classification;
 use crate::removal::Removal;
 use crate::scope::{Scope, Scoped};
-use crate::security::{Secured, SecurityAttributes};
+use crate::security::{CustomVerb, Grant, Requirement, Secured, SecurityAttributes};
 use crate::value::name::ScopedName;
 use crate::value::text::{Description, SkillBody};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 define_id!(SkillId);
+
+/// Loading a skill into a turn (issue 22): what the agent then follows,
+/// asked in the turn's context - the agent for its owner, whoever asked as
+/// initiator. Apart from reading, so that a policy can let a skill be read
+/// but not used, or the other way round; granted as reading by default.
+/// Whether its classification may flow into the channel is asked besides
+/// (`may_publish`).
+pub const USE: CustomVerb = CustomVerb { name: "Use", requires: Requirement::Grant(Grant::Read) };
 
 /// A change of a skill, as it was asked: what it says is made into the
 /// skill's values as it is applied (issue 248).

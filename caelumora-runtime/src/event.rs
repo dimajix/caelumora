@@ -3,6 +3,7 @@ use caelumora_model::channel::ChannelId;
 use caelumora_model::confidentiality::{may_reach, Classification, ConfidentialityPolicy};
 use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::security::{ActionType, Secured, SecurityAttributes, SecurityContext, SecurityManager};
+use caelumora_model::store::EntityKind;
 use caelumora_model::session::SessionId;
 use caelumora_model::user::UserId;
 use dashmap::DashMap;
@@ -46,21 +47,21 @@ impl PublishedEvent {
     /// events of a channel, of its members and of an agent's state in it go
     /// by the channel's attributes, as reading the channel (issue 304).
     fn read_action(&self) -> ActionType<'_> {
-        let attributes = self.security_attributes();
-        match self.event {
-            GlobalEvent::AgentCreated(..) | GlobalEvent::AgentUpdated(..) | GlobalEvent::AgentDeleted(..) | GlobalEvent::AgentRestored(..) | GlobalEvent::AgentStateChanged(_) => ActionType::GetAgent(attributes),
+        let kind = match self.event {
+            GlobalEvent::AgentCreated(..) | GlobalEvent::AgentUpdated(..) | GlobalEvent::AgentDeleted(..) | GlobalEvent::AgentRestored(..) | GlobalEvent::AgentStateChanged(_) => EntityKind::Agent,
             GlobalEvent::ChannelCreated(..) | GlobalEvent::ChannelUpdated(..) | GlobalEvent::ChannelDeleted(..) | GlobalEvent::ChannelRestored(..)
             | GlobalEvent::ChannelStarted(..) | GlobalEvent::ChannelStopped(..)
             | GlobalEvent::AgentChannelJoined(..) | GlobalEvent::AgentChannelLeft(..) | GlobalEvent::AgentChannelStateChanged(..)
-            | GlobalEvent::UserChannelJoined(..) | GlobalEvent::UserChannelLeft(..) => ActionType::GetChannel(attributes),
-            GlobalEvent::UserCreated(_) | GlobalEvent::UserUpdated(..) | GlobalEvent::UserDeleted(_) => ActionType::GetUser(attributes),
-            GlobalEvent::UserProfileUpdated(..) => ActionType::GetUserProfile(attributes),
-            GlobalEvent::WorkspaceCreated(_) | GlobalEvent::WorkspaceUpdated(..) | GlobalEvent::WorkspaceDeleted(_) | GlobalEvent::WorkspaceRestored(_) => ActionType::GetWorkspace(attributes),
-            GlobalEvent::SkillCreated(_) | GlobalEvent::SkillUpdated(..) | GlobalEvent::SkillDeleted(_) | GlobalEvent::SkillRestored(_) => ActionType::GetSkill(attributes),
-            GlobalEvent::GroupCreated(_) | GlobalEvent::GroupUpdated(..) | GlobalEvent::GroupDeleted(_) | GlobalEvent::GroupRestored(_) => ActionType::GetGroup(attributes),
-            GlobalEvent::ArtifactPublished(..) | GlobalEvent::ArtifactUpdated(_) | GlobalEvent::ArtifactDeleted(_) | GlobalEvent::ArtifactRestored(_) => ActionType::GetArtifact(attributes),
-            _ => ActionType::GetSession(attributes),
-        }
+            | GlobalEvent::UserChannelJoined(..) | GlobalEvent::UserChannelLeft(..) => EntityKind::Channel,
+            GlobalEvent::UserCreated(_) | GlobalEvent::UserUpdated(..) | GlobalEvent::UserDeleted(_) => EntityKind::User,
+            GlobalEvent::UserProfileUpdated(..) => EntityKind::UserProfile,
+            GlobalEvent::WorkspaceCreated(_) | GlobalEvent::WorkspaceUpdated(..) | GlobalEvent::WorkspaceDeleted(_) | GlobalEvent::WorkspaceRestored(_) => EntityKind::Workspace,
+            GlobalEvent::SkillCreated(_) | GlobalEvent::SkillUpdated(..) | GlobalEvent::SkillDeleted(_) | GlobalEvent::SkillRestored(_) => EntityKind::Skill,
+            GlobalEvent::GroupCreated(_) | GlobalEvent::GroupUpdated(..) | GlobalEvent::GroupDeleted(_) | GlobalEvent::GroupRestored(_) => EntityKind::Group,
+            GlobalEvent::ArtifactPublished(..) | GlobalEvent::ArtifactUpdated(_) | GlobalEvent::ArtifactDeleted(_) | GlobalEvent::ArtifactRestored(_) => EntityKind::Artifact,
+            _ => EntityKind::Session,
+        };
+        ActionType::get(kind, self.security_attributes())
     }
 }
 
@@ -406,6 +407,8 @@ mod tests {
 
     #[tokio::test]
     async fn the_events_of_a_channel_are_received_by_who_may_read_the_channel() {
+        use caelumora_model::security::Verb;
+
         /// Lets read channels alone, so that the question asked shows.
         #[derive(Debug)]
         struct ChannelsOnly;
@@ -413,7 +416,7 @@ mod tests {
         #[async_trait::async_trait]
         impl SecurityManager for ChannelsOnly {
             async fn check(&self, _context: &SecurityContext, action: ActionType<'_>) -> bool {
-                matches!(action, ActionType::GetChannel(_))
+                matches!(action, ActionType::Entity { kind: EntityKind::Channel, verb: Verb::Get, .. })
             }
         }
 

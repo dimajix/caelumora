@@ -174,7 +174,7 @@ async fn require_attachable(workspaces: &WorkspaceManager, security: &dyn Securi
     if !shared.name.scope.admits(&Scope::SessionScope { session_id }) {
         return Err(SessionError::WorkspaceOutOfScope(id).into());
     }
-    security.require(context, ActionType::UpdateWorkspace(&shared.security_attributes), || StoreError::PermissionDenied).await?;
+    security.require(context, ActionType::update(EntityKind::Workspace, &shared.security_attributes), || StoreError::PermissionDenied).await?;
     Ok(())
 }
 

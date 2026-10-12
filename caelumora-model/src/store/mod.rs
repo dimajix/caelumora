@@ -134,6 +134,15 @@ impl EntityKind {
             EntityKind::Components => "components",
         }
     }
+
+    /// Its name as a type's is written - `SessionTemplate` -, as
+    /// `ActionType::describe` names what is done with it.
+    pub fn title(self) -> String {
+        self.name().split('_').map(|word| {
+            let mut letters = word.chars();
+            letters.next().map(|first| first.to_ascii_uppercase().to_string() + letters.as_str()).unwrap_or_default()
+        }).collect()
+    }
 }
 
 impl std::fmt::Display for EntityKind {

@@ -140,7 +140,7 @@ impl SessionLoop {
         // others in it (issues 198, 312): who may not learns nothing of their
         // clearance. The store asks again as it stores.
         self.security
-            .require(context, ActionType::CreateChannel(&channel.security_attributes), || StoreError::PermissionDenied).await?;
+            .require(context, ActionType::create(EntityKind::Channel, &channel.security_attributes), || StoreError::PermissionDenied).await?;
         crate::channel::require_admitted(&self.runtime_manager, context, &channel).await?;
         let store = &self.entities;
         store.create_channel(context, &channel).await?;
@@ -205,7 +205,7 @@ impl SessionLoop {
         let running = self.channel_for(context, channel_id).await?;
         // Not the guard itself: it would be held across the awaits below.
         let channel = Arc::clone(&running.channel());
-        self.security.require(context, ActionType::DeleteChannel(&channel.security_attributes), || StoreError::PermissionDenied).await?;
+        self.security.require(context, ActionType::delete(EntityKind::Channel, &channel.security_attributes), || StoreError::PermissionDenied).await?;
         let scope = Scope::ChannelScope { session_id: self.id, channel_id };
         self.session_controller.remove_channel(context, channel_id).await?;
         // Marked before what lies in its scope, so that all of that is
@@ -262,7 +262,7 @@ impl SessionLoop {
             _ => return Err(not_found().into()),
         };
         self.security
-            .require(context, ActionType::Restore(EntityKind::Channel, &channel.security_attributes), || StoreError::PermissionDenied).await?;
+            .require(context, ActionType::restore(EntityKind::Channel, &channel.security_attributes), || StoreError::PermissionDenied).await?;
         // As when it was created: its participants' clearance may have
         // changed while it was deleted.
         crate::channel::require_admitted(&self.runtime_manager, context, &channel).await?;

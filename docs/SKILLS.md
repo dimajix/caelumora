@@ -30,13 +30,14 @@ in [CONFIDENTIALITY.md](CONFIDENTIALITY.md).
 
 Two questions, apart:
 
-*   **Managing** a skill is asked as for every entity: `GetSkill`, `ListSkills`, `CreateSkill`,
+*   **Managing** a skill is asked as for every entity: `GetSkill`, `List(skill)`, `CreateSkill`,
     `UpdateSkill`, `DeleteSkill`. Under the ownership policy its owner may do everything, whom its
     access list grants reading read it, a skill of the system is everybody's to read. A user is
     shown a skill only if cleared for its classification, as a channel. Making or reclassifying one
     asks the owner's clearance, as for a workspace, so that nobody writes what they could not read.
-*   **Using** a skill - loading it into a turn - is `UseSkill`, asked in the turn's context: the
-    agent for its owner, whoever asked as initiator
+*   **Using** a skill - loading it into a turn - is `UseSkill`, the skill's own verb `skill::USE`,
+    apart from reading it. It is asked in the turn's context: the agent for its owner, whoever asked
+    as initiator
     ([SECURITY.md](SECURITY.md#in-whose-name-an-agent-acts)). The ownership policy grants it as
     reading: what the owner may read, the agent may follow. Besides, the skill's classification must
     flow into the channel (`may_publish`): a skill classified above the channel is not loaded there.

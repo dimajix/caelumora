@@ -3,6 +3,7 @@
 use caelumora_model::approval::ApprovalRule;
 use anyhow::Result;
 use caelumora_model::security::{ActionType, Enforcement, Grant, SecurityContext, Subject};
+use caelumora_model::store::EntityKind;
 use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::store::StoreError;
 use tracing::info;
@@ -85,7 +86,7 @@ impl SessionLoop {
     /// whatever else storing reports.
     pub async fn set_workspace(&self, context: &SecurityContext, workspace: Option<WorkspaceId>, share: Option<Grant>) -> Result<()> {
         let session = self.session();
-        self.security.require(context, ActionType::UpdateSession(&session.security_attributes), || StoreError::PermissionDenied).await?;
+        self.security.require(context, ActionType::update(EntityKind::Session, &session.security_attributes), || StoreError::PermissionDenied).await?;
         if let Some(id) = workspace {
             require_attachable(self.runtime_manager.workspace_manager(), self.security.as_ref(), context, id, self.id).await?;
         }

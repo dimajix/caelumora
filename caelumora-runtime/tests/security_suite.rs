@@ -85,6 +85,7 @@ impl Recorder {
         match action {
             ActionType::ModifyMessage { author, .. } | ActionType::RevokeMessage { author, .. } => format!("{kind}({}'s)", self.name(*author)),
             ActionType::Reclassify(Reclassified::Message { author, .. }) => format!("{kind}({}'s message)", self.name(*author)),
+            ActionType::List(_) => action.describe(),
             _ => match attributes_of(action) {
                 Some(attributes) => format!("{kind}({}'s)", self.name(attributes.owner_id)),
                 None => kind,
@@ -151,20 +152,9 @@ impl ConfidentialityPolicy for Recorder {
 fn attributes_of<'a>(action: &ActionType<'a>) -> Option<&'a SecurityAttributes> {
     use ActionType::*;
     match *action {
-        GetPersonality(a) | CreatePersonality(a) | UpdatePersonality(a) | DeletePersonality(a)
-        | GetSessionTemplate(a) | CreateSessionTemplate(a) | UpdateSessionTemplate(a) | DeleteSessionTemplate(a)
-        | CreateAgent(a) | GetAgent(a) | ReadAgentContext(a) | ReadAgentTools { agent: a, .. } | ReadAgentComponents(a) | ApproveToolCall { agent: a, .. } | ShowAgentCommand { agent: a, .. } | ExecuteAgentCommand { agent: a, .. } | UpdateAgent(a) | DeleteAgent(a)
-        | CreateSession(a) | GetSession(a) | UpdateSession(a) | DeleteSession(a) | StopSession(a)
-        | GetChannel(a) | CreateChannel(a) | UpdateChannel(a) | DeleteChannel(a)
-        | GetUser(a) | CreateUser(a) | UpdateUser(a) | DeleteUser(a)
-        | GetUserProfile(a) | CreateUserProfile(a) | UpdateUserProfile(a) | DeleteUserProfile(a)
-        | CancelChannel(a) | WakeChannel(a) | RetryMessage(a) | AnswerQuestion(a) | ShowCommand { channel: a, .. } | ExecuteCommand { channel: a, .. }
-        | GetWorkspace(a) | WriteWorkspace(a) | CreateWorkspace(a) | UpdateWorkspace(a) | DeleteWorkspace(a)
-        | GetSkill(a) | CreateSkill(a) | UpdateSkill(a) | DeleteSkill(a) | UseSkill(a)
-        | GetArtifact(a) | WriteArtifact(a) | CreateArtifact(a) | UpdateArtifact(a) | DeleteArtifact(a)
-        | GetGroup(a) | CreateGroup(a) | UpdateGroup(a) | DeleteGroup(a)
-        | GetComponents(a) | CreateComponents(a) | UpdateComponents(a) | DeleteComponents(a)
-        | ReadDeleted(_, a) | Restore(_, a) | Purge(_, a) => Some(a),
+        Entity { attributes: a, .. }
+        | ReadAgentContext(a) | ReadAgentTools { agent: a, .. } | ReadAgentComponents(a) | ApproveToolCall { agent: a, .. } | ShowAgentCommand { agent: a, .. } | ExecuteAgentCommand { agent: a, .. }
+        | StopSession(a) | CancelChannel(a) | WakeChannel(a) | RetryMessage(a) | AnswerQuestion(a) | ShowCommand { channel: a, .. } | ExecuteCommand { channel: a, .. } => Some(a),
         _ => None,
     }
 }
@@ -2064,7 +2054,7 @@ async fn making_a_session_needs_the_template_the_personalities_and_creating_what
         "alice: GetSessionTemplate(system's) yes",
         "alice: CreateSession(alice's) yes",
         "alice: GetUser(system's) yes",
-        "alice: ListAgents yes",
+        "alice: List(agent) yes",
         "alice: GetPersonality(bob's) yes",
         "alice: CreateAgent(alice's) yes",
         "alice: JoinChannel(alice) yes",
@@ -2096,7 +2086,7 @@ async fn making_a_session_needs_the_template_the_personalities_and_creating_what
         "alice: GetSessionTemplate(alice's) yes",
         "alice: CreateSession(alice's) yes",
         "alice: GetUser(system's) yes",
-        "alice: ListAgents yes",
+        "alice: List(agent) yes",
         "alice: GetAgent(alice's) yes",
         "alice: GetPersonality(bob's) no",
     ]), "a personality one may not read: no agent, nothing created - the list is filtered by what she may read, her agent from before");
@@ -2246,19 +2236,19 @@ async fn restoring_a_session_needs_owning_it() {
     let session = world.shared_session(&[], &[]).await;
     world.manager.delete_session(&World::as_user(world.alice), session.id()).await.unwrap();
     let (_, asked) = world.asked(world.manager.restore_session(&World::as_user(world.carol), session.id())).await;
-    assert_eq!(asked, checks(&["carol: ReadDeleted(alice's) no"]));
+    assert_eq!(asked, checks(&["carol: ReadDeletedSession(alice's) no"]));
     let (_, asked) = world.asked(world.manager.restore_session(&World::as_user(world.bob), session.id())).await;
-    assert_eq!(asked, checks(&["bob: ReadDeleted(alice's) no"]), "a contributor does not see the trash");
+    assert_eq!(asked, checks(&["bob: ReadDeletedSession(alice's) no"]), "a contributor does not see the trash");
     let (restored, asked) = world.asked(world.manager.restore_session(&World::as_user(world.alice), session.id())).await;
     assert!(restored.is_ok());
     assert_eq!(asked, checks(&[
-        "alice: ReadDeleted(alice's) yes",
-        "alice: ReadDeleted(alice's) yes",
-        "alice: Restore(alice's) yes",
-        "alice: ReadDeleted(alice's) yes",
-        "alice: Restore(alice's) yes",
-        "alice: ReadDeleted(alice's) yes",
-        "alice: Restore(alice's) yes",
+        "alice: ReadDeletedSession(alice's) yes",
+        "alice: ReadDeletedSession(alice's) yes",
+        "alice: RestoreSession(alice's) yes",
+        "alice: ReadDeletedGroup(alice's) yes",
+        "alice: RestoreGroup(alice's) yes",
+        "alice: ReadDeletedGroup(alice's) yes",
+        "alice: RestoreGroup(alice's) yes",
     ]), "and does not read it back");
 }
 
@@ -2271,13 +2261,13 @@ async fn purging_a_session_is_not_its_owners() {
     let session = world.shared_session(&[], &[]).await;
     world.manager.delete_session(&World::as_user(world.alice), session.id()).await.unwrap();
     let (_, asked) = world.asked(world.manager.purge_session(&World::as_user(world.bob), session.id())).await;
-    assert_eq!(asked, checks(&["bob: ReadDeleted(alice's) no"]));
+    assert_eq!(asked, checks(&["bob: ReadDeletedSession(alice's) no"]));
     let (refused, asked) = world.asked(world.manager.purge_session(&World::as_user(world.alice), session.id())).await;
     assert!(refused.is_err());
     assert_eq!(asked, checks(&[
-        "alice: ReadDeleted(alice's) yes",
-        "alice: ReadDeleted(alice's) yes",
-        "alice: Purge(alice's) no",
+        "alice: ReadDeletedSession(alice's) yes",
+        "alice: ReadDeletedSession(alice's) yes",
+        "alice: PurgeSession(alice's) no",
     ]), "only what was deleted, asked by the agent manager and again by the store");
 }
 
@@ -2295,25 +2285,25 @@ async fn restoring_a_channel_needs_owning_its_session() {
     session.delete_channel(&World::as_user(world.alice), main).await.unwrap();
     let (refused, asked) = world.asked(session.restore_channel(&World::as_user(world.carol), main)).await;
     assert!(matches!(refused.unwrap_err().downcast_ref::<SessionError>(), Some(SessionError::ChannelNotFound { .. })), "a stranger finds nothing");
-    assert_eq!(asked, checks(&["carol: ReadDeleted(alice's) no"]));
+    assert_eq!(asked, checks(&["carol: ReadDeletedChannel(alice's) no"]));
     let (refused, asked) = world.asked(session.restore_channel(&World::as_user(world.bob), main)).await;
     assert!(matches!(refused.unwrap_err().downcast_ref::<SessionError>(), Some(SessionError::ChannelNotFound { .. })), "a participant does not see the trash");
-    assert_eq!(asked, checks(&["bob: ReadDeleted(alice's) no"]));
+    assert_eq!(asked, checks(&["bob: ReadDeletedChannel(alice's) no"]));
     let (restored, asked) = world.asked(session.restore_channel(&World::as_user(world.alice), main)).await;
     assert!(restored.is_ok());
     assert_eq!(asked, checks(&[
-        "alice: ReadDeleted(alice's) yes",
+        "alice: ReadDeletedChannel(alice's) yes",
         "alice: JoinChannel(alice) yes",
-        "alice: Restore(alice's) yes",
+        "alice: RestoreChannel(alice's) yes",
         "alice: JoinChannel(alice) yes",
         "alice: JoinChannel(bob) yes",
-        "alice: ReadDeleted(alice's) yes",
+        "alice: ReadDeletedChannel(alice's) yes",
         "alice: JoinChannel(alice) yes",
-        "alice: Restore(alice's) yes",
+        "alice: RestoreChannel(alice's) yes",
         "alice: GetSession(alice's) yes",
         "alice: UpdateSession(alice's) yes",
-        "alice: ReadDeleted(alice's) yes",
-        "alice: Restore(alice's) yes",
+        "alice: ReadDeletedGroup(alice's) yes",
+        "alice: RestoreGroup(alice's) yes",
     ]), "everyone's clearance again, as when it was created, listing it in the session, and its participants' group");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
@@ -2358,10 +2348,10 @@ async fn deleting_restoring_and_purging_an_agent_is_its_owners_but_purging() {
     ]), "asked by the agent manager before anything happens, and again by the store");
     let (refused, asked) = world.asked(agents.purge(&World::as_user(world.alice), helper)).await;
     assert!(refused.is_err());
-    assert_eq!(asked, checks(&["alice: ReadDeleted(alice's) yes", "alice: Purge(alice's) no"]));
+    assert_eq!(asked, checks(&["alice: ReadDeletedAgent(alice's) yes", "alice: PurgeAgent(alice's) no"]));
     let (restored, asked) = world.asked(agents.restore(&World::as_user(world.alice), helper)).await;
     assert!(restored.is_ok());
-    assert_eq!(asked, checks(&["alice: ReadDeleted(alice's) yes", "alice: Restore(alice's) yes"]), "only what was deleted, asked by the store");
+    assert_eq!(asked, checks(&["alice: ReadDeletedAgent(alice's) yes", "alice: RestoreAgent(alice's) yes"]), "only what was deleted, asked by the store");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
@@ -2489,11 +2479,11 @@ async fn a_workspace_is_its_owners_alone() {
     assert!(matches!(workspaces.restore(&bob, docs.id).await, Err(WorkspaceError::NotFound(_))), "nor restore");
     let (restored, asked) = world.asked(workspaces.restore(&alice, docs.id)).await;
     assert_eq!(restored.expect("alice restores it").id, docs.id);
-    assert_eq!(asked, checks(&["alice: ReadDeleted(alice's) yes", "alice: JoinChannel(alice) yes", "alice: Restore(alice's) yes"]), "reached by the store (issue 322), and not read back (issue 318)");
+    assert_eq!(asked, checks(&["alice: ReadDeletedWorkspace(alice's) yes", "alice: JoinChannel(alice) yes", "alice: RestoreWorkspace(alice's) yes"]), "reached by the store (issue 322), and not read back (issue 318)");
     assert!(workspaces.delete(&alice, docs.id).await.unwrap());
     let (purged, asked) = world.asked(workspaces.purge(&alice, docs.id)).await;
     assert!(matches!(purged, Err(WorkspaceError::Store(StoreError::PermissionDenied))), "the owner does not purge: {purged:?}");
-    assert_eq!(asked, checks(&["alice: ReadDeleted(alice's) yes", "alice: JoinChannel(alice) yes", "alice: Purge(alice's) no"]));
+    assert_eq!(asked, checks(&["alice: ReadDeletedWorkspace(alice's) yes", "alice: JoinChannel(alice) yes", "alice: PurgeWorkspace(alice's) no"]));
     assert!(world.files.path().join(docs.id.to_string()).is_dir(), "and the files stay");
     assert!(workspaces.purge(&World::system(), docs.id).await.unwrap(), "the system does");
     assert!(!world.files.path().join(docs.id.to_string()).exists(), "with the files");
@@ -2536,7 +2526,7 @@ async fn a_workspace_one_is_not_cleared_for_is_not_found() {
     assert!(trash.is_empty(), "not in her trash");
     let (restored, asked) = world.asked(workspaces.restore(&uncleared, docs.id)).await;
     assert!(matches!(restored, Err(WorkspaceError::NotFound(_))), "nor to restore");
-    assert_eq!(asked, checks(&["alice: ReadDeleted(alice's) yes", "alice: JoinChannel(alice) no"]));
+    assert_eq!(asked, checks(&["alice: ReadDeletedWorkspace(alice's) yes", "alice: JoinChannel(alice) no"]));
     assert_eq!(world.manager.views(Viewer::new(alice.clone())).deleted_workspaces().await.unwrap().len(), 1, "where it is, cleared");
 }
 
@@ -3107,7 +3097,7 @@ async fn a_session_comes_back_with_what_lies_in_it_as_far_as_whoever_restores_it
 
     let (restored, asked) = world.asked(world.manager.restore_session(&alice, session_id)).await;
     restored.expect("restored all the same");
-    assert!(asked.contains(&"alice: ReadDeleted(bob's) no".to_string()), "asked in her name: {asked:?}");
+    assert!(asked.contains(&"alice: ReadDeletedArtifact(bob's) no".to_string()), "asked in her name: {asked:?}");
     assert!(world.store.get_artifact(&alice, hers.id).await.is_ok(), "hers comes back with it");
     assert!(world.store.get_deleted_artifact(&World::system(), his.id).await.is_ok(), "bob's stays deleted: not hers to restore");
     world.runtime.artifact_manager().restore(&bob, his.id).await.expect("bob restores his");
