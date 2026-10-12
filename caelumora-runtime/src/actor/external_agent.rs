@@ -35,6 +35,7 @@ use crate::component_impl::external_context_provider::EXTERNAL_CONTEXT_PROVIDER_
 use crate::context::ContextProvider;
 use crate::controller::AgentController;
 use crate::external::{ExternalAgent, ExternalAgentResult, ExternalEvent, OutboundMessage, Said};
+use crate::logging::envelope_span;
 use crate::message::PerceiveInProcessor;
 use crate::runtime::ActorRuntime;
 use crate::transport::{EventReceiver, EventSender};
@@ -924,7 +925,7 @@ impl Actor for ExternalAgentActor {
                     let Some(received) = received else { break };
                     // One answer to all that was queued, to the last request.
                     if let Some(request) = self.hear(&mut state, received, &mut rx, &*output).await {
-                        let span = crate::logging::envelope_span(&request.context, request.event.kind());
+                        let span = envelope_span(&request.context, request.event.kind());
                         self.respond(&mut state, &request, &*output).instrument(span).await;
                         self.follow_open_tasks(&mut state, &mut followed, &mut attempted, &*output).await;
                     }

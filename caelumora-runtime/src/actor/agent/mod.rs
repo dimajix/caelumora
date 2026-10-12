@@ -11,6 +11,7 @@ use crate::view::ViewsFactory;
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::context::ContextProvider;
 use crate::llm::LLMClient;
+use crate::logging::{agent_span, envelope_span};
 use crate::message::{EmitOutProcessor, PerceiveInProcessor};
 use crate::runtime::ActorRuntime;
 use crate::tool::{ToolExecutor, ToolProvider};
@@ -351,7 +352,7 @@ impl AgentActor {
         reject_retries(retries, RetryRefused::AskedAgain, self.id(), &self.agent_controller.name(), &self.security_context(), output).await;
         let mut accepted = None;
         if let Some(retry) = judged {
-            let span = crate::logging::envelope_span(&retry.context, retry.event.kind());
+            let span = envelope_span(&retry.context, retry.event.kind());
             match self.retry(state, &retry, *given_up_for, output).instrument(span).await {
                 Ok(true) => accepted = Some(retry),
                 Ok(false) => {}
@@ -388,7 +389,7 @@ impl AgentActor {
     /// Begins a turn in answer to `request` (`request_response`), and
     /// whether it began: an error is the turn's, which then fails.
     async fn begin_answer(&self, state: &mut AgentChannelState, request: &Envelope, output: &dyn EventSender) -> bool {
-        let span = crate::logging::envelope_span(&request.context, request.event.kind());
+        let span = envelope_span(&request.context, request.event.kind());
         match self.request_response(state, request, output).instrument(span.clone()).await {
             Ok(()) => true,
             // E.g. a fail-closed context provider: the turn never starts.
@@ -975,7 +976,7 @@ impl Actor for AgentActor {
             // Idle/WaitingForUser/Sleep may consume no event before the actor's
             // input channel closes (Ok(None)) - that's the only way this loop ends.
             // Every other state always produces a next state.
-            let span = crate::logging::agent_span(self.agent_id, &self.agent_controller.name(), current_state, state.turn.as_ref().map(|t| &t.work.event_context));
+            let span = agent_span(self.agent_id, &self.agent_controller.name(), current_state, state.turn.as_ref().map(|t| &t.work.event_context));
 
             // Before every step of a turn: a turn that no longer flows into
             // its channel - lowered meanwhile - is given up, whatever it was

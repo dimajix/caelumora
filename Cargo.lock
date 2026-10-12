@@ -327,6 +327,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "caelumora-logging",
  "caelumora-model",
  "caelumora-rest-server",
  "caelumora-runtime",
@@ -357,6 +358,19 @@ dependencies = [
  "anyhow",
  "serde",
  "serde_json",
+ "uuid",
+]
+
+[[package]]
+name = "caelumora-logging"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "caelumora-model",
+ "caelumora-runtime",
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 
@@ -460,7 +474,6 @@ dependencies = [
  "tokio-stream",
  "tokio-util",
  "tracing",
- "tracing-subscriber",
  "uuid",
 ]
 
@@ -490,6 +503,7 @@ name = "caelumora-tui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "caelumora-logging",
  "caelumora-model",
  "caelumora-runtime",
  "caelumora-skills",
