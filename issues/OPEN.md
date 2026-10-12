@@ -96,6 +96,12 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [284](284-automatic-context-compaction.md) | open | An agent's context is compacted only when somebody asks for it; nothing compacts it before a model call that would not fit, least of all within the turn that makes it. |
 | [305](305-skill-versions.md) | open | A skill keeps only its current text: every change overwrites what it said, nobody sees what changed, and an earlier version cannot be made current again. |
 
+## Code structure
+
+| No. | Status | Issue |
+|---|---|---|
+| [323](323-kinds-enumerated-in-the-core.md) | open | Every stored kind is enumerated in the core - `ActionType`, `EntityKind`, `EntityStore`, `GlobalEvent`, the scope, the seed, `ApiError` and the routes - so a subject such as skills cannot be moved into a crate of its own. |
+
 ## Open architecture questions
 
 | No. | Status | Issue |
