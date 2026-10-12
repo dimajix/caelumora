@@ -252,6 +252,7 @@ mod tests {
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::user::UserId;
     use std::collections::HashMap;
+    use caelumora_model::config::AppConfig;
 
     /// A channel of the tests: where it is - its session and itself - and
     /// how it is classified.
@@ -319,7 +320,7 @@ mod tests {
         async fn under(policy: Arc<dyn SecurityManager>) -> Self {
             let store = Arc::new(MemoryStore::new());
             let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-            let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(store)).unwrap());
+            let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store.entity_stores(), secrets, policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), ComponentRegistry::built_in(store)).unwrap());
             Self { runtime, loops: HashMap::new() }
         }
 

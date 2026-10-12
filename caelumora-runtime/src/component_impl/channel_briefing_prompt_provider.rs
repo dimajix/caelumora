@@ -141,6 +141,8 @@ mod tests {
     use caelumora_model::session::{Session, SessionId};
     use caelumora_model::store::Entities;
     use caelumora_model::store::memory::MemoryStore;
+    use caelumora_model::confidentiality::ConfidentialityRules;
+    use caelumora_model::config::AppConfig;
 
     #[test]
     fn a_place_is_described_by_its_summary_and_briefing() {
@@ -170,7 +172,7 @@ mod tests {
         let store = Arc::new(MemoryStore::new());
         let policy = Arc::new(DummySecurityManager::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store.entity_stores(), secrets, policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let system = SecurityContext::system();
 
         let personality = Personality {

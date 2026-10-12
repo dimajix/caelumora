@@ -567,3 +567,11 @@ kind's documents in `entities/<kind>/`: stored entities move there (`templates/a
 `entities/personality`, `templates/sessions` to `entities/session_template`, `templates/components`
 to `entities/components`, `runtime/<kind>s` to `entities/<kind>`), or are deleted.
 
+Step 3b: `EntityStores` is what the runtime is given - a store per kind, beside `entities`, the
+facade, while kinds still use it -, made by the configuration (`create_entity_stores`) or by
+`MemoryStore::entity_stores` and `JsonFileStore::entity_stores`. Skills are the first kind on their
+own store: the `SkillManager`, the views, the seed and the tests take `EntityStores::skills`, and
+`Entities` has no skill methods any more. The store suite takes `EntityStores`, so that each kind
+that follows changes only the field it uses. Paths written out in the lines this step touched are
+imports.
+

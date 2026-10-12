@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::fmt::Debug;
+use std::sync::Arc;
 
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
 use crate::channel::{Channel, ChannelId, ChannelState};
@@ -21,7 +22,7 @@ use crate::template::{SessionTemplate, SessionTemplateId};
 use crate::user::{User, UserId, UserProfile};
 use crate::value::name::ScopedName;
 use crate::workspace::{Workspace, WorkspaceId};
-use crate::skill::{Skill, SkillId};
+use crate::skill::Skill;
 use crate::group::{Group, GroupField, GroupId};
 use crate::artifact::{Artifact, ArtifactField, ArtifactId};
 use crate::channel::ChannelField;
@@ -169,6 +170,16 @@ pub trait EntityStore<T: Deletable + Send + Sync + 'static>: Debug + Send + Sync
     async fn find_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<T>;
 }
 
+/// The stores of the entities (issue 323), one per kind of the core,
+/// which the runtime is given and hands to the managers that keep each
+/// kind. Until every kind has its own, `entities` offers the others at
+/// once.
+#[derive(Debug, Clone)]
+pub struct EntityStores {
+    pub entities: Arc<dyn Entities>,
+    pub skills: Arc<dyn EntityStore<Skill>>,
+}
+
 /// Every kind's entities at once, as one store offered them before each
 /// kind had its own (issue 323): implemented over the stores of the kinds,
 /// and gone once every caller uses the store of its kind.
@@ -303,18 +314,6 @@ pub trait Entities : Debug + Sync + Send {
     async fn get_deleted_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace>;
     async fn list_deleted_workspaces(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Workspace>>;
     async fn find_workspace_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Workspace>;
-
-    // Skills (issue 22)
-    async fn create_skill(&self, ctx: &SecurityContext, value: &Skill) -> StoreResult<()>;
-    async fn get_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<Skill>;
-    async fn update_skill(&self, ctx: &SecurityContext, value: &Skill) -> StoreResult<()>;
-    async fn delete_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<bool>;
-    async fn list_skills(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Skill>>;
-    async fn restore_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<Skill>;
-    async fn purge_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<bool>;
-    async fn get_deleted_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<Skill>;
-    async fn list_deleted_skills(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Skill>>;
-    async fn find_skill_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Skill>;
 
     // Artifacts (issue 271) - their content is no part of the document, and
     // whoever purges one removes it.

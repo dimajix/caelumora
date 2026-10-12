@@ -764,6 +764,9 @@ pub(crate) mod testing {
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::workspace::Workspace;
     use std::sync::Arc;
+    use caelumora_model::confidentiality::ConfidentialityRules;
+    use caelumora_model::config::AppConfig;
+    use crate::component::ComponentRegistry;
 
     /// The largest file the workspace takes.
     pub(crate) const MAX_FILE_BYTES: u64 = 1024 * 1024;
@@ -806,7 +809,7 @@ pub(crate) mod testing {
         let workspaces = WorkspacesConfig { storage: [("dev".to_string(), storage)].into(), max_file_bytes: MAX_FILE_BYTES };
         let artifacts = tempfile::tempdir().unwrap();
         let kept = ArtifactsConfig { storage: [("kept".to_string(), ArtifactStorageConfig::Local { root: artifacts.path().to_path_buf(), destination: None })].into(), ..Default::default() };
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig { workspaces, artifacts: kept, ..Default::default() }, crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store.entity_stores(), secrets, policy, Arc::new(ConfidentialityRules::default()), &AppConfig { workspaces, artifacts: kept, ..Default::default() }, ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let system = SecurityContext::system();
 
         let owner = UserId::new();

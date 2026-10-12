@@ -9,7 +9,7 @@ use crate::secret::SecretManager;
 use crate::secret::env::EnvSecretProvider;
 use crate::secret::file::FileSecretProvider;
 use crate::security::{DummySecurityManager, Memberships, OwnershipSecurityManager, SecurityManager};
-use crate::store::{ComponentStore, Entities, StateStore, StoreError};
+use crate::store::{ComponentStore, Entities, EntityStores, StateStore, StoreError};
 use crate::store::json::JsonFileStore;
 use crate::store::memory::MemoryStore;
 use crate::user_provider::{UserManager, UserProvider};
@@ -71,10 +71,24 @@ impl PersistenceBackend {
 }
 
 /// What `PersistenceBackend::open` returns: a store with every face, so
-/// that one match serves `create_entity_store`, `create_component_store`
+/// that one match serves `create_entity_stores`, `create_component_store`
 /// and `create_state_store`.
-trait Store: Entities + ComponentStore + StateStore {}
-impl<T: Entities + ComponentStore + StateStore> Store for T {}
+trait Store: ComponentStore + StateStore {
+    /// Its stores of the entities, one per kind (issue 323).
+    fn entity_stores(self: Arc<Self>) -> EntityStores;
+}
+
+impl Store for MemoryStore {
+    fn entity_stores(self: Arc<Self>) -> EntityStores {
+        MemoryStore::entity_stores(&self)
+    }
+}
+
+impl Store for JsonFileStore {
+    fn entity_stores(self: Arc<Self>) -> EntityStores {
+        JsonFileStore::entity_stores(&self)
+    }
+}
 
 #[derive(Debug, Deserialize, Default, Clone)]
 #[serde(default, deny_unknown_fields)]
@@ -601,12 +615,13 @@ impl AppConfig {
         })
     }
 
-    /// The entity store, as configured under `persistence.entity_store`.
+    /// The stores of the entities, as configured under
+    /// `persistence.entity_store`.
     ///
     /// # Errors
     /// `ConfigError::Store` if the store cannot be opened.
-    pub fn create_entity_store(&self, security_manager: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> ConfigResult<Arc<dyn Entities>> {
-        Ok(self.persistence.entity_store.open(security_manager, confidentiality)?)
+    pub fn create_entity_stores(&self, security_manager: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> ConfigResult<EntityStores> {
+        Ok(self.persistence.entity_store.open(security_manager, confidentiality)?.entity_stores())
     }
 
     /// The component store: kept where the entity store is, under

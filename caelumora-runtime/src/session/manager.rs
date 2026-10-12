@@ -496,6 +496,9 @@ mod tests {
     use caelumora_model::store::memory::MemoryStore;
     use crate::session::{SessionError, SessionManager};
     use crate::session::testing::*;
+    use caelumora_model::confidentiality::ConfidentialityRules;
+    use caelumora_model::config::AppConfig;
+    use crate::component::ComponentRegistry;
 
     #[tokio::test]
     async fn create_session_emits_created_then_started() {
@@ -857,7 +860,7 @@ mod tests {
         let entities = Arc::new(MemoryStore::new());
         let states = Arc::new(MemoryStore::new());
         let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&states), Arc::<MemoryStore>::clone(&entities), secret_manager, Arc::new(DummySecurityManager::new()), Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&entities))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&states), entities.entity_stores(), secret_manager, Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&entities))).unwrap());
         let manager = SessionManager::new(runtime);
         let ctx = SecurityContext::default();
         let session = make_session("two-stores", ActorId::None);

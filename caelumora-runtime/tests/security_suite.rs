@@ -56,6 +56,7 @@ use caelumora_runtime::group::GroupError;
 use caelumora_model::workspace::{WorkspaceChoice, WorkspaceId};
 use caelumora_model::artifact::Artifact;
 use caelumora_model::removal::Stored;
+use caelumora_model::config::AppConfig;
 
 /// The ownership policy, recording every question it is asked - who acted
 /// with whose rights and for whom, what, of whose entity, and what it
@@ -203,7 +204,7 @@ impl World {
         let shell = StorageConfig::Local { root: files.path().join("shell"), shell: true, destination: Some(Classification::general(Confidentiality::Internal)), max_run_secs: DEFAULT_MAX_RUN_SECS };
         let workspaces = WorkspacesConfig { storage: [("main".to_string(), StorageConfig::Local { root: files.path().to_path_buf(), shell: false, destination: None, max_run_secs: DEFAULT_MAX_RUN_SECS }), ("shell".to_string(), shell)].into(), ..Default::default() };
         let artifacts = ArtifactsConfig { storage: [("kept".to_string(), ArtifactStorageConfig::Local { root: files.path().join("artifacts"), destination: None })].into(), ..Default::default() };
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::<Recorder>::clone(&recorder), &caelumora_model::config::AppConfig { workspaces, artifacts, ..Default::default() }, registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store.entity_stores(), secrets, policy, Arc::<Recorder>::clone(&recorder), &AppConfig { workspaces, artifacts, ..Default::default() }, registry).unwrap());
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let mut world = Self { policy: recorder, store, runtime, manager, alice: UserId::new(), bob: UserId::new(), carol: UserId::new(), files };
         world.alice = world.user("alice").await;
@@ -3714,7 +3715,7 @@ async fn with_a_writing_agent(function: &str, arguments: serde_json::Value) -> (
         .create(&World::as_user(world.bob), "review", Scope::GlobalScope, "How we review", "Read it twice.", Classification::general(Confidentiality::Internal)).await
         .expect("his to make");
     let shared = caelumora_model::skill::Skill { security_attributes: SecurityAttributes::owned_by(ActorId::User(world.bob)).granting(caelumora_model::security::Subject::Actor(ActorId::User(world.alice)), caelumora_model::security::Grant::Read), ..review };
-    world.store.update_skill(&World::as_user(world.bob), &shared).await.expect("shared with alice");
+    world.runtime.entity_stores().skills.update(&World::as_user(world.bob), &shared).await.expect("shared with alice");
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
     world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
@@ -3734,7 +3735,7 @@ async fn an_agents_skill_belongs_to_its_owner_and_lies_in_the_session() {
         asked_for(&world, "alice as helper, asked by bob: CreateSkill(alice's) yes").await;
     }).await;
     assert!(asked.iter().any(|line| line == "alice as helper, asked by bob: CreateSkill(alice's) yes"), "{asked:?}");
-    let skills = world.store.list_skills(&World::system(), &Query::all()).await.map(|page| page.items).unwrap();
+    let skills = world.runtime.entity_stores().skills.list(&World::system(), &Query::all()).await.map(|page| page.items).unwrap();
     let deploy = skills.iter().find(|s| s.name.name.as_str() == "deploy").expect("written");
     assert_eq!(deploy.security_attributes.owner_id, ActorId::User(world.alice), "the agent's owner's");
     assert_eq!(deploy.name.scope, Scope::SessionScope { session_id: session.id() }, "in the session's scope");
@@ -3751,7 +3752,7 @@ async fn an_agent_changes_only_skills_of_its_owners() {
 
     main.user_actor(world.bob).unwrap().send_message("@helper change it".to_string(), None).await.expect("sent");
     asked_for(&world, "alice as helper, asked by bob: UpdateSkill(bob's) no").await;
-    let review = world.store.find_skill_by_name(&World::system(), &ScopedName::new("review", Scope::GlobalScope).unwrap()).await.unwrap();
+    let review = world.runtime.entity_stores().skills.find_by_name(&World::system(), &ScopedName::new("review", Scope::GlobalScope).unwrap()).await.unwrap();
     assert_eq!(review.body.as_str(), "Read it twice.", "unchanged");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }

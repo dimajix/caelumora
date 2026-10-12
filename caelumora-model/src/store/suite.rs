@@ -16,7 +16,7 @@ use crate::value::text::Introduction;
 use crate::scope::{Scoped, Scope};
 use crate::security::SecurityContext;
 use crate::session::{Session, SessionId};
-use crate::store::{ComponentStore, Entities, Journaled, StateStore, StoreError};
+use crate::store::{ComponentStore, EntityStores, Journaled, StateStore, StoreError};
 use crate::template::{ChannelTemplate, ParticipantTemplate, SessionTemplate, SessionTemplateId};
 use crate::removal::{Deletable, Removal};
 use crate::user::{User, UserId, UserProfile};
@@ -223,7 +223,8 @@ fn component() -> StoredComponents {
 /// filter - fields of the entity, of an element of a collection in it, of
 /// an element of a collection in that -, in the order of their ids, in pages
 /// of its limit, each going on after the cursor the one before handed out.
-pub(crate) async fn queries_behave(store: &dyn Entities) {
+pub(crate) async fn queries_behave(stores: &EntityStores) {
+    let store = stores.entities.as_ref();
     use crate::security::{AclEntry, Grant, Subject};
     let ctx = SecurityContext::system();
     let (alice, bob) = (UserId::new(), UserId::new());
@@ -371,7 +372,8 @@ fn component_id(value: &StoredComponents) -> &str {
 
 /// Every kind of entity goes through the same life; users are also found
 /// by name, and so are definitions in their scope.
-pub(crate) async fn entity_store_behaves(store: &dyn Entities) {
+pub(crate) async fn entity_store_behaves(stores: &EntityStores) {
+    let store = stores.entities.as_ref();
     lifecycle!(store, personality(), |v: &Personality| v.id, name.name, "personality",
         create_personality, get_personality, update_personality, delete_personality, list_personalities);
     lifecycle!(store, session_template(), |v: &SessionTemplate| v.id, name.name, "session_template",
@@ -388,8 +390,8 @@ pub(crate) async fn entity_store_behaves(store: &dyn Entities) {
         create_user_profile, get_user_profile, update_user_profile, delete_user_profile, list_user_profiles);
     lifecycle!(store, workspace(UserId::new()), |v: &Workspace| v.id, name.name, "workspace",
         create_workspace, get_workspace, update_workspace, delete_workspace, list_workspaces);
-    lifecycle!(store, skill(UserId::new()), |v: &Skill| v.id, name.name, "skill",
-        create_skill, get_skill, update_skill, delete_skill, list_skills);
+    lifecycle!(stores.skills.as_ref(), skill(UserId::new()), |v: &Skill| v.id, name.name, "skill",
+        create, get, update, delete, list);
     lifecycle!(store, artifact(UserId::new()), |v: &Artifact| v.id, name.name, "artifact",
         create_artifact, get_artifact, update_artifact, delete_artifact, list_artifacts);
     lifecycle!(store, group(UserId::new()), |v: &Group| v.id, name.name, "group",
@@ -427,9 +429,9 @@ pub(crate) async fn entity_store_behaves(store: &dyn Entities) {
     let nobodys = store.create_workspace(&ctx, &Workspace { security_attributes: Default::default(), ..workspace(UserId::new()) }).await;
     assert!(matches!(nobodys, Err(StoreError::Validation(_))), "workspace: one that belongs to no user is not stored, got {nobodys:?}");
 
-    found_by_name!(store, skill_named, "skill",
-        create_skill, delete_skill, find_skill_by_name);
-    let nobodys = store.create_skill(&ctx, &Skill { security_attributes: Default::default(), ..skill(UserId::new()) }).await;
+    found_by_name!(stores.skills.as_ref(), skill_named, "skill",
+        create, delete, find_by_name);
+    let nobodys = stores.skills.create(&ctx, &Skill { security_attributes: Default::default(), ..skill(UserId::new()) }).await;
     assert!(matches!(nobodys, Err(StoreError::Validation(_))), "skill: one that belongs to nobody is not stored, got {nobodys:?}");
 
     found_by_name!(store, group_named, "group",
@@ -476,7 +478,8 @@ macro_rules! unique_by_name {
 
 /// Names are unique per kind in their name space (issue 250), for every
 /// kind that is `Scoped`.
-pub(crate) async fn names_are_unique(store: &dyn Entities) {
+pub(crate) async fn names_are_unique(stores: &EntityStores) {
+    let store = stores.entities.as_ref();
     let user_id = UserId::new();
     let in_scope = |name: &str, scope: &Scope| ScopedName::new(name, scope.clone()).unwrap();
     let (global, users) = (Scope::GlobalScope, Scope::UserScope { user_id });
@@ -504,10 +507,10 @@ pub(crate) async fn names_are_unique(store: &dyn Entities) {
         elsewhere: |name| Workspace { name: in_scope(name, &Scope::UserScope { user_id: bob }), id: WorkspaceId::new(), ..workspace(bob) },
         rename: |value: Workspace, name| Workspace { name: in_scope(name, &value.name.scope), ..value }, "workspace",
         create_workspace, update_workspace, delete_workspace, restore_workspace);
-    unique_by_name!(store, |name| Skill { name: in_scope(name, &global), id: SkillId::new(), ..skill(alice) },
+    unique_by_name!(stores.skills.as_ref(), |name| Skill { name: in_scope(name, &global), id: SkillId::new(), ..skill(alice) },
         elsewhere: |name| Skill { name: in_scope(name, &Scope::UserScope { user_id: bob }), id: SkillId::new(), ..skill(bob) },
         rename: |value: Skill, name| Skill { name: in_scope(name, &value.name.scope), ..value }, "skill",
-        create_skill, update_skill, delete_skill, restore_skill);
+        create, update, delete, restore);
     unique_by_name!(store, |name| Artifact { name: in_scope(name, &global), id: ArtifactId::new(), ..artifact(alice) },
         elsewhere: |name| Artifact { name: in_scope(name, &Scope::UserScope { user_id: bob }), id: ArtifactId::new(), ..artifact(bob) },
         rename: |value: Artifact, name| Artifact { name: in_scope(name, &value.name.scope), ..value }, "artifact",
@@ -532,7 +535,8 @@ pub(crate) async fn names_are_unique(store: &dyn Entities) {
 
 /// A name is taken also by what the caller may not read (issue 250): the
 /// store must ask an `OwnershipSecurityManager`.
-pub(crate) async fn names_are_unique_beyond_what_is_read(store: &dyn Entities) {
+pub(crate) async fn names_are_unique_beyond_what_is_read(stores: &EntityStores) {
+    let store = stores.entities.as_ref();
     let as_user = |id: UserId| SecurityContext::new(crate::actor::ActorId::User(id), Default::default(), Default::default());
     let (alice, bob) = (UserId::new(), UserId::new());
     let owned_by = |name: &str, owner: UserId| Agent::new(ScopedName::new(name, Scope::GlobalScope).unwrap(), &personality(), crate::actor::ActorId::User(owner));
@@ -609,7 +613,8 @@ fn marked<T: Deletable>(mut value: T) -> T {
 /// five operations, also not for the system, and its id stays taken;
 /// nothing created or changed may carry the mark. What was deleted is
 /// read, restored and purged by operations of its own.
-pub(crate) async fn deleting_marks(store: &dyn Entities) {
+pub(crate) async fn deleting_marks(stores: &EntityStores) {
+    let store = stores.entities.as_ref();
     let system = SecurityContext::system();
     let kept = session();
     store.create_session(&system, &kept).await.expect("create");

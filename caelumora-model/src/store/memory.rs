@@ -8,10 +8,10 @@ use crate::removal::{Deletable, Removal, Stored};
 use crate::scope::{Scope, ScopeField};
 use crate::security::{ActionType, DummySecurityManager, SecurityContext, SecurityManager};
 use crate::session::{Session, SessionField, SessionId};
-use crate::skill::{Skill, SkillId};
+use crate::skill::Skill;
 use crate::store::access::{name_free, Access};
 use crate::store::query::{self, Filter, NoField, Page, Query};
-use crate::store::{ComponentStore, Entities, EntityStore, Journaled, StateStore, StoreError, StoreResult};
+use crate::store::{ComponentStore, Entities, EntityStore, EntityStores, Journaled, StateStore, StoreError, StoreResult};
 use crate::template::{SessionTemplate, SessionTemplateId};
 use crate::user::{User, UserId, UserProfile};
 use crate::value::name::ScopedName;
@@ -37,7 +37,7 @@ pub struct MemoryStore {
     users: MemoryEntityStore<User>,
     user_profiles: MemoryEntityStore<UserProfile>,
     workspaces: MemoryEntityStore<Workspace>,
-    skills: MemoryEntityStore<Skill>,
+    skills: Arc<MemoryEntityStore<Skill>>,
     artifacts: MemoryEntityStore<Artifact>,
     groups: MemoryEntityStore<Group>,
     components: MemoryEntityStore<StoredComponents>,
@@ -73,7 +73,7 @@ impl MemoryStore {
             users: MemoryEntityStore::new(&policies),
             user_profiles: MemoryEntityStore::new(&policies),
             workspaces: MemoryEntityStore::new(&policies),
-            skills: MemoryEntityStore::new(&policies),
+            skills: Arc::new(MemoryEntityStore::new(&policies)),
             artifacts: MemoryEntityStore::new(&policies),
             groups: MemoryEntityStore::new(&policies),
             components: MemoryEntityStore::new(&policies),
@@ -81,6 +81,14 @@ impl MemoryStore {
             agent_channel_states: Default::default(),
             channel_states: Default::default(),
         }
+    }
+}
+
+impl MemoryStore {
+    /// The store of every kind (issue 323): this store's, the kinds that
+    /// have one of their own as such.
+    pub fn entity_stores(self: &Arc<Self>) -> EntityStores {
+        EntityStores { entities: Arc::<Self>::clone(self), skills: Arc::<MemoryEntityStore<Skill>>::clone(&self.skills) }
     }
 }
 
@@ -495,36 +503,6 @@ impl Entities for MemoryStore {
     async fn find_workspace_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Workspace> {
         self.workspaces.find_by_name(ctx, name).await
     }
-    async fn create_skill(&self, ctx: &SecurityContext, value: &Skill) -> StoreResult<()> {
-        self.skills.create(ctx, value).await
-    }
-    async fn get_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<Skill> {
-        self.skills.get(ctx, id).await
-    }
-    async fn update_skill(&self, ctx: &SecurityContext, value: &Skill) -> StoreResult<()> {
-        self.skills.update(ctx, value).await
-    }
-    async fn delete_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<bool> {
-        self.skills.delete(ctx, id).await
-    }
-    async fn list_skills(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Skill>> {
-        self.skills.list(ctx, query).await
-    }
-    async fn restore_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<Skill> {
-        self.skills.restore(ctx, id).await
-    }
-    async fn purge_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<bool> {
-        self.skills.purge(ctx, id).await
-    }
-    async fn get_deleted_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<Skill> {
-        self.skills.get_deleted(ctx, id).await
-    }
-    async fn list_deleted_skills(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Skill>> {
-        self.skills.list_deleted(ctx, query).await
-    }
-    async fn find_skill_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Skill> {
-        self.skills.find_by_name(ctx, name).await
-    }
     async fn create_artifact(&self, ctx: &SecurityContext, value: &Artifact) -> StoreResult<()> {
         self.artifacts.create(ctx, value).await
     }
@@ -665,12 +643,12 @@ mod tests {
 
     #[tokio::test]
     async fn behaves_as_an_entity_store() {
-        suite::entity_store_behaves(&MemoryStore::new()).await;
+        suite::entity_store_behaves(&Arc::new(MemoryStore::new()).entity_stores()).await;
     }
 
     #[tokio::test]
     async fn answers_queries() {
-        suite::queries_behave(&MemoryStore::new()).await;
+        suite::queries_behave(&Arc::new(MemoryStore::new()).entity_stores()).await;
     }
 
     /// A limit counts what the caller may read (issue 293): the policy is
@@ -725,13 +703,13 @@ mod tests {
 
     #[tokio::test]
     async fn keeps_what_is_deleted_marked() {
-        suite::deleting_marks(&MemoryStore::new()).await;
+        suite::deleting_marks(&Arc::new(MemoryStore::new()).entity_stores()).await;
     }
 
     #[tokio::test]
     async fn keeps_names_unique() {
-        suite::names_are_unique(&MemoryStore::new()).await;
+        suite::names_are_unique(&Arc::new(MemoryStore::new()).entity_stores()).await;
         let owners = MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()));
-        suite::names_are_unique_beyond_what_is_read(&owners).await;
+        suite::names_are_unique_beyond_what_is_read(&Arc::new(owners).entity_stores()).await;
     }
 }

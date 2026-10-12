@@ -19,7 +19,7 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::skill::{Skill, SkillId, SkillUpdateEvent};
-use caelumora_model::store::{Entities, StoreError, StoreResultExt};
+use caelumora_model::store::{EntityStore, StoreError, StoreResultExt};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::{Description, SkillBody};
 use caelumora_model::value::ValueError;
@@ -59,7 +59,7 @@ fn store_error(id: SkillId) -> impl FnOnce(StoreError) -> SkillError {
 }
 
 pub struct SkillManager {
-    entities: Arc<dyn Entities>,
+    skills: Arc<dyn EntityStore<Skill>>,
     events: Arc<EventBus>,
     /// What may flow where, and who is cleared for what (issue 304).
     confidentiality: Arc<dyn ConfidentialityPolicy>,
@@ -74,11 +74,11 @@ impl fmt::Debug for SkillManager {
 }
 
 impl SkillManager {
-    /// Who may do what is asked by the store `entities`, which every write
+    /// Who may do what is asked by the store `skills`, which every write
     /// goes through - the clearance for a skill reached included (issue
     /// 322); the manager asks the flow alone (issue 304).
-    pub(crate) fn new(entities: Arc<dyn Entities>, events: Arc<EventBus>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> Self {
-        Self { entities, events, confidentiality, writing: Mutex::new(()) }
+    pub(crate) fn new(skills: Arc<dyn EntityStore<Skill>>, events: Arc<EventBus>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> Self {
+        Self { skills, events, confidentiality, writing: Mutex::new(()) }
     }
 
     /// Whether the one `ctx` acts for is cleared for `classification`: what
@@ -108,7 +108,7 @@ impl SkillManager {
         self.require_flow(ctx, &skill.classification)?;
 
         let _writing = self.writing.lock().await;
-        self.entities.create_skill(ctx, &skill).await?;
+        self.skills.create(ctx, &skill).await?;
         self.events.publish_classified(GlobalEvent::SkillCreated(skill.id), skill.security_attributes.clone(), std::slice::from_ref(&skill.classification));
         info!(skill = %skill.id, by = %ctx.caller_id, "Skill created");
         Ok(skill)
@@ -159,7 +159,7 @@ impl SkillManager {
     /// or `NotCleared` for a classification, or whatever the store reports.
     async fn update(&self, ctx: &SecurityContext, id: SkillId, event: SkillUpdateEvent) -> SkillResult<Skill> {
         let _writing = self.writing.lock().await;
-        let mut skill = self.entities.get_skill(ctx, id).await.map_err(store_error(id))?;
+        let mut skill = self.skills.get(ctx, id).await.map_err(store_error(id))?;
         // Announced to who reaches it as it was, too: who no longer does
         // learns so (issue 312).
         let had = skill.classification.clone();
@@ -174,7 +174,7 @@ impl SkillManager {
             }
         }
         skill.updated_at = chrono::Utc::now();
-        self.entities.update_skill(ctx, &skill).await.map_err(store_error(id))?;
+        self.skills.update(ctx, &skill).await.map_err(store_error(id))?;
         self.events.publish_classified(GlobalEvent::SkillUpdated(id, event), skill.security_attributes.clone(), &[had, skill.classification.clone()]);
         info!(skill = %id, by = %ctx.caller_id, "Skill changed");
         Ok(skill)
@@ -187,8 +187,8 @@ impl SkillManager {
     /// Whatever the store reports, `PermissionDenied` included.
     pub async fn delete(&self, ctx: &SecurityContext, id: SkillId) -> SkillResult<bool> {
         let _writing = self.writing.lock().await;
-        let Some(skill) = self.entities.get_skill(ctx, id).await.optional()? else { return Ok(false) };
-        if !self.entities.delete_skill(ctx, id).await? {
+        let Some(skill) = self.skills.get(ctx, id).await.optional()? else { return Ok(false) };
+        if !self.skills.delete(ctx, id).await? {
             return Ok(false);
         }
         self.events.publish_classified(GlobalEvent::SkillDeleted(id), skill.security_attributes, std::slice::from_ref(&skill.classification));
@@ -204,7 +204,7 @@ impl SkillManager {
     /// whatever else the store reports - `NameTaken` among it.
     pub async fn restore(&self, ctx: &SecurityContext, id: SkillId) -> SkillResult<Skill> {
         let _writing = self.writing.lock().await;
-        let skill = self.entities.restore_skill(ctx, id).await.map_err(store_error(id))?;
+        let skill = self.skills.restore(ctx, id).await.map_err(store_error(id))?;
         self.events.publish_classified(GlobalEvent::SkillRestored(id), skill.security_attributes.clone(), std::slice::from_ref(&skill.classification));
         info!(skill = %id, by = %ctx.caller_id, "Skill restored");
         Ok(skill)
@@ -218,7 +218,7 @@ impl SkillManager {
     /// `PermissionDenied`, or whatever the store reports.
     pub async fn purge(&self, ctx: &SecurityContext, id: SkillId) -> SkillResult<bool> {
         let _writing = self.writing.lock().await;
-        let purged = self.entities.purge_skill(ctx, id).await?;
+        let purged = self.skills.purge(ctx, id).await?;
         info!(skill = %id, by = %ctx.caller_id, "Skill purged");
         Ok(purged)
     }
@@ -234,8 +234,8 @@ impl SkillManager {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         let mut left = 0;
-        for skill in self.entities.list_skills(&system, &within(holder)).await?.items {
-            if deleted_unless_refused(self.entities.delete_skill(ctx, skill.id).await)? {
+        for skill in self.skills.list(&system, &within(holder)).await?.items {
+            if deleted_unless_refused(self.skills.delete(ctx, skill.id).await)? {
                 self.events.publish_classified(GlobalEvent::SkillDeleted(skill.id), skill.security_attributes, std::slice::from_ref(&skill.classification));
             } else {
                 left += 1;
@@ -255,8 +255,8 @@ impl SkillManager {
     pub(crate) async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> SkillResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for skill in deleted_since(self.entities.list_deleted_skills(&system, &within(holder)).await?.items, since) {
-            if let Some(restored) = restored_unless_refused(self.entities.restore_skill(ctx, skill.id).await, "skill", &skill.name)? {
+        for skill in deleted_since(self.skills.list_deleted(&system, &within(holder)).await?.items, since) {
+            if let Some(restored) = restored_unless_refused(self.skills.restore(ctx, skill.id).await, "skill", &skill.name)? {
                 self.events.publish_classified(GlobalEvent::SkillRestored(restored.id), restored.security_attributes, std::slice::from_ref(&restored.classification));
             }
         }
@@ -271,8 +271,8 @@ impl SkillManager {
     pub(crate) async fn purge_lying_in(&self, holder: &Scope) -> SkillResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for skill in self.entities.list_deleted_skills(&system, &within(holder)).await?.items {
-            self.entities.purge_skill(&system, skill.id).await?;
+        for skill in self.skills.list_deleted(&system, &within(holder)).await?.items {
+            self.skills.purge(&system, skill.id).await?;
         }
         Ok(())
     }
