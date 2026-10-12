@@ -62,6 +62,7 @@ published before anyone else can take it.
 | [209](209-token-usage.md) | done | The tokens of each model call are recorded per message but summed up nowhere, and the model's context size is unknown, so nobody sees how full an agent's context is. |
 | [297](297-orderly-shutdown.md) | open | Caelumora ends without an orderly shutdown: a signal ends turns mid-step, breaks off streams and leaves the `local` shell's commands running. |
 | [307](307-load-and-performance-tests.md) | open | Nothing measures how Caelumora behaves under load, so its bottlenecks are guessed at, and a real model would hide them behind its own latency. |
+| [336](336-errors-of-a-plugin-shown-as-a-failure.md) | open | The core turns an error into what a person is told by the error types it knows, so what a plugin's error says is shown as a failure wherever it travels inside an `anyhow`. |
 
 ## Persistence
 
