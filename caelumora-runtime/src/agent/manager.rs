@@ -13,12 +13,13 @@
 //! the views show it as a former member, removed as its mark says.
 
 use crate::event::EventBus;
-use crate::scoped::{deleted_since, deleted_unless_refused, restored_unless_refused, within};
+use crate::scoped::{ScopeMember, deleted_since, deleted_unless_refused, restored_unless_refused, within};
+use async_trait::async_trait;
 use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
-use caelumora_model::store::{EntityStore, EntityStores, StateStore, StoreError, StoreResult, StoreResultExt};
+use caelumora_model::store::{EntityKind, EntityStore, EntityStores, StateStore, StoreError, StoreResult, StoreResultExt};
 use chrono::{DateTime, Utc};
 use std::fmt;
 use std::sync::Arc;
@@ -106,6 +107,13 @@ impl AgentManager {
         info!("Agent {} purged by {}", id, context.caller_id);
         Ok(true)
     }
+}
+
+#[async_trait]
+impl ScopeMember for AgentManager {
+    fn kind(&self) -> EntityKind {
+        Agent::KIND
+    }
 
     /// Deletes the agents that lie in `holder` or within it on behalf of
     /// `ctx` (`scoped`), as far as they may, and announces them as `delete`
@@ -115,7 +123,7 @@ impl AgentManager {
     /// # Errors
     /// Whatever else the store reports; what was deleted before stays
     /// deleted.
-    pub(crate) async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> StoreResult<usize> {
+    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> anyhow::Result<usize> {
         let system = SecurityContext::system();
         let mut left = 0;
         for agent in self.agents.list(&system, &within(holder)).await?.items {
@@ -136,10 +144,10 @@ impl AgentManager {
     /// # Errors
     /// Whatever else the store reports; what was restored before stays
     /// restored.
-    pub(crate) async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()> {
+    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> anyhow::Result<()> {
         let system = SecurityContext::system();
         for agent in deleted_since(self.agents.list_deleted(&system, &within(holder)).await?.items, since) {
-            if let Some(restored) = restored_unless_refused(self.agents.restore(ctx, agent.id).await, "agent", &agent.name)? {
+            if let Some(restored) = restored_unless_refused(self.agents.restore(ctx, agent.id).await, &agent)? {
                 self.events.publish(GlobalEvent::AgentRestored(restored.id), restored.security_attributes);
             }
         }
@@ -151,7 +159,7 @@ impl AgentManager {
     ///
     /// # Errors
     /// Whatever the stores report; what was purged before stays purged.
-    pub(crate) async fn purge_lying_in(&self, holder: &Scope) -> StoreResult<()> {
+    async fn purge_lying_in(&self, holder: &Scope) -> anyhow::Result<()> {
         let system = SecurityContext::system();
         for agent in self.agents.list_deleted(&system, &within(holder)).await?.items {
             self.agents.purge(&system, agent.id).await?;

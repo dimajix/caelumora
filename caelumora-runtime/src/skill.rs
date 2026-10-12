@@ -12,14 +12,16 @@
 //! reach it: read and cleared for (issues 312, 322).
 
 use crate::event::EventBus;
-use crate::scoped::{deleted_since, deleted_unless_refused, restored_unless_refused, within};
+use crate::scoped::{ScopeMember, deleted_since, deleted_unless_refused, restored_unless_refused, within};
+use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
 use caelumora_model::event::GlobalEvent;
+use caelumora_model::removal::Stored;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::skill::{Skill, SkillId, SkillUpdateEvent};
-use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResultExt};
+use caelumora_model::store::{EntityKind, EntityStore, EntityStores, StoreError, StoreResultExt};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::{Description, SkillBody};
 use caelumora_model::value::ValueError;
@@ -222,6 +224,13 @@ impl SkillManager {
         info!(skill = %id, by = %ctx.caller_id, "Skill purged");
         Ok(purged)
     }
+}
+
+#[async_trait]
+impl ScopeMember for SkillManager {
+    fn kind(&self) -> EntityKind {
+        Skill::KIND
+    }
 
     /// Deletes the skills that lie in `holder` or within it on behalf of
     /// `ctx` (`scoped`), as far as they may, and announces them as `delete`
@@ -230,7 +239,7 @@ impl SkillManager {
     /// # Errors
     /// Whatever else the store reports; what was deleted before stays
     /// deleted.
-    pub(crate) async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> SkillResult<usize> {
+    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> anyhow::Result<usize> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         let mut left = 0;
@@ -252,11 +261,11 @@ impl SkillManager {
     /// # Errors
     /// Whatever else the store reports; what was restored before stays
     /// restored.
-    pub(crate) async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> SkillResult<()> {
+    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> anyhow::Result<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         for skill in deleted_since(self.skills.list_deleted(&system, &within(holder)).await?.items, since) {
-            if let Some(restored) = restored_unless_refused(self.skills.restore(ctx, skill.id).await, "skill", &skill.name)? {
+            if let Some(restored) = restored_unless_refused(self.skills.restore(ctx, skill.id).await, &skill)? {
                 self.events.publish_classified(GlobalEvent::SkillRestored(restored.id), restored.security_attributes, std::slice::from_ref(&restored.classification));
             }
         }
@@ -268,7 +277,7 @@ impl SkillManager {
     ///
     /// # Errors
     /// Whatever the store reports; what was purged before stays purged.
-    pub(crate) async fn purge_lying_in(&self, holder: &Scope) -> SkillResult<()> {
+    async fn purge_lying_in(&self, holder: &Scope) -> anyhow::Result<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         for skill in self.skills.list_deleted(&system, &within(holder)).await?.items {

@@ -22,7 +22,7 @@ mod local;
 
 use crate::component::{ComponentError, ComponentResult};
 use crate::event::EventBus;
-use crate::scoped::{deleted_since, deleted_unless_refused, restored_unless_refused, within};
+use crate::scoped::{ScopeMember, deleted_since, deleted_unless_refused, restored_unless_refused, within};
 use crate::terminal::ByteStream;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
@@ -35,7 +35,7 @@ use caelumora_model::scope::Scope;
 use caelumora_model::security::{AclEntry, ActionType, Enforcement, Grant, SecurityAttributes, SecurityContext, SecurityManager, Subject, WRITE};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::group::{Group, GroupId};
-use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResultExt};
+use caelumora_model::store::{EntityKind, EntityStore, EntityStores, StoreError, StoreResultExt};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;
@@ -391,6 +391,13 @@ impl ArtifactManager {
         info!(artifact = %id, by = %ctx.caller_id, "Artifact purged");
         Ok(purged)
     }
+}
+
+#[async_trait]
+impl ScopeMember for ArtifactManager {
+    fn kind(&self) -> EntityKind {
+        Artifact::KIND
+    }
 
     /// Deletes the artifacts that lie in `holder` or within it, their
     /// content kept, on behalf of `ctx` (`scoped`), as far as they may, and
@@ -399,7 +406,7 @@ impl ArtifactManager {
     /// # Errors
     /// Whatever else the store reports; what was deleted before stays
     /// deleted.
-    pub(crate) async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> ArtifactResult<usize> {
+    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> anyhow::Result<usize> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         let mut left = 0;
@@ -421,11 +428,11 @@ impl ArtifactManager {
     /// # Errors
     /// Whatever else the store reports; what was restored before stays
     /// restored.
-    pub(crate) async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> ArtifactResult<()> {
+    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> anyhow::Result<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         for artifact in deleted_since(self.artifacts.list_deleted(&system, &within(holder)).await?.items, since) {
-            if let Some(restored) = restored_unless_refused(self.artifacts.restore(ctx, artifact.id).await, "artifact", &artifact.name)? {
+            if let Some(restored) = restored_unless_refused(self.artifacts.restore(ctx, artifact.id).await, &artifact)? {
                 self.events.publish_classified(GlobalEvent::ArtifactRestored(restored.id), restored.reader_attributes(), std::slice::from_ref(&restored.classification));
             }
         }
@@ -438,7 +445,7 @@ impl ArtifactManager {
     /// # Errors
     /// `UnknownStorage`, `Unavailable`, or whatever the store reports;
     /// what was purged before stays purged.
-    pub(crate) async fn purge_lying_in(&self, holder: &Scope) -> ArtifactResult<()> {
+    async fn purge_lying_in(&self, holder: &Scope) -> anyhow::Result<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         for artifact in self.artifacts.list_deleted(&system, &within(holder)).await?.items {

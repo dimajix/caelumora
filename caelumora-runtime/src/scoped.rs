@@ -8,11 +8,13 @@
 //! channel. `SessionManager` and `SessionLoop` are the callers, through
 //! `ScopedEntities`.
 //!
-//! What has an owner of its own - agents, workspaces, skills, artifacts and
-//! groups - is deleted, restored and purged by it (`…_lying_in`, issue
-//! 319): it announces what it deletes and restores as it announces its own
-//! deletions, and holds its lock of writing as it does. Personalities and
-//! session templates, which have none, are marked in the store here.
+//! Each kind that may lie in a scope is a `ScopeMember` (issue 323), kept
+//! by `ScopedEntities` in the order it was registered. What has an owner of
+//! its own - agents, workspaces, skills, artifacts and groups - is a member
+//! by its owner (`…_lying_in`, issue 319): it announces what it deletes and
+//! restores as it announces its own deletions, and holds its lock of
+//! writing as it does. Personalities and session templates, which have
+//! none, are members by their store (`Unowned`), which marks them alone.
 //!
 //! What lies in the scope is listed in the runtime's name, so that all of
 //! it is found, whatever the caller may read; nothing of the list reaches
@@ -28,37 +30,59 @@
 //! back all the same. Purging, the system's or an administrator's, is done
 //! in the runtime's name.
 
-use crate::agent::manager::AgentManager;
-use crate::artifact::ArtifactManager;
 use crate::group::GroupManager;
-use crate::skill::SkillManager;
-use crate::workspace::WorkspaceManager;
-use caelumora_model::removal::Stored;
+use crate::session::SessionError;
+use async_trait::async_trait;
+use caelumora_model::removal::{Deletable, Stored};
 use caelumora_model::scope::{Scope, ScopedField};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::query::Query;
-use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResult};
-use caelumora_model::value::name::ScopedName;
+use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResult};
 use chrono::{DateTime, Utc};
 use std::fmt;
 use std::sync::Arc;
 use tracing::{info, warn};
-use caelumora_model::agent::{Agent, Personality};
-use caelumora_model::artifact::Artifact;
-use caelumora_model::group::Group;
-use caelumora_model::template::SessionTemplate;
-use caelumora_model::skill::Skill;
-use caelumora_model::workspace::Workspace;
+
+/// A kind that may lie in a scope and goes with what holds it (issue 178):
+/// deleted, restored and purged with the session or channel whose scope it
+/// lies in. Implemented by the owner of the kind, which announces what it
+/// deletes and restores, or by `Unowned` for a kind without one.
+#[async_trait]
+pub(crate) trait ScopeMember: Send + Sync {
+    /// The kind this member deletes, restores and purges.
+    fn kind(&self) -> EntityKind;
+
+    /// Deletes what of its kind lies in `holder` or within it on behalf of
+    /// `ctx`, as far as they may; answers how many are left.
+    ///
+    /// # Errors
+    /// Whatever else the store or the owner reports; what was deleted
+    /// before stays deleted.
+    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> anyhow::Result<usize>;
+
+    /// Restores what of its kind lies in `holder` or within it and was
+    /// deleted at `since` or later on behalf of `ctx`. One whose name was
+    /// taken meanwhile stays deleted, as does one `ctx` may not restore.
+    ///
+    /// # Errors
+    /// Whatever else the store or the owner reports; what was restored
+    /// before stays restored.
+    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> anyhow::Result<()>;
+
+    /// Purges what of its kind lies in `holder` or within it and is
+    /// deleted, with what its owner purges with it, in the runtime's name.
+    ///
+    /// # Errors
+    /// Whatever the store or the owner reports; what was purged before
+    /// stays purged.
+    async fn purge_lying_in(&self, holder: &Scope) -> anyhow::Result<()>;
+}
 
 /// Deletes, restores and purges what lies in a scope with what holds it
-/// (issue 178), each kind by its owner where it has one (issue 319).
+/// (issue 178), each kind by its `ScopeMember`, in the order they were
+/// registered, and the groups last.
 pub(crate) struct ScopedEntities {
-    personalities: Arc<dyn EntityStore<Personality>>,
-    session_templates: Arc<dyn EntityStore<SessionTemplate>>,
-    agents: Arc<AgentManager>,
-    workspaces: Arc<WorkspaceManager>,
-    skills: Arc<SkillManager>,
-    artifacts: Arc<ArtifactManager>,
+    members: Vec<Arc<dyn ScopeMember>>,
     groups: Arc<GroupManager>,
 }
 
@@ -69,15 +93,11 @@ impl fmt::Debug for ScopedEntities {
 }
 
 impl ScopedEntities {
-    pub(crate) fn new(
-        stores: &EntityStores,
-        agents: Arc<AgentManager>,
-        workspaces: Arc<WorkspaceManager>,
-        skills: Arc<SkillManager>,
-        artifacts: Arc<ArtifactManager>,
-        groups: Arc<GroupManager>,
-    ) -> Self {
-        Self { personalities: Arc::clone(&stores.personalities), session_templates: Arc::clone(&stores.session_templates), agents, workspaces, skills, artifacts, groups }
+    /// Goes through `members` in their order, and through `groups` after
+    /// them: the groups of the participants are a rule of the scope as a
+    /// whole, not a member like the others.
+    pub(crate) fn new(members: Vec<Arc<dyn ScopeMember>>, groups: Arc<GroupManager>) -> Self {
+        Self { members, groups }
     }
 
     /// Deletes what lies in `holder` or within it on behalf of `ctx`, as
@@ -97,32 +117,21 @@ impl ScopedEntities {
     /// the store or an owner reports; what was deleted before stays
     /// deleted.
     pub(crate) async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> anyhow::Result<()> {
-        let system = SecurityContext::system();
-        let mut personalities = 0;
-        for personality in self.personalities.list(&system, &within(holder)).await?.items {
-            personalities += usize::from(!deleted_unless_refused(self.personalities.delete(ctx, personality.id).await)?);
+        let mut left = Vec::new();
+        for member in &self.members {
+            let count = member.delete_lying_in(ctx, holder).await?;
+            if count > 0 {
+                left.push((member.kind(), count));
+            }
         }
-        let mut templates = 0;
-        for template in self.session_templates.list(&system, &within(holder)).await?.items {
-            templates += usize::from(!deleted_unless_refused(self.session_templates.delete(ctx, template.id).await)?);
-        }
-        let mut left = vec![
-            (Personality::KIND, personalities),
-            (SessionTemplate::KIND, templates),
-            (Agent::KIND, self.agents.delete_lying_in(ctx, holder).await?),
-            (Workspace::KIND, self.workspaces.delete_lying_in(ctx, holder).await?),
-            (Skill::KIND, self.skills.delete_lying_in(ctx, holder).await?),
-            (Artifact::KIND, self.artifacts.delete_lying_in(ctx, holder).await?),
-        ];
-        left.retain(|(_, count)| *count > 0);
         if left.is_empty() {
             let groups = self.groups.delete_lying_in(ctx, holder).await?;
             if groups > 0 {
-                left.push((Group::KIND, groups));
+                left.push((self.groups.kind(), groups));
             }
         }
         if !left.is_empty() {
-            return Err(crate::session::SessionError::ScopeNotEmpty { holder: holder.clone(), left }.into());
+            return Err(SessionError::ScopeNotEmpty { holder: holder.clone(), left }.into());
         }
         Ok(())
     }
@@ -139,19 +148,10 @@ impl ScopedEntities {
     /// Whatever else the store or an owner reports; what was restored
     /// before stays restored.
     pub(crate) async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> anyhow::Result<()> {
-        let system = SecurityContext::system();
-        for personality in deleted_since(self.personalities.list_deleted(&system, &within(holder)).await?.items, since) {
-            restored_unless_refused(self.personalities.restore(ctx, personality.id).await, "personality", &personality.name)?;
+        for member in &self.members {
+            member.restore_lying_in(ctx, holder, since).await?;
         }
-        for template in deleted_since(self.session_templates.list_deleted(&system, &within(holder)).await?.items, since) {
-            restored_unless_refused(self.session_templates.restore(ctx, template.id).await, "session template", &template.name)?;
-        }
-        self.agents.restore_lying_in(ctx, holder, since).await?;
-        self.workspaces.restore_lying_in(ctx, holder, since).await?;
-        self.skills.restore_lying_in(ctx, holder, since).await?;
-        self.artifacts.restore_lying_in(ctx, holder, since).await?;
-        self.groups.restore_lying_in(ctx, holder, since).await?;
-        Ok(())
+        self.groups.restore_lying_in(ctx, holder, since).await
     }
 
     /// Purges what lies in `holder` or within it and is deleted, with what
@@ -162,18 +162,48 @@ impl ScopedEntities {
     /// Whatever the store or an owner reports; what was purged before stays
     /// purged.
     pub(crate) async fn purge_lying_in(&self, holder: &Scope) -> anyhow::Result<()> {
+        for member in &self.members {
+            member.purge_lying_in(holder).await?;
+        }
+        self.groups.purge_lying_in(holder).await
+    }
+}
+
+/// A kind without an owner of its own - personalities and session
+/// templates - as a `ScopeMember`: marked and purged in its store alone,
+/// with nothing announced.
+pub(crate) struct Unowned<T: Deletable + Send + Sync + 'static>(pub(crate) Arc<dyn EntityStore<T>>);
+
+#[async_trait]
+impl<T> ScopeMember for Unowned<T>
+where
+    T: Deletable + Send + Sync + 'static,
+    T::Field: ScopedField,
+{
+    fn kind(&self) -> EntityKind {
+        T::KIND
+    }
+
+    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> anyhow::Result<usize> {
+        let mut left = 0;
+        for entity in self.0.list(&SecurityContext::system(), &within(holder)).await?.items {
+            left += usize::from(!deleted_unless_refused(self.0.delete(ctx, entity.id()).await)?);
+        }
+        Ok(left)
+    }
+
+    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> anyhow::Result<()> {
+        for entity in deleted_since(self.0.list_deleted(&SecurityContext::system(), &within(holder)).await?.items, since) {
+            restored_unless_refused(self.0.restore(ctx, entity.id()).await, &entity)?;
+        }
+        Ok(())
+    }
+
+    async fn purge_lying_in(&self, holder: &Scope) -> anyhow::Result<()> {
         let system = SecurityContext::system();
-        for personality in self.personalities.list_deleted(&system, &within(holder)).await?.items {
-            self.personalities.purge(&system, personality.id).await?;
+        for entity in self.0.list_deleted(&system, &within(holder)).await?.items {
+            self.0.purge(&system, entity.id()).await?;
         }
-        for template in self.session_templates.list_deleted(&system, &within(holder)).await?.items {
-            self.session_templates.purge(&system, template.id).await?;
-        }
-        self.agents.purge_lying_in(holder).await?;
-        self.skills.purge_lying_in(holder).await?;
-        self.groups.purge_lying_in(holder).await?;
-        self.workspaces.purge_lying_in(holder).await?;
-        self.artifacts.purge_lying_in(holder).await?;
         Ok(())
     }
 }
@@ -187,17 +217,18 @@ pub(crate) fn deleted_unless_refused(deleted: StoreResult<bool>) -> StoreResult<
     }
 }
 
-/// What `restored` says was restored; `None` if it stays deleted: its name
-/// was taken meanwhile, or it is not the caller's to restore (issue 320).
-pub(crate) fn restored_unless_refused<T>(restored: StoreResult<T>, kind: &str, name: &ScopedName) -> StoreResult<Option<T>> {
+/// What `restored` says was restored of `deleted`; `None` if it stays
+/// deleted: its name was taken meanwhile, or it is not the caller's to
+/// restore (issue 320).
+pub(crate) fn restored_unless_refused<D: Stored, T>(restored: StoreResult<T>, deleted: &D) -> StoreResult<Option<T>> {
     match restored {
         Ok(value) => Ok(Some(value)),
         Err(StoreError::NameTaken { .. }) => {
-            warn!("The {} {} stays deleted: its name was taken while what holds its scope was deleted", kind, name);
+            warn!(kind = %D::KIND, id = %deleted.id(), "Stays deleted: its name was taken while what holds its scope was deleted");
             Ok(None)
         }
         Err(StoreError::NotFound { .. } | StoreError::PermissionDenied) => {
-            info!("The {} {} stays deleted: it is not the caller's to restore", kind, name);
+            info!(kind = %D::KIND, id = %deleted.id(), "Stays deleted: it is not the caller's to restore");
             Ok(None)
         }
         Err(e) => Err(e),

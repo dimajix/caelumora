@@ -25,13 +25,14 @@
 //! grants what they cannot tell to whom.
 
 use crate::event::EventBus;
-use crate::scoped::{deleted_since, deleted_unless_refused, restored_unless_refused, within};
+use crate::scoped::{ScopeMember, deleted_since, deleted_unless_refused, restored_unless_refused, within};
+use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::group::{Group, GroupId, GroupUpdateEvent};
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{AclEntry, ActionType, Enforcement, Grant, SecurityContext, SecurityManager, Subject};
-use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt};
+use caelumora_model::store::{EntityKind, EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt};
 use caelumora_model::user::{User, UserId};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::ValueError;
@@ -237,6 +238,13 @@ impl GroupManager {
         info!(group = %id, by = %ctx.caller_id, "Group purged");
         Ok(purged)
     }
+}
+
+#[async_trait]
+impl ScopeMember for GroupManager {
+    fn kind(&self) -> EntityKind {
+        Group::KIND
+    }
 
     /// Deletes the groups that lie in `holder` or within it - the
     /// participants of a session or channel among them - on behalf of `ctx`
@@ -246,7 +254,7 @@ impl GroupManager {
     /// # Errors
     /// Whatever else the store reports; what was deleted before stays
     /// deleted.
-    pub(crate) async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> GroupResult<usize> {
+    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> anyhow::Result<usize> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         let mut left = 0;
@@ -268,11 +276,11 @@ impl GroupManager {
     /// # Errors
     /// Whatever else the store reports; what was restored before stays
     /// restored.
-    pub(crate) async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> GroupResult<()> {
+    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> anyhow::Result<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         for group in deleted_since(self.groups.list_deleted(&system, &within(holder)).await?.items, since) {
-            if let Some(restored) = restored_unless_refused(self.groups.restore(ctx, group.id).await, "group", &group.name)? {
+            if let Some(restored) = restored_unless_refused(self.groups.restore(ctx, group.id).await, &group)? {
                 self.events.publish(GlobalEvent::GroupRestored(restored.id), restored.security_attributes);
             }
         }
@@ -284,7 +292,7 @@ impl GroupManager {
     ///
     /// # Errors
     /// Whatever the store reports; what was purged before stays purged.
-    pub(crate) async fn purge_lying_in(&self, holder: &Scope) -> GroupResult<()> {
+    async fn purge_lying_in(&self, holder: &Scope) -> anyhow::Result<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         for group in self.groups.list_deleted(&system, &within(holder)).await?.items {
