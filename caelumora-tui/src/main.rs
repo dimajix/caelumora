@@ -18,6 +18,7 @@ use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
 use caelumora_runtime::session::SessionManager;
 use caelumora_skills::plugin::SkillsPlugin;
+use caelumora_mcp::plugin::McpPlugin;
 use caelumora_runtime::view::Viewer;
 use clap::Parser;
 use caelumora_runtime::logging::{self, LogTarget};
@@ -440,7 +441,7 @@ struct Args {
 
 /// The plugins the terminal builds its runtime with (issue 323).
 fn plugins() -> Vec<Box<dyn Plugin>> {
-    vec![Box::new(SkillsPlugin)]
+    vec![Box::new(SkillsPlugin), Box::new(McpPlugin)]
 }
 
 #[tokio::main]

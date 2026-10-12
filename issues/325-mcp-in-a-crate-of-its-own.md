@@ -1,6 +1,6 @@
 # 325 — The MCP integration is part of the runtime crate
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -60,3 +60,13 @@ alone.
 
 - **2026-10-12** — Opened from the discussion of which subjects besides skills could move into
   crates of their own (issue 323), as the cheapest of them and a first plugin for the composition.
+- **2026-10-12** — Done, after step 11 of issue 323, as its second plugin. `caelumora-mcp` holds
+  the kind (`tool`), its tests and `tests/mcp_tool_integration.rs`, which builds its runtime with
+  the plugin; `McpPlugin` registers the kind alone. The runtime builds without `rmcp`, and needed
+  nothing made visible for it: what `mcp_tool` uses was public already. Decided by the maintainer
+  how a plugin without routes is listed: `caelumora-app` keeps two lists, `rest_plugins()` for the
+  plugins that serve routes and `plugins()` for the others, and builds its runtime with both -
+  rather than a default for `RestPlugin::routes`, which would make the crate depend on the REST
+  server, or a wrapper type in the server. `docs/COMPONENTS.md` says what a component kind outside
+  the core may use; `docs/TOOLS.md` where the kind lives, and now names `endpoint` in its example,
+  which had still shown the parameters before `RemoteEndpoint`.

@@ -1,23 +1,26 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use caelumora_model::agent::AgentId;
+use caelumora_mcp::plugin::McpPlugin;
+use caelumora_mcp::tool::MCP_TOOL_KIND;
+use caelumora_model::actor::ActorId;
+use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy, StoredComponents};
+use caelumora_model::confidentiality::{Classification, Confidentiality, ConfidentialityRules};
+use caelumora_model::config::AppConfig;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{DummySecurityManager, SecurityContext};
-use caelumora_model::store::ComponentStore;
-use caelumora_model::store::memory::MemoryStore;
-use caelumora_model::actor::ActorId;
 use caelumora_model::session::{ChannelId, Session, SessionId};
+use caelumora_model::store::memory::MemoryStore;
+use caelumora_model::store::ComponentStore;
 use caelumora_model::value::name::Name;
 use caelumora_runtime::agent::state::AgentStates;
+use caelumora_runtime::agent::turn::Turn;
 use caelumora_runtime::command::CommandExecutor;
-use caelumora_runtime::runtime::ChannelRuntime;
-use caelumora_runtime::view::ViewsFactory;
-use caelumora_runtime::component::{ComponentContainer, ComponentContext};
-use caelumora_runtime::tool::mcp_tool;
-use caelumora_runtime::runtime::RuntimeManager;
+use caelumora_runtime::component::{ComponentContainer, ComponentContext, ComponentRegistry, PRECONFIGURED_REF_KIND};
+use caelumora_runtime::runtime::{ChannelRuntime, RuntimeBuilder, RuntimeManager};
 use caelumora_runtime::tool::ToolProvider;
+use caelumora_runtime::view::ViewsFactory;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, ServerConfig};
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
@@ -26,9 +29,6 @@ use rmcp::{tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
-use caelumora_model::confidentiality::ConfidentialityRules;
-use caelumora_model::config::AppConfig;
-use caelumora_runtime::component::ComponentRegistry;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct EchoArgs {
@@ -75,18 +75,26 @@ async fn start_test_server() -> (SocketAddr, tokio::task::JoinHandle<()>) {
     (addr, handle)
 }
 
+/// A runtime over `store` with the plugin of MCP servers, as the programs
+/// build theirs.
+fn runtime(store: &Arc<MemoryStore>) -> RuntimeManager {
+    let security = Arc::new(DummySecurityManager::new());
+    let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&security)));
+    let mut builder = RuntimeBuilder::new(Arc::<MemoryStore>::clone(store), Arc::<MemoryStore>::clone(store), secrets, security, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(store))).unwrap();
+    builder.plugin(&McpPlugin).unwrap();
+    builder.build().unwrap()
+}
+
 /// A container with one MCP tool component configured with `params`.
 async fn build_container(params: serde_json::Value) -> ComponentContainer {
-    let store = Arc::new(MemoryStore::new());
-    let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-    let runtime_manager = RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap();
+    let runtime_manager = runtime(&Arc::new(MemoryStore::new()));
     let registry = runtime_manager.component_registry();
     let context = ComponentContext::new(SecurityContext::default(), runtime_manager.services().clone());
 
     let config = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
             id: "test-echo".to_string(),
-            kind: mcp_tool::MCP_TOOL_KIND.to_string(),
+            kind: MCP_TOOL_KIND.to_string(),
             params,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailOpen,
@@ -99,9 +107,7 @@ async fn build_container(params: serde_json::Value) -> ComponentContainer {
 /// What a turn outside of a running session navigates: the views of an
 /// actor in a channel that is attached to no session, so they reach none.
 fn detached_views() -> ViewsFactory {
-    let store = Arc::new(MemoryStore::new());
-    let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-    let runtime_manager = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+    let runtime_manager = Arc::new(runtime(&Arc::new(MemoryStore::new())));
     let now = chrono::Utc::now();
     let session = Session {
         summary: None, briefing: None,
@@ -143,12 +149,12 @@ async fn discovers_and_calls_echo_tool_over_streamable_http() {
     assert_eq!(provider.description(), "Echo messages back, for testing.", "what the server says of itself");
     assert!(provider.unavailable().is_none());
 
-    let mut agent_channel_state = caelumora_model::agent::AgentChannelState::default();
+    let mut agent_channel_state = AgentChannelState::default();
     agent_channel_state.begin_turn(Default::default(), Default::default(), Default::default(), Vec::new(), Default::default());
     let states = AgentStates::new(Arc::new(MemoryStore::new()), Arc::new(()));
     let agent_id = AgentId::default();
     let agent_state = states.get(agent_id, Default::default()).await.expect("the state of the agent was loaded");
-    let mut turn = caelumora_runtime::agent::turn::Turn::of(agent_id, "test-agent".to_string(), &mut agent_channel_state, agent_state, detached_views()).expect("a turn was begun");
+    let mut turn = Turn::of(agent_id, "test-agent".to_string(), &mut agent_channel_state, agent_state, detached_views()).expect("a turn was begun");
 
     let result = provider
         .execute("test-echo__echo", &json!({ "message": "hello mcp" }), None, &mut turn)
@@ -173,7 +179,7 @@ async fn a_configured_approval_and_classification_reach_every_discovered_tool() 
     let tools = provider.tools();
     assert!(!tools.is_empty(), "the server's tools are discovered");
     assert!(tools.iter().all(|t| !t.requires_approval), "no tool of this server needs approval: {tools:?}");
-    let confidential = caelumora_model::confidentiality::Classification::general(caelumora_model::confidentiality::Confidentiality::Confidential);
+    let confidential = Classification::general(Confidentiality::Confidential);
     assert!(tools.iter().all(|t| t.classification.as_ref() == Some(&confidential)), "and so does the classification: {tools:?}");
 }
 
@@ -197,7 +203,6 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
     let url = format!("http://{}/mcp", addr);
 
     let store = Arc::new(MemoryStore::new());
-    let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
 
     // Preconfigured components live in the ComponentStore rather than in application-level
     // config, so seed it directly.
@@ -207,7 +212,7 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
             &StoredComponents::new("shared-echo", ComponentConfig {
                 component_nodes: vec![ComponentDescriptor {
                     id: "shared-echo".to_string(),
-                    kind: mcp_tool::MCP_TOOL_KIND.to_string(),
+                    kind: MCP_TOOL_KIND.to_string(),
                     params: json!({ "endpoint": { "url": url } }),
                     tags: vec![],
                     fail_policy: ComponentFailPolicy::FailOpen,
@@ -217,14 +222,14 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
         .await
         .unwrap();
 
-    let runtime_manager = RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap();
+    let runtime_manager = runtime(&store);
     let registry = runtime_manager.component_registry();
     let context = ComponentContext::new(SecurityContext::default(), runtime_manager.services().clone());
 
     let ref_config = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
             id: "github-tool".to_string(),
-            kind: caelumora_runtime::component::PRECONFIGURED_REF_KIND.to_string(),
+            kind: PRECONFIGURED_REF_KIND.to_string(),
             params: json!({ "id": "shared-echo" }),
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailOpen,

@@ -7,6 +7,7 @@ edition = "2021"
 caelumora-model = { path = "../caelumora-model" }
 caelumora-runtime = { path = "../caelumora-runtime" }
 caelumora-skills = { path = "../caelumora-skills", default-features = false, features = ["runtime"] }
+caelumora-mcp = { path = "../caelumora-mcp" }
 clap = { version = "4.6.7", features = ["derive"] }
 tokio = { version = "1.53.1", features = ["full"] }
 rustyline = "18.0.1"

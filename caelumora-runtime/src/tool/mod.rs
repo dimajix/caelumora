@@ -8,7 +8,6 @@ pub mod artifact_tool;
 pub mod ask_user_tool;
 pub mod calculator_tool;
 pub mod echo_tool;
-pub mod mcp_tool;
 mod providers;
 pub mod sleep_tool;
 pub mod stop_tool;
@@ -658,7 +657,6 @@ pub fn register_all(registry: &mut ComponentRegistry) {
     ask_user_tool::register(registry);
     calculator_tool::register(registry);
     echo_tool::register(registry);
-    mcp_tool::register(registry);
     sleep_tool::register(registry);
     stop_tool::register(registry);
     terminal_tool::register(registry);

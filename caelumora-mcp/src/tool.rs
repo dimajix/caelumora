@@ -1,13 +1,13 @@
-use crate::agent::turn::Turn;
-use caelumora_model::question::Answers;
-use caelumora_model::confidentiality::Classification;
-use crate::component::{config_of_params, ComponentFacets, ComponentRegistry, ComponentKind};
-use caelumora_model::remote::RemoteEndpoint;
-use crate::tool::{ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
+use caelumora_model::confidentiality::Classification;
+use caelumora_model::question::Answers;
+use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::secret::{SecretError, SecretManager};
-use caelumora_model::tool::{Tool, ToolVisibility, ToolParameters};
-use rmcp::model::{CallToolRequestParams, ToolAnnotations};
+use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
+use caelumora_runtime::agent::turn::Turn;
+use caelumora_runtime::component::{config_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
+use caelumora_runtime::tool::{ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
+use rmcp::model::{CallToolRequestParams, CallToolResult, ToolAnnotations};
 use rmcp::service::RunningService;
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use rmcp::transport::StreamableHttpClientTransport;
@@ -238,7 +238,7 @@ fn schema_to_tool_parameters(schema: &Value) -> ToolParameters {
     }
 }
 
-fn call_tool_result_to_value(name: &str, result: rmcp::model::CallToolResult) -> McpResult<Value> {
+fn call_tool_result_to_value(name: &str, result: CallToolResult) -> McpResult<Value> {
     let text: String = result
         .content
         .iter()
@@ -363,6 +363,8 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::confidentiality::Confidentiality;
+    use caelumora_model::remote::RemoteAuthConfig;
     use caelumora_model::security::DummySecurityManager;
     use serde_json::json;
 
@@ -385,7 +387,7 @@ mod tests {
         assert_eq!(config.endpoint.url, "http://127.0.0.1:1234/mcp");
         assert_eq!(config.timeout(), Duration::from_secs(5));
         match config.endpoint.auth {
-            Some(caelumora_model::remote::RemoteAuthConfig::Bearer { secret }) => assert_eq!(secret, "MY_TOKEN"),
+            Some(RemoteAuthConfig::Bearer { secret }) => assert_eq!(secret, "MY_TOKEN"),
             _ => panic!("Expected Bearer auth"),
         }
     }
@@ -440,7 +442,7 @@ mod tests {
         // Issue 180: the server is cleared for what is configured, public
         // unless configured.
         assert_eq!(provider.destination(), Some(Classification::PUBLIC));
-        let internal = Classification::general(caelumora_model::confidentiality::Confidentiality::Internal);
+        let internal = Classification::general(Confidentiality::Internal);
         let cleared = McpToolProvider { config: McpToolConfig { destination: Some(internal.clone()), ..provider.config.clone() }, ..provider };
         assert_eq!(cleared.destination(), Some(internal));
         let configured: McpToolConfig = serde_json::from_value(json!({ "endpoint": { "url": "x" }, "destination": { "level": "confidential" } })).unwrap();

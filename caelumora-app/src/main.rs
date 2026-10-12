@@ -4,6 +4,7 @@
 //! `/`, from the binary.
 
 use axum::Router;
+use caelumora_mcp::plugin::McpPlugin;
 use caelumora_model::config::AppConfig;
 use caelumora_rest_server::auth::{Auth, TokenService};
 use caelumora_rest_server::error::{self, ApiError};
@@ -12,7 +13,8 @@ use caelumora_rest_server::routes;
 use caelumora_rest_server::state::AppState;
 use caelumora_runtime::event::EventBus;
 use caelumora_runtime::logging::{self, LogTarget};
-use caelumora_runtime::runtime::RuntimeBuilder;
+use caelumora_runtime::plugin::Plugin;
+use caelumora_runtime::runtime::{RuntimeBuilder, RuntimeManager};
 use caelumora_runtime::session::SessionManager;
 use caelumora_skills::plugin::SkillsPlugin;
 use clap::Parser;
@@ -47,12 +49,8 @@ async fn main() -> anyhow::Result<()> {
 
     logging::init(&config.logging, LogTarget::Stderr, "info,tower_http=debug,axum::rejection=trace")?;
 
-    let plugins = plugins();
-    let mut builder = RuntimeBuilder::from_config(&config)?;
-    for plugin in &plugins {
-        builder.plugin(plugin.as_ref())?;
-    }
-    let runtime_manager = Arc::new(builder.build()?);
+    let rest_plugins = rest_plugins();
+    let runtime_manager = Arc::new(build(RuntimeBuilder::from_config(&config)?, &rest_plugins)?);
     let session_manager = Arc::new(SessionManager::new(Arc::clone(&runtime_manager)));
     // Users are recorded and their changes announced on the runtime's event
     // bus (issue 306), so the user manager comes after the runtime.
@@ -90,7 +88,7 @@ async fn main() -> anyhow::Result<()> {
         )
     });
     // The request id is set inside the request span, which is the outer layer.
-    let app = app(routes::api(state, &plugins))
+    let app = app(routes::api(state, &rest_plugins))
         .layer(axum::middleware::from_fn(error::request_id))
         .layer(trace_layer);
 
@@ -101,10 +99,28 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The plugins of the program (issue 323), which it builds its runtime and
-/// its API with.
-fn plugins() -> Vec<Box<dyn RestPlugin>> {
+/// The plugins of the program that serve routes (issue 323), which it
+/// builds its runtime and its API with.
+fn rest_plugins() -> Vec<Box<dyn RestPlugin>> {
     vec![Box::new(SkillsPlugin)]
+}
+
+/// The plugins of the program that bring no routes (issue 325), which only
+/// its runtime is built with.
+fn plugins() -> Vec<Box<dyn Plugin>> {
+    vec![Box::new(McpPlugin)]
+}
+
+/// The runtime of `builder`, with every plugin of the program: `rest_plugins`
+/// and those without routes.
+fn build(mut builder: RuntimeBuilder, rest_plugins: &[Box<dyn RestPlugin>]) -> anyhow::Result<RuntimeManager> {
+    for plugin in rest_plugins {
+        builder.plugin(plugin.as_ref())?;
+    }
+    for plugin in plugins() {
+        builder.plugin(plugin.as_ref())?;
+    }
+    builder.build()
 }
 
 /// What the program serves: `api` under `/api`, where a path no route
@@ -124,7 +140,9 @@ mod tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use axum::routing::get;
+    use caelumora_mcp::tool::MCP_TOOL_KIND;
     use caelumora_model::actor::ActorId;
+    use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::security::{DummySecurityManager, SecurityContext};
     use caelumora_model::secret::SecretManager;
     use caelumora_model::store::memory::MemoryStore;
@@ -135,7 +153,9 @@ mod tests {
     use caelumora_runtime::component::{ComponentContainer, ComponentContext, ComponentRegistry};
     use caelumora_runtime::runtime::RuntimeManager;
     use caelumora_runtime::seed::Seed;
+    use caelumora_runtime::tool::ToolProvider;
     use caelumora_skills::skill::Skill;
+    use serde_json::json;
     use std::path::Path;
     use tower::ServiceExt;
 
@@ -151,11 +171,8 @@ mod tests {
         let config = AppConfig::load(example("config.yaml")).unwrap();
         let security = Arc::new(DummySecurityManager::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&security)));
-        let mut builder = RuntimeBuilder::new(Arc::<MemoryStore>::clone(store), Arc::<MemoryStore>::clone(store), secrets, security, config.create_confidentiality_policy(), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(store))).unwrap();
-        for plugin in plugins() {
-            builder.plugin(plugin.as_ref()).unwrap();
-        }
-        builder.build().unwrap()
+        let builder = RuntimeBuilder::new(Arc::<MemoryStore>::clone(store), Arc::<MemoryStore>::clone(store), secrets, security, config.create_confidentiality_policy(), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(store))).unwrap();
+        build(builder, &rest_plugins()).unwrap()
     }
 
     #[tokio::test]
@@ -209,6 +226,20 @@ mod tests {
             ComponentContainer::from_config(&personality.components, runtime.component_registry(), &context).await
                 .unwrap_or_else(|e| panic!("personality {} cannot be built: {e}", personality.name));
         }
+    }
+
+    /// A personality that names `mcp_tool` is built as before the kind
+    /// moved into its plugin (issue 325): its tool set, unavailable while
+    /// nobody answers at the endpoint.
+    #[tokio::test]
+    async fn the_tools_of_an_mcp_server_are_a_component_of_the_program() {
+        let runtime = runtime(&Arc::new(MemoryStore::new()));
+        let context = ComponentContext::new(SecurityContext::system(), runtime.services().clone());
+        let config = ComponentConfig { component_nodes: vec![ComponentDescriptor { params: json!({ "endpoint": { "url": "http://127.0.0.1:1/mcp" } }), ..ComponentDescriptor::new("tracker", MCP_TOOL_KIND) }] };
+        let container = ComponentContainer::from_config(&config, runtime.component_registry(), &context).await.expect("the kind is known");
+        let tools = container.get_all::<dyn ToolProvider>(None);
+        assert_eq!(tools.len(), 1);
+        assert!(tools[0].unavailable().is_some());
     }
 
     async fn status_of(app: &Router, uri: &str) -> (StatusCode, Option<String>) {

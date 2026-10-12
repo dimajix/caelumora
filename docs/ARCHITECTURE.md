@@ -30,6 +30,8 @@ The project is a Rust workspace, with a web UI next to it:
     the binary (feature `web-ui`, on by default).
 *   **`caelumora-skills`** - skills, the first plugin (see [Plugins](#plugins)): the entity, its
     manager, component, views and routes, in layers by Cargo features.
+*   **`caelumora-mcp`** - the tools of MCP servers, a plugin that brings nothing but its component
+    kind `mcp_tool`, and with it `rmcp` (issue 325). See [TOOLS.md](TOOLS.md#mcp-servers).
 *   **`caelumora-web-ui`** - the browser frontend (React, TypeScript), built on the REST API and
     served by `caelumora-app`. See [WEB-UI.md](WEB-UI.md).
 *   **`caelumora-tui`** - a terminal frontend that runs the runtime in its own process.
@@ -48,7 +50,8 @@ the members of a scope, and its sections of the configuration and of the seed. O
 extension trait on the runtime's `Views`, built from what they open. Which plugins are in is the
 program's choice: `caelumora-app` and `caelumora-tui` each list theirs; the core knows none. A
 plugin is one crate, cut into layers by Cargo features rather than crates. The first is
-`caelumora-skills` ([SKILLS.md](SKILLS.md#where-the-code-lives)).
+`caelumora-skills` ([SKILLS.md](SKILLS.md#where-the-code-lives)); `caelumora-mcp` is one that
+brings a component kind alone ([TOOLS.md](TOOLS.md#mcp-servers)).
 
 Details: [COMPONENTS.md](COMPONENTS.md#plugins).
 
