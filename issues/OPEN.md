@@ -105,6 +105,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [325](325-mcp-in-a-crate-of-its-own.md) | open | The MCP integration is part of the runtime crate, so `rmcp` is built into everything that uses the runtime, though the core knows `mcp_tool` only as a component kind. |
 | [326](326-a2a-in-a-crate-of-its-own.md) | open | The A2A protocol is part of the runtime crate, though the core reaches external agents only through the `ExternalAgent` facet and names no protocol. |
 | [327](327-open-terminal-in-a-crate-of-its-own.md) | open | The Open Terminal storages of workspaces are part of the runtime crate and named in `StorageConfig`, so `bollard` is built into everything that uses the runtime. |
+| [328](328-artifacts-in-a-crate-of-their-own.md) | open | Artifacts are enumerated in the core like skills, and need seams skills do not - the channel's view, an event that carries a version, a verb shared with workspaces, a dependency on workspaces. |
 
 ## Open architecture questions
 
