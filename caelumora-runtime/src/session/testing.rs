@@ -151,7 +151,7 @@ pub(crate) async fn create(manager: &SessionManager, ctx: &SecurityContext, sess
 /// Stores `session` and its main channel without starting it.
 pub(crate) async fn persist(runtime: &Arc<RuntimeManager>, ctx: &SecurityContext, session: &Session) {
     runtime.entity_store().create_session(ctx, session).await.unwrap();
-    runtime.entity_store().create_channel(ctx, &main_channel(session)).await.unwrap();
+    runtime.entity_stores().channels.create(ctx, &main_channel(session)).await.unwrap();
 }
 
 /// Drain every event currently buffered on the receiver.

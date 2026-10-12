@@ -442,7 +442,6 @@ mod tests {
     use caelumora_model::secret::SecretManager;
     use caelumora_model::security::{OwnershipSecurityManager, SecurityManager};
     use caelumora_model::session::SessionId;
-    use caelumora_model::store::Entities;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::tool::ToolCall;
     use caelumora_model::user::{User, UserId};
@@ -518,7 +517,7 @@ mod tests {
             deleted: None,
             former: Vec::new(),
         };
-        store.create_channel(&system, &channel).await.unwrap();
+        store.entity_stores().channels.create(&system, &channel).await.unwrap();
         let executor = CommandExecutor::empty(Arc::clone(runtime.security_manager()));
         let session_id = channel.session_id;
         let channel = ChannelLoop::new(channel, ChannelRuntime::outside_a_session(Arc::clone(&runtime), Arc::new(executor), session_id)).await.unwrap();

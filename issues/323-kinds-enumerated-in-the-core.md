@@ -617,3 +617,9 @@ longer the facade; the `ChannelLoop` keeps it for whether a participant still ex
 (`agent_exists`, `Member::of`), and the `ChannelRuntime` hands out `EntityStores` rather than the
 facade; templates find and make agents in it, the views read them from it.
 
+Step 3k: channels on their own store. The `SessionLoop` and the `SessionManager` make, restore,
+delete and purge channels in it through their `EntityStores`; the `ChannelController` keeps it and
+no longer the facade, the `WorkspaceManager` keeps it for where a workspace is used, and the views
+of a session read channels from it. `Views::entities` is gone: the views read the facade only for
+sessions now.
+

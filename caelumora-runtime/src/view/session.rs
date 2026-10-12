@@ -182,7 +182,7 @@ impl SessionView {
         match &self.running {
             Some(session_loop) => Ok(session_loop.channel_by_id(id).map(|channel_loop| (Arc::clone(&channel_loop.channel()), Some(channel_loop)))),
             None if self.session.channels.contains(&id) => {
-                let channel = self.views.entities().get_channel(&SecurityContext::system(), id).await
+                let channel = self.views.stores().channels.get(&SecurityContext::system(), id).await
                     .map_err(|e| ViewError::failed(e, format!("reading channel {id}")))?;
                 Ok(Some((Arc::new(channel), None)))
             }
@@ -198,11 +198,11 @@ impl SessionView {
                 .map(|channel_loop| (Arc::clone(&channel_loop.channel()), Some(channel_loop)))
                 .collect(),
             None => {
-                let store = self.views.entities();
+                let store = &self.views.stores().channels;
                 let system = SecurityContext::system();
                 let mut channels = Vec::with_capacity(self.session.channels.len());
                 for id in &self.session.channels {
-                    match store.get_channel(&system, *id).await {
+                    match store.get(&system, *id).await {
                         Ok(channel) => channels.push((Arc::new(channel), None)),
                         Err(e) => warn!("Cannot read channel {} of session {}: {}", id, self.session.id, e),
                     }
@@ -294,7 +294,7 @@ impl SessionView {
         let context = views.context();
         let failed = |e| ViewError::failed(e, format!("listing the deleted channels of session {}", self.id()));
         let of_this = Query::filtered(Filter::eq(ChannelField::Session, self.id()));
-        let channels = views.entities().list_deleted_channels(context, &of_this).await.map_err(failed)?.items;
+        let channels = views.stores().channels.list_deleted(context, &of_this).await.map_err(failed)?.items;
         let may_change = self.may_change().await;
         let mut deleted = Vec::new();
         for channel in channels {

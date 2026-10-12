@@ -200,7 +200,7 @@ mod tests {
             deleted: None,
         };
         store.create_session(&system, &session).await.unwrap();
-        store.create_channel(&system, &channel).await.unwrap();
+        store.entity_stores().channels.create(&system, &channel).await.unwrap();
         let session_loop = SessionLoop::new(session.clone(), vec![channel.clone()], Arc::clone(&runtime)).await.unwrap();
 
         let context = SecurityContext::default().next(ActorId::Agent(agent.id), ActorId::None);

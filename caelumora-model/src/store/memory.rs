@@ -1,6 +1,6 @@
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality};
 use crate::artifact::Artifact;
-use crate::channel::{Channel, ChannelField, ChannelId, ChannelState};
+use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::StoredComponents;
 use crate::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
 use crate::group::Group;
@@ -32,7 +32,7 @@ pub struct MemoryStore {
     session_templates: Arc<MemoryEntityStore<SessionTemplate>>,
     agents: Arc<MemoryEntityStore<Agent>>,
     sessions: MemoryEntityStore<Session>,
-    channels: MemoryEntityStore<Channel>,
+    channels: Arc<MemoryEntityStore<Channel>>,
     users: Arc<MemoryEntityStore<User>>,
     user_profiles: Arc<MemoryEntityStore<UserProfile>>,
     workspaces: Arc<MemoryEntityStore<Workspace>>,
@@ -68,7 +68,7 @@ impl MemoryStore {
             session_templates: Arc::new(MemoryEntityStore::new(&policies)),
             agents: Arc::new(MemoryEntityStore::new(&policies)),
             sessions: MemoryEntityStore::new(&policies),
-            channels: MemoryEntityStore::new(&policies),
+            channels: Arc::new(MemoryEntityStore::new(&policies)),
             users: Arc::new(MemoryEntityStore::new(&policies)),
             user_profiles: Arc::new(MemoryEntityStore::new(&policies)),
             workspaces: Arc::new(MemoryEntityStore::new(&policies)),
@@ -98,6 +98,7 @@ impl MemoryStore {
             personalities: Arc::<MemoryEntityStore<Personality>>::clone(&self.personalities),
             users: Arc::<MemoryEntityStore<User>>::clone(&self.users),
             agents: Arc::<MemoryEntityStore<Agent>>::clone(&self.agents),
+            channels: Arc::<MemoryEntityStore<Channel>>::clone(&self.channels),
         }
     }
 }
@@ -306,33 +307,6 @@ impl Entities for MemoryStore {
     }
     async fn list_deleted_sessions(&self, ctx: &SecurityContext, query: &Query<SessionField>) -> StoreResult<Page<Session>> {
         self.sessions.list_deleted(ctx, query).await
-    }
-    async fn create_channel(&self, ctx: &SecurityContext, value: &Channel) -> StoreResult<()> {
-        self.channels.create(ctx, value).await
-    }
-    async fn get_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel> {
-        self.channels.get(ctx, id).await
-    }
-    async fn update_channel(&self, ctx: &SecurityContext, value: &Channel) -> StoreResult<()> {
-        self.channels.update(ctx, value).await
-    }
-    async fn delete_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool> {
-        self.channels.delete(ctx, id).await
-    }
-    async fn list_channels(&self, ctx: &SecurityContext, query: &Query<ChannelField>) -> StoreResult<Page<Channel>> {
-        self.channels.list(ctx, query).await
-    }
-    async fn restore_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel> {
-        self.channels.restore(ctx, id).await
-    }
-    async fn purge_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool> {
-        self.channels.purge(ctx, id).await
-    }
-    async fn get_deleted_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel> {
-        self.channels.get_deleted(ctx, id).await
-    }
-    async fn list_deleted_channels(&self, ctx: &SecurityContext, query: &Query<ChannelField>) -> StoreResult<Page<Channel>> {
-        self.channels.list_deleted(ctx, query).await
     }
 }
 

@@ -354,7 +354,7 @@ impl World {
         // (issue 286).
         self.store.create_session(&Self::system(), &session).await.unwrap();
         self.runtime.entity_stores().groups.create(&Self::system(), &Group::of_session(&session)).await.unwrap();
-        self.store.create_channel(&Self::system(), &channel).await.unwrap();
+        self.runtime.entity_stores().channels.create(&Self::system(), &channel).await.unwrap();
         self.runtime.entity_stores().groups.create(&Self::system(), &Group::of_channel(&channel)).await.unwrap();
         self.manager.open_session(&Self::as_user(self.alice), session.id).await.expect("alice opens her session")
     }

@@ -231,7 +231,7 @@ impl SessionManager {
         let made = async {
             keep_participants(self.stores.groups.as_ref(), Group::of_session(&session)).await?;
             for channel in &channels {
-                store.create_channel(context, channel).await?;
+                self.stores.channels.create(context, channel).await?;
                 keep_participants(self.stores.groups.as_ref(), Group::of_channel(channel)).await?;
             }
             Ok::<_, StoreError>(())
@@ -264,11 +264,10 @@ impl SessionManager {
     /// session the caller may read follows from an action already permitted,
     /// and it must not fail because the caller is not in one of its channels.
     async fn load_channels(&self, session: &Session) -> Result<Vec<Channel>> {
-        let store = &self.stores.entities;
         let system = SecurityContext::system();
         let mut channels = Vec::with_capacity(session.channels.len());
         for id in &session.channels {
-            channels.push(store.get_channel(&system, *id).await?);
+            channels.push(self.stores.channels.get(&system, *id).await?);
         }
         Ok(channels)
     }
@@ -447,7 +446,7 @@ impl SessionManager {
         }
         let mut channels = session.channels.clone();
         let of_it = Query::filtered(Filter::eq(ChannelField::Session, id));
-        channels.extend(store.list_deleted_channels(&SecurityContext::system(), &of_it).await?.items.into_iter().map(|c| c.id));
+        channels.extend(self.stores.channels.list_deleted(&SecurityContext::system(), &of_it).await?.items.into_iter().map(|c| c.id));
         // The state lives in the `StateStore`, which may be another store
         // than the session's.
         let state_store = self.runtime_manager.state_store();
@@ -701,13 +700,13 @@ mod tests {
         let mut stopped = make_session("stopped", ActorId::None);
         stopped.participants = vec![Participant::Agent(helper.id)];
         store.create_session(&system, &stopped).await.unwrap();
-        store.create_channel(&system, &Channel { participants: vec![Participant::Agent(helper.id)], ..main_channel(&stopped) }).await.unwrap();
+        runtime.entity_stores().channels.create(&system, &Channel { participants: vec![Participant::Agent(helper.id)], ..main_channel(&stopped) }).await.unwrap();
 
         assert!(agents.delete(&ctx, helper.id).await.expect("deleted"));
         until(|| !talk.actor_ids().contains(&actor), "its actor stops in the running channel").await;
         let rests = |channel: &Channel| channel.participants.iter().any(|p| p.actor_id() == actor) && !channel.former.iter().any(|f| f.participant.actor_id() == actor);
         assert!(rests(&talk.channel()), "it rests in the running channel");
-        assert!(rests(&store.get_channel(&system, stopped.channels[0]).await.unwrap()), "and in the stopped one");
+        assert!(rests(&runtime.entity_stores().channels.get(&system, stopped.channels[0]).await.unwrap()), "and in the stopped one");
         assert!(runtime.entity_stores().agents.get(&system, helper.id).await.is_err(), "it is not there");
         let views = manager.views(Viewer::new(ctx.clone()));
         let reached = views.channel_of(running.id(), talk.id()).await.unwrap().there().unwrap();
@@ -802,7 +801,6 @@ mod tests {
 
         let runtime = test_runtime();
         let manager = SessionManager::new(Arc::clone(&runtime));
-        let store = runtime.entity_store();
         let owner = UserId::new();
         runtime.entity_stores().users.create(&SecurityContext::system(), &User { id: owner, username: Name::new("alice").unwrap(), email: String::new(), roles: Vec::new(), deleted: None }).await.unwrap();
         let template = SessionTemplate {
@@ -842,7 +840,7 @@ mod tests {
         let main = session.channel_by_name("main").expect("the template's channel runs");
         assert!(main.user_actor(owner).is_some(), "the owner is the template's \"user\"");
         assert_eq!(main.channel().language, profile.preferred_language, "held in the language the owner prefers");
-        let stored = store.get_channel(&hers, main.id()).await.unwrap();
+        let stored = runtime.entity_stores().channels.get(&hers, main.id()).await.unwrap();
         assert!(stored.participants.iter().any(|p| matches!(p, Participant::Approver(a) if a.strategy == ApprovalStrategy::All)), "the template's approver");
         manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
 
@@ -884,8 +882,8 @@ mod tests {
         manager.purge_session(&ctx, id).await.expect("purged");
         assert!(entities.get_deleted_session(&ctx, id).await.is_err(), "nothing left to restore");
         assert!(states.get_channel_state(channel_id).await.is_err(), "deleted from the state store, not only from the entity store");
-        assert!(entities.get_channel(&ctx, channel_id).await.is_err(), "its channels go with it (issue 70)");
-        assert!(entities.get_deleted_channel(&ctx, side).await.is_err(), "also those deleted from it before");
+        assert!(entities.entity_stores().channels.get(&ctx, channel_id).await.is_err(), "its channels go with it (issue 70)");
+        assert!(entities.entity_stores().channels.get_deleted(&ctx, side).await.is_err(), "also those deleted from it before");
         assert!(states.get_channel_state(side).await.is_err(), "with their state");
     }
 

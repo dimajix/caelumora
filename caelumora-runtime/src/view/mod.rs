@@ -62,7 +62,7 @@ use caelumora_model::scope::{found_from, Scope, Scoped};
 use caelumora_model::value::name::Name;
 use crate::workspace::WorkspaceManager;
 use crate::skill::SkillManager;
-use caelumora_model::store::{Entities, EntityStores, StateStore, StoreResultExt};
+use caelumora_model::store::{EntityStores, StateStore, StoreResultExt};
 use crate::component::ComponentRegistry;
 use std::sync::Arc;
 use caelumora_model::artifact::Artifact;
@@ -249,10 +249,6 @@ impl Views {
         &self.confidentiality
     }
 
-    pub(crate) fn entities(&self) -> &Arc<dyn Entities> {
-        &self.stores.entities
-    }
-
     /// The stores of the entities, one per kind (issue 323).
     pub(crate) fn stores(&self) -> &EntityStores {
         &self.stores
@@ -363,7 +359,7 @@ impl Views {
     /// (`SessionView::readable`, issue 304) - one the viewer is not cleared
     /// for is never there, as a live one would be not found.
     async fn gone_channel<T>(&self, session: &SessionView, id: ChannelId) -> ViewResult<Reached<T>> {
-        let deleted = self.stores.entities.get_deleted_channel(&SecurityContext::system(), id).await.optional()
+        let deleted = self.stores.channels.get_deleted(&SecurityContext::system(), id).await.optional()
             .map_err(|e| ViewError::failed(e, format!("looking up channel {id}")))?;
         Ok(match deleted {
             Some(channel) if channel.session_id == session.id() && session.readable(&channel).await.is_some() =>
@@ -541,7 +537,7 @@ impl Views {
         let system = SecurityContext::system();
         match group.name.scope {
             Scope::SessionScope { session_id } => self.stores.entities.get_session(&system, session_id).await.optional().ok().flatten().map(|s| s.name.to_string()),
-            Scope::ChannelScope { channel_id, .. } => self.stores.entities.get_channel(&system, channel_id).await.optional().ok().flatten().map(|c| c.name.to_string()),
+            Scope::ChannelScope { channel_id, .. } => self.stores.channels.get(&system, channel_id).await.optional().ok().flatten().map(|c| c.name.to_string()),
             _ => Some(group.name.to_string()),
         }
     }
@@ -998,7 +994,7 @@ mod tests {
     /// Stores `channel` as the runtime does, with the group of its
     /// participants.
     async fn stored_channel(store: &Arc<MemoryStore>, channel: &Channel) {
-        store.create_channel(&SecurityContext::system(), channel).await.unwrap();
+        store.entity_stores().channels.create(&SecurityContext::system(), channel).await.unwrap();
         keep_participants(store.entity_stores().groups.as_ref(), Group::of_channel(channel)).await.unwrap();
     }
 
@@ -1685,7 +1681,7 @@ use caelumora_model::turn::TurnState;
         deleted.id = ChannelId::new();
         deleted.name = Name::new("deleted").unwrap();
         stored_channel(&store, &deleted).await;
-        store.delete_channel(&alice_ctx, deleted.id).await.unwrap();
+        store.entity_stores().channels.delete(&alice_ctx, deleted.id).await.unwrap();
         match views.channel_of(session.id, deleted.id).await.unwrap() {
             Reached::Gone(removal) => assert_eq!(removal.by, ActorId::User(alice.id)),
             other => panic!("gone, not {other:?}"),
@@ -1713,8 +1709,8 @@ use caelumora_model::turn::TurnState;
         for channel in [&main, &internal, &secret] {
             stored_channel(&store, channel).await;
         }
-        store.delete_channel(&SecurityContext::system(), internal.id).await.unwrap();
-        store.delete_channel(&SecurityContext::system(), secret.id).await.unwrap();
+        store.entity_stores().channels.delete(&SecurityContext::system(), internal.id).await.unwrap();
+        store.entity_stores().channels.delete(&SecurityContext::system(), secret.id).await.unwrap();
 
         // Alice owns both, and is cleared for internal alone (issue 304).
         let hers = manager.views(Viewer::new(SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default()).with_roles(vec![staff], None)));
@@ -1734,7 +1730,7 @@ use caelumora_model::turn::TurnState;
         stored_channel(&store, &channel).await;
         stored_channel(&store, &side).await;
         let alice_ctx = as_user(alice.id).context().clone();
-        store.delete_channel(&alice_ctx, side.id).await.unwrap();
+        store.entity_stores().channels.delete(&alice_ctx, side.id).await.unwrap();
 
         let hers = manager.views(as_user(alice.id));
         let channels = hers.session(session.id).await.unwrap().deleted_channels().await.unwrap();

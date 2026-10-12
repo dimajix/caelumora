@@ -315,9 +315,9 @@ pub(crate) async fn queries_behave(stores: &EntityStores) {
     assert_eq!(found.items.iter().map(|s| s.id).collect::<Vec<_>>(), [with_agent.id], "a participant, the whole element");
 
     let of_it = Channel { session_id: with_agent.id, ..self::channel() };
-    store.create_channel(&ctx, &of_it).await.unwrap();
-    store.create_channel(&ctx, &Channel { session_id: without.id, ..self::channel() }).await.unwrap();
-    let found = store.list_channels(&ctx, &Query::filtered(Filter::eq(ChannelField::Session, with_agent.id))).await.unwrap();
+    stores.channels.create(&ctx, &of_it).await.unwrap();
+    stores.channels.create(&ctx, &Channel { session_id: without.id, ..self::channel() }).await.unwrap();
+    let found = stores.channels.list(&ctx, &Query::filtered(Filter::eq(ChannelField::Session, with_agent.id))).await.unwrap();
     assert_eq!(found.items.iter().map(|c| c.id).collect::<Vec<_>>(), [of_it.id], "the channels of a session");
 
     // By a member (issue 308).
@@ -382,8 +382,8 @@ pub(crate) async fn entity_store_behaves(stores: &EntityStores) {
         create, get, update, delete, list);
     lifecycle!(store, session(), |v: &Session| v.id, name, "session",
         create_session, get_session, update_session, delete_session, list_sessions);
-    lifecycle!(store, channel(), |v: &Channel| v.id, name, "channel",
-        create_channel, get_channel, update_channel, delete_channel, list_channels);
+    lifecycle!(stores.channels.as_ref(), channel(), |v: &Channel| v.id, name, "channel",
+        create, get, update, delete, list);
     lifecycle!(stores.users.as_ref(), user("alice"), |v: &User| v.id, username, "user",
         create, get, update, delete, list);
     lifecycle!(stores.user_profiles.as_ref(), UserProfile::new(UserId::new(), None), |v: &UserProfile| v.user_id(), introduction = Some(Introduction::new("renamed").unwrap()), "user_profile",
@@ -496,10 +496,10 @@ pub(crate) async fn names_are_unique(stores: &EntityStores) {
         rename: |value: Agent, name| Agent { name: in_scope(name, &value.name.scope), ..value }, "agent",
         create, update, delete, restore);
     let (session_id, other_session) = (SessionId::new(), SessionId::new());
-    unique_by_name!(store, |name| Channel { name: Name::new(name).unwrap(), session_id, id: ChannelId::new(), ..channel() },
+    unique_by_name!(stores.channels.as_ref(), |name| Channel { name: Name::new(name).unwrap(), session_id, id: ChannelId::new(), ..channel() },
         elsewhere: |name| Channel { name: Name::new(name).unwrap(), session_id: other_session, id: ChannelId::new(), ..channel() },
         rename: |value: Channel, name| Channel { name: Name::new(name).unwrap(), ..value }, "channel",
-        create_channel, update_channel, delete_channel, restore_channel);
+        create, update, delete, restore);
     unique_by_name!(stores.users.as_ref(), user, rename: |value: User, name| User { username: Name::new(name).unwrap(), ..value }, "user",
         create, update, delete, restore);
     let (alice, bob) = (UserId::new(), UserId::new());

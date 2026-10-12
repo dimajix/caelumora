@@ -25,7 +25,6 @@ use crate::workspace::Workspace;
 use crate::skill::Skill;
 use crate::group::Group;
 use crate::artifact::Artifact;
-use crate::channel::ChannelField;
 use crate::session::SessionField;
 use crate::store::query::{NoField, Page, Query};
 
@@ -185,6 +184,7 @@ pub struct EntityStores {
     pub personalities: Arc<dyn EntityStore<Personality>>,
     pub users: Arc<dyn EntityStore<User>>,
     pub agents: Arc<dyn EntityStore<Agent>>,
+    pub channels: Arc<dyn EntityStore<Channel>>,
 }
 
 /// Every kind's entities at once, as one store offered them before each
@@ -238,17 +238,6 @@ pub trait Entities : Debug + Sync + Send {
     async fn get_deleted_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session>;
     async fn list_deleted_sessions(&self, ctx: &SecurityContext, query: &Query<SessionField>) -> StoreResult<Page<Session>>;
 
-    // Channels (issue 70): documents of their own, which the session lists
-    // by id.
-    async fn create_channel(&self, ctx: &SecurityContext, value: &Channel) -> StoreResult<()>;
-    async fn get_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel>;
-    async fn update_channel(&self, ctx: &SecurityContext, value: &Channel) -> StoreResult<()>;
-    async fn delete_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool>;
-    async fn list_channels(&self, ctx: &SecurityContext, query: &Query<ChannelField>) -> StoreResult<Page<Channel>>;
-    async fn restore_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel>;
-    async fn purge_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool>;
-    async fn get_deleted_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel>;
-    async fn list_deleted_channels(&self, ctx: &SecurityContext, query: &Query<ChannelField>) -> StoreResult<Page<Channel>>;
 
 
 

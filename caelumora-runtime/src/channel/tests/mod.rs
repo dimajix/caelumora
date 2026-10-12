@@ -331,7 +331,7 @@ pub(super) async fn agent_channel(security: Arc<dyn SecurityManager>, model: Arc
         former: Vec::new(),
     };
     // Stored, so that leaving it can be stored too.
-    runtime.entity_store().create_channel(&SecurityContext::system(), &channel).await.unwrap();
+    runtime.entity_stores().channels.create(&SecurityContext::system(), &channel).await.unwrap();
     let executor = CommandExecutor::empty(Arc::clone(runtime.security_manager()));
     let session_id = channel.session_id;
     let channel = ChannelLoop::new(channel, ChannelRuntime::outside_a_session(runtime, Arc::new(executor), session_id)).await.unwrap();

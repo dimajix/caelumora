@@ -12,7 +12,7 @@ use tracing::error;
 use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::security::{Grant, SecurityContext, Subject};
 use caelumora_model::session::SessionId;
-use caelumora_model::store::{Entities, EntityStore, EntityStores, StoreError, StoreResult};
+use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResult};
 use std::sync::Arc;
 use super::check_restricting;
 
@@ -25,7 +25,7 @@ pub struct ChannelController {
     session_id: SessionId,
     channel: ArcSwap<Channel>,
     event_publisher: Arc<dyn EventPublisher>,
-    entity_store: Arc<dyn Entities>,
+    channels: Arc<dyn EntityStore<Channel>>,
     groups: Arc<dyn EntityStore<Group>>,
     /// Held while the channel is changed and stored, so that two changes
     /// cannot overwrite each other.
@@ -41,7 +41,7 @@ impl ChannelController {
             session_id,
             channel: ArcSwap::from_pointee(channel),
             event_publisher,
-            entity_store: Arc::clone(&stores.entities),
+            channels: Arc::clone(&stores.channels),
             groups: Arc::clone(&stores.groups),
             write_lock: tokio::sync::Mutex::new(()),
         }
@@ -225,7 +225,7 @@ impl ChannelController {
 
     /// Stores `channel` on behalf of `ctx`.
     async fn store(&self, ctx: &SecurityContext, channel: &Channel) -> StoreResult<()> {
-        self.entity_store.update_channel(ctx, channel).await
+        self.channels.update(ctx, channel).await
     }
 
     /// Applies `event`, stores the channel, takes it over and announces it.

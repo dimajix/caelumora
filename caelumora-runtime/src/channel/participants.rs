@@ -451,7 +451,7 @@ mod tests {
         assert_eq!(limited.start, Some(caelumora_model::channel::HistoryStart::From(before[2].id)), "from the last message");
         assert_eq!(full.start, None, "all of it");
         assert_eq!(limited.digest, full.digest, "up to where is the same for both");
-        let stored = runtime.entity_store().get_channel(&ctx, channel.id()).await.unwrap();
+        let stored = runtime.entity_stores().channels.get(&ctx, channel.id()).await.unwrap();
         assert!(stored.participants.iter().any(|p| p.actor_id() == other), "stored, not only in memory");
         assert_eq!(stored.history_limits.len(), 1, "with the limit");
         let events = drain(&mut rx);
@@ -508,7 +508,7 @@ mod tests {
         channel.remove_participant(&ctx, other).await.expect("removed");
 
         assert!(!channel.members().iter().any(|m| m.id == other), "no longer a member");
-        let stored = runtime.entity_store().get_channel(&ctx, channel.id()).await.unwrap();
+        let stored = runtime.entity_stores().channels.get(&ctx, channel.id()).await.unwrap();
         assert!(!stored.participants.iter().any(|p| p.actor_id() == other), "stored, not only in memory");
         let former = stored.former.iter().find(|f| f.participant.actor_id() == other).expect("kept as a former participant (issue 164)");
         assert_eq!(former.left.by, ctx.caller_id, "with who removed it");
@@ -526,7 +526,7 @@ mod tests {
         // Added again at once, once its old actor has ended (issue 171).
         channel.add_participant(&ctx, other, caelumora_model::channel::HistoryAccess::All).await.expect("added again");
         assert!(channel.user_actor(other.as_user_id().unwrap()).is_some(), "with a new actor");
-        let stored = runtime.entity_store().get_channel(&ctx, channel.id()).await.unwrap();
+        let stored = runtime.entity_stores().channels.get(&ctx, channel.id()).await.unwrap();
         assert!(stored.former.is_empty(), "and no longer a former participant");
         manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }

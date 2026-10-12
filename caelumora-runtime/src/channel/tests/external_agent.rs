@@ -96,7 +96,7 @@ async fn external_channel(remote: Arc<crate::external::testing::ScriptedExternal
         deleted: None,
         former: Vec::new(),
     };
-    runtime.entity_store().create_channel(&SecurityContext::system(), &channel).await.unwrap();
+    runtime.entity_stores().channels.create(&SecurityContext::system(), &channel).await.unwrap();
     if let Some(mut stored) = stored(agent_id) {
         runtime.state_store().put_agent_channel_state(agent_id, channel.id, &mut stored).await.unwrap();
     }

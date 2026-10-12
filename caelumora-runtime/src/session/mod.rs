@@ -151,14 +151,13 @@ pub struct SessionLoop {
 /// purged (issue 164).
 async fn purge_channel_document(stores: &EntityStores, channel_id: ChannelId) -> StoreResult<bool> {
     let system = SecurityContext::system();
-    let store = stores.entities.as_ref();
     if let Err(e) = purge_participants(stores.groups.as_ref(), GroupId::of_channel(channel_id)).await {
         if !matches!(e, StoreError::NotFound { .. }) {
             return Err(e);
         }
     }
-    store.delete_channel(&system, channel_id).await?;
-    store.purge_channel(&system, channel_id).await
+    stores.channels.delete(&system, channel_id).await?;
+    stores.channels.purge(&system, channel_id).await
 }
 
 /// Asks whether `context` may attach the workspace `id` to the session
