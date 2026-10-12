@@ -407,6 +407,7 @@ published before anyone else can take it.
 | [328](328-artifacts-in-a-crate-of-their-own.md) | open | Artifacts are enumerated in the core like skills, and need seams skills do not - the channel's view, an event that carries a version, a verb shared with workspaces, a dependency on workspaces. |
 | [329](329-ollama-named-by-the-core.md) | open | The core names `ollama_client` as the default model, so the choice of a model provider is not the deployment's and a second provider cannot become the default without configuration. |
 | [330](330-log-setup-in-the-runtime.md) | open | The runtime library installs the `tracing` subscriber for the binaries and so depends on `tracing-subscriber`, though setting up the log is the application's decision. |
+| [333](333-workspaces-woven-into-sessions.md) | open | Workspaces are part of what sessions, channels and templates are - an attached workspace, its use per channel, one made by a template -, so they cannot leave the core as skills did. |
 
 ## Integrations
 
