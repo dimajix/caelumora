@@ -600,3 +600,9 @@ Step 3g: user profiles on their own store. The `UserController` keeps it - the o
 -, the member view of a user and the preferred language of a new session or channel read it, and
 the REST route of the profile takes it from `EntityStores`.
 
+Step 3h: personalities on their own store. They have no manager either: `ScopedEntities` keeps the
+store and no longer the facade, the `AgentController` and the member view of an agent read an
+agent's personality from it, and `template::resolve_participants` takes `&EntityStores` to read
+the personality an agent is made of. Many tests made personalities through the store they had at
+hand; they take the store of personalities now.
+

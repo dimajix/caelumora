@@ -112,7 +112,7 @@ impl ControllerManager {
             ActorId::User(owner) => self.user_controller(owner).await.optional()?,
             _ => None,
         };
-        let controller = Arc::new(AgentController::new(agent, owner, Arc::<EventBus>::clone(&self.event_bus), Arc::clone(&self.stores.entities)));
+        let controller = Arc::new(AgentController::new(agent, owner, Arc::<EventBus>::clone(&self.event_bus), &self.stores));
         remember(&mut agents, id, &controller);
         Ok(controller)
     }

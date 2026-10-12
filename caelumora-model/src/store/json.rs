@@ -1,4 +1,4 @@
-use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
+use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality};
 use crate::artifact::Artifact;
 use crate::channel::{Channel, ChannelField, ChannelId, ChannelState};
 use crate::component::StoredComponents;
@@ -47,7 +47,7 @@ pub const DEFAULT_JOURNAL_FLOOR: u64 = 64 * 1024;
 pub struct JsonFileStore {
     root: PathBuf,
     journal_floor: u64,
-    personalities: JsonEntityStore<Personality>,
+    personalities: Arc<JsonEntityStore<Personality>>,
     session_templates: Arc<JsonEntityStore<SessionTemplate>>,
     agents: JsonEntityStore<Agent>,
     sessions: JsonEntityStore<Session>,
@@ -71,7 +71,7 @@ impl JsonFileStore {
         let policies = (security_manager, confidentiality);
         let store = Self {
             journal_floor: DEFAULT_JOURNAL_FLOOR,
-            personalities: JsonEntityStore::new(&root, &policies)?,
+            personalities: Arc::new(JsonEntityStore::new(&root, &policies)?),
             session_templates: Arc::new(JsonEntityStore::new(&root, &policies)?),
             agents: JsonEntityStore::new(&root, &policies)?,
             sessions: JsonEntityStore::new(&root, &policies)?,
@@ -100,6 +100,7 @@ impl JsonFileStore {
             groups: Arc::<JsonEntityStore<Group>>::clone(&self.groups),
             session_templates: Arc::<JsonEntityStore<SessionTemplate>>::clone(&self.session_templates),
             user_profiles: Arc::<JsonEntityStore<UserProfile>>::clone(&self.user_profiles),
+            personalities: Arc::<JsonEntityStore<Personality>>::clone(&self.personalities),
         }
     }
 
@@ -527,36 +528,6 @@ impl<T: Deletable + Serialize + DeserializeOwned + Send + Sync + 'static> Entity
 
 #[async_trait]
 impl Entities for JsonFileStore {
-    async fn create_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()> {
-        self.personalities.create(ctx, value).await
-    }
-    async fn get_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
-        self.personalities.get(ctx, id).await
-    }
-    async fn update_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()> {
-        self.personalities.update(ctx, value).await
-    }
-    async fn delete_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool> {
-        self.personalities.delete(ctx, id).await
-    }
-    async fn list_personalities(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Personality>> {
-        self.personalities.list(ctx, query).await
-    }
-    async fn restore_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
-        self.personalities.restore(ctx, id).await
-    }
-    async fn purge_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool> {
-        self.personalities.purge(ctx, id).await
-    }
-    async fn get_deleted_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
-        self.personalities.get_deleted(ctx, id).await
-    }
-    async fn list_deleted_personalities(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Personality>> {
-        self.personalities.list_deleted(ctx, query).await
-    }
-    async fn find_personality_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Personality> {
-        self.personalities.find_by_name(ctx, name).await
-    }
     async fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
         self.agents.create(ctx, value).await
     }
@@ -873,13 +844,13 @@ mod tests {
             components: Default::default(), security_attributes: Default::default(), reasoning_visibility: Default::default(),
             deleted: None,
         };
-        store.create_personality(&system, &personality).await.unwrap();
+        store.personalities.create(&system, &personality).await.unwrap();
 
         let mut writes = tokio::task::JoinSet::new();
         for i in 0..16 {
             let (store, system) = (Arc::clone(&store), system.clone());
             let changed = Personality { description: Some(crate::value::text::Description::new(format!("version {i}")).unwrap()), ..personality.clone() };
-            writes.spawn(async move { store.update_personality(&system, &changed).await });
+            writes.spawn(async move { store.personalities.update(&system, &changed).await });
         }
         while let Some(result) = writes.join_next().await {
             result.unwrap().expect("no writer loses its temporary file to another");
@@ -890,7 +861,7 @@ mod tests {
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
         assert_eq!(names, [path.file_name().unwrap().to_string_lossy().into_owned()], "only the file itself");
-        let stored = store.get_personality(&system, personality.id).await.expect("readable");
+        let stored = store.personalities.get(&system, personality.id).await.expect("readable");
         assert!(stored.description.as_ref().map(|d| d.as_str()).unwrap_or_default().starts_with("version "), "one of the writes, whole");
     }
 

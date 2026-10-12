@@ -274,7 +274,7 @@ impl World {
             reasoning_visibility: Default::default(),
             deleted: None,
         };
-        self.store.create_personality(&Self::system(), &personality).await.unwrap();
+        self.runtime.entity_stores().personalities.create(&Self::system(), &personality).await.unwrap();
         personality
     }
 
@@ -440,7 +440,7 @@ async fn an_agent_whose_personality_was_withdrawn_is_left_out_of_its_channel() {
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 
     let withdrawn = Personality { security_attributes: attributes(Some(world.bob), &[]), ..shared };
-    world.store.update_personality(&World::as_user(world.bob), &withdrawn).await.expect("bob owns it");
+    world.runtime.entity_stores().personalities.update(&World::as_user(world.bob), &withdrawn).await.expect("bob owns it");
 
     let reopened = world.manager.open_session(&World::as_user(world.alice), session.id()).await.expect("the session still opens");
     assert!(!reopened.channels()[0].actor_ids().contains(&ActorId::Agent(helper)), "the agent is not run");
@@ -457,7 +457,7 @@ async fn an_agent_whose_personality_is_gone_is_left_out_of_its_channel() {
     let helper = world.agent("helper", world.alice, &bobs).await;
     let session = world.shared_session(&[helper], &[]).await;
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
-    world.store.delete_personality(&World::as_user(world.bob), bobs.id).await.expect("bob deletes his personality");
+    world.runtime.entity_stores().personalities.delete(&World::as_user(world.bob), bobs.id).await.expect("bob deletes his personality");
 
     let reopened = world.manager.open_session(&World::as_user(world.alice), session.id()).await.expect("the session still opens");
     assert!(!reopened.channels()[0].actor_ids().contains(&ActorId::Agent(helper)), "the agent is not run");
@@ -474,7 +474,7 @@ async fn an_agent_whose_personality_was_withdrawn_cannot_join_a_channel() {
     let main = Arc::clone(&session.channels()[0]);
 
     let withdrawn = Personality { security_attributes: attributes(Some(world.bob), &[]), ..shared };
-    world.store.update_personality(&World::as_user(world.bob), &withdrawn).await.unwrap();
+    world.runtime.entity_stores().personalities.update(&World::as_user(world.bob), &withdrawn).await.unwrap();
 
     let refused = main.add_participant(&World::as_user(world.alice), ActorId::Agent(helper), HistoryAccess::All).await.expect_err("it may not run");
     assert!(denied(&refused), "{refused:#}");
@@ -490,13 +490,13 @@ async fn a_personality_is_changed_by_its_owner_and_read_by_who_it_is_shared_with
     let shared = world.personality("shared", Some(world.bob), &[world.alice]).await;
     let (alice, bob, carol) = (World::as_user(world.alice), World::as_user(world.bob), World::as_user(world.carol));
 
-    assert!(world.store.get_personality(&alice, shared.id).await.is_ok(), "shared with her");
+    assert!(world.runtime.entity_stores().personalities.get(&alice, shared.id).await.is_ok(), "shared with her");
     let changed = Personality { description: Some(Description::new("hers now").unwrap()), ..shared.clone() };
-    assert!(world.store.update_personality(&alice, &changed).await.is_err(), "but not hers to change");
-    assert!(world.store.delete_personality(&alice, shared.id).await.is_err(), "nor to delete");
-    assert!(matches!(world.store.get_personality(&carol, shared.id).await, Err(StoreError::NotFound { .. })), "not there for a stranger");
-    assert!(world.store.list_personalities(&carol, &Query::all()).await.map(|page| page.items).unwrap().iter().all(|p| p.id != shared.id), "nor listed");
-    world.store.update_personality(&bob, &changed).await.expect("its owner changes it");
+    assert!(world.runtime.entity_stores().personalities.update(&alice, &changed).await.is_err(), "but not hers to change");
+    assert!(world.runtime.entity_stores().personalities.delete(&alice, shared.id).await.is_err(), "nor to delete");
+    assert!(matches!(world.runtime.entity_stores().personalities.get(&carol, shared.id).await, Err(StoreError::NotFound { .. })), "not there for a stranger");
+    assert!(world.runtime.entity_stores().personalities.list(&carol, &Query::all()).await.map(|page| page.items).unwrap().iter().all(|p| p.id != shared.id), "nor listed");
+    world.runtime.entity_stores().personalities.update(&bob, &changed).await.expect("its owner changes it");
 }
 
 /// P6: what of a personality is public - how its agents introduce
@@ -510,7 +510,7 @@ async fn an_agents_introduction_reaches_whoever_sees_it_but_not_its_personality(
     let session = world.shared_session(&[helper], &[]).await;
     let channel = session.channels()[0].id();
 
-    assert!(world.store.get_personality(&World::as_user(world.bob), hers.id).await.is_err(), "bob may not read the personality");
+    assert!(world.runtime.entity_stores().personalities.get(&World::as_user(world.bob), hers.id).await.is_err(), "bob may not read the personality");
     let view = world.manager.views(Viewer::new(World::as_user(world.bob))).session(session.id()).await.unwrap().channel(channel).await.unwrap();
     let members = view.members().await;
     let member = members.iter().find(|m| m.id() == ActorId::Agent(helper)).expect("he sees the agent");
@@ -531,7 +531,7 @@ async fn the_components_a_personality_includes_are_read_in_its_agents_name() {
     world.store.create_components(&World::as_user(world.bob), &tools).await.expect("bob keeps his tools");
     let mut hers = world.personality("hers", Some(world.alice), &[]).await;
     hers.components = ComponentConfig { component_nodes: vec![ComponentDescriptor { params: serde_json::json!({ "id": "bobs-tools" }), ..ComponentDescriptor::new("tools", PRECONFIGURED_REF_KIND) }] };
-    world.store.update_personality(&World::as_user(world.alice), &hers).await.unwrap();
+    world.runtime.entity_stores().personalities.update(&World::as_user(world.alice), &hers).await.unwrap();
     let helper = world.agent("helper", world.alice, &hers).await;
 
     let (session, asked) = world.asked(world.shared_session(&[helper], &[])).await;
@@ -889,7 +889,7 @@ async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
         components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("model", "answering")] },
         ..world.personality("answering", None, &[]).await
     };
-    world.store.update_personality(&World::system(), &answering).await.unwrap();
+    world.runtime.entity_stores().personalities.update(&World::system(), &answering).await.unwrap();
     let helper = world.agent("helper", world.alice, &answering).await;
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
@@ -939,7 +939,7 @@ async fn nudging_an_agent_is_for_whoever_takes_part_and_it_responds_on_their_wor
         components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("model", "silent")] },
         ..world.personality("silent", None, &[]).await
     };
-    world.store.update_personality(&World::system(), &silent).await.unwrap();
+    world.runtime.entity_stores().personalities.update(&World::system(), &silent).await.unwrap();
     let helper = world.agent("helper", world.alice, &silent).await;
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
@@ -1059,7 +1059,7 @@ async fn which_components_an_agent_was_built_from_is_read_by_its_owner_alone() {
         ComponentDescriptor::new("stop", "stop_tool"),
         ComponentDescriptor { params: serde_json::json!({ "id": "bobs-tools" }), ..ComponentDescriptor::new("tools", PRECONFIGURED_REF_KIND) },
     ] };
-    world.store.update_personality(&World::as_user(world.alice), &hers).await.unwrap();
+    world.runtime.entity_stores().personalities.update(&World::as_user(world.alice), &hers).await.unwrap();
     let helper = world.agent("helper", world.alice, &hers).await;
     let session = world.shared_session(&[helper], &[]).await;
     let channel = session.channels()[0].id();
@@ -1153,7 +1153,7 @@ async fn with_a_call_to_approve() -> (World, Arc<SessionLoop>, Arc<caelumora_run
         ] },
         ..world.personality("asking", None, &[]).await
     };
-    world.store.update_personality(&World::system(), &asking).await.unwrap();
+    world.runtime.entity_stores().personalities.update(&World::system(), &asking).await.unwrap();
     let helper = world.agent("helper", world.alice, &asking).await;
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
@@ -1231,7 +1231,7 @@ async fn with_a_call_asking(sensitive: bool, asker: fn(&World) -> UserId) -> (Wo
         ] },
         ..world.personality("asking", None, &[]).await
     };
-    world.store.update_personality(&World::system(), &asking).await.unwrap();
+    world.runtime.entity_stores().personalities.update(&World::system(), &asking).await.unwrap();
     let helper = world.agent("helper", world.alice, &asking).await;
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
@@ -1551,7 +1551,7 @@ async fn a_tool_whose_remote_side_is_not_cleared_for_the_channel_is_not_offered_
         components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("model", "once"), ComponentDescriptor::new("outward", "outward")] },
         ..world.personality("sending", None, &[]).await
     };
-    world.store.update_personality(&World::system(), &sending).await.unwrap();
+    world.runtime.entity_stores().personalities.update(&World::system(), &sending).await.unwrap();
     let helper = world.agent("helper", world.alice, &sending).await;
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
@@ -1621,7 +1621,7 @@ async fn an_agent_asked_by_an_agent_acts_for_its_own_owner() {
         let world = &world;
         async move {
             let personality = Personality { components: ComponentConfig { component_nodes: components }, ..world.personality(name, None, &[]).await };
-            world.store.update_personality(&World::system(), &personality).await.unwrap();
+            world.runtime.entity_stores().personalities.update(&World::system(), &personality).await.unwrap();
             personality
         }
     };
@@ -1670,7 +1670,7 @@ async fn with_a_reader_of(owner: fn(&World) -> UserId, in_side: bool) -> (World,
         ] },
         ..world.personality("reading", None, &[]).await
     };
-    world.store.update_personality(&World::system(), &reading).await.unwrap();
+    world.runtime.entity_stores().personalities.update(&World::system(), &reading).await.unwrap();
     let reader = world.agent("reader", owner(&world), &reading).await;
     let session = world.shared_session(&[reader], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
@@ -1818,7 +1818,7 @@ async fn remote_personality(world: &World) -> Personality {
         components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("remote", "remote_at_work")] },
         ..world.personality("remote", None, &[]).await
     };
-    world.store.update_personality(&World::system(), &remote).await.unwrap();
+    world.runtime.entity_stores().personalities.update(&World::system(), &remote).await.unwrap();
     remote
 }
 
@@ -2380,7 +2380,7 @@ async fn adding_an_agent_needs_owning_the_channel_and_the_agent_its_personality(
     ]));
 
     let withdrawn = Personality { security_attributes: attributes(Some(world.bob), &[]), ..shared };
-    world.store.update_personality(&World::as_user(world.bob), &withdrawn).await.unwrap();
+    world.runtime.entity_stores().personalities.update(&World::as_user(world.bob), &withdrawn).await.unwrap();
     let (refused, asked) = world.asked(main.add_participant(&alice, ActorId::Agent(other), HistoryAccess::All)).await;
     assert!(denied(&refused.unwrap_err()));
     assert_eq!(asked, checks(&["alice: UpdateChannel(alice's) yes", "alice as other: GetPersonality(bob's) no"]), "an agent that may not run is not added");
@@ -3239,7 +3239,7 @@ async fn asked_for_a_call(kind: &str, function: &str, arguments: serde_json::Val
         ] },
         ..world.personality("working", None, &[]).await
     };
-    world.store.update_personality(&World::system(), &working).await.unwrap();
+    world.runtime.entity_stores().personalities.update(&World::system(), &working).await.unwrap();
     let helper = world.agent("helper", owner(&world), &working).await;
     let alice = World::as_user(world.alice);
     let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "shell", None, Classification::general(Confidentiality::Internal)).await.unwrap();
@@ -3491,7 +3491,7 @@ async fn with_a_commanded_agent() -> (World, Arc<SessionLoop>, Arc<caelumora_run
         ] },
         ..world.personality("commanded", None, &[]).await
     };
-    world.store.update_personality(&World::system(), &commanded).await.unwrap();
+    world.runtime.entity_stores().personalities.update(&World::system(), &commanded).await.unwrap();
     let helper = world.agent("helper", world.alice, &commanded).await;
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
@@ -3595,7 +3595,7 @@ async fn only_an_agents_owner_compacts_its_context() {
         ] },
         ..world.personality("compacting", None, &[]).await
     };
-    world.store.update_personality(&World::system(), &compacting).await.unwrap();
+    world.runtime.entity_stores().personalities.update(&World::system(), &compacting).await.unwrap();
     let helper = world.agent("helper", world.alice, &compacting).await;
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
@@ -3627,7 +3627,7 @@ async fn with_a_skilled_agent() -> (World, Arc<SessionLoop>, Arc<caelumora_runti
         ] },
         ..world.personality("skilled", None, &[]).await
     };
-    world.store.update_personality(&World::system(), &skilled).await.unwrap();
+    world.runtime.entity_stores().personalities.update(&World::system(), &skilled).await.unwrap();
     let helper = world.agent("helper", world.alice, &skilled).await;
     let internal = Classification::general(Confidentiality::Internal);
     world.runtime.skill_manager()
@@ -3708,7 +3708,7 @@ async fn with_a_writing_agent(function: &str, arguments: serde_json::Value) -> (
         ] },
         ..world.personality("writing", None, &[]).await
     };
-    world.store.update_personality(&World::system(), &writing).await.unwrap();
+    world.runtime.entity_stores().personalities.update(&World::system(), &writing).await.unwrap();
     let helper = world.agent("helper", world.alice, &writing).await;
     let review = world.runtime.skill_manager()
         .create(&World::as_user(world.bob), "review", Scope::GlobalScope, "How we review", "Read it twice.", Classification::general(Confidentiality::Internal)).await

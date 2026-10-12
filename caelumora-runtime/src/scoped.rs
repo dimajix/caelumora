@@ -37,7 +37,7 @@ use caelumora_model::removal::Stored;
 use caelumora_model::scope::{Scope, ScopedField};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::query::Query;
-use caelumora_model::store::{Entities, EntityStore, EntityStores, StoreError, StoreResult};
+use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResult};
 use caelumora_model::value::name::ScopedName;
 use chrono::{DateTime, Utc};
 use std::fmt;
@@ -53,7 +53,7 @@ use caelumora_model::workspace::Workspace;
 /// Deletes, restores and purges what lies in a scope with what holds it
 /// (issue 178), each kind by its owner where it has one (issue 319).
 pub(crate) struct ScopedEntities {
-    entities: Arc<dyn Entities>,
+    personalities: Arc<dyn EntityStore<Personality>>,
     session_templates: Arc<dyn EntityStore<SessionTemplate>>,
     agents: Arc<AgentManager>,
     workspaces: Arc<WorkspaceManager>,
@@ -77,7 +77,7 @@ impl ScopedEntities {
         artifacts: Arc<ArtifactManager>,
         groups: Arc<GroupManager>,
     ) -> Self {
-        Self { entities: Arc::clone(&stores.entities), session_templates: Arc::clone(&stores.session_templates), agents, workspaces, skills, artifacts, groups }
+        Self { personalities: Arc::clone(&stores.personalities), session_templates: Arc::clone(&stores.session_templates), agents, workspaces, skills, artifacts, groups }
     }
 
     /// Deletes what lies in `holder` or within it on behalf of `ctx`, as
@@ -99,8 +99,8 @@ impl ScopedEntities {
     pub(crate) async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> anyhow::Result<()> {
         let system = SecurityContext::system();
         let mut personalities = 0;
-        for personality in self.entities.list_personalities(&system, &within(holder)).await?.items {
-            personalities += usize::from(!deleted_unless_refused(self.entities.delete_personality(ctx, personality.id).await)?);
+        for personality in self.personalities.list(&system, &within(holder)).await?.items {
+            personalities += usize::from(!deleted_unless_refused(self.personalities.delete(ctx, personality.id).await)?);
         }
         let mut templates = 0;
         for template in self.session_templates.list(&system, &within(holder)).await?.items {
@@ -140,8 +140,8 @@ impl ScopedEntities {
     /// before stays restored.
     pub(crate) async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> anyhow::Result<()> {
         let system = SecurityContext::system();
-        for personality in deleted_since(self.entities.list_deleted_personalities(&system, &within(holder)).await?.items, since) {
-            restored_unless_refused(self.entities.restore_personality(ctx, personality.id).await, "personality", &personality.name)?;
+        for personality in deleted_since(self.personalities.list_deleted(&system, &within(holder)).await?.items, since) {
+            restored_unless_refused(self.personalities.restore(ctx, personality.id).await, "personality", &personality.name)?;
         }
         for template in deleted_since(self.session_templates.list_deleted(&system, &within(holder)).await?.items, since) {
             restored_unless_refused(self.session_templates.restore(ctx, template.id).await, "session template", &template.name)?;
@@ -163,8 +163,8 @@ impl ScopedEntities {
     /// purged.
     pub(crate) async fn purge_lying_in(&self, holder: &Scope) -> anyhow::Result<()> {
         let system = SecurityContext::system();
-        for personality in self.entities.list_deleted_personalities(&system, &within(holder)).await?.items {
-            self.entities.purge_personality(&system, personality.id).await?;
+        for personality in self.personalities.list_deleted(&system, &within(holder)).await?.items {
+            self.personalities.purge(&system, personality.id).await?;
         }
         for template in self.session_templates.list_deleted(&system, &within(holder)).await?.items {
             self.session_templates.purge(&system, template.id).await?;

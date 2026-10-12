@@ -58,7 +58,7 @@ async fn external_channel(remote: Arc<crate::external::testing::ScriptedExternal
         security_attributes: Default::default(),
         deleted: None,
     };
-    store.create_personality(&SecurityContext::system(), &personality).await.unwrap();
+    store.entity_stores().personalities.create(&SecurityContext::system(), &personality).await.unwrap();
     let alice = user("alice");
     let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
     let agent = Agent::new(ScopedName::new("hermes", Scope::GlobalScope).unwrap(), &personality, context.initiator_id);
@@ -1154,7 +1154,7 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_since() 
         security_attributes: Default::default(), reasoning_visibility: Default::default(),
         deleted: None,
     };
-    store.create_personality(&system, &personality).await.unwrap();
+    store.entity_stores().personalities.create(&system, &personality).await.unwrap();
     let hermes = Agent::new(ScopedName::new("hermes", Scope::GlobalScope).unwrap(), &personality, ActorId::User(alice.id));
     store.create_agent(&system, &hermes).await.unwrap();
 

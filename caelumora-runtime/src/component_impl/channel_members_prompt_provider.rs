@@ -263,7 +263,7 @@ mod tests {
         assert_eq!(one_line(Some(" \n".to_string())), None, "nothing in it is none");
     }
 
-    async fn personality(store: &MemoryStore, introduction: Option<&str>) -> Personality {
+    async fn personality(store: &Arc<MemoryStore>, introduction: Option<&str>) -> Personality {
         // Named apart: a name is unique in its scope (issue 250).
         let id = PersonalityId::new();
         let personality = Personality {
@@ -278,7 +278,7 @@ mod tests {
             reasoning_visibility: Visibility::Channel,
             deleted: None,
         };
-        store.create_personality(&SecurityContext::system(), &personality).await.unwrap();
+        store.entity_stores().personalities.create(&SecurityContext::system(), &personality).await.unwrap();
         personality
     }
 

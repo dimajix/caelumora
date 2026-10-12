@@ -24,7 +24,7 @@ use caelumora_model::mention::handle_of;
 use caelumora_model::note::Note;
 use caelumora_model::security::{SecurityAttributes, SecurityContext};
 use caelumora_model::session::ChannelId;
-use caelumora_model::store::{Entities, EntityStore, StateStore, StoreError, StoreResultExt};
+use caelumora_model::store::{EntityStore, StateStore, StoreError, StoreResultExt};
 use caelumora_model::user::{UserId, UserProfile};
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -95,7 +95,7 @@ pub(super) async fn member_state(views: &Views, participant: &Participant, chann
             Some(agent) => Arc::new(AgentMemberState {
                 member: AgentMember(StateRef { agent: agent.id, channel, store: Arc::clone(views.states()) }),
                 agent,
-                store: Arc::clone(views.entities()),
+                personalities: Arc::clone(&views.stores().personalities),
                 personality: OnceCell::new(),
             }),
             // A deleted agent keeps its name (issue 164), nothing else.
@@ -189,7 +189,7 @@ impl StateRef {
 struct AgentMemberState {
     agent: Agent,
     member: AgentMember,
-    store: Arc<dyn Entities>,
+    personalities: Arc<dyn EntityStore<Personality>>,
     personality: OnceCell<Option<Personality>>,
 }
 
@@ -207,7 +207,7 @@ impl MemberState for AgentMemberState {
 
     async fn personality(&self) -> ViewResult<Option<&Personality>> {
         let personality = self.personality.get_or_try_init(|| async {
-            self.store.get_personality(&SecurityContext::system(), self.agent.personality_id).await.optional()
+            self.personalities.get(&SecurityContext::system(), self.agent.personality_id).await.optional()
                 .map_err(|e| ViewError::failed(e, format!("reading the personality of agent {}", self.agent.id)))
         }).await?;
         Ok(personality.as_ref())

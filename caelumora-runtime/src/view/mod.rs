@@ -969,7 +969,7 @@ mod tests {
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::value::text::{Briefing, Summary};
     use crate::runtime::RuntimeManager;
-    use caelumora_model::agent::{Agent, Personality, PersonalityId};
+    use caelumora_model::agent::{Agent, Personality, PersonalityId, PersonalityKind};
     use caelumora_model::channel::{Channel, Participant};
     use caelumora_model::confidentiality::{Classification, ConfidentialityRules, Visibility};
     use caelumora_model::scope::Scope;
@@ -1010,11 +1010,11 @@ mod tests {
         Channel { id, name: Name::new(name).unwrap(), security_attributes, ..template.clone() }
     }
 
-    async fn an_agent_of(store: &MemoryStore, owner: ActorId) -> Agent {
+    async fn an_agent_of(store: &Arc<MemoryStore>, owner: ActorId) -> Agent {
         an_agent_of_kind(store, owner, Default::default()).await
     }
 
-    async fn an_agent_of_kind(store: &MemoryStore, owner: ActorId, kind: caelumora_model::agent::PersonalityKind) -> Agent {
+    async fn an_agent_of_kind(store: &Arc<MemoryStore>, owner: ActorId, kind: PersonalityKind) -> Agent {
         let personality = Personality {
             description: None,
             introduction: None,
@@ -1027,7 +1027,7 @@ mod tests {
             security_attributes: Default::default(),
             deleted: None,
         };
-        store.create_personality(&SecurityContext::system(), &personality).await.unwrap();
+        store.entity_stores().personalities.create(&SecurityContext::system(), &personality).await.unwrap();
         let agent = Agent::new(ScopedName::new("Helper", Scope::GlobalScope).unwrap(), &personality, owner);
         store.create_agent(&SecurityContext::system(), &agent).await.unwrap();
         agent
@@ -1035,7 +1035,6 @@ mod tests {
 
     #[tokio::test]
     async fn the_context_of_an_external_agent_is_what_the_remote_agent_was_given() {
-        use caelumora_model::agent::PersonalityKind;
         use caelumora_model::agent::AgentChannelState;
         use caelumora_model::message::{Message, MessageId};
         use caelumora_model::store::StateStore;
@@ -1188,7 +1187,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_members_profile_says_who_it_is_to_everybody_in_the_channel() {
-        use caelumora_model::agent::PersonalityKind;
         use caelumora_model::approval::{ApprovalStrategy, Approver, ApproverId};
         use caelumora_model::user::UserProfile;
 
@@ -1198,9 +1196,9 @@ mod tests {
         // Carol owns the agent but takes no part in the session.
         store.create_user(&system, &carol).await.unwrap();
         let remote = an_agent_of_kind(&store, ActorId::User(carol.id), PersonalityKind::External).await;
-        let mut personality = store.get_personality(&system, remote.personality_id).await.unwrap();
+        let mut personality = store.entity_stores().personalities.get(&system, remote.personality_id).await.unwrap();
         personality.introduction = Some(Introduction::new("Answers questions about the weather.").unwrap());
-        store.update_personality(&system, &personality).await.unwrap();
+        store.entity_stores().personalities.update(&system, &personality).await.unwrap();
         let approver = Approver { id: ApproverId(uuid::Uuid::new_v4()), strategy: ApprovalStrategy::Any };
 
         let mut session = make_session("hers", ActorId::User(alice.id));
@@ -1456,7 +1454,7 @@ mod tests {
         let mut kept = caelumora_model::agent::AgentChannelState::default();
         kept.notes.push(Change::Add { id: NoteId(1), text: "kept".to_string(), classification: Classification::CHANNEL_DEFAULT }, NoteOrigin::default(), MessageId::default());
         store.put_agent_channel_state(helper.id, channel.id, &mut kept).await.unwrap();
-        assert!(store.delete_personality(&system, helper.personality_id).await.unwrap());
+        assert!(store.entity_stores().personalities.delete(&system, helper.personality_id).await.unwrap());
 
         let for_alice = manager.views(as_user(alice.id)).session(session.id).await.unwrap().channel(channel.id).await.unwrap();
         let member = for_alice.member(ActorId::Agent(helper.id)).await.unwrap();
@@ -1965,7 +1963,7 @@ use caelumora_model::turn::TurnState;
             security_attributes: Default::default(), reasoning_visibility: Default::default(),
             deleted: None,
         };
-        store.create_personality(&system, &personality).await.unwrap();
+        store.entity_stores().personalities.create(&system, &personality).await.unwrap();
         let thinker = Agent::new(ScopedName::new("thinker", Scope::GlobalScope).unwrap(), &personality, ActorId::User(alice.id));
         store.create_agent(&system, &thinker).await.unwrap();
         let agent = ActorId::Agent(thinker.id);

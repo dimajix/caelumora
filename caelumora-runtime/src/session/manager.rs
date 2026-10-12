@@ -146,7 +146,6 @@ impl SessionManager {
         let owner = context.principal_id.as_user_id().ok_or(SessionError::OwnerNotAUser(context.principal_id))?;
         // Before anything is found or made for it.
         let name = Name::optional(name)?;
-        let store = &self.stores.entities;
         let template = self.stores.session_templates.get(context, template_id).await?;
         let id = SessionId::new();
         // Its own verb before anything of others is asked or anything is
@@ -161,7 +160,7 @@ impl SessionManager {
             }
             _ => None,
         };
-        let participants = crate::template::resolve_participants(store.as_ref(), context, &template, id, owner).await?;
+        let participants = crate::template::resolve_participants(&self.stores, context, &template, id, owner).await?;
         let name = name.unwrap_or_else(|| template.name.name.clone());
         let language = preferred_language(self.stores.user_profiles.as_ref(), context).await?;
         // What is to be found or made: the template's, unless one was chosen.
@@ -689,7 +688,7 @@ mod tests {
             roles: None, description: None, introduction: None, components: Default::default(),
             security_attributes: Default::default(), reasoning_visibility: Default::default(), deleted: None,
         };
-        store.create_personality(&system, &personality).await.unwrap();
+        runtime.entity_stores().personalities.create(&system, &personality).await.unwrap();
         let helper = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), &personality, ActorId::None);
         store.create_agent(&system, &helper).await.unwrap();
         let actor = ActorId::Agent(helper.id);
@@ -768,7 +767,7 @@ mod tests {
             roles: None, description: None, introduction: None, components: Default::default(),
             security_attributes: Default::default(), reasoning_visibility: Default::default(), deleted: None,
         };
-        store.create_personality(&system, &personality).await.unwrap();
+        runtime.entity_stores().personalities.create(&system, &personality).await.unwrap();
         let helper = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), &personality, ActorId::None);
         store.create_agent(&system, &helper).await.unwrap();
         let actor = ActorId::Agent(helper.id);
@@ -898,6 +897,7 @@ mod tests {
 
         let runtime = test_runtime();
         let store = Arc::clone(runtime.entity_store());
+        let personalities = Arc::clone(&runtime.entity_stores().personalities);
         let manager = SessionManager::new(runtime);
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
         let session = make_session("scoped", ActorId::None);
@@ -910,7 +910,7 @@ mod tests {
             roles: None, description: None, introduction: None, components: Default::default(),
             security_attributes: Default::default(), reasoning_visibility: Default::default(), deleted: None,
         };
-        store.create_personality(&system, &personality).await.unwrap();
+        personalities.create(&system, &personality).await.unwrap();
         let agent_in = |name: &str, scope| Agent::new(ScopedName::new(name, scope).unwrap(), &personality, ActorId::None);
         let sessions = agent_in("helper", Scope::SessionScope { session_id: id });
         let sides = agent_in("aside", Scope::ChannelScope { session_id: id, channel_id: side });
@@ -933,12 +933,12 @@ mod tests {
 
         manager.delete_session(&ctx, id).await.unwrap();
         assert!(!present(&sessions).await && !present(&sides).await, "the session's and its channels' go with it");
-        assert!(store.get_personality(&system, personality.id).await.is_err(), "so do its personalities");
+        assert!(personalities.get(&system, personality.id).await.is_err(), "so do its personalities");
         assert!(present(&users).await, "the user's stays");
 
         manager.restore_session(&ctx, id).await.unwrap();
         assert!(present(&sessions).await && present(&sides).await, "back with it");
-        assert!(store.get_personality(&system, personality.id).await.is_ok());
+        assert!(personalities.get(&system, personality.id).await.is_ok());
         assert!(!present(&earlier).await, "but not what was deleted before it");
 
         // A name taken meanwhile (issue 250): that one stays deleted, the
@@ -955,7 +955,7 @@ mod tests {
         for agent in [&sessions, &sides, &earlier, &taker] {
             assert!(store.get_deleted_agent(&system, agent.id).await.is_err(), "{} is purged with it", agent.name);
         }
-        assert!(store.get_deleted_personality(&system, personality.id).await.is_err());
+        assert!(personalities.get_deleted(&system, personality.id).await.is_err());
         assert!(present(&users).await, "the user's is not");
     }
 

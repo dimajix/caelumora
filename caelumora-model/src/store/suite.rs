@@ -296,10 +296,10 @@ pub(crate) async fn queries_behave(stores: &EntityStores) {
     let in_channel = Personality { name: ScopedName::new("in-channel", Scope::ChannelScope { session_id, channel_id: ChannelId(Uuid::new_v4()) }).unwrap(), ..personality() };
     let elsewhere = Personality { name: scoped("elsewhere"), ..personality() };
     for personality in [&in_session, &in_channel, &elsewhere] {
-        store.create_personality(&ctx, personality).await.unwrap();
+        stores.personalities.create(&ctx, personality).await.unwrap();
     }
     let holder = Scope::SessionScope { session_id };
-    let lying = store.list_personalities(&ctx, &Query { filter: holder.within::<ScopeField>(), ..Query::all() }).await.unwrap();
+    let lying = stores.personalities.list(&ctx, &Query { filter: holder.within::<ScopeField>(), ..Query::all() }).await.unwrap();
     let mut expected = vec![in_session.id, in_channel.id];
     expected.sort_by_key(|id| id.to_string());
     assert_eq!(lying.items.iter().map(|p| p.id).collect::<Vec<_>>(), expected, "what lies in the session or a channel of it");
@@ -374,8 +374,8 @@ fn component_id(value: &StoredComponents) -> &str {
 /// by name, and so are definitions in their scope.
 pub(crate) async fn entity_store_behaves(stores: &EntityStores) {
     let store = stores.entities.as_ref();
-    lifecycle!(store, personality(), |v: &Personality| v.id, name.name, "personality",
-        create_personality, get_personality, update_personality, delete_personality, list_personalities);
+    lifecycle!(stores.personalities.as_ref(), personality(), |v: &Personality| v.id, name.name, "personality",
+        create, get, update, delete, list);
     lifecycle!(stores.session_templates.as_ref(), session_template(), |v: &SessionTemplate| v.id, name.name, "session_template",
         create, get, update, delete, list);
     lifecycle!(store, Agent::new(scoped("assistant-1"), &personality(), crate::actor::ActorId::None), |v: &Agent| v.id, name.name, "agent",
@@ -417,8 +417,8 @@ pub(crate) async fn entity_store_behaves(stores: &EntityStores) {
     let refused = stores.session_templates.update(&ctx, &moved).await;
     assert!(matches!(refused, Err(StoreError::Validation(_))), "nor moved into a channel's, got {refused:?}");
 
-    found_by_name!(store, |name| Personality { name, id: PersonalityId::new(), ..personality() }, "personality",
-        create_personality, delete_personality, find_personality_by_name);
+    found_by_name!(stores.personalities.as_ref(), |name| Personality { name, id: PersonalityId::new(), ..personality() }, "personality",
+        create, delete, find_by_name);
     found_by_name!(stores.session_templates.as_ref(), |name| SessionTemplate { name, id: SessionTemplateId::new(), ..session_template() }, "session_template",
         create, delete, find_by_name);
     found_by_name!(store, |name| Agent::new(name, &personality(), crate::actor::ActorId::None), "agent",
@@ -483,10 +483,10 @@ pub(crate) async fn names_are_unique(stores: &EntityStores) {
     let user_id = UserId::new();
     let in_scope = |name: &str, scope: &Scope| ScopedName::new(name, scope.clone()).unwrap();
     let (global, users) = (Scope::GlobalScope, Scope::UserScope { user_id });
-    unique_by_name!(store, |name| Personality { name: in_scope(name, &global), id: PersonalityId::new(), ..personality() },
+    unique_by_name!(stores.personalities.as_ref(), |name| Personality { name: in_scope(name, &global), id: PersonalityId::new(), ..personality() },
         elsewhere: |name| Personality { name: in_scope(name, &users), id: PersonalityId::new(), ..personality() },
         rename: |value: Personality, name| Personality { name: in_scope(name, &value.name.scope), ..value }, "personality",
-        create_personality, update_personality, delete_personality, restore_personality);
+        create, update, delete, restore);
     unique_by_name!(stores.session_templates.as_ref(), |name| SessionTemplate { name: in_scope(name, &global), id: SessionTemplateId::new(), ..session_template() },
         elsewhere: |name| SessionTemplate { name: in_scope(name, &users), id: SessionTemplateId::new(), ..session_template() },
         rename: |value: SessionTemplate, name| SessionTemplate { name: in_scope(name, &value.name.scope), ..value }, "session_template",

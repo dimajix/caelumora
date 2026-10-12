@@ -205,7 +205,7 @@ mod tests {
                     security_attributes: Default::default(), reasoning_visibility: Default::default(),
                     deleted: None,
                 };
-                store.create_personality(&system, &personality).await.unwrap();
+                store.entity_stores().personalities.create(&system, &personality).await.unwrap();
                 let agent = Agent::new(ScopedName::new(name, Scope::GlobalScope).unwrap(), &personality, owner);
                 store.create_agent(&system, &agent).await.unwrap();
                 ActorId::Agent(agent.id)
@@ -265,6 +265,7 @@ mod tests {
 
         let runtime = test_runtime();
         let store = Arc::clone(runtime.entity_store());
+        let personalities = Arc::clone(&runtime.entity_stores().personalities);
         let manager = SessionManager::new(runtime);
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
         let personality = Personality {
@@ -272,7 +273,7 @@ mod tests {
             roles: None, description: None, introduction: None, components: Default::default(),
             security_attributes: Default::default(), reasoning_visibility: Default::default(), deleted: None,
         };
-        store.create_personality(&system, &personality).await.unwrap();
+        personalities.create(&system, &personality).await.unwrap();
         let mut session = make_session("scoped", ActorId::None);
         let id = session.id;
         let elsewhere = [

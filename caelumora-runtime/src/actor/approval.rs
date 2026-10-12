@@ -490,7 +490,7 @@ mod tests {
             reasoning_visibility: Default::default(),
             deleted: None,
         };
-        store.create_personality(&system, &personality).await.unwrap();
+        store.entity_stores().personalities.create(&system, &personality).await.unwrap();
         let mut stored = Agent::new(ScopedName::new("helper", Default::default()).unwrap(), &personality, ActorId::System);
         stored.security_attributes = agent(&ids);
         store.create_agent(&system, &stored).await.unwrap();

@@ -185,7 +185,7 @@ mod tests {
             kind: Default::default(), roles: None, introduction: None, components: Default::default(),
             security_attributes: Default::default(), reasoning_visibility: Visibility::Channel, deleted: None,
         };
-        store.create_personality(&system, &personality).await.unwrap();
+        store.entity_stores().personalities.create(&system, &personality).await.unwrap();
         let agent = Agent::new(ScopedName::new("Jonathan", Scope::GlobalScope).unwrap(), &personality, ActorId::None);
         store.create_agent(&system, &agent).await.unwrap();
         let session_id = SessionId::new();

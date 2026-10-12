@@ -1,4 +1,4 @@
-use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
+use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality};
 use crate::artifact::Artifact;
 use crate::channel::{Channel, ChannelField, ChannelId, ChannelState};
 use crate::component::StoredComponents;
@@ -29,7 +29,7 @@ use tracing::info;
 /// and maps for the states.
 #[derive(Debug)]
 pub struct MemoryStore {
-    personalities: MemoryEntityStore<Personality>,
+    personalities: Arc<MemoryEntityStore<Personality>>,
     session_templates: Arc<MemoryEntityStore<SessionTemplate>>,
     agents: MemoryEntityStore<Agent>,
     sessions: MemoryEntityStore<Session>,
@@ -65,7 +65,7 @@ impl MemoryStore {
         info!("Creating memory store");
         let policies = (security_manager, confidentiality);
         Self {
-            personalities: MemoryEntityStore::new(&policies),
+            personalities: Arc::new(MemoryEntityStore::new(&policies)),
             session_templates: Arc::new(MemoryEntityStore::new(&policies)),
             agents: MemoryEntityStore::new(&policies),
             sessions: MemoryEntityStore::new(&policies),
@@ -96,6 +96,7 @@ impl MemoryStore {
             groups: Arc::<MemoryEntityStore<Group>>::clone(&self.groups),
             session_templates: Arc::<MemoryEntityStore<SessionTemplate>>::clone(&self.session_templates),
             user_profiles: Arc::<MemoryEntityStore<UserProfile>>::clone(&self.user_profiles),
+            personalities: Arc::<MemoryEntityStore<Personality>>::clone(&self.personalities),
         }
     }
 }
@@ -278,36 +279,6 @@ impl<T: Deletable + Clone + Serialize + Send + Sync + 'static> EntityStore<T> fo
 
 #[async_trait]
 impl Entities for MemoryStore {
-    async fn create_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()> {
-        self.personalities.create(ctx, value).await
-    }
-    async fn get_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
-        self.personalities.get(ctx, id).await
-    }
-    async fn update_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()> {
-        self.personalities.update(ctx, value).await
-    }
-    async fn delete_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool> {
-        self.personalities.delete(ctx, id).await
-    }
-    async fn list_personalities(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Personality>> {
-        self.personalities.list(ctx, query).await
-    }
-    async fn restore_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
-        self.personalities.restore(ctx, id).await
-    }
-    async fn purge_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool> {
-        self.personalities.purge(ctx, id).await
-    }
-    async fn get_deleted_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
-        self.personalities.get_deleted(ctx, id).await
-    }
-    async fn list_deleted_personalities(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Personality>> {
-        self.personalities.list_deleted(ctx, query).await
-    }
-    async fn find_personality_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Personality> {
-        self.personalities.find_by_name(ctx, name).await
-    }
     async fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
         self.agents.create(ctx, value).await
     }

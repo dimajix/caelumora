@@ -12,7 +12,7 @@ use serde::Serialize;
 use std::fmt::Debug;
 use std::sync::Arc;
 
-use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
+use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality};
 use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::StoredComponents;
 use crate::removal::Deletable;
@@ -183,6 +183,7 @@ pub struct EntityStores {
     pub groups: Arc<dyn EntityStore<Group>>,
     pub session_templates: Arc<dyn EntityStore<SessionTemplate>>,
     pub user_profiles: Arc<dyn EntityStore<UserProfile>>,
+    pub personalities: Arc<dyn EntityStore<Personality>>,
 }
 
 /// Every kind's entities at once, as one store offered them before each
@@ -222,17 +223,6 @@ pub struct EntityStores {
 /// purge never takes what was restored.
 #[async_trait]
 pub trait Entities : Debug + Sync + Send {
-    // Personalities
-    async fn create_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()>;
-    async fn get_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality>;
-    async fn update_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()>;
-    async fn delete_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool>;
-    async fn list_personalities(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Personality>>;
-    async fn restore_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality>;
-    async fn purge_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool>;
-    async fn get_deleted_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality>;
-    async fn list_deleted_personalities(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Personality>>;
-    async fn find_personality_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Personality>;
 
 
     // Agents

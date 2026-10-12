@@ -84,7 +84,6 @@ impl Seed {
     /// stored before stays.
     pub async fn apply(&self, stores: &EntityStores, components: &dyn ComponentStore, confidentiality: &dyn ConfidentialityPolicy) -> anyhow::Result<()> {
         let system = SecurityContext::system();
-        let store = stores.entities.as_ref();
         for component in &self.components {
             if components.get_components(&system, component.id()).await.optional()?.is_none() {
                 components.create_components(&system, component).await?;
@@ -93,8 +92,8 @@ impl Seed {
         }
         for seeded in &self.personalities {
             let personality = seeded.resolved(confidentiality)?;
-            if store.get_personality(&system, personality.id).await.optional()?.is_none() {
-                store.create_personality(&system, &personality).await?;
+            if stores.personalities.get(&system, personality.id).await.optional()?.is_none() {
+                stores.personalities.create(&system, &personality).await?;
                 info!("Seeded personality {} ({})", personality.name, personality.id);
             }
         }
@@ -138,7 +137,7 @@ mod tests {
     use caelumora_model::secret::SecretManager;
     use caelumora_model::security::DummySecurityManager;
     use caelumora_model::store::memory::MemoryStore;
-    use caelumora_model::store::{ComponentStore, Entities};
+    use caelumora_model::store::ComponentStore;
     use caelumora_model::template::ParticipantTemplate;
     use std::sync::Arc;
     use caelumora_model::config::AppConfig;
@@ -169,7 +168,7 @@ mod tests {
         for template in &seed.session_templates {
             for participant in &template.participants {
                 if let ParticipantTemplate::Agent { personality_id, .. } = participant {
-                    store.get_personality(&system, *personality_id).await
+                    store.entity_stores().personalities.get(&system, *personality_id).await
                         .unwrap_or_else(|_| panic!("template {} names a personality the seed has", template.name));
                 }
             }
@@ -178,11 +177,11 @@ mod tests {
         // A document changed in the store stays as it is.
         let mut changed = seed.personalities[0].personality.clone();
         changed.description = Some(caelumora_model::value::text::Description::new("changed").unwrap());
-        store.update_personality(&system, &changed).await.unwrap();
+        store.entity_stores().personalities.update(&system, &changed).await.unwrap();
         load(&stores, store.as_ref(), policy.as_ref(), &[example()]).await.expect("seeding again is no conflict");
-        assert_eq!(store.list_personalities(&system, &Query::all()).await.map(|page| page.items).unwrap().len(), seed.personalities.len(), "nothing twice");
+        assert_eq!(store.entity_stores().personalities.list(&system, &Query::all()).await.map(|page| page.items).unwrap().len(), seed.personalities.len(), "nothing twice");
         assert_eq!(stores.session_templates.list(&system, &Query::all()).await.map(|page| page.items).unwrap().len(), seed.session_templates.len());
-        assert_eq!(store.get_personality(&system, changed.id).await.unwrap().description, changed.description);
+        assert_eq!(store.entity_stores().personalities.get(&system, changed.id).await.unwrap().description, changed.description);
         let skills = stores.skills.list(&system, &Query::all()).await.map(|page| page.items).unwrap();
         assert!(!skills.is_empty() && skills.len() == seed.skills.len(), "the skills, once (issue 22)");
         assert!(skills.iter().all(|s| s.security_attributes.owner_id == ActorId::System), "the system's");
@@ -215,7 +214,7 @@ mod tests {
         let seed: Seed = parse_yaml("personalities:\n- id: ff9a5e56-e5ea-43f9-9114-2098a6f417a9\n  name: limited\n  roles: [staff]\n").unwrap();
         let (store, policy) = (Arc::new(MemoryStore::new()), policy());
         seed.apply(&store.entity_stores(), store.as_ref(), policy.as_ref()).await.unwrap();
-        let stored = store.list_personalities(&SecurityContext::system(), &Query::all()).await.map(|page| page.items).unwrap();
+        let stored = store.entity_stores().personalities.list(&SecurityContext::system(), &Query::all()).await.map(|page| page.items).unwrap();
         assert_eq!(stored[0].roles, Some(vec![policy.roles().unwrap().id_of("staff").unwrap()]), "by the id the configuration gives it");
         let unknown: Seed = parse_yaml("personalities:\n- id: 1f9a5e56-e5ea-43f9-9114-2098a6f417a9\n  name: typo\n  roles: [staf]\n").unwrap();
         let error = unknown.apply(&store.entity_stores(), store.as_ref(), policy.as_ref()).await.expect_err("a role not configured");
