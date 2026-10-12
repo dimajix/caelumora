@@ -12,7 +12,7 @@ use tracing::error;
 use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::security::{Grant, SecurityContext, Subject};
 use caelumora_model::session::SessionId;
-use caelumora_model::store::{EntityStore, StoreError, StoreResult};
+use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResult};
 use std::sync::Arc;
 use super::check_restricting;
 
@@ -25,14 +25,15 @@ pub struct ChannelController {
     session_id: SessionId,
     channel: ArcSwap<Channel>,
     event_publisher: Arc<dyn EventPublisher>,
-    entity_store: Arc<dyn EntityStore>,
+    channels: Arc<dyn EntityStore<Channel>>,
+    groups: Arc<dyn EntityStore<Group>>,
     /// Held while the channel is changed and stored, so that two changes
     /// cannot overwrite each other.
     write_lock: tokio::sync::Mutex<()>,
 }
 
 impl ChannelController {
-    pub fn new(channel: Channel, event_publisher: Arc<dyn EventPublisher>, entity_store: Arc<dyn EntityStore>) -> Self {
+    pub fn new(channel: Channel, event_publisher: Arc<dyn EventPublisher>, stores: &EntityStores) -> Self {
         let id = channel.id;
         let session_id = channel.session_id;
         Self {
@@ -40,7 +41,8 @@ impl ChannelController {
             session_id,
             channel: ArcSwap::from_pointee(channel),
             event_publisher,
-            entity_store,
+            channels: Arc::clone(&stores.channels),
+            groups: Arc::clone(&stores.groups),
             write_lock: tokio::sync::Mutex::new(()),
         }
     }
@@ -216,14 +218,14 @@ impl ChannelController {
     /// permitted and is stored. A failure is logged and corrected by the
     /// next change, which derives the group anew.
     async fn keep_participants(&self, channel: &Channel) {
-        if let Err(e) = crate::group::keep_participants(self.entity_store.as_ref(), Group::of_channel(channel)).await {
+        if let Err(e) = crate::group::keep_participants(self.groups.as_ref(), Group::of_channel(channel)).await {
             error!(channel = %channel.id, "The group of the channel's participants does not follow them: {e}");
         }
     }
 
     /// Stores `channel` on behalf of `ctx`.
     async fn store(&self, ctx: &SecurityContext, channel: &Channel) -> StoreResult<()> {
-        self.entity_store.update_channel(ctx, channel).await
+        self.channels.update(ctx, channel).await
     }
 
     /// Applies `event`, stores the channel, takes it over and announces it.

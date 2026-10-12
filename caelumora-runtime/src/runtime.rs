@@ -3,7 +3,7 @@ use crate::command::{CommandExecutor, ChannelCommandProvider};
 use crate::component::{ComponentContainer, ComponentContext, ComponentRegistry, ComponentResult, ComponentServices};
 use crate::controller::{ControllerManager, SessionController};
 use crate::event::EventBus;
-use crate::recorder::Recorder;
+use crate::recorder::{BlackholeRecorder, Recorder};
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{AgentChannelState, AgentId};
@@ -13,7 +13,7 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::SecurityAttributes;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::StoreResult;
-use crate::agent::state::AgentStateHandle;
+use crate::agent::state::{AgentStateHandle, AgentStates};
 use crate::event::{EventSubscription, SubscriptionTopic};
 use crate::view::ViewsFactory;
 use caelumora_model::component::ComponentConfig;
@@ -21,11 +21,15 @@ use caelumora_model::config::AppConfig;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{SecurityContext, SecurityManager};
 use caelumora_model::session::Session;
-use caelumora_model::store::{EntityStore, StateStore};
+use caelumora_model::store::{EntityStores, StateStore};
 use caelumora_model::confidentiality::ConfidentialityPolicy;
 use std::sync::{Arc, OnceLock, Weak};
 use crate::agent::manager::AgentManager;
 use crate::group::GroupManager;
+use crate::artifact::ArtifactManager;
+use crate::scoped::ScopedEntities;
+use crate::skill::SkillManager;
+use crate::workspace::WorkspaceManager;
 
 #[derive(Debug)]
 pub struct RuntimeManager {
@@ -34,7 +38,7 @@ pub struct RuntimeManager {
     /// beside the `SecurityManager`, never by it.
     confidentiality: Arc<dyn ConfidentialityPolicy>,
     state_store: Arc<dyn StateStore>,
-    entity_store: Arc<dyn EntityStore>,
+    entity_stores: EntityStores,
     secret_manager: Arc<SecretManager>,
     component_registry: Arc<ComponentRegistry>,
     event_bus: Arc<EventBus>,
@@ -44,20 +48,20 @@ pub struct RuntimeManager {
     /// (`AppConfig::approvals`, issue 13).
     approval_rules: Arc<[ApprovalRule]>,
     /// One owner of every running agent's `AgentState` (issue 62).
-    agent_states: Arc<crate::agent::state::AgentStates>,
+    agent_states: Arc<AgentStates>,
     /// The one owner of workspaces and their places (issue 253).
-    workspaces: Arc<crate::workspace::WorkspaceManager>,
+    workspaces: Arc<WorkspaceManager>,
     /// The one writer of skills (issue 22).
-    skills: Arc<crate::skill::SkillManager>,
+    skills: Arc<SkillManager>,
     /// The one owner of artifacts and their content (issue 271).
-    artifacts: Arc<crate::artifact::ArtifactManager>,
+    artifacts: Arc<ArtifactManager>,
     /// The one writer of teams (issue 286).
     groups: Arc<GroupManager>,
     /// The one owner of agents' lifecycle (issue 314).
     agents: Arc<AgentManager>,
     /// What deletes, restores and purges what lies in a scope with what
     /// holds it (issues 178, 319).
-    scoped: Arc<crate::scoped::ScopedEntities>,
+    scoped: Arc<ScopedEntities>,
     /// The services components may use (issue 296), each given to the
     /// kinds that declare it (`ComponentKind::uses`).
     component_services: ComponentServices,
@@ -131,9 +135,9 @@ impl ChannelRuntime {
 
     pub fn controller_manager(&self) -> &Arc<ControllerManager> { self.runtime_manager.controller_manager() }
 
-    /// The entities - for what a channel checks of its participants (issue
-    /// 191).
-    pub fn entity_store(&self) -> &Arc<dyn EntityStore> { self.runtime_manager.entity_store() }
+    /// The stores of the entities - for what a channel checks of its
+    /// participants (issue 191).
+    pub fn entity_stores(&self) -> &EntityStores { self.runtime_manager.entity_stores() }
 
     pub fn new_recorder(&self) -> Result<Box<dyn Recorder>> { self.runtime_manager.new_recorder() }
 
@@ -195,7 +199,7 @@ impl ActorRuntime {
 
     /// The session `id` as stored, as `security` may read it.
     pub async fn load_session(&self, security: &SecurityContext, id: SessionId) -> StoreResult<Session> {
-        self.runtime.runtime_manager.entity_store().get_session(security, id).await
+        self.runtime.runtime_manager.entity_stores().sessions.get(security, id).await
     }
 
     /// The agent's own state, shared with its actors in other channels and
@@ -309,7 +313,7 @@ impl RuntimeManager {
     /// then.
     pub fn new(
         state_store: Arc<dyn StateStore>,
-        entity_store: Arc<dyn EntityStore>,
+        entity_stores: EntityStores,
         secret_manager: Arc<SecretManager>,
         security_manager: Arc<dyn SecurityManager>,
         confidentiality: Arc<dyn ConfidentialityPolicy>,
@@ -319,14 +323,14 @@ impl RuntimeManager {
         component_registry.set_defaults(&config.component_defaults)?;
 
         let event_bus = Arc::new(EventBus::new(Arc::clone(&security_manager), Arc::clone(&confidentiality)));
-        let controller_manager = Arc::new(ControllerManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus)));
-        let agent_states = Arc::new(crate::agent::state::AgentStates::new(Arc::clone(&state_store), Arc::<EventBus>::clone(&event_bus)));
-        let workspaces = crate::workspace::WorkspaceManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus), Arc::clone(&security_manager), Arc::clone(&confidentiality), Arc::clone(&controller_manager), &secret_manager, &config.workspaces)?;
-        let skills = Arc::new(crate::skill::SkillManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus), Arc::clone(&confidentiality)));
-        let artifacts = Arc::new(crate::artifact::ArtifactManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus), Arc::clone(&security_manager), Arc::clone(&confidentiality), &config.artifacts)?);
-        let groups = Arc::new(GroupManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus), Arc::clone(&security_manager)));
-        let agents = Arc::new(AgentManager::new(Arc::clone(&entity_store), Arc::clone(&state_store), Arc::clone(&event_bus), Arc::clone(&security_manager)));
-        let scoped = Arc::new(crate::scoped::ScopedEntities::new(Arc::clone(&entity_store), Arc::clone(&agents), Arc::clone(&workspaces), Arc::clone(&skills), Arc::clone(&artifacts), Arc::clone(&groups)));
+        let controller_manager = Arc::new(ControllerManager::new(entity_stores.clone(), Arc::clone(&event_bus)));
+        let agent_states = Arc::new(AgentStates::new(Arc::clone(&state_store), Arc::<EventBus>::clone(&event_bus)));
+        let workspaces = WorkspaceManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&security_manager), Arc::clone(&confidentiality), Arc::clone(&controller_manager), &secret_manager, &config.workspaces)?;
+        let skills = Arc::new(SkillManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&confidentiality)));
+        let artifacts = Arc::new(ArtifactManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&security_manager), Arc::clone(&confidentiality), &config.artifacts)?);
+        let groups = Arc::new(GroupManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&security_manager)));
+        let agents = Arc::new(AgentManager::new(&entity_stores, Arc::clone(&state_store), Arc::clone(&event_bus), Arc::clone(&security_manager)));
+        let scoped = Arc::new(ScopedEntities::new(&entity_stores, Arc::clone(&agents), Arc::clone(&workspaces), Arc::clone(&skills), Arc::clone(&artifacts), Arc::clone(&groups)));
 
         let component_services = ComponentServices::empty()
             .with(Arc::clone(&security_manager))
@@ -338,7 +342,7 @@ impl RuntimeManager {
             security_manager,
             confidentiality,
             state_store,
-            entity_store,
+            entity_stores,
             secret_manager,
             component_registry: Arc::new(component_registry),
             event_bus,
@@ -388,7 +392,8 @@ impl RuntimeManager {
 
     pub fn state_store(&self) -> &Arc<dyn StateStore> { &self.state_store }
 
-    pub fn entity_store(&self) -> &Arc<dyn EntityStore> { &self.entity_store }
+    /// The stores of the entities, one per kind (issue 323).
+    pub fn entity_stores(&self) -> &EntityStores { &self.entity_stores }
 
     pub fn secret_manager(&self) -> &Arc<SecretManager> { &self.secret_manager }
 
@@ -408,22 +413,22 @@ impl RuntimeManager {
     }
 
     /// The owner of every running agent's `AgentState` (issue 62).
-    pub fn agent_states(&self) -> &Arc<crate::agent::state::AgentStates> {
+    pub fn agent_states(&self) -> &Arc<AgentStates> {
         &self.agent_states
     }
 
     /// The one owner of workspaces and their places (issue 253).
-    pub fn workspace_manager(&self) -> &Arc<crate::workspace::WorkspaceManager> {
+    pub fn workspace_manager(&self) -> &Arc<WorkspaceManager> {
         &self.workspaces
     }
 
     /// The one writer of skills (issue 22).
-    pub fn skill_manager(&self) -> &Arc<crate::skill::SkillManager> {
+    pub fn skill_manager(&self) -> &Arc<SkillManager> {
         &self.skills
     }
 
     /// The one owner of artifacts and their content (issue 271).
-    pub fn artifact_manager(&self) -> &Arc<crate::artifact::ArtifactManager> {
+    pub fn artifact_manager(&self) -> &Arc<ArtifactManager> {
         &self.artifacts
     }
 
@@ -439,12 +444,12 @@ impl RuntimeManager {
 
     /// What deletes, restores and purges what lies in a scope with what
     /// holds it (issues 178, 319).
-    pub(crate) fn scoped_entities(&self) -> &Arc<crate::scoped::ScopedEntities> {
+    pub(crate) fn scoped_entities(&self) -> &Arc<ScopedEntities> {
         &self.scoped
     }
 
     pub fn new_recorder(&self) -> Result<Box<dyn Recorder>> {
-        Ok(Box::new(crate::recorder::BlackholeRecorder::new()))
+        Ok(Box::new(BlackholeRecorder::new()))
     }
 }
 
@@ -455,11 +460,12 @@ mod tests {
     use caelumora_model::security::DummySecurityManager;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::user::UserId;
+    use caelumora_model::confidentiality::ConfidentialityRules;
 
     fn channel_runtime() -> ChannelRuntime {
         let store = Arc::new(MemoryStore::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-        let manager = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(DummySecurityManager::new()), Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let manager = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store.entity_stores(), secrets, Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let commands = Arc::new(CommandExecutor::empty(Arc::clone(manager.security_manager())));
         ChannelRuntime::outside_a_session(manager, commands, SessionId::new())
     }
@@ -483,7 +489,7 @@ mod tests {
             let store = Arc::new(MemoryStore::new());
             let secrets = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
             let defaults: ComponentConfig = serde_json::from_value(defaults).unwrap();
-            RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(DummySecurityManager::new()), Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig { component_defaults: defaults, ..Default::default() }, crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store)))
+            RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store.entity_stores(), secrets, Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()), &AppConfig { component_defaults: defaults, ..Default::default() }, ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store)))
         };
         // As in `examples/config.yaml`.
         assert!(manager(serde_json::json!([{"id": "context", "kind": "turn_context_provider"}])).is_ok());

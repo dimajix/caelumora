@@ -137,8 +137,9 @@ mod tests {
     use caelumora_model::secret::SecretManager;
     use caelumora_model::security::{DummySecurityManager, SecurityContext};
     use caelumora_model::session::{Session, SessionId};
-    use caelumora_model::store::EntityStore;
     use caelumora_model::store::memory::MemoryStore;
+    use caelumora_model::confidentiality::ConfidentialityRules;
+    use caelumora_model::config::AppConfig;
 
     fn language(tag: &str) -> Option<Language> {
         Some(Language::new(tag).unwrap())
@@ -175,7 +176,7 @@ mod tests {
         let store = Arc::new(MemoryStore::new());
         let policy = Arc::new(DummySecurityManager::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store.entity_stores(), secrets, policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let system = SecurityContext::system();
 
         let personality = Personality {
@@ -183,9 +184,9 @@ mod tests {
             kind: Default::default(), roles: None, introduction: None, components: Default::default(),
             security_attributes: Default::default(), reasoning_visibility: Visibility::Channel, deleted: None,
         };
-        store.create_personality(&system, &personality).await.unwrap();
+        store.entity_stores().personalities.create(&system, &personality).await.unwrap();
         let agent = Agent::new(ScopedName::new("Jonathan", Scope::GlobalScope).unwrap(), &personality, ActorId::None);
-        store.create_agent(&system, &agent).await.unwrap();
+        store.entity_stores().agents.create(&system, &agent).await.unwrap();
         let session_id = SessionId::new();
         let channel = Channel::build(session_id, ActorId::None, Name::new("main").unwrap(), Default::default(), Classification::CHANNEL_DEFAULT, language("de"), vec![Participant::Agent(agent.id)]);
         let now = chrono::Utc::now();
@@ -197,8 +198,8 @@ mod tests {
             commands: Default::default(), privacy: Default::default(), created_at: now, updated_at: now, security_attributes: Default::default(),
             deleted: None,
         };
-        store.create_session(&system, &session).await.unwrap();
-        store.create_channel(&system, &channel).await.unwrap();
+        store.entity_stores().sessions.create(&system, &session).await.unwrap();
+        store.entity_stores().channels.create(&system, &channel).await.unwrap();
         let session_loop = SessionLoop::new(session.clone(), vec![channel.clone()], Arc::clone(&runtime)).await.unwrap();
 
         let context = SecurityContext::default().next(ActorId::Agent(agent.id), ActorId::None);

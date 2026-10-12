@@ -446,6 +446,9 @@ impl From<axum::extract::rejection::PathRejection> for ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::artifact::Artifact;
+    use caelumora_model::removal::Stored;
+    use caelumora_model::scope::Scope;
     use caelumora_model::store::StoreError;
 
     async fn body_of(error: ApiError) -> (StatusCode, String, serde_json::Value) {
@@ -564,9 +567,8 @@ mod tests {
             assert_eq!(workspace(WorkspaceError::Terminal(TerminalError::UnknownCommand("7".to_string()))), (404, "command_not_found"), "nor one not started in the channel");
             assert_eq!(answer(not_found("workspace"), Subject::Session), (404, "workspace_not_found"), "as attaching reports it");
             assert_eq!(answer(anyhow::Error::new(SessionError::WorkspaceOutOfScope(id)), Subject::Session), (400, "workspace_out_of_scope"));
-            use caelumora_model::removal::Stored;
-            let left = vec![(caelumora_model::artifact::Artifact::KIND, 1)];
-            assert_eq!(answer(anyhow::Error::new(SessionError::ScopeNotEmpty { holder: caelumora_model::scope::Scope::SessionScope { session_id: session }, left }), Subject::Session), (409, "scope_not_empty"), "what is left is the others' to take away (issue 320)");
+            let left = vec![(Artifact::KIND, 1)];
+            assert_eq!(answer(anyhow::Error::new(SessionError::ScopeNotEmpty { holder: Scope::SessionScope { session_id: session }, left }), Subject::Session), (409, "scope_not_empty"), "what is left is the others' to take away (issue 320)");
         {
             use caelumora_runtime::artifact::ArtifactError;
             let artifact = caelumora_model::artifact::ArtifactId::new();

@@ -25,7 +25,7 @@ use caelumora_model::note::Note;
 use caelumora_model::security::{SecurityAttributes, SecurityContext};
 use caelumora_model::session::ChannelId;
 use caelumora_model::store::{EntityStore, StateStore, StoreError, StoreResultExt};
-use caelumora_model::user::UserId;
+use caelumora_model::user::{UserId, UserProfile};
 use std::fmt::Debug;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
@@ -82,8 +82,8 @@ pub(super) trait MemberState: Send + Sync + Debug {
 /// may see.
 pub(super) async fn member_state(views: &Views, participant: &Participant, channel: ChannelId) -> Arc<dyn MemberState> {
     match participant {
-        Participant::User(id) => match views.entities().get_user(&SecurityContext::system(), *id).await {
-            Ok(user) => Arc::new(UserMember { id: *id, name: user.username.to_string(), store: Arc::clone(views.entities()), introduction: OnceCell::new() }),
+        Participant::User(id) => match views.stores().users.get(&SecurityContext::system(), *id).await {
+            Ok(user) => Arc::new(UserMember { id: *id, name: user.username.to_string(), profiles: Arc::clone(&views.stores().user_profiles), introduction: OnceCell::new() }),
             Err(StoreError::NotFound { .. }) => Arc::new(GoneMember { name: None }),
             Err(e) => {
                 warn!("Cannot read user {}: {:#}", id, e);
@@ -95,7 +95,7 @@ pub(super) async fn member_state(views: &Views, participant: &Participant, chann
             Some(agent) => Arc::new(AgentMemberState {
                 member: AgentMember(StateRef { agent: agent.id, channel, store: Arc::clone(views.states()) }),
                 agent,
-                store: Arc::clone(views.entities()),
+                personalities: Arc::clone(&views.stores().personalities),
                 personality: OnceCell::new(),
             }),
             // A deleted agent keeps its name (issue 164), nothing else.
@@ -110,7 +110,7 @@ pub(super) async fn member_state(views: &Views, participant: &Participant, chann
 struct UserMember {
     id: UserId,
     name: String,
-    store: Arc<dyn EntityStore>,
+    profiles: Arc<dyn EntityStore<UserProfile>>,
     introduction: OnceCell<Option<String>>,
 }
 
@@ -122,7 +122,7 @@ impl MemberState for UserMember {
 
     async fn introduction(&self) -> ViewResult<Option<String>> {
         let introduction = self.introduction.get_or_try_init(|| async {
-            let profile = self.store.get_user_profile(&SecurityContext::system(), self.id).await.optional()
+            let profile = self.profiles.get(&SecurityContext::system(), self.id).await.optional()
                 .map_err(|e| ViewError::failed(e, format!("reading the introduction of {}", ActorId::User(self.id))))?;
             Ok::<_, ViewError>(profile.and_then(|profile| profile.introduction).map(String::from))
         }).await?;
@@ -189,7 +189,7 @@ impl StateRef {
 struct AgentMemberState {
     agent: Agent,
     member: AgentMember,
-    store: Arc<dyn EntityStore>,
+    personalities: Arc<dyn EntityStore<Personality>>,
     personality: OnceCell<Option<Personality>>,
 }
 
@@ -207,7 +207,7 @@ impl MemberState for AgentMemberState {
 
     async fn personality(&self) -> ViewResult<Option<&Personality>> {
         let personality = self.personality.get_or_try_init(|| async {
-            self.store.get_personality(&SecurityContext::system(), self.agent.personality_id).await.optional()
+            self.personalities.get(&SecurityContext::system(), self.agent.personality_id).await.optional()
                 .map_err(|e| ViewError::failed(e, format!("reading the personality of agent {}", self.agent.id)))
         }).await?;
         Ok(personality.as_ref())

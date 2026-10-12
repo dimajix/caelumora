@@ -10,22 +10,21 @@ use async_trait::async_trait;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::fmt::Debug;
+use std::sync::Arc;
 
-use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
+use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality};
 use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::StoredComponents;
+use crate::removal::Deletable;
 use crate::security::SecurityContext;
-use crate::session::{Session, SessionId};
-use crate::template::{SessionTemplate, SessionTemplateId};
-use crate::user::{User, UserId, UserProfile};
+use crate::session::Session;
+use crate::template::SessionTemplate;
+use crate::user::{User, UserProfile};
 use crate::value::name::ScopedName;
-use crate::workspace::{Workspace, WorkspaceId};
-use crate::skill::{Skill, SkillId};
-use crate::group::{Group, GroupField, GroupId};
-use crate::artifact::{Artifact, ArtifactField, ArtifactId};
-use crate::channel::ChannelField;
-use crate::scope::ScopeField;
-use crate::session::SessionField;
+use crate::workspace::Workspace;
+use crate::skill::Skill;
+use crate::group::Group;
+use crate::artifact::Artifact;
 use crate::store::query::{NoField, Page, Query};
 
 
@@ -133,174 +132,57 @@ impl std::fmt::Display for EntityKind {
     }
 }
 
-/// The durable entities (issue 93): every kind has the same five
-/// operations - `create`, `get`, `update`, `delete`, `list` - by id, and
-/// every one of them is checked the same way (`store::access`).
-/// `create` refuses an entity that exists (`Conflict`), `update` one that
-/// does not (`NotFound`); `delete` says whether there was one to delete.
-/// Some kinds are also found by name, among what the caller may read -
-/// `NotFound` if there is none: users by their username, an identity, and
-/// what lies in a scope - personalities, session templates, agents - by
-/// their `ScopedName`, the name in exactly that scope (issue 178). Finding
-/// one from a place, in the scopes around it, is `scope::find_by_name`
-/// over `list_x`.
+/// The entities of one kind (issues 93, 323): every kind has the same
+/// operations, checked the same way (`store::access`), and is kept by a
+/// store of its own. `create` refuses an entity that exists (`Conflict`),
+/// `update` one that does not (`NotFound`); `delete` says whether there was
+/// one to delete. What has a name unique of its kind in its scope
+/// (`Stored::unique_name`, issue 250) is created, renamed and restored only
+/// under a name no other one of its kind that is not deleted has there,
+/// also one the caller may not read (`NameTaken`), and is found by it
+/// (`find_by_name`) - `NotFound` for a kind without one.
 ///
-/// What is `Scoped` - personalities, session templates, agents, channels,
-/// users, workspaces, skills, artifacts, groups - has a name unique of its kind in its scope (issue
-/// 250): `create`,
-/// `update` and `restore` refuse one that another has there (`NameTaken`),
-/// checked against every one of the kind that is not deleted, also those
-/// the caller may not read, in the same step as the write. Sessions have
-/// names, but no unique ones.
-///
-/// Deleting marks (issue 164): `delete_x` sets the mark - who, when - and
-/// keeps the document. What is marked is not there for any of the five:
-/// not read, not listed, not changed, not deleted again - also not for the
-/// system - and its id is not free for `create`. Nothing new or changed can
-/// carry the mark (`Validation`): only deleting sets it. What was deleted
-/// is reached by four operations of its own, each kind alike:
-/// `get_deleted_x` and `list_deleted_x` read it (`ReadDeleted`),
-/// `restore_x` takes the mark away (`Restore`) and returns what it
-/// restored, and `purge_x` removes what was deleted for good (`Purge`) -
-/// only what is marked, so that what is deleted is deleted first, and a
-/// purge never takes what was restored.
+/// Deleting marks (issue 164): `delete` sets the mark - who, when - and
+/// keeps the entity. What is marked is not there for `get`, `list`,
+/// `update` and `delete`, also not for the system, and its id is not free
+/// for `create`; nothing new or changed may carry the mark (`Validation`).
+/// What was deleted is reached by four operations of its own:
+/// `get_deleted` and `list_deleted` read it (`ReadDeleted`), `restore`
+/// takes the mark away (`Restore`) and returns what it restored, and
+/// `purge` removes what was deleted for good (`Purge`) - only what is
+/// marked, so that a purge never takes what was restored.
 #[async_trait]
-pub trait EntityStore : Debug + Sync + Send {
-    // Personalities
-    async fn create_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()>;
-    async fn get_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality>;
-    async fn update_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()>;
-    async fn delete_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool>;
-    async fn list_personalities(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Personality>>;
-    async fn restore_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality>;
-    async fn purge_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool>;
-    async fn get_deleted_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality>;
-    async fn list_deleted_personalities(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Personality>>;
-    async fn find_personality_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Personality>;
+pub trait EntityStore<T: Deletable + Send + Sync + 'static>: Debug + Send + Sync {
+    async fn create(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()>;
+    async fn get(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T>;
+    async fn update(&self, ctx: &SecurityContext, value: &T) -> StoreResult<()>;
+    async fn delete(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<bool>;
+    async fn list(&self, ctx: &SecurityContext, query: &Query<T::Field>) -> StoreResult<Page<T>>;
+    async fn restore(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T>;
+    async fn purge(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<bool>;
+    async fn get_deleted(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T>;
+    async fn list_deleted(&self, ctx: &SecurityContext, query: &Query<T::Field>) -> StoreResult<Page<T>>;
+    /// The one of `name`, in exactly that scope, among what the caller may
+    /// read (issue 178).
+    async fn find_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<T>;
+}
 
-    // Session templates
-    async fn create_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()>;
-    async fn get_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<SessionTemplate>;
-    async fn update_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()>;
-    async fn delete_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool>;
-    async fn list_session_templates(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<SessionTemplate>>;
-    async fn restore_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<SessionTemplate>;
-    async fn purge_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool>;
-    async fn get_deleted_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<SessionTemplate>;
-    async fn list_deleted_session_templates(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<SessionTemplate>>;
-    async fn find_session_template_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<SessionTemplate>;
-
-    // Agents
-    async fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()>;
-    async fn get_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent>;
-    async fn update_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()>;
-    async fn delete_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<bool>;
-    async fn list_agents(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Agent>>;
-    async fn restore_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent>;
-    async fn purge_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<bool>;
-    async fn get_deleted_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent>;
-    async fn list_deleted_agents(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Agent>>;
-    async fn find_agent_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Agent>;
-
-    // Sessions
-    async fn create_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()>;
-    async fn get_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session>;
-    async fn update_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()>;
-    async fn delete_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool>;
-    async fn list_sessions(&self, ctx: &SecurityContext, query: &Query<SessionField>) -> StoreResult<Page<Session>>;
-    async fn restore_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session>;
-    async fn purge_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool>;
-    async fn get_deleted_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session>;
-    async fn list_deleted_sessions(&self, ctx: &SecurityContext, query: &Query<SessionField>) -> StoreResult<Page<Session>>;
-
-    // Channels (issue 70): documents of their own, which the session lists
-    // by id.
-    async fn create_channel(&self, ctx: &SecurityContext, value: &Channel) -> StoreResult<()>;
-    async fn get_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel>;
-    async fn update_channel(&self, ctx: &SecurityContext, value: &Channel) -> StoreResult<()>;
-    async fn delete_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool>;
-    async fn list_channels(&self, ctx: &SecurityContext, query: &Query<ChannelField>) -> StoreResult<Page<Channel>>;
-    async fn restore_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel>;
-    async fn purge_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool>;
-    async fn get_deleted_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel>;
-    async fn list_deleted_channels(&self, ctx: &SecurityContext, query: &Query<ChannelField>) -> StoreResult<Page<Channel>>;
-
-    // Users - they belong to the system: everybody reads them, only the
-    // system changes them (issue 94).
-    async fn create_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()>;
-    async fn get_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User>;
-    async fn update_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()>;
-    async fn delete_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool>;
-    async fn list_users(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<User>>;
-    async fn restore_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User>;
-    async fn purge_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool>;
-    async fn get_deleted_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User>;
-    async fn list_deleted_users(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<User>>;
-    async fn find_user_by_name(&self, ctx: &SecurityContext, name: &str) -> StoreResult<User>;
-
-    // User profiles - what a user says about themselves (issue 176), one
-    // per user, under the user's id. Unlike the user, a profile belongs to
-    // its user.
-    async fn create_user_profile(&self, ctx: &SecurityContext, value: &UserProfile) -> StoreResult<()>;
-    async fn get_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<UserProfile>;
-    async fn update_user_profile(&self, ctx: &SecurityContext, value: &UserProfile) -> StoreResult<()>;
-    async fn delete_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool>;
-    async fn list_user_profiles(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<UserProfile>>;
-    async fn restore_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<UserProfile>;
-    async fn purge_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool>;
-    async fn get_deleted_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<UserProfile>;
-    async fn list_deleted_user_profiles(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<UserProfile>>;
-
-    // Workspaces (issue 253) - their files are no part of the document, and
-    // whoever purges one removes them.
-    async fn create_workspace(&self, ctx: &SecurityContext, value: &Workspace) -> StoreResult<()>;
-    async fn get_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace>;
-    async fn update_workspace(&self, ctx: &SecurityContext, value: &Workspace) -> StoreResult<()>;
-    async fn delete_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<bool>;
-    async fn list_workspaces(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Workspace>>;
-    async fn restore_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace>;
-    async fn purge_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<bool>;
-    async fn get_deleted_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace>;
-    async fn list_deleted_workspaces(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Workspace>>;
-    async fn find_workspace_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Workspace>;
-
-    // Skills (issue 22)
-    async fn create_skill(&self, ctx: &SecurityContext, value: &Skill) -> StoreResult<()>;
-    async fn get_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<Skill>;
-    async fn update_skill(&self, ctx: &SecurityContext, value: &Skill) -> StoreResult<()>;
-    async fn delete_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<bool>;
-    async fn list_skills(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Skill>>;
-    async fn restore_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<Skill>;
-    async fn purge_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<bool>;
-    async fn get_deleted_skill(&self, ctx: &SecurityContext, id: SkillId) -> StoreResult<Skill>;
-    async fn list_deleted_skills(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Skill>>;
-    async fn find_skill_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Skill>;
-
-    // Artifacts (issue 271) - their content is no part of the document, and
-    // whoever purges one removes it.
-    async fn create_artifact(&self, ctx: &SecurityContext, value: &Artifact) -> StoreResult<()>;
-    async fn get_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<Artifact>;
-    async fn update_artifact(&self, ctx: &SecurityContext, value: &Artifact) -> StoreResult<()>;
-    async fn delete_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<bool>;
-    async fn list_artifacts(&self, ctx: &SecurityContext, query: &Query<ArtifactField>) -> StoreResult<Page<Artifact>>;
-    async fn restore_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<Artifact>;
-    async fn purge_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<bool>;
-    async fn get_deleted_artifact(&self, ctx: &SecurityContext, id: ArtifactId) -> StoreResult<Artifact>;
-    async fn list_deleted_artifacts(&self, ctx: &SecurityContext, query: &Query<ArtifactField>) -> StoreResult<Page<Artifact>>;
-    async fn find_artifact_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Artifact>;
-
-    // Groups (issue 286) - teams, and the participants of sessions and
-    // channels, kept by those.
-    async fn create_group(&self, ctx: &SecurityContext, value: &Group) -> StoreResult<()>;
-    async fn get_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group>;
-    async fn update_group(&self, ctx: &SecurityContext, value: &Group) -> StoreResult<()>;
-    async fn delete_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<bool>;
-    async fn list_groups(&self, ctx: &SecurityContext, query: &Query<GroupField>) -> StoreResult<Page<Group>>;
-    async fn restore_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group>;
-    async fn purge_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<bool>;
-    async fn get_deleted_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group>;
-    async fn list_deleted_groups(&self, ctx: &SecurityContext, query: &Query<GroupField>) -> StoreResult<Page<Group>>;
-    async fn find_group_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Group>;
+/// The stores of the entities (issue 323), one per kind of the core,
+/// which the runtime is given and hands to the managers that keep each
+/// kind.
+#[derive(Debug, Clone)]
+pub struct EntityStores {
+    pub skills: Arc<dyn EntityStore<Skill>>,
+    pub workspaces: Arc<dyn EntityStore<Workspace>>,
+    pub artifacts: Arc<dyn EntityStore<Artifact>>,
+    pub groups: Arc<dyn EntityStore<Group>>,
+    pub session_templates: Arc<dyn EntityStore<SessionTemplate>>,
+    pub user_profiles: Arc<dyn EntityStore<UserProfile>>,
+    pub personalities: Arc<dyn EntityStore<Personality>>,
+    pub users: Arc<dyn EntityStore<User>>,
+    pub agents: Arc<dyn EntityStore<Agent>>,
+    pub channels: Arc<dyn EntityStore<Channel>>,
+    pub sessions: Arc<dyn EntityStore<Session>>,
 }
 
 /// The preconfigured components: runtime configuration that personalities
@@ -354,6 +236,7 @@ pub trait StateStore : Debug + Sync + Send {
 
 #[cfg(test)]
 mod tests {
+    use crate::session::SessionId;
     use super::*;
     use crate::security::{SecurityAttributes, SecurityContext};
     use crate::store::memory::MemoryStore;
@@ -403,13 +286,13 @@ mod tests {
             security_attributes: SecurityAttributes::default(),
             deleted: None,
         };
-        let store = Arc::new(MemoryStore::new());
+        let store = Arc::new(MemoryStore::new()).entity_stores().sessions;
         let ctx = SecurityContext::default();
 
-        store.create_session(&ctx, &session1).await.unwrap();
-        store.create_session(&ctx, &session2).await.unwrap();
+        store.create(&ctx, &session1).await.unwrap();
+        store.create(&ctx, &session2).await.unwrap();
 
-        let sessions = store.list_sessions(&ctx, &Query::all()).await.map(|page| page.items).unwrap();
+        let sessions = store.list(&ctx, &Query::all()).await.map(|page| page.items).unwrap();
         assert_eq!(sessions.len(), 2);
         assert!(sessions.iter().any(|s| s.id == session1.id));
         assert!(sessions.iter().any(|s| s.id == session2.id));

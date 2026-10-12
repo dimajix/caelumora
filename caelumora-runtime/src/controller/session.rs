@@ -17,19 +17,19 @@ pub struct SessionController {
     id: SessionId,
     session: ArcSwap<Session>,
     event_publisher: Arc<dyn EventPublisher>,
-    entity_store: Arc<dyn EntityStore>,
+    sessions: Arc<dyn EntityStore<Session>>,
     /// Held while the session is changed and stored, so that two changes -
     /// say a rename and a new channel - cannot overwrite each other.
     write_lock: tokio::sync::Mutex<()>,
 }
 
 impl SessionController {
-    pub fn new(session: Session, event_publisher: Arc<dyn EventPublisher>, entity_store: Arc<dyn EntityStore>) -> Self {
+    pub fn new(session: Session, event_publisher: Arc<dyn EventPublisher>, sessions: Arc<dyn EntityStore<Session>>) -> Self {
         Self {
             id: session.id,
             session: ArcSwap::from_pointee(session),
             event_publisher,
-            entity_store,
+            sessions,
             write_lock: tokio::sync::Mutex::new(()),
         }
     }
@@ -109,7 +109,7 @@ impl SessionController {
     async fn update(&self, ctx: &SecurityContext, event: SessionUpdateEvent) -> StoreResult<()> {
         let _guard = self.write_lock.lock().await;
         let session = self.apply(&event)?;
-        self.entity_store.update_session(ctx, &session).await?;
+        self.sessions.update(ctx, &session).await?;
         let attributes = session.security_attributes.clone();
         self.session.store(Arc::new(session));
         self.event_publisher.publish(GlobalEvent::SessionUpdated(self.id, event), attributes);
@@ -165,7 +165,7 @@ impl SessionController {
     /// Stores `session` as changed by `ctx` and takes it over live.
     async fn store(&self, ctx: &SecurityContext, mut session: Session) -> StoreResult<()> {
         session.updated_at = Utc::now();
-        self.entity_store.update_session(ctx, &session).await?;
+        self.sessions.update(ctx, &session).await?;
         self.session.store(Arc::new(session));
         Ok(())
     }
@@ -231,13 +231,13 @@ mod tests {
         let session = session();
         let store = Arc::new(MemoryStore::new());
         let ctx = SecurityContext::default();
-        store.create_session(&ctx, &session).await.unwrap();
-        let controller = SessionController::new(session.clone(), Arc::new(()), Arc::<MemoryStore>::clone(&store));
+        store.entity_stores().sessions.create(&ctx, &session).await.unwrap();
+        let controller = SessionController::new(session.clone(), Arc::new(()), store.entity_stores().sessions);
 
         controller.update_name(&ctx, "renamed").await.unwrap();
 
         assert_eq!(controller.name(), "renamed");
-        assert_eq!(store.get_session(&ctx, session.id).await.unwrap().name, "renamed");
+        assert_eq!(store.entity_stores().sessions.get(&ctx, session.id).await.unwrap().name, "renamed");
     }
 
     #[tokio::test]
@@ -245,12 +245,12 @@ mod tests {
         let session = session();
         let store = Arc::new(MemoryStore::new());
         let ctx = SecurityContext::default();
-        store.create_session(&ctx, &session).await.unwrap();
+        store.entity_stores().sessions.create(&ctx, &session).await.unwrap();
         let announced = Arc::new(Announced::default());
-        let controller = SessionController::new(session.clone(), Arc::<Announced>::clone(&announced), Arc::<MemoryStore>::clone(&store));
+        let controller = SessionController::new(session.clone(), Arc::<Announced>::clone(&announced), store.entity_stores().sessions);
 
         controller.update_description(&ctx, Some("Release 2.0"), Some("")).await.unwrap();
-        let stored = store.get_session(&ctx, session.id).await.unwrap();
+        let stored = store.entity_stores().sessions.get(&ctx, session.id).await.unwrap();
         assert_eq!((stored.summary.as_ref().map(|s| s.as_str()), stored.briefing), (Some("Release 2.0"), None), "empty is none");
         assert!(matches!(announced.0.lock().unwrap().as_slice(), [GlobalEvent::SessionUpdated(_, SessionUpdateEvent::DescriptionChanged { .. })]), "announced");
 
@@ -259,7 +259,7 @@ mod tests {
 
         let renamed = controller.update_name(&ctx, " ").await;
         assert!(matches!(&renamed, Err(StoreError::Invalid(ValueError::Blank { field: "name" }))), "a name is checked so, too: {renamed:?}");
-        assert_eq!(store.get_session(&ctx, session.id).await.unwrap().summary, stored.summary, "unchanged by what is refused");
+        assert_eq!(store.entity_stores().sessions.get(&ctx, session.id).await.unwrap().summary, stored.summary, "unchanged by what is refused");
         assert_eq!(announced.0.lock().unwrap().len(), 1);
     }
 }

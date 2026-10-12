@@ -220,9 +220,11 @@ mod tests {
     use caelumora_model::secret::SecretManager;
     use caelumora_model::security::{DummySecurityManager, SecurityContext};
     use caelumora_model::session::{ChannelId, Session, SessionId};
-    use caelumora_model::store::EntityStore;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::user::{User, UserId, UserProfile};
+    use caelumora_model::confidentiality::ConfidentialityRules;
+    use caelumora_model::config::AppConfig;
+    use caelumora_model::value::text::Introduction;
 
     fn member(name: &str, person: bool, introduction: Option<&str>) -> Member {
         Member { id: ActorId::None, name: name.to_string(), handle: Some(name.to_lowercase()), person, introduction: introduction.map(str::to_string) }
@@ -260,7 +262,7 @@ mod tests {
         assert_eq!(one_line(Some(" \n".to_string())), None, "nothing in it is none");
     }
 
-    async fn personality(store: &MemoryStore, introduction: Option<&str>) -> Personality {
+    async fn personality(store: &Arc<MemoryStore>, introduction: Option<&str>) -> Personality {
         // Named apart: a name is unique in its scope (issue 250).
         let id = PersonalityId::new();
         let personality = Personality {
@@ -269,19 +271,19 @@ mod tests {
             name: ScopedName::new(format!("plain {id}"), Default::default()).unwrap(),
             kind: Default::default(),
             roles: None,
-            introduction: introduction.map(|text| caelumora_model::value::text::Introduction::new(text).unwrap()),
+            introduction: introduction.map(|text| Introduction::new(text).unwrap()),
             components: Default::default(),
             security_attributes: Default::default(),
             reasoning_visibility: Visibility::Channel,
             deleted: None,
         };
-        store.create_personality(&SecurityContext::system(), &personality).await.unwrap();
+        store.entity_stores().personalities.create(&SecurityContext::system(), &personality).await.unwrap();
         personality
     }
 
-    async fn agent(store: &MemoryStore, name: &str, personality: &Personality) -> Agent {
+    async fn agent(store: &Arc<MemoryStore>, name: &str, personality: &Personality) -> Agent {
         let agent = Agent::new(ScopedName::new(name, Scope::GlobalScope).unwrap(), personality, ActorId::None);
-        store.create_agent(&SecurityContext::system(), &agent).await.unwrap();
+        store.entity_stores().agents.create(&SecurityContext::system(), &agent).await.unwrap();
         agent
     }
 
@@ -290,14 +292,14 @@ mod tests {
         let store = Arc::new(MemoryStore::new());
         let policy = Arc::new(DummySecurityManager::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store.entity_stores(), secrets, policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let system = SecurityContext::system();
 
         let (kaya, bob) = (User { id: UserId::new(), username: Name::new("Kaya").unwrap(), email: String::new(), roles: Vec::new(), deleted: None }, User { id: UserId::new(), username: Name::new("Bob").unwrap(), email: String::new(), roles: Vec::new(), deleted: None });
         for user in [&kaya, &bob] {
-            store.create_user(&system, user).await.unwrap();
+            store.entity_stores().users.create(&system, user).await.unwrap();
         }
-        store.create_user_profile(&system, &UserProfile::new(kaya.id, Some(caelumora_model::value::text::Introduction::new("I run the budget.").unwrap()))).await.unwrap();
+        store.entity_stores().user_profiles.create(&system, &UserProfile::new(kaya.id, Some(Introduction::new("I run the budget.").unwrap()))).await.unwrap();
         let quiz_master = personality(&store, Some("A quiz master.")).await;
         let plain = personality(&store, None).await;
         let jonathan = agent(&store, "Jonathan", &quiz_master).await;
@@ -324,8 +326,8 @@ mod tests {
             deleted: None,
             former: Vec::new(),
         };
-        store.create_session(&system, &session).await.unwrap();
-        store.create_channel(&system, &channel).await.unwrap();
+        store.entity_stores().sessions.create(&system, &session).await.unwrap();
+        store.entity_stores().channels.create(&system, &channel).await.unwrap();
         let session_loop = SessionLoop::new(session.clone(), vec![channel.clone()], Arc::clone(&runtime)).await.unwrap();
 
         let context = SecurityContext::default().next(ActorId::Agent(jonathan.id), ActorId::None);

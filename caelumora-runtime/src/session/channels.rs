@@ -140,9 +140,8 @@ impl SessionLoop {
         self.security
             .require(context, ActionType::create(Channel::KIND, &channel.security_attributes), || StoreError::PermissionDenied).await?;
         crate::channel::require_admitted(&self.runtime_manager, context, &channel).await?;
-        let store = &self.entities;
-        store.create_channel(context, &channel).await?;
-        let added = match keep_participants(store.as_ref(), Group::of_channel(&channel)).await {
+        self.stores.channels.create(context, &channel).await?;
+        let added = match keep_participants(self.stores.groups.as_ref(), Group::of_channel(&channel)).await {
             Ok(()) => self.session_controller.add_channel(context, channel.id).await,
             Err(e) => Err(e),
         };
@@ -213,7 +212,7 @@ impl SessionLoop {
         // part in no other channel (`Scope::admits`). If either fails, the
         // channel is put back - in the runtime's name: its deletion was
         // permitted - and runs on, without what was deleted.
-        let deleted = match self.entities.delete_channel(context, channel_id).await {
+        let deleted = match self.stores.channels.delete(context, channel_id).await {
             Ok(_) => self.scoped.delete_lying_in(context, &scope).await,
             Err(error) => Err(error.into()),
         };
@@ -254,8 +253,7 @@ impl SessionLoop {
     ///   channel or change the session; nothing is changed then.
     pub async fn restore_channel(self: &Arc<Self>, context: &SecurityContext, channel_id: ChannelId) -> Result<Arc<ChannelLoop>> {
         let not_found = || SessionError::ChannelNotFound { session: self.id, channel: channel_id };
-        let store = &self.entities;
-        let channel = match store.get_deleted_channel(context, channel_id).await.optional()? {
+        let channel = match self.stores.channels.get_deleted(context, channel_id).await.optional()? {
             Some(channel) if channel.session_id == self.id => channel,
             _ => return Err(not_found().into()),
         };
@@ -265,7 +263,7 @@ impl SessionLoop {
         // changed while it was deleted.
         crate::channel::require_admitted(&self.runtime_manager, context, &channel).await?;
         let deleted_at = channel.deleted.as_ref().map(|removal| removal.at);
-        let channel = store.restore_channel(context, channel_id).await?;
+        let channel = self.stores.channels.restore(context, channel_id).await?;
         let listed = match self.session_controller.add_channel(context, channel_id).await {
             Ok(()) => self.add_channel_loop(&channel).await,
             Err(error) => Err(error.into()),
@@ -275,7 +273,7 @@ impl SessionLoop {
             Err(error) => {
                 // Deleted again, so that it is neither half back nor lost.
                 let _ = self.session_controller.remove_channel(context, channel_id).await;
-                if let Err(undo) = store.delete_channel(&SecurityContext::system(), channel_id).await {
+                if let Err(undo) = self.stores.channels.delete(&SecurityContext::system(), channel_id).await {
                     warn!("Channel {} of session {} could not be restored and not be marked deleted again: {}", channel_id, self.id, undo);
                 }
                 return Err(error);
@@ -297,7 +295,7 @@ impl SessionLoop {
     /// session again, last, and its mark taken away, if it was marked.
     async fn keep_channel(&self, channel_id: ChannelId) {
         let system = SecurityContext::system();
-        if let Err(e) = self.entities.restore_channel(&system, channel_id).await.optional() {
+        if let Err(e) = self.stores.channels.restore(&system, channel_id).await.optional() {
             warn!("Channel {} of session {} could not be deleted and not be unmarked again: {}", channel_id, self.id, e);
         }
         if let Err(e) = self.session_controller.add_channel(&system, channel_id).await {
@@ -308,7 +306,7 @@ impl SessionLoop {
     /// Deletes the stored channel `channel_id` again after creating it failed
     /// half-way - in the runtime's name: its creation was permitted.
     async fn discard_channel(&self, channel_id: ChannelId) {
-        if let Err(e) = purge_channel_document(self.entities.as_ref(), channel_id).await {
+        if let Err(e) = purge_channel_document(&self.stores, channel_id).await {
             warn!("Channel {} of session {} could not be deleted again: {}", channel_id, self.id, e);
         }
     }
@@ -349,9 +347,9 @@ mod tests {
         let names: Vec<String> = session.channels().iter().map(|c| c.name().to_string()).collect();
         assert_eq!(names, ["main", "side"], "in the order of the session");
 
-        let stored = runtime.entity_store().get_session(&ctx, session.id()).await.unwrap();
+        let stored = runtime.entity_stores().sessions.get(&ctx, session.id()).await.unwrap();
         assert!(stored.channels.contains(&channel.id()), "the session lists the channel");
-        let document = runtime.entity_store().get_channel(&ctx, channel.id()).await.expect("stored as a document of its own");
+        let document = runtime.entity_stores().channels.get(&ctx, channel.id()).await.expect("stored as a document of its own");
         assert_eq!(document.name, "side");
 
         // `run` starts it asynchronously.
@@ -375,7 +373,7 @@ mod tests {
         let owner = ctx.initiator_id.as_user_id().unwrap();
         let mut profile = UserProfile::new(owner, None);
         profile.preferred_language = language("de");
-        runtime.entity_store().create_user_profile(&ctx, &profile).await.unwrap();
+        runtime.entity_stores().user_profiles.create(&ctx, &profile).await.unwrap();
         let unsaid = session.create_channel(&ctx, spec("unsaid", vec![])).await.unwrap();
         assert_eq!(unsaid.channel().language, None, "not the one the creator prefers: that is the frontend's to offer (issue 331)");
         let asked = session.create_channel(&ctx, ChannelSpec { language: Some("en".to_string()), ..spec("asked", vec![]) }).await.unwrap();
@@ -383,7 +381,7 @@ mod tests {
 
         asked.update_language(&ctx, None).await.expect("the owner changes it");
         assert_eq!(asked.channel().language, None);
-        let stored = runtime.entity_store().get_channel(&ctx, asked.id()).await.unwrap();
+        let stored = runtime.entity_stores().channels.get(&ctx, asked.id()).await.unwrap();
         assert_eq!(stored.language, None, "stored, not only in memory");
         manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
@@ -398,7 +396,7 @@ mod tests {
         assert!(unsaid.channel().uses_workspace, "by default");
         let without = session.create_channel(&ctx, ChannelSpec { uses_workspace: Some(false), ..spec("without", vec![]) }).await.unwrap();
         assert!(!without.channel().uses_workspace, "as its creator says");
-        let stored = runtime.entity_store().get_channel(&ctx, without.id()).await.unwrap();
+        let stored = runtime.entity_stores().channels.get(&ctx, without.id()).await.unwrap();
         assert!(!stored.uses_workspace, "stored, not only in memory");
         manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
@@ -423,7 +421,7 @@ mod tests {
         assert!(matches!(refusal(session.create_channel(&ctx, ChannelSpec { components: two, ..spec("x", vec![]) }).await), SessionError::InvalidModerator(_)), "a channel has one policy");
 
         assert_eq!(session.channels().len(), 1);
-        assert_eq!(runtime.entity_store().get_session(&ctx, session.id()).await.unwrap().channels.len(), 1);
+        assert_eq!(runtime.entity_stores().sessions.get(&ctx, session.id()).await.unwrap().channels.len(), 1);
         manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
@@ -443,9 +441,9 @@ mod tests {
         session.delete_channel(&ctx, id).await.expect("the owner deletes it");
 
         assert!(session.channel_by_id(id).is_none());
-        assert!(!runtime.entity_store().get_session(&ctx, session.id()).await.unwrap().channels.contains(&id));
-        assert!(runtime.entity_store().get_channel(&ctx, id).await.is_err(), "not there");
-        assert!(runtime.entity_store().get_deleted_channel(&ctx, id).await.is_ok(), "but kept, marked (issue 164)");
+        assert!(!runtime.entity_stores().sessions.get(&ctx, session.id()).await.unwrap().channels.contains(&id));
+        assert!(runtime.entity_stores().channels.get(&ctx, id).await.is_err(), "not there");
+        assert!(runtime.entity_stores().channels.get_deleted(&ctx, id).await.is_ok(), "but kept, marked (issue 164)");
         assert!(runtime.state_store().get_channel_state(id).await.is_ok(), "with its state");
         let events = drain(&mut rx);
         let stopped = events.iter().position(|e| matches!(e, GlobalEvent::ChannelStopped(_, cid) if *cid == id));
@@ -462,7 +460,7 @@ mod tests {
         session.delete_channel(&ctx, taken.id()).await.unwrap();
         session.restore_channel(&ctx, id).await.expect("restored");
         assert!(session.channel_by_id(id).is_some());
-        assert!(runtime.entity_store().get_session(&ctx, session.id()).await.unwrap().channels.contains(&id), "listed again");
+        assert!(runtime.entity_stores().sessions.get(&ctx, session.id()).await.unwrap().channels.contains(&id), "listed again");
         assert!(drain(&mut rx).iter().any(|e| matches!(e, GlobalEvent::ChannelRestored(_, cid) if *cid == id)), "and announced");
         assert!(runtime.state_store().get_channel_state(id).await.is_ok());
         let again = session.restore_channel(&ctx, id).await.expect_err("not deleted");

@@ -18,7 +18,7 @@ use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
-use caelumora_model::store::{EntityStore, StateStore, StoreError, StoreResult, StoreResultExt};
+use caelumora_model::store::{EntityStore, EntityStores, StateStore, StoreError, StoreResult, StoreResultExt};
 use chrono::{DateTime, Utc};
 use std::fmt;
 use std::sync::Arc;
@@ -27,7 +27,7 @@ use caelumora_model::removal::Stored;
 
 /// The one owner of agents' lifecycle (issue 314).
 pub struct AgentManager {
-    entities: Arc<dyn EntityStore>,
+    agents: Arc<dyn EntityStore<Agent>>,
     states: Arc<dyn StateStore>,
     events: Arc<EventBus>,
     security: Arc<dyn SecurityManager>,
@@ -40,8 +40,8 @@ impl fmt::Debug for AgentManager {
 }
 
 impl AgentManager {
-    pub(crate) fn new(entities: Arc<dyn EntityStore>, states: Arc<dyn StateStore>, events: Arc<EventBus>, security: Arc<dyn SecurityManager>) -> Self {
-        Self { entities, states, events, security }
+    pub(crate) fn new(stores: &EntityStores, states: Arc<dyn StateStore>, events: Arc<EventBus>, security: Arc<dyn SecurityManager>) -> Self {
+        Self { agents: Arc::clone(&stores.agents), states, events, security }
     }
 
     /// Deletes agent `id` on behalf of `context` (issues 164, 314): marked
@@ -59,10 +59,10 @@ impl AgentManager {
     /// `StoreError::PermissionDenied` if they may read it but not delete
     /// it, or whatever else the store reports.
     pub async fn delete(&self, context: &SecurityContext, id: AgentId) -> StoreResult<bool> {
-        let Some(agent) = self.entities.get_agent(context, id).await.optional()? else { return Ok(false) };
+        let Some(agent) = self.agents.get(context, id).await.optional()? else { return Ok(false) };
         self.security
             .require(context, ActionType::delete(Agent::KIND, &agent.security_attributes), || StoreError::PermissionDenied).await?;
-        if !self.entities.delete_agent(context, id).await? {
+        if !self.agents.delete(context, id).await? {
             return Ok(false);
         }
         self.events.publish(GlobalEvent::AgentDeleted(id), agent.security_attributes);
@@ -81,7 +81,7 @@ impl AgentManager {
     /// but not restore it, `StoreError::NameTaken` if another agent took its
     /// name in its scope meanwhile (issue 250).
     pub async fn restore(&self, context: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
-        let agent = self.entities.restore_agent(context, id).await?;
+        let agent = self.agents.restore(context, id).await?;
         self.events.publish(GlobalEvent::AgentRestored(id), agent.security_attributes.clone());
         info!("Agent {} restored by {}", id, context.caller_id);
         Ok(agent)
@@ -99,7 +99,7 @@ impl AgentManager {
     /// `StoreError::PermissionDenied` if they may see it but not purge it,
     /// or whatever else the stores report.
     pub async fn purge(&self, context: &SecurityContext, id: AgentId) -> StoreResult<bool> {
-        if !self.entities.purge_agent(context, id).await? {
+        if !self.agents.purge(context, id).await? {
             return Ok(false);
         }
         self.states.delete_agent_state(id).await?;
@@ -118,8 +118,8 @@ impl AgentManager {
     pub(crate) async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> StoreResult<usize> {
         let system = SecurityContext::system();
         let mut left = 0;
-        for agent in self.entities.list_agents(&system, &within(holder)).await?.items {
-            if deleted_unless_refused(self.entities.delete_agent(ctx, agent.id).await)? {
+        for agent in self.agents.list(&system, &within(holder)).await?.items {
+            if deleted_unless_refused(self.agents.delete(ctx, agent.id).await)? {
                 self.events.publish(GlobalEvent::AgentDeleted(agent.id), agent.security_attributes);
             } else {
                 left += 1;
@@ -138,8 +138,8 @@ impl AgentManager {
     /// restored.
     pub(crate) async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()> {
         let system = SecurityContext::system();
-        for agent in deleted_since(self.entities.list_deleted_agents(&system, &within(holder)).await?.items, since) {
-            if let Some(restored) = restored_unless_refused(self.entities.restore_agent(ctx, agent.id).await, "agent", &agent.name)? {
+        for agent in deleted_since(self.agents.list_deleted(&system, &within(holder)).await?.items, since) {
+            if let Some(restored) = restored_unless_refused(self.agents.restore(ctx, agent.id).await, "agent", &agent.name)? {
                 self.events.publish(GlobalEvent::AgentRestored(restored.id), restored.security_attributes);
             }
         }
@@ -153,8 +153,8 @@ impl AgentManager {
     /// Whatever the stores report; what was purged before stays purged.
     pub(crate) async fn purge_lying_in(&self, holder: &Scope) -> StoreResult<()> {
         let system = SecurityContext::system();
-        for agent in self.entities.list_deleted_agents(&system, &within(holder)).await?.items {
-            self.entities.purge_agent(&system, agent.id).await?;
+        for agent in self.agents.list_deleted(&system, &within(holder)).await?.items {
+            self.agents.purge(&system, agent.id).await?;
             self.states.delete_agent_state(agent.id).await?;
         }
         Ok(())

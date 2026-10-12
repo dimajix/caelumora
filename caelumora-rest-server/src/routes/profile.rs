@@ -16,8 +16,8 @@ use crate::state::AppState;
 
 /// The user's profile; one without an introduction if they never wrote one.
 pub async fn get_profile(State(state): State<Arc<AppState>>, user: AuthenticatedUser) -> Result<Json<ProfileResponse>, ApiError> {
-    let store = state.runtime_manager.entity_store();
-    let profile = store.get_user_profile(&user.security_context(), user.id).await.optional()
+    let profiles = &state.runtime_manager.entity_stores().user_profiles;
+    let profile = profiles.get(&user.security_context(), user.id).await.optional()
         .map_err(|e| ApiError::internal("profile_failed", "reading the profile", &e.into()))?;
     Ok(Json(ProfileResponse::of(profile)))
 }

@@ -4,7 +4,6 @@
 
 use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
 use caelumora_model::security::{OwnershipSecurityManager, SecurityManager};
-use caelumora_model::store::EntityStore;
 use caelumora_model::store::memberships::StoreMemberships;
 use caelumora_model::store::memory::MemoryStore;
 use std::sync::Arc;
@@ -28,6 +27,8 @@ use caelumora_model::security::DummySecurityManager;
 use caelumora_model::actor::{ActorEvent, Envelope, Rejection};
 use caelumora_model::message::MessageId;
 use tokio::sync::broadcast;
+use caelumora_model::config::AppConfig;
+use crate::component::ComponentRegistry;
 
 /// A store under the ownership policy, which learns who belongs to a
 /// group from that store (issue 23), and `rules` as the confidentiality
@@ -37,8 +38,7 @@ pub(crate) fn owned_store(rules: ConfidentialityRules) -> (Arc<dyn SecurityManag
     let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_memberships(Arc::<StoreMemberships>::clone(&memberships)));
     let confidentiality: Arc<dyn ConfidentialityPolicy> = Arc::new(rules);
     let store = Arc::new(MemoryStore::with_policies(Arc::clone(&policy), Arc::clone(&confidentiality)));
-    let entities: Arc<dyn EntityStore> = Arc::<MemoryStore>::clone(&store);
-    memberships.bind(&entities);
+    memberships.bind(&store.entity_stores().groups);
     (policy, confidentiality, store)
 }
 
@@ -50,10 +50,10 @@ pub(crate) fn user(name: &str) -> User {
 /// `users` as participants, recorded in the store the session reads
 /// them from (issue 120).
 pub(crate) async fn record_users(manager: &SessionManager, users: &[&User]) -> Vec<Participant> {
-    let store = manager.runtime_manager.entity_store();
+    let store = &manager.runtime_manager.entity_stores().users;
     let mut participants = Vec::new();
     for user in users {
-        store.create_user(&SecurityContext::system(), user).await.unwrap();
+        store.create(&SecurityContext::system(), user).await.unwrap();
         participants.push(Participant::User(user.id));
     }
     participants
@@ -64,7 +64,7 @@ pub(crate) async fn record_users(manager: &SessionManager, users: &[&User]) -> V
 pub(crate) fn owned_runtime(rules: ConfidentialityRules) -> (Arc<MemoryStore>, Arc<SessionManager>) {
     let (policy, confidentiality, store) = owned_store(rules);
     let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, confidentiality, &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store.entity_stores(), secrets, policy, confidentiality, &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
     (store, Arc::new(SessionManager::new(runtime)))
 }
 
@@ -72,7 +72,7 @@ pub(crate) fn owned_runtime(rules: ConfidentialityRules) -> (Arc<MemoryStore>, A
 pub(crate) fn test_runtime() -> Arc<RuntimeManager> {
     let store = Arc::new(MemoryStore::new());
     let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-    Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(DummySecurityManager::new()), Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap())
+    Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store.entity_stores(), secret_manager, Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap())
 }
 
 /// A session that holds nothing but its id `session_id`: what a channel
@@ -150,8 +150,8 @@ pub(crate) async fn create(manager: &SessionManager, ctx: &SecurityContext, sess
 
 /// Stores `session` and its main channel without starting it.
 pub(crate) async fn persist(runtime: &Arc<RuntimeManager>, ctx: &SecurityContext, session: &Session) {
-    runtime.entity_store().create_session(ctx, session).await.unwrap();
-    runtime.entity_store().create_channel(ctx, &main_channel(session)).await.unwrap();
+    runtime.entity_stores().sessions.create(ctx, session).await.unwrap();
+    runtime.entity_stores().channels.create(ctx, &main_channel(session)).await.unwrap();
 }
 
 /// Drain every event currently buffered on the receiver.

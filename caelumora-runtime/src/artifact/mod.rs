@@ -34,8 +34,8 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{AclEntry, ActionType, Enforcement, Grant, SecurityAttributes, SecurityContext, SecurityManager, Subject, WRITE};
 use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::group::GroupId;
-use caelumora_model::store::{EntityStore, StoreError, StoreResultExt};
+use caelumora_model::group::{Group, GroupId};
+use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResultExt};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;
@@ -112,7 +112,8 @@ pub(crate) trait ArtifactStorage: Send + Sync + fmt::Debug {
 }
 
 pub struct ArtifactManager {
-    entities: Arc<dyn EntityStore>,
+    artifacts: Arc<dyn EntityStore<Artifact>>,
+    groups: Arc<dyn EntityStore<Group>>,
     events: Arc<EventBus>,
     security: Arc<dyn SecurityManager>,
     /// What may flow where (issue 304): into a storage that keeps it.
@@ -133,7 +134,7 @@ impl fmt::Debug for ArtifactManager {
 }
 
 impl ArtifactManager {
-    pub(crate) fn new(entities: Arc<dyn EntityStore>, events: Arc<EventBus>, security: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>, config: &ArtifactsConfig) -> ComponentResult<Self> {
+    pub(crate) fn new(stores: &EntityStores, events: Arc<EventBus>, security: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>, config: &ArtifactsConfig) -> ComponentResult<Self> {
         config.check().map_err(|why| ComponentError::InvalidConfig(format!("artifacts: {why}")))?;
         let storages = config.storage.iter()
             .map(|(name, storage)| {
@@ -143,7 +144,7 @@ impl ArtifactManager {
                 (name.clone(), storage)
             })
             .collect();
-        Ok(Self { entities, events, security, confidentiality, storages, publish_to: config.publish_to().map(String::from), max_bytes: config.max_bytes, writing: Mutex::new(()) })
+        Ok(Self { artifacts: Arc::clone(&stores.artifacts), groups: Arc::clone(&stores.groups), events, security, confidentiality, storages, publish_to: config.publish_to().map(String::from), max_bytes: config.max_bytes, writing: Mutex::new(()) })
     }
 
     /// Whether artifacts can be published: a storage is configured.
@@ -185,7 +186,7 @@ impl ArtifactManager {
         let _writing = self.writing.lock().await;
         // Found whoever's it is, so that one not the caller's to add to is
         // refused as such rather than taken for a name to make anew.
-        let existing = self.entities.find_artifact_by_name(&SecurityContext::system(), &name).await.optional()?;
+        let existing = self.artifacts.find_by_name(&SecurityContext::system(), &name).await.optional()?;
         let (id, number, storage_name) = match &existing {
             Some(artifact) => {
                 self.security.require(ctx, ActionType::custom(Artifact::KIND, &WRITE, &artifact.security_attributes), || StoreError::PermissionDenied).await?;
@@ -235,11 +236,11 @@ impl ArtifactManager {
                 artifact.add_version(version);
                 // Changed in the runtime's name: whoever may add a version
                 // need not own the artifact (`WriteArtifact`, asked above).
-                self.entities.update_artifact(&SecurityContext::system(), &artifact).await.map(|()| artifact)
+                self.artifacts.update(&SecurityContext::system(), &artifact).await.map(|()| artifact)
             }
             None => {
                 let artifact = Artifact::new(id, name, storage_name, classification.clone(), owner, version);
-                self.entities.create_artifact(ctx, &artifact).await.map(|()| artifact)
+                self.artifacts.create(ctx, &artifact).await.map(|()| artifact)
             }
         };
         let artifact = match stored {
@@ -292,11 +293,11 @@ impl ArtifactManager {
     /// an agent, the system or nobody, or a group the caller cannot read.
     pub async fn set_access(&self, ctx: &SecurityContext, id: ArtifactId, acl: Vec<AclEntry>) -> ArtifactResult<Artifact> {
         let _writing = self.writing.lock().await;
-        let mut artifact = self.entities.get_artifact(ctx, id).await.map_err(store_error(id))?;
-        crate::group::require_nameable(self.entities.as_ref(), ctx, &artifact.security_attributes.acl, &acl).await?;
+        let mut artifact = self.artifacts.get(ctx, id).await.map_err(store_error(id))?;
+        crate::group::require_nameable(self.groups.as_ref(), ctx, &artifact.security_attributes.acl, &acl).await?;
         artifact.security_attributes.acl = acl;
         artifact.updated_at = Utc::now();
-        self.entities.update_artifact(ctx, &artifact).await?;
+        self.artifacts.update(ctx, &artifact).await?;
         self.events.publish_classified(GlobalEvent::ArtifactUpdated(id), artifact.reader_attributes(), std::slice::from_ref(&artifact.classification));
         info!(artifact = %id, by = %ctx.caller_id, "Artifact's access changed");
         Ok(artifact)
@@ -313,7 +314,7 @@ impl ArtifactManager {
     /// reports - `PermissionDenied` and `NameTaken` among it.
     pub async fn keep(&self, ctx: &SecurityContext, id: ArtifactId, scope: Scope) -> ArtifactResult<Artifact> {
         let _writing = self.writing.lock().await;
-        let mut artifact = self.entities.get_artifact(ctx, id).await.map_err(store_error(id))?;
+        let mut artifact = self.artifacts.get(ctx, id).await.map_err(store_error(id))?;
         match (&scope, artifact.owner()) {
             (Scope::GlobalScope, _) => {}
             (Scope::UserScope { user_id }, Some(owner)) if *user_id == owner => {}
@@ -321,7 +322,7 @@ impl ArtifactManager {
         }
         artifact.name.scope = scope;
         artifact.updated_at = Utc::now();
-        self.entities.update_artifact(ctx, &artifact).await?;
+        self.artifacts.update(ctx, &artifact).await?;
         self.events.publish_classified(GlobalEvent::ArtifactUpdated(id), artifact.reader_attributes(), std::slice::from_ref(&artifact.classification));
         info!(artifact = %id, by = %ctx.caller_id, "Artifact kept");
         Ok(artifact)
@@ -335,10 +336,10 @@ impl ArtifactManager {
     /// whatever the store reports - `PermissionDenied` among it.
     pub async fn describe(&self, ctx: &SecurityContext, id: ArtifactId, description: Option<&str>) -> ArtifactResult<Artifact> {
         let _writing = self.writing.lock().await;
-        let mut artifact = self.entities.get_artifact(ctx, id).await.map_err(store_error(id))?;
+        let mut artifact = self.artifacts.get(ctx, id).await.map_err(store_error(id))?;
         artifact.description = Description::optional(description)?;
         artifact.updated_at = Utc::now();
-        self.entities.update_artifact(ctx, &artifact).await?;
+        self.artifacts.update(ctx, &artifact).await?;
         self.events.publish_classified(GlobalEvent::ArtifactUpdated(id), artifact.reader_attributes(), std::slice::from_ref(&artifact.classification));
         Ok(artifact)
     }
@@ -350,8 +351,8 @@ impl ArtifactManager {
     /// Whatever the store reports, `PermissionDenied` included.
     pub async fn delete(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<bool> {
         let _writing = self.writing.lock().await;
-        let Some(artifact) = self.entities.get_artifact(ctx, id).await.optional()? else { return Ok(false) };
-        if !self.entities.delete_artifact(ctx, id).await? {
+        let Some(artifact) = self.artifacts.get(ctx, id).await.optional()? else { return Ok(false) };
+        if !self.artifacts.delete(ctx, id).await? {
             return Ok(false);
         }
         self.events.publish_classified(GlobalEvent::ArtifactDeleted(id), artifact.reader_attributes(), std::slice::from_ref(&artifact.classification));
@@ -367,7 +368,7 @@ impl ArtifactManager {
     /// whatever else the store reports - `NameTaken` among it.
     pub async fn restore(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<Artifact> {
         let _writing = self.writing.lock().await;
-        let artifact = self.entities.restore_artifact(ctx, id).await.map_err(store_error(id))?;
+        let artifact = self.artifacts.restore(ctx, id).await.map_err(store_error(id))?;
         self.events.publish_classified(GlobalEvent::ArtifactRestored(id), artifact.reader_attributes(), std::slice::from_ref(&artifact.classification));
         info!(artifact = %id, by = %ctx.caller_id, "Artifact restored");
         Ok(artifact)
@@ -383,10 +384,10 @@ impl ArtifactManager {
     /// the store reports.
     pub async fn purge(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<bool> {
         let _writing = self.writing.lock().await;
-        let Some(artifact) = self.entities.get_deleted_artifact(ctx, id).await.optional()? else { return Ok(false) };
+        let Some(artifact) = self.artifacts.get_deleted(ctx, id).await.optional()? else { return Ok(false) };
         self.security.require(ctx, ActionType::purge(Artifact::KIND, &artifact.security_attributes), || StoreError::PermissionDenied).await?;
         self.storage(&artifact.storage)?.remove(id).await?;
-        let purged = self.entities.purge_artifact(ctx, id).await?;
+        let purged = self.artifacts.purge(ctx, id).await?;
         info!(artifact = %id, by = %ctx.caller_id, "Artifact purged");
         Ok(purged)
     }
@@ -402,8 +403,8 @@ impl ArtifactManager {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         let mut left = 0;
-        for artifact in self.entities.list_artifacts(&system, &within(holder)).await?.items {
-            if deleted_unless_refused(self.entities.delete_artifact(ctx, artifact.id).await)? {
+        for artifact in self.artifacts.list(&system, &within(holder)).await?.items {
+            if deleted_unless_refused(self.artifacts.delete(ctx, artifact.id).await)? {
                 self.events.publish_classified(GlobalEvent::ArtifactDeleted(artifact.id), artifact.reader_attributes(), std::slice::from_ref(&artifact.classification));
             } else {
                 left += 1;
@@ -423,8 +424,8 @@ impl ArtifactManager {
     pub(crate) async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> ArtifactResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for artifact in deleted_since(self.entities.list_deleted_artifacts(&system, &within(holder)).await?.items, since) {
-            if let Some(restored) = restored_unless_refused(self.entities.restore_artifact(ctx, artifact.id).await, "artifact", &artifact.name)? {
+        for artifact in deleted_since(self.artifacts.list_deleted(&system, &within(holder)).await?.items, since) {
+            if let Some(restored) = restored_unless_refused(self.artifacts.restore(ctx, artifact.id).await, "artifact", &artifact.name)? {
                 self.events.publish_classified(GlobalEvent::ArtifactRestored(restored.id), restored.reader_attributes(), std::slice::from_ref(&restored.classification));
             }
         }
@@ -440,9 +441,9 @@ impl ArtifactManager {
     pub(crate) async fn purge_lying_in(&self, holder: &Scope) -> ArtifactResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for artifact in self.entities.list_deleted_artifacts(&system, &within(holder)).await?.items {
+        for artifact in self.artifacts.list_deleted(&system, &within(holder)).await?.items {
             self.storage(&artifact.storage)?.remove(artifact.id).await?;
-            self.entities.purge_artifact(&system, artifact.id).await?;
+            self.artifacts.purge(&system, artifact.id).await?;
         }
         Ok(())
     }

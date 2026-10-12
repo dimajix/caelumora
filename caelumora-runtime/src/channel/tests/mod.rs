@@ -3,7 +3,7 @@
 use super::*;
 use caelumora_model::value::name::Name;
 use crate::actor::Actor;
-use crate::component::ComponentImpl;
+use crate::component::{ComponentImpl, ComponentKind, ComponentRegistry};
 use crate::runtime::{ChannelRuntime, RuntimeManager};
 use crate::transport::EventSender;
 use anyhow::Result;
@@ -23,15 +23,18 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 
 use caelumora_model::value::name::ScopedName;
-use caelumora_model::store::EntityStore;
 use crate::command::CommandExecutor;
 use crate::command::help_command::HelpCommandProvider;
 use crate::command::wakeup_command::WakeupCommandProvider;
-use caelumora_model::component::ComponentFailPolicy;
+use caelumora_model::component::{ComponentConfig, ComponentFailPolicy};
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::DummySecurityManager;
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::user::User;
+use caelumora_model::confidentiality::ConfidentialityRules;
+use caelumora_model::config::AppConfig;
+use caelumora_model::agent::AgentId;
+use crate::llm::LLMClient;
 
 mod agent;
 mod commands;
@@ -46,7 +49,7 @@ pub(super) async fn channel_with(users: &[&User], security: Arc<dyn SecurityMana
     let store = Arc::new(MemoryStore::new());
     let mut participants = Vec::new();
     for user in users {
-        store.create_user(&SecurityContext::system(), user).await.unwrap();
+        store.entity_stores().users.create(&SecurityContext::system(), user).await.unwrap();
         participants.push(Participant::User(user.id));
     }
     channel_of(store, participants, security).await
@@ -54,14 +57,14 @@ pub(super) async fn channel_with(users: &[&User], security: Arc<dyn SecurityMana
 
 /// A channel of `participants`, whose actors are read from `store`.
 async fn channel_of(store: Arc<MemoryStore>, participants: Vec<Participant>, security: Arc<dyn SecurityManager>) -> Arc<ChannelLoop> {
-    let registry = crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
+    let registry = ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
     channel_built(store, participants, security, registry, caelumora_model::channel::moderation_components(None, Some("broadcast_policy"))).await
 }
 
 /// A channel of `participants` with `components`, built by `registry`.
-async fn channel_built(store: Arc<MemoryStore>, participants: Vec<Participant>, security: Arc<dyn SecurityManager>, registry: crate::component::ComponentRegistry, components: caelumora_model::component::ComponentConfig) -> Arc<ChannelLoop> {
+async fn channel_built(store: Arc<MemoryStore>, participants: Vec<Participant>, security: Arc<dyn SecurityManager>, registry: ComponentRegistry, components: ComponentConfig) -> Arc<ChannelLoop> {
     let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&security)));
-    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, security, Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig::default(), registry).unwrap());
+    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store.entity_stores(), secrets, security, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), registry).unwrap());
     let channel = Channel {
         summary: None, briefing: None,
         approval_rules: Vec::new(),
@@ -91,8 +94,8 @@ async fn channel_built(store: Arc<MemoryStore>, participants: Vec<Participant>, 
 async fn a_participant_that_no_longer_exists_is_left_out() {
     let alice = user("alice");
     let store = Arc::new(MemoryStore::new());
-    store.create_user(&SecurityContext::system(), &alice).await.unwrap();
-    let (gone_user, gone_agent) = (UserId::new(), caelumora_model::agent::AgentId::new());
+    store.entity_stores().users.create(&SecurityContext::system(), &alice).await.unwrap();
+    let (gone_user, gone_agent) = (UserId::new(), AgentId::new());
 
     let channel = channel_of(
         store,
@@ -140,10 +143,10 @@ pub(super) async fn channel_moderated_by(users: &[&User], moderator: Arc<dyn cra
     let store = Arc::new(MemoryStore::new());
     let mut participants = Vec::new();
     for user in users {
-        store.create_user(&SecurityContext::system(), user).await.unwrap();
+        store.entity_stores().users.create(&SecurityContext::system(), user).await.unwrap();
         participants.push(Participant::User(user.id));
     }
-    let mut registry = crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
+    let mut registry = ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
     registry.register(ComponentKind::new("test_moderator").provides::<dyn crate::moderator::Moderator>(), move |_, _| {
         let mut facets = ComponentFacets::empty();
         facets.insert::<dyn crate::moderator::Moderator>(Arc::clone(&moderator));
@@ -182,7 +185,7 @@ pub(super) fn sleeper() -> Arc<Sleeper> {
 }
 
 fn sleeper_named(name: &'static str) -> Arc<Sleeper> {
-    Arc::new(Sleeper { id: ActorId::Agent(caelumora_model::agent::AgentId::new()), name, woken: AtomicBool::new(false), cancelled: AtomicBool::new(false) })
+    Arc::new(Sleeper { id: ActorId::Agent(AgentId::new()), name, woken: AtomicBool::new(false), cancelled: AtomicBool::new(false) })
 }
 
 /// A channel of alice's with the sleeping agents `names`, as approvers -
@@ -199,7 +202,7 @@ pub(super) async fn channel_with_sleepers(names: &[&'static str]) -> (Arc<Channe
 }
 
 /// What the channel shows next of `wanted`'s kind from `agent`.
-async fn shown_by(events: &mut tokio::sync::broadcast::Receiver<Envelope>, agent: caelumora_model::agent::AgentId, wanted: &str) -> ActorEvent {
+async fn shown_by(events: &mut tokio::sync::broadcast::Receiver<Envelope>, agent: AgentId, wanted: &str) -> ActorEvent {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
@@ -215,7 +218,7 @@ async fn shown_by(events: &mut tokio::sync::broadcast::Receiver<Envelope>, agent
 pub(super) struct NeverAnswers;
 
 #[async_trait::async_trait]
-impl crate::llm::LLMClient for NeverAnswers {
+impl LLMClient for NeverAnswers {
     async fn chat_completion(&self, _: &[Message], _: &[caelumora_model::tool::Tool])
         -> futures::stream::BoxStream<'static, crate::llm::LLMResult<caelumora_model::message::MessageEvent>>
     {
@@ -232,7 +235,7 @@ impl crate::llm::LLMClient for NeverAnswers {
 pub(super) struct Stuck {
     pub(super) channel: Arc<ChannelLoop>,
     pub(super) context: SecurityContext,
-    pub(super) agent: caelumora_model::agent::AgentId,
+    pub(super) agent: AgentId,
     pub(super) helper: Arc<dyn Actor>,
     pub(super) events: broadcast::Receiver<Envelope>,
     pub(super) running: tokio::task::JoinHandle<Result<()>>,
@@ -246,22 +249,21 @@ pub(super) async fn stuck_in_a_model_call() -> Stuck {
 
 /// A running channel with alice and an agent that talks to `model` and
 /// has `components`, after alice said "hello".
-async fn with_an_agent(model: Arc<dyn crate::llm::LLMClient>, components: caelumora_model::component::ComponentConfig) -> Stuck {
+async fn with_an_agent(model: Arc<dyn LLMClient>, components: ComponentConfig) -> Stuck {
     with_an_agent_under(Arc::new(DummySecurityManager::new()), model, components).await
 }
 
 /// `with_an_agent`, under `security`.
-async fn with_an_agent_under(security: Arc<dyn SecurityManager>, model: Arc<dyn crate::llm::LLMClient>, components: caelumora_model::component::ComponentConfig) -> Stuck {
+async fn with_an_agent_under(security: Arc<dyn SecurityManager>, model: Arc<dyn LLMClient>, components: ComponentConfig) -> Stuck {
     start(agent_channel(security, model, components).await).await
 }
 
 /// A channel of alice and an agent that talks to `model` and has
 /// `components`, under `security`, built but not running.
-pub(super) async fn agent_channel(security: Arc<dyn SecurityManager>, model: Arc<dyn crate::llm::LLMClient>, components: caelumora_model::component::ComponentConfig) -> (Arc<ChannelLoop>, SecurityContext, caelumora_model::agent::AgentId, UserId) {
+pub(super) async fn agent_channel(security: Arc<dyn SecurityManager>, model: Arc<dyn LLMClient>, components: ComponentConfig) -> (Arc<ChannelLoop>, SecurityContext, AgentId, UserId) {
     use caelumora_model::agent::{Agent, Personality, PersonalityId};
     use caelumora_model::scope::Scope;
-    use caelumora_model::store::EntityStore;
-
+    
     let store = Arc::new(MemoryStore::new());
     let personality = Personality {
         description: None,
@@ -275,30 +277,30 @@ pub(super) async fn agent_channel(security: Arc<dyn SecurityManager>, model: Arc
         security_attributes: Default::default(),
         deleted: None,
     };
-    store.create_personality(&SecurityContext::system(), &personality).await.unwrap();
+    store.entity_stores().personalities.create(&SecurityContext::system(), &personality).await.unwrap();
     let alice = user("alice");
     let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
     let agent = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), &personality, context.initiator_id);
     let agent_id = agent.id;
-    store.create_user(&SecurityContext::system(), &alice).await.unwrap();
-    store.create_agent(&SecurityContext::system(), &agent).await.unwrap();
+    store.entity_stores().users.create(&SecurityContext::system(), &alice).await.unwrap();
+    store.entity_stores().agents.create(&SecurityContext::system(), &agent).await.unwrap();
 
     let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&security)));
     // The model is a component (issue 130): the stand-in is registered as
     // a kind of its own and made every agent's default.
-    let mut registry = crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
+    let mut registry = ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
     registry.register(
-        crate::component::ComponentKind::new("test_model").provides::<dyn crate::llm::LLMClient>(),
+        ComponentKind::new("test_model").provides::<dyn LLMClient>(),
         move |_descriptor, _context| {
             let mut facets = crate::component::ComponentFacets::empty();
-            facets.insert::<dyn crate::llm::LLMClient>(Arc::clone(&model));
+            facets.insert::<dyn LLMClient>(Arc::clone(&model));
             Ok(facets)
         },
     );
     register_no_secrets(&mut registry);
     register_asking_tool(&mut registry);
     register_marking_command(&mut registry);
-    let defaults = caelumora_model::component::ComponentConfig {
+    let defaults = ComponentConfig {
         component_nodes: vec![caelumora_model::component::ComponentDescriptor {
             id: "model".to_string(),
             kind: "test_model".to_string(),
@@ -307,7 +309,7 @@ pub(super) async fn agent_channel(security: Arc<dyn SecurityManager>, model: Arc
             fail_policy: Default::default(),
         }],
     };
-    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store, secrets, security, Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig { component_defaults: defaults, ..Default::default() }, registry).unwrap());
+    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store.entity_stores(), secrets, security, Arc::new(ConfidentialityRules::default()), &AppConfig { component_defaults: defaults, ..Default::default() }, registry).unwrap());
     let channel = Channel {
         summary: None, briefing: None,
         approval_rules: Vec::new(),
@@ -329,7 +331,7 @@ pub(super) async fn agent_channel(security: Arc<dyn SecurityManager>, model: Arc
         former: Vec::new(),
     };
     // Stored, so that leaving it can be stored too.
-    runtime.entity_store().create_channel(&SecurityContext::system(), &channel).await.unwrap();
+    runtime.entity_stores().channels.create(&SecurityContext::system(), &channel).await.unwrap();
     let executor = CommandExecutor::empty(Arc::clone(runtime.security_manager()));
     let session_id = channel.session_id;
     let channel = ChannelLoop::new(channel, ChannelRuntime::outside_a_session(runtime, Arc::new(executor), session_id)).await.unwrap();
@@ -342,7 +344,7 @@ pub(super) async fn agent_channel(security: Arc<dyn SecurityManager>, model: Arc
 struct Scripted(std::sync::Mutex<std::collections::VecDeque<Message>>);
 
 #[async_trait::async_trait]
-impl crate::llm::LLMClient for Scripted {
+impl LLMClient for Scripted {
     async fn chat_completion(&self, _: &[Message], _: &[caelumora_model::tool::Tool])
         -> futures::stream::BoxStream<'static, crate::llm::LLMResult<caelumora_model::message::MessageEvent>>
     {
@@ -358,7 +360,7 @@ impl crate::llm::LLMClient for Scripted {
 }
 
 /// The states `agent` told the users of through `shown`, up to `until`.
-async fn told_states(shown: &mut broadcast::Receiver<Envelope>, agent: caelumora_model::agent::AgentId, until: ActorState) -> Vec<ActorState> {
+async fn told_states(shown: &mut broadcast::Receiver<Envelope>, agent: AgentId, until: ActorState) -> Vec<ActorState> {
     tokio::time::timeout(Duration::from_secs(5), async {
         let mut states = Vec::new();
         loop {
@@ -374,7 +376,7 @@ async fn told_states(shown: &mut broadcast::Receiver<Envelope>, agent: caelumora
 /// Why the agent `agent` gave its next turn up, as its `TurnGivenUp`
 /// says: what its users are told of a failure, else the cause - with
 /// the channel, if it was lowered.
-async fn turn_given_up(events: &mut tokio::sync::broadcast::Receiver<Envelope>, agent: caelumora_model::agent::AgentId) -> String {
+async fn turn_given_up(events: &mut tokio::sync::broadcast::Receiver<Envelope>, agent: AgentId) -> String {
     use caelumora_model::turn::GivenUpReason;
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
@@ -489,9 +491,9 @@ impl crate::command::AgentCommandProvider for Marking {
     }
 }
 
-fn register_marking_command(registry: &mut crate::component::ComponentRegistry) {
+fn register_marking_command(registry: &mut ComponentRegistry) {
     registry.register(
-        crate::component::ComponentKind::new("test_marking").provides::<dyn crate::command::AgentCommandProvider>(),
+        ComponentKind::new("test_marking").provides::<dyn crate::command::AgentCommandProvider>(),
         |_descriptor, _context| {
             let mut facets = crate::component::ComponentFacets::empty();
             facets.insert::<dyn crate::command::AgentCommandProvider>(Arc::new(Marking));
@@ -526,9 +528,9 @@ pub(super) fn says(text: &str) -> Message {
     }
 }
 
-fn register_asking_tool(registry: &mut crate::component::ComponentRegistry) {
+fn register_asking_tool(registry: &mut ComponentRegistry) {
     registry.register(
-        crate::component::ComponentKind::new("test_asking_tool").provides::<dyn crate::tool::ToolProvider>(),
+        ComponentKind::new("test_asking_tool").provides::<dyn crate::tool::ToolProvider>(),
         |descriptor, _context| {
             let sensitive = descriptor.params.get("sensitive").and_then(serde_json::Value::as_bool).unwrap_or(false);
             let mut facets = crate::component::ComponentFacets::empty();
@@ -538,9 +540,9 @@ fn register_asking_tool(registry: &mut crate::component::ComponentRegistry) {
     );
 }
 
-fn register_no_secrets(registry: &mut crate::component::ComponentRegistry) {
+fn register_no_secrets(registry: &mut ComponentRegistry) {
     registry.register(
-        crate::component::ComponentKind::new("test_no_secrets").provides::<dyn crate::message::PerceiveInProcessor>(),
+        ComponentKind::new("test_no_secrets").provides::<dyn crate::message::PerceiveInProcessor>(),
         |_descriptor, _context| {
             let mut facets = crate::component::ComponentFacets::empty();
             facets.insert::<dyn crate::message::PerceiveInProcessor>(Arc::new(NoSecrets));
@@ -550,7 +552,7 @@ fn register_no_secrets(registry: &mut crate::component::ComponentRegistry) {
 }
 
 /// Runs `built` and has alice say "hello".
-pub(super) async fn start((channel, context, agent, alice): (Arc<ChannelLoop>, SecurityContext, caelumora_model::agent::AgentId, UserId)) -> Stuck {
+pub(super) async fn start((channel, context, agent, alice): (Arc<ChannelLoop>, SecurityContext, AgentId, UserId)) -> Stuck {
     let events = channel.observe();
     let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
     channel.user_actor(alice).unwrap().send_message("hello".to_string(), None).await.unwrap();
@@ -559,7 +561,7 @@ pub(super) async fn start((channel, context, agent, alice): (Arc<ChannelLoop>, S
 }
 
 /// What `agent` answered next.
-async fn answered(events: &mut tokio::sync::broadcast::Receiver<Envelope>, agent: caelumora_model::agent::AgentId) -> Vec<Message> {
+async fn answered(events: &mut tokio::sync::broadcast::Receiver<Envelope>, agent: AgentId) -> Vec<Message> {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");

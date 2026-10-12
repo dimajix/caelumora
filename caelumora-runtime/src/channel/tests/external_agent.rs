@@ -10,7 +10,6 @@ use anyhow::Result;
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::Channel;
 use caelumora_model::security::{SecurityAttributes, SecurityContext, SecurityManager};
-use caelumora_model::store::EntityStore;
 use caelumora_model::session::{ChannelId, SessionId};
 use std::sync::Arc;
 use caelumora_model::value::name::ScopedName;
@@ -20,6 +19,9 @@ use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::actor::{ActorEvent, Envelope};
 use crate::session::SessionManager;
 use crate::session::testing::*;
+use caelumora_model::confidentiality::ConfidentialityRules;
+use caelumora_model::config::AppConfig;
+use crate::component::ComponentRegistry;
 
 /// A running channel with alice and an external agent (issue 179) that
 /// `remote` stands in for, after alice said "hello". The remote agent is
@@ -55,17 +57,17 @@ async fn external_channel(remote: Arc<crate::external::testing::ScriptedExternal
         security_attributes: Default::default(),
         deleted: None,
     };
-    store.create_personality(&SecurityContext::system(), &personality).await.unwrap();
+    store.entity_stores().personalities.create(&SecurityContext::system(), &personality).await.unwrap();
     let alice = user("alice");
     let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
     let agent = Agent::new(ScopedName::new("hermes", Scope::GlobalScope).unwrap(), &personality, context.initiator_id);
     let agent_id = agent.id;
-    store.create_user(&SecurityContext::system(), &alice).await.unwrap();
-    store.create_agent(&SecurityContext::system(), &agent).await.unwrap();
+    store.entity_stores().users.create(&SecurityContext::system(), &alice).await.unwrap();
+    store.entity_stores().agents.create(&SecurityContext::system(), &agent).await.unwrap();
 
     let security: Arc<dyn SecurityManager> = Arc::new(caelumora_model::security::DummySecurityManager::new());
     let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&security)));
-    let mut registry = crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
+    let mut registry = ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
     registry.register(
         crate::component::ComponentKind::new("test_remote").provides::<dyn crate::external::ExternalAgent>(),
         move |_descriptor, _context| {
@@ -77,7 +79,7 @@ async fn external_channel(remote: Arc<crate::external::testing::ScriptedExternal
     register_no_secrets(&mut registry);
     register_heard(&mut registry);
     register_marking_command(&mut registry);
-    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store, secrets, security, Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig::default(), registry).unwrap());
+    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store.entity_stores(), secrets, security, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), registry).unwrap());
     let channel = Channel {
         summary: None, briefing: None,
         approval_rules: Vec::new(),
@@ -94,7 +96,7 @@ async fn external_channel(remote: Arc<crate::external::testing::ScriptedExternal
         deleted: None,
         former: Vec::new(),
     };
-    runtime.entity_store().create_channel(&SecurityContext::system(), &channel).await.unwrap();
+    runtime.entity_stores().channels.create(&SecurityContext::system(), &channel).await.unwrap();
     if let Some(mut stored) = stored(agent_id) {
         runtime.state_store().put_agent_channel_state(agent_id, channel.id, &mut stored).await.unwrap();
     }
@@ -105,7 +107,7 @@ async fn external_channel(remote: Arc<crate::external::testing::ScriptedExternal
 }
 
 /// Registers `Heard` as the kind `test_heard`.
-fn register_heard(registry: &mut crate::component::ComponentRegistry) {
+fn register_heard(registry: &mut ComponentRegistry) {
     registry.register(
         crate::component::ComponentKind::new("test_heard").provides::<dyn crate::context::PromptProvider>(),
         |_descriptor, _context| {
@@ -1120,12 +1122,11 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_since() 
     use caelumora_model::agent::{Agent, Personality, PersonalityId, PersonalityKind};
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::scope::Scope;
-    use caelumora_model::store::EntityStore;
 
     let answer = |text: &str| vec![Ok(ExternalEvent::Message(text.to_string())), Ok(ExternalEvent::Completed)];
     let remote = Arc::new(ScriptedExternalAgent::answering(vec![answer("Hello."), answer("Hi, bob.")]));
     let store = Arc::new(MemoryStore::new());
-    let mut registry = crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
+    let mut registry = ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
     registry.register(
         crate::component::ComponentKind::new("test_remote").provides::<dyn crate::external::ExternalAgent>(),
         { let remote = Arc::clone(&remote); move |_descriptor, _context| {
@@ -1136,7 +1137,7 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_since() 
     );
     let policy = Arc::new(DummySecurityManager::new());
     let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&policy)));
-    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig::default(), registry).unwrap());
+    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store.entity_stores(), secrets, policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), registry).unwrap());
     let manager = SessionManager::new(Arc::clone(&runtime));
     let system = SecurityContext::system();
 
@@ -1151,9 +1152,9 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_since() 
         security_attributes: Default::default(), reasoning_visibility: Default::default(),
         deleted: None,
     };
-    store.create_personality(&system, &personality).await.unwrap();
+    store.entity_stores().personalities.create(&system, &personality).await.unwrap();
     let hermes = Agent::new(ScopedName::new("hermes", Scope::GlobalScope).unwrap(), &personality, ActorId::User(alice.id));
-    store.create_agent(&system, &hermes).await.unwrap();
+    store.entity_stores().agents.create(&system, &hermes).await.unwrap();
 
     let alice_ctx = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
     let mut session = make_session("roster", ActorId::None);

@@ -442,13 +442,15 @@ mod tests {
     use caelumora_model::secret::SecretManager;
     use caelumora_model::security::{OwnershipSecurityManager, SecurityManager};
     use caelumora_model::session::SessionId;
-    use caelumora_model::store::EntityStore;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::tool::ToolCall;
     use caelumora_model::user::{User, UserId};
     use serde_json::json;
     use std::any::Any;
     use tokio::sync::mpsc;
+    use caelumora_model::confidentiality::ConfidentialityRules;
+    use caelumora_model::config::AppConfig;
+    use crate::component::ComponentRegistry;
 
     /// The approver of a channel of users, under the ownership policy, run
     /// on its own: the channel is built, so that its users have their
@@ -472,7 +474,7 @@ mod tests {
         let mut ids = Vec::new();
         for n in 0..users {
             let user = User { id: UserId::new(), username: Name::new(format!("user{n}")).unwrap(), email: String::new(), roles: vec![], deleted: None };
-            store.create_user(&system, &user).await.unwrap();
+            store.entity_stores().users.create(&system, &user).await.unwrap();
             ids.push(user.id);
         }
         let personality = Personality {
@@ -487,15 +489,15 @@ mod tests {
             reasoning_visibility: Default::default(),
             deleted: None,
         };
-        store.create_personality(&system, &personality).await.unwrap();
+        store.entity_stores().personalities.create(&system, &personality).await.unwrap();
         let mut stored = Agent::new(ScopedName::new("helper", Default::default()).unwrap(), &personality, ActorId::System);
         stored.security_attributes = agent(&ids);
-        store.create_agent(&system, &stored).await.unwrap();
+        store.entity_stores().agents.create(&system, &stored).await.unwrap();
 
         let security: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&security)));
-        let registry = crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, security, Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig::default(), registry).unwrap());
+        let registry = ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store.entity_stores(), secrets, security, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), registry).unwrap());
         let approver = Approver { id: ApproverId::new(), strategy };
         let mut participants: Vec<Participant> = ids.iter().map(|id| Participant::User(*id)).collect();
         participants.push(Participant::Approver(approver.clone()));
@@ -515,7 +517,7 @@ mod tests {
             deleted: None,
             former: Vec::new(),
         };
-        store.create_channel(&system, &channel).await.unwrap();
+        store.entity_stores().channels.create(&system, &channel).await.unwrap();
         let executor = CommandExecutor::empty(Arc::clone(runtime.security_manager()));
         let session_id = channel.session_id;
         let channel = ChannelLoop::new(channel, ChannelRuntime::outside_a_session(Arc::clone(&runtime), Arc::new(executor), session_id)).await.unwrap();

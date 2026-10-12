@@ -7,7 +7,7 @@ use caelumora_model::role::RoleId;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{ChannelId, SessionId};
 use super::UserController;
-use caelumora_model::store::{EntityStore, StoreResult};
+use caelumora_model::store::{EntityStore, EntityStores, StoreResult};
 use std::sync::Arc;
 
 /// The one writer of an agent's document in this instance, shared by all
@@ -20,7 +20,8 @@ pub struct AgentController {
     /// 304); none for an agent of the system, or of an owner who is gone.
     owner: Option<Arc<UserController>>,
     event_publisher: Arc<dyn EventPublisher>,
-    entity_store: Arc<dyn EntityStore>,
+    agents: Arc<dyn EntityStore<Agent>>,
+    personalities: Arc<dyn EntityStore<Personality>>,
     /// Held while the agent is changed and stored, like the other
     /// controllers.
     write_lock: tokio::sync::Mutex<()>,
@@ -29,13 +30,14 @@ pub struct AgentController {
 impl AgentController {
     /// The live `agent`, owned by the user `owner` holds, if any. Made by
     /// the `ControllerManager`, which keeps one per agent.
-    pub(crate) fn new(agent: Agent, owner: Option<Arc<UserController>>, event_publisher: Arc<dyn EventPublisher>, entity_store: Arc<dyn EntityStore>) -> Self {
+    pub(crate) fn new(agent: Agent, owner: Option<Arc<UserController>>, event_publisher: Arc<dyn EventPublisher>, stores: &EntityStores) -> Self {
         Self {
             id: agent.id,
             agent: ArcSwap::from_pointee(agent),
             owner,
             event_publisher,
-            entity_store,
+            agents: Arc::clone(&stores.agents),
+            personalities: Arc::clone(&stores.personalities),
             write_lock: tokio::sync::Mutex::new(()),
         }
     }
@@ -73,7 +75,7 @@ impl AgentController {
     /// Whatever the store reports: also that the personality is gone.
     pub async fn personality(&self) -> StoreResult<Personality> {
         let id = self.agent.load().personality_id;
-        self.entity_store.get_personality(&SecurityContext::system(), id).await
+        self.personalities.get(&SecurityContext::system(), id).await
     }
 
     /// Renames the agent on behalf of `ctx`: stored first - which is where
@@ -87,7 +89,7 @@ impl AgentController {
         let _guard = self.write_lock.lock().await;
         let event = AgentUpdateEvent::NameChanged(new_name.to_string());
         let agent = self.apply(&event)?;
-        self.entity_store.update_agent(ctx, &agent).await?;
+        self.agents.update(ctx, &agent).await?;
         let attributes = agent.security_attributes.clone();
         self.agent.store(Arc::new(agent));
         self.event_publisher.publish(GlobalEvent::AgentUpdated(self.id, event), attributes);
@@ -149,13 +151,13 @@ mod tests {
         let agent = Agent::new(ScopedName::new("assistant", Scope::GlobalScope).unwrap(), &personality, caelumora_model::actor::ActorId::None);
         let store = Arc::new(MemoryStore::new());
         let ctx = SecurityContext::default();
-        store.create_agent(&ctx, &agent).await.unwrap();
-        let controller = AgentController::new(agent.clone(), None, Arc::new(()), Arc::<MemoryStore>::clone(&store));
+        store.entity_stores().agents.create(&ctx, &agent).await.unwrap();
+        let controller = AgentController::new(agent.clone(), None, Arc::new(()), &store.entity_stores());
 
         controller.update_name(&ctx, "new_name").await.unwrap();
 
         assert_eq!(controller.name(), "new_name");
-        assert_eq!(store.get_agent(&ctx, agent.id).await.unwrap().name.as_str(), "new_name");
+        assert_eq!(store.entity_stores().agents.get(&ctx, agent.id).await.unwrap().name.as_str(), "new_name");
     }
 
     /// Issue 304: an agent acts with its owner's roles as they are now - a
@@ -170,10 +172,10 @@ mod tests {
         let (staff, hr) = (RoleId::new(), RoleId::new());
         let alice = User { id: UserId::new(), username: caelumora_model::value::name::Name::new("alice").unwrap(), email: String::new(), roles: vec![staff], deleted: None };
         let store = Arc::new(MemoryStore::new());
-        let owner = Arc::new(UserController::new(alice.clone(), None, Arc::new(()), Arc::<MemoryStore>::clone(&store)));
+        let owner = Arc::new(UserController::new(alice.clone(), None, Arc::new(()), store.entity_stores().user_profiles));
         let personality = Personality { roles: Some(vec![staff]), ..plain() };
         let agent = Agent::new(ScopedName::new("assistant", Scope::GlobalScope).unwrap(), &personality, ActorId::User(alice.id));
-        let controller = AgentController::new(agent, Some(Arc::clone(&owner)), Arc::new(()), Arc::<MemoryStore>::clone(&store));
+        let controller = AgentController::new(agent, Some(Arc::clone(&owner)), Arc::new(()), &store.entity_stores());
         let (session, channel) = (Default::default(), Default::default());
 
         let context = controller.security_context(session, channel, personality.limiting_roles());

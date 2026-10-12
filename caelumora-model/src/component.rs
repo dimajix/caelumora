@@ -1,6 +1,9 @@
 use crate::security::{Secured, SecurityAttributes};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use crate::removal::Stored;
+use crate::store::EntityKind;
+use crate::store::query::NoField;
 
 
 /// The components of a personality, a template or the configuration -
@@ -69,8 +72,14 @@ impl StoredComponents {
 /// Deleted for good, not marked (issue 164): it is runtime configuration,
 /// reached only through the personalities and templates that refer to it,
 /// and hidden with them.
-impl crate::removal::Stored for StoredComponents {
-    const KIND: crate::store::EntityKind = crate::store::EntityKind::new("components");
+impl Stored for StoredComponents {
+    const KIND: EntityKind = EntityKind::new("components");
+    type Id = String;
+    type Field = NoField;
+
+    fn id(&self) -> String {
+        self.id().to_string()
+    }
 }
 
 impl Secured for StoredComponents {

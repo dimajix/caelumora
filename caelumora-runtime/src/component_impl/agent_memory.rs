@@ -252,6 +252,7 @@ mod tests {
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::user::UserId;
     use std::collections::HashMap;
+    use caelumora_model::config::AppConfig;
 
     /// A channel of the tests: where it is - its session and itself - and
     /// how it is classified.
@@ -319,14 +320,14 @@ mod tests {
         async fn under(policy: Arc<dyn SecurityManager>) -> Self {
             let store = Arc::new(MemoryStore::new());
             let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-            let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig::default(), crate::component::ComponentRegistry::built_in(store)).unwrap());
+            let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store.entity_stores(), secrets, policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), ComponentRegistry::built_in(store)).unwrap());
             Self { runtime, loops: HashMap::new() }
         }
 
         /// Session `id` as privacy sees it as `privacy`, stored and running.
         async fn add(&mut self, id: SessionId, privacy: SessionPrivacy) -> &mut Self {
             let session = session_with(id, &privacy);
-            self.runtime.entity_store().create_session(&SecurityContext::system(), &session).await.unwrap();
+            self.runtime.entity_stores().sessions.create(&SecurityContext::system(), &session).await.unwrap();
             self.loops.insert(id, SessionLoop::new(session.clone(), vec![main_channel(&session)], Arc::clone(&self.runtime)).await.unwrap());
             self
         }
@@ -335,19 +336,19 @@ mod tests {
         /// stored, as a change to a running session is stored first - or
         /// is gone (`None`).
         async fn set(&mut self, id: SessionId, privacy: Option<SessionPrivacy>) {
-            let store = self.runtime.entity_store();
+            let sessions = &self.runtime.entity_stores().sessions;
             match privacy {
                 Some(privacy) => {
                     let session = session_with(id, &privacy);
-                    if store.update_session(&SecurityContext::system(), &session).await.is_err() {
+                    if sessions.update(&SecurityContext::system(), &session).await.is_err() {
                         // Gone meanwhile: back again.
-                        store.create_session(&SecurityContext::system(), &session).await.unwrap();
+                        sessions.create(&SecurityContext::system(), &session).await.unwrap();
                     }
                     self.loops.insert(id, SessionLoop::new(session.clone(), vec![main_channel(&session)], Arc::clone(&self.runtime)).await.unwrap());
                 }
                 None => {
-                    store.delete_session(&SecurityContext::system(), id).await.unwrap();
-                    store.purge_session(&SecurityContext::system(), id).await.unwrap();
+                    sessions.delete(&SecurityContext::system(), id).await.unwrap();
+                    sessions.purge(&SecurityContext::system(), id).await.unwrap();
                     self.loops.remove(&id);
                 }
             }

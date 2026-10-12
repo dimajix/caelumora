@@ -9,6 +9,9 @@ use crate::value::name::{Name, ScopedName};
 use crate::value::text::Introduction;
 use crate::value::ValueError;
 use serde::{Deserialize, Serialize};
+use crate::removal::{Deletable, Removal, Stored};
+use crate::store::EntityKind;
+use crate::store::query::NoField;
 
 define_id!(UserId);
 
@@ -25,7 +28,7 @@ pub struct User {
     /// Set when it was deleted (issue 164): it stays stored, hidden from
     /// every read but those for what was deleted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub deleted: Option<crate::removal::Removal>,
+    pub deleted: Option<Removal>,
 }
 
 /// A user record belongs to the system, not to the user (issue 94):
@@ -36,7 +39,49 @@ pub struct User {
 /// Derived rather than stored, so that no record can say otherwise.
 static SYSTEM_OWNED: SecurityAttributes = SecurityAttributes { owner_id: ActorId::System, acl: Vec::new() };
 
-crate::impl_deletable!(User => "user", UserProfile => "user_profile");
+impl Stored for User {
+    const KIND: EntityKind = EntityKind::new("user");
+    type Id = UserId;
+    type Field = NoField;
+
+    fn id(&self) -> UserId {
+        self.id
+    }
+
+    fn deleted(&self) -> Option<&Removal> {
+        self.deleted.as_ref()
+    }
+
+    fn unique_name(&self) -> Option<ScopedName> {
+        Some(self.scoped_name())
+    }
+}
+
+impl Deletable for User {
+    fn set_deleted(&mut self, deleted: Option<Removal>) {
+        self.deleted = deleted;
+    }
+}
+
+impl Stored for UserProfile {
+    const KIND: EntityKind = EntityKind::new("user_profile");
+    type Id = UserId;
+    type Field = NoField;
+
+    fn id(&self) -> UserId {
+        self.user_id()
+    }
+
+    fn deleted(&self) -> Option<&Removal> {
+        self.deleted.as_ref()
+    }
+}
+
+impl Deletable for UserProfile {
+    fn set_deleted(&mut self, deleted: Option<Removal>) {
+        self.deleted = deleted;
+    }
+}
 
 /// A username is unique everywhere (issue 250).
 impl Scoped for User {
@@ -89,7 +134,7 @@ pub struct UserProfile {
     /// Set when it was deleted (issue 164): it stays stored, hidden from
     /// every read but those for what was deleted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub deleted: Option<crate::removal::Removal>,
+    pub deleted: Option<Removal>,
     #[serde(skip)]
     security_attributes: SecurityAttributes,
 }
@@ -170,7 +215,7 @@ struct UserProfileFields {
     #[serde(default)]
     approval_rules: Vec<ApprovalRule>,
     #[serde(default)]
-    deleted: Option<crate::removal::Removal>,
+    deleted: Option<Removal>,
 }
 
 impl From<UserProfileFields> for UserProfile {
@@ -244,19 +289,19 @@ mod tests {
         use crate::security::{OwnershipSecurityManager, SecurityContext};
         use crate::session::SessionId;
         use crate::channel::ChannelId;
-        use crate::store::{EntityStore, StoreError};
+        use crate::store::StoreError;
         use crate::store::memory::MemoryStore;
         use std::sync::Arc;
 
-        let store = MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()));
+        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()))).entity_stores().user_profiles;
         let (alice, bob) = (UserId::new(), UserId::new());
         let as_user = |id| SecurityContext::new(ActorId::User(id), SessionId::default(), ChannelId::default());
 
         let hers = UserProfile::new(alice, Some(Introduction::new("I run the budget.").unwrap()));
-        assert!(matches!(store.create_user_profile(&as_user(bob), &hers).await, Err(StoreError::PermissionDenied)), "nobody writes a profile of someone else");
-        store.create_user_profile(&as_user(alice), &hers).await.expect("her own");
+        assert!(matches!(store.create(&as_user(bob), &hers).await, Err(StoreError::PermissionDenied)), "nobody writes a profile of someone else");
+        store.create(&as_user(alice), &hers).await.expect("her own");
         let changed = UserProfile::new(alice, Some(Introduction::new("Bob decides everything.").unwrap()));
-        assert!(matches!(store.update_user_profile(&as_user(bob), &changed).await, Err(StoreError::NotFound { .. })), "nor changes it");
-        assert_eq!(store.get_user_profile(&SecurityContext::system(), alice).await.unwrap().introduction.as_ref().map(Introduction::as_str), Some("I run the budget."));
+        assert!(matches!(store.update(&as_user(bob), &changed).await, Err(StoreError::NotFound { .. })), "nor changes it");
+        assert_eq!(store.get(&SecurityContext::system(), alice).await.unwrap().introduction.as_ref().map(Introduction::as_str), Some("I run the budget."));
     }
 }

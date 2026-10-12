@@ -31,8 +31,8 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::group::{Group, GroupId, GroupUpdateEvent};
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{AclEntry, ActionType, Enforcement, Grant, SecurityContext, SecurityManager, Subject};
-use caelumora_model::store::{EntityStore, StoreError, StoreResult, StoreResultExt};
-use caelumora_model::user::UserId;
+use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt};
+use caelumora_model::user::{User, UserId};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::ValueError;
 use chrono::{DateTime, Utc};
@@ -75,7 +75,8 @@ fn store_error(id: GroupId) -> impl FnOnce(StoreError) -> GroupError {
 
 /// The one writer of teams (issue 286).
 pub struct GroupManager {
-    entities: Arc<dyn EntityStore>,
+    users: Arc<dyn EntityStore<User>>,
+    groups: Arc<dyn EntityStore<Group>>,
     /// Asked where the manager asks before the store does (issue 312).
     security: Arc<dyn SecurityManager>,
     events: Arc<EventBus>,
@@ -90,8 +91,8 @@ impl fmt::Debug for GroupManager {
 }
 
 impl GroupManager {
-    pub(crate) fn new(entities: Arc<dyn EntityStore>, events: Arc<EventBus>, security: Arc<dyn SecurityManager>) -> Self {
-        Self { entities, security, events, writing: Mutex::new(()) }
+    pub(crate) fn new(stores: &EntityStores, events: Arc<EventBus>, security: Arc<dyn SecurityManager>) -> Self {
+        Self { users: Arc::clone(&stores.users), groups: Arc::clone(&stores.groups), security, events, writing: Mutex::new(()) }
     }
 
     /// Makes a team of the user `ctx` acts for, of `name` in `scope` - the
@@ -105,7 +106,7 @@ impl GroupManager {
         let ActorId::User(owner) = ctx.principal_id else { return Err(GroupError::OwnerNotAUser) };
         let group = Group::team(ScopedName::new(name, scope)?, owner);
         let _writing = self.writing.lock().await;
-        self.entities.create_group(ctx, &group).await?;
+        self.groups.create(ctx, &group).await?;
         self.events.publish(GlobalEvent::GroupCreated(group.id), group.security_attributes.clone());
         info!(group = %group.id, by = %ctx.caller_id, "Group created");
         Ok(group)
@@ -144,7 +145,7 @@ impl GroupManager {
     /// the store reports.
     async fn update(&self, ctx: &SecurityContext, id: GroupId, event: GroupUpdateEvent, members: Option<Vec<UserId>>) -> GroupResult<Group> {
         let _writing = self.writing.lock().await;
-        let mut group = self.entities.get_group(ctx, id).await.map_err(store_error(id))?;
+        let mut group = self.groups.get(ctx, id).await.map_err(store_error(id))?;
         if group.is_participants() {
             return Err(GroupError::Participants(id));
         }
@@ -159,7 +160,7 @@ impl GroupManager {
             let system = SecurityContext::system();
             let mut actors = Vec::with_capacity(members.len());
             for user in members {
-                if self.entities.get_user(&system, user).await.optional()?.is_none() {
+                if self.users.get(&system, user).await.optional()?.is_none() {
                     return Err(GroupError::UnknownMember(user));
                 }
                 if !actors.contains(&ActorId::User(user)) {
@@ -169,7 +170,7 @@ impl GroupManager {
             group.members = actors;
         }
         group.updated_at = Utc::now();
-        self.entities.update_group(ctx, &group).await.map_err(store_error(id))?;
+        self.groups.update(ctx, &group).await.map_err(store_error(id))?;
         // Who left is told too: they read it no longer once it is stored.
         told.retain(|actor| !group.has_member(*actor));
         let attributes = told.into_iter().fold(before, |attributes, actor| attributes.granting(Subject::Actor(actor), Grant::Read));
@@ -187,11 +188,11 @@ impl GroupManager {
     /// whatever the store reports, `PermissionDenied` included.
     pub async fn delete(&self, ctx: &SecurityContext, id: GroupId) -> GroupResult<bool> {
         let _writing = self.writing.lock().await;
-        let Some(group) = self.entities.get_group(ctx, id).await.optional()? else { return Ok(false) };
+        let Some(group) = self.groups.get(ctx, id).await.optional()? else { return Ok(false) };
         if group.is_participants() {
             return Err(GroupError::Participants(id));
         }
-        if !self.entities.delete_group(ctx, id).await? {
+        if !self.groups.delete(ctx, id).await? {
             return Ok(false);
         }
         self.events.publish(GlobalEvent::GroupDeleted(id), group.security_attributes);
@@ -209,11 +210,11 @@ impl GroupManager {
     /// among it.
     pub async fn restore(&self, ctx: &SecurityContext, id: GroupId) -> GroupResult<Group> {
         let _writing = self.writing.lock().await;
-        let deleted = self.entities.get_deleted_group(ctx, id).await.map_err(store_error(id))?;
+        let deleted = self.groups.get_deleted(ctx, id).await.map_err(store_error(id))?;
         if deleted.is_participants() {
             return Err(GroupError::Participants(id));
         }
-        let group = self.entities.restore_group(ctx, id).await.map_err(store_error(id))?;
+        let group = self.groups.restore(ctx, id).await.map_err(store_error(id))?;
         self.events.publish(GlobalEvent::GroupRestored(id), group.security_attributes.clone());
         info!(group = %id, by = %ctx.caller_id, "Group restored");
         Ok(group)
@@ -228,11 +229,11 @@ impl GroupManager {
     /// go with it, `PermissionDenied`, or whatever the store reports.
     pub async fn purge(&self, ctx: &SecurityContext, id: GroupId) -> GroupResult<bool> {
         let _writing = self.writing.lock().await;
-        let Some(deleted) = self.entities.get_deleted_group(ctx, id).await.optional()? else { return Ok(false) };
+        let Some(deleted) = self.groups.get_deleted(ctx, id).await.optional()? else { return Ok(false) };
         if deleted.is_participants() {
             return Err(GroupError::Participants(id));
         }
-        let purged = self.entities.purge_group(ctx, id).await?;
+        let purged = self.groups.purge(ctx, id).await?;
         info!(group = %id, by = %ctx.caller_id, "Group purged");
         Ok(purged)
     }
@@ -249,8 +250,8 @@ impl GroupManager {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         let mut left = 0;
-        for group in self.entities.list_groups(&system, &within(holder)).await?.items {
-            if deleted_unless_refused(self.entities.delete_group(ctx, group.id).await)? {
+        for group in self.groups.list(&system, &within(holder)).await?.items {
+            if deleted_unless_refused(self.groups.delete(ctx, group.id).await)? {
                 self.events.publish(GlobalEvent::GroupDeleted(group.id), group.security_attributes);
             } else {
                 left += 1;
@@ -270,8 +271,8 @@ impl GroupManager {
     pub(crate) async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> GroupResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for group in deleted_since(self.entities.list_deleted_groups(&system, &within(holder)).await?.items, since) {
-            if let Some(restored) = restored_unless_refused(self.entities.restore_group(ctx, group.id).await, "group", &group.name)? {
+        for group in deleted_since(self.groups.list_deleted(&system, &within(holder)).await?.items, since) {
+            if let Some(restored) = restored_unless_refused(self.groups.restore(ctx, group.id).await, "group", &group.name)? {
                 self.events.publish(GlobalEvent::GroupRestored(restored.id), restored.security_attributes);
             }
         }
@@ -286,8 +287,8 @@ impl GroupManager {
     pub(crate) async fn purge_lying_in(&self, holder: &Scope) -> GroupResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for group in self.entities.list_deleted_groups(&system, &within(holder)).await?.items {
-            self.entities.purge_group(&system, group.id).await?;
+        for group in self.groups.list_deleted(&system, &within(holder)).await?.items {
+            self.groups.purge(&system, group.id).await?;
         }
         Ok(())
     }
@@ -301,13 +302,13 @@ impl GroupManager {
 /// # Errors
 /// `StoreError::Validation` naming the first group `ctx` may not read, or
 /// whatever else the store reports.
-pub(crate) async fn require_nameable(store: &dyn EntityStore, ctx: &SecurityContext, before: &[AclEntry], entries: &[AclEntry]) -> StoreResult<()> {
+pub(crate) async fn require_nameable(store: &dyn EntityStore<Group>, ctx: &SecurityContext, before: &[AclEntry], entries: &[AclEntry]) -> StoreResult<()> {
     for entry in entries {
         let Subject::Group(group) = entry.subject else { continue };
         if before.iter().any(|named| named.subject == entry.subject) {
             continue;
         }
-        if store.get_group(ctx, group).await.optional()?.is_none() {
+        if store.get(ctx, group).await.optional()?.is_none() {
             return Err(StoreError::Validation(format!("an access list names group {group}, which you cannot read")));
         }
     }
@@ -320,18 +321,18 @@ pub(crate) async fn require_nameable(store: &dyn EntityStore, ctx: &SecurityCont
 ///
 /// # Errors
 /// Whatever the store reports.
-pub(crate) async fn keep_participants(store: &dyn EntityStore, participants: Group) -> StoreResult<()> {
+pub(crate) async fn keep_participants(store: &dyn EntityStore<Group>, participants: Group) -> StoreResult<()> {
     let system = SecurityContext::system();
-    match store.get_group(&system, participants.id).await {
+    match store.get(&system, participants.id).await {
         Ok(mut stored) => {
             if stored.members == participants.members {
                 return Ok(());
             }
             stored.members = participants.members;
             stored.updated_at = Utc::now();
-            store.update_group(&system, &stored).await
+            store.update(&system, &stored).await
         }
-        Err(StoreError::NotFound { .. }) => store.create_group(&system, &participants).await,
+        Err(StoreError::NotFound { .. }) => store.create(&system, &participants).await,
         Err(e) => Err(e),
     }
 }
@@ -343,8 +344,8 @@ pub(crate) async fn keep_participants(store: &dyn EntityStore, participants: Gro
 ///
 /// # Errors
 /// Whatever the store reports.
-pub(crate) async fn purge_participants(store: &dyn EntityStore, id: GroupId) -> StoreResult<bool> {
+pub(crate) async fn purge_participants(store: &dyn EntityStore<Group>, id: GroupId) -> StoreResult<bool> {
     let system = SecurityContext::system();
-    store.delete_group(&system, id).await?;
-    store.purge_group(&system, id).await
+    store.delete(&system, id).await?;
+    store.purge(&system, id).await
 }

@@ -8,6 +8,10 @@ use crate::actor::ActorId;
 use crate::confidentiality::Classification;
 use crate::security::Secured;
 use crate::store::EntityKind;
+use crate::store::query::Field;
+use crate::value::name::ScopedName;
+use std::fmt::{Debug, Display};
+use std::hash::Hash;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -35,6 +39,22 @@ pub trait Stored: Secured {
     /// Its kind (issue 323), by which what is done with it is asked and
     /// named.
     const KIND: EntityKind;
+
+    /// What it is kept and found by.
+    type Id: Clone + Eq + Hash + Display + Debug + Send + Sync + 'static;
+
+    /// The fields a query of its kind names (issue 293).
+    type Field: Field;
+
+    /// Its id.
+    fn id(&self) -> Self::Id;
+
+    /// Its name and the scope it lies in, if its kind is `Scoped` - a name
+    /// unique of its kind in that scope, which the store keeps so (issue
+    /// 250) -; `None` for a kind without one.
+    fn unique_name(&self) -> Option<ScopedName> {
+        None
+    }
 
     /// Whether, and by whom and when, it was deleted; never for a kind that
     /// is not `Deletable`.
@@ -65,24 +85,4 @@ pub trait Stored: Secured {
 pub trait Deletable: Stored {
     /// Marks it deleted, or with `None` takes the mark away.
     fn set_deleted(&mut self, deleted: Option<Removal>);
-}
-
-/// Implements `Stored` and `Deletable` for types with a field
-/// `deleted: Option<Removal>`, each of the kind named after it.
-#[macro_export]
-macro_rules! impl_deletable {
-    ($($t:ty => $kind:literal),+ $(,)?) => {$(
-        impl $crate::removal::Stored for $t {
-            const KIND: $crate::store::EntityKind = $crate::store::EntityKind::new($kind);
-
-            fn deleted(&self) -> Option<&$crate::removal::Removal> {
-                self.deleted.as_ref()
-            }
-        }
-        impl $crate::removal::Deletable for $t {
-            fn set_deleted(&mut self, deleted: Option<$crate::removal::Removal>) {
-                self.deleted = deleted;
-            }
-        }
-    )+};
 }

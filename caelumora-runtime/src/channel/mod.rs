@@ -32,6 +32,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, OnceLock, Weak};
 use crate::session::SessionLoop;
 use std::time::Duration;
+use caelumora_model::agent::Agent;
 #[cfg(test)]
 use caelumora_model::actor::Envelope;
 #[cfg(test)]
@@ -204,7 +205,7 @@ pub struct ChannelLoop {
     /// The services it works with, taken from `runtime` once (issue 229).
     security: Arc<dyn SecurityManager>,
     confidentiality: Arc<dyn ConfidentialityPolicy>,
-    entities: Arc<dyn EntityStore>,
+    agents: Arc<dyn EntityStore<Agent>>,
     controllers: Arc<ControllerManager>,
     /// The actors of the participants, each with what it was built from -
     /// what a reclassification asks its clearances of; replaced as a whole
@@ -291,7 +292,7 @@ impl ChannelLoop {
             channel: channel_controller,
             security: Arc::clone(runtime.security_manager()),
             confidentiality: Arc::clone(runtime.confidentiality()),
-            entities: Arc::clone(runtime.entity_store()),
+            agents: Arc::clone(&runtime.entity_stores().agents),
             controllers: Arc::clone(runtime.controller_manager()),
             runtime,
             actors: ArcSwap::from_pointee(HashMap::new()),
@@ -350,7 +351,7 @@ impl ChannelLoop {
 
     /// `participant` with what its actor is built from (`Member::of`).
     async fn member_of(&self, participant: &Participant) -> Result<Option<Member>> {
-        Member::of(participant, &self.channel.load(), self.entities.as_ref(), &self.controllers, self.security.as_ref()).await
+        Member::of(participant, &self.channel.load(), self.agents.as_ref(), &self.controllers, self.security.as_ref()).await
     }
 
     /// Makes `session` the session of this channel. Called once by the

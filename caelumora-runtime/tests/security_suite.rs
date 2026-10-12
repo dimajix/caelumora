@@ -38,7 +38,7 @@ use caelumora_model::group::{Group, GroupId};
 use caelumora_model::security::{AclEntry, ActionType, Grant, OwnershipSecurityManager, Reclassified, SecurityAttributes, SecurityContext, SecurityManager, Subject};
 use caelumora_model::snapshot::{Detail, PublicationSnapshot};
 use caelumora_model::session::{ChannelId, Session, SessionId};
-use caelumora_model::store::{ComponentStore, EntityStore, StateStore, StoreError};
+use caelumora_model::store::{ComponentStore, StateStore, StoreError};
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId, TemplateError, WorkspaceTemplate};
 use caelumora_model::user::{User, UserId, UserProfile};
@@ -56,6 +56,7 @@ use caelumora_runtime::group::GroupError;
 use caelumora_model::workspace::{WorkspaceChoice, WorkspaceId};
 use caelumora_model::artifact::Artifact;
 use caelumora_model::removal::Stored;
+use caelumora_model::config::AppConfig;
 
 /// The ownership policy, recording every question it is asked - who acted
 /// with whose rights and for whom, what, of whose entity, and what it
@@ -194,8 +195,7 @@ impl World {
         let recorder = Arc::new(Recorder { policy: OwnershipSecurityManager::with_memberships(Arc::<StoreMemberships>::clone(&memberships)), rules, asked: Mutex::new(Vec::new()), names: Mutex::new(HashMap::new()) });
         let policy: Arc<dyn SecurityManager> = Arc::<Recorder>::clone(&recorder);
         let store = Arc::new(MemoryStore::with_policies(Arc::clone(&policy), Arc::<Recorder>::clone(&recorder)));
-        let entities: Arc<dyn EntityStore> = Arc::<MemoryStore>::clone(&store);
-        memberships.bind(&entities);
+        memberships.bind(&store.entity_stores().groups);
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
         let mut registry = ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
         register(&mut registry);
@@ -203,7 +203,7 @@ impl World {
         let shell = StorageConfig::Local { root: files.path().join("shell"), shell: true, destination: Some(Classification::general(Confidentiality::Internal)), max_run_secs: DEFAULT_MAX_RUN_SECS };
         let workspaces = WorkspacesConfig { storage: [("main".to_string(), StorageConfig::Local { root: files.path().to_path_buf(), shell: false, destination: None, max_run_secs: DEFAULT_MAX_RUN_SECS }), ("shell".to_string(), shell)].into(), ..Default::default() };
         let artifacts = ArtifactsConfig { storage: [("kept".to_string(), ArtifactStorageConfig::Local { root: files.path().join("artifacts"), destination: None })].into(), ..Default::default() };
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::<Recorder>::clone(&recorder), &caelumora_model::config::AppConfig { workspaces, artifacts, ..Default::default() }, registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store.entity_stores(), secrets, policy, Arc::<Recorder>::clone(&recorder), &AppConfig { workspaces, artifacts, ..Default::default() }, registry).unwrap());
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let mut world = Self { policy: recorder, store, runtime, manager, alice: UserId::new(), bob: UserId::new(), carol: UserId::new(), files };
         world.alice = world.user("alice").await;
@@ -225,7 +225,7 @@ impl World {
 
     async fn user(&self, name: &str) -> UserId {
         let user = User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: vec![*STAFF], deleted: None };
-        self.store.create_user(&Self::system(), &user).await.unwrap();
+        self.runtime.entity_stores().users.create(&Self::system(), &user).await.unwrap();
         self.policy.names.lock().unwrap().insert(ActorId::User(user.id), name.to_string());
         user.id
     }
@@ -248,7 +248,7 @@ impl World {
         let result = action.await;
         let asked = std::mem::take(&mut *self.policy.asked.lock().unwrap());
         // Agents made by the action are recorded by their names, too.
-        for agent in self.store.list_agents(&Self::system(), &Query::all()).await.map(|page| page.items).unwrap() {
+        for agent in self.runtime.entity_stores().agents.list(&Self::system(), &Query::all()).await.map(|page| page.items).unwrap() {
             self.policy.names.lock().unwrap().insert(ActorId::Agent(agent.id), agent.name.name.to_string());
         }
         let names = self.policy.names.lock().unwrap().clone();
@@ -274,7 +274,7 @@ impl World {
             reasoning_visibility: Default::default(),
             deleted: None,
         };
-        self.store.create_personality(&Self::system(), &personality).await.unwrap();
+        self.runtime.entity_stores().personalities.create(&Self::system(), &personality).await.unwrap();
         personality
     }
 
@@ -307,14 +307,14 @@ impl World {
             privacy: Default::default(),
             deleted: None,
         };
-        self.store.create_session_template(&Self::system(), &template).await.unwrap();
+        self.runtime.entity_stores().session_templates.create(&Self::system(), &template).await.unwrap();
         template.id
     }
 
     /// An agent of `owner` and `personality`, as made before.
     async fn agent(&self, name: &str, owner: UserId, personality: &Personality) -> AgentId {
         let agent = Agent::new(ScopedName::new(name, Scope::GlobalScope).unwrap(), personality, ActorId::User(owner));
-        self.store.create_agent(&Self::system(), &agent).await.unwrap();
+        self.runtime.entity_stores().agents.create(&Self::system(), &agent).await.unwrap();
         self.policy.names.lock().unwrap().insert(ActorId::Agent(agent.id), name.to_string());
         agent.id
     }
@@ -352,10 +352,10 @@ impl World {
         };
         // Each with the group of its participants, as the runtime stores them
         // (issue 286).
-        self.store.create_session(&Self::system(), &session).await.unwrap();
-        self.store.create_group(&Self::system(), &Group::of_session(&session)).await.unwrap();
-        self.store.create_channel(&Self::system(), &channel).await.unwrap();
-        self.store.create_group(&Self::system(), &Group::of_channel(&channel)).await.unwrap();
+        self.runtime.entity_stores().sessions.create(&Self::system(), &session).await.unwrap();
+        self.runtime.entity_stores().groups.create(&Self::system(), &Group::of_session(&session)).await.unwrap();
+        self.runtime.entity_stores().channels.create(&Self::system(), &channel).await.unwrap();
+        self.runtime.entity_stores().groups.create(&Self::system(), &Group::of_channel(&channel)).await.unwrap();
         self.manager.open_session(&Self::as_user(self.alice), session.id).await.expect("alice opens her session")
     }
 
@@ -402,7 +402,7 @@ async fn a_session_cannot_be_made_with_a_personality_the_user_may_not_read() {
     let refused = world.manager.create_from_template(&World::as_user(world.alice), template, None, None).await.expect_err("not hers to use");
     assert!(not_found(&refused), "answered as not there, so that it cannot be probed: {refused:#}");
     assert!(world.manager.views(Viewer::new(World::as_user(world.alice))).sessions().await.unwrap().is_empty(), "no session was stored");
-    assert!(world.store.list_agents(&World::system(), &Query::all()).await.map(|page| page.items).unwrap().is_empty(), "nor an agent");
+    assert!(world.runtime.entity_stores().agents.list(&World::system(), &Query::all()).await.map(|page| page.items).unwrap().is_empty(), "nor an agent");
 }
 
 /// P2: a personality shared with the user, or the system's, makes an agent
@@ -415,13 +415,13 @@ async fn a_shared_personality_makes_an_agent_of_whoever_uses_it() {
     for personality in [&shared, &global] {
         let template = world.template(Some(world.alice), &[], personality.name.name.as_str(), personality.id).await;
         let session = world.manager.create_from_template(&World::as_user(world.alice), template, None, None).await.expect("hers to use");
-        let agents = world.store.list_agents(&World::as_user(world.alice), &Query::all()).await.map(|page| page.items).unwrap();
+        let agents = world.runtime.entity_stores().agents.list(&World::as_user(world.alice), &Query::all()).await.map(|page| page.items).unwrap();
         let agent = agents.iter().find(|a| a.personality_id == personality.id).expect("an agent of hers");
         assert_eq!(agent.security_attributes.owner_id, ActorId::User(world.alice), "owned by who made it");
-        let gone = world.store.get_agent(&World::as_user(world.bob), agent.id).await.expect_err("not bob's to read");
+        let gone = world.runtime.entity_stores().agents.get(&World::as_user(world.bob), agent.id).await.expect_err("not bob's to read");
         assert!(matches!(gone, StoreError::NotFound { .. }), "{gone}");
         let renamed = Agent { name: ScopedName::new("taken", Scope::GlobalScope).unwrap(), ..agent.clone() };
-        assert!(world.store.update_agent(&World::as_user(world.bob), &renamed).await.is_err(), "nor his to change, though the personality is his");
+        assert!(world.runtime.entity_stores().agents.update(&World::as_user(world.bob), &renamed).await.is_err(), "nor his to change, though the personality is his");
         world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
     }
 }
@@ -440,7 +440,7 @@ async fn an_agent_whose_personality_was_withdrawn_is_left_out_of_its_channel() {
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 
     let withdrawn = Personality { security_attributes: attributes(Some(world.bob), &[]), ..shared };
-    world.store.update_personality(&World::as_user(world.bob), &withdrawn).await.expect("bob owns it");
+    world.runtime.entity_stores().personalities.update(&World::as_user(world.bob), &withdrawn).await.expect("bob owns it");
 
     let reopened = world.manager.open_session(&World::as_user(world.alice), session.id()).await.expect("the session still opens");
     assert!(!reopened.channels()[0].actor_ids().contains(&ActorId::Agent(helper)), "the agent is not run");
@@ -457,7 +457,7 @@ async fn an_agent_whose_personality_is_gone_is_left_out_of_its_channel() {
     let helper = world.agent("helper", world.alice, &bobs).await;
     let session = world.shared_session(&[helper], &[]).await;
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
-    world.store.delete_personality(&World::as_user(world.bob), bobs.id).await.expect("bob deletes his personality");
+    world.runtime.entity_stores().personalities.delete(&World::as_user(world.bob), bobs.id).await.expect("bob deletes his personality");
 
     let reopened = world.manager.open_session(&World::as_user(world.alice), session.id()).await.expect("the session still opens");
     assert!(!reopened.channels()[0].actor_ids().contains(&ActorId::Agent(helper)), "the agent is not run");
@@ -474,7 +474,7 @@ async fn an_agent_whose_personality_was_withdrawn_cannot_join_a_channel() {
     let main = Arc::clone(&session.channels()[0]);
 
     let withdrawn = Personality { security_attributes: attributes(Some(world.bob), &[]), ..shared };
-    world.store.update_personality(&World::as_user(world.bob), &withdrawn).await.unwrap();
+    world.runtime.entity_stores().personalities.update(&World::as_user(world.bob), &withdrawn).await.unwrap();
 
     let refused = main.add_participant(&World::as_user(world.alice), ActorId::Agent(helper), HistoryAccess::All).await.expect_err("it may not run");
     assert!(denied(&refused), "{refused:#}");
@@ -490,13 +490,13 @@ async fn a_personality_is_changed_by_its_owner_and_read_by_who_it_is_shared_with
     let shared = world.personality("shared", Some(world.bob), &[world.alice]).await;
     let (alice, bob, carol) = (World::as_user(world.alice), World::as_user(world.bob), World::as_user(world.carol));
 
-    assert!(world.store.get_personality(&alice, shared.id).await.is_ok(), "shared with her");
+    assert!(world.runtime.entity_stores().personalities.get(&alice, shared.id).await.is_ok(), "shared with her");
     let changed = Personality { description: Some(Description::new("hers now").unwrap()), ..shared.clone() };
-    assert!(world.store.update_personality(&alice, &changed).await.is_err(), "but not hers to change");
-    assert!(world.store.delete_personality(&alice, shared.id).await.is_err(), "nor to delete");
-    assert!(matches!(world.store.get_personality(&carol, shared.id).await, Err(StoreError::NotFound { .. })), "not there for a stranger");
-    assert!(world.store.list_personalities(&carol, &Query::all()).await.map(|page| page.items).unwrap().iter().all(|p| p.id != shared.id), "nor listed");
-    world.store.update_personality(&bob, &changed).await.expect("its owner changes it");
+    assert!(world.runtime.entity_stores().personalities.update(&alice, &changed).await.is_err(), "but not hers to change");
+    assert!(world.runtime.entity_stores().personalities.delete(&alice, shared.id).await.is_err(), "nor to delete");
+    assert!(matches!(world.runtime.entity_stores().personalities.get(&carol, shared.id).await, Err(StoreError::NotFound { .. })), "not there for a stranger");
+    assert!(world.runtime.entity_stores().personalities.list(&carol, &Query::all()).await.map(|page| page.items).unwrap().iter().all(|p| p.id != shared.id), "nor listed");
+    world.runtime.entity_stores().personalities.update(&bob, &changed).await.expect("its owner changes it");
 }
 
 /// P6: what of a personality is public - how its agents introduce
@@ -510,7 +510,7 @@ async fn an_agents_introduction_reaches_whoever_sees_it_but_not_its_personality(
     let session = world.shared_session(&[helper], &[]).await;
     let channel = session.channels()[0].id();
 
-    assert!(world.store.get_personality(&World::as_user(world.bob), hers.id).await.is_err(), "bob may not read the personality");
+    assert!(world.runtime.entity_stores().personalities.get(&World::as_user(world.bob), hers.id).await.is_err(), "bob may not read the personality");
     let view = world.manager.views(Viewer::new(World::as_user(world.bob))).session(session.id()).await.unwrap().channel(channel).await.unwrap();
     let members = view.members().await;
     let member = members.iter().find(|m| m.id() == ActorId::Agent(helper)).expect("he sees the agent");
@@ -531,7 +531,7 @@ async fn the_components_a_personality_includes_are_read_in_its_agents_name() {
     world.store.create_components(&World::as_user(world.bob), &tools).await.expect("bob keeps his tools");
     let mut hers = world.personality("hers", Some(world.alice), &[]).await;
     hers.components = ComponentConfig { component_nodes: vec![ComponentDescriptor { params: serde_json::json!({ "id": "bobs-tools" }), ..ComponentDescriptor::new("tools", PRECONFIGURED_REF_KIND) }] };
-    world.store.update_personality(&World::as_user(world.alice), &hers).await.unwrap();
+    world.runtime.entity_stores().personalities.update(&World::as_user(world.alice), &hers).await.unwrap();
     let helper = world.agent("helper", world.alice, &hers).await;
 
     let (session, asked) = world.asked(world.shared_session(&[helper], &[])).await;
@@ -889,7 +889,7 @@ async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
         components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("model", "answering")] },
         ..world.personality("answering", None, &[]).await
     };
-    world.store.update_personality(&World::system(), &answering).await.unwrap();
+    world.runtime.entity_stores().personalities.update(&World::system(), &answering).await.unwrap();
     let helper = world.agent("helper", world.alice, &answering).await;
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
@@ -939,7 +939,7 @@ async fn nudging_an_agent_is_for_whoever_takes_part_and_it_responds_on_their_wor
         components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("model", "silent")] },
         ..world.personality("silent", None, &[]).await
     };
-    world.store.update_personality(&World::system(), &silent).await.unwrap();
+    world.runtime.entity_stores().personalities.update(&World::system(), &silent).await.unwrap();
     let helper = world.agent("helper", world.alice, &silent).await;
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
@@ -1059,7 +1059,7 @@ async fn which_components_an_agent_was_built_from_is_read_by_its_owner_alone() {
         ComponentDescriptor::new("stop", "stop_tool"),
         ComponentDescriptor { params: serde_json::json!({ "id": "bobs-tools" }), ..ComponentDescriptor::new("tools", PRECONFIGURED_REF_KIND) },
     ] };
-    world.store.update_personality(&World::as_user(world.alice), &hers).await.unwrap();
+    world.runtime.entity_stores().personalities.update(&World::as_user(world.alice), &hers).await.unwrap();
     let helper = world.agent("helper", world.alice, &hers).await;
     let session = world.shared_session(&[helper], &[]).await;
     let channel = session.channels()[0].id();
@@ -1153,7 +1153,7 @@ async fn with_a_call_to_approve() -> (World, Arc<SessionLoop>, Arc<caelumora_run
         ] },
         ..world.personality("asking", None, &[]).await
     };
-    world.store.update_personality(&World::system(), &asking).await.unwrap();
+    world.runtime.entity_stores().personalities.update(&World::system(), &asking).await.unwrap();
     let helper = world.agent("helper", world.alice, &asking).await;
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
@@ -1231,7 +1231,7 @@ async fn with_a_call_asking(sensitive: bool, asker: fn(&World) -> UserId) -> (Wo
         ] },
         ..world.personality("asking", None, &[]).await
     };
-    world.store.update_personality(&World::system(), &asking).await.unwrap();
+    world.runtime.entity_stores().personalities.update(&World::system(), &asking).await.unwrap();
     let helper = world.agent("helper", world.alice, &asking).await;
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
@@ -1551,7 +1551,7 @@ async fn a_tool_whose_remote_side_is_not_cleared_for_the_channel_is_not_offered_
         components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("model", "once"), ComponentDescriptor::new("outward", "outward")] },
         ..world.personality("sending", None, &[]).await
     };
-    world.store.update_personality(&World::system(), &sending).await.unwrap();
+    world.runtime.entity_stores().personalities.update(&World::system(), &sending).await.unwrap();
     let helper = world.agent("helper", world.alice, &sending).await;
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
@@ -1621,7 +1621,7 @@ async fn an_agent_asked_by_an_agent_acts_for_its_own_owner() {
         let world = &world;
         async move {
             let personality = Personality { components: ComponentConfig { component_nodes: components }, ..world.personality(name, None, &[]).await };
-            world.store.update_personality(&World::system(), &personality).await.unwrap();
+            world.runtime.entity_stores().personalities.update(&World::system(), &personality).await.unwrap();
             personality
         }
     };
@@ -1670,7 +1670,7 @@ async fn with_a_reader_of(owner: fn(&World) -> UserId, in_side: bool) -> (World,
         ] },
         ..world.personality("reading", None, &[]).await
     };
-    world.store.update_personality(&World::system(), &reading).await.unwrap();
+    world.runtime.entity_stores().personalities.update(&World::system(), &reading).await.unwrap();
     let reader = world.agent("reader", owner(&world), &reading).await;
     let session = world.shared_session(&[reader], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
@@ -1818,7 +1818,7 @@ async fn remote_personality(world: &World) -> Personality {
         components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("remote", "remote_at_work")] },
         ..world.personality("remote", None, &[]).await
     };
-    world.store.update_personality(&World::system(), &remote).await.unwrap();
+    world.runtime.entity_stores().personalities.update(&World::system(), &remote).await.unwrap();
     remote
 }
 
@@ -2004,15 +2004,15 @@ async fn a_profile_is_written_by_its_user_alone_and_read_by_who_shares_a_session
     let world = World::new().await;
     let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
     let profile = UserProfile::new(world.alice, Some(Introduction::new("I run the team.").unwrap()));
-    world.store.create_user_profile(&alice, &profile).await.expect("she writes her own");
+    world.runtime.entity_stores().user_profiles.create(&alice, &profile).await.expect("she writes her own");
     let forged = UserProfile::new(world.alice, Some(Introduction::new("I quit.").unwrap()));
-    assert!(world.store.update_user_profile(&bob, &forged).await.is_err(), "bob does not write hers");
+    assert!(world.runtime.entity_stores().user_profiles.update(&bob, &forged).await.is_err(), "bob does not write hers");
     let carols = UserProfile::new(world.carol, Some(Introduction::new("hello").unwrap()));
-    assert!(world.store.create_user_profile(&bob, &carols).await.is_err(), "nor anyone else's");
+    assert!(world.runtime.entity_stores().user_profiles.create(&bob, &carols).await.is_err(), "nor anyone else's");
 
-    let mut promoted = world.store.get_user(&alice, world.alice).await.expect("everyone reads a user");
+    let mut promoted = world.runtime.entity_stores().users.get(&alice, world.alice).await.expect("everyone reads a user");
     promoted.roles.push(RoleId::new());
-    assert!(world.store.update_user(&alice, &promoted).await.is_err(), "nobody grants themselves roles");
+    assert!(world.runtime.entity_stores().users.update(&alice, &promoted).await.is_err(), "nobody grants themselves roles");
 
     let session = world.shared_session(&[], &[]).await;
     let channel = session.channels()[0].id();
@@ -2133,7 +2133,7 @@ async fn deleting_a_session_needs_owning_it() {
     let alice = World::as_user(world.alice);
     let personality = world.personality("plain", None, &[]).await;
     let bobs = Agent::new(ScopedName::new("helper", Scope::SessionScope { session_id: session.id() }).unwrap(), &personality, ActorId::User(world.bob));
-    world.store.create_agent(&World::system(), &bobs).await.unwrap();
+    world.runtime.entity_stores().agents.create(&World::system(), &bobs).await.unwrap();
     let (_, asked) = world.asked(world.manager.delete_session(&World::as_user(world.carol), session.id())).await;
     assert_eq!(asked, checks(&["carol: GetSession(alice's) no"]));
     let (_, asked) = world.asked(world.manager.delete_session(&World::as_user(world.bob), session.id())).await;
@@ -2148,14 +2148,14 @@ async fn deleting_a_session_needs_owning_it() {
         "alice: DeleteSession(alice's) yes",
         "alice: GetAgent(bob's) no",
     ]), "asked by the session manager before it stops anything, again by the store, and for what lies in its scope");
-    assert!(world.store.get_session(&alice, session.id()).await.is_ok(), "the session is kept");
-    assert!(world.store.get_agent(&World::system(), bobs.id).await.is_ok(), "and bob's agent");
+    assert!(world.runtime.entity_stores().sessions.get(&alice, session.id()).await.is_ok(), "the session is kept");
+    assert!(world.runtime.entity_stores().agents.get(&World::system(), bobs.id).await.is_ok(), "and bob's agent");
 
     world.runtime.agent_manager().delete(&World::as_user(world.bob), bobs.id).await.expect("his to delete");
     let (deleted, _) = world.asked(world.manager.delete_session(&alice, session.id())).await;
     assert!(deleted.unwrap(), "nothing of anybody else's is left");
     world.manager.restore_session(&alice, session.id()).await.unwrap();
-    assert!(world.store.get_agent(&World::system(), bobs.id).await.is_err(), "deleted before the session, bob's agent stays deleted");
+    assert!(world.runtime.entity_stores().agents.get(&World::system(), bobs.id).await.is_err(), "deleted before the session, bob's agent stays deleted");
 }
 
 /// Creating a channel: the classification it is given, creating it - as
@@ -2318,10 +2318,10 @@ async fn deleting_an_agent_needs_owning_it() {
     let world = World::new().await;
     let shared = world.personality("shared", Some(world.bob), &[world.alice]).await;
     let helper = world.agent("helper", world.alice, &shared).await;
-    let (deleted, asked) = world.asked(world.store.delete_agent(&World::as_user(world.bob), helper)).await;
+    let (deleted, asked) = world.asked(world.runtime.entity_stores().agents.delete(&World::as_user(world.bob), helper)).await;
     assert!(!deleted.unwrap(), "not there for bob, though the personality is his");
     assert_eq!(asked, checks(&["bob: GetAgent(alice's) no"]));
-    let (deleted, asked) = world.asked(world.store.delete_agent(&World::as_user(world.alice), helper)).await;
+    let (deleted, asked) = world.asked(world.runtime.entity_stores().agents.delete(&World::as_user(world.alice), helper)).await;
     assert!(deleted.unwrap());
     assert_eq!(asked, checks(&["alice: GetAgent(alice's) yes", "alice: DeleteAgent(alice's) yes"]));
 }
@@ -2380,7 +2380,7 @@ async fn adding_an_agent_needs_owning_the_channel_and_the_agent_its_personality(
     ]));
 
     let withdrawn = Personality { security_attributes: attributes(Some(world.bob), &[]), ..shared };
-    world.store.update_personality(&World::as_user(world.bob), &withdrawn).await.unwrap();
+    world.runtime.entity_stores().personalities.update(&World::as_user(world.bob), &withdrawn).await.unwrap();
     let (refused, asked) = world.asked(main.add_participant(&alice, ActorId::Agent(other), HistoryAccess::All)).await;
     assert!(denied(&refused.unwrap_err()));
     assert_eq!(asked, checks(&["alice: UpdateChannel(alice's) yes", "alice as other: GetPersonality(bob's) no"]), "an agent that may not run is not added");
@@ -2580,19 +2580,19 @@ async fn only_its_owner_attaches_a_workspace_to_a_session_they_may_change() {
     assert_eq!(asked, checks(&["alice: UpdateSession(alice's) yes", "alice: GetWorkspace(alice's) yes", "alice: JoinChannel(alice) yes", "alice: UpdateWorkspace(alice's) yes", "alice: GetSession(alice's) yes", "alice: UpdateSession(alice's) yes"]));
     assert_eq!(session.session().workspace, Some(hers.id));
     let members = Subject::Group(GroupId::of_session(session.id()));
-    assert!(world.store.get_workspace(&alice, hers.id).await.unwrap().security_attributes.acl.is_empty(), "attaching alone shares nothing");
+    assert!(world.runtime.entity_stores().workspaces.get(&alice, hers.id).await.unwrap().security_attributes.acl.is_empty(), "attaching alone shares nothing");
 
     session.set_workspace(&alice, Some(hers.id), Some(Grant::Read)).await.expect("shared with its members to read");
-    let acl = world.store.get_workspace(&alice, hers.id).await.unwrap().security_attributes.acl;
+    let acl = world.runtime.entity_stores().workspaces.get(&alice, hers.id).await.unwrap().security_attributes.acl;
     assert_eq!(acl, [caelumora_model::security::AclEntry { subject: members, grant: Grant::Read }]);
     session.set_workspace(&alice, Some(hers.id), Some(Grant::Write)).await.expect("and widened to write");
-    let acl = world.store.get_workspace(&alice, hers.id).await.unwrap().security_attributes.acl;
+    let acl = world.runtime.entity_stores().workspaces.get(&alice, hers.id).await.unwrap().security_attributes.acl;
     assert_eq!(acl, [caelumora_model::security::AclEntry { subject: members, grant: Grant::Write }], "one entry, widened");
 
     assert!(denied(&session.set_workspace(&bob, None, None).await.unwrap_err()), "bob does not take it away");
     session.set_workspace(&alice, None, None).await.expect("alice does");
     assert_eq!(session.session().workspace, None);
-    assert_eq!(world.store.get_workspace(&alice, hers.id).await.unwrap().security_attributes.acl.len(), 1, "the list is the workspace's, and stays");
+    assert_eq!(world.runtime.entity_stores().workspaces.get(&alice, hers.id).await.unwrap().security_attributes.acl.len(), 1, "the list is the workspace's, and stays");
     world.manager.stop_session(&alice, session.id()).await.unwrap();
 }
 
@@ -2847,12 +2847,12 @@ async fn the_group_of_a_channels_participants_follows_who_takes_part() {
         async move { manager.views(Viewer::new(World::as_user(user))).session(session_id).await.unwrap().channel(channel_id).await.is_ok() }
     };
     assert!(readable(world.bob).await, "bob takes part, and reads it");
-    let group = world.store.get_group(&World::system(), GroupId::of_channel(main.id())).await.expect("the channel's participants are a group");
+    let group = world.runtime.entity_stores().groups.get(&World::system(), GroupId::of_channel(main.id())).await.expect("the channel's participants are a group");
     assert!(group.has_member(ActorId::User(world.bob)));
 
     main.remove_participant(&World::as_user(world.alice), ActorId::User(world.bob)).await.expect("alice removes him");
     assert!(!readable(world.bob).await, "removed, he no longer reads it");
-    let group = world.store.get_group(&World::system(), GroupId::of_channel(main.id())).await.unwrap();
+    let group = world.runtime.entity_stores().groups.get(&World::system(), GroupId::of_channel(main.id())).await.unwrap();
     assert!(!group.has_member(ActorId::User(world.bob)), "the group followed");
     let refused = world.runtime.group_manager().set_members(&World::as_user(world.alice), group.id, vec![world.bob]).await;
     assert!(matches!(refused, Err(GroupError::Participants(_))), "nor is it changed by hand, not even by its owner: {refused:?}");
@@ -2892,9 +2892,9 @@ async fn an_artifact_shared_with_a_team_is_among_its_members_artifacts() {
     let the_team = AclEntry { subject: Subject::Group(project.id), grant: Grant::Read };
     world.runtime.artifact_manager().set_access(&alice, whole.id, vec![the_team]).await.expect("shared with the team");
     // No operation shares a single version yet; its list is written as stored.
-    let mut stored = world.store.get_artifact(&World::system(), by_version.id).await.unwrap();
+    let mut stored = world.runtime.entity_stores().artifacts.get(&World::system(), by_version.id).await.unwrap();
     stored.versions[0].acl.push(the_team);
-    world.store.update_artifact(&World::system(), &stored).await.unwrap();
+    world.runtime.entity_stores().artifacts.update(&World::system(), &stored).await.unwrap();
 
     let mut both = vec![whole.id, by_version.id];
     both.sort_by_key(|id| id.to_string());
@@ -3019,9 +3019,9 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
     world.manager.stop_session(&alice, session_id).await.unwrap();
     world.manager.delete_session(&alice, session_id).await.unwrap();
     world.manager.purge_session(&World::system(), session_id).await.unwrap();
-    assert!(world.store.get_artifact(&alice, artifact.id).await.is_ok(), "what was kept stays");
+    assert!(world.runtime.entity_stores().artifacts.get(&alice, artifact.id).await.is_ok(), "what was kept stays");
     assert!(world.files.path().join("artifacts").join(artifact.id.to_string()).is_dir(), "with its content");
-    assert!(world.store.get_deleted_artifact(&World::system(), left.id).await.is_err(), "what was not kept went with the session");
+    assert!(world.runtime.entity_stores().artifacts.get_deleted(&World::system(), left.id).await.is_err(), "what was not kept went with the session");
     assert!(!world.files.path().join("artifacts").join(left.id.to_string()).exists(), "its content too");
 }
 
@@ -3074,15 +3074,15 @@ async fn a_session_goes_with_what_lies_in_it_only_as_far_as_whoever_deletes_it_m
     let her_checks = checks(&["alice: GetArtifact(alice's) yes", "alice: JoinChannel(alice) yes", "alice: DeleteArtifact(alice's) yes"]);
     assert!(artifact_checks == [his_checks.clone(), her_checks.clone()].concat() || artifact_checks == [her_checks, his_checks].concat(),
         "asked in her name, who does not read bob's outside the channel: {artifact_checks:?}");
-    assert!(world.store.get_session(&alice, session_id).await.is_ok(), "the session is kept");
+    assert!(world.runtime.entity_stores().sessions.get(&alice, session_id).await.is_ok(), "the session is kept");
     assert!(world.manager.views(Viewer::new(alice.clone())).session(session_id).await.is_ok(), "and runs on");
-    assert!(world.store.get_artifact(&bob, his.id).await.is_ok(), "bob's artifact stays");
-    let removal = world.store.get_deleted_artifact(&World::system(), hers.id).await.unwrap().deleted.expect("hers went");
+    assert!(world.runtime.entity_stores().artifacts.get(&bob, his.id).await.is_ok(), "bob's artifact stays");
+    let removal = world.runtime.entity_stores().artifacts.get_deleted(&World::system(), hers.id).await.unwrap().deleted.expect("hers went");
     assert_eq!(removal.by, ActorId::User(world.alice), "in her name");
 
     world.runtime.artifact_manager().keep(&bob, his.id, Scope::UserScope { user_id: world.bob }).await.expect("bob keeps his");
     assert!(world.manager.delete_session(&alice, session_id).await.expect("nothing of anybody else's is left"));
-    assert!(world.store.get_artifact(&bob, his.id).await.is_ok(), "what bob kept stays");
+    assert!(world.runtime.entity_stores().artifacts.get(&bob, his.id).await.is_ok(), "what bob kept stays");
 }
 
 /// Issue 320: what went with a session comes back with it in the name of
@@ -3100,8 +3100,8 @@ async fn a_session_comes_back_with_what_lies_in_it_as_far_as_whoever_restores_it
     let (restored, asked) = world.asked(world.manager.restore_session(&alice, session_id)).await;
     restored.expect("restored all the same");
     assert!(asked.contains(&"alice: ReadDeletedArtifact(bob's) no".to_string()), "asked in her name: {asked:?}");
-    assert!(world.store.get_artifact(&alice, hers.id).await.is_ok(), "hers comes back with it");
-    assert!(world.store.get_deleted_artifact(&World::system(), his.id).await.is_ok(), "bob's stays deleted: not hers to restore");
+    assert!(world.runtime.entity_stores().artifacts.get(&alice, hers.id).await.is_ok(), "hers comes back with it");
+    assert!(world.runtime.entity_stores().artifacts.get_deleted(&World::system(), his.id).await.is_ok(), "bob's stays deleted: not hers to restore");
     world.runtime.artifact_manager().restore(&bob, his.id).await.expect("bob restores his");
 }
 
@@ -3239,7 +3239,7 @@ async fn asked_for_a_call(kind: &str, function: &str, arguments: serde_json::Val
         ] },
         ..world.personality("working", None, &[]).await
     };
-    world.store.update_personality(&World::system(), &working).await.unwrap();
+    world.runtime.entity_stores().personalities.update(&World::system(), &working).await.unwrap();
     let helper = world.agent("helper", owner(&world), &working).await;
     let alice = World::as_user(world.alice);
     let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "shell", None, Classification::general(Confidentiality::Internal)).await.unwrap();
@@ -3334,9 +3334,9 @@ async fn an_agent_reaches_the_workspace_of_a_session_its_owner_does_not_take_par
 async fn template_with_workspace(world: &World, scope: ScopeTemplate, storage: &str) -> SessionTemplateId {
     let global = world.personality(&format!("global-{storage}"), None, &[]).await;
     let id = world.template(None, &[], &format!("helper-{storage}"), global.id).await;
-    let mut template = world.store.get_session_template(&World::system(), id).await.unwrap();
+    let mut template = world.runtime.entity_stores().session_templates.get(&World::system(), id).await.unwrap();
     template.workspace = Some(WorkspaceTemplate { name: Name::new("files").unwrap(), scope, storage: storage.to_string(), classification: Classification::general(Confidentiality::Internal), description: None });
-    world.store.update_session_template(&World::system(), &template).await.unwrap();
+    world.runtime.entity_stores().session_templates.update(&World::system(), &template).await.unwrap();
     id
 }
 
@@ -3353,7 +3353,7 @@ async fn a_workspace_of_a_session_s_scope_is_made_with_it_and_goes_with_it() {
     let second = world.manager.create_from_template(&alice, template, None, None).await.unwrap();
     let (mine, others) = (first.session().workspace.expect("attached"), second.session().workspace.expect("attached"));
     assert_ne!(mine, others, "one for every session");
-    let made = world.store.get_workspace(&alice, mine).await.expect("hers");
+    let made = world.runtime.entity_stores().workspaces.get(&alice, mine).await.expect("hers");
     assert_eq!(made.name.scope, Scope::SessionScope { session_id: first.id() });
 
     assert_eq!(made.security_attributes.acl, [AclEntry { subject: Subject::Group(GroupId::of_session(first.id())), grant: Grant::Write }], "its members' to work on (issue 23)");
@@ -3362,9 +3362,9 @@ async fn a_workspace_of_a_session_s_scope_is_made_with_it_and_goes_with_it() {
     assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::WorkspaceOutOfScope(_))), "nor attached to another session: {refused}");
 
     world.manager.delete_session(&alice, first.id()).await.unwrap();
-    assert!(world.store.get_deleted_workspace(&alice, mine).await.is_ok(), "deleted with it");
+    assert!(world.runtime.entity_stores().workspaces.get_deleted(&alice, mine).await.is_ok(), "deleted with it");
     world.manager.restore_session(&alice, first.id()).await.unwrap();
-    assert!(world.store.get_workspace(&alice, mine).await.is_ok(), "restored with it");
+    assert!(world.runtime.entity_stores().workspaces.get(&alice, mine).await.is_ok(), "restored with it");
     world.manager.delete_session(&alice, first.id()).await.unwrap();
     world.manager.purge_session(&World::system(), first.id()).await.unwrap();
     assert!(!world.files.path().join(mine.to_string()).exists(), "purged with it, its files too");
@@ -3428,7 +3428,7 @@ async fn a_workspace_chosen_as_a_session_is_made_takes_the_place_of_its_template
     assert_eq!(asked, checks(&["alice: GetSessionTemplate(system's) yes", "alice: CreateSession(alice's) yes", "alice: GetWorkspace(bob's) no"]), "refused before anything is made");
 
     let made = world.manager.create_from_template(&alice, template, Some("Report"), Some(WorkspaceChoice::New { storage: "main".to_string(), classification: internal.clone() })).await.expect("one of its own");
-    let own = world.store.get_workspace(&alice, made.session().workspace.expect("attached")).await.unwrap();
+    let own = world.runtime.entity_stores().workspaces.get(&alice, made.session().workspace.expect("attached")).await.unwrap();
     assert_eq!((own.name.name.as_str(), &own.name.scope, own.storage.as_str()), ("Report", &Scope::SessionScope { session_id: made.id() }, "main"));
     assert_eq!(own.owner(), Some(world.alice));
     let refused = world.manager.create_from_template(&alice, template, None, Some(WorkspaceChoice::Existing { id: own.id, share: None })).await.unwrap_err();
@@ -3491,7 +3491,7 @@ async fn with_a_commanded_agent() -> (World, Arc<SessionLoop>, Arc<caelumora_run
         ] },
         ..world.personality("commanded", None, &[]).await
     };
-    world.store.update_personality(&World::system(), &commanded).await.unwrap();
+    world.runtime.entity_stores().personalities.update(&World::system(), &commanded).await.unwrap();
     let helper = world.agent("helper", world.alice, &commanded).await;
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
@@ -3595,7 +3595,7 @@ async fn only_an_agents_owner_compacts_its_context() {
         ] },
         ..world.personality("compacting", None, &[]).await
     };
-    world.store.update_personality(&World::system(), &compacting).await.unwrap();
+    world.runtime.entity_stores().personalities.update(&World::system(), &compacting).await.unwrap();
     let helper = world.agent("helper", world.alice, &compacting).await;
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
@@ -3627,7 +3627,7 @@ async fn with_a_skilled_agent() -> (World, Arc<SessionLoop>, Arc<caelumora_runti
         ] },
         ..world.personality("skilled", None, &[]).await
     };
-    world.store.update_personality(&World::system(), &skilled).await.unwrap();
+    world.runtime.entity_stores().personalities.update(&World::system(), &skilled).await.unwrap();
     let helper = world.agent("helper", world.alice, &skilled).await;
     let internal = Classification::general(Confidentiality::Internal);
     world.runtime.skill_manager()
@@ -3708,13 +3708,13 @@ async fn with_a_writing_agent(function: &str, arguments: serde_json::Value) -> (
         ] },
         ..world.personality("writing", None, &[]).await
     };
-    world.store.update_personality(&World::system(), &writing).await.unwrap();
+    world.runtime.entity_stores().personalities.update(&World::system(), &writing).await.unwrap();
     let helper = world.agent("helper", world.alice, &writing).await;
     let review = world.runtime.skill_manager()
         .create(&World::as_user(world.bob), "review", Scope::GlobalScope, "How we review", "Read it twice.", Classification::general(Confidentiality::Internal)).await
         .expect("his to make");
     let shared = caelumora_model::skill::Skill { security_attributes: SecurityAttributes::owned_by(ActorId::User(world.bob)).granting(caelumora_model::security::Subject::Actor(ActorId::User(world.alice)), caelumora_model::security::Grant::Read), ..review };
-    world.store.update_skill(&World::as_user(world.bob), &shared).await.expect("shared with alice");
+    world.runtime.entity_stores().skills.update(&World::as_user(world.bob), &shared).await.expect("shared with alice");
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
     world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
@@ -3734,7 +3734,7 @@ async fn an_agents_skill_belongs_to_its_owner_and_lies_in_the_session() {
         asked_for(&world, "alice as helper, asked by bob: CreateSkill(alice's) yes").await;
     }).await;
     assert!(asked.iter().any(|line| line == "alice as helper, asked by bob: CreateSkill(alice's) yes"), "{asked:?}");
-    let skills = world.store.list_skills(&World::system(), &Query::all()).await.map(|page| page.items).unwrap();
+    let skills = world.runtime.entity_stores().skills.list(&World::system(), &Query::all()).await.map(|page| page.items).unwrap();
     let deploy = skills.iter().find(|s| s.name.name.as_str() == "deploy").expect("written");
     assert_eq!(deploy.security_attributes.owner_id, ActorId::User(world.alice), "the agent's owner's");
     assert_eq!(deploy.name.scope, Scope::SessionScope { session_id: session.id() }, "in the session's scope");
@@ -3751,7 +3751,7 @@ async fn an_agent_changes_only_skills_of_its_owners() {
 
     main.user_actor(world.bob).unwrap().send_message("@helper change it".to_string(), None).await.expect("sent");
     asked_for(&world, "alice as helper, asked by bob: UpdateSkill(bob's) no").await;
-    let review = world.store.find_skill_by_name(&World::system(), &ScopedName::new("review", Scope::GlobalScope).unwrap()).await.unwrap();
+    let review = world.runtime.entity_stores().skills.find_by_name(&World::system(), &ScopedName::new("review", Scope::GlobalScope).unwrap()).await.unwrap();
     assert_eq!(review.body.as_str(), "Read it twice.", "unchanged");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }

@@ -110,12 +110,12 @@ pub trait UserProvider: Debug + Send + Sync {
 #[derive(Debug)]
 pub struct UserManager {
     providers: Vec<Arc<dyn UserProvider>>,
-    store: Arc<dyn EntityStore>,
+    store: Arc<dyn EntityStore<User>>,
     events: Arc<dyn EventPublisher>,
 }
 
 impl UserManager {
-    pub fn new(providers: Vec<Arc<dyn UserProvider>>, store: Arc<dyn EntityStore>, events: Arc<dyn EventPublisher>) -> Self {
+    pub fn new(providers: Vec<Arc<dyn UserProvider>>, store: Arc<dyn EntityStore<User>>, events: Arc<dyn EventPublisher>) -> Self {
         Self { providers, store, events }
     }
 
@@ -179,8 +179,8 @@ impl UserManager {
     async fn record(&self, found: User) -> AuthResult<User> {
         let system = SecurityContext::system();
         let backend = |e: crate::store::StoreError| AuthError::Backend(e.to_string());
-        let Some(stored) = self.store.get_user(&system, found.id).await.optional().map_err(backend)? else {
-            self.store.create_user(&system, &found).await.map_err(backend)?;
+        let Some(stored) = self.store.get(&system, found.id).await.optional().map_err(backend)? else {
+            self.store.create(&system, &found).await.map_err(backend)?;
             self.events.publish(GlobalEvent::UserCreated(found.id), found.security_attributes().clone());
             return Ok(found);
         };
@@ -190,7 +190,7 @@ impl UserManager {
         if !renamed && !roles_changed && user.email == stored.email {
             return Ok(stored);
         }
-        self.store.update_user(&system, &user).await.map_err(backend)?;
+        self.store.update(&system, &user).await.map_err(backend)?;
         if renamed {
             self.events.publish(GlobalEvent::UserUpdated(user.id, UserUpdateEvent::NameChanged(user.username.to_string())), user.security_attributes().clone());
         }
@@ -235,7 +235,7 @@ mod tests {
 
     /// A manager of `providers`, keeping records in a store of its own.
     fn chain(providers: Vec<Arc<dyn UserProvider>>) -> UserManager {
-        UserManager::new(providers, Arc::new(MemoryStore::new()), Arc::new(Announced::default()))
+        UserManager::new(providers, Arc::new(MemoryStore::new()).entity_stores().users, Arc::new(Announced::default()))
     }
 
     fn user(name: &str) -> User {
@@ -364,7 +364,7 @@ mod tests {
     /// announced, nothing written where nothing changed.
     #[tokio::test]
     async fn the_manager_keeps_and_announces_the_records_the_providers_answer() {
-        let store: Arc<dyn EntityStore> = Arc::new(MemoryStore::new());
+        let store = Arc::new(MemoryStore::new()).entity_stores().users;
         let announced = Arc::new(Announced::default());
         // A manager whose one provider knows `user` with the password "a".
         let answering = |user: &User| UserManager::new(vec![Arc::new(MapUserProvider::new(&[(user, "a")]))], Arc::clone(&store), Arc::<Announced>::clone(&announced));
@@ -378,7 +378,7 @@ mod tests {
         let found = answering(&User { roles: vec![staff], ..alice.clone() }).get_user(alice.id).await.unwrap().unwrap();
         assert_eq!(found.roles, [staff], "on a renewal, as the provider answers");
         assert!(matches!(&announced.taken()[..], [GlobalEvent::UserUpdated(id, UserUpdateEvent::RolesChanged(roles))] if *id == alice.id && *roles == [staff]));
-        let stored = store.get_user(&SecurityContext::system(), alice.id).await.unwrap();
+        let stored = store.get(&SecurityContext::system(), alice.id).await.unwrap();
         assert_eq!(stored.roles, [staff], "and stored");
 
         answering(&alice).authenticate("alice", &Credential::Password("a")).await.unwrap();

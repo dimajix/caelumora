@@ -158,7 +158,7 @@ mod tests {
         let refused = side.update_name(&ctx, "Main").await.expect_err("the session has a main");
         assert!(matches!(refused.downcast_ref::<StoreError>(), Some(StoreError::NameTaken { entity: "channel" })), "{refused}");
         assert_eq!(side.name().as_str(), "side", "unchanged");
-        assert_eq!(runtime.entity_store().get_channel(&ctx, side.id()).await.unwrap().name.as_str(), "side", "also as stored");
+        assert_eq!(runtime.entity_stores().channels.get(&ctx, side.id()).await.unwrap().name.as_str(), "side", "also as stored");
         side.update_name(&ctx, "Side").await.expect("its own name, written otherwise");
         assert_eq!(side.name().as_str(), "Side");
         manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
@@ -208,7 +208,7 @@ mod tests {
         assert!(hr.reclassify(&bob_ctx, lowered.clone()).await.is_err(), "only the owner reclassifies the channel");
         hr.reclassify(&alice_ctx, lowered.clone()).await.expect("the owner lowers it");
         assert_eq!(hr.classification(), lowered);
-        assert_eq!(runtime.entity_store().get_channel(&alice_ctx, hr.id()).await.unwrap().classification, lowered, "stored");
+        assert_eq!(runtime.entity_stores().channels.get(&alice_ctx, hr.id()).await.unwrap().classification, lowered, "stored");
         let history = hr.history().await;
         let classification_of = |id| history.iter().find(|m| m.id == id).map(|m| m.classification.clone()).unwrap();
         assert_eq!(classification_of(bobs), released, "what was released stays released");
@@ -219,7 +219,6 @@ mod tests {
     #[tokio::test]
     async fn renaming_a_channel_is_stored_and_only_the_owner_may() {
         use caelumora_model::actor::ActorId;
-        use caelumora_model::store::EntityStore;
 
         let (store, manager) = owned_runtime(Default::default());
         let users = (user("alice"), user("bob"));
@@ -236,7 +235,7 @@ mod tests {
 
         main.update_name(&as_user(alice), "lobby").await.expect("the owner may");
         assert_eq!(main.name(), "lobby");
-        assert_eq!(store.get_channel(&as_user(alice), main.id()).await.unwrap().name, "lobby", "stored, not only in memory");
+        assert_eq!(store.entity_stores().channels.get(&as_user(alice), main.id()).await.unwrap().name, "lobby", "stored, not only in memory");
         manager.stop_session(&SecurityContext::system(), running.id()).await.unwrap();
     }
 

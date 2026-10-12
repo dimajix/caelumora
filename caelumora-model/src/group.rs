@@ -28,6 +28,7 @@ use crate::user::UserId;
 use crate::value::name::{Name, ScopedName};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use crate::store::EntityKind;
 
 define_id!(GroupId);
 
@@ -166,7 +167,17 @@ impl Group {
 }
 
 impl Stored for Group {
-    const KIND: crate::store::EntityKind = crate::store::EntityKind::new("group");
+    const KIND: EntityKind = EntityKind::new("group");
+    type Id = GroupId;
+    type Field = GroupField;
+
+    fn id(&self) -> GroupId {
+        self.id
+    }
+
+    fn unique_name(&self) -> Option<ScopedName> {
+        Some(self.scoped_name())
+    }
 
     fn deleted(&self) -> Option<&Removal> {
         self.deleted.as_ref()

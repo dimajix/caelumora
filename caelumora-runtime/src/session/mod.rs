@@ -14,7 +14,7 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
 use crate::view::{Viewer, Views};
 use caelumora_model::privacy::SessionPrivacy;
-use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResult};
+use caelumora_model::store::{EntityKind, EntityStores, StoreError, StoreResult};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::group::GroupId;
@@ -112,7 +112,7 @@ pub struct SessionLoop {
     /// 229).
     security: Arc<dyn SecurityManager>,
     confidentiality: Arc<dyn ConfidentialityPolicy>,
-    entities: Arc<dyn EntityStore>,
+    stores: EntityStores,
     events: Arc<EventBus>,
     /// What goes with a channel deleted or restored (issue 178).
     scoped: Arc<ScopedEntities>,
@@ -135,15 +135,15 @@ pub struct SessionLoop {
 /// not - a channel of a session being purged, which is hidden with the
 /// session, or one whose creation failed - since only what was deleted is
 /// purged (issue 164).
-async fn purge_channel_document(store: &dyn EntityStore, channel_id: ChannelId) -> StoreResult<bool> {
+async fn purge_channel_document(stores: &EntityStores, channel_id: ChannelId) -> StoreResult<bool> {
     let system = SecurityContext::system();
-    if let Err(e) = purge_participants(store, GroupId::of_channel(channel_id)).await {
+    if let Err(e) = purge_participants(stores.groups.as_ref(), GroupId::of_channel(channel_id)).await {
         if !matches!(e, StoreError::NotFound { .. }) {
             return Err(e);
         }
     }
-    store.delete_channel(&system, channel_id).await?;
-    store.purge_channel(&system, channel_id).await
+    stores.channels.delete(&system, channel_id).await?;
+    stores.channels.purge(&system, channel_id).await
 }
 
 /// Asks whether `context` may attach the workspace `id` to the session
@@ -191,7 +191,7 @@ impl SessionLoop {
             session_controller,
             security: Arc::clone(runtime_manager.security_manager()),
             confidentiality: Arc::clone(runtime_manager.confidentiality()),
-            entities: Arc::clone(runtime_manager.entity_store()),
+            stores: runtime_manager.entity_stores().clone(),
             events: Arc::clone(runtime_manager.event_bus()),
             scoped: Arc::clone(runtime_manager.scoped_entities()),
             runtime_manager,

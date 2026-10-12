@@ -1,15 +1,15 @@
 # Storage
 
 Caelumora keeps two kinds of data apart: long-lived **entities** - definitions and identities - in
-the `EntityStore`, and frequently changing runtime **state** in the `StateStore`; preconfigured
-components have a `ComponentStore` of their own. This document describes the stores, who writes
-what, and the controllers that hold the entities of a running session live. How access to stored
-entities is checked is in [SECURITY.md](SECURITY.md); which stores are used is configured in
-[CONFIGURATION.md](CONFIGURATION.md).
+the entity stores, one `EntityStore<T>` per kind, and frequently changing runtime **state** in the
+`StateStore`; preconfigured components have a `ComponentStore` of their own. This document
+describes the stores, who writes what, and the controllers that hold the entities of a running
+session live. How access to stored entities is checked is in [SECURITY.md](SECURITY.md); which
+stores are used is configured in [CONFIGURATION.md](CONFIGURATION.md).
 
 ## The entity store
 
-The `EntityStore` (in `caelumora-model`) stores the long-lived domain entities:
+The entity stores (`EntityStore<T>`, in `caelumora-model`) keep the long-lived domain entities:
 
 *   **Personalities**, the definitions of agents, and **session templates**, which sessions are
     made from.
@@ -27,15 +27,22 @@ The `EntityStore` (in `caelumora-model`) stores the long-lived domain entities:
 *   **Groups**: lists of actors an access list names as one subject - a user's teams, and the
     participants of every session and channel (see [SECURITY.md](SECURITY.md#groups)).
 
-There are two implementations: `MemoryStore`, for tests, and `JsonFileStore`, which keeps one JSON
-file per document.
+Each kind is kept by a store of its own, `EntityStore<T>` (issue
+[323](../issues/323-kinds-enumerated-in-the-core.md)), with the same operations for every kind.
+There are two implementations: `MemoryEntityStore<T>`, for tests, and `JsonEntityStore<T>`, which
+keeps one JSON file per document in the kind's directory, `entities/<kind>/<id>.json`, and holds
+the kind's lock for names. `MemoryStore` and `JsonFileStore` hold one of them per kind beside the
+runtime state, and hand them out as `EntityStores`, which the configuration makes
+(`create_entity_stores`) and the runtime is given: a store per kind. A manager is made with
+`&EntityStores` and keeps the stores of the kinds it uses as fields, as every service is held.
 
-Every stored type says which kind it is, `Stored::KIND`, an `EntityKind` named by a string
-(`"skill"`) that is unique among the kinds (issue
-[323](../issues/323-kinds-enumerated-in-the-core.md)). The stores take it from the type they read
-and write: what is asked of the `SecurityManager` (`ActionType::get(T::KIND, …)`), the name in
-errors and logs, and the name lock of the JSON store. A new kind is added without a change to
-`EntityKind`.
+Every stored type says what it is to its store (`Stored`): its kind, `Stored::KIND`, an
+`EntityKind` named by a string (`"skill"`) that is unique among the kinds; its id and the fields a
+query names; and, if its kind is `Scoped`, the name that is unique in its scope
+(`Stored::unique_name`). The stores take all of it from the type they read and write: what is asked
+of the `SecurityManager` (`ActionType::get(T::KIND, …)`), the name in errors, logs and the JSON
+store's directory, and which names to keep unique. A new kind is added without a change to the
+stores or to `EntityKind`.
 
 ### Artifact content
 
@@ -134,9 +141,9 @@ operations of its own, each with a permission of its own:
 
 | Operation | asks | does |
 |---|---|---|
-| `get_deleted_x`, `list_deleted_x` | `ReadDeleted` | read the marked documents; what is not marked is not found |
-| `restore_x` | `ReadDeleted`, then `Restore` | takes the mark away and returns the restored document |
-| `purge_x` | `ReadDeleted`, then `Purge` | removes the document for good - only if it is marked, also when it is removed |
+| `get_deleted`, `list_deleted` | `ReadDeleted` | read the marked documents; what is not marked is not found |
+| `restore` | `ReadDeleted`, then `Restore` | takes the mark away and returns the restored document |
+| `purge` | `ReadDeleted`, then `Purge` | removes the document for good - only if it is marked, also when it is removed |
 
 For what is classified - a channel, a workspace, a skill, an artifact -, every operation also asks
 whether the caller is cleared for it, the deleted alike (issue 322, see

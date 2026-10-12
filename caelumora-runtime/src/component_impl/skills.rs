@@ -496,7 +496,7 @@ mod tests {
         assert!(mine.is_ok(), "{mine:?}");
         drop(turn);
 
-        let skills = world.runtime.entity_store().list_skills(&SecurityContext::system(), &Query::all()).await.map(|page| page.items).unwrap();
+        let skills = world.runtime.entity_stores().skills.list(&SecurityContext::system(), &Query::all()).await.map(|page| page.items).unwrap();
         let deploy = skills.iter().find(|s| s.name.name.as_str() == "deploy").expect("made");
         let owner = world.context.principal_id;
         assert_eq!((deploy.security_attributes.owner_id, &deploy.name.scope), (owner, &Scope::SessionScope { session_id: world.session.id() }), "its owner's, in the session");
@@ -515,7 +515,7 @@ mod tests {
         let nothing = call(&component, &mut turn, UPDATE_SKILL_TOOL_NAME, serde_json::json!({ "name": "deploy" })).await;
         assert!(matches!(nothing, Err(ToolError::InvalidParameter(_))), "nothing to change");
         drop(turn);
-        let deploy = world.runtime.entity_store().get_skill(&SecurityContext::system(), deploy.id).await.unwrap();
+        let deploy = world.runtime.entity_stores().skills.get(&SecurityContext::system(), deploy.id).await.unwrap();
         assert_eq!((deploy.body.as_str(), &deploy.classification), ("1. Build.\n2. Ship.", &internal), "the new steps, classified as what was seen");
         assert_eq!(created_id, serde_json::json!(deploy.id), "the skill it made");
     }

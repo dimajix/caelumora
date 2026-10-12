@@ -549,3 +549,84 @@ type. The store's helpers take it from `T` and lost their `kind` parameter, so a
 be passed to the map of another; whoever names a kind writes `Skill::KIND`. Nothing stored changed:
 the names are those of before.
 
+**2026-10-12** — Step 3 decided with the maintainer: every kind moves to the generic store in this
+step (option A), by way of the old trait as a facade over the stores of the kinds (option B), kind
+by kind in commits of their own, the facade deleted at the end. The runtime is handed a struct with
+a field per kind of the core, a plugin makes its store through a factory; the JSON store's
+directory of a kind is named after the kind. The `ComponentStore` was to become an
+`EntityStore<StoredComponents>` as well; it stays a trait of its own, since a component is removed
+when deleted, and a permanent delete in the generic trait would let any kind be removed past its
+trash, with `Delete` alone instead of `Purge`.
+
+Step 3a, on branch `issue-323-generic-store`: `Stored` says the id, the query fields and the unique
+name of its kind (`unique_name`, from `Scoped`), so that a store needs nothing else of a kind; the
+`impl_deletable!` macro is gone. `EntityStore<T>` is the generic trait, implemented by
+`MemoryEntityStore<T>` and `JsonEntityStore<T>`; the old trait is `Entities` for the transition,
+implemented by `MemoryStore` and `JsonFileStore` over one store per kind. The JSON store keeps a
+kind's documents in `entities/<kind>/`: stored entities move there (`templates/agents` to
+`entities/personality`, `templates/sessions` to `entities/session_template`, `templates/components`
+to `entities/components`, `runtime/<kind>s` to `entities/<kind>`), or are deleted.
+
+Step 3b: `EntityStores` is what the runtime is given - a store per kind, beside `entities`, the
+facade, while kinds still use it -, made by the configuration (`create_entity_stores`) or by
+`MemoryStore::entity_stores` and `JsonFileStore::entity_stores`. Skills are the first kind on their
+own store: the `SkillManager`, the views, the seed and the tests take `EntityStores::skills`, and
+`Entities` has no skill methods any more. The store suite takes `EntityStores`, so that each kind
+that follows changes only the field it uses. Paths written out in the lines this step touched are
+imports.
+
+Step 3c: workspaces on their own store. The `WorkspaceManager` keeps it beside the facade, which it
+still reads sessions, channels and groups through, and finds a workspace by name for a template
+(`find_by_name`), so that `template::resolve_workspace` no longer reaches into the store. A manager
+is made with `&EntityStores` and takes the stores it uses - the `WorkspaceManager` and the
+`SkillManager` alike -, so that its constructor does not grow with every kind that moves.
+
+Step 3d: artifacts on their own store. The `ArtifactManager` keeps it beside the facade, which it
+still reads groups through; the views reach the stores of the kinds as `Views::stores`.
+
+Step 3e: groups on their own store. Groups are read and written beyond their manager: the
+`GroupManager`, the access lists the workspace and artifact managers are given
+(`require_nameable`), the groups of participants that sessions, channels and the
+`ChannelController` keep (`keep_participants`, `purge_participants`), and the policy's
+`StoreMemberships`, now bound to the store of groups. The free functions take that store; the
+`SessionLoop`, the `SessionManager` and the `ControllerManager` hold `EntityStores`, as the views
+do, since they use many kinds; the `ArtifactManager` no longer needs the facade.
+
+Step 3f: session templates on their own store. They have no manager: `ScopedEntities` keeps the
+store, made from `&EntityStores` as the managers are, the `SessionManager`, the seed, the REST
+route of templates and the terminal frontend take it from `EntityStores`.
+
+Step 3g: user profiles on their own store. The `UserController` keeps it - the only store it used
+-, the member view of a user and the preferred language of a new session or channel read it, and
+the REST route of the profile takes it from `EntityStores`.
+
+Step 3h: personalities on their own store. They have no manager either: `ScopedEntities` keeps the
+store and no longer the facade, the `AgentController` and the member view of an agent read an
+agent's personality from it, and `template::resolve_participants` takes `&EntityStores` to read
+the personality an agent is made of. Many tests made personalities through the store they had at
+hand; they take the store of personalities now.
+
+Step 3i: users on their own store. The `UserManager` and the `accept_any` provider keep it, given
+by the configuration (`create_user_manager`); a provider finds a user by name as the name in the
+global scope, which a username is (issue 250), and one that is no valid name is nobody's. The
+`GroupManager` checks the users it is given against it and no longer needs the facade; the views,
+the templates and the terminal frontend read users from it.
+
+Step 3j: agents on their own store. The `AgentManager` and the `AgentController` keep it and no
+longer the facade; the `ChannelLoop` keeps it for whether a participant still exists
+(`agent_exists`, `Member::of`), and the `ChannelRuntime` hands out `EntityStores` rather than the
+facade; templates find and make agents in it, the views read them from it.
+
+Step 3k: channels on their own store. The `SessionLoop` and the `SessionManager` make, restore,
+delete and purge channels in it through their `EntityStores`; the `ChannelController` keeps it and
+no longer the facade, the `WorkspaceManager` keeps it for where a workspace is used, and the views
+of a session read channels from it. `Views::entities` is gone: the views read the facade only for
+sessions now.
+
+Step 3l: sessions on their own store, and the facade gone. The `SessionController` keeps the store
+of sessions, the `WorkspaceManager` keeps it for where a workspace is used, the session code and
+the views take it from `EntityStores`. `Entities`, `EntityStores::entities` and
+`RuntimeManager::entity_store` are gone: every kind of the core is kept by an `EntityStore<T>` of
+its own, and whoever uses a kind holds its store. Step 3 is done; the plugin of skills can make its
+store as the backends make theirs.
+

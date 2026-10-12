@@ -3,6 +3,7 @@ use caelumora_model::secret::{SecretError, SecretManager};
 use caelumora_model::security::SecurityContext;
 use caelumora_runtime::component::ComponentRegistry;
 use caelumora_runtime::runtime::RuntimeManager;
+use caelumora_runtime::seed;
 use caelumora_runtime::session::SessionManager;
 use clap::Parser;
 use std::sync::Arc;
@@ -49,13 +50,13 @@ async fn main() -> anyhow::Result<()> {
     // What may flow where, decided apart from who may do what (issue 304).
     let confidentiality = config.create_confidentiality_policy();
     let state_store = config.create_state_store(Arc::clone(&security_manager), Arc::clone(&confidentiality))?;
-    let entity_store = config.create_entity_store(Arc::clone(&security_manager), Arc::clone(&confidentiality))?;
-    memberships.bind(&entity_store);
+    let entity_stores = config.create_entity_stores(Arc::clone(&security_manager), Arc::clone(&confidentiality))?;
+    memberships.bind(&entity_stores.groups);
     let component_store = config.create_component_store(Arc::clone(&security_manager), Arc::clone(&confidentiality))?;
     let secret_manager = config.create_secret_manager(Arc::clone(&security_manager))?;
     let runtime_manager = Arc::new(RuntimeManager::new(
         state_store,
-        Arc::clone(&entity_store),
+        entity_stores.clone(),
         Arc::clone(&secret_manager),
         Arc::clone(&security_manager),
         Arc::clone(&confidentiality),
@@ -65,7 +66,7 @@ async fn main() -> anyhow::Result<()> {
     let session_manager = Arc::new(SessionManager::new(Arc::clone(&runtime_manager)));
     // Users are recorded and their changes announced on the runtime's event
     // bus (issue 306), so the user manager comes after the runtime.
-    let user_manager = config.create_user_manager(Arc::clone(&entity_store), Arc::<EventBus>::clone(runtime_manager.event_bus()))?;
+    let user_manager = config.create_user_manager(Arc::clone(&entity_stores.users), Arc::<EventBus>::clone(runtime_manager.event_bus()))?;
     if user_manager.is_empty() {
         tracing::warn!("No user providers configured (`users` section): nobody can log in. \
             See examples/config.yaml.");
@@ -77,7 +78,7 @@ async fn main() -> anyhow::Result<()> {
         controllers: Arc::clone(runtime_manager.controller_manager()),
     });
 
-    caelumora_runtime::seed::load(entity_store.as_ref(), component_store.as_ref(), confidentiality.as_ref(), &config.seed).await?;
+    seed::load(&entity_stores, component_store.as_ref(), confidentiality.as_ref(), &config.seed).await?;
 
     let state = Arc::new(AppState {
         auth,

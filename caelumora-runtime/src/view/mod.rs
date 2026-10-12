@@ -62,7 +62,7 @@ use caelumora_model::scope::{found_from, Scope, Scoped};
 use caelumora_model::value::name::Name;
 use crate::workspace::WorkspaceManager;
 use crate::skill::SkillManager;
-use caelumora_model::store::{EntityStore, StateStore, StoreResultExt};
+use caelumora_model::store::{EntityStores, StateStore, StoreResultExt};
 use crate::component::ComponentRegistry;
 use std::sync::Arc;
 use caelumora_model::artifact::Artifact;
@@ -198,7 +198,7 @@ impl RunningSessions for OwnSession {
 pub struct Views {
     security: Arc<dyn SecurityManager>,
     confidentiality: Arc<dyn ConfidentialityPolicy>,
-    entities: Arc<dyn EntityStore>,
+    stores: EntityStores,
     states: Arc<dyn StateStore>,
     components: Arc<ComponentRegistry>,
     workspaces: Arc<WorkspaceManager>,
@@ -213,7 +213,7 @@ impl Views {
         Self {
             security: Arc::clone(runtime.security_manager()),
             confidentiality: Arc::clone(runtime.confidentiality()),
-            entities: Arc::clone(runtime.entity_store()),
+            stores: runtime.entity_stores().clone(),
             states: Arc::clone(runtime.state_store()),
             components: Arc::clone(runtime.component_registry()),
             workspaces: Arc::clone(runtime.workspace_manager()),
@@ -249,8 +249,9 @@ impl Views {
         &self.confidentiality
     }
 
-    pub(crate) fn entities(&self) -> &Arc<dyn EntityStore> {
-        &self.entities
+    /// The stores of the entities, one per kind (issue 323).
+    pub(crate) fn stores(&self) -> &EntityStores {
+        &self.stores
     }
 
     pub(crate) fn states(&self) -> &Arc<dyn StateStore> {
@@ -281,7 +282,7 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn sessions(&self) -> ViewResult<Vec<SessionView>> {
-        let sessions = self.entities.list_sessions(self.viewer.context(), &Query::all()).await.map(|page| page.items)
+        let sessions = self.stores.sessions.list(self.viewer.context(), &Query::all()).await.map(|page| page.items)
             .map_err(|e| ViewError::failed(e, "listing the sessions"))?;
         // The store lists what the viewer may read; a running session is
         // reached through its loop.
@@ -309,7 +310,7 @@ impl Views {
                 }
                 Found::Running(session_loop)
             }
-            None => Found::Stored(self.entities.get_session(self.viewer.context(), id).await.map_err(|e| {
+            None => Found::Stored(self.stores.sessions.get(self.viewer.context(), id).await.map_err(|e| {
                 let e = anyhow::Error::new(e);
                 if crate::error::is_not_found(&e, "session") || crate::error::is_forbidden(&e) { not_found() } else { ViewError::Failed(e) }
             })?),
@@ -344,7 +345,7 @@ impl Views {
     /// Whether session `id` was deleted and the viewer could read it were
     /// it there.
     async fn gone_session<T>(&self, id: SessionId) -> ViewResult<Reached<T>> {
-        let deleted = self.entities.get_deleted_session(&SecurityContext::system(), id).await.optional()
+        let deleted = self.stores.sessions.get_deleted(&SecurityContext::system(), id).await.optional()
             .map_err(|e| ViewError::failed(e, format!("looking up session {id}")))?;
         Ok(match deleted {
             Some(session) if self.security.may_read_session(self.viewer.context(), &session.security_attributes).await =>
@@ -358,7 +359,7 @@ impl Views {
     /// (`SessionView::readable`, issue 304) - one the viewer is not cleared
     /// for is never there, as a live one would be not found.
     async fn gone_channel<T>(&self, session: &SessionView, id: ChannelId) -> ViewResult<Reached<T>> {
-        let deleted = self.entities.get_deleted_channel(&SecurityContext::system(), id).await.optional()
+        let deleted = self.stores.channels.get_deleted(&SecurityContext::system(), id).await.optional()
             .map_err(|e| ViewError::failed(e, format!("looking up channel {id}")))?;
         Ok(match deleted {
             Some(channel) if channel.session_id == session.id() && session.readable(&channel).await.is_some() =>
@@ -373,7 +374,7 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn agents(&self) -> ViewResult<Vec<AgentSnapshot>> {
-        let agents = self.entities.list_agents(self.viewer.context(), &Query::all()).await.map(|page| page.items)
+        let agents = self.stores.agents.list(self.viewer.context(), &Query::all()).await.map(|page| page.items)
             .map_err(|e| ViewError::failed(e, "listing the agents"))?;
         let policy = &self.security;
         let mut listed = Vec::with_capacity(agents.len());
@@ -390,7 +391,7 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn deleted_agents(&self) -> ViewResult<Vec<DeletedSnapshot<AgentId>>> {
-        let agents = self.entities.list_deleted_agents(self.viewer.context(), &Query::all()).await.map(|page| page.items)
+        let agents = self.stores.agents.list_deleted(self.viewer.context(), &Query::all()).await.map(|page| page.items)
             .map_err(|e| ViewError::failed(e, "listing the deleted agents"))?;
         let policy = &self.security;
         let mut deleted = Vec::with_capacity(agents.len());
@@ -415,7 +416,7 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn workspaces(&self) -> ViewResult<Vec<WorkspaceView>> {
-        let workspaces = self.entities.list_workspaces(self.viewer.context(), &Query::all()).await.map(|page| page.items)
+        let workspaces = self.stores.workspaces.list(self.viewer.context(), &Query::all()).await.map(|page| page.items)
             .map_err(|e| ViewError::failed(e, "listing the workspaces"))?;
         Ok(workspaces.into_iter().map(|workspace| WorkspaceView::of(self.clone(), workspace)).collect())
     }
@@ -426,7 +427,7 @@ impl Views {
     /// # Errors
     /// `WorkspaceNotFound` if there is none they may reach.
     pub async fn workspace(&self, id: WorkspaceId) -> ViewResult<WorkspaceView> {
-        match self.entities.get_workspace(self.viewer.context(), id).await.optional() {
+        match self.stores.workspaces.get(self.viewer.context(), id).await.optional() {
             Ok(Some(workspace)) => Ok(WorkspaceView::of(self.clone(), workspace)),
             Ok(None) => Err(ViewError::WorkspaceNotFound(id)),
             Err(e) => Err(ViewError::failed(e, "reading a workspace")),
@@ -452,7 +453,7 @@ impl Views {
         let principal = context.principal_id;
         let roles = context.roles.iter().copied().filter(|role| context.has_role(*role));
         let belonging = Filter::any(GroupField::Members, Filter::eq(GroupField::Member, principal));
-        let groups = self.entities.list_groups(&SecurityContext::system(), &Query::filtered(belonging)).await.map_err(failed)?.items;
+        let groups = self.stores.groups.list(&SecurityContext::system(), &Query::filtered(belonging)).await.map_err(failed)?.items;
         let teams = groups.iter().filter(|group| !group.is_participants()).map(|group| Subject::Group(group.id));
         let subjects: Vec<Subject> = std::iter::once(Subject::Actor(principal)).chain(roles.map(Subject::Role)).chain(teams).collect();
         let named = Filter::is_in(ArtifactField::Subject, subjects);
@@ -461,7 +462,7 @@ impl Views {
             Filter::any(ArtifactField::Acl, named.clone()),
             Filter::any(ArtifactField::Versions, Filter::any(ArtifactField::VersionAcl, named)),
         ]);
-        let artifacts = self.entities.list_artifacts(&SecurityContext::system(), &Query::filtered(theirs)).await.map_err(failed)?.items;
+        let artifacts = self.stores.artifacts.list(&SecurityContext::system(), &Query::filtered(theirs)).await.map_err(failed)?.items;
         let mut readable = Vec::new();
         for artifact in artifacts {
             if let Some(view) = self.readable_artifact(artifact).await {
@@ -478,7 +479,7 @@ impl Views {
     /// `ArtifactNotFound` if they may read nothing of it - one they are not
     /// cleared for is the same -; `Failed` if the store cannot read it.
     pub async fn artifact(&self, id: ArtifactId) -> ViewResult<ArtifactView> {
-        let found = self.entities.get_artifact(&SecurityContext::system(), id).await.optional()
+        let found = self.stores.artifacts.get(&SecurityContext::system(), id).await.optional()
             .map_err(|e| ViewError::failed(e, "reading an artifact"))?;
         match found {
             Some(artifact) => self.readable_artifact(artifact).await.ok_or(ViewError::ArtifactNotFound(id)),
@@ -516,10 +517,10 @@ impl Views {
         let mut access = Vec::with_capacity(acl.len());
         for entry in acl {
             let (name, scope) = match entry.subject {
-                Subject::Actor(ActorId::User(user)) => (self.entities.get_user(&system, user).await.optional().ok().flatten().map(|u| u.username.to_string()), None),
+                Subject::Actor(ActorId::User(user)) => (self.stores.users.get(&system, user).await.optional().ok().flatten().map(|u| u.username.to_string()), None),
                 Subject::Actor(_) => (None, None),
                 Subject::Role(role) => (self.confidentiality.roles().and_then(|roles| roles.name_of(role)).map(str::to_string), None),
-                Subject::Group(group) => match self.entities.get_group(&system, group).await.optional().ok().flatten() {
+                Subject::Group(group) => match self.stores.groups.get(&system, group).await.optional().ok().flatten() {
                     Some(group) => (self.group_name(&group).await, Some(group.name.scope)),
                     None => (None, None),
                 },
@@ -535,8 +536,8 @@ impl Views {
     async fn group_name(&self, group: &Group) -> Option<String> {
         let system = SecurityContext::system();
         match group.name.scope {
-            Scope::SessionScope { session_id } => self.entities.get_session(&system, session_id).await.optional().ok().flatten().map(|s| s.name.to_string()),
-            Scope::ChannelScope { channel_id, .. } => self.entities.get_channel(&system, channel_id).await.optional().ok().flatten().map(|c| c.name.to_string()),
+            Scope::SessionScope { session_id } => self.stores.sessions.get(&system, session_id).await.optional().ok().flatten().map(|s| s.name.to_string()),
+            Scope::ChannelScope { channel_id, .. } => self.stores.channels.get(&system, channel_id).await.optional().ok().flatten().map(|c| c.name.to_string()),
             _ => Some(group.name.to_string()),
         }
     }
@@ -548,7 +549,7 @@ impl Views {
     /// # Errors
     /// `Failed` if the store fails.
     pub async fn groups(&self) -> ViewResult<Vec<GroupView>> {
-        let groups = self.entities.list_groups(self.viewer.context(), &Query::all()).await.map(|page| page.items)
+        let groups = self.stores.groups.list(self.viewer.context(), &Query::all()).await.map(|page| page.items)
             .map_err(|e| ViewError::failed(e, "listing the groups"))?;
         Ok(groups.into_iter().filter(|group| !group.is_participants()).map(|group| GroupView::of(self.clone(), group)).collect())
     }
@@ -559,7 +560,7 @@ impl Views {
     /// # Errors
     /// `GroupNotFound` if there is none they may read, alike.
     pub async fn group(&self, id: GroupId) -> ViewResult<GroupView> {
-        match self.entities.get_group(self.viewer.context(), id).await.optional() {
+        match self.stores.groups.get(self.viewer.context(), id).await.optional() {
             Ok(Some(group)) => Ok(GroupView::of(self.clone(), group)),
             Ok(None) => Err(ViewError::GroupNotFound(id)),
             Err(e) => Err(ViewError::failed(e, "reading a group")),
@@ -573,7 +574,7 @@ impl Views {
     /// # Errors
     /// `Failed` if the store fails.
     pub async fn deleted_groups(&self) -> ViewResult<Vec<DeletedSnapshot<GroupId>>> {
-        let groups = self.entities.list_deleted_groups(self.viewer.context(), &Query::all()).await.map(|page| page.items)
+        let groups = self.stores.groups.list_deleted(self.viewer.context(), &Query::all()).await.map(|page| page.items)
             .map_err(|e| ViewError::failed(e, "listing the deleted groups"))?;
         let policy = &self.security;
         let mut deleted = Vec::with_capacity(groups.len());
@@ -597,7 +598,7 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn deleted_artifacts(&self) -> ViewResult<Vec<DeletedSnapshot<ArtifactId>>> {
-        let artifacts = self.entities.list_deleted_artifacts(self.viewer.context(), &Query::all()).await.map(|page| page.items)
+        let artifacts = self.stores.artifacts.list_deleted(self.viewer.context(), &Query::all()).await.map(|page| page.items)
             .map_err(|e| ViewError::failed(e, "listing the deleted artifacts"))?;
         let policy = &self.security;
         let mut deleted = Vec::with_capacity(artifacts.len());
@@ -621,7 +622,7 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn deleted_workspaces(&self) -> ViewResult<Vec<DeletedSnapshot<WorkspaceId>>> {
-        let workspaces = self.entities.list_deleted_workspaces(self.viewer.context(), &Query::all()).await.map(|page| page.items)
+        let workspaces = self.stores.workspaces.list_deleted(self.viewer.context(), &Query::all()).await.map(|page| page.items)
             .map_err(|e| ViewError::failed(e, "listing the deleted workspaces"))?;
         let policy = &self.security;
         let mut deleted = Vec::with_capacity(workspaces.len());
@@ -645,7 +646,7 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn deleted_sessions(&self) -> ViewResult<Vec<DeletedSnapshot<SessionId>>> {
-        let sessions = self.entities.list_deleted_sessions(self.viewer.context(), &Query::all()).await.map(|page| page.items)
+        let sessions = self.stores.sessions.list_deleted(self.viewer.context(), &Query::all()).await.map(|page| page.items)
             .map_err(|e| ViewError::failed(e, "listing the deleted sessions"))?;
         let policy = &self.security;
         let mut deleted = Vec::with_capacity(sessions.len());
@@ -681,7 +682,7 @@ impl Views {
     /// 244).
     async fn name_of(&self, actor: ActorId) -> Option<String> {
         match actor {
-            ActorId::User(id) => self.entities.get_user(&SecurityContext::system(), id).await.ok().map(|user| user.username.to_string()),
+            ActorId::User(id) => self.stores.users.get(&SecurityContext::system(), id).await.ok().map(|user| user.username.to_string()),
             ActorId::Agent(id) => match self.agent_of(id).await {
                 Some(agent) => Some(agent.name.to_string()),
                 None => self.deleted_agent_name(id).await,
@@ -694,21 +695,21 @@ impl Views {
     /// what it said keeps its sender. Read in the runtime's name, like its
     /// name while it exists.
     pub(super) async fn deleted_agent_name(&self, id: AgentId) -> Option<String> {
-        self.entities.get_deleted_agent(&SecurityContext::system(), id).await.ok().map(|agent| agent.name.to_string())
+        self.stores.agents.get_deleted(&SecurityContext::system(), id).await.ok().map(|agent| agent.name.to_string())
     }
 
     /// Who deleted agent `id` and when, if it was deleted and not purged
     /// (issue 314): when it left the channels it rests in. Read in the
     /// runtime's name, like its name.
     pub(super) async fn agent_removal(&self, id: AgentId) -> Option<Removal> {
-        self.entities.get_deleted_agent(&SecurityContext::system(), id).await.ok().and_then(|agent| agent.deleted)
+        self.stores.agents.get_deleted(&SecurityContext::system(), id).await.ok().and_then(|agent| agent.deleted)
     }
 
     /// The document of agent `id` - its name, its attributes, its
     /// personality - or `None` if it no longer exists. Read in the
     /// runtime's name, like its name.
     async fn agent_of(&self, id: AgentId) -> Option<Agent> {
-        self.entities.get_agent(&SecurityContext::system(), id).await.ok()
+        self.stores.agents.get(&SecurityContext::system(), id).await.ok()
     }
 
     /// The session `id` as privacy sees it now, or `None` if there is no
@@ -722,7 +723,7 @@ impl Views {
     /// # Errors
     /// `Failed` if it cannot be looked up.
     pub(crate) async fn privacy_of(&self, id: SessionId) -> ViewResult<Option<SessionPrivacy>> {
-        let session = self.entities.get_session(&SecurityContext::system(), id).await.optional()
+        let session = self.stores.sessions.get(&SecurityContext::system(), id).await.optional()
             .map_err(|e| ViewError::failed(e, format!("looking up session {id}")))?;
         Ok(session.as_ref().map(SessionPrivacy::of))
     }
@@ -743,7 +744,7 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn skills(&self) -> ViewResult<Vec<SkillView>> {
-        let skills = self.entities.list_skills(self.viewer.context(), &Query::all()).await.map(|page| page.items)
+        let skills = self.stores.skills.list(self.viewer.context(), &Query::all()).await.map(|page| page.items)
             .map_err(|e| ViewError::failed(e, "listing the skills"))?;
         Ok(skills.into_iter().map(|skill| SkillView::of(self.clone(), skill)).collect())
     }
@@ -754,7 +755,7 @@ impl Views {
     /// # Errors
     /// `SkillNotFound` if there is none they may reach.
     pub async fn skill(&self, id: SkillId) -> ViewResult<SkillView> {
-        match self.entities.get_skill(self.viewer.context(), id).await.optional() {
+        match self.stores.skills.get(self.viewer.context(), id).await.optional() {
             Ok(Some(skill)) => Ok(SkillView::of(self.clone(), skill)),
             Ok(None) => Err(ViewError::SkillNotFound(id)),
             Err(e) => Err(ViewError::failed(e, "reading a skill")),
@@ -767,7 +768,7 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn deleted_skills(&self) -> ViewResult<Vec<DeletedSnapshot<SkillId>>> {
-        let skills = self.entities.list_deleted_skills(self.viewer.context(), &Query::all()).await.map(|page| page.items)
+        let skills = self.stores.skills.list_deleted(self.viewer.context(), &Query::all()).await.map(|page| page.items)
             .map_err(|e| ViewError::failed(e, "listing the deleted skills"))?;
         let policy = &self.security;
         let mut deleted = Vec::with_capacity(skills.len());
@@ -804,7 +805,7 @@ impl Views {
         let owner = context.principal_id.as_user_id();
         // Those seen from here, which the store is asked for alone (issue 293).
         let seen = Query::filtered(Scope::seen_from(&here, owner));
-        let skills = self.entities.list_skills(context, &seen).await.map_err(failed)?.items;
+        let skills = self.stores.skills.list(context, &seen).await.map_err(failed)?.items;
         let mut usable = Vec::with_capacity(skills.len());
         for skill in skills {
             if self.security.may_use_skill(context, &skill.security_attributes).await
@@ -964,7 +965,7 @@ mod tests {
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::value::text::{Briefing, Summary};
     use crate::runtime::RuntimeManager;
-    use caelumora_model::agent::{Agent, Personality, PersonalityId};
+    use caelumora_model::agent::{Agent, Personality, PersonalityId, PersonalityKind};
     use caelumora_model::channel::{Channel, Participant};
     use caelumora_model::confidentiality::{Classification, ConfidentialityRules, Visibility};
     use caelumora_model::scope::Scope;
@@ -972,9 +973,11 @@ mod tests {
     use caelumora_model::security::{Grant, SecurityAttributes, Subject};
     use crate::group::keep_participants;
     use caelumora_model::session::Session;
-    use caelumora_model::store::EntityStore;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::user::UserId;
+    use caelumora_model::config::AppConfig;
+    use crate::component::ComponentRegistry;
+    use caelumora_model::value::text::Introduction;
 
     fn as_user(id: UserId) -> Viewer {
         Viewer::new(SecurityContext::new(ActorId::User(id), Default::default(), Default::default()))
@@ -982,16 +985,16 @@ mod tests {
 
     /// Stores `session` as the runtime does, with the group of its
     /// participants (issue 286).
-    async fn stored_session(store: &MemoryStore, session: &Session) {
-        store.create_session(&SecurityContext::system(), session).await.unwrap();
-        keep_participants(store, Group::of_session(session)).await.unwrap();
+    async fn stored_session(store: &Arc<MemoryStore>, session: &Session) {
+        store.entity_stores().sessions.create(&SecurityContext::system(), session).await.unwrap();
+        keep_participants(store.entity_stores().groups.as_ref(), Group::of_session(session)).await.unwrap();
     }
 
     /// Stores `channel` as the runtime does, with the group of its
     /// participants.
-    async fn stored_channel(store: &MemoryStore, channel: &Channel) {
-        store.create_channel(&SecurityContext::system(), channel).await.unwrap();
-        keep_participants(store, Group::of_channel(channel)).await.unwrap();
+    async fn stored_channel(store: &Arc<MemoryStore>, channel: &Channel) {
+        store.entity_stores().channels.create(&SecurityContext::system(), channel).await.unwrap();
+        keep_participants(store.entity_stores().groups.as_ref(), Group::of_channel(channel)).await.unwrap();
     }
 
     /// Another channel like `template`, named `name`: an id of its own,
@@ -1002,11 +1005,11 @@ mod tests {
         Channel { id, name: Name::new(name).unwrap(), security_attributes, ..template.clone() }
     }
 
-    async fn an_agent_of(store: &MemoryStore, owner: ActorId) -> Agent {
+    async fn an_agent_of(store: &Arc<MemoryStore>, owner: ActorId) -> Agent {
         an_agent_of_kind(store, owner, Default::default()).await
     }
 
-    async fn an_agent_of_kind(store: &MemoryStore, owner: ActorId, kind: caelumora_model::agent::PersonalityKind) -> Agent {
+    async fn an_agent_of_kind(store: &Arc<MemoryStore>, owner: ActorId, kind: PersonalityKind) -> Agent {
         let personality = Personality {
             description: None,
             introduction: None,
@@ -1019,15 +1022,14 @@ mod tests {
             security_attributes: Default::default(),
             deleted: None,
         };
-        store.create_personality(&SecurityContext::system(), &personality).await.unwrap();
+        store.entity_stores().personalities.create(&SecurityContext::system(), &personality).await.unwrap();
         let agent = Agent::new(ScopedName::new("Helper", Scope::GlobalScope).unwrap(), &personality, owner);
-        store.create_agent(&SecurityContext::system(), &agent).await.unwrap();
+        store.entity_stores().agents.create(&SecurityContext::system(), &agent).await.unwrap();
         agent
     }
 
     #[tokio::test]
     async fn the_context_of_an_external_agent_is_what_the_remote_agent_was_given() {
-        use caelumora_model::agent::PersonalityKind;
         use caelumora_model::agent::AgentChannelState;
         use caelumora_model::message::{Message, MessageId};
         use caelumora_model::store::StateStore;
@@ -1180,7 +1182,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_members_profile_says_who_it_is_to_everybody_in_the_channel() {
-        use caelumora_model::agent::PersonalityKind;
         use caelumora_model::approval::{ApprovalStrategy, Approver, ApproverId};
         use caelumora_model::user::UserProfile;
 
@@ -1188,11 +1189,11 @@ mod tests {
         let system = SecurityContext::system();
         let (alice, bob, carol) = (user("alice"), user("bob"), user("carol"));
         // Carol owns the agent but takes no part in the session.
-        store.create_user(&system, &carol).await.unwrap();
+        store.entity_stores().users.create(&system, &carol).await.unwrap();
         let remote = an_agent_of_kind(&store, ActorId::User(carol.id), PersonalityKind::External).await;
-        let mut personality = store.get_personality(&system, remote.personality_id).await.unwrap();
-        personality.introduction = Some(caelumora_model::value::text::Introduction::new("Answers questions about the weather.").unwrap());
-        store.update_personality(&system, &personality).await.unwrap();
+        let mut personality = store.entity_stores().personalities.get(&system, remote.personality_id).await.unwrap();
+        personality.introduction = Some(Introduction::new("Answers questions about the weather.").unwrap());
+        store.entity_stores().personalities.update(&system, &personality).await.unwrap();
         let approver = Approver { id: ApproverId(uuid::Uuid::new_v4()), strategy: ApprovalStrategy::Any };
 
         let mut session = make_session("hers", ActorId::User(alice.id));
@@ -1200,7 +1201,7 @@ mod tests {
         session.participants.push(Participant::Agent(remote.id));
         let mut channel = main_channel(&session);
         channel.participants.push(Participant::Approver(approver));
-        store.create_user_profile(&system, &UserProfile::new(alice.id, Some(caelumora_model::value::text::Introduction::new("I run the project.").unwrap()))).await.unwrap();
+        store.entity_stores().user_profiles.create(&system, &UserProfile::new(alice.id, Some(Introduction::new("I run the project.").unwrap()))).await.unwrap();
         stored_session(&store, &session).await;
         stored_channel(&store, &channel).await;
 
@@ -1365,7 +1366,7 @@ mod tests {
             Skill { security_attributes: SecurityAttributes::owned_by(ActorId::User(alice)).granting(caelumora_model::security::Subject::Actor(ActorId::User(bob)), caelumora_model::security::Grant::Read), ..skill("review", Scope::GlobalScope, ActorId::User(alice), Classification::CHANNEL_DEFAULT) },
             skill("elsewhere", Scope::SessionScope { session_id: SessionId::new() }, ActorId::User(bob), Classification::CHANNEL_DEFAULT),
         ] {
-            store.create_skill(&system, &made).await.unwrap();
+            store.entity_stores().skills.create(&system, &made).await.unwrap();
         }
 
         let context = SecurityContext::new(ActorId::User(bob), session_id, channel).next(ActorId::Agent(helper.id), ActorId::User(bob));
@@ -1448,7 +1449,7 @@ mod tests {
         let mut kept = caelumora_model::agent::AgentChannelState::default();
         kept.notes.push(Change::Add { id: NoteId(1), text: "kept".to_string(), classification: Classification::CHANNEL_DEFAULT }, NoteOrigin::default(), MessageId::default());
         store.put_agent_channel_state(helper.id, channel.id, &mut kept).await.unwrap();
-        assert!(store.delete_personality(&system, helper.personality_id).await.unwrap());
+        assert!(store.entity_stores().personalities.delete(&system, helper.personality_id).await.unwrap());
 
         let for_alice = manager.views(as_user(alice.id)).session(session.id).await.unwrap().channel(channel.id).await.unwrap();
         let member = for_alice.member(ActorId::Agent(helper.id)).await.unwrap();
@@ -1679,13 +1680,13 @@ use caelumora_model::turn::TurnState;
         deleted.id = ChannelId::new();
         deleted.name = Name::new("deleted").unwrap();
         stored_channel(&store, &deleted).await;
-        store.delete_channel(&alice_ctx, deleted.id).await.unwrap();
+        store.entity_stores().channels.delete(&alice_ctx, deleted.id).await.unwrap();
         match views.channel_of(session.id, deleted.id).await.unwrap() {
             Reached::Gone(removal) => assert_eq!(removal.by, ActorId::User(alice.id)),
             other => panic!("gone, not {other:?}"),
         }
         assert!(matches!(stranger.channel_of(session.id, deleted.id).await.unwrap(), Reached::Never), "not to a stranger");
-        store.delete_session(&alice_ctx, session.id).await.unwrap();
+        store.entity_stores().sessions.delete(&alice_ctx, session.id).await.unwrap();
         assert!(matches!(views.channel_of(session.id, channel.id).await.unwrap(), Reached::Gone(_)), "gone with its session");
         assert!(matches!(stranger.channel_of(session.id, channel.id).await.unwrap(), Reached::Never));
     }
@@ -1707,8 +1708,8 @@ use caelumora_model::turn::TurnState;
         for channel in [&main, &internal, &secret] {
             stored_channel(&store, channel).await;
         }
-        store.delete_channel(&SecurityContext::system(), internal.id).await.unwrap();
-        store.delete_channel(&SecurityContext::system(), secret.id).await.unwrap();
+        store.entity_stores().channels.delete(&SecurityContext::system(), internal.id).await.unwrap();
+        store.entity_stores().channels.delete(&SecurityContext::system(), secret.id).await.unwrap();
 
         // Alice owns both, and is cleared for internal alone (issue 304).
         let hers = manager.views(Viewer::new(SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default()).with_roles(vec![staff], None)));
@@ -1728,7 +1729,7 @@ use caelumora_model::turn::TurnState;
         stored_channel(&store, &channel).await;
         stored_channel(&store, &side).await;
         let alice_ctx = as_user(alice.id).context().clone();
-        store.delete_channel(&alice_ctx, side.id).await.unwrap();
+        store.entity_stores().channels.delete(&alice_ctx, side.id).await.unwrap();
 
         let hers = manager.views(as_user(alice.id));
         let channels = hers.session(session.id).await.unwrap().deleted_channels().await.unwrap();
@@ -1738,7 +1739,7 @@ use caelumora_model::turn::TurnState;
         let his = manager.views(as_user(bob.id));
         assert!(his.session(session.id).await.unwrap().deleted_channels().await.unwrap().is_empty(), "not a contributor's trash");
 
-        store.delete_session(&alice_ctx, session.id).await.unwrap();
+        store.entity_stores().sessions.delete(&alice_ctx, session.id).await.unwrap();
         let sessions = hers.deleted_sessions().await.unwrap();
         assert_eq!(sessions.iter().map(|s| s.id).collect::<Vec<_>>(), [session.id]);
         assert!(sessions[0].can_restore && !sessions[0].can_purge, "purging is not the owner's");
@@ -1932,11 +1933,10 @@ use caelumora_model::turn::TurnState;
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         use caelumora_model::scope::Scope;
         use caelumora_model::snapshot::Detail;
-        use caelumora_model::store::EntityStore;
         
 
         let store = Arc::new(MemoryStore::new());
-        let mut registry = crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
+        let mut registry = ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
         registry.register(crate::component::ComponentKind::new("silent").provides::<dyn crate::llm::LLMClient>(), |_descriptor, _context| {
             let mut facets = crate::component::ComponentFacets::empty();
             facets.insert::<dyn crate::llm::LLMClient>(Arc::new(Silent));
@@ -1944,7 +1944,7 @@ use caelumora_model::turn::TurnState;
         });
         let policy = Arc::new(DummySecurityManager::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig::default(), registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store.entity_stores(), secrets, policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), registry).unwrap());
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let system = SecurityContext::system();
 
@@ -1957,9 +1957,9 @@ use caelumora_model::turn::TurnState;
             security_attributes: Default::default(), reasoning_visibility: Default::default(),
             deleted: None,
         };
-        store.create_personality(&system, &personality).await.unwrap();
+        store.entity_stores().personalities.create(&system, &personality).await.unwrap();
         let thinker = Agent::new(ScopedName::new("thinker", Scope::GlobalScope).unwrap(), &personality, ActorId::User(alice.id));
-        store.create_agent(&system, &thinker).await.unwrap();
+        store.entity_stores().agents.create(&system, &thinker).await.unwrap();
         let agent = ActorId::Agent(thinker.id);
 
         let alice_ctx = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());

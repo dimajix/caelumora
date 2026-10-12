@@ -16,6 +16,7 @@ use caelumora_model::work::TurnId;
 use caelumora_runtime::component::ComponentRegistry;
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::runtime::RuntimeManager;
+use caelumora_runtime::seed;
 use caelumora_runtime::session::SessionManager;
 use caelumora_runtime::view::Viewer;
 use clap::Parser;
@@ -459,27 +460,27 @@ async fn main() -> anyhow::Result<()> {
     // What may flow where, decided apart from who may do what (issue 304).
     let confidentiality = config.create_confidentiality_policy();
     let state_store = config.create_state_store(Arc::clone(&security_manager), Arc::clone(&confidentiality))?;
-    let entity_store = config.create_entity_store(Arc::clone(&security_manager), Arc::clone(&confidentiality))?;
-    memberships.bind(&entity_store);
+    let entity_stores = config.create_entity_stores(Arc::clone(&security_manager), Arc::clone(&confidentiality))?;
+    memberships.bind(&entity_stores.groups);
     let component_store = config.create_component_store(Arc::clone(&security_manager), Arc::clone(&confidentiality))?;
     let secret_manager = config.create_secret_manager(Arc::clone(&security_manager))?;
 
     let runtime = Arc::new(RuntimeManager::new(
         Arc::clone(&state_store),
-        Arc::clone(&entity_store),
+        entity_stores.clone(),
         secret_manager,
         Arc::clone(&security_manager),
         Arc::clone(&confidentiality),
         &config,
         ComponentRegistry::built_in(Arc::clone(&component_store)),
     )?);
-    caelumora_runtime::seed::load(entity_store.as_ref(), component_store.as_ref(), confidentiality.as_ref(), &config.seed).await?;
+    seed::load(&entity_stores, component_store.as_ref(), confidentiality.as_ref(), &config.seed).await?;
 
     let owner = UserId::default();
     // Users belong to the system (issue 94), so the system records this one.
     let system = SecurityContext::system();
-    if entity_store.get_user(&system, owner).await.is_err() {
-        entity_store.create_user(&system, &User {
+    if entity_stores.users.get(&system, owner).await.is_err() {
+        entity_stores.users.create(&system, &User {
             id: owner,
             username: Name::new("user")?,
             email: "user@example.com".to_string(),
@@ -494,7 +495,7 @@ async fn main() -> anyhow::Result<()> {
     let security = runtime.controller_manager().user_controller(owner).await?.security_context(Default::default(), Default::default());
 
     // By name, among those this user may use.
-    let template = entity_store.list_session_templates(&security, &Query::all()).await.map(|page| page.items)?.into_iter()
+    let template = entity_stores.session_templates.list(&security, &Query::all()).await.map(|page| page.items)?.into_iter()
         .find(|t| t.name.name == args.template.as_str())
         .ok_or_else(|| anyhow::anyhow!("Session template '{}' not found: templates come from the `seed` of the configuration - `--config examples/config.yaml` seeds the demo ones", args.template))?;
 
@@ -504,7 +505,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Its channels held in the language the user prefers where the template
     // names none: the frontend's to set, not the server's (issue 331).
-    let preferred = entity_store.get_user_profile(&security, owner).await.optional()?.and_then(|profile| profile.preferred_language);
+    let preferred = entity_stores.user_profiles.get(&security, owner).await.optional()?.and_then(|profile| profile.preferred_language);
     if let Some(language) = preferred {
         for channel in session_loop.channels().into_iter().filter(|channel| channel.channel().language.is_none()) {
             // The session exists either way; reported, not undone.

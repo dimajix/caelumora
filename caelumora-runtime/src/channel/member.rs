@@ -6,7 +6,7 @@ use anyhow::Result;
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::{Channel, ChannelId, Participant};
 use crate::controller::{AgentController, ControllerManager, UserController};
-use caelumora_model::agent::{AgentId, Personality, PersonalityKind};
+use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityKind};
 use caelumora_model::approval::Approver;
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
 use caelumora_model::role::RoleId;
@@ -43,12 +43,12 @@ impl Member {
     /// Whatever else the store reports when loading it - also that an
     /// agent's personality is gone - and `StoreError::PermissionDenied` if
     /// it is not the agent's to read: the agent exists, but cannot be run.
-    pub(super) async fn of(participant: &Participant, channel: &Channel, entities: &dyn EntityStore, controllers: &ControllerManager, security: &dyn SecurityManager) -> Result<Option<Self>> {
+    pub(super) async fn of(participant: &Participant, channel: &Channel, agents: &dyn EntityStore<Agent>, controllers: &ControllerManager, security: &dyn SecurityManager) -> Result<Option<Self>> {
         let agent = match participant {
             Participant::User(id) => return Ok(controllers.user_controller(*id).await.optional()?.map(Member::User)),
             Participant::Approver(approver) => return Ok(Some(Member::Approver(approver.clone()))),
             Participant::Agent(id) => {
-                if !agent_exists(entities, *id).await? {
+                if !agent_exists(agents, *id).await? {
                     return Ok(None);
                 }
                 match controllers.agent_controller(*id).await.optional()? {
@@ -122,14 +122,14 @@ impl Member {
 }
 
 /// Whether agent `id` exists - neither deleted nor purged -, asked of
-/// `entities` rather than of the controllers: the instance keeps the
+/// `agents` rather than of the controllers: the instance keeps the
 /// controller of an agent while an actor of it runs, also once it was
 /// deleted (issue 314).
 ///
 /// # Errors
 /// Whatever the store reports but that there is none.
-pub(super) async fn agent_exists(entities: &dyn EntityStore, id: AgentId) -> StoreResult<bool> {
-    Ok(entities.get_agent(&SecurityContext::system(), id).await.optional()?.is_some())
+pub(super) async fn agent_exists(agents: &dyn EntityStore<Agent>, id: AgentId) -> StoreResult<bool> {
+    Ok(agents.get(&SecurityContext::system(), id).await.optional()?.is_some())
 }
 
 /// Nothing if every participant of `channel` that still exists may take
@@ -142,7 +142,7 @@ pub(super) async fn agent_exists(entities: &dyn EntityStore, id: AgentId) -> Sto
 /// whatever reading a participant reports.
 pub(crate) async fn require_admitted(runtime: &RuntimeManager, context: &SecurityContext, channel: &Channel) -> Result<()> {
     for participant in &channel.participants {
-        if let Some(member) = Member::of(participant, channel, runtime.entity_store().as_ref(), runtime.controller_manager(), runtime.security_manager().as_ref()).await? {
+        if let Some(member) = Member::of(participant, channel, runtime.entity_stores().agents.as_ref(), runtime.controller_manager(), runtime.security_manager().as_ref()).await? {
             member.require_in_scope(channel.session_id, channel.id)?;
             member.require_cleared(runtime.confidentiality().as_ref(), context, &channel.classification, channel.session_id, channel.id)?;
         }
@@ -176,7 +176,6 @@ mod tests {
         use caelumora_model::role::{RoleId, Roles};
         use caelumora_model::value::name::ScopedName;
         use caelumora_model::scope::Scope;
-        use caelumora_model::store::EntityStore;
         use caelumora_model::user::{User, UserId};
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
@@ -205,9 +204,9 @@ mod tests {
                     security_attributes: Default::default(), reasoning_visibility: Default::default(),
                     deleted: None,
                 };
-                store.create_personality(&system, &personality).await.unwrap();
+                store.entity_stores().personalities.create(&system, &personality).await.unwrap();
                 let agent = Agent::new(ScopedName::new(name, Scope::GlobalScope).unwrap(), &personality, owner);
-                store.create_agent(&system, &agent).await.unwrap();
+                store.entity_stores().agents.create(&system, &agent).await.unwrap();
                 ActorId::Agent(agent.id)
             }
         };
@@ -264,7 +263,8 @@ mod tests {
         use caelumora_model::channel::{HistoryAccess, Participant};
 
         let runtime = test_runtime();
-        let store = Arc::clone(runtime.entity_store());
+        let personalities = Arc::clone(&runtime.entity_stores().personalities);
+        let agents = Arc::clone(&runtime.entity_stores().agents);
         let manager = SessionManager::new(runtime);
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
         let personality = Personality {
@@ -272,7 +272,7 @@ mod tests {
             roles: None, description: None, introduction: None, components: Default::default(),
             security_attributes: Default::default(), reasoning_visibility: Default::default(), deleted: None,
         };
-        store.create_personality(&system, &personality).await.unwrap();
+        personalities.create(&system, &personality).await.unwrap();
         let mut session = make_session("scoped", ActorId::None);
         let id = session.id;
         let elsewhere = [
@@ -280,7 +280,7 @@ mod tests {
             Agent::new(ScopedName::new("visitor", Scope::SessionScope { session_id: SessionId::new() }).unwrap(), &personality, ActorId::None),
         ];
         for agent in &elsewhere {
-            store.create_agent(&system, agent).await.unwrap();
+            agents.create(&system, agent).await.unwrap();
             session.participants.push(Participant::Agent(agent.id));
         }
         // In the session, not in its channel: adding them there is refused below.

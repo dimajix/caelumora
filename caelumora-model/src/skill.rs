@@ -6,13 +6,14 @@
 
 use crate::actor::ActorId;
 use crate::confidentiality::Classification;
-use crate::removal::Removal;
-use crate::scope::{Scope, Scoped};
+use crate::removal::{Deletable, Removal, Stored};
+use crate::scope::{Scope, ScopeField, Scoped};
 use crate::security::{CustomVerb, Grant, Requirement, Secured, SecurityAttributes};
 use crate::value::name::ScopedName;
 use crate::value::text::{Description, SkillBody};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use crate::store::EntityKind;
 
 define_id!(SkillId);
 
@@ -93,8 +94,18 @@ impl Skill {
     }
 }
 
-impl crate::removal::Stored for Skill {
-    const KIND: crate::store::EntityKind = crate::store::EntityKind::new("skill");
+impl Stored for Skill {
+    const KIND: EntityKind = EntityKind::new("skill");
+    type Id = SkillId;
+    type Field = ScopeField;
+
+    fn id(&self) -> SkillId {
+        self.id
+    }
+
+    fn unique_name(&self) -> Option<ScopedName> {
+        Some(self.scoped_name())
+    }
 
     fn deleted(&self) -> Option<&Removal> {
         self.deleted.as_ref()
@@ -120,7 +131,7 @@ impl crate::removal::Stored for Skill {
     }
 }
 
-impl crate::removal::Deletable for Skill {
+impl Deletable for Skill {
     fn set_deleted(&mut self, deleted: Option<Removal>) {
         self.deleted = deleted;
     }
@@ -141,7 +152,7 @@ impl Scoped for Skill {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::removal::Stored;
+    use Stored;
     use crate::session::{ChannelId, SessionId};
     use crate::user::UserId;
 

@@ -44,7 +44,7 @@ use caelumora_model::security::{AccessQuestions, AclEntry, ActionType, Enforceme
 use crate::view::{channel_reading, ChannelReader};
 use caelumora_model::channel::Participant;
 use caelumora_model::session::{Channel, ChannelId, Session, SessionId};
-use caelumora_model::store::{EntityStore, StoreError, StoreResultExt};
+use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;
@@ -59,6 +59,7 @@ use tokio::sync::{broadcast, Mutex};
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{info, warn};
 use caelumora_model::removal::Stored;
+use caelumora_model::group::Group;
 
 /// How often the commands of the storages are checked besides the events
 /// that can change who may run them (issue 254).
@@ -112,7 +113,10 @@ fn store_error(id: WorkspaceId) -> impl FnOnce(StoreError) -> WorkspaceError {
 }
 
 pub struct WorkspaceManager {
-    entities: Arc<dyn EntityStore>,
+    sessions: Arc<dyn EntityStore<Session>>,
+    workspaces: Arc<dyn EntityStore<Workspace>>,
+    channels: Arc<dyn EntityStore<Channel>>,
+    groups: Arc<dyn EntityStore<Group>>,
     events: Arc<EventBus>,
     security: Arc<dyn SecurityManager>,
     /// What may flow where, and who is cleared for what (issue 304).
@@ -136,15 +140,16 @@ impl fmt::Debug for WorkspaceManager {
 }
 
 impl WorkspaceManager {
-    /// The manager of the storages `config` names. Where one of them has a
-    /// shell, it starts the task that ends the commands nobody may run any
-    /// longer (issue 254).
+    /// The manager of the workspaces of `stores`, whose files lie in the
+    /// storages `config` names. Where one of them has a shell, it starts
+    /// the task that ends the commands nobody may run any longer (issue
+    /// 254).
     ///
     /// # Errors
     /// `ComponentError::InvalidConfig` for a storage whose provider cannot
     /// be made, naming it, or for a storage with a shell outside a Tokio
     /// runtime.
-    pub(crate) fn new(entities: Arc<dyn EntityStore>, events: Arc<EventBus>, security: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>, controllers: Arc<ControllerManager>, secrets: &Arc<SecretManager>, config: &WorkspacesConfig) -> ComponentResult<Arc<Self>> {
+    pub(crate) fn new(stores: &EntityStores, events: Arc<EventBus>, security: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>, controllers: Arc<ControllerManager>, secrets: &Arc<SecretManager>, config: &WorkspacesConfig) -> ComponentResult<Arc<Self>> {
         let storages: BTreeMap<String, Arc<dyn TerminalProvider>> = config.storage.iter()
             .map(|(name, storage)| {
                 let invalid = |e: TerminalError| ComponentError::InvalidConfig(format!("the storage '{name}' of workspaces: {e}"));
@@ -162,7 +167,7 @@ impl WorkspaceManager {
             })
             .collect::<ComponentResult<_>>()?;
         let with_shell = storages.values().any(|provider| provider.has_shell());
-        let manager = Arc::new(Self { entities, events, security, confidentiality, controllers, storages, max_file_bytes: config.max_file_bytes, writing: Mutex::new(()), checker: OnceLock::new() });
+        let manager = Arc::new(Self { sessions: Arc::clone(&stores.sessions), workspaces: Arc::clone(&stores.workspaces), channels: Arc::clone(&stores.channels), groups: Arc::clone(&stores.groups), events, security, confidentiality, controllers, storages, max_file_bytes: config.max_file_bytes, writing: Mutex::new(()), checker: OnceLock::new() });
         if with_shell {
             let runtime = tokio::runtime::Handle::try_current()
                 .map_err(|_| ComponentError::InvalidConfig("a storage of workspaces with a shell needs a running runtime".to_string()))?;
@@ -224,13 +229,13 @@ impl WorkspaceManager {
         self.require_flow(ctx, storage, provider.as_ref(), &workspace.classification)?;
 
         let _writing = self.writing.lock().await;
-        self.entities.create_workspace(ctx, &workspace).await?;
+        self.workspaces.create(ctx, &workspace).await?;
         if let Err(e) = provider.create(workspace.id).await {
             warn!(workspace = %workspace.id, "The place of a new workspace could not be made: {e}");
             let system = SecurityContext::system();
             if let Err(cleanup) = async {
-                self.entities.delete_workspace(&system, workspace.id).await?;
-                self.entities.purge_workspace(&system, workspace.id).await
+                self.workspaces.delete(&system, workspace.id).await?;
+                self.workspaces.purge(&system, workspace.id).await
             }.await {
                 warn!(workspace = %workspace.id, "A workspace whose place could not be made is left in the trash: {cleanup}");
             }
@@ -289,10 +294,10 @@ impl WorkspaceManager {
     /// says, under the lock of writing.
     async fn store_access(&self, ctx: &SecurityContext, mut workspace: Workspace, acl: Vec<AclEntry>) -> WorkspaceResult<Workspace> {
         let id = workspace.id;
-        crate::group::require_nameable(self.entities.as_ref(), ctx, &workspace.security_attributes.acl, &acl).await?;
+        crate::group::require_nameable(self.groups.as_ref(), ctx, &workspace.security_attributes.acl, &acl).await?;
         workspace.security_attributes.acl = acl;
         workspace.updated_at = chrono::Utc::now();
-        self.entities.update_workspace(ctx, &workspace).await.map_err(store_error(id))?;
+        self.workspaces.update(ctx, &workspace).await.map_err(store_error(id))?;
         self.events.publish_classified(GlobalEvent::WorkspaceUpdated(id, WorkspaceUpdateEvent::AccessChanged), workspace.security_attributes.clone(), std::slice::from_ref(&workspace.classification));
         info!(workspace = %id, by = %ctx.caller_id, "Workspace's access changed");
         Ok(workspace)
@@ -346,7 +351,7 @@ impl WorkspaceManager {
             WorkspaceUpdateEvent::AccessChanged => {}
         }
         workspace.updated_at = chrono::Utc::now();
-        self.entities.update_workspace(ctx, &workspace).await.map_err(store_error(id))?;
+        self.workspaces.update(ctx, &workspace).await.map_err(store_error(id))?;
         self.events.publish_classified(GlobalEvent::WorkspaceUpdated(id, event), workspace.security_attributes.clone(), &[had, workspace.classification.clone()]);
         info!(workspace = %id, by = %ctx.caller_id, "Workspace changed");
         Ok(workspace)
@@ -365,7 +370,7 @@ impl WorkspaceManager {
             Err(WorkspaceError::NotFound(_)) => return Ok(false),
             Err(e) => return Err(e),
         };
-        if !self.entities.delete_workspace(ctx, id).await? {
+        if !self.workspaces.delete(ctx, id).await? {
             return Ok(false);
         }
         self.events.publish_classified(GlobalEvent::WorkspaceDeleted(id), workspace.security_attributes, std::slice::from_ref(&workspace.classification));
@@ -381,7 +386,7 @@ impl WorkspaceManager {
     /// whatever else the store reports - `NameTaken` among it.
     pub async fn restore(&self, ctx: &SecurityContext, id: WorkspaceId) -> WorkspaceResult<Workspace> {
         let _writing = self.writing.lock().await;
-        let workspace = self.entities.restore_workspace(ctx, id).await.map_err(store_error(id))?;
+        let workspace = self.workspaces.restore(ctx, id).await.map_err(store_error(id))?;
         self.events.publish_classified(GlobalEvent::WorkspaceRestored(id), workspace.security_attributes.clone(), std::slice::from_ref(&workspace.classification));
         info!(workspace = %id, by = %ctx.caller_id, "Workspace restored");
         Ok(workspace)
@@ -399,12 +404,23 @@ impl WorkspaceManager {
     /// store reports.
     pub async fn purge(&self, ctx: &SecurityContext, id: WorkspaceId) -> WorkspaceResult<bool> {
         let _writing = self.writing.lock().await;
-        let Some(workspace) = self.entities.get_deleted_workspace(ctx, id).await.optional()? else { return Ok(false) };
+        let Some(workspace) = self.workspaces.get_deleted(ctx, id).await.optional()? else { return Ok(false) };
         self.security.require(ctx, ActionType::purge(Workspace::KIND, &workspace.security_attributes), || StoreError::PermissionDenied).await?;
         self.provider(&workspace)?.remove(id).await?;
-        let purged = self.entities.purge_workspace(ctx, id).await?;
+        let purged = self.workspaces.purge(ctx, id).await?;
         info!(workspace = %id, by = %ctx.caller_id, "Workspace purged");
         Ok(purged)
+    }
+
+    /// The workspace of `name`, in exactly that scope, among those `ctx`
+    /// may read and is cleared for - as a template looks for the one it
+    /// names.
+    ///
+    /// # Errors
+    /// `StoreError::NotFound` if there is none; whatever else the store
+    /// reports.
+    pub(crate) async fn find_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Workspace> {
+        self.workspaces.find_by_name(ctx, name).await
     }
 
     /// Workspace `id`, used directly by whoever `ctx` acts for, wherever the
@@ -418,7 +434,7 @@ impl WorkspaceManager {
     /// that nothing can be probed; `ReadOnly` if they may not change its
     /// files where `need` asks to; or whatever else the store reports.
     pub(crate) async fn reached(&self, ctx: &SecurityContext, id: WorkspaceId, need: Grant) -> WorkspaceResult<Workspace> {
-        let workspace = self.entities.get_workspace(ctx, id).await.map_err(store_error(id))?;
+        let workspace = self.workspaces.get(ctx, id).await.map_err(store_error(id))?;
         if need == Grant::Write {
             self.security.require(ctx, ActionType::custom(Workspace::KIND, &WRITE, &workspace.security_attributes), || WorkspaceError::ReadOnly(id)).await?;
         }
@@ -443,7 +459,7 @@ impl WorkspaceManager {
         if channel.session_id != session.id || !channel.uses_workspace || !member {
             return Ok(None);
         }
-        let Some(workspace) = self.entities.get_workspace(&SecurityContext::system(), id).await.optional()? else {
+        let Some(workspace) = self.workspaces.get(&SecurityContext::system(), id).await.optional()? else {
             warn!(session = %session.id, workspace = %id, "The workspace attached to a session is gone");
             return Ok(None);
         };
@@ -470,8 +486,8 @@ impl WorkspaceManager {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         let mut left = 0;
-        for workspace in self.entities.list_workspaces(&system, &within(holder)).await?.items {
-            if deleted_unless_refused(self.entities.delete_workspace(ctx, workspace.id).await)? {
+        for workspace in self.workspaces.list(&system, &within(holder)).await?.items {
+            if deleted_unless_refused(self.workspaces.delete(ctx, workspace.id).await)? {
                 self.events.publish_classified(GlobalEvent::WorkspaceDeleted(workspace.id), workspace.security_attributes, std::slice::from_ref(&workspace.classification));
             } else {
                 left += 1;
@@ -491,8 +507,8 @@ impl WorkspaceManager {
     pub(crate) async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> WorkspaceResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for workspace in deleted_since(self.entities.list_deleted_workspaces(&system, &within(holder)).await?.items, since) {
-            if let Some(restored) = restored_unless_refused(self.entities.restore_workspace(ctx, workspace.id).await, "workspace", &workspace.name)? {
+        for workspace in deleted_since(self.workspaces.list_deleted(&system, &within(holder)).await?.items, since) {
+            if let Some(restored) = restored_unless_refused(self.workspaces.restore(ctx, workspace.id).await, "workspace", &workspace.name)? {
                 self.events.publish_classified(GlobalEvent::WorkspaceRestored(restored.id), restored.security_attributes, std::slice::from_ref(&restored.classification));
             }
         }
@@ -508,9 +524,9 @@ impl WorkspaceManager {
     pub(crate) async fn purge_lying_in(&self, holder: &Scope) -> WorkspaceResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for workspace in self.entities.list_deleted_workspaces(&system, &within(holder)).await?.items {
+        for workspace in self.workspaces.list_deleted(&system, &within(holder)).await?.items {
             self.provider(&workspace)?.remove(workspace.id).await?;
-            self.entities.purge_workspace(&system, workspace.id).await?;
+            self.workspaces.purge(&system, workspace.id).await?;
         }
         Ok(())
     }
@@ -590,8 +606,8 @@ impl WorkspaceManager {
     /// `terminal_in` asks.
     async fn usable_in_channel(&self, ctx: &SecurityContext, session_id: SessionId, channel_id: ChannelId, need: Grant) -> WorkspaceResult<Workspace> {
         let system = SecurityContext::system();
-        let Some(session) = self.entities.get_session(&system, session_id).await.optional()? else { return Err(WorkspaceError::NotUsableInChannel) };
-        let Some(channel) = self.entities.get_channel(&system, channel_id).await.optional()? else { return Err(WorkspaceError::NotUsableInChannel) };
+        let Some(session) = self.sessions.get(&system, session_id).await.optional()? else { return Err(WorkspaceError::NotUsableInChannel) };
+        let Some(channel) = self.channels.get(&system, channel_id).await.optional()? else { return Err(WorkspaceError::NotUsableInChannel) };
         if !self.security.may_read_session(ctx, &session.security_attributes).await {
             return Err(WorkspaceError::NotUsableInChannel);
         }
@@ -648,7 +664,7 @@ impl WorkspaceManager {
     async fn may_run(&self, (workspace, scope, _): &CommandKey) -> WorkspaceResult<bool> {
         let system = SecurityContext::system();
         let Some(channel_id) = channel_of(scope) else { return Ok(false) };
-        let Some(channel) = self.entities.get_channel(&system, channel_id).await.optional()? else { return Ok(false) };
+        let Some(channel) = self.channels.get(&system, channel_id).await.optional()? else { return Ok(false) };
         for participant in &channel.participants {
             let member = match participant {
                 // One whose record is gone asks with no roles, as before.
@@ -758,12 +774,14 @@ pub(crate) mod testing {
     use caelumora_model::secret::SecretManager;
     use caelumora_model::security::{DummySecurityManager, SecurityContext};
     use caelumora_model::session::{Session, SessionId};
-    use caelumora_model::store::EntityStore;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::workspace::Workspace;
     use std::sync::Arc;
+    use caelumora_model::confidentiality::ConfidentialityRules;
+    use caelumora_model::config::AppConfig;
+    use crate::component::ComponentRegistry;
 
     /// The largest file the workspace takes.
     pub(crate) const MAX_FILE_BYTES: u64 = 1024 * 1024;
@@ -806,7 +824,7 @@ pub(crate) mod testing {
         let workspaces = WorkspacesConfig { storage: [("dev".to_string(), storage)].into(), max_file_bytes: MAX_FILE_BYTES };
         let artifacts = tempfile::tempdir().unwrap();
         let kept = ArtifactsConfig { storage: [("kept".to_string(), ArtifactStorageConfig::Local { root: artifacts.path().to_path_buf(), destination: None })].into(), ..Default::default() };
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), &caelumora_model::config::AppConfig { workspaces, artifacts: kept, ..Default::default() }, crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store.entity_stores(), secrets, policy, Arc::new(ConfidentialityRules::default()), &AppConfig { workspaces, artifacts: kept, ..Default::default() }, ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let system = SecurityContext::system();
 
         let owner = UserId::new();
@@ -818,9 +836,9 @@ pub(crate) mod testing {
             kind: Default::default(), roles: None, introduction: None, components: Default::default(),
             security_attributes: Default::default(), reasoning_visibility: Visibility::Channel, deleted: None,
         };
-        store.create_personality(&system, &personality).await.unwrap();
+        store.entity_stores().personalities.create(&system, &personality).await.unwrap();
         let agent = Agent::new(ScopedName::new("Jonathan", Scope::GlobalScope).unwrap(), &personality, ActorId::User(owner));
-        store.create_agent(&system, &agent).await.unwrap();
+        store.entity_stores().agents.create(&system, &agent).await.unwrap();
         let session_id = SessionId::new();
         let channel = Channel::build(session_id, ActorId::User(owner), Name::new("main").unwrap(), Default::default(), internal, None, vec![Participant::User(owner), Participant::Agent(agent.id)]);
         let now = chrono::Utc::now();
@@ -832,8 +850,8 @@ pub(crate) mod testing {
             commands: Default::default(), privacy: Default::default(), created_at: now, updated_at: now, security_attributes: Default::default(),
             deleted: None,
         };
-        store.create_session(&system, &session).await.unwrap();
-        store.create_channel(&system, &channel).await.unwrap();
+        store.entity_stores().sessions.create(&system, &session).await.unwrap();
+        store.entity_stores().channels.create(&system, &channel).await.unwrap();
         let session = SessionLoop::new(session, vec![channel], Arc::clone(&runtime)).await.unwrap();
         let context = SecurityContext::new(ActorId::User(owner), session_id, session.channels()[0].id()).next(ActorId::Agent(agent.id), ActorId::User(owner));
         WithWorkspace { files, artifacts, session, agent: agent.id, context, workspace, runtime }
@@ -859,10 +877,9 @@ mod tests {
 
     /// Whether the channel uses the workspace.
     async fn use_workspace(w: &WithWorkspace, uses: bool) -> Channel {
-        let store = w.runtime.entity_store();
-        let mut channel = store.get_channel(&SecurityContext::system(), w.session.channels()[0].id()).await.unwrap();
+        let mut channel = w.runtime.entity_stores().channels.get(&SecurityContext::system(), w.session.channels()[0].id()).await.unwrap();
         channel.uses_workspace = uses;
-        store.update_channel(&SecurityContext::system(), &channel).await.unwrap();
+        w.runtime.entity_stores().channels.update(&SecurityContext::system(), &channel).await.unwrap();
         channel
     }
 
@@ -885,16 +902,15 @@ mod tests {
         let w = session_with_workspace().await;
         let workspaces = w.runtime.workspace_manager();
         let (shell, id) = running(&w).await;
-        let store = w.runtime.entity_store();
-        let mut channel = store.get_channel(&SecurityContext::system(), w.session.channels()[0].id()).await.unwrap();
+        let mut channel = w.runtime.entity_stores().channels.get(&SecurityContext::system(), w.session.channels()[0].id()).await.unwrap();
 
         channel.participants.retain(|participant| !matches!(participant, Participant::Agent(_)));
-        store.update_channel(&SecurityContext::system(), &channel).await.unwrap();
+        w.runtime.entity_stores().channels.update(&SecurityContext::system(), &channel).await.unwrap();
         workspaces.end_unusable_commands().await;
         assert_eq!(shell.output(&id, 0, Duration::ZERO).await.unwrap().status, CommandStatus::Running, "the agent that started it left, the owner may still start it there");
 
         channel.participants.clear();
-        store.update_channel(&SecurityContext::system(), &channel).await.unwrap();
+        w.runtime.entity_stores().channels.update(&SecurityContext::system(), &channel).await.unwrap();
         workspaces.end_unusable_commands().await;
         assert_eq!(shell.output(&id, 0, Duration::ZERO).await.unwrap().status, CommandStatus::Killed, "nobody left who could");
     }

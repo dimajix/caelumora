@@ -3,10 +3,11 @@ use crate::security::SecurityContext;
 use crate::store::{EntityStore, StoreError, StoreResultExt};
 use crate::user::{User, UserId};
 use crate::user_provider::{AuthError, AuthResult, Credential, UserProvider};
-use crate::value::name::Name;
+use crate::value::name::{Name, ScopedName};
 use async_trait::async_trait;
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use crate::scope::Scope;
 
 /// **Development only.** Accepts every username with any credential.
 ///
@@ -27,7 +28,7 @@ use std::sync::Arc;
 /// stand-in.
 #[derive(Debug)]
 pub struct AcceptAnyUserProvider {
-    store: Arc<dyn EntityStore>,
+    store: Arc<dyn EntityStore<User>>,
     /// The roles of the users named (issue 142), by their ids (issue 23).
     roles: BTreeMap<String, Vec<RoleId>>,
     /// The roles of everybody else.
@@ -36,13 +37,13 @@ pub struct AcceptAnyUserProvider {
 
 impl AcceptAnyUserProvider {
     /// A provider that gives nobody a role.
-    pub fn new(store: Arc<dyn EntityStore>) -> Self {
+    pub fn new(store: Arc<dyn EntityStore<User>>) -> Self {
         Self::with_roles(store, BTreeMap::new(), Vec::new())
     }
 
     /// A provider that gives the users named in `roles` theirs, and
     /// everybody else `default_roles`.
-    pub fn with_roles(store: Arc<dyn EntityStore>, roles: BTreeMap<String, Vec<RoleId>>, default_roles: Vec<RoleId>) -> Self {
+    pub fn with_roles(store: Arc<dyn EntityStore<User>>, roles: BTreeMap<String, Vec<RoleId>>, default_roles: Vec<RoleId>) -> Self {
         Self { store, roles, default_roles }
     }
 
@@ -75,14 +76,17 @@ impl AcceptAnyUserProvider {
 #[async_trait]
 impl UserProvider for AcceptAnyUserProvider {
     async fn find_user(&self, username: &str) -> AuthResult<Option<User>> {
-        Self::found(self.store.find_user_by_name(&Self::context(), username).await)
+        // A username is a name in the global scope (issue 250); one that
+        // is no valid name is nobody's.
+        let Ok(name) = ScopedName::new(username, Scope::GlobalScope) else { return Ok(None) };
+        Self::found(self.store.find_by_name(&Self::context(), &name).await)
     }
 
     /// The user as stored, with the roles the configuration gives them now -
     /// what the `UserManager` compares with the record when a token is
     /// renewed.
     async fn get_user(&self, id: UserId) -> AuthResult<Option<User>> {
-        Ok(Self::found(self.store.get_user(&Self::context(), id).await)?.map(|user| self.configured(user)))
+        Ok(Self::found(self.store.get(&Self::context(), id).await)?.map(|user| self.configured(user)))
     }
 
     /// Whoever `username` is, without any credential: the user stored under
@@ -109,12 +113,12 @@ mod tests {
 
     /// The provider in a chain of its own, whose manager keeps the records
     /// in `store`.
-    fn chain(store: &Arc<dyn EntityStore>, provider: AcceptAnyUserProvider) -> UserManager {
+    fn chain(store: &Arc<dyn EntityStore<User>>, provider: AcceptAnyUserProvider) -> UserManager {
         UserManager::new(vec![Arc::new(provider)], Arc::clone(store), Arc::new(()))
     }
 
-    fn store() -> Arc<dyn EntityStore> {
-        Arc::new(MemoryStore::new())
+    fn store() -> Arc<dyn EntityStore<User>> {
+        Arc::new(MemoryStore::new()).entity_stores().users
     }
 
     #[tokio::test]
@@ -167,7 +171,7 @@ mod tests {
         let changed = chain(&store, AcceptAnyUserProvider::with_roles(Arc::clone(&store), BTreeMap::new(), Vec::new()));
         let again = changed.get_user(alice.id).await.unwrap().unwrap();
         assert!(again.roles.is_empty(), "the configuration decides, also for a user already stored, on a renewal too");
-        assert_eq!(store.get_user(&SecurityContext::system(), alice.id).await.unwrap().roles, Vec::<RoleId>::new(), "and it is stored");
+        assert_eq!(store.get(&SecurityContext::system(), alice.id).await.unwrap().roles, Vec::<RoleId>::new(), "and it is stored");
     }
 
     #[tokio::test]
@@ -186,7 +190,7 @@ mod tests {
             roles: vec![RoleId::new()],
             deleted: None,
         };
-        store.create_user(&SecurityContext::default(), &existing).await.unwrap();
+        store.create(&SecurityContext::default(), &existing).await.unwrap();
 
         let provider = AcceptAnyUserProvider::new(store);
         let user = provider.authenticate("user", &Credential::Password("x")).await.unwrap().expect("accepted");
