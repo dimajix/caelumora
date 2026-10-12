@@ -623,3 +623,10 @@ no longer the facade, the `WorkspaceManager` keeps it for where a workspace is u
 of a session read channels from it. `Views::entities` is gone: the views read the facade only for
 sessions now.
 
+Step 3l: sessions on their own store, and the facade gone. The `SessionController` keeps the store
+of sessions, the `WorkspaceManager` keeps it for where a workspace is used, the session code and
+the views take it from `EntityStores`. `Entities`, `EntityStores::entities` and
+`RuntimeManager::entity_store` are gone: every kind of the core is kept by an `EntityStore<T>` of
+its own, and whoever uses a kind holds its store. Step 3 is done; the plugin of skills can make its
+store as the backends make theirs.
+

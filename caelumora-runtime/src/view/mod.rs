@@ -282,7 +282,7 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn sessions(&self) -> ViewResult<Vec<SessionView>> {
-        let sessions = self.stores.entities.list_sessions(self.viewer.context(), &Query::all()).await.map(|page| page.items)
+        let sessions = self.stores.sessions.list(self.viewer.context(), &Query::all()).await.map(|page| page.items)
             .map_err(|e| ViewError::failed(e, "listing the sessions"))?;
         // The store lists what the viewer may read; a running session is
         // reached through its loop.
@@ -310,7 +310,7 @@ impl Views {
                 }
                 Found::Running(session_loop)
             }
-            None => Found::Stored(self.stores.entities.get_session(self.viewer.context(), id).await.map_err(|e| {
+            None => Found::Stored(self.stores.sessions.get(self.viewer.context(), id).await.map_err(|e| {
                 let e = anyhow::Error::new(e);
                 if crate::error::is_not_found(&e, "session") || crate::error::is_forbidden(&e) { not_found() } else { ViewError::Failed(e) }
             })?),
@@ -345,7 +345,7 @@ impl Views {
     /// Whether session `id` was deleted and the viewer could read it were
     /// it there.
     async fn gone_session<T>(&self, id: SessionId) -> ViewResult<Reached<T>> {
-        let deleted = self.stores.entities.get_deleted_session(&SecurityContext::system(), id).await.optional()
+        let deleted = self.stores.sessions.get_deleted(&SecurityContext::system(), id).await.optional()
             .map_err(|e| ViewError::failed(e, format!("looking up session {id}")))?;
         Ok(match deleted {
             Some(session) if self.security.may_read_session(self.viewer.context(), &session.security_attributes).await =>
@@ -536,7 +536,7 @@ impl Views {
     async fn group_name(&self, group: &Group) -> Option<String> {
         let system = SecurityContext::system();
         match group.name.scope {
-            Scope::SessionScope { session_id } => self.stores.entities.get_session(&system, session_id).await.optional().ok().flatten().map(|s| s.name.to_string()),
+            Scope::SessionScope { session_id } => self.stores.sessions.get(&system, session_id).await.optional().ok().flatten().map(|s| s.name.to_string()),
             Scope::ChannelScope { channel_id, .. } => self.stores.channels.get(&system, channel_id).await.optional().ok().flatten().map(|c| c.name.to_string()),
             _ => Some(group.name.to_string()),
         }
@@ -646,7 +646,7 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn deleted_sessions(&self) -> ViewResult<Vec<DeletedSnapshot<SessionId>>> {
-        let sessions = self.stores.entities.list_deleted_sessions(self.viewer.context(), &Query::all()).await.map(|page| page.items)
+        let sessions = self.stores.sessions.list_deleted(self.viewer.context(), &Query::all()).await.map(|page| page.items)
             .map_err(|e| ViewError::failed(e, "listing the deleted sessions"))?;
         let policy = &self.security;
         let mut deleted = Vec::with_capacity(sessions.len());
@@ -723,7 +723,7 @@ impl Views {
     /// # Errors
     /// `Failed` if it cannot be looked up.
     pub(crate) async fn privacy_of(&self, id: SessionId) -> ViewResult<Option<SessionPrivacy>> {
-        let session = self.stores.entities.get_session(&SecurityContext::system(), id).await.optional()
+        let session = self.stores.sessions.get(&SecurityContext::system(), id).await.optional()
             .map_err(|e| ViewError::failed(e, format!("looking up session {id}")))?;
         Ok(session.as_ref().map(SessionPrivacy::of))
     }
@@ -973,7 +973,6 @@ mod tests {
     use caelumora_model::security::{Grant, SecurityAttributes, Subject};
     use crate::group::keep_participants;
     use caelumora_model::session::Session;
-    use caelumora_model::store::Entities;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::user::UserId;
     use caelumora_model::config::AppConfig;
@@ -987,7 +986,7 @@ mod tests {
     /// Stores `session` as the runtime does, with the group of its
     /// participants (issue 286).
     async fn stored_session(store: &Arc<MemoryStore>, session: &Session) {
-        store.create_session(&SecurityContext::system(), session).await.unwrap();
+        store.entity_stores().sessions.create(&SecurityContext::system(), session).await.unwrap();
         keep_participants(store.entity_stores().groups.as_ref(), Group::of_session(session)).await.unwrap();
     }
 
@@ -1687,7 +1686,7 @@ use caelumora_model::turn::TurnState;
             other => panic!("gone, not {other:?}"),
         }
         assert!(matches!(stranger.channel_of(session.id, deleted.id).await.unwrap(), Reached::Never), "not to a stranger");
-        store.delete_session(&alice_ctx, session.id).await.unwrap();
+        store.entity_stores().sessions.delete(&alice_ctx, session.id).await.unwrap();
         assert!(matches!(views.channel_of(session.id, channel.id).await.unwrap(), Reached::Gone(_)), "gone with its session");
         assert!(matches!(stranger.channel_of(session.id, channel.id).await.unwrap(), Reached::Never));
     }
@@ -1740,7 +1739,7 @@ use caelumora_model::turn::TurnState;
         let his = manager.views(as_user(bob.id));
         assert!(his.session(session.id).await.unwrap().deleted_channels().await.unwrap().is_empty(), "not a contributor's trash");
 
-        store.delete_session(&alice_ctx, session.id).await.unwrap();
+        store.entity_stores().sessions.delete(&alice_ctx, session.id).await.unwrap();
         let sessions = hers.deleted_sessions().await.unwrap();
         assert_eq!(sessions.iter().map(|s| s.id).collect::<Vec<_>>(), [session.id]);
         assert!(sessions[0].can_restore && !sessions[0].can_purge, "purging is not the owner's");

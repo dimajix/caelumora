@@ -44,7 +44,7 @@ use caelumora_model::security::{AccessQuestions, AclEntry, ActionType, Enforceme
 use crate::view::{channel_reading, ChannelReader};
 use caelumora_model::channel::Participant;
 use caelumora_model::session::{Channel, ChannelId, Session, SessionId};
-use caelumora_model::store::{Entities, EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt};
+use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;
@@ -113,7 +113,7 @@ fn store_error(id: WorkspaceId) -> impl FnOnce(StoreError) -> WorkspaceError {
 }
 
 pub struct WorkspaceManager {
-    entities: Arc<dyn Entities>,
+    sessions: Arc<dyn EntityStore<Session>>,
     workspaces: Arc<dyn EntityStore<Workspace>>,
     channels: Arc<dyn EntityStore<Channel>>,
     groups: Arc<dyn EntityStore<Group>>,
@@ -167,7 +167,7 @@ impl WorkspaceManager {
             })
             .collect::<ComponentResult<_>>()?;
         let with_shell = storages.values().any(|provider| provider.has_shell());
-        let manager = Arc::new(Self { entities: Arc::clone(&stores.entities), workspaces: Arc::clone(&stores.workspaces), channels: Arc::clone(&stores.channels), groups: Arc::clone(&stores.groups), events, security, confidentiality, controllers, storages, max_file_bytes: config.max_file_bytes, writing: Mutex::new(()), checker: OnceLock::new() });
+        let manager = Arc::new(Self { sessions: Arc::clone(&stores.sessions), workspaces: Arc::clone(&stores.workspaces), channels: Arc::clone(&stores.channels), groups: Arc::clone(&stores.groups), events, security, confidentiality, controllers, storages, max_file_bytes: config.max_file_bytes, writing: Mutex::new(()), checker: OnceLock::new() });
         if with_shell {
             let runtime = tokio::runtime::Handle::try_current()
                 .map_err(|_| ComponentError::InvalidConfig("a storage of workspaces with a shell needs a running runtime".to_string()))?;
@@ -606,7 +606,7 @@ impl WorkspaceManager {
     /// `terminal_in` asks.
     async fn usable_in_channel(&self, ctx: &SecurityContext, session_id: SessionId, channel_id: ChannelId, need: Grant) -> WorkspaceResult<Workspace> {
         let system = SecurityContext::system();
-        let Some(session) = self.entities.get_session(&system, session_id).await.optional()? else { return Err(WorkspaceError::NotUsableInChannel) };
+        let Some(session) = self.sessions.get(&system, session_id).await.optional()? else { return Err(WorkspaceError::NotUsableInChannel) };
         let Some(channel) = self.channels.get(&system, channel_id).await.optional()? else { return Err(WorkspaceError::NotUsableInChannel) };
         if !self.security.may_read_session(ctx, &session.security_attributes).await {
             return Err(WorkspaceError::NotUsableInChannel);
@@ -774,7 +774,6 @@ pub(crate) mod testing {
     use caelumora_model::secret::SecretManager;
     use caelumora_model::security::{DummySecurityManager, SecurityContext};
     use caelumora_model::session::{Session, SessionId};
-    use caelumora_model::store::Entities;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::{Name, ScopedName};
@@ -851,7 +850,7 @@ pub(crate) mod testing {
             commands: Default::default(), privacy: Default::default(), created_at: now, updated_at: now, security_attributes: Default::default(),
             deleted: None,
         };
-        store.create_session(&system, &session).await.unwrap();
+        store.entity_stores().sessions.create(&system, &session).await.unwrap();
         store.entity_stores().channels.create(&system, &channel).await.unwrap();
         let session = SessionLoop::new(session, vec![channel], Arc::clone(&runtime)).await.unwrap();
         let context = SecurityContext::new(ActorId::User(owner), session_id, session.channels()[0].id()).next(ActorId::Agent(agent.id), ActorId::User(owner));

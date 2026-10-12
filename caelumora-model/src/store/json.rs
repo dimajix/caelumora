@@ -6,11 +6,11 @@ use crate::confidentiality::ConfidentialityPolicy;
 use crate::group::Group;
 use crate::removal::{Deletable, Removal, Stored};
 use crate::security::{ActionType, SecurityManager};
-use crate::session::{Session, SessionField, SessionId};
+use crate::session::Session;
 use crate::skill::Skill;
 use crate::store::access::{name_free, Access};
 use crate::store::query::{Field, Filter, NoField, Page, Query};
-use crate::store::{ComponentStore, Entities, EntityStore, EntityStores, Journaled, StateStore, StoreError, StoreResult};
+use crate::store::{ComponentStore, EntityStore, EntityStores, Journaled, StateStore, StoreError, StoreResult};
 use crate::template::SessionTemplate;
 use crate::user::{User, UserProfile};
 use crate::value::name::ScopedName;
@@ -49,7 +49,7 @@ pub struct JsonFileStore {
     personalities: Arc<JsonEntityStore<Personality>>,
     session_templates: Arc<JsonEntityStore<SessionTemplate>>,
     agents: Arc<JsonEntityStore<Agent>>,
-    sessions: JsonEntityStore<Session>,
+    sessions: Arc<JsonEntityStore<Session>>,
     channels: Arc<JsonEntityStore<Channel>>,
     users: Arc<JsonEntityStore<User>>,
     user_profiles: Arc<JsonEntityStore<UserProfile>>,
@@ -73,7 +73,7 @@ impl JsonFileStore {
             personalities: Arc::new(JsonEntityStore::new(&root, &policies)?),
             session_templates: Arc::new(JsonEntityStore::new(&root, &policies)?),
             agents: Arc::new(JsonEntityStore::new(&root, &policies)?),
-            sessions: JsonEntityStore::new(&root, &policies)?,
+            sessions: Arc::new(JsonEntityStore::new(&root, &policies)?),
             channels: Arc::new(JsonEntityStore::new(&root, &policies)?),
             users: Arc::new(JsonEntityStore::new(&root, &policies)?),
             user_profiles: Arc::new(JsonEntityStore::new(&root, &policies)?),
@@ -88,11 +88,9 @@ impl JsonFileStore {
         Ok(store)
     }
 
-    /// The store of every kind (issue 323): this store's, the kinds that
-    /// have one of their own as such.
+    /// The stores of the entities, one per kind (issue 323).
     pub fn entity_stores(self: &Arc<Self>) -> EntityStores {
         EntityStores {
-            entities: Arc::<Self>::clone(self),
             skills: Arc::<JsonEntityStore<Skill>>::clone(&self.skills),
             workspaces: Arc::<JsonEntityStore<Workspace>>::clone(&self.workspaces),
             artifacts: Arc::<JsonEntityStore<Artifact>>::clone(&self.artifacts),
@@ -103,6 +101,7 @@ impl JsonFileStore {
             users: Arc::<JsonEntityStore<User>>::clone(&self.users),
             agents: Arc::<JsonEntityStore<Agent>>::clone(&self.agents),
             channels: Arc::<JsonEntityStore<Channel>>::clone(&self.channels),
+            sessions: Arc::<JsonEntityStore<Session>>::clone(&self.sessions),
         }
     }
 
@@ -528,37 +527,6 @@ impl<T: Deletable + Serialize + DeserializeOwned + Send + Sync + 'static> Entity
     }
 }
 
-#[async_trait]
-impl Entities for JsonFileStore {
-    async fn create_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
-        self.sessions.create(ctx, value).await
-    }
-    async fn get_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session> {
-        self.sessions.get(ctx, id).await
-    }
-    async fn update_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
-        self.sessions.update(ctx, value).await
-    }
-    async fn delete_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool> {
-        self.sessions.delete(ctx, id).await
-    }
-    async fn list_sessions(&self, ctx: &SecurityContext, query: &Query<SessionField>) -> StoreResult<Page<Session>> {
-        self.sessions.list(ctx, query).await
-    }
-    async fn restore_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session> {
-        self.sessions.restore(ctx, id).await
-    }
-    async fn purge_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool> {
-        self.sessions.purge(ctx, id).await
-    }
-    async fn get_deleted_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session> {
-        self.sessions.get_deleted(ctx, id).await
-    }
-    async fn list_deleted_sessions(&self, ctx: &SecurityContext, query: &Query<SessionField>) -> StoreResult<Page<Session>> {
-        self.sessions.list_deleted(ctx, query).await
-    }
-}
-
 /// Preconfigured components, kept like the entities (issue 164).
 #[async_trait]
 impl ComponentStore for JsonFileStore {
@@ -672,6 +640,7 @@ impl StateStore for JsonFileStore {
 
 #[cfg(test)]
 mod tests {
+    use crate::session::SessionId;
     use super::*;
     use chrono::Utc;
     use crate::security::SecurityAttributes;
@@ -737,10 +706,10 @@ mod tests {
             commands: Default::default(), privacy: Default::default(), created_at: Utc::now(), updated_at: Utc::now(),
             security_attributes: SecurityAttributes::default(), deleted: None,
         };
-        store.create_session(&system, &session).await.unwrap();
+        store.sessions.create(&system, &session).await.unwrap();
         let text = tokio::fs::read_to_string(store.sessions.path(&session.id)).await.unwrap();
         assert!(!text.contains("deleted"), "{text}");
-        assert!(store.get_session(&system, session.id).await.unwrap().deleted.is_none());
+        assert!(store.sessions.get(&system, session.id).await.unwrap().deleted.is_none());
     }
 
     #[tokio::test]
@@ -853,7 +822,7 @@ mod tests {
             security_attributes: SecurityAttributes::default(),
             deleted: None,
         };
-        store.create_session(&ctx, &session).await.unwrap();
+        store.sessions.create(&ctx, &session).await.unwrap();
 
         // Write out channel state so we can assert it gets removed.
         let agent_id = AgentId(Uuid::new_v4());
@@ -865,10 +834,10 @@ mod tests {
         assert!(store.sessions.path(&session_id).exists());
         assert!(store.agent_channel_state_dir(channel_id).exists());
 
-        assert!(store.delete_session(&ctx, session_id).await.unwrap());
+        assert!(store.sessions.delete(&ctx, session_id).await.unwrap());
         assert!(store.sessions.path(&session_id).exists(), "deleting marks the file");
         assert!(store.agent_channel_state_dir(channel_id).exists(), "the state is the state store's");
-        assert!(store.purge_session(&ctx, session_id).await.unwrap());
+        assert!(store.sessions.purge(&ctx, session_id).await.unwrap());
         assert!(!store.sessions.path(&session_id).exists(), "purging removes it");
 
         store.put_channel_state(channel_id, &mut ChannelState::new(channel_id)).await.unwrap();
@@ -878,9 +847,9 @@ mod tests {
         store.delete_channel_state(channel_id).await.expect("nothing to delete is no error");
 
         // Deleting or purging again reports that nothing was there.
-        assert!(!store.delete_session(&ctx, session_id).await.unwrap());
-        assert!(!store.purge_session(&ctx, session_id).await.unwrap());
-        let err = store.get_session(&ctx, session_id).await.unwrap_err();
+        assert!(!store.sessions.delete(&ctx, session_id).await.unwrap());
+        assert!(!store.sessions.purge(&ctx, session_id).await.unwrap());
+        let err = store.sessions.get(&ctx, session_id).await.unwrap_err();
         assert!(matches!(err, StoreError::NotFound { entity: "session", .. }));
     }
 
@@ -906,14 +875,14 @@ mod tests {
             security_attributes: SecurityAttributes::default(),
             deleted: None,
         };
-        store.create_session(&ctx, &s1).await.unwrap();
+        store.sessions.create(&ctx, &s1).await.unwrap();
 
         // Create a corrupted JSON file
         let corrupted_path = store.sessions.dir.join("corrupted.json");
         fs::write(corrupted_path, "invalid json").unwrap();
 
         // This should NOT fail, it should return s1 and log a warning
-        let sessions = store.list_sessions(&ctx, &Query::all()).await.map(|page| page.items).unwrap();
+        let sessions = store.sessions.list(&ctx, &Query::all()).await.map(|page| page.items).unwrap();
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].id, s1.id);
     }

@@ -17,7 +17,7 @@ use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::StoredComponents;
 use crate::removal::Deletable;
 use crate::security::SecurityContext;
-use crate::session::{Session, SessionId};
+use crate::session::Session;
 use crate::template::SessionTemplate;
 use crate::user::{User, UserProfile};
 use crate::value::name::ScopedName;
@@ -25,7 +25,6 @@ use crate::workspace::Workspace;
 use crate::skill::Skill;
 use crate::group::Group;
 use crate::artifact::Artifact;
-use crate::session::SessionField;
 use crate::store::query::{NoField, Page, Query};
 
 
@@ -170,11 +169,9 @@ pub trait EntityStore<T: Deletable + Send + Sync + 'static>: Debug + Send + Sync
 
 /// The stores of the entities (issue 323), one per kind of the core,
 /// which the runtime is given and hands to the managers that keep each
-/// kind. Until every kind has its own, `entities` offers the others at
-/// once.
+/// kind.
 #[derive(Debug, Clone)]
 pub struct EntityStores {
-    pub entities: Arc<dyn Entities>,
     pub skills: Arc<dyn EntityStore<Skill>>,
     pub workspaces: Arc<dyn EntityStore<Workspace>>,
     pub artifacts: Arc<dyn EntityStore<Artifact>>,
@@ -185,64 +182,7 @@ pub struct EntityStores {
     pub users: Arc<dyn EntityStore<User>>,
     pub agents: Arc<dyn EntityStore<Agent>>,
     pub channels: Arc<dyn EntityStore<Channel>>,
-}
-
-/// Every kind's entities at once, as one store offered them before each
-/// kind had its own (issue 323): implemented over the stores of the kinds,
-/// and gone once every caller uses the store of its kind.
-///
-/// The durable entities (issue 93): every kind has the same five
-/// operations - `create`, `get`, `update`, `delete`, `list` - by id, and
-/// every one of them is checked the same way (`store::access`).
-/// `create` refuses an entity that exists (`Conflict`), `update` one that
-/// does not (`NotFound`); `delete` says whether there was one to delete.
-/// Some kinds are also found by name, among what the caller may read -
-/// `NotFound` if there is none: users by their username, an identity, and
-/// what lies in a scope - personalities, session templates, agents - by
-/// their `ScopedName`, the name in exactly that scope (issue 178). Finding
-/// one from a place, in the scopes around it, is `scope::find_by_name`
-/// over `list_x`.
-///
-/// What is `Scoped` - personalities, session templates, agents, channels,
-/// users, workspaces, skills, artifacts, groups - has a name unique of its kind in its scope (issue
-/// 250): `create`,
-/// `update` and `restore` refuse one that another has there (`NameTaken`),
-/// checked against every one of the kind that is not deleted, also those
-/// the caller may not read, in the same step as the write. Sessions have
-/// names, but no unique ones.
-///
-/// Deleting marks (issue 164): `delete_x` sets the mark - who, when - and
-/// keeps the document. What is marked is not there for any of the five:
-/// not read, not listed, not changed, not deleted again - also not for the
-/// system - and its id is not free for `create`. Nothing new or changed can
-/// carry the mark (`Validation`): only deleting sets it. What was deleted
-/// is reached by four operations of its own, each kind alike:
-/// `get_deleted_x` and `list_deleted_x` read it (`ReadDeleted`),
-/// `restore_x` takes the mark away (`Restore`) and returns what it
-/// restored, and `purge_x` removes what was deleted for good (`Purge`) -
-/// only what is marked, so that what is deleted is deleted first, and a
-/// purge never takes what was restored.
-#[async_trait]
-pub trait Entities : Debug + Sync + Send {
-
-
-
-    // Sessions
-    async fn create_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()>;
-    async fn get_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session>;
-    async fn update_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()>;
-    async fn delete_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool>;
-    async fn list_sessions(&self, ctx: &SecurityContext, query: &Query<SessionField>) -> StoreResult<Page<Session>>;
-    async fn restore_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session>;
-    async fn purge_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool>;
-    async fn get_deleted_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session>;
-    async fn list_deleted_sessions(&self, ctx: &SecurityContext, query: &Query<SessionField>) -> StoreResult<Page<Session>>;
-
-
-
-
-
-
+    pub sessions: Arc<dyn EntityStore<Session>>,
 }
 
 /// The preconfigured components: runtime configuration that personalities
@@ -296,6 +236,7 @@ pub trait StateStore : Debug + Sync + Send {
 
 #[cfg(test)]
 mod tests {
+    use crate::session::SessionId;
     use super::*;
     use crate::security::{SecurityAttributes, SecurityContext};
     use crate::store::memory::MemoryStore;
@@ -345,13 +286,13 @@ mod tests {
             security_attributes: SecurityAttributes::default(),
             deleted: None,
         };
-        let store = Arc::new(MemoryStore::new());
+        let store = Arc::new(MemoryStore::new()).entity_stores().sessions;
         let ctx = SecurityContext::default();
 
-        store.create_session(&ctx, &session1).await.unwrap();
-        store.create_session(&ctx, &session2).await.unwrap();
+        store.create(&ctx, &session1).await.unwrap();
+        store.create(&ctx, &session2).await.unwrap();
 
-        let sessions = store.list_sessions(&ctx, &Query::all()).await.map(|page| page.items).unwrap();
+        let sessions = store.list(&ctx, &Query::all()).await.map(|page| page.items).unwrap();
         assert_eq!(sessions.len(), 2);
         assert!(sessions.iter().any(|s| s.id == session1.id));
         assert!(sessions.iter().any(|s| s.id == session2.id));

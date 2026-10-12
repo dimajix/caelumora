@@ -1,15 +1,15 @@
 # Storage
 
 Caelumora keeps two kinds of data apart: long-lived **entities** - definitions and identities - in
-the `EntityStore`, and frequently changing runtime **state** in the `StateStore`; preconfigured
-components have a `ComponentStore` of their own. This document describes the stores, who writes
-what, and the controllers that hold the entities of a running session live. How access to stored
-entities is checked is in [SECURITY.md](SECURITY.md); which stores are used is configured in
-[CONFIGURATION.md](CONFIGURATION.md).
+the entity stores, one `EntityStore<T>` per kind, and frequently changing runtime **state** in the
+`StateStore`; preconfigured components have a `ComponentStore` of their own. This document
+describes the stores, who writes what, and the controllers that hold the entities of a running
+session live. How access to stored entities is checked is in [SECURITY.md](SECURITY.md); which
+stores are used is configured in [CONFIGURATION.md](CONFIGURATION.md).
 
 ## The entity store
 
-The `EntityStore` (in `caelumora-model`) stores the long-lived domain entities:
+The entity stores (`EntityStore<T>`, in `caelumora-model`) keep the long-lived domain entities:
 
 *   **Personalities**, the definitions of agents, and **session templates**, which sessions are
     made from.
@@ -35,7 +35,6 @@ the kind's lock for names. `MemoryStore` and `JsonFileStore` hold one of them pe
 runtime state, and hand them out as `EntityStores`, which the configuration makes
 (`create_entity_stores`) and the runtime is given: a store per kind. A manager is made with
 `&EntityStores` and keeps the stores of the kinds it uses as fields, as every service is held.
-Until every kind has moved, `EntityStores::entities` offers the others at once (`Entities`).
 
 Every stored type says what it is to its store (`Stored`): its kind, `Stored::KIND`, an
 `EntityKind` named by a string (`"skill"`) that is unique among the kinds; its id and the fields a
@@ -142,9 +141,9 @@ operations of its own, each with a permission of its own:
 
 | Operation | asks | does |
 |---|---|---|
-| `get_deleted_x`, `list_deleted_x` | `ReadDeleted` | read the marked documents; what is not marked is not found |
-| `restore_x` | `ReadDeleted`, then `Restore` | takes the mark away and returns the restored document |
-| `purge_x` | `ReadDeleted`, then `Purge` | removes the document for good - only if it is marked, also when it is removed |
+| `get_deleted`, `list_deleted` | `ReadDeleted` | read the marked documents; what is not marked is not found |
+| `restore` | `ReadDeleted`, then `Restore` | takes the mark away and returns the restored document |
+| `purge` | `ReadDeleted`, then `Purge` | removes the document for good - only if it is marked, also when it is removed |
 
 For what is classified - a channel, a workspace, a skill, an artifact -, every operation also asks
 whether the caller is cleared for it, the deleted alike (issue 322, see

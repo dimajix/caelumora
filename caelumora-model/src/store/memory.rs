@@ -6,11 +6,11 @@ use crate::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
 use crate::group::Group;
 use crate::removal::{Deletable, Removal, Stored};
 use crate::security::{ActionType, DummySecurityManager, SecurityContext, SecurityManager};
-use crate::session::{Session, SessionField, SessionId};
+use crate::session::Session;
 use crate::skill::Skill;
 use crate::store::access::{name_free, Access};
 use crate::store::query::{self, Filter, NoField, Page, Query};
-use crate::store::{ComponentStore, Entities, EntityStore, EntityStores, Journaled, StateStore, StoreError, StoreResult};
+use crate::store::{ComponentStore, EntityStore, EntityStores, Journaled, StateStore, StoreError, StoreResult};
 use crate::template::SessionTemplate;
 use crate::user::{User, UserProfile};
 use crate::value::name::ScopedName;
@@ -31,7 +31,7 @@ pub struct MemoryStore {
     personalities: Arc<MemoryEntityStore<Personality>>,
     session_templates: Arc<MemoryEntityStore<SessionTemplate>>,
     agents: Arc<MemoryEntityStore<Agent>>,
-    sessions: MemoryEntityStore<Session>,
+    sessions: Arc<MemoryEntityStore<Session>>,
     channels: Arc<MemoryEntityStore<Channel>>,
     users: Arc<MemoryEntityStore<User>>,
     user_profiles: Arc<MemoryEntityStore<UserProfile>>,
@@ -67,7 +67,7 @@ impl MemoryStore {
             personalities: Arc::new(MemoryEntityStore::new(&policies)),
             session_templates: Arc::new(MemoryEntityStore::new(&policies)),
             agents: Arc::new(MemoryEntityStore::new(&policies)),
-            sessions: MemoryEntityStore::new(&policies),
+            sessions: Arc::new(MemoryEntityStore::new(&policies)),
             channels: Arc::new(MemoryEntityStore::new(&policies)),
             users: Arc::new(MemoryEntityStore::new(&policies)),
             user_profiles: Arc::new(MemoryEntityStore::new(&policies)),
@@ -84,11 +84,9 @@ impl MemoryStore {
 }
 
 impl MemoryStore {
-    /// The store of every kind (issue 323): this store's, the kinds that
-    /// have one of their own as such.
+    /// The stores of the entities, one per kind (issue 323).
     pub fn entity_stores(self: &Arc<Self>) -> EntityStores {
         EntityStores {
-            entities: Arc::<Self>::clone(self),
             skills: Arc::<MemoryEntityStore<Skill>>::clone(&self.skills),
             workspaces: Arc::<MemoryEntityStore<Workspace>>::clone(&self.workspaces),
             artifacts: Arc::<MemoryEntityStore<Artifact>>::clone(&self.artifacts),
@@ -99,6 +97,7 @@ impl MemoryStore {
             users: Arc::<MemoryEntityStore<User>>::clone(&self.users),
             agents: Arc::<MemoryEntityStore<Agent>>::clone(&self.agents),
             channels: Arc::<MemoryEntityStore<Channel>>::clone(&self.channels),
+            sessions: Arc::<MemoryEntityStore<Session>>::clone(&self.sessions),
         }
     }
 }
@@ -279,37 +278,6 @@ impl<T: Deletable + Clone + Serialize + Send + Sync + 'static> EntityStore<T> fo
     }
 }
 
-#[async_trait]
-impl Entities for MemoryStore {
-    async fn create_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
-        self.sessions.create(ctx, value).await
-    }
-    async fn get_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session> {
-        self.sessions.get(ctx, id).await
-    }
-    async fn update_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
-        self.sessions.update(ctx, value).await
-    }
-    async fn delete_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool> {
-        self.sessions.delete(ctx, id).await
-    }
-    async fn list_sessions(&self, ctx: &SecurityContext, query: &Query<SessionField>) -> StoreResult<Page<Session>> {
-        self.sessions.list(ctx, query).await
-    }
-    async fn restore_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session> {
-        self.sessions.restore(ctx, id).await
-    }
-    async fn purge_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool> {
-        self.sessions.purge(ctx, id).await
-    }
-    async fn get_deleted_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session> {
-        self.sessions.get_deleted(ctx, id).await
-    }
-    async fn list_deleted_sessions(&self, ctx: &SecurityContext, query: &Query<SessionField>) -> StoreResult<Page<Session>> {
-        self.sessions.list_deleted(ctx, query).await
-    }
-}
-
 /// Preconfigured components, kept like the entities (issue 164).
 #[async_trait]
 impl ComponentStore for MemoryStore {
@@ -383,6 +351,7 @@ impl StateStore for MemoryStore {
 mod tests {
     use super::*;
     use crate::store::suite;
+    use crate::session::SessionId;
     use crate::user::UserId;
     use crate::confidentiality::ConfidentialityRules;
     use crate::security::OwnershipSecurityManager;

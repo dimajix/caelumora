@@ -350,7 +350,7 @@ mod tests {
         let names: Vec<String> = session.channels().iter().map(|c| c.name().to_string()).collect();
         assert_eq!(names, ["main", "side"], "in the order of the session");
 
-        let stored = runtime.entity_store().get_session(&ctx, session.id()).await.unwrap();
+        let stored = runtime.entity_stores().sessions.get(&ctx, session.id()).await.unwrap();
         assert!(stored.channels.contains(&channel.id()), "the session lists the channel");
         let document = runtime.entity_stores().channels.get(&ctx, channel.id()).await.expect("stored as a document of its own");
         assert_eq!(document.name, "side");
@@ -427,7 +427,7 @@ mod tests {
         assert!(matches!(refusal(session.create_channel(&ctx, ChannelSpec { components: two, ..spec("x", vec![]) }).await), SessionError::InvalidModerator(_)), "a channel has one policy");
 
         assert_eq!(session.channels().len(), 1);
-        assert_eq!(runtime.entity_store().get_session(&ctx, session.id()).await.unwrap().channels.len(), 1);
+        assert_eq!(runtime.entity_stores().sessions.get(&ctx, session.id()).await.unwrap().channels.len(), 1);
         manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
@@ -447,7 +447,7 @@ mod tests {
         session.delete_channel(&ctx, id).await.expect("the owner deletes it");
 
         assert!(session.channel_by_id(id).is_none());
-        assert!(!runtime.entity_store().get_session(&ctx, session.id()).await.unwrap().channels.contains(&id));
+        assert!(!runtime.entity_stores().sessions.get(&ctx, session.id()).await.unwrap().channels.contains(&id));
         assert!(runtime.entity_stores().channels.get(&ctx, id).await.is_err(), "not there");
         assert!(runtime.entity_stores().channels.get_deleted(&ctx, id).await.is_ok(), "but kept, marked (issue 164)");
         assert!(runtime.state_store().get_channel_state(id).await.is_ok(), "with its state");
@@ -466,7 +466,7 @@ mod tests {
         session.delete_channel(&ctx, taken.id()).await.unwrap();
         session.restore_channel(&ctx, id).await.expect("restored");
         assert!(session.channel_by_id(id).is_some());
-        assert!(runtime.entity_store().get_session(&ctx, session.id()).await.unwrap().channels.contains(&id), "listed again");
+        assert!(runtime.entity_stores().sessions.get(&ctx, session.id()).await.unwrap().channels.contains(&id), "listed again");
         assert!(drain(&mut rx).iter().any(|e| matches!(e, GlobalEvent::ChannelRestored(_, cid) if *cid == id)), "and announced");
         assert!(runtime.state_store().get_channel_state(id).await.is_ok());
         let again = session.restore_channel(&ctx, id).await.expect_err("not deleted");

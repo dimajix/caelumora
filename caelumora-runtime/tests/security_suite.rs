@@ -38,7 +38,7 @@ use caelumora_model::group::{Group, GroupId};
 use caelumora_model::security::{AclEntry, ActionType, Grant, OwnershipSecurityManager, Reclassified, SecurityAttributes, SecurityContext, SecurityManager, Subject};
 use caelumora_model::snapshot::{Detail, PublicationSnapshot};
 use caelumora_model::session::{ChannelId, Session, SessionId};
-use caelumora_model::store::{ComponentStore, Entities, StateStore, StoreError};
+use caelumora_model::store::{ComponentStore, StateStore, StoreError};
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId, TemplateError, WorkspaceTemplate};
 use caelumora_model::user::{User, UserId, UserProfile};
@@ -352,7 +352,7 @@ impl World {
         };
         // Each with the group of its participants, as the runtime stores them
         // (issue 286).
-        self.store.create_session(&Self::system(), &session).await.unwrap();
+        self.runtime.entity_stores().sessions.create(&Self::system(), &session).await.unwrap();
         self.runtime.entity_stores().groups.create(&Self::system(), &Group::of_session(&session)).await.unwrap();
         self.runtime.entity_stores().channels.create(&Self::system(), &channel).await.unwrap();
         self.runtime.entity_stores().groups.create(&Self::system(), &Group::of_channel(&channel)).await.unwrap();
@@ -2148,7 +2148,7 @@ async fn deleting_a_session_needs_owning_it() {
         "alice: DeleteSession(alice's) yes",
         "alice: GetAgent(bob's) no",
     ]), "asked by the session manager before it stops anything, again by the store, and for what lies in its scope");
-    assert!(world.store.get_session(&alice, session.id()).await.is_ok(), "the session is kept");
+    assert!(world.runtime.entity_stores().sessions.get(&alice, session.id()).await.is_ok(), "the session is kept");
     assert!(world.runtime.entity_stores().agents.get(&World::system(), bobs.id).await.is_ok(), "and bob's agent");
 
     world.runtime.agent_manager().delete(&World::as_user(world.bob), bobs.id).await.expect("his to delete");
@@ -3074,7 +3074,7 @@ async fn a_session_goes_with_what_lies_in_it_only_as_far_as_whoever_deletes_it_m
     let her_checks = checks(&["alice: GetArtifact(alice's) yes", "alice: JoinChannel(alice) yes", "alice: DeleteArtifact(alice's) yes"]);
     assert!(artifact_checks == [his_checks.clone(), her_checks.clone()].concat() || artifact_checks == [her_checks, his_checks].concat(),
         "asked in her name, who does not read bob's outside the channel: {artifact_checks:?}");
-    assert!(world.store.get_session(&alice, session_id).await.is_ok(), "the session is kept");
+    assert!(world.runtime.entity_stores().sessions.get(&alice, session_id).await.is_ok(), "the session is kept");
     assert!(world.manager.views(Viewer::new(alice.clone())).session(session_id).await.is_ok(), "and runs on");
     assert!(world.runtime.entity_stores().artifacts.get(&bob, his.id).await.is_ok(), "bob's artifact stays");
     let removal = world.runtime.entity_stores().artifacts.get_deleted(&World::system(), hers.id).await.unwrap().deleted.expect("hers went");

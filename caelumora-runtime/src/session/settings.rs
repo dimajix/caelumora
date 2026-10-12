@@ -137,7 +137,7 @@ mod tests {
 
         session.update_privacy(&as_user(alice.id), PrivacyConfig::SharedAudience).await.expect("the owner may");
         assert_eq!(session.privacy().policy, PrivacyConfig::SharedAudience);
-        let stored = runtime.entity_store().get_session(&SecurityContext::system(), session.id()).await.unwrap();
+        let stored = runtime.entity_stores().sessions.get(&SecurityContext::system(), session.id()).await.unwrap();
         assert_eq!(stored.privacy, PrivacyConfig::SharedAudience, "stored");
         assert!(drain(&mut events).iter().any(|e| matches!(e, GlobalEvent::SessionUpdated(id, SessionUpdateEvent::PrivacyChanged(PrivacyConfig::SharedAudience)) if *id == session.id())),
                 "announced");

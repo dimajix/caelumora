@@ -237,7 +237,7 @@ mod tests {
     use crate::security::{ActionType, SecurityAttributes, SecurityContext, SecurityManager, Subject, Verb};
     use crate::removal::Stored;
     use crate::session::{Session, SessionId};
-    use crate::store::{Entities, StoreError};
+    use crate::store::StoreError;
     use crate::store::query::{NoField, Query};
     use crate::store::memory::MemoryStore;
     use crate::user::UserId;
@@ -344,74 +344,74 @@ mod tests {
 
     #[tokio::test]
     async fn what_the_caller_may_not_read_does_not_exist_for_them() {
-        let store = MemoryStore::with_policies(Arc::new(OwnersAndContributors), Arc::new(ConfidentialityRules::default()));
+        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnersAndContributors), Arc::new(ConfidentialityRules::default()))).entity_stores().sessions;
         let (alice, alice_ctx) = user();
         let (bob, bob_ctx) = user();
         let (_, carol_ctx) = user();
         let hers = session(alice, vec![bob]);
-        store.create_session(&alice_ctx, &hers).await.unwrap();
+        store.create(&alice_ctx, &hers).await.unwrap();
 
-        assert!(store.get_session(&bob_ctx, hers.id).await.is_ok(), "a contributor reads it");
-        assert!(matches!(store.get_session(&carol_ctx, hers.id).await, Err(StoreError::NotFound { .. })), "not refused: absent");
-        assert_eq!(store.list_sessions(&carol_ctx, &Query::all()).await.map(|page| page.items).unwrap().len(), 0, "lists are filtered");
-        assert_eq!(store.list_sessions(&bob_ctx, &Query::all()).await.map(|page| page.items).unwrap().len(), 1);
+        assert!(store.get(&bob_ctx, hers.id).await.is_ok(), "a contributor reads it");
+        assert!(matches!(store.get(&carol_ctx, hers.id).await, Err(StoreError::NotFound { .. })), "not refused: absent");
+        assert_eq!(store.list(&carol_ctx, &Query::all()).await.map(|page| page.items).unwrap().len(), 0, "lists are filtered");
+        assert_eq!(store.list(&bob_ctx, &Query::all()).await.map(|page| page.items).unwrap().len(), 1);
     }
 
     #[tokio::test]
     async fn changes_are_checked_against_what_is_stored() {
-        let store = MemoryStore::with_policies(Arc::new(OwnersAndContributors), Arc::new(ConfidentialityRules::default()));
+        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnersAndContributors), Arc::new(ConfidentialityRules::default()))).entity_stores().sessions;
         let (alice, alice_ctx) = user();
         let (bob, bob_ctx) = user();
         let (carol, carol_ctx) = user();
         let hers = session(alice, vec![bob]);
-        store.create_session(&alice_ctx, &hers).await.unwrap();
+        store.create(&alice_ctx, &hers).await.unwrap();
 
         // Writing oneself in as owner does not make the change one's own.
         let mut forged = hers.clone();
         forged.security_attributes.owner_id = carol;
-        assert!(matches!(store.update_session(&carol_ctx, &forged).await, Err(StoreError::NotFound { .. })));
+        assert!(matches!(store.update(&carol_ctx, &forged).await, Err(StoreError::NotFound { .. })));
         let mut forged = hers.clone();
         forged.security_attributes.owner_id = bob;
-        assert!(matches!(store.update_session(&bob_ctx, &forged).await, Err(StoreError::PermissionDenied)), "a contributor may read, not change");
-        assert!(store.update_session(&alice_ctx, &hers).await.is_ok());
+        assert!(matches!(store.update(&bob_ctx, &forged).await, Err(StoreError::PermissionDenied)), "a contributor may read, not change");
+        assert!(store.update(&alice_ctx, &hers).await.is_ok());
 
-        assert!(!store.delete_session(&carol_ctx, hers.id).await.unwrap(), "nothing carol could see to delete");
-        assert!(matches!(store.delete_session(&bob_ctx, hers.id).await, Err(StoreError::PermissionDenied)));
-        assert!(store.delete_session(&alice_ctx, hers.id).await.unwrap());
+        assert!(!store.delete(&carol_ctx, hers.id).await.unwrap(), "nothing carol could see to delete");
+        assert!(matches!(store.delete(&bob_ctx, hers.id).await, Err(StoreError::PermissionDenied)));
+        assert!(store.delete(&alice_ctx, hers.id).await.unwrap());
     }
 
     #[tokio::test]
     async fn what_was_deleted_is_the_owners_to_read_and_restore_and_the_systems_to_purge() {
         use crate::security::OwnershipSecurityManager;
-        let store = MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()));
+        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()))).entity_stores().sessions;
         let (alice, alice_ctx) = user();
         let (bob, bob_ctx) = user();
         let hers = session(alice, vec![bob]);
-        store.create_session(&alice_ctx, &hers).await.unwrap();
-        assert!(store.delete_session(&alice_ctx, hers.id).await.unwrap());
-        assert_eq!(store.get_deleted_session(&alice_ctx, hers.id).await.unwrap().deleted.map(|d| d.by), Some(alice), "deleted by her");
+        store.create(&alice_ctx, &hers).await.unwrap();
+        assert!(store.delete(&alice_ctx, hers.id).await.unwrap());
+        assert_eq!(store.get_deleted(&alice_ctx, hers.id).await.unwrap().deleted.map(|d| d.by), Some(alice), "deleted by her");
 
-        let seen = store.get_deleted_session(&bob_ctx, hers.id).await;
+        let seen = store.get_deleted(&bob_ctx, hers.id).await;
         assert!(matches!(seen, Err(StoreError::NotFound { .. })), "a contributor does not see the trash: {seen:?}");
-        assert!(store.list_deleted_sessions(&bob_ctx, &Query::all()).await.map(|page| page.items).unwrap().is_empty());
-        let restored = store.restore_session(&bob_ctx, hers.id).await;
+        assert!(store.list_deleted(&bob_ctx, &Query::all()).await.map(|page| page.items).unwrap().is_empty());
+        let restored = store.restore(&bob_ctx, hers.id).await;
         assert!(matches!(restored, Err(StoreError::NotFound { .. })), "nor restores from it: {restored:?}");
-        assert!(!store.purge_session(&bob_ctx, hers.id).await.unwrap(), "nothing bob could see to purge");
+        assert!(!store.purge(&bob_ctx, hers.id).await.unwrap(), "nothing bob could see to purge");
 
-        let purged = store.purge_session(&alice_ctx, hers.id).await;
+        let purged = store.purge(&alice_ctx, hers.id).await;
         assert!(matches!(purged, Err(StoreError::PermissionDenied)), "the owner does not purge: {purged:?}");
-        assert_eq!(store.list_deleted_sessions(&alice_ctx, &Query::all()).await.map(|page| page.items).unwrap().len(), 1, "the owner sees her trash");
-        store.restore_session(&alice_ctx, hers.id).await.expect("and restores from it");
-        assert!(store.delete_session(&alice_ctx, hers.id).await.unwrap());
-        assert!(store.purge_session(&SecurityContext::system(), hers.id).await.unwrap(), "the system purges");
+        assert_eq!(store.list_deleted(&alice_ctx, &Query::all()).await.map(|page| page.items).unwrap().len(), 1, "the owner sees her trash");
+        store.restore(&alice_ctx, hers.id).await.expect("and restores from it");
+        assert!(store.delete(&alice_ctx, hers.id).await.unwrap());
+        assert!(store.purge(&SecurityContext::system(), hers.id).await.unwrap(), "the system purges");
     }
 
     #[tokio::test]
     async fn nobody_creates_in_someone_elses_name() {
-        let store = MemoryStore::with_policies(Arc::new(OwnersAndContributors), Arc::new(ConfidentialityRules::default()));
+        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnersAndContributors), Arc::new(ConfidentialityRules::default()))).entity_stores().sessions;
         let (alice, _) = user();
         let (_, bob_ctx) = user();
-        assert!(matches!(store.create_session(&bob_ctx, &session(alice, Vec::new())).await, Err(StoreError::PermissionDenied)));
+        assert!(matches!(store.create(&bob_ctx, &session(alice, Vec::new())).await, Err(StoreError::PermissionDenied)));
     }
 
     #[tokio::test]

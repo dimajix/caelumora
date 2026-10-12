@@ -224,7 +224,6 @@ fn component() -> StoredComponents {
 /// an element of a collection in that -, in the order of their ids, in pages
 /// of its limit, each going on after the cursor the one before handed out.
 pub(crate) async fn queries_behave(stores: &EntityStores) {
-    let store = stores.entities.as_ref();
     use crate::security::{AclEntry, Grant, Subject};
     let ctx = SecurityContext::system();
     let (alice, bob) = (UserId::new(), UserId::new());
@@ -308,10 +307,10 @@ pub(crate) async fn queries_behave(stores: &EntityStores) {
     let mut with_agent = self::session();
     with_agent.participants.push(Participant::Agent(agent));
     let without = self::session();
-    store.create_session(&ctx, &with_agent).await.unwrap();
-    store.create_session(&ctx, &without).await.unwrap();
+    stores.sessions.create(&ctx, &with_agent).await.unwrap();
+    stores.sessions.create(&ctx, &without).await.unwrap();
     let taking_part = Filter::any(SessionField::Participants, Filter::eq(SessionField::Participant, ActorId::Agent(agent)));
-    let found = store.list_sessions(&ctx, &Query::filtered(taking_part)).await.unwrap();
+    let found = stores.sessions.list(&ctx, &Query::filtered(taking_part)).await.unwrap();
     assert_eq!(found.items.iter().map(|s| s.id).collect::<Vec<_>>(), [with_agent.id], "a participant, the whole element");
 
     let of_it = Channel { session_id: with_agent.id, ..self::channel() };
@@ -373,15 +372,14 @@ fn component_id(value: &StoredComponents) -> &str {
 /// Every kind of entity goes through the same life; users are also found
 /// by name, and so are definitions in their scope.
 pub(crate) async fn entity_store_behaves(stores: &EntityStores) {
-    let store = stores.entities.as_ref();
     lifecycle!(stores.personalities.as_ref(), personality(), |v: &Personality| v.id, name.name, "personality",
         create, get, update, delete, list);
     lifecycle!(stores.session_templates.as_ref(), session_template(), |v: &SessionTemplate| v.id, name.name, "session_template",
         create, get, update, delete, list);
     lifecycle!(stores.agents.as_ref(), Agent::new(scoped("assistant-1"), &personality(), ActorId::None), |v: &Agent| v.id, name.name, "agent",
         create, get, update, delete, list);
-    lifecycle!(store, session(), |v: &Session| v.id, name, "session",
-        create_session, get_session, update_session, delete_session, list_sessions);
+    lifecycle!(stores.sessions.as_ref(), session(), |v: &Session| v.id, name, "session",
+        create, get, update, delete, list);
     lifecycle!(stores.channels.as_ref(), channel(), |v: &Channel| v.id, name, "channel",
         create, get, update, delete, list);
     lifecycle!(stores.users.as_ref(), user("alice"), |v: &User| v.id, username, "user",
@@ -479,7 +477,6 @@ macro_rules! unique_by_name {
 /// Names are unique per kind in their name space (issue 250), for every
 /// kind that is `Scoped`.
 pub(crate) async fn names_are_unique(stores: &EntityStores) {
-    let store = stores.entities.as_ref();
     let user_id = UserId::new();
     let in_scope = |name: &str, scope: &Scope| ScopedName::new(name, scope.clone()).unwrap();
     let (global, users) = (Scope::GlobalScope, Scope::UserScope { user_id });
@@ -529,8 +526,8 @@ pub(crate) async fn names_are_unique(stores: &EntityStores) {
     assert!(matches!(moved, Err(StoreError::NameTaken { entity: "agent" })), "nor moved where its name is taken: {moved:?}");
 
     // Sessions have names, but no unique ones.
-    store.create_session(&ctx, &session()).await.expect("create");
-    store.create_session(&ctx, &session()).await.expect("a second session of the same name");
+    stores.sessions.create(&ctx, &session()).await.expect("create");
+    stores.sessions.create(&ctx, &session()).await.expect("a second session of the same name");
 }
 
 /// A name is taken also by what the caller may not read (issue 250): the
@@ -613,53 +610,52 @@ fn marked<T: Deletable>(mut value: T) -> T {
 /// nothing created or changed may carry the mark. What was deleted is
 /// read, restored and purged by operations of its own.
 pub(crate) async fn deleting_marks(stores: &EntityStores) {
-    let store = stores.entities.as_ref();
     let system = SecurityContext::system();
     let kept = session();
-    store.create_session(&system, &kept).await.expect("create");
+    stores.sessions.create(&system, &kept).await.expect("create");
     let gone = session();
-    store.create_session(&system, &gone).await.expect("create");
-    assert!(store.delete_session(&system, gone.id).await.expect("delete"));
+    stores.sessions.create(&system, &gone).await.expect("create");
+    assert!(stores.sessions.delete(&system, gone.id).await.expect("delete"));
 
-    let read = store.get_session(&system, gone.id).await;
+    let read = stores.sessions.get(&system, gone.id).await;
     assert!(matches!(read, Err(StoreError::NotFound { entity: "session", .. })), "not read, not even by the system: {read:?}");
-    let listed = store.list_sessions(&system, &Query::all()).await.map(|page| page.items).expect("list");
+    let listed = stores.sessions.list(&system, &Query::all()).await.map(|page| page.items).expect("list");
     assert_eq!(listed.iter().map(|s| s.id).collect::<Vec<_>>(), [kept.id], "not listed");
-    let changed = store.update_session(&system, &gone).await;
+    let changed = stores.sessions.update(&system, &gone).await;
     assert!(matches!(changed, Err(StoreError::NotFound { .. })), "not changed: {changed:?}");
-    assert!(!store.delete_session(&system, gone.id).await.expect("delete"), "not deleted again");
-    let again = store.create_session(&system, &gone).await;
+    assert!(!stores.sessions.delete(&system, gone.id).await.expect("delete"), "not deleted again");
+    let again = stores.sessions.create(&system, &gone).await;
     assert!(matches!(again, Err(StoreError::Conflict(_))), "its id stays taken: {again:?}");
 
-    let created = store.create_session(&system, &marked(session())).await;
+    let created = stores.sessions.create(&system, &marked(session())).await;
     assert!(matches!(created, Err(StoreError::Validation(_))), "nothing is created marked: {created:?}");
-    let changed = store.update_session(&system, &marked(kept.clone())).await;
+    let changed = stores.sessions.update(&system, &marked(kept.clone())).await;
     assert!(matches!(changed, Err(StoreError::Validation(_))), "nor changed to be: {changed:?}");
 
     // The trash.
-    let deleted = store.get_deleted_session(&system, gone.id).await.expect("read as deleted");
+    let deleted = stores.sessions.get_deleted(&system, gone.id).await.expect("read as deleted");
     let mark = deleted.deleted.expect("marked");
     assert_eq!(mark.by, system.caller_id, "by whom");
-    let trash = store.list_deleted_sessions(&system, &Query::all()).await.map(|page| page.items).expect("list deleted");
+    let trash = stores.sessions.list_deleted(&system, &Query::all()).await.map(|page| page.items).expect("list deleted");
     assert_eq!(trash.iter().map(|s| s.id).collect::<Vec<_>>(), [gone.id], "only what was deleted");
-    let not_deleted = store.get_deleted_session(&system, kept.id).await;
+    let not_deleted = stores.sessions.get_deleted(&system, kept.id).await;
     assert!(matches!(not_deleted, Err(StoreError::NotFound { .. })), "what is there is not in the trash: {not_deleted:?}");
 
     // Restored: there again, as it was.
-    let restored = store.restore_session(&system, gone.id).await.expect("restore");
+    let restored = stores.sessions.restore(&system, gone.id).await.expect("restore");
     assert!(restored.deleted.is_none(), "returned without the mark");
-    assert!(store.get_session(&system, gone.id).await.expect("there again").deleted.is_none());
-    let again = store.restore_session(&system, gone.id).await;
+    assert!(stores.sessions.get(&system, gone.id).await.expect("there again").deleted.is_none());
+    let again = stores.sessions.restore(&system, gone.id).await;
     assert!(matches!(again, Err(StoreError::NotFound { .. })), "only what was deleted is restored: {again:?}");
 
     // Purged: only what was deleted, gone for good, and its id free again.
-    assert!(!store.purge_session(&system, gone.id).await.expect("purge restored"), "what is not marked is not purged");
-    assert!(store.get_session(&system, gone.id).await.is_ok(), "and stays");
-    assert!(store.delete_session(&system, gone.id).await.expect("delete"));
-    assert!(store.purge_session(&system, gone.id).await.expect("purge marked"));
-    assert!(!store.purge_session(&system, gone.id).await.expect("purge again"), "nothing left");
-    assert!(store.list_deleted_sessions(&system, &Query::all()).await.map(|page| page.items).expect("list deleted").is_empty());
-    store.create_session(&system, &gone).await.expect("its id is free again");
+    assert!(!stores.sessions.purge(&system, gone.id).await.expect("purge restored"), "what is not marked is not purged");
+    assert!(stores.sessions.get(&system, gone.id).await.is_ok(), "and stays");
+    assert!(stores.sessions.delete(&system, gone.id).await.expect("delete"));
+    assert!(stores.sessions.purge(&system, gone.id).await.expect("purge marked"));
+    assert!(!stores.sessions.purge(&system, gone.id).await.expect("purge again"), "nothing left");
+    assert!(stores.sessions.list_deleted(&system, &Query::all()).await.map(|page| page.items).expect("list deleted").is_empty());
+    stores.sessions.create(&system, &gone).await.expect("its id is free again");
 
     let carol = user("carol");
     stores.users.create(&system, &carol).await.expect("create user");
