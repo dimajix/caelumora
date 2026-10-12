@@ -4,6 +4,7 @@ use crate::channel::ChannelId;
 use crate::command::Command;
 use crate::group::GroupId;
 use crate::role::RoleId;
+use crate::skill;
 use crate::store::EntityKind;
 use crate::store::query::FieldValue;
 use crate::tool::ToolCall;
@@ -14,27 +15,39 @@ use std::sync::Arc;
 
 /// Everything the `SecurityManager` is asked about.
 ///
-/// An action on a stored entity carries that entity's `SecurityAttributes`,
-/// so that a policy can decide by its owner and its access list (issues 11,
-/// 23) without being handed the entity itself: `Get`, `Update` and `Delete` carry the
+/// What is done with a stored entity is asked alike for every kind (issue
+/// 323): `Entity`, by the kind, a `Verb` and the entity's
+/// `SecurityAttributes`, so that a policy can decide by its owner and its
+/// access list (issues 11, 23) without being handed the entity itself, and
+/// a new kind brings no new action. `Get`, `Update` and `Delete` carry the
 /// attributes as stored - never those of a new value, which the caller
-/// controls - and `Create` those of the entity to be created. `Find` and
-/// `List` ask whether the caller may search at all; the result is then
-/// filtered with `Get` for every entity in it.
+/// controls - and `Create` those of the entity to be created. `List` asks
+/// whether the caller may search at all; the result is then filtered with
+/// `Get` for every entity in it. The other variants are acts of the core
+/// that concern no single stored entity alone.
 #[derive(Debug, Clone, Copy)]
 pub enum ActionType<'a> {
-    GetPersonality(&'a SecurityAttributes),
-    ListPersonalities,
-    CreatePersonality(&'a SecurityAttributes),
-    UpdatePersonality(&'a SecurityAttributes),
-    DeletePersonality(&'a SecurityAttributes),
-    GetSessionTemplate(&'a SecurityAttributes),
-    ListSessionTemplates,
-    CreateSessionTemplate(&'a SecurityAttributes),
-    UpdateSessionTemplate(&'a SecurityAttributes),
-    DeleteSessionTemplate(&'a SecurityAttributes),
-    CreateAgent(&'a SecurityAttributes),
-    GetAgent(&'a SecurityAttributes),
+    /// Doing `verb` with an entity of `kind` that has `attributes`. What
+    /// reading covers differs by kind:
+    ///
+    /// - a workspace (issue 253): the document and its files - listing,
+    ///   downloading, the tools that only read (what its access list grants
+    ///   `Read`); an agent using it through a channel is bounded by the
+    ///   channel besides. Its files are changed by `WRITE`.
+    /// - a skill (issue 22): its name, description and body; loading it into
+    ///   a turn is `skill::USE`, apart from reading it.
+    /// - an artifact (issue 271): the artifact, or a version's content with
+    ///   what reads that version - the artifact's attributes with the
+    ///   version's own list (`Artifact::version_attributes`); adding a
+    ///   version is `WRITE`.
+    /// - a group (issue 286): who belongs to it, granted to its owner and,
+    ///   by its own access list, to its members. The participants of a
+    ///   session or channel are changed only by the runtime.
+    /// - a user: receiving the events about them; a stored user belongs to
+    ///   the system (issue 94). A profile belongs to its user (issue 176).
+    Entity { kind: EntityKind, verb: Verb, attributes: &'a SecurityAttributes },
+    /// Listing the entities of a kind.
+    List(EntityKind),
     /// Reading what an agent's model saw when it produced a message - its
     /// system prompt, internal messages and tool results included (issue
     /// 06). Carries the agent's attributes.
@@ -53,95 +66,9 @@ pub enum ActionType<'a> {
     /// answer that counts for the approval it was asked for. Carries the
     /// agent's attributes and those of the channel the call is made in.
     ApproveToolCall { agent: &'a SecurityAttributes, channel: &'a SecurityAttributes },
-    ListAgents,
-    UpdateAgent(&'a SecurityAttributes),
-    DeleteAgent(&'a SecurityAttributes),
-    CreateSession(&'a SecurityAttributes),
-    GetSession(&'a SecurityAttributes),
-    UpdateSession(&'a SecurityAttributes),
-    DeleteSession(&'a SecurityAttributes),
     /// Stopping a running session - all its channels and actors - without
     /// deleting it, carrying its attributes. It stops for everybody in it.
     StopSession(&'a SecurityAttributes),
-    ListSessions,
-    /// Reading a channel, carrying its attributes (issue 70).
-    GetChannel(&'a SecurityAttributes),
-    ListChannels,
-    /// Creating a channel, with the attributes of the new channel.
-    CreateChannel(&'a SecurityAttributes),
-    /// Changing a channel - its name, its participants - with its attributes
-    /// as stored.
-    UpdateChannel(&'a SecurityAttributes),
-    /// Deleting a channel, with its attributes as stored.
-    DeleteChannel(&'a SecurityAttributes),
-    /// Reading a user, e.g. receiving the events about them. A stored user
-    /// belongs to the system (issue 94): see `User`'s `Secured`.
-    GetUser(&'a SecurityAttributes),
-    ListUsers,
-    CreateUser(&'a SecurityAttributes),
-    UpdateUser(&'a SecurityAttributes),
-    DeleteUser(&'a SecurityAttributes),
-    /// Reading a user's profile (issue 176), carrying its attributes. A
-    /// profile belongs to its user: see `UserProfile`'s `Secured`.
-    GetUserProfile(&'a SecurityAttributes),
-    ListUserProfiles,
-    CreateUserProfile(&'a SecurityAttributes),
-    UpdateUserProfile(&'a SecurityAttributes),
-    DeleteUserProfile(&'a SecurityAttributes),
-    /// Reading a workspace (issue 253), carrying its attributes: the
-    /// document, and its files - listing, downloading, the tools that only
-    /// read (issue 23: what its access list grants `Read`). An agent using
-    /// it through a channel is bounded by the channel besides.
-    GetWorkspace(&'a SecurityAttributes),
-    /// Changing the files of a workspace (issue 23), carrying its
-    /// attributes: uploading, deleting, the tools that write, a command in
-    /// its shell - what its access list grants `Write`.
-    WriteWorkspace(&'a SecurityAttributes),
-    ListWorkspaces,
-    CreateWorkspace(&'a SecurityAttributes),
-    /// Changing a workspace - its name, description, classification - with
-    /// its attributes as stored.
-    UpdateWorkspace(&'a SecurityAttributes),
-    DeleteWorkspace(&'a SecurityAttributes),
-    /// Reading a skill (issue 22): its name, description and body - in the
-    /// list of skills, on its own, to change it.
-    GetSkill(&'a SecurityAttributes),
-    ListSkills,
-    CreateSkill(&'a SecurityAttributes),
-    /// Changing a skill - its name, description, body, classification - with
-    /// its attributes as stored.
-    UpdateSkill(&'a SecurityAttributes),
-    DeleteSkill(&'a SecurityAttributes),
-    /// Loading a skill into a turn (issue 22): what the agent then follows,
-    /// asked in the turn's context - the agent for its owner, whoever asked
-    /// as initiator. Apart from reading, so that a policy can let a skill be
-    /// read but not used, or the other way round; whether its classification
-    /// may flow into the channel is asked besides (`may_publish`).
-    UseSkill(&'a SecurityAttributes),
-    /// Reading an artifact (issue 271), carrying its attributes - or a
-    /// version's content, carrying what reads that version: the artifact's
-    /// attributes with the version's own list (issue 23,
-    /// `Artifact::version_attributes`).
-    GetArtifact(&'a SecurityAttributes),
-    /// Adding a version to an artifact (issue 23): what its list grants
-    /// `Write`.
-    WriteArtifact(&'a SecurityAttributes),
-    ListArtifacts,
-    CreateArtifact(&'a SecurityAttributes),
-    /// Changing an artifact - a version added, its description, the scope
-    /// it is kept in - with its attributes as stored.
-    UpdateArtifact(&'a SecurityAttributes),
-    DeleteArtifact(&'a SecurityAttributes),
-    /// Reading a group (issue 286): who belongs to it. Granted to its owner
-    /// and, by its own access list, to its members.
-    GetGroup(&'a SecurityAttributes),
-    ListGroups,
-    CreateGroup(&'a SecurityAttributes),
-    /// Changing a group - its name, its members - with its attributes as
-    /// stored. The participants of a session or channel are changed only
-    /// by that, in the runtime's name.
-    UpdateGroup(&'a SecurityAttributes),
-    DeleteGroup(&'a SecurityAttributes),
     /// Ending the current turn of every agent in a channel, carrying the
     /// channel's attributes.
     CancelChannel(&'a SecurityAttributes),
@@ -189,92 +116,68 @@ pub enum ActionType<'a> {
     ExecuteAgentCommand { command: &'a Command, agent: &'a SecurityAttributes, channel: &'a SecurityAttributes },
     CallTool(&'a ToolCall),
     ReadSecret(&'a str),
-    GetComponents(&'a SecurityAttributes),
-    ListComponents,
-    CreateComponents(&'a SecurityAttributes),
-    UpdateComponents(&'a SecurityAttributes),
-    DeleteComponents(&'a SecurityAttributes),
-    /// Reading what was deleted of a kind - marked, not purged (issue 164):
-    /// one entity, carrying its stored attributes, or for each entity of a
-    /// listing. The trash.
-    ReadDeleted(EntityKind, &'a SecurityAttributes),
-    /// Taking the mark of a deletion away (issue 164).
-    Restore(EntityKind, &'a SecurityAttributes),
-    /// Removing an entity for good, marked or not, with what belongs to it
-    /// (issue 164) - an administrator's act, or a retention policy's (issue
-    /// 07).
-    Purge(EntityKind, &'a SecurityAttributes),
 }
 
-impl ActionType<'_> {
+impl<'a> ActionType<'a> {
+    /// Doing `verb` with an entity of `kind` that has `attributes`.
+    pub const fn entity(kind: EntityKind, verb: Verb, attributes: &'a SecurityAttributes) -> Self {
+        ActionType::Entity { kind, verb, attributes }
+    }
+
+    /// Reading an entity of `kind` that has `attributes`.
+    pub const fn get(kind: EntityKind, attributes: &'a SecurityAttributes) -> Self {
+        Self::entity(kind, Verb::Get, attributes)
+    }
+
+    /// Creating an entity of `kind` that is to have `attributes`.
+    pub const fn create(kind: EntityKind, attributes: &'a SecurityAttributes) -> Self {
+        Self::entity(kind, Verb::Create, attributes)
+    }
+
+    /// Changing an entity of `kind` that has `attributes` as stored.
+    pub const fn update(kind: EntityKind, attributes: &'a SecurityAttributes) -> Self {
+        Self::entity(kind, Verb::Update, attributes)
+    }
+
+    /// Deleting an entity of `kind` that has `attributes` as stored.
+    pub const fn delete(kind: EntityKind, attributes: &'a SecurityAttributes) -> Self {
+        Self::entity(kind, Verb::Delete, attributes)
+    }
+
+    /// Reading a deleted entity of `kind` that has `attributes`.
+    pub const fn read_deleted(kind: EntityKind, attributes: &'a SecurityAttributes) -> Self {
+        Self::entity(kind, Verb::ReadDeleted, attributes)
+    }
+
+    /// Restoring a deleted entity of `kind` that has `attributes`.
+    pub const fn restore(kind: EntityKind, attributes: &'a SecurityAttributes) -> Self {
+        Self::entity(kind, Verb::Restore, attributes)
+    }
+
+    /// Purging an entity of `kind` that has `attributes`.
+    pub const fn purge(kind: EntityKind, attributes: &'a SecurityAttributes) -> Self {
+        Self::entity(kind, Verb::Purge, attributes)
+    }
+
+    /// Doing a kind's own `verb` with an entity of `kind` that has
+    /// `attributes`, such as using a skill (`skill::USE`).
+    pub const fn custom(kind: EntityKind, verb: &'static CustomVerb, attributes: &'a SecurityAttributes) -> Self {
+        Self::entity(kind, Verb::Custom(verb), attributes)
+    }
+
     /// The action for the log: its kind and what identifies what it is
-    /// about, never content - a tool call by its function, not its
+    /// about, never content - an act on an entity by its verb and kind
+    /// (`GetSession`, `UseSkill`), a tool call by its function, not its
     /// arguments; a secret by its name, not its value.
     pub fn describe(&self) -> String {
         match self {
-            ActionType::GetPersonality(_) => "GetPersonality".into(),
-            ActionType::ListPersonalities => "ListPersonalities".into(),
-            ActionType::CreatePersonality(_) => "CreatePersonality".into(),
-            ActionType::UpdatePersonality(_) => "UpdatePersonality".into(),
-            ActionType::DeletePersonality(_) => "DeletePersonality".into(),
-            ActionType::GetSessionTemplate(_) => "GetSessionTemplate".into(),
-            ActionType::ListSessionTemplates => "ListSessionTemplates".into(),
-            ActionType::CreateSessionTemplate(_) => "CreateSessionTemplate".into(),
-            ActionType::UpdateSessionTemplate(_) => "UpdateSessionTemplate".into(),
-            ActionType::DeleteSessionTemplate(_) => "DeleteSessionTemplate".into(),
-            ActionType::CreateAgent(_) => "CreateAgent".into(),
-            ActionType::GetAgent(_) => "GetAgent".into(),
+            ActionType::Entity { kind, verb, .. } => format!("{}{}", verb.name(), kind.title()),
+            ActionType::List(kind) => format!("List({kind})"),
             ActionType::ReadAgentContext(_) => "ReadAgentContext".into(),
             ActionType::ReadAgentTools { .. } => "ReadAgentTools".into(),
             ActionType::ReadAgentComponents(_) => "ReadAgentComponents".into(),
             ActionType::ApproveToolCall { .. } => "ApproveToolCall".into(),
-            ActionType::ListAgents => "ListAgents".into(),
-            ActionType::UpdateAgent(_) => "UpdateAgent".into(),
-            ActionType::DeleteAgent(_) => "DeleteAgent".into(),
-            ActionType::CreateSession(_) => "CreateSession".into(),
-            ActionType::GetSession(_) => "GetSession".into(),
-            ActionType::UpdateSession(_) => "UpdateSession".into(),
-            ActionType::DeleteSession(_) => "DeleteSession".into(),
             ActionType::StopSession(_) => "StopSession".into(),
-            ActionType::ListSessions => "ListSessions".into(),
-            ActionType::GetChannel(_) => "GetChannel".into(),
-            ActionType::ListChannels => "ListChannels".into(),
-            ActionType::CreateChannel(_) => "CreateChannel".into(),
-            ActionType::UpdateChannel(_) => "UpdateChannel".into(),
-            ActionType::DeleteChannel(_) => "DeleteChannel".into(),
-            ActionType::GetUser(_) => "GetUser".into(),
-            ActionType::ListUsers => "ListUsers".into(),
-            ActionType::CreateUser(_) => "CreateUser".into(),
-            ActionType::UpdateUser(_) => "UpdateUser".into(),
-            ActionType::DeleteUser(_) => "DeleteUser".into(),
-            ActionType::GetUserProfile(_) => "GetUserProfile".into(),
-            ActionType::ListUserProfiles => "ListUserProfiles".into(),
-            ActionType::CreateUserProfile(_) => "CreateUserProfile".into(),
-            ActionType::UpdateUserProfile(_) => "UpdateUserProfile".into(),
-            ActionType::DeleteUserProfile(_) => "DeleteUserProfile".into(),
-            ActionType::GetWorkspace(_) => "GetWorkspace".into(),
-            ActionType::WriteWorkspace(_) => "WriteWorkspace".into(),
-            ActionType::ListWorkspaces => "ListWorkspaces".into(),
-            ActionType::CreateWorkspace(_) => "CreateWorkspace".into(),
-            ActionType::UpdateWorkspace(_) => "UpdateWorkspace".into(),
-            ActionType::DeleteWorkspace(_) => "DeleteWorkspace".into(),
-            ActionType::GetSkill(_) => "GetSkill".into(),
-            ActionType::ListSkills => "ListSkills".into(),
-            ActionType::CreateSkill(_) => "CreateSkill".into(),
-            ActionType::UpdateSkill(_) => "UpdateSkill".into(),
-            ActionType::DeleteSkill(_) => "DeleteSkill".into(),
-            ActionType::UseSkill(_) => "UseSkill".into(),
-            ActionType::GetArtifact(_) => "GetArtifact".into(),
-            ActionType::WriteArtifact(_) => "WriteArtifact".into(),
-            ActionType::ListArtifacts => "ListArtifacts".into(),
-            ActionType::CreateArtifact(_) => "CreateArtifact".into(),
-            ActionType::UpdateArtifact(_) => "UpdateArtifact".into(),
-            ActionType::DeleteArtifact(_) => "DeleteArtifact".into(),
-            ActionType::GetGroup(_) => "GetGroup".into(),
-            ActionType::ListGroups => "ListGroups".into(),
-            ActionType::CreateGroup(_) => "CreateGroup".into(),
-            ActionType::UpdateGroup(_) => "UpdateGroup".into(),
-            ActionType::DeleteGroup(_) => "DeleteGroup".into(),
             ActionType::CancelChannel(_) => "CancelChannel".into(),
             ActionType::WakeChannel(_) => "WakeChannel".into(),
             ActionType::RetryMessage(_) => "RetryMessage".into(),
@@ -288,17 +191,72 @@ impl ActionType<'_> {
             ActionType::ExecuteAgentCommand { command, .. } => format!("ExecuteAgentCommand(/{})", command.name),
             ActionType::CallTool(call) => format!("CallTool({})", call.function_name),
             ActionType::ReadSecret(key) => format!("ReadSecret({key})"),
-            ActionType::GetComponents(_) => "GetComponents".into(),
-            ActionType::ListComponents => "ListComponents".into(),
-            ActionType::CreateComponents(_) => "CreateComponents".into(),
-            ActionType::UpdateComponents(_) => "UpdateComponents".into(),
-            ActionType::DeleteComponents(_) => "DeleteComponents".into(),
-            ActionType::ReadDeleted(kind, _) => format!("ReadDeleted({kind})"),
-            ActionType::Restore(kind, _) => format!("Restore({kind})"),
-            ActionType::Purge(kind, _) => format!("Purge({kind})"),
         }
     }
 }
+
+/// What is done with a stored entity (`ActionType::Entity`, issue 323):
+/// the verbs every kind has, and those a kind brings of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verb {
+    Get,
+    Create,
+    Update,
+    Delete,
+    /// Reading what was deleted - marked, not purged (issue 164): one
+    /// entity, or each of a listing. The trash.
+    ReadDeleted,
+    /// Taking the mark of a deletion away (issue 164).
+    Restore,
+    /// Removing an entity for good, marked or not, with what belongs to it
+    /// (issue 164) - an administrator's act, or a retention policy's (issue
+    /// 07).
+    Purge,
+    /// A verb of one kind or a few, decided by what it requires.
+    Custom(&'static CustomVerb),
+}
+
+impl Verb {
+    /// Its name, as `describe` gives it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Verb::Get => "Get",
+            Verb::Create => "Create",
+            Verb::Update => "Update",
+            Verb::Delete => "Delete",
+            Verb::ReadDeleted => "ReadDeleted",
+            Verb::Restore => "Restore",
+            Verb::Purge => "Purge",
+            Verb::Custom(custom) => custom.name,
+        }
+    }
+}
+
+/// A verb a kind brings beside those every kind has (issue 323), such as
+/// using a skill or writing a workspace's files. A policy decides it by
+/// what it `requires`, which names a right the policy knows: a verb can be
+/// mapped onto a right, never invent one. A policy that decides one verb of
+/// one kind otherwise tells it by its kind and `name`.
+#[derive(Debug, PartialEq, Eq)]
+pub struct CustomVerb {
+    /// Its name, unique among the verbs of a kind.
+    pub name: &'static str,
+    pub requires: Requirement,
+}
+
+/// What a `CustomVerb` requires of the one who does it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Requirement {
+    /// What an entry of the access list grants, or owning the entity.
+    Grant(Grant),
+    /// Owning the entity.
+    Owner,
+}
+
+/// Changing the content of what is stored, beside reading it (issue 23):
+/// a workspace's files, an artifact's versions - what an access list
+/// grants `Write`.
+pub const WRITE: CustomVerb = CustomVerb { name: "Write", requires: Requirement::Grant(Grant::Write) };
 
 /// What is reclassified (`ActionType::Reclassify`, issue 133), with who it
 /// belongs to.
@@ -654,43 +612,43 @@ pub trait AccessQuestions {
 #[async_trait]
 impl<T: SecurityManager + ?Sized> AccessQuestions for T {
     async fn may_read_session(&self, context: &SecurityContext, session: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::GetSession(session)).await
+        self.check(context, ActionType::get(EntityKind::Session, session)).await
     }
 
     async fn may_read_channel(&self, context: &SecurityContext, channel: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::GetChannel(channel)).await
+        self.check(context, ActionType::get(EntityKind::Channel, channel)).await
     }
 
     async fn may_change_channel(&self, context: &SecurityContext, channel: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::UpdateChannel(channel)).await
+        self.check(context, ActionType::update(EntityKind::Channel, channel)).await
     }
 
     async fn may_change_session(&self, context: &SecurityContext, session: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::UpdateSession(session)).await
+        self.check(context, ActionType::update(EntityKind::Session, session)).await
     }
 
     async fn may_change_workspace(&self, context: &SecurityContext, workspace: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::UpdateWorkspace(workspace)).await
+        self.check(context, ActionType::update(EntityKind::Workspace, workspace)).await
     }
 
     async fn may_write_workspace(&self, context: &SecurityContext, workspace: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::WriteWorkspace(workspace)).await
+        self.check(context, ActionType::custom(EntityKind::Workspace, &WRITE, workspace)).await
     }
 
     async fn may_read_workspace(&self, context: &SecurityContext, workspace: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::GetWorkspace(workspace)).await
+        self.check(context, ActionType::get(EntityKind::Workspace, workspace)).await
     }
 
     async fn may_change_artifact(&self, context: &SecurityContext, artifact: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::UpdateArtifact(artifact)).await
+        self.check(context, ActionType::update(EntityKind::Artifact, artifact)).await
     }
 
     async fn may_read_artifact(&self, context: &SecurityContext, artifact: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::GetArtifact(artifact)).await
+        self.check(context, ActionType::get(EntityKind::Artifact, artifact)).await
     }
 
     async fn may_write_artifact(&self, context: &SecurityContext, artifact: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::WriteArtifact(artifact)).await
+        self.check(context, ActionType::custom(EntityKind::Artifact, &WRITE, artifact)).await
     }
 
     async fn may_read_agent_context(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool {
@@ -710,7 +668,7 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
     }
 
     async fn may_delete_agent(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::DeleteAgent(agent)).await
+        self.check(context, ActionType::delete(EntityKind::Agent, agent)).await
     }
 
     async fn may_retry_message(&self, context: &SecurityContext, channel: &SecurityAttributes) -> bool {
@@ -722,23 +680,23 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
     }
 
     async fn may_restore(&self, context: &SecurityContext, kind: EntityKind, attributes: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::Restore(kind, attributes)).await
+        self.check(context, ActionType::restore(kind, attributes)).await
     }
 
     async fn may_purge(&self, context: &SecurityContext, kind: EntityKind, attributes: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::Purge(kind, attributes)).await
+        self.check(context, ActionType::purge(kind, attributes)).await
     }
 
     async fn may_change_group(&self, context: &SecurityContext, group: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::UpdateGroup(group)).await
+        self.check(context, ActionType::update(EntityKind::Group, group)).await
     }
 
     async fn may_change_skill(&self, context: &SecurityContext, skill: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::UpdateSkill(skill)).await
+        self.check(context, ActionType::update(EntityKind::Skill, skill)).await
     }
 
     async fn may_use_skill(&self, context: &SecurityContext, skill: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::UseSkill(skill)).await
+        self.check(context, ActionType::custom(EntityKind::Skill, &skill::USE, skill)).await
     }
 }
 
@@ -908,29 +866,29 @@ impl SecurityManager for OwnershipSecurityManager {
         if me == ActorId::System {
             return true;
         }
+        let owns = |attributes: &SecurityAttributes| attributes.owner_id == me && me != ActorId::None;
         match action {
-            // Reading: what the principal may read, or the caller itself -
-            // an agent what it takes part in (issue 264).
-            ActionType::GetPersonality(a)
-            | ActionType::GetSessionTemplate(a)
-            | ActionType::GetAgent(a)
-            | ActionType::GetSession(a)
-            | ActionType::GetChannel(a)
-            | ActionType::GetComponents(a)
-            | ActionType::GetUser(a)
-            | ActionType::GetUserProfile(a)
-            | ActionType::GetWorkspace(a)
-            | ActionType::GetArtifact(a)
-            | ActionType::GetSkill(a)
-            | ActionType::GetGroup(a) => self.granted(a, Grant::Read, context, true).await,
-            // Using a skill is granted as reading it is: what the owner may
-            // read the agent may follow (issue 22).
-            ActionType::UseSkill(a) => self.granted(a, Grant::Read, context, true).await,
-            // Changing a workspace's files: what its list grants writing
-            // (issue 23) - to the principal, or an agent taking part itself.
-            ActionType::WriteWorkspace(a) => self.granted(a, Grant::Write, context, true).await,
-            // Adding a version to an artifact, likewise (issue 23).
-            ActionType::WriteArtifact(a) => self.granted(a, Grant::Write, context, true).await,
+            ActionType::Entity { verb, attributes: a, .. } => match verb {
+                // Reading: what the principal may read, or the caller itself
+                // - an agent what it takes part in (issue 264).
+                Verb::Get => self.granted(a, Grant::Read, context, true).await,
+                // Creating is only allowed with oneself as owner; changing,
+                // deleting, and what was deleted, only for the owner.
+                Verb::Create | Verb::Update | Verb::Delete | Verb::ReadDeleted | Verb::Restore => owns(a),
+                // Until there is an administrator (issue 125): the system
+                // alone, as the retention policy (issue 07) acts.
+                Verb::Purge => false,
+                // What a kind's own verb requires (issue 323): using a skill
+                // is granted as reading it - what the owner may read the
+                // agent may follow (issue 22) -, changing a workspace's files
+                // or adding an artifact's version as writing (issue 23); to
+                // the principal, or an agent taking part itself.
+                Verb::Custom(custom) => match custom.requires {
+                    Requirement::Grant(grant) => self.granted(a, grant, context, true).await,
+                    Requirement::Owner => owns(a),
+                },
+            },
+            ActionType::List(_) => true,
             ActionType::CancelChannel(a)
             | ActionType::WakeChannel(a)
             | ActionType::RetryMessage(a)
@@ -950,75 +908,19 @@ impl SecurityManager for OwnershipSecurityManager {
             // A command of the session alike (issue 304): its members, or
             // for the owners alone, whoever may change the channel.
             ActionType::ShowCommand { command, channel } | ActionType::ExecuteCommand { command, channel } => {
-                if command.owners_only { channel.owner_id == me && me != ActorId::None } else { self.granted(channel, Grant::Read, context, false).await }
+                if command.owners_only { owns(channel) } else { self.granted(channel, Grant::Read, context, false).await }
             }
-            ActionType::Reclassify(target) => {
-                let owns = |attributes: &SecurityAttributes| attributes.owner_id == me && me != ActorId::None;
-                match target {
-                    Reclassified::Channel { attributes } => owns(attributes),
-                    Reclassified::Message { author, attributes } => owns(attributes) || author == context.caller_id,
-                    Reclassified::Note { author, .. } | Reclassified::Memory { author, .. } => author == context.caller_id,
-                }
-            }
+            ActionType::Reclassify(target) => match target {
+                Reclassified::Channel { attributes } => owns(attributes),
+                Reclassified::Message { author, attributes } => owns(attributes) || author == context.caller_id,
+                Reclassified::Note { author, .. } | Reclassified::Memory { author, .. } => author == context.caller_id,
+            },
             // A message is its author's to change: who said it, not whom
             // they acted for.
             ActionType::ModifyMessage { author, .. } | ActionType::RevokeMessage { author, .. } => author == context.caller_id && author != ActorId::None,
-            ActionType::CreatePersonality(a)
-            | ActionType::CreateSessionTemplate(a)
-            | ActionType::CreateAgent(a)
-            | ActionType::CreateSession(a)
-            | ActionType::CreateChannel(a)
-            | ActionType::CreateUser(a)
-            | ActionType::CreateUserProfile(a)
-            | ActionType::CreateWorkspace(a)
-            | ActionType::CreateSkill(a)
-            | ActionType::CreateArtifact(a)
-            | ActionType::CreateGroup(a)
-            | ActionType::CreateComponents(a) => a.owner_id == me && me != ActorId::None,
-            ActionType::UpdatePersonality(a)
-            | ActionType::DeletePersonality(a)
-            | ActionType::UpdateSessionTemplate(a)
-            | ActionType::DeleteSessionTemplate(a)
-            | ActionType::UpdateAgent(a)
-            | ActionType::DeleteAgent(a)
-            | ActionType::ReadAgentContext(a)
+            ActionType::ReadAgentContext(a)
             | ActionType::ReadAgentComponents(a)
-            | ActionType::UpdateSession(a)
-            | ActionType::DeleteSession(a)
-            | ActionType::StopSession(a)
-            | ActionType::UpdateChannel(a)
-            | ActionType::DeleteChannel(a)
-            | ActionType::UpdateUser(a)
-            | ActionType::DeleteUser(a)
-            | ActionType::UpdateUserProfile(a)
-            | ActionType::DeleteUserProfile(a)
-            | ActionType::UpdateWorkspace(a)
-            | ActionType::DeleteWorkspace(a)
-            | ActionType::UpdateSkill(a)
-            | ActionType::DeleteSkill(a)
-            | ActionType::UpdateArtifact(a)
-            | ActionType::DeleteArtifact(a)
-            | ActionType::UpdateGroup(a)
-            | ActionType::DeleteGroup(a)
-            | ActionType::UpdateComponents(a)
-            | ActionType::DeleteComponents(a)
-            | ActionType::ReadDeleted(_, a)
-            | ActionType::Restore(_, a) => a.owner_id == me && me != ActorId::None,
-            // Until there is an administrator (issue 125): the system
-            // alone, as the retention policy (issue 07) acts.
-            ActionType::Purge(..) => false,
-            ActionType::ListPersonalities
-            | ActionType::ListSessionTemplates
-            | ActionType::ListAgents
-            | ActionType::ListSessions
-            | ActionType::ListChannels
-            | ActionType::ListUsers
-            | ActionType::ListUserProfiles
-            | ActionType::ListWorkspaces
-            | ActionType::ListSkills
-            | ActionType::ListArtifacts
-            | ActionType::ListGroups
-            | ActionType::ListComponents => true,
+            | ActionType::StopSession(a) => owns(a),
             // Hooks for another policy (issue 24): what decides a call
             // today is the tools offered and the place's rules; secrets
             // have no owner to decide by yet (issue 310).
@@ -1092,10 +994,10 @@ mod tests {
         let hers = SecurityAttributes::owned_by(alice);
         let policy = OwnershipSecurityManager::new();
         let asked_by_bob = context(bob).next(agent, alice);
-        assert!(policy.check(&asked_by_bob, ActionType::GetSession(&hers)).await, "with alice's rights, whoever asked");
-        assert!(policy.check(&asked_by_bob, ActionType::UpdateSession(&hers)).await, "all of them");
+        assert!(policy.check(&asked_by_bob, ActionType::get(EntityKind::Session, &hers)).await, "with alice's rights, whoever asked");
+        assert!(policy.check(&asked_by_bob, ActionType::update(EntityKind::Session, &hers)).await, "all of them");
         let asked_by_alice = context(alice).next(agent, bob);
-        assert!(!policy.check(&asked_by_alice, ActionType::GetSession(&hers)).await, "asking lends nothing, not even the owner's own rights to another's agent");
+        assert!(!policy.check(&asked_by_alice, ActionType::get(EntityKind::Session, &hers)).await, "asking lends nothing, not even the owner's own rights to another's agent");
     }
 
     #[tokio::test]
@@ -1119,11 +1021,11 @@ mod tests {
         let (alice, bob, carol) = (user(), user(), user());
         let hers = shared(alice, &[bob]);
 
-        for action in [ActionType::GetSession(&hers), ActionType::UpdateSession(&hers), ActionType::DeleteSession(&hers)] {
+        for action in [ActionType::get(EntityKind::Session, &hers), ActionType::update(EntityKind::Session, &hers), ActionType::delete(EntityKind::Session, &hers)] {
             assert!(allows(alice, action).await, "{action:?}");
             assert!(!allows(carol, action).await, "{action:?}");
         }
-        assert!(allows(bob, ActionType::GetSession(&hers)).await);
+        assert!(allows(bob, ActionType::get(EntityKind::Session, &hers)).await);
         assert!(allows(bob, ActionType::CancelChannel(&hers)).await, "a reader acts in it");
         assert!(allows(alice, ActionType::ReadAgentContext(&hers)).await);
         assert!(!allows(bob, ActionType::ReadAgentContext(&hers)).await, "what an agent saw is its owner's alone");
@@ -1162,13 +1064,13 @@ mod tests {
         assert!(!allows(bob, run(&members, &theirs)).await, "nobody else");
         assert!(allows(carol, run(&owners, &theirs)).await, "a command for the owners: whose channel it is");
         assert!(!allows(alice, run(&owners, &theirs)).await && !allows(alice, show(&owners, &theirs)).await, "not a member who does not own it");
-        assert!(!allows(bob, ActionType::UpdateSession(&hers)).await);
-        assert!(!allows(bob, ActionType::DeleteSession(&hers)).await);
+        assert!(!allows(bob, ActionType::update(EntityKind::Session, &hers)).await);
+        assert!(!allows(bob, ActionType::delete(EntityKind::Session, &hers)).await);
         // A skill (issue 22) is used as it is read; changed by its owner.
-        assert!(allows(bob, ActionType::UseSkill(&hers)).await, "a reader uses it");
-        assert!(!allows(carol, ActionType::UseSkill(&hers)).await, "nobody else");
-        assert!(allows(carol, ActionType::UseSkill(&systems)).await, "the system's, everybody");
-        assert!(allows(bob, ActionType::GetSkill(&hers)).await && !allows(bob, ActionType::UpdateSkill(&hers)).await, "read, not changed");
+        assert!(allows(bob, ActionType::custom(EntityKind::Skill, &skill::USE, &hers)).await, "a reader uses it");
+        assert!(!allows(carol, ActionType::custom(EntityKind::Skill, &skill::USE, &hers)).await, "nobody else");
+        assert!(allows(carol, ActionType::custom(EntityKind::Skill, &skill::USE, &systems)).await, "the system's, everybody");
+        assert!(allows(bob, ActionType::get(EntityKind::Skill, &hers)).await && !allows(bob, ActionType::update(EntityKind::Skill, &hers)).await, "read, not changed");
     }
 
     #[tokio::test]
@@ -1178,11 +1080,11 @@ mod tests {
         let place = GroupId::of_channel(ChannelId::new());
         let alices = SecurityAttributes::owned_by(alice).granting(Subject::Group(place), Grant::Read);
         let policy = knowing(Known { members: vec![(member, place)] });
-        assert!(policy.check(&context(bob).next(hers, alice), ActionType::GetChannel(&alices)).await, "her agent, whoever asked");
-        assert!(!policy.check(&context(bob).next(his, bob), ActionType::GetChannel(&alices)).await, "not his: he may not read it");
-        assert!(policy.check(&context(bob).next(member, bob), ActionType::GetChannel(&alices)).await, "but an agent taking part in it");
-        assert!(policy.check(&context(bob).next(member, bob), ActionType::GetSession(&alices)).await, "so for every read");
-        assert!(!policy.check(&context(bob).next(member, bob), ActionType::UpdateChannel(&alices)).await, "changing stays its owner's");
+        assert!(policy.check(&context(bob).next(hers, alice), ActionType::get(EntityKind::Channel, &alices)).await, "her agent, whoever asked");
+        assert!(!policy.check(&context(bob).next(his, bob), ActionType::get(EntityKind::Channel, &alices)).await, "not his: he may not read it");
+        assert!(policy.check(&context(bob).next(member, bob), ActionType::get(EntityKind::Channel, &alices)).await, "but an agent taking part in it");
+        assert!(policy.check(&context(bob).next(member, bob), ActionType::get(EntityKind::Session, &alices)).await, "so for every read");
+        assert!(!policy.check(&context(bob).next(member, bob), ActionType::update(EntityKind::Channel, &alices)).await, "changing stays its owner's");
         assert!(!policy.check(&context(bob).next(member, bob), ActionType::CancelChannel(&alices)).await, "and so does acting on it");
     }
 
@@ -1215,19 +1117,19 @@ mod tests {
     async fn what_belongs_to_the_system_everybody_uses_and_only_the_system_changes() {
         let alice = user();
         for shared in [SecurityAttributes::default(), SecurityAttributes::owned_by(ActorId::System)] {
-            assert!(allows(alice, ActionType::GetSessionTemplate(&shared)).await, "stored without an owner, or the system's");
-            assert!(!allows(alice, ActionType::UpdateSessionTemplate(&shared)).await);
-            assert!(allows(ActorId::System, ActionType::UpdateSessionTemplate(&shared)).await);
+            assert!(allows(alice, ActionType::get(EntityKind::SessionTemplate, &shared)).await, "stored without an owner, or the system's");
+            assert!(!allows(alice, ActionType::update(EntityKind::SessionTemplate, &shared)).await);
+            assert!(allows(ActorId::System, ActionType::update(EntityKind::SessionTemplate, &shared)).await);
         }
     }
 
     #[tokio::test]
     async fn nobody_creates_in_someone_elses_name_and_no_one_at_all_creates() {
         let (alice, bob) = (user(), user());
-        assert!(allows(alice, ActionType::CreateSession(&SecurityAttributes::owned_by(alice))).await);
-        assert!(!allows(bob, ActionType::CreateSession(&SecurityAttributes::owned_by(alice))).await);
-        assert!(!allows(ActorId::None, ActionType::CreateSession(&SecurityAttributes::default())).await, "an empty context has no rights");
-        assert!(!allows(ActorId::None, ActionType::UpdateSession(&SecurityAttributes::default())).await);
+        assert!(allows(alice, ActionType::create(EntityKind::Session, &SecurityAttributes::owned_by(alice))).await);
+        assert!(!allows(bob, ActionType::create(EntityKind::Session, &SecurityAttributes::owned_by(alice))).await);
+        assert!(!allows(ActorId::None, ActionType::create(EntityKind::Session, &SecurityAttributes::default())).await, "an empty context has no rights");
+        assert!(!allows(ActorId::None, ActionType::update(EntityKind::Session, &SecurityAttributes::default())).await);
     }
 
     #[tokio::test]
@@ -1237,11 +1139,11 @@ mod tests {
         let hers = SecurityAttributes::owned_by(alice).granting(Subject::Group(place), Grant::Read);
         let policy = knowing(Known { members: vec![(bob, place)] });
         let elsewhere = SecurityContext::new(bob, SessionId::new(), ChannelId::new());
-        assert!(policy.check(&elsewhere, ActionType::GetSession(&hers)).await, "a member, though he acts somewhere else");
-        assert!(!policy.check(&context(carol), ActionType::GetSession(&hers)).await, "not who is no member");
-        assert!(!policy.check(&context(bob), ActionType::UpdateSession(&hers)).await, "reading, not changing");
+        assert!(policy.check(&elsewhere, ActionType::get(EntityKind::Session, &hers)).await, "a member, though he acts somewhere else");
+        assert!(!policy.check(&context(carol), ActionType::get(EntityKind::Session, &hers)).await, "not who is no member");
+        assert!(!policy.check(&context(bob), ActionType::update(EntityKind::Session, &hers)).await, "reading, not changing");
         let other = SecurityAttributes::owned_by(alice).granting(Subject::Group(GroupId::new()), Grant::Read);
-        assert!(!policy.check(&context(bob), ActionType::GetSession(&other)).await, "a member of the group named, not of any");
+        assert!(!policy.check(&context(bob), ActionType::get(EntityKind::Session, &other)).await, "a member of the group named, not of any");
     }
 
     #[tokio::test]
@@ -1251,11 +1153,11 @@ mod tests {
         let team = Group::team(ScopedName::new("project", Scope::GlobalScope).unwrap(), alice_id);
         let policy = knowing(Known { members: vec![(bob, team.id)] });
         let theirs = &team.security_attributes;
-        assert!(policy.check(&context(alice), ActionType::GetGroup(theirs)).await, "its owner");
-        assert!(policy.check(&context(bob), ActionType::GetGroup(theirs)).await, "a member, by the group's own list");
-        assert!(!policy.check(&context(carol), ActionType::GetGroup(theirs)).await, "not a stranger");
-        assert!(policy.check(&context(alice), ActionType::UpdateGroup(theirs)).await && policy.check(&context(alice), ActionType::DeleteGroup(theirs)).await);
-        assert!(!policy.check(&context(bob), ActionType::UpdateGroup(theirs)).await, "a member does not change it");
+        assert!(policy.check(&context(alice), ActionType::get(EntityKind::Group, theirs)).await, "its owner");
+        assert!(policy.check(&context(bob), ActionType::get(EntityKind::Group, theirs)).await, "a member, by the group's own list");
+        assert!(!policy.check(&context(carol), ActionType::get(EntityKind::Group, theirs)).await, "not a stranger");
+        assert!(policy.check(&context(alice), ActionType::update(EntityKind::Group, theirs)).await && policy.check(&context(alice), ActionType::delete(EntityKind::Group, theirs)).await);
+        assert!(!policy.check(&context(bob), ActionType::update(EntityKind::Group, theirs)).await, "a member does not change it");
     }
 
     #[tokio::test]
@@ -1269,11 +1171,11 @@ mod tests {
         let policy = OwnershipSecurityManager::new();
         let his_context = context(bob).with_roles(vec![hr, staff], None);
         let his_agents = context(bob).next(agent, bob).with_roles(vec![hr, staff], Some(vec![staff]));
-        assert!(policy.check(&his_context, ActionType::GetSkill(&hers)).await, "who holds the role");
-        assert!(!policy.check(&his_agents, ActionType::GetSkill(&hers)).await, "not his agent, limited below it");
-        assert!(!policy.check(&context(bob).next(agent, bob), ActionType::GetSkill(&hers)).await, "nor a context continued without roles: the initiator lends none");
+        assert!(policy.check(&his_context, ActionType::get(EntityKind::Skill, &hers)).await, "who holds the role");
+        assert!(!policy.check(&his_agents, ActionType::get(EntityKind::Skill, &hers)).await, "not his agent, limited below it");
+        assert!(!policy.check(&context(bob).next(agent, bob), ActionType::get(EntityKind::Skill, &hers)).await, "nor a context continued without roles: the initiator lends none");
         let his = SecurityAttributes::owned_by(alice).granting(Subject::Actor(bob), Grant::Read);
-        assert!(policy.check(&his_agents, ActionType::GetSkill(&his)).await, "what he is granted as a person, his agent is too");
+        assert!(policy.check(&his_agents, ActionType::get(EntityKind::Skill, &his)).await, "what he is granted as a person, his agent is too");
     }
 
     #[tokio::test]
@@ -1295,10 +1197,10 @@ mod tests {
     async fn a_workspaces_files_are_read_and_changed_as_its_list_grants() {
         let (alice, bob, carol) = (user(), user(), user());
         let theirs = SecurityAttributes::owned_by(alice).granting(Subject::Actor(bob), Grant::Read).granting(Subject::Actor(carol), Grant::Write);
-        assert!(allows(alice, ActionType::WriteWorkspace(&theirs)).await, "its owner");
-        assert!(allows(bob, ActionType::GetWorkspace(&theirs)).await && !allows(bob, ActionType::WriteWorkspace(&theirs)).await, "a reader reads");
-        assert!(allows(carol, ActionType::GetWorkspace(&theirs)).await && allows(carol, ActionType::WriteWorkspace(&theirs)).await, "a writer both");
-        assert!(!allows(carol, ActionType::UpdateWorkspace(&theirs)).await, "changing the workspace itself stays the owner's");
+        assert!(allows(alice, ActionType::custom(EntityKind::Workspace, &WRITE, &theirs)).await, "its owner");
+        assert!(allows(bob, ActionType::get(EntityKind::Workspace, &theirs)).await && !allows(bob, ActionType::custom(EntityKind::Workspace, &WRITE, &theirs)).await, "a reader reads");
+        assert!(allows(carol, ActionType::get(EntityKind::Workspace, &theirs)).await && allows(carol, ActionType::custom(EntityKind::Workspace, &WRITE, &theirs)).await, "a writer both");
+        assert!(!allows(carol, ActionType::update(EntityKind::Workspace, &theirs)).await, "changing the workspace itself stays the owner's");
     }
 
     #[test]
@@ -1327,7 +1229,7 @@ mod tests {
         let described = ActionType::CallTool(&call).describe();
         assert_eq!(described, "CallTool(web_search)");
         assert!(!described.contains("secret plans"), "no arguments in the log");
-        assert_eq!(ActionType::GetSession(&SecurityAttributes::default()).describe(), "GetSession");
+        assert_eq!(ActionType::get(EntityKind::Session, &SecurityAttributes::default()).describe(), "GetSession");
     }
 
     #[tokio::test]
@@ -1339,8 +1241,8 @@ mod tests {
         let hers = SecurityAttributes::owned_by(owner);
         let policy = OwnershipSecurityManager::new();
 
-        assert_eq!(policy.require(&context(owner), ActionType::DeleteSession(&hers), || Refused).await, Ok(()));
-        assert_eq!(policy.require(&context(stranger), ActionType::DeleteSession(&hers), || Refused).await, Err(Refused));
+        assert_eq!(policy.require(&context(owner), ActionType::delete(EntityKind::Session, &hers), || Refused).await, Ok(()));
+        assert_eq!(policy.require(&context(stranger), ActionType::delete(EntityKind::Session, &hers), || Refused).await, Err(Refused));
     }
 
     /// A subject as a query compares it (issue 293).

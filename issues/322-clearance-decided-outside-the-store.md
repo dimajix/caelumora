@@ -71,3 +71,9 @@ second filter beside the store's, written in several places.
   skills, artifacts -, and the store asks the clearance of all of them. `ArtifactManager::reached`
   is gone; the views keep reaching what they read in the runtime's name themselves:
   `channel_reading` for a channel, the versions' lists for an artifact (issue 316).
+- **2026-10-12** — A test of the suite failed after the merge,
+  `a_session_goes_with_what_lies_in_it_only_as_far_as_whoever_deletes_it_may`: deleting the
+  session's artifacts now asks the clearance for hers (`JoinChannel`), which its expectation did
+  not have, and it expected the two artifacts in one order, though the store lists them by their
+  random ids. Its expectation takes the clearance and either order; fixed on the branch of issue
+  [323](323-kinds-enumerated-in-the-core.md), step 1.

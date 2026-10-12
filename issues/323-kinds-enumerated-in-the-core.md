@@ -1,6 +1,6 @@
 # 323 — Every stored kind is enumerated in the core, so no subject can leave it
 
-**Status:** open
+**Status:** in progress
 **Area:** Code structure
 
 ## The problem
@@ -531,3 +531,13 @@ the core's own features (the transcript's `KnowledgeSource`, the compaction, `To
 Decided the same day: static plugins; skills alone in this issue; the web UI changed along; the
 REST side in three layers with `caelumora-app` as the application, which embeds the web UI; one
 crate per plugin, layered by features. The plan above has eleven steps.
+
+**2026-10-12** — Step 1 done, on branch `issue-323-action-by-verb`: `ActionType::Entity { kind,
+verb, attributes }` and `List(kind)` replace the variants per kind and verb, with shortcuts per
+verb (`ActionType::get(kind, attributes)`, …, `custom(kind, &verb, attributes)`) asked for by the
+maintainer. `UseSkill` is `skill::USE`, `WriteWorkspace` and `WriteArtifact` are `WRITE`, each a
+`CustomVerb` with its `Requirement`. `describe()` names an act on an entity by verb and kind as
+before (`GetSession`, `UseSkill`), a listing as `List(session)`; the security suite now names the
+kind in `ReadDeleted`, `Restore` and `Purge` as well. The `Actions` tables of `store::access` are
+gone: the stores pass the `EntityKind`. `EntityKind` is still a closed enum (step 2), and
+`AccessQuestions` keeps `may_change_skill` and `may_use_skill` until step 10.

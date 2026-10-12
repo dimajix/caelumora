@@ -40,7 +40,7 @@ use caelumora_model::scope::Scope;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions, Place};
-use caelumora_model::security::{AccessQuestions, AclEntry, ActionType, Enforcement, Grant, SecurityContext, SecurityManager, Subject};
+use caelumora_model::security::{AccessQuestions, AclEntry, ActionType, Enforcement, Grant, SecurityContext, SecurityManager, Subject, WRITE};
 use crate::view::{channel_reading, ChannelReader};
 use caelumora_model::channel::Participant;
 use caelumora_model::session::{Channel, ChannelId, Session, SessionId};
@@ -399,7 +399,7 @@ impl WorkspaceManager {
     pub async fn purge(&self, ctx: &SecurityContext, id: WorkspaceId) -> WorkspaceResult<bool> {
         let _writing = self.writing.lock().await;
         let Some(workspace) = self.entities.get_deleted_workspace(ctx, id).await.optional()? else { return Ok(false) };
-        self.security.require(ctx, ActionType::Purge(EntityKind::Workspace, &workspace.security_attributes), || StoreError::PermissionDenied).await?;
+        self.security.require(ctx, ActionType::purge(EntityKind::Workspace, &workspace.security_attributes), || StoreError::PermissionDenied).await?;
         self.provider(&workspace)?.remove(id).await?;
         let purged = self.entities.purge_workspace(ctx, id).await?;
         info!(workspace = %id, by = %ctx.caller_id, "Workspace purged");
@@ -419,7 +419,7 @@ impl WorkspaceManager {
     pub(crate) async fn reached(&self, ctx: &SecurityContext, id: WorkspaceId, need: Grant) -> WorkspaceResult<Workspace> {
         let workspace = self.entities.get_workspace(ctx, id).await.map_err(store_error(id))?;
         if need == Grant::Write {
-            self.security.require(ctx, ActionType::WriteWorkspace(&workspace.security_attributes), || WorkspaceError::ReadOnly(id)).await?;
+            self.security.require(ctx, ActionType::custom(EntityKind::Workspace, &WRITE, &workspace.security_attributes), || WorkspaceError::ReadOnly(id)).await?;
         }
         Ok(workspace)
     }
@@ -604,7 +604,7 @@ impl WorkspaceManager {
         }
         let workspace = self.usable_in(ctx, &session, &channel).await?.ok_or(WorkspaceError::NotUsableInChannel)?;
         if need == Grant::Write {
-            self.security.require(ctx, ActionType::WriteWorkspace(&workspace.security_attributes), || WorkspaceError::ReadOnly(workspace.id)).await?;
+            self.security.require(ctx, ActionType::custom(EntityKind::Workspace, &WRITE, &workspace.security_attributes), || WorkspaceError::ReadOnly(workspace.id)).await?;
         }
         Ok(workspace)
     }
