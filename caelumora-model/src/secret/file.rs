@@ -1,5 +1,6 @@
 use crate::secret::{SecretError, SecretProvider, SecretResult};
 use async_trait::async_trait;
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -12,6 +13,14 @@ use std::path::PathBuf;
 #[derive(Debug)]
 pub struct FileSecretProvider {
     path: PathBuf,
+}
+
+/// The parameters of `file` (issue 324): the file the secrets are read
+/// from.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileSecretConfig {
+    pub path: PathBuf,
 }
 
 impl FileSecretProvider {

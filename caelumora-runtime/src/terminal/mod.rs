@@ -16,16 +16,22 @@
 //! knows its commands (`commands.rs`, issue 254): its provider lists those
 //! that may still run and ends one when told, and none runs longer than the
 //! storage's `max_run`.
+//!
+//! A storage is a backend (issue 324): its provider is made by the factory
+//! registered for its type - `local`, `open_terminal_shared` and
+//! `open_terminal_docker` here (`register_backends`), others by a plugin -,
+//! from its parameters, which that factory reads and checks.
 
 mod commands;
 mod local;
 mod local_shell;
 mod open_terminal;
 
-pub(crate) use commands::CommandKey;
-pub(crate) use local::{write_whole, LocalProvider, WriteFailure};
-pub(crate) use open_terminal::{DockerProvider, SharedProvider};
+pub use commands::CommandKey;
+pub(crate) use local::{write_whole, WriteFailure};
 
+use crate::backend::Backends;
+use crate::component::{ComponentError, ComponentResult};
 use async_trait::async_trait;
 use bytes::Bytes;
 use caelumora_model::confidentiality::Classification;
@@ -206,9 +212,10 @@ pub trait Shell: Send + Sync + Debug {
 }
 
 /// What makes and reaches the places of the workspaces of one storage
-/// (issue 251, part A).
+/// (issue 251, part A): the service a storage of workspaces is a backend
+/// of (issue 324).
 #[async_trait]
-pub(crate) trait TerminalProvider: Send + Sync + Debug {
+pub trait TerminalProvider: Send + Sync + Debug {
     /// Makes the place of the workspace `id`: empty.
     async fn create(&self, id: WorkspaceId) -> TerminalResult<()>;
     /// Removes the place of the workspace `id`, with everything in it - the
@@ -244,6 +251,33 @@ pub(crate) trait TerminalProvider: Send + Sync + Debug {
     /// What may be put into this storage: the classification a workspace
     /// in it may have at most; `None` for no bound (issue 251, part B2).
     fn destination(&self) -> Option<&Classification>;
+}
+
+/// How long a command in a workspace may run unless its storage says
+/// otherwise (issue 254): an hour.
+pub const DEFAULT_MAX_RUN_SECS: u64 = 3600;
+
+fn default_max_run_secs() -> u64 {
+    DEFAULT_MAX_RUN_SECS
+}
+
+/// `secs`, a storage's `max_run_secs`, as how long a command in one of its
+/// workspaces may run (issue 254).
+///
+/// # Errors
+/// `ComponentError::InvalidConfig` for none at all.
+fn max_run(secs: u64) -> ComponentResult<Duration> {
+    if secs == 0 {
+        return Err(ComponentError::InvalidConfig("max_run_secs must be more than 0".to_string()));
+    }
+    Ok(Duration::from_secs(secs))
+}
+
+/// Registers the storages of workspaces the core brings with `backends`:
+/// `local`, `open_terminal_shared` and `open_terminal_docker`.
+pub(crate) fn register_backends(backends: &mut Backends) {
+    local::register_backend(backends);
+    open_terminal::register_backends(backends);
 }
 
 #[cfg(test)]

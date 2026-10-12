@@ -1,6 +1,6 @@
 # 324 — Every configured backend is a closed enum, so no backend can be added from outside the core
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -102,3 +102,23 @@ configuration, not stored data.
 - **2026-10-12** — Opened from the discussion of which subjects besides skills could move into
   crates of their own (issue 323). Open Terminal turned out to be blocked by `StorageConfig`, and
   the same closed shape was found in four further places.
+- **2026-10-12** — Done for four of the five, as option B. Decided by the maintainer: the
+  persistence stays a closed enum in the core (`PersistenceBackend`), without an issue of its own -
+  its stores are generic over the kinds they keep (`EntityStoreFactory::entity_store<T>`), so a
+  registry alone could not open it; the tag is `type` for all; a plugin registers its backends in a
+  step of its own, `Plugin::backends`, asked before anything is made; the `UserManager` is made by
+  the runtime. `caelumora_runtime::backend::Backends` keeps the factories by service and type,
+  `Backends::built_in` the core's, `with_plugins` adds those of the plugins; a factory is given the
+  name of the backend, its parameters and the services made before it (`service_of`), and fails
+  with `ComponentError::Backend`, which names the backend and its type. `StorageConfig`,
+  `ArtifactStorageConfig`, `SecretProviderConfig` and `UserProviderConfig` are one `BackendConfig`;
+  the parameters of each type are a type beside its provider, with its checks, so that they are
+  refused when the runtime is built rather than when the file is read.
+  `RuntimeBuilder::from_config` takes the plugins and runs both steps; `RuntimeBuilder::new` takes
+  the `Backends`. `create_user_manager` and `create_secret_manager` left the model.
+  `TerminalProvider`, `CommandKey` and `ArtifactStorage` are public. The configuration of
+  `workspaces.storage` and `artifacts.storage` names its backend by `type` instead of `provider`.
+  Since the parameters are kept as written until a factory reads them, `parse_yaml` now takes only
+  `true` and `false` as booleans (`strict_booleans`): `yes`, `no`, `on`, `off` and `y` would
+  otherwise turn into booleans where nothing types them - `image: no` refused as a boolean. Asked
+  for by the maintainer; it holds for the configuration and the seed files alike.

@@ -1,10 +1,11 @@
-use crate::role::RoleId;
+use crate::role::{RoleError, RoleId, Roles};
 use crate::security::SecurityContext;
 use crate::store::{EntityStore, StoreError, StoreResultExt};
 use crate::user::{User, UserId};
 use crate::user_provider::{AuthError, AuthResult, Credential, UserProvider};
 use crate::value::name::{Name, ScopedName};
 use async_trait::async_trait;
+use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use crate::scope::Scope;
@@ -14,7 +15,7 @@ use crate::scope::Scope;
 /// A stand-in until a real backend exists (issue 25), so that login and
 /// sessions (issue 10) can be built against the `UserProvider` trait. It must
 /// be enabled explicitly in the configuration and is never part of a default
-/// chain; `AppConfig::create_user_manager` warns loudly when it is.
+/// chain; the runtime warns loudly when it is made.
 ///
 /// Its source is the `EntityStore` itself and the configured roles: a name it
 /// finds there is that user, any other a new one with a random id, which the
@@ -33,6 +34,36 @@ pub struct AcceptAnyUserProvider {
     roles: BTreeMap<String, Vec<RoleId>>,
     /// The roles of everybody else.
     default_roles: Vec<RoleId>,
+}
+
+/// The parameters of `accept_any` (issue 324): the roles of the users
+/// named, and those of everybody else (issue 142), by the names of
+/// configured roles.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AcceptAnyConfig {
+    pub roles: BTreeMap<String, Vec<String>>,
+    pub default_roles: Vec<String>,
+}
+
+impl AcceptAnyConfig {
+    /// The provider it describes, keeping its users in `store`, with the
+    /// roles it names resolved to their ids by the configured `roles`
+    /// (issue 23).
+    ///
+    /// # Errors
+    /// `RoleError::UnknownRole` for a role that is not configured - any,
+    /// if no roles are.
+    pub fn provider(&self, store: Arc<dyn EntityStore<User>>, roles: Option<&Roles>) -> Result<AcceptAnyUserProvider, RoleError> {
+        let ids = |names: &[String]| match roles {
+            Some(roles) => roles.ids_of(names),
+            None => names.first().map_or(Ok(Vec::new()), |name| Err(RoleError::UnknownRole(name.clone()))),
+        };
+        let assigned = self.roles.iter()
+            .map(|(user, names)| Ok((user.clone(), ids(names)?)))
+            .collect::<Result<_, RoleError>>()?;
+        Ok(AcceptAnyUserProvider::with_roles(store, assigned, ids(&self.default_roles)?))
+    }
 }
 
 impl AcceptAnyUserProvider {
@@ -196,5 +227,21 @@ mod tests {
         let user = provider.authenticate("user", &Credential::Password("x")).await.unwrap().expect("accepted");
 
         assert_eq!(user.id, existing.id, "a user already in the store keeps its id");
+    }
+
+    #[tokio::test]
+    async fn its_parameters_name_configured_roles_only() {
+        let (hr, staff) = (RoleId::new(), RoleId::new());
+        let roles = Roles::new([(hr, "hr".to_string(), vec![]), (staff, "staff".to_string(), vec![])]).unwrap();
+        let config = AcceptAnyConfig { roles: [("alice".to_string(), vec!["hr".to_string()])].into(), default_roles: vec!["staff".to_string()] };
+        let users_store = store();
+        let users = chain(&users_store, config.provider(Arc::clone(&users_store), Some(&roles)).expect("configured roles"));
+        assert_eq!(users.authenticate("alice", &Credential::Password("x")).await.unwrap().roles, [hr], "by their ids");
+        assert_eq!(users.authenticate("bob", &Credential::Password("x")).await.unwrap().roles, [staff]);
+
+        let unknown = AcceptAnyConfig { default_roles: vec!["boss".to_string()], ..Default::default() };
+        assert!(matches!(unknown.provider(store(), Some(&roles)), Err(RoleError::UnknownRole(role)) if role == "boss"));
+        assert!(matches!(config.provider(store(), None), Err(RoleError::UnknownRole(_))), "roles given, but none configured");
+        assert!(AcceptAnyConfig::default().provider(store(), None).is_ok(), "none given, none needed");
     }
 }

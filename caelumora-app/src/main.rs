@@ -12,9 +12,8 @@ use caelumora_rest_server::error::{self, ApiError};
 use caelumora_rest_server::plugin::RestPlugin;
 use caelumora_rest_server::routes;
 use caelumora_rest_server::state::AppState;
-use caelumora_runtime::event::EventBus;
 use caelumora_runtime::plugin::Plugin;
-use caelumora_runtime::runtime::{RuntimeBuilder, RuntimeManager};
+use caelumora_runtime::runtime::RuntimeBuilder;
 use caelumora_runtime::session::SessionManager;
 use caelumora_skills::plugin::SkillsPlugin;
 use clap::Parser;
@@ -50,11 +49,10 @@ async fn main() -> anyhow::Result<()> {
     caelumora_logging::init(&config.logging, LogTarget::Stderr, "info,tower_http=debug,axum::rejection=trace")?;
 
     let rest_plugins = rest_plugins();
-    let runtime_manager = Arc::new(build(RuntimeBuilder::from_config(&config)?, &rest_plugins)?);
+    let plugins = plugins();
+    let runtime_manager = Arc::new(RuntimeBuilder::from_config(&config, &all(&rest_plugins, &plugins))?.build()?);
     let session_manager = Arc::new(SessionManager::new(Arc::clone(&runtime_manager)));
-    // Users are recorded and their changes announced on the runtime's event
-    // bus (issue 306), so the user manager comes after the runtime.
-    let user_manager = config.create_user_manager(Arc::clone(&runtime_manager.entity_stores().users), Arc::<EventBus>::clone(runtime_manager.event_bus()))?;
+    let user_manager = Arc::clone(runtime_manager.user_manager());
     if user_manager.is_empty() {
         tracing::warn!("No user providers configured (`users` section): nobody can log in. \
             See examples/config.yaml.");
@@ -111,16 +109,10 @@ fn plugins() -> Vec<Box<dyn Plugin>> {
     vec![Box::new(McpPlugin)]
 }
 
-/// The runtime of `builder`, with every plugin of the program: `rest_plugins`
-/// and those without routes.
-fn build(mut builder: RuntimeBuilder, rest_plugins: &[Box<dyn RestPlugin>]) -> anyhow::Result<RuntimeManager> {
-    for plugin in rest_plugins {
-        builder.plugin(plugin.as_ref())?;
-    }
-    for plugin in plugins() {
-        builder.plugin(plugin.as_ref())?;
-    }
-    builder.build()
+/// Every plugin of the program, which it builds its runtime with:
+/// `rest_plugins` and `plugins`, those without routes.
+fn all<'a>(rest_plugins: &'a [Box<dyn RestPlugin>], plugins: &'a [Box<dyn Plugin>]) -> Vec<&'a dyn Plugin> {
+    rest_plugins.iter().map(|plugin| plugin.as_ref() as &dyn Plugin).chain(plugins.iter().map(Box::as_ref)).collect()
 }
 
 /// What the program serves: `api` under `/api`, where a path no route
@@ -150,6 +142,7 @@ mod tests {
     use caelumora_model::store::{ComponentStore, EntityStoreFactory};
     use caelumora_model::template::ParticipantTemplate;
     use caelumora_model::value::text::Description;
+    use caelumora_runtime::backend::Backends;
     use caelumora_runtime::component::{ComponentContainer, ComponentContext, ComponentRegistry};
     use caelumora_runtime::runtime::RuntimeManager;
     use caelumora_runtime::seed::Seed;
@@ -171,8 +164,13 @@ mod tests {
         let config = AppConfig::load(example("config.yaml")).unwrap();
         let security = Arc::new(DummySecurityManager::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&security)));
-        let builder = RuntimeBuilder::new(Arc::<MemoryStore>::clone(store), Arc::<MemoryStore>::clone(store), secrets, security, config.create_confidentiality_policy(), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(store))).unwrap();
-        build(builder, &rest_plugins()).unwrap()
+        let (rest_plugins, plugins) = (rest_plugins(), plugins());
+        let plugins = all(&rest_plugins, &plugins);
+        let mut builder = RuntimeBuilder::new(Arc::<MemoryStore>::clone(store), Arc::<MemoryStore>::clone(store), secrets, security, config.create_confidentiality_policy(), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(store)), &Backends::with_plugins(&plugins)).unwrap();
+        for plugin in plugins {
+            builder.plugin(plugin).unwrap();
+        }
+        builder.build().unwrap()
     }
 
     #[tokio::test]

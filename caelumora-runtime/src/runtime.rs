@@ -17,8 +17,10 @@ use crate::event::{EventSubscription, SubscriptionTopic};
 use crate::view::ViewsFactory;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::config::AppConfig;
-use caelumora_model::secret::SecretManager;
+use caelumora_model::secret::{SecretManager, SecretProvider};
 use caelumora_model::security::{SecurityContext, SecurityManager};
+use caelumora_model::user_provider::{UserManager, UserProvider};
+use crate::backend::Backends;
 use caelumora_model::session::Session;
 use caelumora_model::removal::Deletable;
 use caelumora_model::store::memberships::StoreMemberships;
@@ -34,7 +36,8 @@ use caelumora_model::confidentiality::ConfidentialityPolicy;
 use std::sync::{Arc, OnceLock, Weak};
 use crate::agent::manager::AgentManager;
 use crate::group::GroupManager;
-use crate::artifact::ArtifactManager;
+use crate::artifact::{ArtifactManager, ArtifactStorage};
+use crate::terminal::TerminalProvider;
 use crate::scoped::{ScopeMember, ScopedEntities, Unowned};
 use crate::workspace::WorkspaceManager;
 
@@ -49,6 +52,8 @@ pub struct RuntimeManager {
     /// The preconfigured components, which the seed puts in.
     component_store: Arc<dyn ComponentStore>,
     secret_manager: Arc<SecretManager>,
+    /// The one writer of user records, asked at a login (issue 306).
+    user_manager: Arc<UserManager>,
     component_registry: Arc<ComponentRegistry>,
     event_bus: Arc<EventBus>,
     controller_manager: Arc<ControllerManager>,
@@ -304,7 +309,8 @@ impl ChannelRuntime {
 pub type Services = TypeMap;
 
 /// What builds the `RuntimeManager` (issue 323): the core's services and
-/// managers, made first, and what the plugins register with it
+/// managers, made first - their backends by `Backends`, the core's and the
+/// plugins' (issue 324) -, and what the plugins register with it
 /// (`Plugin::register`) - their component kinds, the stores of their kinds,
 /// the services they provide, the members of a scope, their sections of
 /// the configuration and of the seed. `build` makes the runtime of it.
@@ -313,6 +319,7 @@ pub struct RuntimeBuilder {
     state_store: Arc<dyn StateStore>,
     entity_stores: EntityStores,
     secret_manager: Arc<SecretManager>,
+    user_manager: Arc<UserManager>,
     security_manager: Arc<dyn SecurityManager>,
     confidentiality: Arc<dyn ConfidentialityPolicy>,
     component_registry: ComponentRegistry,
@@ -354,14 +361,19 @@ impl RuntimeBuilder {
     /// the components that replace built-in defaults of facets of which an
     /// agent has one (`component_defaults`, issue 99), what the system
     /// restricts of tool calls (`approvals`, issue 13), the storages
-    /// workspaces are made in (`workspaces`, issue 253) and the sections of
-    /// the plugins. `component_registry` holds the component kinds agents
-    /// and sessions are built from - `ComponentRegistry::built_in`, to which
-    /// a test may add stand-ins, such as a model of its own (issue 130).
+    /// workspaces are made in (`workspaces`, issue 253), those artifacts
+    /// are kept in (`artifacts`, issue 271), the user providers (`users`)
+    /// and the sections of the plugins. `component_registry` holds the
+    /// component kinds agents and sessions are built from -
+    /// `ComponentRegistry::built_in`, to which a test may add stand-ins,
+    /// such as a model of its own (issue 130). `backends` makes the
+    /// storages and the user providers `config` names (issue 324):
+    /// `Backends::with_plugins` of the plugins registered afterwards.
     ///
     /// # Errors
-    /// If a store of the core's kinds cannot be opened, or the storages of
-    /// workspaces or artifacts are not what their managers can use.
+    /// If a store of the core's kinds cannot be opened, or a storage of
+    /// workspaces or artifacts or a user provider cannot be made.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         state_store: Arc<dyn StateStore>,
         backend: impl Into<StoreBackend>,
@@ -370,14 +382,28 @@ impl RuntimeBuilder {
         confidentiality: Arc<dyn ConfidentialityPolicy>,
         config: &AppConfig,
         component_registry: ComponentRegistry,
+        backends: &Backends,
     ) -> Result<Self> {
         let backend = backend.into();
         let entity_stores = backend.entity_stores()?;
         let event_bus = Arc::new(EventBus::new(Arc::clone(&security_manager), Arc::clone(&confidentiality)));
         let controller_manager = Arc::new(ControllerManager::new(entity_stores.clone(), Arc::clone(&event_bus)));
         let agent_states = Arc::new(AgentStates::new(Arc::clone(&state_store), Arc::<EventBus>::clone(&event_bus)));
-        let workspaces = WorkspaceManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&security_manager), Arc::clone(&confidentiality), Arc::clone(&controller_manager), &secret_manager, &config.workspaces)?;
-        let artifacts = Arc::new(ArtifactManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&security_manager), Arc::clone(&confidentiality), &config.artifacts)?);
+        // What a backend may ask for: the policies, the secrets and, for a
+        // user provider, the records of the users.
+        let backend_services = Services::empty()
+            .with(Arc::clone(&security_manager))
+            .with(Arc::clone(&confidentiality))
+            .with(Arc::clone(&secret_manager))
+            .with(Arc::clone(&entity_stores.users));
+        let storages = backends.make_named::<dyn TerminalProvider>("storage of workspaces", &config.workspaces.storage, &backend_services)?;
+        let workspaces = WorkspaceManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&security_manager), Arc::clone(&confidentiality), Arc::clone(&controller_manager), storages, &config.workspaces)?;
+        let storages = backends.make_named::<dyn ArtifactStorage>("storage of artifacts", &config.artifacts.storage, &backend_services)?;
+        let artifacts = Arc::new(ArtifactManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&security_manager), Arc::clone(&confidentiality), storages, &config.artifacts)?);
+        // Users are recorded and their changes announced on the event bus
+        // (issue 306).
+        let user_providers = backends.make_chain::<dyn UserProvider>("user provider", &config.users.providers, &backend_services)?;
+        let user_manager = Arc::new(UserManager::new(user_providers, Arc::clone(&entity_stores.users), Arc::<EventBus>::clone(&event_bus)));
         let groups = Arc::new(GroupManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&security_manager)));
         let agents = Arc::new(AgentManager::new(&entity_stores, Arc::clone(&state_store), Arc::clone(&event_bus), Arc::clone(&security_manager)));
         let scope_members: Vec<Arc<dyn ScopeMember>> = vec![
@@ -398,6 +424,7 @@ impl RuntimeBuilder {
             state_store,
             entity_stores,
             secret_manager,
+            user_manager,
             security_manager,
             confidentiality,
             component_registry,
@@ -419,15 +446,19 @@ impl RuntimeBuilder {
         })
     }
 
-    /// The builder of the runtime as `config` describes it: the policy,
-    /// learning who belongs to a group from the store it guards (issue 23),
-    /// the policy of what may flow where (issue 304), the stores, the
-    /// secrets and the built-in component kinds - what a program builds its
-    /// runtime from before it adds its plugins.
+    /// The builder of the runtime as `config` describes it, with `plugins`
+    /// registered: the policy, learning who belongs to a group from the
+    /// store it guards (issue 23), the policy of what may flow where (issue
+    /// 304), the stores, the secrets, the built-in component kinds and the
+    /// backends of the core and of the plugins (issue 324) - first the
+    /// plugins' backends, then what is made of them, then the rest of what
+    /// the plugins bring.
     ///
     /// # Errors
-    /// If a store cannot be opened, or as `new`.
-    pub fn from_config(config: &AppConfig) -> Result<Self> {
+    /// If a store cannot be opened, a secret provider cannot be made, or as
+    /// `new` and `plugin`.
+    pub fn from_config(config: &AppConfig, plugins: &[&dyn Plugin]) -> Result<Self> {
+        let backends = Backends::with_plugins(plugins);
         // The policy is made before the store it guards, and bound to it
         // once it exists.
         let memberships = Arc::new(StoreMemberships::new());
@@ -436,9 +467,15 @@ impl RuntimeBuilder {
         let state_store = config.create_state_store(Arc::clone(&security_manager), Arc::clone(&confidentiality))?;
         let backend = config.open_entity_store(Arc::clone(&security_manager), Arc::clone(&confidentiality))?;
         memberships.bind(&backend.entity_stores()?.groups);
-        let secret_manager = config.create_secret_manager(Arc::clone(&security_manager))?;
+        let secret_services = Services::empty().with(Arc::clone(&security_manager)).with(Arc::clone(&confidentiality));
+        let secret_providers = backends.make_chain::<dyn SecretProvider>("secret provider", &config.secrets.providers, &secret_services)?;
+        let secret_manager = Arc::new(SecretManager::new(secret_providers, Arc::clone(&security_manager)));
         let registry = ComponentRegistry::built_in(backend.component_store());
-        Self::new(state_store, backend, secret_manager, security_manager, confidentiality, config, registry)
+        let mut builder = Self::new(state_store, backend, secret_manager, security_manager, confidentiality, config, registry, &backends)?;
+        for plugin in plugins {
+            builder.plugin(*plugin)?;
+        }
+        Ok(builder)
     }
 
     /// Registers what `plugin` brings.
@@ -556,6 +593,7 @@ impl RuntimeBuilder {
             entity_stores: self.entity_stores,
             component_store: self.backend.component_store(),
             secret_manager: self.secret_manager,
+            user_manager: self.user_manager,
             component_registry: Arc::new(self.component_registry),
             event_bus: self.event_bus,
             controller_manager: self.controller_manager,
@@ -575,7 +613,7 @@ impl RuntimeBuilder {
 
 impl RuntimeManager {
     /// The runtime of the core alone, without plugins: as `RuntimeBuilder`
-    /// builds it from the same parts.
+    /// builds it from the same parts, with the core's backends.
     ///
     /// # Errors
     /// As `RuntimeBuilder::new` and `RuntimeBuilder::build`.
@@ -588,7 +626,7 @@ impl RuntimeManager {
         config: &AppConfig,
         component_registry: ComponentRegistry,
     ) -> Result<Self> {
-        RuntimeBuilder::new(state_store, backend, secret_manager, security_manager, confidentiality, config, component_registry)?.build()
+        RuntimeBuilder::new(state_store, backend, secret_manager, security_manager, confidentiality, config, component_registry, &Backends::built_in())?.build()
     }
 
     /// Puts what the seed files `paths` hold into the stores (issue 105):
@@ -636,6 +674,10 @@ impl RuntimeManager {
     pub fn entity_stores(&self) -> &EntityStores { &self.entity_stores }
 
     pub fn secret_manager(&self) -> &Arc<SecretManager> { &self.secret_manager }
+
+    /// The one writer of user records, which authenticates a login against
+    /// the configured user providers (issues 306, 324).
+    pub fn user_manager(&self) -> &Arc<UserManager> { &self.user_manager }
 
     pub fn services(&self) -> &Services { &self.services }
 
@@ -696,6 +738,7 @@ mod tests {
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::user::UserId;
     use caelumora_model::confidentiality::ConfidentialityRules;
+    use caelumora_model::user_provider::Credential;
 
     fn channel_runtime() -> ChannelRuntime {
         let store = Arc::new(MemoryStore::new());
@@ -731,5 +774,26 @@ mod tests {
         let refused = manager(serde_json::json!([{"id": "context", "kind": "calculator_tool"}])).expect_err("provides no context");
         assert!(refused.to_string().contains("exactly one facet"), "{refused}");
     }
-}
 
+    #[tokio::test]
+    async fn the_backends_the_configuration_names_are_made_when_the_runtime_is_built() {
+        let dir = tempfile::tempdir().unwrap();
+        let yaml = format!("secrets:\n  providers: []\nworkspaces:\n  storage:\n    main:\n      type: local\n      root: \"{}\"\nusers:\n  providers:\n    - type: accept_any\n", dir.path().display());
+        let runtime = RuntimeBuilder::from_config(&AppConfig::from_yaml(&yaml).unwrap(), &[]).unwrap().build().unwrap();
+        assert_eq!(runtime.workspace_manager().storages().collect::<Vec<_>>(), [("main", false)]);
+        let alice = runtime.user_manager().authenticate("alice", &Credential::Password("x")).await.expect("accepted by accept_any");
+        assert_eq!(alice.username, "alice");
+
+        for (yaml, names) in [
+            ("workspaces:\n  storage:\n    main:\n      type: nfs\n", ["the storage of workspaces 'main' (nfs)", "known are: local"]),
+            ("workspaces:\n  storage:\n    dev:\n      type: local\n      root: x\n      max_run_secs: 0\n", ["'dev'", "max_run_secs"]),
+            ("artifacts:\n  storage:\n    kept:\n      type: local\n", ["the storage of artifacts 'kept' (local)", "root"]),
+            ("users:\n  providers:\n    - type: accept_any\n      default_roles: [staff]\n", ["the user provider 1 (accept_any)", "staff"]),
+            ("secrets:\n  providers:\n    - type: env\n    - type: vault\n", ["the secret provider 2 (vault)", "known are: env, file"]),
+        ] {
+            let refused = RuntimeBuilder::from_config(&AppConfig::from_yaml(yaml).unwrap(), &[]).map(|_| ()).expect_err(yaml);
+            let message = format!("{refused:#}");
+            assert!(names.iter().all(|name| message.contains(name)), "{yaml:?} gave: {message}");
+        }
+    }
+}

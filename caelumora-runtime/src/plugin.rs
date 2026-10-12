@@ -1,10 +1,14 @@
 //! Plugins (issue 323): subjects joined to the core as crates linked into
 //! the program, not loaded at run time. A plugin registers what it brings
-//! when the runtime is built (`RuntimeBuilder`): its component kinds, the
-//! stores of its kinds and the managers that keep them, as services, the
-//! members of a scope, its sections of the configuration and of the seed.
-//! Which plugins are in is the program's choice; the core knows none.
+//! when the runtime is built, in two steps: first the backends of the
+//! core's services (`Backends`, issue 324), before anything is made; then,
+//! with the core's services and managers made (`RuntimeBuilder`), its
+//! component kinds, the stores of its kinds and the managers that keep
+//! them, as services, the members of a scope, its sections of the
+//! configuration and of the seed. Which plugins are in is the program's
+//! choice; the core knows none.
 
+use crate::backend::Backends;
 use crate::runtime::RuntimeBuilder;
 
 /// A subject joined to the core, after the pattern of Bevy's
@@ -12,6 +16,11 @@ use crate::runtime::RuntimeBuilder;
 pub trait Plugin: Send + Sync {
     /// Its name, as messages name it.
     fn name(&self) -> &'static str;
+
+    /// Registers the backends it brings with `backends` - before the
+    /// services they serve are made, so before `register`. None unless it
+    /// says otherwise.
+    fn backends(&self, _backends: &mut Backends) {}
 
     /// Registers what it brings with `runtime`.
     ///
@@ -36,7 +45,8 @@ mod tests {
     use caelumora_model::define_id;
     use caelumora_model::group::Group;
     use caelumora_model::removal::{Deletable, Removal, Stored};
-    use caelumora_model::secret::SecretManager;
+    use caelumora_model::secret::{SecretManager, SecretProvider, SecretResult};
+    use crate::component::config_of_params;
     use caelumora_model::security::{DummySecurityManager, Secured, SecurityAttributes, SecurityContext};
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::store::query::NoField;
@@ -160,10 +170,47 @@ mod tests {
         }
     }
 
+    /// A plugin that brings a backend of a service of the core: secrets from
+    /// a place of its own.
+    struct Vault;
+
+    #[derive(Debug)]
+    struct VaultSecrets(String);
+
+    #[async_trait]
+    impl SecretProvider for VaultSecrets {
+        async fn get_secret(&self, _key: &str) -> SecretResult<Option<String>> {
+            Ok(Some(self.0.clone()))
+        }
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct VaultConfig {
+        secret: String,
+    }
+
+    impl Plugin for Vault {
+        fn name(&self) -> &'static str {
+            "vault"
+        }
+
+        fn backends(&self, backends: &mut Backends) {
+            backends.register::<dyn SecretProvider, _>("vault", |_, params, _| {
+                let config: VaultConfig = config_of_params(params)?;
+                Ok(Arc::new(VaultSecrets(config.secret)))
+            });
+        }
+
+        fn register(&self, _runtime: &mut RuntimeBuilder) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
     fn builder(store: &Arc<MemoryStore>, config: &AppConfig) -> anyhow::Result<RuntimeBuilder> {
         let security = Arc::new(DummySecurityManager::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&security)));
-        RuntimeBuilder::new(Arc::<MemoryStore>::clone(store), Arc::<MemoryStore>::clone(store), secrets, security, Arc::new(ConfidentialityRules::default()), config, ComponentRegistry::built_in(Arc::<MemoryStore>::clone(store)))
+        RuntimeBuilder::new(Arc::<MemoryStore>::clone(store), Arc::<MemoryStore>::clone(store), secrets, security, Arc::new(ConfidentialityRules::default()), config, ComponentRegistry::built_in(Arc::<MemoryStore>::clone(store)), &Backends::built_in())
     }
 
     fn built(config: &AppConfig, plugin: &dyn Plugin) -> anyhow::Result<RuntimeManager> {
@@ -199,6 +246,15 @@ mod tests {
         let notes = store.entity_store::<Note>().unwrap();
         let note = notes.get(&SecurityContext::system(), "3f9a5e56-e5ea-43f9-9114-2098a6f417a9".parse().unwrap()).await.expect("seeded");
         assert_eq!(note.text, "remember");
+    }
+
+    #[tokio::test]
+    async fn a_plugin_brings_a_backend_of_a_service_of_the_core() {
+        let config = AppConfig::from_yaml("secrets:\n  providers:\n    - type: vault\n      secret: s3cr3t\n").unwrap();
+        let runtime = RuntimeBuilder::from_config(&config, &[&Vault]).unwrap().build().unwrap();
+        assert_eq!(runtime.secret_manager().resolve(&SecurityContext::system(), "ANY").await.unwrap(), "s3cr3t", "made by the plugin's factory");
+        let without = RuntimeBuilder::from_config(&config, &[]).map(|_| ()).expect_err("nobody brings it");
+        assert!(format!("{without:#}").contains("the secret provider 1 (vault)"), "{without:#}");
     }
 
     #[test]

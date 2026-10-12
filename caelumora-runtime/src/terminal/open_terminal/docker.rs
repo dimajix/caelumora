@@ -22,7 +22,9 @@
 
 use super::client::{Client, Key};
 use super::{OpenCommands, OpenTerminal};
-use crate::terminal::{CommandKey, Terminal, TerminalError, TerminalProvider, TerminalResult};
+use crate::backend::Backends;
+use crate::component::{config_of_params, ComponentError, ComponentResult};
+use crate::terminal::{default_max_run_secs, max_run, CommandKey, Terminal, TerminalError, TerminalProvider, TerminalResult};
 use async_trait::async_trait;
 use bollard::errors::Error as DockerError;
 use bollard::exec::{CreateExecOptions, StartExecOptions};
@@ -34,6 +36,7 @@ use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::workspace::WorkspaceId;
 use futures::StreamExt;
 use reqwest::Method;
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -54,6 +57,74 @@ const PORT: u16 = 8000;
 const START_WAIT: Duration = Duration::from_secs(120);
 /// How long a container is given to stop before it is killed.
 const STOP_GRACE_SECS: i32 = 5;
+
+/// The parameters of `open_terminal_docker`: the image the containers run,
+/// the network they are started in, how long one may stay unused.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DockerStorageConfig {
+    /// Pinned: Open Terminal's API is 0.x.
+    image: String,
+    /// The Docker network the containers are started in, which reaches
+    /// what the agents are meant to reach; Caelumora reaches them at their
+    /// address there.
+    #[serde(default = "default_network")]
+    network: String,
+    #[serde(default = "default_idle_stop_secs")]
+    idle_stop_secs: u64,
+    /// What may be put into this storage; `public` unless given - a
+    /// command reaches whatever its network does.
+    #[serde(default)]
+    destination: Option<Classification>,
+    /// How long a command may run (issue 254), bounded by its container
+    /// itself.
+    #[serde(default = "default_max_run_secs")]
+    max_run_secs: u64,
+}
+
+fn default_network() -> String {
+    "bridge".to_string()
+}
+
+fn default_idle_stop_secs() -> u64 {
+    900
+}
+
+impl DockerStorageConfig {
+    /// Nothing if its fields fit: an image is named, the network gives a
+    /// container an address of its own, and a container may stay unused a
+    /// while.
+    ///
+    /// # Errors
+    /// `ComponentError::InvalidConfig` naming what does not fit.
+    fn check(&self) -> ComponentResult<()> {
+        let invalid = |why: String| Err(ComponentError::InvalidConfig(why));
+        if self.image.trim().is_empty() {
+            return invalid("an image is needed".to_string());
+        }
+        let network = &self.network;
+        if matches!(network.as_str(), "" | "host" | "none") || network.starts_with("container:") {
+            return invalid(format!("the network '{network}' does not give a container an address of its own"));
+        }
+        if self.idle_stop_secs == 0 {
+            return invalid("idle_stop_secs must be more than 0".to_string());
+        }
+        Ok(())
+    }
+}
+
+/// Registers the storage `open_terminal_docker` with `backends`: its
+/// containers are labelled with the name of the storage.
+pub(super) fn register_backend(backends: &mut Backends) {
+    backends.register::<dyn TerminalProvider, _>("open_terminal_docker", |storage, params, _| {
+        let config: DockerStorageConfig = config_of_params(params)?;
+        config.check()?;
+        let max_run = max_run(config.max_run_secs)?;
+        let provider = DockerProvider::new(storage, &config.image, &config.network, Duration::from_secs(config.idle_stop_secs), max_run, config.destination)
+            .map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
+        Ok(Arc::new(provider))
+    });
+}
 
 /// The instance of a workspace while it runs here: its client, or none.
 type Slot = Arc<Mutex<Option<Arc<Client>>>>;
@@ -392,6 +463,10 @@ impl TerminalProvider for DockerProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::Services;
+    use crate::terminal::DEFAULT_MAX_RUN_SECS;
+    use caelumora_model::config::BackendConfig;
+    use serde_json::json;
     use crate::terminal::{ByteStream, WorkspacePath};
     use caelumora_model::workspace::CommandStatus;
     use bytes::Bytes;
@@ -500,5 +575,22 @@ mod tests {
         let left = shell.start("pgrep -c -f '[s]leep 41' || true").await.unwrap();
         assert_eq!(shell.output(&left, 0, Duration::from_secs(10)).await.unwrap().output.trim(), "0", "what it started went with it");
         provider.remove(id).await.unwrap();
+    }
+
+    #[test]
+    fn its_parameters_name_its_image_and_take_the_rest_by_default() {
+        let config: DockerStorageConfig = config_of_params(&json!({ "image": "ghcr.io/open-webui/open-terminal:0.14.0" })).expect("a container per workspace");
+        config.check().expect("fits");
+        assert_eq!((config.image.as_str(), config.network.as_str(), config.idle_stop_secs, &config.destination, config.max_run_secs), ("ghcr.io/open-webui/open-terminal:0.14.0", "bridge", 900, &None, DEFAULT_MAX_RUN_SECS));
+        for (wrong, why) in [(json!({ "network": "host" }), "network"), (json!({ "network": "container:x" }), "network"), (json!({ "idle_stop_secs": 0 }), "idle_stop_secs"), (json!({ "image": " " }), "image")] {
+            let mut params = json!({ "image": "ghcr.io/open-webui/open-terminal:0.14.0" });
+            params.as_object_mut().unwrap().extend(wrong.as_object().unwrap().clone());
+            let config: DockerStorageConfig = config_of_params(&params).unwrap();
+            let refused = config.check().unwrap_err().to_string();
+            assert!(refused.contains(why), "{refused}");
+        }
+        let storages = [("isolated".to_string(), BackendConfig::new("open_terminal_docker", json!({ "image": "x", "max_run_secs": 0 })))].into();
+        let refused = Backends::built_in().make_named::<dyn TerminalProvider>("storage of workspaces", &storages, &Services::empty()).map(|_| ()).unwrap_err().to_string();
+        assert!(refused.contains("'isolated'") && refused.contains("max_run_secs"), "{refused}");
     }
 }

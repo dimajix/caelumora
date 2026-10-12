@@ -55,7 +55,8 @@ change to the stores or to `EntityKind`.
 ### Artifact content
 
 The content of artifacts lies in the storages configured under `artifacts`, each an
-`ArtifactStorage` that puts, reads and deletes a version without asking permissions. The
+`ArtifactStorage` that puts, reads and deletes a version without asking permissions - a backend,
+made by the factory registered for its `type` (see [ARCHITECTURE.md](ARCHITECTURE.md#backends)). The
 `ArtifactManager` is the one writer of artifact documents and the only code that holds the storages:
 a version's content is kept before the document says it exists, and removed again if the document
 cannot be stored; an artifact is purged with its content, the content first. It knows no workspace:

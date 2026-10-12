@@ -20,6 +20,7 @@
 
 mod local;
 
+use crate::backend::Backends;
 use crate::component::{ComponentError, ComponentResult};
 use crate::event::EventBus;
 use crate::scoped::{ScopeMember, deleted_since, deleted_unless_refused, restored_unless_refused, within};
@@ -27,7 +28,7 @@ use crate::terminal::ByteStream;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::artifact::{Artifact, ArtifactId, ArtifactUpdateEvent, ArtifactVersion};
-use caelumora_model::config::{ArtifactStorageConfig, ArtifactsConfig};
+use caelumora_model::config::ArtifactsConfig;
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
 use caelumora_model::digest::ContentDigest;
 use caelumora_model::event::GlobalEvent;
@@ -41,7 +42,6 @@ use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;
 use chrono::{DateTime, Utc};
 use futures::StreamExt;
-use local::LocalArtifactStorage;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::{Arc, Mutex as SyncMutex, PoisonError};
@@ -85,6 +85,12 @@ pub enum ArtifactError {
 
 pub type ArtifactResult<T> = Result<T, ArtifactError>;
 
+/// Registers the storages of artifacts the core brings with `backends`:
+/// `local`.
+pub(crate) fn register_backends(backends: &mut Backends) {
+    local::register_backend(backends);
+}
+
 /// `NotFound` for artifact `id` where the store found nothing.
 fn store_error(id: ArtifactId) -> impl FnOnce(StoreError) -> ArtifactError {
     move |e| match e {
@@ -95,8 +101,9 @@ fn store_error(id: ArtifactId) -> impl FnOnce(StoreError) -> ArtifactError {
 
 /// Where the content of artifacts lies (issue 271): one piece per version,
 /// by artifact and number, without permissions - which are the manager's.
+/// The service a storage of artifacts is a backend of (issue 324).
 #[async_trait]
-pub(crate) trait ArtifactStorage: Send + Sync + fmt::Debug {
+pub trait ArtifactStorage: Send + Sync + fmt::Debug {
     /// Keeps `content` as version `version` of `artifact`, at most `limit`
     /// bytes, or nothing; answers how many bytes were kept.
     async fn put(&self, artifact: ArtifactId, version: u32, content: ByteStream, limit: u64) -> ArtifactResult<u64>;
@@ -134,16 +141,15 @@ impl fmt::Debug for ArtifactManager {
 }
 
 impl ArtifactManager {
-    pub(crate) fn new(stores: &EntityStores, events: Arc<EventBus>, security: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>, config: &ArtifactsConfig) -> ComponentResult<Self> {
+    /// The manager of the artifacts of `stores`, whose content lies in
+    /// `storages`, by their names - the storages `config` names, made as
+    /// backends (issue 324) -, new ones in the storage `config` says.
+    ///
+    /// # Errors
+    /// `ComponentError::InvalidConfig` where `config` does not fit
+    /// together.
+    pub(crate) fn new(stores: &EntityStores, events: Arc<EventBus>, security: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>, storages: BTreeMap<String, Arc<dyn ArtifactStorage>>, config: &ArtifactsConfig) -> ComponentResult<Self> {
         config.check().map_err(|why| ComponentError::InvalidConfig(format!("artifacts: {why}")))?;
-        let storages = config.storage.iter()
-            .map(|(name, storage)| {
-                let storage: Arc<dyn ArtifactStorage> = match storage {
-                    ArtifactStorageConfig::Local { root, destination } => Arc::new(LocalArtifactStorage::new(root.clone(), destination.clone())),
-                };
-                (name.clone(), storage)
-            })
-            .collect();
         Ok(Self { artifacts: Arc::clone(&stores.artifacts), groups: Arc::clone(&stores.groups), events, security, confidentiality, storages, publish_to: config.publish_to().map(String::from), max_bytes: config.max_bytes, writing: Mutex::new(()) })
     }
 

@@ -69,6 +69,14 @@ Caelumora) and `open_terminal_docker` (a volume and a container per workspace, s
 docs (`terminal::open_terminal`). A storage's key is resolved through the secret chain in the
 system's name, since the storage is the operator's.
 
+A storage is a backend (issue 324, see [ARCHITECTURE.md](ARCHITECTURE.md#backends)): its provider
+is made by the factory registered for its `type`, which reads and checks its parameters. The three
+above are the core's, registered by `terminal::register_backends` beside their providers in
+`caelumora-runtime/src/terminal/`; another sandbox - a pod, a remote machine - is added by a plugin
+that registers a `TerminalProvider` of its own. What a provider has to offer is the
+`TerminalProvider` trait: making and removing the place of a workspace, its `Terminal`, whether it
+has a shell, the commands that may still run and ending one (`CommandKey`), and its `destination`.
+
 A storage bounds what may be put into it: its `destination`, the classification a workspace in it
 may have at most - where its files go, and for a storage with a shell where what a command reads can
 go, since a command reaches whatever its host or container reaches; making or raising a workspace

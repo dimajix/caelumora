@@ -203,14 +203,27 @@ which a tool passes on with `?`.
 ## Plugins
 
 A plugin (issue 323) is a crate linked into the program that brings a subject the core does not
-know - a kind of entity with what keeps it, its components, its views and its routes. It implements
-`caelumora_runtime::plugin::Plugin` - a name for messages and `register` - and the program lists
-it: `caelumora-app` in `rest_plugins()` if it serves routes, otherwise in `plugins()`, and builds
-its runtime with both; `caelumora-tui` in its own `plugins()`. `RuntimeBuilder::new` makes the
-core's services and managers first; then each plugin registers, and `build` makes the runtime.
-`RuntimeBuilder::from_config` makes what a program builds from the configuration - the policies,
-the stores, the secrets, the built-in component kinds -, `RuntimeManager::new` is the builder
-without plugins. While it registers, a plugin
+know - a kind of entity with what keeps it, its components, its views and its routes - or a backend
+of a service of the core (issue 324). It implements `caelumora_runtime::plugin::Plugin` - a name for
+messages, `backends` and `register` - and the program lists it: `caelumora-app` in `rest_plugins()`
+if it serves routes, otherwise in `plugins()`, and builds its runtime with both; `caelumora-tui` in
+its own `plugins()`. A program builds its runtime with `RuntimeBuilder::from_config`, given the
+configuration and its plugins, in two steps:
+
+1.  Each plugin registers its backends (`backends`, see
+    [ARCHITECTURE.md](ARCHITECTURE.md#backends)) with the core's (`Backends::with_plugins`), before
+    anything is made: what the core's services are made of has to be known first.
+2.  The policies, the stores, the secrets and the built-in component kinds are made, then the
+    core's services and managers (`RuntimeBuilder::new`), with the backends the configuration
+    names; then each plugin registers the rest of what it brings (`register`), and `build` makes
+    the runtime.
+
+A test that builds the runtime from parts of its own calls `RuntimeBuilder::new` with
+`Backends::with_plugins` of its plugins and registers them afterwards; `RuntimeManager::new` is the
+builder without plugins. A backend's factory is registered with `Backends::register` for the
+service it serves (`dyn TerminalProvider`, say), reads its parameters with `config_of_params` and
+asks the services it is given - the policies, the `SecretManager`, the store of the users - with
+`service_of`. While it registers, a plugin
 
 *   asks for the store of its kind (`entity_store::<T>()`). The configured backend opens a store
     for any kind (`EntityStoreFactory`), once - whoever asks for the kind again is given the same

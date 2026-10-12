@@ -3,14 +3,39 @@
 //! whole or not at all, as the files of a local workspace are.
 
 use super::{ArtifactError, ArtifactResult, ArtifactStorage};
+use crate::backend::Backends;
+use crate::component::config_of_params;
 use crate::terminal::{write_whole, ByteStream, WriteFailure};
 use async_trait::async_trait;
 use caelumora_model::artifact::ArtifactId;
 use caelumora_model::confidentiality::Classification;
+use serde::Deserialize;
 use std::io::ErrorKind;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::fs;
 use tokio_util::io::ReaderStream;
+
+/// The parameters of `local`: a directory per artifact under `root`, a
+/// file per version, on Caelumora's host.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LocalArtifactStorageConfig {
+    root: PathBuf,
+    /// What may be put into this storage: the classification an artifact
+    /// in it may have at most; no bound unless given, since nothing then
+    /// leaves the host.
+    #[serde(default)]
+    destination: Option<Classification>,
+}
+
+/// Registers the storage `local` of artifacts with `backends`.
+pub(super) fn register_backend(backends: &mut Backends) {
+    backends.register::<dyn ArtifactStorage, _>("local", |_, params, _| {
+        let config: LocalArtifactStorageConfig = config_of_params(params)?;
+        Ok(Arc::new(LocalArtifactStorage::new(config.root, config.destination)))
+    });
+}
 
 #[derive(Debug)]
 pub(crate) struct LocalArtifactStorage {

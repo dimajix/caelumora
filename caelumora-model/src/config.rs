@@ -1,25 +1,17 @@
 use crate::approval::ApprovalRule;
 use crate::command::default_commands;
-use crate::confidentiality::{Classification, Compartments, ConfidentialityPolicy, ConfidentialityRules};
-use crate::role::{RoleError, RoleId, Roles};
+use crate::confidentiality::{Compartments, ConfidentialityPolicy, ConfidentialityRules};
+use crate::role::Roles;
 use std::collections::BTreeMap;
 use crate::component::ComponentConfig;
-use crate::remote::RemoteEndpoint;
-use crate::secret::SecretManager;
-use crate::secret::env::EnvSecretProvider;
-use crate::secret::file::FileSecretProvider;
 use crate::security::{DummySecurityManager, Memberships, OwnershipSecurityManager, SecurityManager};
-use crate::store::{EntityStore, StateStore, StoreBackend, StoreError};
+use crate::store::{StateStore, StoreBackend, StoreError};
 use crate::store::json::JsonFileStore;
 use crate::store::memory::MemoryStore;
-use crate::user_provider::{UserManager, UserProvider};
-use crate::user_provider::accept_any::AcceptAnyUserProvider;
-use crate::event::EventPublisher;
 use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use crate::user::User;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -78,17 +70,35 @@ pub struct PersistenceConfig {
     pub state_store: PersistenceBackend,
 }
 
-#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-pub enum SecretProviderConfig {
-    File { path: PathBuf },
-    Env,
+/// A backend of a service (issue 324): its `type`, by which the runtime
+/// finds the factory registered for it - the core's or a plugin's -, and
+/// its parameters, written beside the type and read by that factory. A
+/// type no factory is registered for, or parameters it cannot read, are
+/// refused when the runtime is built.
+#[derive(Debug, Deserialize, Clone, PartialEq)]
+pub struct BackendConfig {
+    #[serde(rename = "type")]
+    pub kind: String,
+    #[serde(flatten)]
+    pub params: serde_json::Map<String, serde_json::Value>,
 }
 
+impl BackendConfig {
+    /// The backend of the type `kind` with `params`, an object or nothing.
+    pub fn new(kind: &str, params: serde_json::Value) -> Self {
+        let params = match params {
+            serde_json::Value::Object(params) => params,
+            _ => serde_json::Map::new(),
+        };
+        Self { kind: kind.to_string(), params }
+    }
+}
+
+/// The chain of secret providers, each a backend (`dyn SecretProvider`).
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default, deny_unknown_fields)]
 pub struct SecretsConfig {
-    pub providers: Vec<SecretProviderConfig>,
+    pub providers: Vec<BackendConfig>,
 }
 
 /// Without a `secrets` section, secrets come from `local/secrets.json` and
@@ -97,8 +107,8 @@ impl Default for SecretsConfig {
     fn default() -> Self {
         Self {
             providers: vec![
-                SecretProviderConfig::File { path: PathBuf::from("local/secrets.json") },
-                SecretProviderConfig::Env,
+                BackendConfig::new("file", serde_json::json!({ "path": "local/secrets.json" })),
+                BackendConfig::new("env", serde_json::Value::Null),
             ],
         }
     }
@@ -119,29 +129,14 @@ pub enum SecurityConfig {
     AllowAll,
 }
 
-#[derive(Debug, Deserialize, Clone)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-pub enum UserProviderConfig {
-    /// Development only: accepts any username and password (see
-    /// `AcceptAnyUserProvider`). Never part of the default chain. Gives the
-    /// users named in `roles` their roles, and everybody else
-    /// `default_roles` (issue 142) - by their names, resolved to their ids
-    /// when the provider is made (issue 23).
-    AcceptAny {
-        #[serde(default)]
-        roles: BTreeMap<String, Vec<String>>,
-        #[serde(default)]
-        default_roles: Vec<String>,
-    },
-}
-
+/// The chain of user providers, each a backend (`dyn UserProvider`).
 /// Without a `users` section the chain is empty and nobody can
 /// authenticate: there is no default provider, because the only one that
 /// needs no setup accepts everybody.
 #[derive(Debug, Deserialize, Default, Clone)]
 #[serde(default, deny_unknown_fields)]
 pub struct UsersConfig {
-    pub providers: Vec<UserProviderConfig>,
+    pub providers: Vec<BackendConfig>,
 }
 
 /// How the REST server keeps a browser logged in: a signed JWT in an
@@ -271,13 +266,14 @@ pub struct AppConfig {
 }
 
 /// The storages workspaces are made in (issue 253), each by the name a
-/// workspace refers to it with and served by its provider, and how large a
-/// file a person may put into one.
+/// workspace refers to it with and a backend (`dyn TerminalProvider`), the
+/// provider that makes and reaches the place of each (issue 251, part A),
+/// and how large a file a person may put into one.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default, deny_unknown_fields)]
 pub struct WorkspacesConfig {
     pub max_file_bytes: u64,
-    pub storage: BTreeMap<String, StorageConfig>,
+    pub storage: BTreeMap<String, BackendConfig>,
 }
 
 /// The largest file a person may put into a workspace unless configured
@@ -290,75 +286,9 @@ impl Default for WorkspacesConfig {
     }
 }
 
-/// A storage of workspaces, by the provider that makes and reaches the
-/// place of each (issue 251, part A).
-#[derive(Debug, Deserialize, Clone, PartialEq)]
-#[serde(tag = "provider", rename_all = "snake_case", deny_unknown_fields)]
-pub enum StorageConfig {
-    /// A directory per workspace under `root`, on Caelumora's host, read
-    /// and written by Caelumora itself. With `shell`, agents run commands
-    /// there - on Caelumora's host, as its user: for development and tests,
-    /// never where the host is to be protected.
-    Local {
-        root: PathBuf,
-        #[serde(default)]
-        shell: bool,
-        /// What may be put into this storage (issue 251): the classification
-        /// a workspace in it may have at most. Without it, `public` where it
-        /// has a shell - a command may send anything anywhere - and no bound
-        /// where it has none, since nothing then leaves the process.
-        #[serde(default)]
-        destination: Option<Classification>,
-        /// How long a command may run (issue 254): killed, with what it
-        /// started, once it ran so long. Of use only with `shell`.
-        #[serde(default = "default_max_run_secs")]
-        max_run_secs: u64,
-    },
-    /// One Open Terminal instance, started outside Caelumora, at
-    /// `endpoint`, that has the storage at `mount`: a workspace is the
-    /// directory `<mount>/<id>` there. Every workspace of the storage lies
-    /// in the one instance, and a command in one reaches every other.
-    OpenTerminalShared {
-        endpoint: RemoteEndpoint,
-        /// Where the instance has the storage: absolute, in the instance.
-        mount: String,
-        /// What may be put into this storage; `public` unless given - a
-        /// command may send anything anywhere.
-        #[serde(default)]
-        destination: Option<Classification>,
-        /// How long a command may run (issue 254), bounded by the instance
-        /// itself: one an earlier run of Caelumora left ends then too.
-        #[serde(default = "default_max_run_secs")]
-        max_run_secs: u64,
-    },
-    /// A volume and an Open Terminal container per workspace, started by
-    /// Caelumora over the Docker daemon its environment names - which is
-    /// root on the host - on first use and stopped after `idle_stop_secs`
-    /// unused. A workspace's commands are kept to its container.
-    OpenTerminalDocker {
-        /// Pinned: Open Terminal's API is 0.x.
-        image: String,
-        /// The Docker network the containers are started in, which reaches
-        /// what the agents are meant to reach; Caelumora reaches them at
-        /// their address there.
-        #[serde(default = "default_docker_network")]
-        network: String,
-        #[serde(default = "default_idle_stop_secs")]
-        idle_stop_secs: u64,
-        /// What may be put into this storage; `public` unless given - a
-        /// command reaches whatever its network does.
-        #[serde(default)]
-        destination: Option<Classification>,
-        /// How long a command may run (issue 254), bounded by its container
-        /// itself.
-        #[serde(default = "default_max_run_secs")]
-        max_run_secs: u64,
-    },
-}
-
 /// The storages artifacts are kept in (issue 271), each by the name an
-/// artifact refers to it with, which of them new artifacts go to, and how
-/// large a version may be.
+/// artifact refers to it with and a backend (`dyn ArtifactStorage`), which
+/// of them new artifacts go to, and how large a version may be.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default, deny_unknown_fields)]
 pub struct ArtifactsConfig {
@@ -366,7 +296,7 @@ pub struct ArtifactsConfig {
     /// The storage new artifacts are made in; needed where there are
     /// several, the one there is where there is one.
     pub publish_to: Option<String>,
-    pub storage: BTreeMap<String, ArtifactStorageConfig>,
+    pub storage: BTreeMap<String, BackendConfig>,
 }
 
 impl Default for ArtifactsConfig {
@@ -396,79 +326,6 @@ impl ArtifactsConfig {
             Some(name) if !self.storage.contains_key(name) => Err(format!("publish_to names '{name}', which is no storage of artifacts")),
             None if self.storage.len() > 1 => Err("publish_to is needed where there are several storages of artifacts".to_string()),
             _ => Ok(()),
-        }
-    }
-}
-
-/// A storage of artifacts, by its provider (issue 271); object storage is
-/// issue 272.
-#[derive(Debug, Deserialize, Clone, PartialEq)]
-#[serde(tag = "provider", rename_all = "snake_case", deny_unknown_fields)]
-pub enum ArtifactStorageConfig {
-    /// A directory per artifact under `root`, a file per version, on
-    /// Caelumora's host.
-    Local {
-        root: PathBuf,
-        /// What may be put into this storage: the classification an
-        /// artifact in it may have at most; no bound unless given, since
-        /// nothing then leaves the host.
-        #[serde(default)]
-        destination: Option<Classification>,
-    },
-}
-
-fn default_docker_network() -> String {
-    "bridge".to_string()
-}
-
-fn default_idle_stop_secs() -> u64 {
-    900
-}
-
-/// How long a command in a workspace may run unless its storage says
-/// otherwise (issue 254): an hour.
-pub const DEFAULT_MAX_RUN_SECS: u64 = 3600;
-
-fn default_max_run_secs() -> u64 {
-    DEFAULT_MAX_RUN_SECS
-}
-
-impl StorageConfig {
-    /// How long a command in one of its workspaces may run (issue 254).
-    pub fn max_run(&self) -> std::time::Duration {
-        let (Self::Local { max_run_secs, .. } | Self::OpenTerminalShared { max_run_secs, .. } | Self::OpenTerminalDocker { max_run_secs, .. }) = self;
-        std::time::Duration::from_secs(*max_run_secs)
-    }
-
-    /// Whether its fields fit: a `mount` is absolute and stays where it
-    /// says, and a command may run at all.
-    ///
-    /// # Errors
-    /// What does not fit.
-    pub fn check(&self) -> Result<(), String> {
-        if self.max_run().is_zero() {
-            return Err("max_run_secs must be more than 0".to_string());
-        }
-        match self {
-            Self::Local { .. } => Ok(()),
-            Self::OpenTerminalShared { mount, .. } => {
-                if !mount.starts_with('/') || mount.contains('\0') || mount.split('/').any(|part| part == "..") {
-                    return Err(format!("the mount '{mount}' is not an absolute path that stays where it says"));
-                }
-                Ok(())
-            }
-            Self::OpenTerminalDocker { image, network, idle_stop_secs, .. } => {
-                if image.trim().is_empty() {
-                    return Err("an image is needed".to_string());
-                }
-                if matches!(network.as_str(), "" | "host" | "none") || network.starts_with("container:") {
-                    return Err(format!("the network '{network}' does not give a container an address of its own"));
-                }
-                if *idle_stop_secs == 0 {
-                    return Err("idle_stop_secs must be more than 0".to_string());
-                }
-                Ok(())
-            }
         }
     }
 }
@@ -506,7 +363,10 @@ impl Default for AppConfig {
 }
 
 /// Parses a document the way the configuration is parsed, for files a
-/// configuration names (e.g. `seed`).
+/// configuration names (e.g. `seed`). Only `true` and `false` are booleans:
+/// `yes`, `no`, `on`, `off` and `y` are text, also where nothing says which
+/// it should be - the parameters of a backend or the section of a plugin,
+/// kept as they were written until they are read.
 ///
 /// # Errors
 /// `ConfigError::Parse` if `yaml` is not a `T`; the error names the line and
@@ -517,6 +377,7 @@ pub fn parse_yaml<T: serde::de::DeserializeOwned>(yaml: &str) -> ConfigResult<T>
     // is enough to find the mistake.
     let mut options = serde_saphyr::Options::default();
     options.with_snippet = false;
+    options.strict_booleans = true;
     Ok(serde_saphyr::from_str_with_options(yaml, options)?)
 }
 
@@ -543,41 +404,17 @@ impl AppConfig {
     }
 
     /// Nothing if the sections fit together: the roles grant only
-    /// configured compartments, and the user providers give only
-    /// configured roles - and none without a `roles` section.
+    /// configured compartments. What a backend is given is checked by the
+    /// backend, when it is made (issue 324).
     fn check(&self) -> ConfigResult<()> {
         if let Some(roles) = &self.roles {
             roles.check(&self.compartments).map_err(|e| ConfigError::Invalid(e.to_string()))?;
-        }
-        for (name, storage) in &self.workspaces.storage {
-            storage.check().map_err(|why| ConfigError::Invalid(format!("the storage '{name}' of workspaces: {why}")))?;
         }
         self.artifacts.check().map_err(|why| ConfigError::Invalid(format!("artifacts: {why}")))?;
         for rule in &self.approvals.rules {
             rule.check_restricting().map_err(|e| ConfigError::Invalid(format!("an approval rule for `{}`: {e}", rule.matcher.tool)))?;
         }
-        for provider in &self.users.providers {
-            let UserProviderConfig::AcceptAny { roles: assigned, default_roles } = provider;
-            for names in assigned.values().chain([default_roles]) {
-                self.role_ids(names)?;
-            }
-        }
         Ok(())
-    }
-
-    /// The ids of the configured roles `names` names (issue 23).
-    ///
-    /// # Errors
-    /// `ConfigError::Invalid` for a role that is not configured - any, if
-    /// there is no `roles` section.
-    fn role_ids(&self, names: &[String]) -> ConfigResult<Vec<RoleId>> {
-        match &self.roles {
-            Some(roles) => roles.ids_of(names).map_err(|e: RoleError| ConfigError::Invalid(e.to_string())),
-            None => match names.first() {
-                Some(role) => Err(ConfigError::Invalid(format!("role '{role}' is given to users, but no roles are configured"))),
-                None => Ok(Vec::new()),
-            },
-        }
     }
 
     /// The one `SecurityManager` of the process, as configured, learning
@@ -619,44 +456,12 @@ impl AppConfig {
     pub fn create_state_store(&self, security_manager: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> ConfigResult<Arc<dyn StateStore>> {
         Ok(self.persistence.state_store.open(security_manager, confidentiality)?.state_store())
     }
-
-    /// The chain of secret providers from the `secrets` section.
-    pub fn create_secret_manager(&self, security_manager: Arc<dyn SecurityManager>) -> ConfigResult<Arc<SecretManager>> {
-        let providers = self.secrets.providers.iter()
-            .map(|config| match config {
-                SecretProviderConfig::File { path } => Arc::new(FileSecretProvider::new(path.clone())) as Arc<dyn crate::secret::SecretProvider>,
-                SecretProviderConfig::Env => Arc::new(EnvSecretProvider::new()) as Arc<dyn crate::secret::SecretProvider>,
-            })
-            .collect();
-
-        Ok(Arc::new(SecretManager::new(providers, security_manager)))
-    }
-
-    /// The chain of user providers from the `users` section, keeping the
-    /// user records in `users` and announcing their changes through
-    /// `events` (issue 306).
-    pub fn create_user_manager(&self, users: Arc<dyn EntityStore<User>>, events: Arc<dyn EventPublisher>) -> ConfigResult<Arc<UserManager>> {
-        let providers = self.users.providers.iter()
-            .map(|config| match config {
-                UserProviderConfig::AcceptAny { roles, default_roles } => {
-                    tracing::warn!("User provider 'accept_any' is enabled: ANY username and password will be accepted. \
-                        Development only - never expose this server to a network.");
-                    let roles = roles.iter()
-                        .map(|(user, names)| Ok((user.clone(), self.role_ids(names)?)))
-                        .collect::<ConfigResult<BTreeMap<_, _>>>()?;
-                    let default_roles = self.role_ids(default_roles)?;
-                    Ok(Arc::new(AcceptAnyUserProvider::with_roles(Arc::clone(&users), roles, default_roles)) as Arc<dyn UserProvider>)
-                }
-            })
-            .collect::<ConfigResult<Vec<_>>>()?;
-
-        Ok(Arc::new(UserManager::new(providers, users, events)))
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::role::RoleId;
 
     #[test]
     fn a_store_backend_is_named_by_its_type() {
@@ -688,12 +493,12 @@ persistence:
 
     #[test]
     fn artifacts_are_kept_in_the_storage_publish_to_names_or_the_one_there_is() {
-        let one = AppConfig::from_yaml("artifacts:\n  storage:\n    files:\n      provider: local\n      root: local/artifacts\n").expect("one local storage");
+        let one = AppConfig::from_yaml("artifacts:\n  storage:\n    files:\n      type: local\n      root: local/artifacts\n").expect("one local storage");
         assert_eq!(one.artifacts.publish_to(), Some("files"));
         assert_eq!(one.artifacts.max_bytes, DEFAULT_MAX_FILE_BYTES);
         let none = AppConfig::from_yaml("{}").unwrap();
         assert_eq!(none.artifacts.publish_to(), None, "none configured");
-        let several = "artifacts:\n  storage:\n    a:\n      provider: local\n      root: a\n    b:\n      provider: local\n      root: b\n";
+        let several = "artifacts:\n  storage:\n    a:\n      type: local\n      root: a\n    b:\n      type: local\n      root: b\n";
         assert!(AppConfig::from_yaml(several).is_err(), "which one, among several, must be said");
         let chosen = AppConfig::from_yaml(&format!("{several}  publish_to: b\n")).expect("chosen");
         assert_eq!(chosen.artifacts.publish_to(), Some("b"));
@@ -701,48 +506,19 @@ persistence:
     }
 
     #[test]
-    fn workspaces_are_made_in_the_storages_configured() {
-        let config = AppConfig::from_yaml("workspaces:\n  max_file_bytes: 1024\n  storage:\n    main:\n      provider: local\n      root: local/workspaces\n").expect("a local storage");
+    fn a_backend_is_named_by_its_type_and_keeps_its_parameters_for_its_factory() {
+        let config = AppConfig::from_yaml("workspaces:\n  max_file_bytes: 1024\n  storage:\n    dev:\n      type: local\n      root: x\n      shell: true\n      destination: { level: internal }\n").expect("a local storage");
         assert_eq!(config.workspaces.max_file_bytes, 1024);
-        assert_eq!(config.workspaces.storage.get("main"), Some(&StorageConfig::Local { root: PathBuf::from("local/workspaces"), shell: false, destination: None, max_run_secs: DEFAULT_MAX_RUN_SECS }));
-        let shell = AppConfig::from_yaml("workspaces:\n  storage:\n    dev:\n      provider: local\n      root: x\n      shell: true\n      destination: { level: internal }\n").expect("a local storage with a shell");
-        assert_eq!(shell.workspaces.storage.get("dev"), Some(&StorageConfig::Local { root: PathBuf::from("x"), shell: true, destination: Some(Classification::general(crate::confidentiality::Confidentiality::Internal)), max_run_secs: DEFAULT_MAX_RUN_SECS }));
+        let expected = BackendConfig::new("local", serde_json::json!({ "root": "x", "shell": true, "destination": { "level": "internal" } }));
+        assert_eq!(config.workspaces.storage.get("dev"), Some(&expected));
+        // What the parameters are is the factory's to say, when the runtime
+        // is built: a type nobody registers is no error here.
+        let unknown = AppConfig::from_yaml("workspaces:\n  storage:\n    main:\n      type: nfs\n      rot: z\n").expect("read as it is written");
+        assert_eq!(unknown.workspaces.storage.get("main"), Some(&BackendConfig::new("nfs", serde_json::json!({ "rot": "z" }))));
+        assert!(AppConfig::from_yaml("workspaces:\n  storage:\n    main:\n      root: x\n").is_err(), "a type is needed");
         let none = AppConfig::from_yaml("{}\n").expect("nothing configured");
         assert!(none.workspaces.storage.is_empty(), "no storage unless configured");
         assert_eq!(none.workspaces.max_file_bytes, DEFAULT_MAX_FILE_BYTES);
-        let bounded = AppConfig::from_yaml("workspaces:\n  storage:\n    dev:\n      provider: local\n      root: x\n      shell: true\n      max_run_secs: 60\n").expect("a bound of its own");
-        assert_eq!(bounded.workspaces.storage.get("dev").map(StorageConfig::max_run), Some(std::time::Duration::from_secs(60)));
-        let unbounded = AppConfig::from_yaml("workspaces:\n  storage:\n    dev:\n      provider: local\n      root: x\n      max_run_secs: 0\n").map(|_| ()).unwrap_err().to_string();
-        assert!(unbounded.contains("dev") && unbounded.contains("max_run_secs"), "{unbounded}");
-        for yaml in ["workspaces:\n  storage:\n    main:\n      provider: local\n      root: x\n      rot: y\n", "workspaces:\n  storage:\n    main:\n      provider: nfs\n"] {
-            assert!(AppConfig::from_yaml(yaml).is_err(), "{yaml:?}");
-        }
-    }
-
-    #[test]
-    fn an_open_terminal_storage_names_its_instance_and_where_it_has_the_storage() {
-        let yaml = "workspaces:\n  storage:\n    sandbox:\n      provider: open_terminal_shared\n      endpoint: { url: \"http://open-terminal:8000\", auth: { type: bearer, secret: OPEN_TERMINAL_API_KEY } }\n      mount: /workspaces\n";
-        let config = AppConfig::from_yaml(yaml).expect("a shared Open Terminal");
-        let Some(StorageConfig::OpenTerminalShared { endpoint, mount, destination, max_run_secs }) = config.workspaces.storage.get("sandbox") else { panic!("{:?}", config.workspaces.storage) };
-        assert_eq!((endpoint.url.as_str(), mount.as_str(), destination, *max_run_secs), ("http://open-terminal:8000", "/workspaces", &None, DEFAULT_MAX_RUN_SECS));
-        for mount in ["workspaces", "/a/../b"] {
-            let refused = AppConfig::from_yaml(&yaml.replace("/workspaces", mount)).map(|_| ()).unwrap_err().to_string();
-            assert!(refused.contains("sandbox") && refused.contains("mount"), "{refused}");
-        }
-        assert!(AppConfig::from_yaml(&yaml.replace("      mount: /workspaces\n", "")).is_err(), "a mount is needed");
-    }
-
-    #[test]
-    fn a_docker_storage_names_its_image_and_takes_the_rest_by_default() {
-        let yaml = "workspaces:\n  storage:\n    isolated:\n      provider: open_terminal_docker\n      image: ghcr.io/open-webui/open-terminal:0.14.0\n";
-        let config = AppConfig::from_yaml(yaml).expect("a container per workspace");
-        let Some(StorageConfig::OpenTerminalDocker { image, network, idle_stop_secs, destination, max_run_secs }) = config.workspaces.storage.get("isolated") else { panic!() };
-        assert_eq!((image.as_str(), network.as_str(), *idle_stop_secs, destination, *max_run_secs), ("ghcr.io/open-webui/open-terminal:0.14.0", "bridge", 900, &None, DEFAULT_MAX_RUN_SECS));
-        for (wrong, why) in [("      network: host\n", "network"), ("      idle_stop_secs: 0\n", "idle_stop_secs"), ("      max_run_secs: 0\n", "max_run_secs")] {
-            let refused = AppConfig::from_yaml(&format!("{yaml}{wrong}")).map(|_| ()).unwrap_err().to_string();
-            assert!(refused.contains("isolated") && refused.contains(why), "{refused}");
-        }
-        assert!(AppConfig::from_yaml(&yaml.replace("ghcr.io/open-webui/open-terminal:0.14.0", "\" \"")).is_err(), "an image is needed");
     }
 
     #[test]
@@ -782,8 +558,8 @@ secrets:
 "#;
         let config = AppConfig::from_yaml(yaml).unwrap();
         assert_eq!(config.secrets.providers, [
-            SecretProviderConfig::File { path: PathBuf::from("local/secrets.json") },
-            SecretProviderConfig::Env,
+            BackendConfig::new("file", serde_json::json!({ "path": "local/secrets.json" })),
+            BackendConfig::new("env", serde_json::Value::Null),
         ]);
     }
 
@@ -795,8 +571,7 @@ users:
     - type: accept_any
 "#;
         let config = AppConfig::from_yaml(yaml).unwrap();
-        assert_eq!(config.users.providers.len(), 1);
-        assert!(matches!(config.users.providers[0], UserProviderConfig::AcceptAny { .. }));
+        assert_eq!(config.users.providers, [BackendConfig::new("accept_any", serde_json::Value::Null)]);
     }
 
     #[test]
@@ -832,47 +607,13 @@ auth:
         assert_eq!(config.auth.max_session_secs, 12 * 60 * 60, "unset fields keep their defaults");
     }
 
-    #[tokio::test]
-    async fn test_create_user_manager_without_config_accepts_nobody() {
-        let store = Arc::new(MemoryStore::new()).entity_stores().users;
-        let manager = AppConfig::default().create_user_manager(store, Arc::new(())).unwrap();
-
-        let result = manager.authenticate("user", &crate::user_provider::Credential::Password("x")).await;
-        assert!(result.is_err(), "no provider must be enabled by default");
-    }
-
-    #[tokio::test]
-    async fn test_create_user_manager_with_accept_any() {
-        let yaml = r#"
-users:
-  providers:
-    - type: accept_any
-"#;
-        let config = AppConfig::from_yaml(yaml).unwrap();
-        let store = Arc::new(MemoryStore::new()).entity_stores().users;
-        let manager = config.create_user_manager(store, Arc::new(())).unwrap();
-
-        let user = manager.authenticate("alice", &crate::user_provider::Credential::Password("x")).await
-            .expect("accept_any accepts everybody");
-        assert_eq!(user.username, "alice");
-    }
-
-    #[tokio::test]
-    async fn test_create_secret_manager_defaults_fall_through_to_env() {
-        // With no `secrets` config, the default provider chain is
-        // [File("local/secrets.json"), Env]. Since that file does not exist
-        // in the test working directory, a lookup should fall through to
-        // the env provider.
-        std::env::set_var("CAELUMORA_TEST_CONFIG_SECRET", "value-from-env");
-        let config = AppConfig::default();
-        let security_manager = Arc::new(crate::security::DummySecurityManager::new());
-        let manager = config.create_secret_manager(security_manager).unwrap();
-        let value = manager
-            .resolve(&crate::security::SecurityContext::default(), "CAELUMORA_TEST_CONFIG_SECRET")
-            .await
-            .unwrap();
-        assert_eq!(value, "value-from-env");
-        std::env::remove_var("CAELUMORA_TEST_CONFIG_SECRET");
+    #[test]
+    fn only_true_and_false_are_booleans() {
+        let config = AppConfig::from_yaml("workspaces:\n  storage:\n    main:\n      type: local\n      root: no\n      image: y\n      shell: true\n").unwrap();
+        let params = &config.workspaces.storage["main"].params;
+        assert_eq!((params["root"].as_str(), params["image"].as_str(), params["shell"].as_bool()), (Some("no"), Some("y"), Some(true)), "kept as text, read as written");
+        assert!(AppConfig::from_yaml("auth:\n  secure_cookie: off\n").is_err(), "no boolean where one is needed");
+        assert!(!AppConfig::from_yaml("auth:\n  secure_cookie: false\n").unwrap().auth.secure_cookie);
     }
 
     #[test]
@@ -925,21 +666,16 @@ users:
     }
 
     #[test]
-    fn roles_are_checked_against_the_compartments_and_the_providers() {
+    fn roles_are_checked_against_the_compartments() {
         let compartments = "compartments:\n  - name: hr\n";
         let hr = RoleId::new();
         let roles = format!("roles:\n  - id: {hr}\n    name: hr\n    clearances:\n      - {{ level: confidential, compartment: hr }}\n");
-        let config = AppConfig::from_yaml(&format!("{compartments}{roles}users:\n  providers:\n    - type: accept_any\n      roles: {{ alice: [hr] }}\n")).unwrap();
+        let config = AppConfig::from_yaml(&format!("{compartments}{roles}")).unwrap();
         assert_eq!(config.roles.as_ref().map(|r| r.id_of("hr")), Some(Ok(hr)), "named, kept by its id");
-        assert_eq!(config.role_ids(&["hr".to_string()]).unwrap(), vec![hr], "what the providers name resolves to it");
         assert!(AppConfig::default().roles.is_none(), "none unless configured: clearances are not checked");
 
         let typo = format!("roles:\n  - id: {hr}\n    name: hr\n    clearances:\n      - {{ level: confidential, compartment: hrr }}\n");
         assert!(matches!(AppConfig::from_yaml(&format!("{compartments}{typo}")), Err(ConfigError::Invalid(_))), "a compartment not configured");
-        let unknown = format!("{compartments}{roles}users:\n  providers:\n    - type: accept_any\n      default_roles: [staff]\n");
-        assert!(matches!(AppConfig::from_yaml(&unknown), Err(ConfigError::Invalid(_))), "a role not configured");
-        let without = "users:\n  providers:\n    - type: accept_any\n      default_roles: [staff]\n";
-        assert!(matches!(AppConfig::from_yaml(without), Err(ConfigError::Invalid(_))), "roles given, but none configured");
         assert!(AppConfig::from_yaml(&format!("{compartments}roles:\n  - name: hr\n")).is_err(), "a role without an id");
     }
 

@@ -56,3 +56,8 @@ keeps its commands in; `Terminal` and `Shell`, the handles it gives out, are pub
 
 - **2026-10-12** — Opened from the discussion of which subjects besides skills could move into
   crates of their own (issue 323); found to need issue 324 first.
+- **2026-10-12** — Issue 324 is done: the storages are backends (`Backends`), the tag stays
+  `type`, and the crate registers `open_terminal_shared` and `open_terminal_docker` in
+  `Plugin::backends`. Their parameters are types beside their providers already
+  (`SharedStorageConfig`, `DockerStorageConfig`), and `TerminalProvider` and `CommandKey` are
+  public; `Commands` and `Kept` are not yet. Still open before it: the remote helpers (issue 326).
