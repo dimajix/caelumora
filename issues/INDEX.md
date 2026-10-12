@@ -409,6 +409,7 @@ published before anyone else can take it.
 | [330](330-log-setup-in-the-runtime.md) | open | The runtime library installs the `tracing` subscriber for the binaries and so depends on `tracing-subscriber`, though setting up the log is the application's decision. |
 | [333](333-workspaces-woven-into-sessions.md) | open | Workspaces are part of what sessions, channels and templates are - an attached workspace, its use per channel, one made by a template -, so they cannot leave the core as skills did. |
 | [334](334-groups-are-part-of-the-access-model.md) | open | Groups are the participants of sessions and channels and the teams users make in one kind, which the policy reads, so only teams could become a plugin. |
+| [335](335-channel-events-name-their-session.md) | open | The events of channels and their members are variants of their own beside `GlobalEvent::Entity`, which cannot say where an entity lies, so a plugin's kind that lies in a channel has no way to announce it. |
 
 ## Integrations
 
