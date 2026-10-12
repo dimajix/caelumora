@@ -187,7 +187,7 @@ mod tests {
         };
         store.entity_stores().personalities.create(&system, &personality).await.unwrap();
         let agent = Agent::new(ScopedName::new("Jonathan", Scope::GlobalScope).unwrap(), &personality, ActorId::None);
-        store.create_agent(&system, &agent).await.unwrap();
+        store.entity_stores().agents.create(&system, &agent).await.unwrap();
         let session_id = SessionId::new();
         let channel = Channel::build(session_id, ActorId::None, Name::new("main").unwrap(), Default::default(), Classification::CHANNEL_DEFAULT, language("de"), vec![Participant::Agent(agent.id)]);
         let now = chrono::Utc::now();

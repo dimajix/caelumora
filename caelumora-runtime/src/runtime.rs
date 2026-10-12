@@ -135,9 +135,9 @@ impl ChannelRuntime {
 
     pub fn controller_manager(&self) -> &Arc<ControllerManager> { self.runtime_manager.controller_manager() }
 
-    /// The entities - for what a channel checks of its participants (issue
-    /// 191).
-    pub fn entity_store(&self) -> &Arc<dyn Entities> { self.runtime_manager.entity_store() }
+    /// The stores of the entities - for what a channel checks of its
+    /// participants (issue 191).
+    pub fn entity_stores(&self) -> &EntityStores { self.runtime_manager.entity_stores() }
 
     pub fn new_recorder(&self) -> Result<Box<dyn Recorder>> { self.runtime_manager.new_recorder() }
 
@@ -321,7 +321,6 @@ impl RuntimeManager {
         mut component_registry: ComponentRegistry,
     ) -> ComponentResult<Self> {
         component_registry.set_defaults(&config.component_defaults)?;
-        let entity_store = Arc::clone(&entity_stores.entities);
 
         let event_bus = Arc::new(EventBus::new(Arc::clone(&security_manager), Arc::clone(&confidentiality)));
         let controller_manager = Arc::new(ControllerManager::new(entity_stores.clone(), Arc::clone(&event_bus)));
@@ -330,7 +329,7 @@ impl RuntimeManager {
         let skills = Arc::new(SkillManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&confidentiality)));
         let artifacts = Arc::new(ArtifactManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&security_manager), Arc::clone(&confidentiality), &config.artifacts)?);
         let groups = Arc::new(GroupManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&security_manager)));
-        let agents = Arc::new(AgentManager::new(Arc::clone(&entity_store), Arc::clone(&state_store), Arc::clone(&event_bus), Arc::clone(&security_manager)));
+        let agents = Arc::new(AgentManager::new(&entity_stores, Arc::clone(&state_store), Arc::clone(&event_bus), Arc::clone(&security_manager)));
         let scoped = Arc::new(ScopedEntities::new(&entity_stores, Arc::clone(&agents), Arc::clone(&workspaces), Arc::clone(&skills), Arc::clone(&artifacts), Arc::clone(&groups)));
 
         let component_services = ComponentServices::empty()

@@ -5,7 +5,6 @@ use crate::component::StoredComponents;
 use crate::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
 use crate::group::Group;
 use crate::removal::{Deletable, Removal, Stored};
-use crate::scope::ScopeField;
 use crate::security::{ActionType, DummySecurityManager, SecurityContext, SecurityManager};
 use crate::session::{Session, SessionField, SessionId};
 use crate::skill::Skill;
@@ -31,7 +30,7 @@ use tracing::info;
 pub struct MemoryStore {
     personalities: Arc<MemoryEntityStore<Personality>>,
     session_templates: Arc<MemoryEntityStore<SessionTemplate>>,
-    agents: MemoryEntityStore<Agent>,
+    agents: Arc<MemoryEntityStore<Agent>>,
     sessions: MemoryEntityStore<Session>,
     channels: MemoryEntityStore<Channel>,
     users: Arc<MemoryEntityStore<User>>,
@@ -67,7 +66,7 @@ impl MemoryStore {
         Self {
             personalities: Arc::new(MemoryEntityStore::new(&policies)),
             session_templates: Arc::new(MemoryEntityStore::new(&policies)),
-            agents: MemoryEntityStore::new(&policies),
+            agents: Arc::new(MemoryEntityStore::new(&policies)),
             sessions: MemoryEntityStore::new(&policies),
             channels: MemoryEntityStore::new(&policies),
             users: Arc::new(MemoryEntityStore::new(&policies)),
@@ -98,6 +97,7 @@ impl MemoryStore {
             user_profiles: Arc::<MemoryEntityStore<UserProfile>>::clone(&self.user_profiles),
             personalities: Arc::<MemoryEntityStore<Personality>>::clone(&self.personalities),
             users: Arc::<MemoryEntityStore<User>>::clone(&self.users),
+            agents: Arc::<MemoryEntityStore<Agent>>::clone(&self.agents),
         }
     }
 }
@@ -280,36 +280,6 @@ impl<T: Deletable + Clone + Serialize + Send + Sync + 'static> EntityStore<T> fo
 
 #[async_trait]
 impl Entities for MemoryStore {
-    async fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
-        self.agents.create(ctx, value).await
-    }
-    async fn get_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
-        self.agents.get(ctx, id).await
-    }
-    async fn update_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
-        self.agents.update(ctx, value).await
-    }
-    async fn delete_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<bool> {
-        self.agents.delete(ctx, id).await
-    }
-    async fn list_agents(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Agent>> {
-        self.agents.list(ctx, query).await
-    }
-    async fn restore_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
-        self.agents.restore(ctx, id).await
-    }
-    async fn purge_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<bool> {
-        self.agents.purge(ctx, id).await
-    }
-    async fn get_deleted_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
-        self.agents.get_deleted(ctx, id).await
-    }
-    async fn list_deleted_agents(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Agent>> {
-        self.agents.list_deleted(ctx, query).await
-    }
-    async fn find_agent_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Agent> {
-        self.agents.find_by_name(ctx, name).await
-    }
     async fn create_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
         self.sessions.create(ctx, value).await
     }

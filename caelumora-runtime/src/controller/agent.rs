@@ -7,7 +7,7 @@ use caelumora_model::role::RoleId;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{ChannelId, SessionId};
 use super::UserController;
-use caelumora_model::store::{Entities, EntityStore, EntityStores, StoreResult};
+use caelumora_model::store::{EntityStore, EntityStores, StoreResult};
 use std::sync::Arc;
 
 /// The one writer of an agent's document in this instance, shared by all
@@ -20,7 +20,7 @@ pub struct AgentController {
     /// 304); none for an agent of the system, or of an owner who is gone.
     owner: Option<Arc<UserController>>,
     event_publisher: Arc<dyn EventPublisher>,
-    entity_store: Arc<dyn Entities>,
+    agents: Arc<dyn EntityStore<Agent>>,
     personalities: Arc<dyn EntityStore<Personality>>,
     /// Held while the agent is changed and stored, like the other
     /// controllers.
@@ -36,7 +36,7 @@ impl AgentController {
             agent: ArcSwap::from_pointee(agent),
             owner,
             event_publisher,
-            entity_store: Arc::clone(&stores.entities),
+            agents: Arc::clone(&stores.agents),
             personalities: Arc::clone(&stores.personalities),
             write_lock: tokio::sync::Mutex::new(()),
         }
@@ -89,7 +89,7 @@ impl AgentController {
         let _guard = self.write_lock.lock().await;
         let event = AgentUpdateEvent::NameChanged(new_name.to_string());
         let agent = self.apply(&event)?;
-        self.entity_store.update_agent(ctx, &agent).await?;
+        self.agents.update(ctx, &agent).await?;
         let attributes = agent.security_attributes.clone();
         self.agent.store(Arc::new(agent));
         self.event_publisher.publish(GlobalEvent::AgentUpdated(self.id, event), attributes);
@@ -151,13 +151,13 @@ mod tests {
         let agent = Agent::new(ScopedName::new("assistant", Scope::GlobalScope).unwrap(), &personality, caelumora_model::actor::ActorId::None);
         let store = Arc::new(MemoryStore::new());
         let ctx = SecurityContext::default();
-        store.create_agent(&ctx, &agent).await.unwrap();
+        store.entity_stores().agents.create(&ctx, &agent).await.unwrap();
         let controller = AgentController::new(agent.clone(), None, Arc::new(()), &store.entity_stores());
 
         controller.update_name(&ctx, "new_name").await.unwrap();
 
         assert_eq!(controller.name(), "new_name");
-        assert_eq!(store.get_agent(&ctx, agent.id).await.unwrap().name.as_str(), "new_name");
+        assert_eq!(store.entity_stores().agents.get(&ctx, agent.id).await.unwrap().name.as_str(), "new_name");
     }
 
     /// Issue 304: an agent acts with its owner's roles as they are now - a

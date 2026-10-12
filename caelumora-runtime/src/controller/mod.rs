@@ -105,7 +105,7 @@ impl ControllerManager {
         if let Some(controller) = agents.get(&id).and_then(Weak::upgrade) {
             return Ok(controller);
         }
-        let agent = self.stores.entities.get_agent(&SecurityContext::system(), id).await?;
+        let agent = self.stores.agents.get(&SecurityContext::system(), id).await?;
         // Its owner's roles are what it acts with (issue 304): an owner who
         // is gone leaves it none.
         let owner = match agent.security_attributes.owner_id {
@@ -210,7 +210,7 @@ mod tests {
     use caelumora_model::actor::ActorId;
     use caelumora_model::scope::Scope;
     use caelumora_model::security::DummySecurityManager;
-    use caelumora_model::store::{Entities, StoreError};
+    use caelumora_model::store::StoreError;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::user::{User, UserUpdateEvent};
     use std::time::Duration;
@@ -223,7 +223,7 @@ mod tests {
         (store, bus, manager)
     }
 
-    async fn agent_in(store: &MemoryStore) -> Agent {
+    async fn agent_in(store: &Arc<MemoryStore>) -> Agent {
         let personality = Personality {
             description: None,
             introduction: None,
@@ -237,7 +237,7 @@ mod tests {
             deleted: None,
         };
         let agent = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), &personality, ActorId::None);
-        store.create_agent(&SecurityContext::system(), &agent).await.unwrap();
+        store.entity_stores().agents.create(&SecurityContext::system(), &agent).await.unwrap();
         agent
     }
 
@@ -284,7 +284,7 @@ mod tests {
         drop(first);
         let mut renamed = agent.clone();
         renamed.name.name = Name::new("renamed").unwrap();
-        store.update_agent(&SecurityContext::system(), &renamed).await.unwrap();
+        store.entity_stores().agents.update(&SecurityContext::system(), &renamed).await.unwrap();
         assert_eq!(manager.agent_controller(agent.id).await.unwrap().name(), "renamed");
 
         let gone = manager.agent_controller(AgentId::new()).await;

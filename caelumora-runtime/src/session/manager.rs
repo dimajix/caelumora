@@ -690,7 +690,7 @@ mod tests {
         };
         runtime.entity_stores().personalities.create(&system, &personality).await.unwrap();
         let helper = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), &personality, ActorId::None);
-        store.create_agent(&system, &helper).await.unwrap();
+        runtime.entity_stores().agents.create(&system, &helper).await.unwrap();
         let actor = ActorId::Agent(helper.id);
 
         // In a running session's channel, and in a stopped one's.
@@ -708,7 +708,7 @@ mod tests {
         let rests = |channel: &Channel| channel.participants.iter().any(|p| p.actor_id() == actor) && !channel.former.iter().any(|f| f.participant.actor_id() == actor);
         assert!(rests(&talk.channel()), "it rests in the running channel");
         assert!(rests(&store.get_channel(&system, stopped.channels[0]).await.unwrap()), "and in the stopped one");
-        assert!(store.get_agent(&system, helper.id).await.is_err(), "it is not there");
+        assert!(runtime.entity_stores().agents.get(&system, helper.id).await.is_err(), "it is not there");
         let views = manager.views(Viewer::new(ctx.clone()));
         let reached = views.channel_of(running.id(), talk.id()).await.unwrap().there().unwrap();
         let former = reached.member(actor).await.unwrap();
@@ -738,13 +738,13 @@ mod tests {
 
         // Its name taken meanwhile: not restored.
         let again = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), &personality, ActorId::None);
-        store.create_agent(&system, &again).await.unwrap();
+        runtime.entity_stores().agents.create(&system, &again).await.unwrap();
         let taken = agents.restore(&ctx, helper.id).await.expect_err("its name is taken");
         assert!(matches!(taken, StoreError::NameTaken { entity: "agent" }), "{taken}");
 
         // Purged: a former member still, not knowing when it left.
         assert!(agents.purge(&ctx, helper.id).await.expect("purged"));
-        assert!(store.get_deleted_agent(&system, helper.id).await.is_err(), "nothing left to restore");
+        assert!(runtime.entity_stores().agents.get_deleted(&system, helper.id).await.is_err(), "nothing left to restore");
         let reached = views.channel_of(running.id(), talk.id()).await.unwrap().there().unwrap();
         let purged = reached.member(actor).await.unwrap();
         assert!(purged.former() && purged.left().is_none(), "former, without when");
@@ -760,7 +760,6 @@ mod tests {
         use caelumora_model::scope::Scope;
         let runtime = test_runtime();
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
-        let store = runtime.entity_store();
         let (system, ctx) = (SecurityContext::system(), SecurityContext::default());
         let personality = Personality {
             id: PersonalityId::new(), name: ScopedName::new("plain", Scope::GlobalScope).unwrap(), kind: Default::default(),
@@ -769,7 +768,7 @@ mod tests {
         };
         runtime.entity_stores().personalities.create(&system, &personality).await.unwrap();
         let helper = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), &personality, ActorId::None);
-        store.create_agent(&system, &helper).await.unwrap();
+        runtime.entity_stores().agents.create(&system, &helper).await.unwrap();
         let actor = ActorId::Agent(helper.id);
         let mut session = make_session("running", ActorId::None);
         session.participants = vec![Participant::Agent(helper.id)];
@@ -779,13 +778,13 @@ mod tests {
         // Deleted with nothing announced, as if the session lost the event.
         assert!(talk.actor_ids().contains(&actor));
         let mut rx = runtime.event_bus().subscribe_all();
-        store.delete_agent(&system, helper.id).await.unwrap();
+        runtime.entity_stores().agents.delete(&system, helper.id).await.unwrap();
         session.follow_agents(None).await;
         assert!(!talk.actor_ids().contains(&actor), "looking again, it stops the actor");
         let announced = drain(&mut rx);
         assert!(announced.iter().any(|e| matches!(e, GlobalEvent::AgentChannelLeft(s, c, a) if *s == session.id() && *c == talk.id() && *a == helper.id)), "as a leave: {announced:?}");
 
-        store.restore_agent(&system, helper.id).await.unwrap();
+        runtime.entity_stores().agents.restore(&system, helper.id).await.unwrap();
         session.follow_agents(None).await;
         assert!(talk.actor_ids().contains(&actor), "and starts it again");
         let announced = drain(&mut rx);
@@ -896,8 +895,8 @@ mod tests {
         use caelumora_model::user::UserId;
 
         let runtime = test_runtime();
-        let store = Arc::clone(runtime.entity_store());
         let personalities = Arc::clone(&runtime.entity_stores().personalities);
+        let agents = Arc::clone(&runtime.entity_stores().agents);
         let manager = SessionManager::new(runtime);
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
         let session = make_session("scoped", ActorId::None);
@@ -917,12 +916,12 @@ mod tests {
         let users = agent_in("own", Scope::UserScope { user_id: UserId::new() });
         let earlier = agent_in("earlier", Scope::SessionScope { session_id: id });
         for agent in [&sessions, &sides, &users, &earlier] {
-            store.create_agent(&system, agent).await.unwrap();
+            agents.create(&system, agent).await.unwrap();
         }
-        store.delete_agent(&system, earlier.id).await.unwrap();
+        agents.delete(&system, earlier.id).await.unwrap();
         let present = |agent: &Agent| {
-            let (store, id) = (Arc::clone(&store), agent.id);
-            async move { store.get_agent(&SecurityContext::system(), id).await.is_ok() }
+            let (agents, id) = (Arc::clone(&agents), agent.id);
+            async move { agents.get(&SecurityContext::system(), id).await.is_ok() }
         };
 
         running.delete_channel(&ctx, side).await.unwrap();
@@ -945,7 +944,7 @@ mod tests {
         // others come back.
         manager.delete_session(&ctx, id).await.unwrap();
         let taker = agent_in("Aside", Scope::ChannelScope { session_id: id, channel_id: side });
-        store.create_agent(&system, &taker).await.unwrap();
+        agents.create(&system, &taker).await.unwrap();
         manager.restore_session(&ctx, id).await.unwrap();
         assert!(!present(&sides).await, "the one whose name is taken stays deleted");
         assert!(present(&sessions).await && present(&taker).await, "the others are back");
@@ -953,7 +952,7 @@ mod tests {
         manager.delete_session(&ctx, id).await.unwrap();
         manager.purge_session(&ctx, id).await.unwrap();
         for agent in [&sessions, &sides, &earlier, &taker] {
-            assert!(store.get_deleted_agent(&system, agent.id).await.is_err(), "{} is purged with it", agent.name);
+            assert!(agents.get_deleted(&system, agent.id).await.is_err(), "{} is purged with it", agent.name);
         }
         assert!(personalities.get_deleted(&system, personality.id).await.is_err());
         assert!(present(&users).await, "the user's is not");

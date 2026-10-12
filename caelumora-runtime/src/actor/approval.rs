@@ -493,7 +493,7 @@ mod tests {
         store.entity_stores().personalities.create(&system, &personality).await.unwrap();
         let mut stored = Agent::new(ScopedName::new("helper", Default::default()).unwrap(), &personality, ActorId::System);
         stored.security_attributes = agent(&ids);
-        store.create_agent(&system, &stored).await.unwrap();
+        store.entity_stores().agents.create(&system, &stored).await.unwrap();
 
         let security: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&security)));

@@ -10,7 +10,6 @@ use anyhow::Result;
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::Channel;
 use caelumora_model::security::{SecurityAttributes, SecurityContext, SecurityManager};
-use caelumora_model::store::Entities;
 use caelumora_model::session::{ChannelId, SessionId};
 use std::sync::Arc;
 use caelumora_model::value::name::ScopedName;
@@ -64,7 +63,7 @@ async fn external_channel(remote: Arc<crate::external::testing::ScriptedExternal
     let agent = Agent::new(ScopedName::new("hermes", Scope::GlobalScope).unwrap(), &personality, context.initiator_id);
     let agent_id = agent.id;
     store.entity_stores().users.create(&SecurityContext::system(), &alice).await.unwrap();
-    store.create_agent(&SecurityContext::system(), &agent).await.unwrap();
+    store.entity_stores().agents.create(&SecurityContext::system(), &agent).await.unwrap();
 
     let security: Arc<dyn SecurityManager> = Arc::new(caelumora_model::security::DummySecurityManager::new());
     let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&security)));
@@ -1123,7 +1122,6 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_since() 
     use caelumora_model::agent::{Agent, Personality, PersonalityId, PersonalityKind};
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::scope::Scope;
-    use caelumora_model::store::Entities;
 
     let answer = |text: &str| vec![Ok(ExternalEvent::Message(text.to_string())), Ok(ExternalEvent::Completed)];
     let remote = Arc::new(ScriptedExternalAgent::answering(vec![answer("Hello."), answer("Hi, bob.")]));
@@ -1156,7 +1154,7 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_since() 
     };
     store.entity_stores().personalities.create(&system, &personality).await.unwrap();
     let hermes = Agent::new(ScopedName::new("hermes", Scope::GlobalScope).unwrap(), &personality, ActorId::User(alice.id));
-    store.create_agent(&system, &hermes).await.unwrap();
+    store.entity_stores().agents.create(&system, &hermes).await.unwrap();
 
     let alice_ctx = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
     let mut session = make_session("roster", ActorId::None);

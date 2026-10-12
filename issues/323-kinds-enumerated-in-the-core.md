@@ -612,3 +612,8 @@ global scope, which a username is (issue 250), and one that is no valid name is 
 `GroupManager` checks the users it is given against it and no longer needs the facade; the views,
 the templates and the terminal frontend read users from it.
 
+Step 3j: agents on their own store. The `AgentManager` and the `AgentController` keep it and no
+longer the facade; the `ChannelLoop` keeps it for whether a participant still exists
+(`agent_exists`, `Member::of`), and the `ChannelRuntime` hands out `EntityStores` rather than the
+facade; templates find and make agents in it, the views read them from it.
+

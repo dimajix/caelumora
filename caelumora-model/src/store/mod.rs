@@ -26,7 +26,6 @@ use crate::skill::Skill;
 use crate::group::Group;
 use crate::artifact::Artifact;
 use crate::channel::ChannelField;
-use crate::scope::ScopeField;
 use crate::session::SessionField;
 use crate::store::query::{NoField, Page, Query};
 
@@ -185,6 +184,7 @@ pub struct EntityStores {
     pub user_profiles: Arc<dyn EntityStore<UserProfile>>,
     pub personalities: Arc<dyn EntityStore<Personality>>,
     pub users: Arc<dyn EntityStore<User>>,
+    pub agents: Arc<dyn EntityStore<Agent>>,
 }
 
 /// Every kind's entities at once, as one store offered them before each
@@ -226,17 +226,6 @@ pub struct EntityStores {
 pub trait Entities : Debug + Sync + Send {
 
 
-    // Agents
-    async fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()>;
-    async fn get_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent>;
-    async fn update_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()>;
-    async fn delete_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<bool>;
-    async fn list_agents(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Agent>>;
-    async fn restore_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent>;
-    async fn purge_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<bool>;
-    async fn get_deleted_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent>;
-    async fn list_deleted_agents(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Agent>>;
-    async fn find_agent_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Agent>;
 
     // Sessions
     async fn create_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()>;

@@ -131,7 +131,7 @@ impl ChannelLoop {
             let actor = participant.actor_id();
             match self.actors.load().get(&actor).cloned() {
                 // Running: only whether it still exists matters.
-                Some(running) => match agent_exists(self.entities.as_ref(), id).await {
+                Some(running) => match agent_exists(self.agents.as_ref(), id).await {
                     Ok(true) => {}
                     Ok(false) => {
                         self.stop_actor(actor, running, &SecurityContext::system());

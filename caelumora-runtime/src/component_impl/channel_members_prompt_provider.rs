@@ -282,9 +282,9 @@ mod tests {
         personality
     }
 
-    async fn agent(store: &MemoryStore, name: &str, personality: &Personality) -> Agent {
+    async fn agent(store: &Arc<MemoryStore>, name: &str, personality: &Personality) -> Agent {
         let agent = Agent::new(ScopedName::new(name, Scope::GlobalScope).unwrap(), personality, ActorId::None);
-        store.create_agent(&SecurityContext::system(), &agent).await.unwrap();
+        store.entity_stores().agents.create(&SecurityContext::system(), &agent).await.unwrap();
         agent
     }
 

@@ -283,7 +283,7 @@ pub(super) async fn agent_channel(security: Arc<dyn SecurityManager>, model: Arc
     let agent = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), &personality, context.initiator_id);
     let agent_id = agent.id;
     store.entity_stores().users.create(&SecurityContext::system(), &alice).await.unwrap();
-    store.create_agent(&SecurityContext::system(), &agent).await.unwrap();
+    store.entity_stores().agents.create(&SecurityContext::system(), &agent).await.unwrap();
 
     let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&security)));
     // The model is a component (issue 130): the stand-in is registered as

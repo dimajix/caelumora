@@ -378,7 +378,7 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn agents(&self) -> ViewResult<Vec<AgentSnapshot>> {
-        let agents = self.stores.entities.list_agents(self.viewer.context(), &Query::all()).await.map(|page| page.items)
+        let agents = self.stores.agents.list(self.viewer.context(), &Query::all()).await.map(|page| page.items)
             .map_err(|e| ViewError::failed(e, "listing the agents"))?;
         let policy = &self.security;
         let mut listed = Vec::with_capacity(agents.len());
@@ -395,7 +395,7 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn deleted_agents(&self) -> ViewResult<Vec<DeletedSnapshot<AgentId>>> {
-        let agents = self.stores.entities.list_deleted_agents(self.viewer.context(), &Query::all()).await.map(|page| page.items)
+        let agents = self.stores.agents.list_deleted(self.viewer.context(), &Query::all()).await.map(|page| page.items)
             .map_err(|e| ViewError::failed(e, "listing the deleted agents"))?;
         let policy = &self.security;
         let mut deleted = Vec::with_capacity(agents.len());
@@ -699,21 +699,21 @@ impl Views {
     /// what it said keeps its sender. Read in the runtime's name, like its
     /// name while it exists.
     pub(super) async fn deleted_agent_name(&self, id: AgentId) -> Option<String> {
-        self.stores.entities.get_deleted_agent(&SecurityContext::system(), id).await.ok().map(|agent| agent.name.to_string())
+        self.stores.agents.get_deleted(&SecurityContext::system(), id).await.ok().map(|agent| agent.name.to_string())
     }
 
     /// Who deleted agent `id` and when, if it was deleted and not purged
     /// (issue 314): when it left the channels it rests in. Read in the
     /// runtime's name, like its name.
     pub(super) async fn agent_removal(&self, id: AgentId) -> Option<Removal> {
-        self.stores.entities.get_deleted_agent(&SecurityContext::system(), id).await.ok().and_then(|agent| agent.deleted)
+        self.stores.agents.get_deleted(&SecurityContext::system(), id).await.ok().and_then(|agent| agent.deleted)
     }
 
     /// The document of agent `id` - its name, its attributes, its
     /// personality - or `None` if it no longer exists. Read in the
     /// runtime's name, like its name.
     async fn agent_of(&self, id: AgentId) -> Option<Agent> {
-        self.stores.entities.get_agent(&SecurityContext::system(), id).await.ok()
+        self.stores.agents.get(&SecurityContext::system(), id).await.ok()
     }
 
     /// The session `id` as privacy sees it now, or `None` if there is no
@@ -1029,7 +1029,7 @@ mod tests {
         };
         store.entity_stores().personalities.create(&SecurityContext::system(), &personality).await.unwrap();
         let agent = Agent::new(ScopedName::new("Helper", Scope::GlobalScope).unwrap(), &personality, owner);
-        store.create_agent(&SecurityContext::system(), &agent).await.unwrap();
+        store.entity_stores().agents.create(&SecurityContext::system(), &agent).await.unwrap();
         agent
     }
 
@@ -1938,7 +1938,6 @@ use caelumora_model::turn::TurnState;
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         use caelumora_model::scope::Scope;
         use caelumora_model::snapshot::Detail;
-        use caelumora_model::store::Entities;
         
 
         let store = Arc::new(MemoryStore::new());
@@ -1965,7 +1964,7 @@ use caelumora_model::turn::TurnState;
         };
         store.entity_stores().personalities.create(&system, &personality).await.unwrap();
         let thinker = Agent::new(ScopedName::new("thinker", Scope::GlobalScope).unwrap(), &personality, ActorId::User(alice.id));
-        store.create_agent(&system, &thinker).await.unwrap();
+        store.entity_stores().agents.create(&system, &thinker).await.unwrap();
         let agent = ActorId::Agent(thinker.id);
 
         let alice_ctx = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());

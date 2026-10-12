@@ -838,7 +838,7 @@ pub(crate) mod testing {
         };
         store.entity_stores().personalities.create(&system, &personality).await.unwrap();
         let agent = Agent::new(ScopedName::new("Jonathan", Scope::GlobalScope).unwrap(), &personality, ActorId::User(owner));
-        store.create_agent(&system, &agent).await.unwrap();
+        store.entity_stores().agents.create(&system, &agent).await.unwrap();
         let session_id = SessionId::new();
         let channel = Channel::build(session_id, ActorId::User(owner), Name::new("main").unwrap(), Default::default(), internal, None, vec![Participant::User(owner), Participant::Agent(agent.id)]);
         let now = chrono::Utc::now();

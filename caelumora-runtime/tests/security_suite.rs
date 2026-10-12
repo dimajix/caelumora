@@ -248,7 +248,7 @@ impl World {
         let result = action.await;
         let asked = std::mem::take(&mut *self.policy.asked.lock().unwrap());
         // Agents made by the action are recorded by their names, too.
-        for agent in self.store.list_agents(&Self::system(), &Query::all()).await.map(|page| page.items).unwrap() {
+        for agent in self.runtime.entity_stores().agents.list(&Self::system(), &Query::all()).await.map(|page| page.items).unwrap() {
             self.policy.names.lock().unwrap().insert(ActorId::Agent(agent.id), agent.name.name.to_string());
         }
         let names = self.policy.names.lock().unwrap().clone();
@@ -314,7 +314,7 @@ impl World {
     /// An agent of `owner` and `personality`, as made before.
     async fn agent(&self, name: &str, owner: UserId, personality: &Personality) -> AgentId {
         let agent = Agent::new(ScopedName::new(name, Scope::GlobalScope).unwrap(), personality, ActorId::User(owner));
-        self.store.create_agent(&Self::system(), &agent).await.unwrap();
+        self.runtime.entity_stores().agents.create(&Self::system(), &agent).await.unwrap();
         self.policy.names.lock().unwrap().insert(ActorId::Agent(agent.id), name.to_string());
         agent.id
     }
@@ -402,7 +402,7 @@ async fn a_session_cannot_be_made_with_a_personality_the_user_may_not_read() {
     let refused = world.manager.create_from_template(&World::as_user(world.alice), template, None, None).await.expect_err("not hers to use");
     assert!(not_found(&refused), "answered as not there, so that it cannot be probed: {refused:#}");
     assert!(world.manager.views(Viewer::new(World::as_user(world.alice))).sessions().await.unwrap().is_empty(), "no session was stored");
-    assert!(world.store.list_agents(&World::system(), &Query::all()).await.map(|page| page.items).unwrap().is_empty(), "nor an agent");
+    assert!(world.runtime.entity_stores().agents.list(&World::system(), &Query::all()).await.map(|page| page.items).unwrap().is_empty(), "nor an agent");
 }
 
 /// P2: a personality shared with the user, or the system's, makes an agent
@@ -415,13 +415,13 @@ async fn a_shared_personality_makes_an_agent_of_whoever_uses_it() {
     for personality in [&shared, &global] {
         let template = world.template(Some(world.alice), &[], personality.name.name.as_str(), personality.id).await;
         let session = world.manager.create_from_template(&World::as_user(world.alice), template, None, None).await.expect("hers to use");
-        let agents = world.store.list_agents(&World::as_user(world.alice), &Query::all()).await.map(|page| page.items).unwrap();
+        let agents = world.runtime.entity_stores().agents.list(&World::as_user(world.alice), &Query::all()).await.map(|page| page.items).unwrap();
         let agent = agents.iter().find(|a| a.personality_id == personality.id).expect("an agent of hers");
         assert_eq!(agent.security_attributes.owner_id, ActorId::User(world.alice), "owned by who made it");
-        let gone = world.store.get_agent(&World::as_user(world.bob), agent.id).await.expect_err("not bob's to read");
+        let gone = world.runtime.entity_stores().agents.get(&World::as_user(world.bob), agent.id).await.expect_err("not bob's to read");
         assert!(matches!(gone, StoreError::NotFound { .. }), "{gone}");
         let renamed = Agent { name: ScopedName::new("taken", Scope::GlobalScope).unwrap(), ..agent.clone() };
-        assert!(world.store.update_agent(&World::as_user(world.bob), &renamed).await.is_err(), "nor his to change, though the personality is his");
+        assert!(world.runtime.entity_stores().agents.update(&World::as_user(world.bob), &renamed).await.is_err(), "nor his to change, though the personality is his");
         world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
     }
 }
@@ -2133,7 +2133,7 @@ async fn deleting_a_session_needs_owning_it() {
     let alice = World::as_user(world.alice);
     let personality = world.personality("plain", None, &[]).await;
     let bobs = Agent::new(ScopedName::new("helper", Scope::SessionScope { session_id: session.id() }).unwrap(), &personality, ActorId::User(world.bob));
-    world.store.create_agent(&World::system(), &bobs).await.unwrap();
+    world.runtime.entity_stores().agents.create(&World::system(), &bobs).await.unwrap();
     let (_, asked) = world.asked(world.manager.delete_session(&World::as_user(world.carol), session.id())).await;
     assert_eq!(asked, checks(&["carol: GetSession(alice's) no"]));
     let (_, asked) = world.asked(world.manager.delete_session(&World::as_user(world.bob), session.id())).await;
@@ -2149,13 +2149,13 @@ async fn deleting_a_session_needs_owning_it() {
         "alice: GetAgent(bob's) no",
     ]), "asked by the session manager before it stops anything, again by the store, and for what lies in its scope");
     assert!(world.store.get_session(&alice, session.id()).await.is_ok(), "the session is kept");
-    assert!(world.store.get_agent(&World::system(), bobs.id).await.is_ok(), "and bob's agent");
+    assert!(world.runtime.entity_stores().agents.get(&World::system(), bobs.id).await.is_ok(), "and bob's agent");
 
     world.runtime.agent_manager().delete(&World::as_user(world.bob), bobs.id).await.expect("his to delete");
     let (deleted, _) = world.asked(world.manager.delete_session(&alice, session.id())).await;
     assert!(deleted.unwrap(), "nothing of anybody else's is left");
     world.manager.restore_session(&alice, session.id()).await.unwrap();
-    assert!(world.store.get_agent(&World::system(), bobs.id).await.is_err(), "deleted before the session, bob's agent stays deleted");
+    assert!(world.runtime.entity_stores().agents.get(&World::system(), bobs.id).await.is_err(), "deleted before the session, bob's agent stays deleted");
 }
 
 /// Creating a channel: the classification it is given, creating it - as
@@ -2318,10 +2318,10 @@ async fn deleting_an_agent_needs_owning_it() {
     let world = World::new().await;
     let shared = world.personality("shared", Some(world.bob), &[world.alice]).await;
     let helper = world.agent("helper", world.alice, &shared).await;
-    let (deleted, asked) = world.asked(world.store.delete_agent(&World::as_user(world.bob), helper)).await;
+    let (deleted, asked) = world.asked(world.runtime.entity_stores().agents.delete(&World::as_user(world.bob), helper)).await;
     assert!(!deleted.unwrap(), "not there for bob, though the personality is his");
     assert_eq!(asked, checks(&["bob: GetAgent(alice's) no"]));
-    let (deleted, asked) = world.asked(world.store.delete_agent(&World::as_user(world.alice), helper)).await;
+    let (deleted, asked) = world.asked(world.runtime.entity_stores().agents.delete(&World::as_user(world.alice), helper)).await;
     assert!(deleted.unwrap());
     assert_eq!(asked, checks(&["alice: GetAgent(alice's) yes", "alice: DeleteAgent(alice's) yes"]));
 }

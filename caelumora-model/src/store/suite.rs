@@ -174,7 +174,7 @@ fn skill_named(name: ScopedName) -> Skill {
         Scope::UserScope { user_id } => user_id,
         _ => UserId::new(),
     };
-    Skill::new(name, crate::value::text::Description::new("How we write a release note").unwrap(), crate::value::text::SkillBody::new("Collect, group, write.").unwrap(), Classification::CHANNEL_DEFAULT, crate::actor::ActorId::User(owner))
+    Skill::new(name, crate::value::text::Description::new("How we write a release note").unwrap(), crate::value::text::SkillBody::new("Collect, group, write.").unwrap(), Classification::CHANNEL_DEFAULT, ActorId::User(owner))
 }
 
 fn group(owner: UserId) -> Group {
@@ -378,8 +378,8 @@ pub(crate) async fn entity_store_behaves(stores: &EntityStores) {
         create, get, update, delete, list);
     lifecycle!(stores.session_templates.as_ref(), session_template(), |v: &SessionTemplate| v.id, name.name, "session_template",
         create, get, update, delete, list);
-    lifecycle!(store, Agent::new(scoped("assistant-1"), &personality(), crate::actor::ActorId::None), |v: &Agent| v.id, name.name, "agent",
-        create_agent, get_agent, update_agent, delete_agent, list_agents);
+    lifecycle!(stores.agents.as_ref(), Agent::new(scoped("assistant-1"), &personality(), ActorId::None), |v: &Agent| v.id, name.name, "agent",
+        create, get, update, delete, list);
     lifecycle!(store, session(), |v: &Session| v.id, name, "session",
         create_session, get_session, update_session, delete_session, list_sessions);
     lifecycle!(store, channel(), |v: &Channel| v.id, name, "channel",
@@ -421,8 +421,8 @@ pub(crate) async fn entity_store_behaves(stores: &EntityStores) {
         create, delete, find_by_name);
     found_by_name!(stores.session_templates.as_ref(), |name| SessionTemplate { name, id: SessionTemplateId::new(), ..session_template() }, "session_template",
         create, delete, find_by_name);
-    found_by_name!(store, |name| Agent::new(name, &personality(), crate::actor::ActorId::None), "agent",
-        create_agent, delete_agent, find_agent_by_name);
+    found_by_name!(stores.agents.as_ref(), |name| Agent::new(name, &personality(), ActorId::None), "agent",
+        create, delete, find_by_name);
 
     found_by_name!(stores.workspaces.as_ref(), workspace_named, "workspace",
         create, delete, find_by_name);
@@ -491,10 +491,10 @@ pub(crate) async fn names_are_unique(stores: &EntityStores) {
         elsewhere: |name| SessionTemplate { name: in_scope(name, &users), id: SessionTemplateId::new(), ..session_template() },
         rename: |value: SessionTemplate, name| SessionTemplate { name: in_scope(name, &value.name.scope), ..value }, "session_template",
         create, update, delete, restore);
-    unique_by_name!(store, |name| Agent::new(in_scope(name, &global), &personality(), crate::actor::ActorId::None),
-        elsewhere: |name| Agent::new(in_scope(name, &users), &personality(), crate::actor::ActorId::None),
+    unique_by_name!(stores.agents.as_ref(), |name| Agent::new(in_scope(name, &global), &personality(), ActorId::None),
+        elsewhere: |name| Agent::new(in_scope(name, &users), &personality(), ActorId::None),
         rename: |value: Agent, name| Agent { name: in_scope(name, &value.name.scope), ..value }, "agent",
-        create_agent, update_agent, delete_agent, restore_agent);
+        create, update, delete, restore);
     let (session_id, other_session) = (SessionId::new(), SessionId::new());
     unique_by_name!(store, |name| Channel { name: Name::new(name).unwrap(), session_id, id: ChannelId::new(), ..channel() },
         elsewhere: |name| Channel { name: Name::new(name).unwrap(), session_id: other_session, id: ChannelId::new(), ..channel() },
@@ -522,10 +522,10 @@ pub(crate) async fn names_are_unique(stores: &EntityStores) {
 
     // Moved into a scope where its name is taken.
     let ctx = SecurityContext::default();
-    let mine = Agent::new(in_scope("Moving", &users), &personality(), crate::actor::ActorId::None);
-    store.create_agent(&ctx, &mine).await.expect("create");
-    store.create_agent(&ctx, &Agent::new(in_scope("moving", &global), &personality(), crate::actor::ActorId::None)).await.expect("create");
-    let moved = store.update_agent(&ctx, &Agent { name: in_scope("Moving", &global), ..mine }).await;
+    let mine = Agent::new(in_scope("Moving", &users), &personality(), ActorId::None);
+    stores.agents.create(&ctx, &mine).await.expect("create");
+    stores.agents.create(&ctx, &Agent::new(in_scope("moving", &global), &personality(), ActorId::None)).await.expect("create");
+    let moved = stores.agents.update(&ctx, &Agent { name: in_scope("Moving", &global), ..mine }).await;
     assert!(matches!(moved, Err(StoreError::NameTaken { entity: "agent" })), "nor moved where its name is taken: {moved:?}");
 
     // Sessions have names, but no unique ones.
@@ -536,14 +536,13 @@ pub(crate) async fn names_are_unique(stores: &EntityStores) {
 /// A name is taken also by what the caller may not read (issue 250): the
 /// store must ask an `OwnershipSecurityManager`.
 pub(crate) async fn names_are_unique_beyond_what_is_read(stores: &EntityStores) {
-    let store = stores.entities.as_ref();
-    let as_user = |id: UserId| SecurityContext::new(crate::actor::ActorId::User(id), Default::default(), Default::default());
+    let as_user = |id: UserId| SecurityContext::new(ActorId::User(id), Default::default(), Default::default());
     let (alice, bob) = (UserId::new(), UserId::new());
-    let owned_by = |name: &str, owner: UserId| Agent::new(ScopedName::new(name, Scope::GlobalScope).unwrap(), &personality(), crate::actor::ActorId::User(owner));
-    store.create_agent(&as_user(alice), &owned_by("Helper", alice)).await.expect("alice makes hers");
-    let hidden = store.find_agent_by_name(&as_user(bob), &ScopedName::new("helper", Scope::GlobalScope).unwrap()).await;
+    let owned_by = |name: &str, owner: UserId| Agent::new(ScopedName::new(name, Scope::GlobalScope).unwrap(), &personality(), ActorId::User(owner));
+    stores.agents.create(&as_user(alice), &owned_by("Helper", alice)).await.expect("alice makes hers");
+    let hidden = stores.agents.find_by_name(&as_user(bob), &ScopedName::new("helper", Scope::GlobalScope).unwrap()).await;
     assert!(matches!(hidden, Err(StoreError::NotFound { .. })), "bob does not see hers: {hidden:?}");
-    let refused = store.create_agent(&as_user(bob), &owned_by("helper", bob)).await;
+    let refused = stores.agents.create(&as_user(bob), &owned_by("helper", bob)).await;
     assert!(matches!(refused, Err(StoreError::NameTaken { entity: "agent" })), "but cannot take its name: {refused:?}");
 }
 
@@ -605,7 +604,7 @@ pub(crate) async fn state_store_behaves(store: &dyn StateStore) {
 }
 /// `value` marked deleted, as only deleting may.
 fn marked<T: Deletable>(mut value: T) -> T {
-    value.set_deleted(Some(Removal::now(crate::actor::ActorId::System)));
+    value.set_deleted(Some(Removal::now(ActorId::System)));
     value
 }
 

@@ -5,7 +5,6 @@ use crate::component::StoredComponents;
 use crate::confidentiality::ConfidentialityPolicy;
 use crate::group::Group;
 use crate::removal::{Deletable, Removal, Stored};
-use crate::scope::ScopeField;
 use crate::security::{ActionType, SecurityManager};
 use crate::session::{Session, SessionField, SessionId};
 use crate::skill::Skill;
@@ -49,7 +48,7 @@ pub struct JsonFileStore {
     journal_floor: u64,
     personalities: Arc<JsonEntityStore<Personality>>,
     session_templates: Arc<JsonEntityStore<SessionTemplate>>,
-    agents: JsonEntityStore<Agent>,
+    agents: Arc<JsonEntityStore<Agent>>,
     sessions: JsonEntityStore<Session>,
     channels: JsonEntityStore<Channel>,
     users: Arc<JsonEntityStore<User>>,
@@ -73,7 +72,7 @@ impl JsonFileStore {
             journal_floor: DEFAULT_JOURNAL_FLOOR,
             personalities: Arc::new(JsonEntityStore::new(&root, &policies)?),
             session_templates: Arc::new(JsonEntityStore::new(&root, &policies)?),
-            agents: JsonEntityStore::new(&root, &policies)?,
+            agents: Arc::new(JsonEntityStore::new(&root, &policies)?),
             sessions: JsonEntityStore::new(&root, &policies)?,
             channels: JsonEntityStore::new(&root, &policies)?,
             users: Arc::new(JsonEntityStore::new(&root, &policies)?),
@@ -102,6 +101,7 @@ impl JsonFileStore {
             user_profiles: Arc::<JsonEntityStore<UserProfile>>::clone(&self.user_profiles),
             personalities: Arc::<JsonEntityStore<Personality>>::clone(&self.personalities),
             users: Arc::<JsonEntityStore<User>>::clone(&self.users),
+            agents: Arc::<JsonEntityStore<Agent>>::clone(&self.agents),
         }
     }
 
@@ -529,36 +529,6 @@ impl<T: Deletable + Serialize + DeserializeOwned + Send + Sync + 'static> Entity
 
 #[async_trait]
 impl Entities for JsonFileStore {
-    async fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
-        self.agents.create(ctx, value).await
-    }
-    async fn get_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
-        self.agents.get(ctx, id).await
-    }
-    async fn update_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
-        self.agents.update(ctx, value).await
-    }
-    async fn delete_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<bool> {
-        self.agents.delete(ctx, id).await
-    }
-    async fn list_agents(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Agent>> {
-        self.agents.list(ctx, query).await
-    }
-    async fn restore_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
-        self.agents.restore(ctx, id).await
-    }
-    async fn purge_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<bool> {
-        self.agents.purge(ctx, id).await
-    }
-    async fn get_deleted_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
-        self.agents.get_deleted(ctx, id).await
-    }
-    async fn list_deleted_agents(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Agent>> {
-        self.agents.list_deleted(ctx, query).await
-    }
-    async fn find_agent_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Agent> {
-        self.agents.find_by_name(ctx, name).await
-    }
     async fn create_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
         self.sessions.create(ctx, value).await
     }
@@ -854,7 +824,7 @@ mod tests {
         for _ in 0..16 {
             let (store, system) = (Arc::clone(&store), system.clone());
             let agent = Agent::new(crate::value::name::ScopedName::new("Helper", Default::default()).unwrap(), &personality, ActorId::None);
-            writes.spawn(async move { store.create_agent(&system, &agent).await });
+            writes.spawn(async move { store.agents.create(&system, &agent).await });
         }
         let mut made = 0;
         while let Some(result) = writes.join_next().await {
@@ -864,7 +834,7 @@ mod tests {
             }
         }
         assert_eq!(made, 1);
-        assert_eq!(store.list_agents(&system, &Query::all()).await.map(|page| page.items).unwrap().len(), 1);
+        assert_eq!(store.agents.list(&system, &Query::all()).await.map(|page| page.items).unwrap().len(), 1);
     }
 
     #[tokio::test]
