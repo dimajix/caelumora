@@ -386,8 +386,8 @@ pub(crate) async fn entity_store_behaves(stores: &EntityStores) {
         create_channel, get_channel, update_channel, delete_channel, list_channels);
     lifecycle!(store, user("alice"), |v: &User| v.id, username, "user",
         create_user, get_user, update_user, delete_user, list_users);
-    lifecycle!(store, UserProfile::new(UserId::new(), None), |v: &UserProfile| v.user_id(), introduction = Some(Introduction::new("renamed").unwrap()), "user_profile",
-        create_user_profile, get_user_profile, update_user_profile, delete_user_profile, list_user_profiles);
+    lifecycle!(stores.user_profiles.as_ref(), UserProfile::new(UserId::new(), None), |v: &UserProfile| v.user_id(), introduction = Some(Introduction::new("renamed").unwrap()), "user_profile",
+        create, get, update, delete, list);
     lifecycle!(stores.workspaces.as_ref(), workspace(UserId::new()), |v: &Workspace| v.id, name.name, "workspace",
         create, get, update, delete, list);
     lifecycle!(stores.skills.as_ref(), skill(UserId::new()), |v: &Skill| v.id, name.name, "skill",

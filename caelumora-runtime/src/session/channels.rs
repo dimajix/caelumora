@@ -115,7 +115,7 @@ impl SessionLoop {
         require_classification(&self.runtime_manager, &classification)?;
         let language = match language {
             Some(language) => Some(language),
-            None => preferred_language(self.stores.entities.as_ref(), context).await?,
+            None => preferred_language(self.stores.user_profiles.as_ref(), context).await?,
         };
 
         // The creator first, if they take part in the session at all.
@@ -381,7 +381,7 @@ mod tests {
         let owner = ctx.initiator_id.as_user_id().unwrap();
         let mut profile = UserProfile::new(owner, None);
         profile.preferred_language = language("de");
-        runtime.entity_store().create_user_profile(&ctx, &profile).await.unwrap();
+        runtime.entity_stores().user_profiles.create(&ctx, &profile).await.unwrap();
         let preferred = session.create_channel(&ctx, spec("preferred", vec![])).await.unwrap();
         assert_eq!(preferred.channel().language, language("de"), "the one the creator prefers");
         let asked = session.create_channel(&ctx, ChannelSpec { language: Some("en".to_string()), ..spec("asked", vec![]) }).await.unwrap();

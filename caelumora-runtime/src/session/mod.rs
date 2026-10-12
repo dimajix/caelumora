@@ -15,7 +15,7 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
 use crate::view::{Viewer, Views};
 use caelumora_model::privacy::SessionPrivacy;
-use caelumora_model::store::{EntityKind, Entities, EntityStores, StoreError, StoreResult, StoreResultExt};
+use caelumora_model::store::{EntityKind, EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::group::GroupId;
@@ -30,6 +30,7 @@ use std::sync::Arc;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::{AbortHandle, JoinSet};
+use caelumora_model::user::UserProfile;
 
 mod channels;
 mod manager;
@@ -102,9 +103,9 @@ fn require_classification(runtime_manager: &RuntimeManager, classification: &Cla
 ///
 /// # Errors
 /// Whatever reading their profile reports, except that there is none.
-async fn preferred_language(store: &dyn Entities, context: &SecurityContext) -> StoreResult<Option<Language>> {
+async fn preferred_language(profiles: &dyn EntityStore<UserProfile>, context: &SecurityContext) -> StoreResult<Option<Language>> {
     let Some(user) = context.principal_id.as_user_id() else { return Ok(None) };
-    let profile = store.get_user_profile(context, user).await.optional()?;
+    let profile = profiles.get(context, user).await.optional()?;
     Ok(profile.and_then(|profile| profile.preferred_language))
 }
 

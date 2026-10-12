@@ -130,8 +130,8 @@ impl ControllerManager {
             return Ok(controller);
         }
         let user = self.stores.entities.get_user(&SecurityContext::system(), id).await?;
-        let profile = self.stores.entities.get_user_profile(&SecurityContext::system(), id).await.optional()?;
-        let controller = Arc::new(UserController::new(user, profile, Arc::<EventBus>::clone(&self.event_bus), Arc::clone(&self.stores.entities)));
+        let profile = self.stores.user_profiles.get(&SecurityContext::system(), id).await.optional()?;
+        let controller = Arc::new(UserController::new(user, profile, Arc::<EventBus>::clone(&self.event_bus), Arc::clone(&self.stores.user_profiles)));
         remember(&mut users, id, &controller);
         Ok(controller)
     }

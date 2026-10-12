@@ -3,7 +3,7 @@
 use super::*;
 use caelumora_model::value::name::Name;
 use crate::actor::Actor;
-use crate::component::ComponentImpl;
+use crate::component::{ComponentImpl, ComponentKind, ComponentRegistry};
 use crate::runtime::{ChannelRuntime, RuntimeManager};
 use crate::transport::EventSender;
 use anyhow::Result;
@@ -34,7 +34,6 @@ use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::user::User;
 use caelumora_model::confidentiality::ConfidentialityRules;
 use caelumora_model::config::AppConfig;
-use crate::component::ComponentRegistry;
 use caelumora_model::agent::AgentId;
 use crate::llm::LLMClient;
 
@@ -293,7 +292,7 @@ pub(super) async fn agent_channel(security: Arc<dyn SecurityManager>, model: Arc
     // a kind of its own and made every agent's default.
     let mut registry = ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
     registry.register(
-        crate::component::ComponentKind::new("test_model").provides::<dyn LLMClient>(),
+        ComponentKind::new("test_model").provides::<dyn LLMClient>(),
         move |_descriptor, _context| {
             let mut facets = crate::component::ComponentFacets::empty();
             facets.insert::<dyn LLMClient>(Arc::clone(&model));
@@ -496,7 +495,7 @@ impl crate::command::AgentCommandProvider for Marking {
 
 fn register_marking_command(registry: &mut ComponentRegistry) {
     registry.register(
-        crate::component::ComponentKind::new("test_marking").provides::<dyn crate::command::AgentCommandProvider>(),
+        ComponentKind::new("test_marking").provides::<dyn crate::command::AgentCommandProvider>(),
         |_descriptor, _context| {
             let mut facets = crate::component::ComponentFacets::empty();
             facets.insert::<dyn crate::command::AgentCommandProvider>(Arc::new(Marking));
@@ -533,7 +532,7 @@ pub(super) fn says(text: &str) -> Message {
 
 fn register_asking_tool(registry: &mut ComponentRegistry) {
     registry.register(
-        crate::component::ComponentKind::new("test_asking_tool").provides::<dyn crate::tool::ToolProvider>(),
+        ComponentKind::new("test_asking_tool").provides::<dyn crate::tool::ToolProvider>(),
         |descriptor, _context| {
             let sensitive = descriptor.params.get("sensitive").and_then(serde_json::Value::as_bool).unwrap_or(false);
             let mut facets = crate::component::ComponentFacets::empty();
@@ -545,7 +544,7 @@ fn register_asking_tool(registry: &mut ComponentRegistry) {
 
 fn register_no_secrets(registry: &mut ComponentRegistry) {
     registry.register(
-        crate::component::ComponentKind::new("test_no_secrets").provides::<dyn crate::message::PerceiveInProcessor>(),
+        ComponentKind::new("test_no_secrets").provides::<dyn crate::message::PerceiveInProcessor>(),
         |_descriptor, _context| {
             let mut facets = crate::component::ComponentFacets::empty();
             facets.insert::<dyn crate::message::PerceiveInProcessor>(Arc::new(NoSecrets));

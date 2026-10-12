@@ -35,7 +35,7 @@ pub struct MemoryStore {
     sessions: MemoryEntityStore<Session>,
     channels: MemoryEntityStore<Channel>,
     users: MemoryEntityStore<User>,
-    user_profiles: MemoryEntityStore<UserProfile>,
+    user_profiles: Arc<MemoryEntityStore<UserProfile>>,
     workspaces: Arc<MemoryEntityStore<Workspace>>,
     skills: Arc<MemoryEntityStore<Skill>>,
     artifacts: Arc<MemoryEntityStore<Artifact>>,
@@ -71,7 +71,7 @@ impl MemoryStore {
             sessions: MemoryEntityStore::new(&policies),
             channels: MemoryEntityStore::new(&policies),
             users: MemoryEntityStore::new(&policies),
-            user_profiles: MemoryEntityStore::new(&policies),
+            user_profiles: Arc::new(MemoryEntityStore::new(&policies)),
             workspaces: Arc::new(MemoryEntityStore::new(&policies)),
             skills: Arc::new(MemoryEntityStore::new(&policies)),
             artifacts: Arc::new(MemoryEntityStore::new(&policies)),
@@ -95,6 +95,7 @@ impl MemoryStore {
             artifacts: Arc::<MemoryEntityStore<Artifact>>::clone(&self.artifacts),
             groups: Arc::<MemoryEntityStore<Group>>::clone(&self.groups),
             session_templates: Arc::<MemoryEntityStore<SessionTemplate>>::clone(&self.session_templates),
+            user_profiles: Arc::<MemoryEntityStore<UserProfile>>::clone(&self.user_profiles),
         }
     }
 }
@@ -422,33 +423,6 @@ impl Entities for MemoryStore {
         let not_found = || StoreError::NotFound { entity: User::KIND.name(), id: name.to_string() };
         let name = ScopedName::new(name, Scope::GlobalScope).map_err(|_| not_found())?;
         self.users.find_by_name(ctx, &name).await
-    }
-    async fn create_user_profile(&self, ctx: &SecurityContext, value: &UserProfile) -> StoreResult<()> {
-        self.user_profiles.create(ctx, value).await
-    }
-    async fn get_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<UserProfile> {
-        self.user_profiles.get(ctx, id).await
-    }
-    async fn update_user_profile(&self, ctx: &SecurityContext, value: &UserProfile) -> StoreResult<()> {
-        self.user_profiles.update(ctx, value).await
-    }
-    async fn delete_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
-        self.user_profiles.delete(ctx, id).await
-    }
-    async fn list_user_profiles(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<UserProfile>> {
-        self.user_profiles.list(ctx, query).await
-    }
-    async fn restore_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<UserProfile> {
-        self.user_profiles.restore(ctx, id).await
-    }
-    async fn purge_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
-        self.user_profiles.purge(ctx, id).await
-    }
-    async fn get_deleted_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<UserProfile> {
-        self.user_profiles.get_deleted(ctx, id).await
-    }
-    async fn list_deleted_user_profiles(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<UserProfile>> {
-        self.user_profiles.list_deleted(ctx, query).await
     }
 }
 

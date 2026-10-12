@@ -182,6 +182,7 @@ pub struct EntityStores {
     pub artifacts: Arc<dyn EntityStore<Artifact>>,
     pub groups: Arc<dyn EntityStore<Group>>,
     pub session_templates: Arc<dyn EntityStore<SessionTemplate>>,
+    pub user_profiles: Arc<dyn EntityStore<UserProfile>>,
 }
 
 /// Every kind's entities at once, as one store offered them before each
@@ -282,18 +283,6 @@ pub trait Entities : Debug + Sync + Send {
     async fn list_deleted_users(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<User>>;
     async fn find_user_by_name(&self, ctx: &SecurityContext, name: &str) -> StoreResult<User>;
 
-    // User profiles - what a user says about themselves (issue 176), one
-    // per user, under the user's id. Unlike the user, a profile belongs to
-    // its user.
-    async fn create_user_profile(&self, ctx: &SecurityContext, value: &UserProfile) -> StoreResult<()>;
-    async fn get_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<UserProfile>;
-    async fn update_user_profile(&self, ctx: &SecurityContext, value: &UserProfile) -> StoreResult<()>;
-    async fn delete_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool>;
-    async fn list_user_profiles(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<UserProfile>>;
-    async fn restore_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<UserProfile>;
-    async fn purge_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool>;
-    async fn get_deleted_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<UserProfile>;
-    async fn list_deleted_user_profiles(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<UserProfile>>;
 
 
 

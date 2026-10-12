@@ -982,6 +982,7 @@ mod tests {
     use caelumora_model::user::UserId;
     use caelumora_model::config::AppConfig;
     use crate::component::ComponentRegistry;
+    use caelumora_model::value::text::Introduction;
 
     fn as_user(id: UserId) -> Viewer {
         Viewer::new(SecurityContext::new(ActorId::User(id), Default::default(), Default::default()))
@@ -1198,7 +1199,7 @@ mod tests {
         store.create_user(&system, &carol).await.unwrap();
         let remote = an_agent_of_kind(&store, ActorId::User(carol.id), PersonalityKind::External).await;
         let mut personality = store.get_personality(&system, remote.personality_id).await.unwrap();
-        personality.introduction = Some(caelumora_model::value::text::Introduction::new("Answers questions about the weather.").unwrap());
+        personality.introduction = Some(Introduction::new("Answers questions about the weather.").unwrap());
         store.update_personality(&system, &personality).await.unwrap();
         let approver = Approver { id: ApproverId(uuid::Uuid::new_v4()), strategy: ApprovalStrategy::Any };
 
@@ -1207,7 +1208,7 @@ mod tests {
         session.participants.push(Participant::Agent(remote.id));
         let mut channel = main_channel(&session);
         channel.participants.push(Participant::Approver(approver));
-        store.create_user_profile(&system, &UserProfile::new(alice.id, Some(caelumora_model::value::text::Introduction::new("I run the project.").unwrap()))).await.unwrap();
+        store.entity_stores().user_profiles.create(&system, &UserProfile::new(alice.id, Some(Introduction::new("I run the project.").unwrap()))).await.unwrap();
         stored_session(&store, &session).await;
         stored_channel(&store, &channel).await;
 

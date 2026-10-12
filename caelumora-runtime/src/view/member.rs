@@ -24,8 +24,8 @@ use caelumora_model::mention::handle_of;
 use caelumora_model::note::Note;
 use caelumora_model::security::{SecurityAttributes, SecurityContext};
 use caelumora_model::session::ChannelId;
-use caelumora_model::store::{Entities, StateStore, StoreError, StoreResultExt};
-use caelumora_model::user::UserId;
+use caelumora_model::store::{Entities, EntityStore, StateStore, StoreError, StoreResultExt};
+use caelumora_model::user::{UserId, UserProfile};
 use std::fmt::Debug;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
@@ -83,7 +83,7 @@ pub(super) trait MemberState: Send + Sync + Debug {
 pub(super) async fn member_state(views: &Views, participant: &Participant, channel: ChannelId) -> Arc<dyn MemberState> {
     match participant {
         Participant::User(id) => match views.entities().get_user(&SecurityContext::system(), *id).await {
-            Ok(user) => Arc::new(UserMember { id: *id, name: user.username.to_string(), store: Arc::clone(views.entities()), introduction: OnceCell::new() }),
+            Ok(user) => Arc::new(UserMember { id: *id, name: user.username.to_string(), profiles: Arc::clone(&views.stores().user_profiles), introduction: OnceCell::new() }),
             Err(StoreError::NotFound { .. }) => Arc::new(GoneMember { name: None }),
             Err(e) => {
                 warn!("Cannot read user {}: {:#}", id, e);
@@ -110,7 +110,7 @@ pub(super) async fn member_state(views: &Views, participant: &Participant, chann
 struct UserMember {
     id: UserId,
     name: String,
-    store: Arc<dyn Entities>,
+    profiles: Arc<dyn EntityStore<UserProfile>>,
     introduction: OnceCell<Option<String>>,
 }
 
@@ -122,7 +122,7 @@ impl MemberState for UserMember {
 
     async fn introduction(&self) -> ViewResult<Option<String>> {
         let introduction = self.introduction.get_or_try_init(|| async {
-            let profile = self.store.get_user_profile(&SecurityContext::system(), self.id).await.optional()
+            let profile = self.profiles.get(&SecurityContext::system(), self.id).await.optional()
                 .map_err(|e| ViewError::failed(e, format!("reading the introduction of {}", ActorId::User(self.id))))?;
             Ok::<_, ViewError>(profile.and_then(|profile| profile.introduction).map(String::from))
         }).await?;

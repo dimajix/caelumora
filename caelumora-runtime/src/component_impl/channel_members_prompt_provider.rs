@@ -225,6 +225,7 @@ mod tests {
     use caelumora_model::user::{User, UserId, UserProfile};
     use caelumora_model::confidentiality::ConfidentialityRules;
     use caelumora_model::config::AppConfig;
+    use caelumora_model::value::text::Introduction;
 
     fn member(name: &str, person: bool, introduction: Option<&str>) -> Member {
         Member { id: ActorId::None, name: name.to_string(), handle: Some(name.to_lowercase()), person, introduction: introduction.map(str::to_string) }
@@ -271,7 +272,7 @@ mod tests {
             name: ScopedName::new(format!("plain {id}"), Default::default()).unwrap(),
             kind: Default::default(),
             roles: None,
-            introduction: introduction.map(|text| caelumora_model::value::text::Introduction::new(text).unwrap()),
+            introduction: introduction.map(|text| Introduction::new(text).unwrap()),
             components: Default::default(),
             security_attributes: Default::default(),
             reasoning_visibility: Visibility::Channel,
@@ -299,7 +300,7 @@ mod tests {
         for user in [&kaya, &bob] {
             store.create_user(&system, user).await.unwrap();
         }
-        store.create_user_profile(&system, &UserProfile::new(kaya.id, Some(caelumora_model::value::text::Introduction::new("I run the budget.").unwrap()))).await.unwrap();
+        store.entity_stores().user_profiles.create(&system, &UserProfile::new(kaya.id, Some(Introduction::new("I run the budget.").unwrap()))).await.unwrap();
         let quiz_master = personality(&store, Some("A quiz master.")).await;
         let plain = personality(&store, None).await;
         let jonathan = agent(&store, "Jonathan", &quiz_master).await;

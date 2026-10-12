@@ -2004,11 +2004,11 @@ async fn a_profile_is_written_by_its_user_alone_and_read_by_who_shares_a_session
     let world = World::new().await;
     let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
     let profile = UserProfile::new(world.alice, Some(Introduction::new("I run the team.").unwrap()));
-    world.store.create_user_profile(&alice, &profile).await.expect("she writes her own");
+    world.runtime.entity_stores().user_profiles.create(&alice, &profile).await.expect("she writes her own");
     let forged = UserProfile::new(world.alice, Some(Introduction::new("I quit.").unwrap()));
-    assert!(world.store.update_user_profile(&bob, &forged).await.is_err(), "bob does not write hers");
+    assert!(world.runtime.entity_stores().user_profiles.update(&bob, &forged).await.is_err(), "bob does not write hers");
     let carols = UserProfile::new(world.carol, Some(Introduction::new("hello").unwrap()));
-    assert!(world.store.create_user_profile(&bob, &carols).await.is_err(), "nor anyone else's");
+    assert!(world.runtime.entity_stores().user_profiles.create(&bob, &carols).await.is_err(), "nor anyone else's");
 
     let mut promoted = world.store.get_user(&alice, world.alice).await.expect("everyone reads a user");
     promoted.roles.push(RoleId::new());

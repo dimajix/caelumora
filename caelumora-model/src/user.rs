@@ -289,19 +289,19 @@ mod tests {
         use crate::security::{OwnershipSecurityManager, SecurityContext};
         use crate::session::SessionId;
         use crate::channel::ChannelId;
-        use crate::store::{Entities, StoreError};
+        use crate::store::StoreError;
         use crate::store::memory::MemoryStore;
         use std::sync::Arc;
 
-        let store = MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()));
+        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()))).entity_stores().user_profiles;
         let (alice, bob) = (UserId::new(), UserId::new());
         let as_user = |id| SecurityContext::new(ActorId::User(id), SessionId::default(), ChannelId::default());
 
         let hers = UserProfile::new(alice, Some(Introduction::new("I run the budget.").unwrap()));
-        assert!(matches!(store.create_user_profile(&as_user(bob), &hers).await, Err(StoreError::PermissionDenied)), "nobody writes a profile of someone else");
-        store.create_user_profile(&as_user(alice), &hers).await.expect("her own");
+        assert!(matches!(store.create(&as_user(bob), &hers).await, Err(StoreError::PermissionDenied)), "nobody writes a profile of someone else");
+        store.create(&as_user(alice), &hers).await.expect("her own");
         let changed = UserProfile::new(alice, Some(Introduction::new("Bob decides everything.").unwrap()));
-        assert!(matches!(store.update_user_profile(&as_user(bob), &changed).await, Err(StoreError::NotFound { .. })), "nor changes it");
-        assert_eq!(store.get_user_profile(&SecurityContext::system(), alice).await.unwrap().introduction.as_ref().map(Introduction::as_str), Some("I run the budget."));
+        assert!(matches!(store.update(&as_user(bob), &changed).await, Err(StoreError::NotFound { .. })), "nor changes it");
+        assert_eq!(store.get(&SecurityContext::system(), alice).await.unwrap().introduction.as_ref().map(Introduction::as_str), Some("I run the budget."));
     }
 }

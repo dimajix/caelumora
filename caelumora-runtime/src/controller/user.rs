@@ -6,7 +6,7 @@ use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::value::language::Language;
 use caelumora_model::value::name::Name;
 use caelumora_model::security::{Secured, SecurityContext};
-use caelumora_model::store::{Entities, StoreError, StoreResult};
+use caelumora_model::store::{EntityStore, StoreError, StoreResult};
 use caelumora_model::user::{User, UserId, UserProfile, UserUpdateEvent};
 use std::sync::Arc;
 
@@ -23,7 +23,7 @@ pub struct UserController {
     /// they never wrote one.
     profile: ArcSwap<UserProfile>,
     event_publisher: Arc<dyn EventPublisher>,
-    entity_store: Arc<dyn Entities>,
+    profiles: Arc<dyn EntityStore<UserProfile>>,
     /// Held while the profile is changed and stored, like the other
     /// controllers.
     write_lock: tokio::sync::Mutex<()>,
@@ -32,14 +32,14 @@ pub struct UserController {
 impl UserController {
     /// The live `user` with their `profile`, `None` if they have none yet.
     /// Made by the `ControllerManager`, which keeps one per user.
-    pub(crate) fn new(user: User, profile: Option<UserProfile>, event_publisher: Arc<dyn EventPublisher>, entity_store: Arc<dyn Entities>) -> Self {
+    pub(crate) fn new(user: User, profile: Option<UserProfile>, event_publisher: Arc<dyn EventPublisher>, profiles: Arc<dyn EntityStore<UserProfile>>) -> Self {
         let id = user.id;
         Self {
             id,
             user: ArcSwap::from_pointee(user),
             profile: ArcSwap::from_pointee(profile.unwrap_or_else(|| UserProfile::new(id, None))),
             event_publisher,
-            entity_store,
+            profiles,
             write_lock: tokio::sync::Mutex::new(()),
         }
     }
@@ -137,9 +137,9 @@ impl UserController {
     /// was created meanwhile, in another instance. The store asks whether
     /// `ctx` may.
     async fn save(&self, ctx: &SecurityContext, profile: &UserProfile) -> StoreResult<()> {
-        match self.entity_store.update_user_profile(ctx, profile).await {
-            Err(StoreError::NotFound { .. }) => match self.entity_store.create_user_profile(ctx, profile).await {
-                Err(StoreError::Conflict(_)) => self.entity_store.update_user_profile(ctx, profile).await,
+        match self.profiles.update(ctx, profile).await {
+            Err(StoreError::NotFound { .. }) => match self.profiles.create(ctx, profile).await {
+                Err(StoreError::Conflict(_)) => self.profiles.update(ctx, profile).await,
                 created => created,
             },
             updated => updated,
@@ -222,14 +222,14 @@ mod tests {
         let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default())));
         let announced = Arc::new(Announced::default());
         let user = alice();
-        let controller = UserController::new(user.clone(), None, Arc::<Announced>::clone(&announced), Arc::<MemoryStore>::clone(&store));
+        let controller = UserController::new(user.clone(), None, Arc::<Announced>::clone(&announced), store.entity_stores().user_profiles);
         let hers = as_user(user.id);
 
         for text in ["I run the budget.", "I run the budget and the team."] {
             let profile = controller.update_profile(&hers, Some(text), None).await.expect("her own, created once and changed after");
             assert_eq!(profile.introduction.as_ref().map(Introduction::as_str), Some(text));
             assert_eq!(controller.profile().introduction.as_ref().map(Introduction::as_str), Some(text), "live");
-            assert_eq!(store.get_user_profile(&hers, user.id).await.unwrap().introduction.as_ref().map(Introduction::as_str), Some(text), "stored");
+            assert_eq!(store.entity_stores().user_profiles.get(&hers, user.id).await.unwrap().introduction.as_ref().map(Introduction::as_str), Some(text), "stored");
         }
         assert!(matches!(announced.0.lock().unwrap().as_slice(), [GlobalEvent::UserProfileUpdated(..), GlobalEvent::UserProfileUpdated(id, p)] if *id == user.id && p.introduction.as_ref().map(Introduction::as_str) == Some("I run the budget and the team.")));
     }
@@ -239,7 +239,7 @@ mod tests {
     #[test]
     fn the_roles_follow_their_announcement() {
         let user = alice();
-        let controller = UserController::new(user.clone(), None, Arc::new(Announced::default()), Arc::new(MemoryStore::new()));
+        let controller = UserController::new(user.clone(), None, Arc::new(Announced::default()), Arc::new(MemoryStore::new()).entity_stores().user_profiles);
         let staff = RoleId::new();
         controller.process_global_event(&GlobalEvent::UserUpdated(UserId::new(), UserUpdateEvent::RolesChanged(vec![staff])));
         assert!(controller.load().roles.is_empty(), "not someone else's");
@@ -254,7 +254,7 @@ mod tests {
         let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default())));
         let announced = Arc::new(Announced::default());
         let user = alice();
-        let controller = UserController::new(user.clone(), None, Arc::<Announced>::clone(&announced), Arc::<MemoryStore>::clone(&store));
+        let controller = UserController::new(user.clone(), None, Arc::<Announced>::clone(&announced), store.entity_stores().user_profiles);
 
         let invalid = controller.update_profile(&as_user(user.id), Some("a\u{1b}[2Jb"), None).await;
         assert!(matches!(invalid, Err(StoreError::Invalid(_))), "{invalid:?}");
@@ -273,7 +273,7 @@ mod tests {
         use caelumora_model::approval::{Reach, RuleDecision, ToolMatcher};
         let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default())));
         let user = alice();
-        let controller = UserController::new(user.clone(), None, Arc::new(()), Arc::<MemoryStore>::clone(&store));
+        let controller = UserController::new(user.clone(), None, Arc::new(()), store.entity_stores().user_profiles);
         let hers = as_user(user.id);
         controller.update_profile(&hers, Some("I run the budget."), None).await.unwrap();
         let rule = ApprovalRule::new(ToolMatcher { tool: "shell".to_string(), arguments: Default::default() }, RuleDecision::Allow, Reach::Everywhere, None).unwrap();
@@ -281,7 +281,7 @@ mod tests {
         assert!(matches!(controller.add_approval_rule(&as_user(UserId::new()), rule.clone()).await, Err(StoreError::PermissionDenied)), "not by someone else");
         controller.add_approval_rule(&hers, rule.clone()).await.expect("hers");
         assert_eq!(controller.profile().approval_rules(), std::slice::from_ref(&rule), "live");
-        assert_eq!(store.get_user_profile(&hers, user.id).await.unwrap().approval_rules(), std::slice::from_ref(&rule), "stored");
+        assert_eq!(store.entity_stores().user_profiles.get(&hers, user.id).await.unwrap().approval_rules(), std::slice::from_ref(&rule), "stored");
         assert_eq!(controller.profile().introduction.as_ref().map(Introduction::as_str), Some("I run the budget."), "the rest stays");
         controller.update_profile(&hers, None, None).await.unwrap();
         assert_eq!(controller.profile().approval_rules(), std::slice::from_ref(&rule), "and stays through a change of the rest");
@@ -296,7 +296,7 @@ mod tests {
     #[tokio::test]
     async fn a_profile_changed_elsewhere_is_taken_over() {
         let user = alice();
-        let controller = UserController::new(user.clone(), None, Arc::new(()), Arc::new(MemoryStore::new()));
+        let controller = UserController::new(user.clone(), None, Arc::new(()), Arc::new(MemoryStore::new()).entity_stores().user_profiles);
         let changed = UserProfile::new(user.id, Some(Introduction::new("I run the budget.").unwrap()));
 
         controller.process_global_event(&GlobalEvent::UserProfileUpdated(UserId::new(), UserProfile::new(UserId::new(), Some(Introduction::new("not hers").unwrap()))));

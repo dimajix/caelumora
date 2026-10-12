@@ -163,7 +163,7 @@ impl SessionManager {
         };
         let participants = crate::template::resolve_participants(store.as_ref(), context, &template, id, owner).await?;
         let name = name.unwrap_or_else(|| template.name.name.clone());
-        let language = preferred_language(store.as_ref(), context).await?;
+        let language = preferred_language(self.stores.user_profiles.as_ref(), context).await?;
         // What is to be found or made: the template's, unless one was chosen.
         let wanted = match workspace {
             None => template.workspace.clone(),
@@ -836,7 +836,7 @@ mod tests {
         let hers = SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
         let mut profile = caelumora_model::user::UserProfile::new(owner, None);
         profile.preferred_language = Some(Language::new("de").unwrap());
-        store.create_user_profile(&hers, &profile).await.unwrap();
+        runtime.entity_stores().user_profiles.create(&hers, &profile).await.unwrap();
 
         let session = manager.create_from_template(&hers, template.id, None, None).await.expect("created and started");
         assert_eq!(session.name(), "pairing", "named after the template unless named");
