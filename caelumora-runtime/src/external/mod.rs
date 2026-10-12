@@ -1,16 +1,13 @@
 //! The facet through which an external agent is reached (issue 179): an
 //! agent that runs elsewhere and takes part in a channel through an
-//! `ExternalAgentActor`. The facet says nothing of the protocol - A2A is
-//! one implementation (`a2a_agent`), and the built-in components are the
-//! submodules of this one, one module per component kind; the actor knows
-//! only the facet.
+//! `ExternalAgentActor`. The facet says nothing of the protocol, and the
+//! actor knows only the facet: a protocol is a component kind in a crate of
+//! its own - A2A is `a2a_agent` in `caelumora-a2a` (issue 326).
 //!
 //! The remote agent is given what was said in the channel and answers as it
 //! sees fit. What it is given becomes a *task* of the remote agent, within a
 //! *conversation* it keeps with the channel; both are opaque handles of the
 //! remote side (`ConversationId`, `TaskId`), which the actor stores.
-
-pub mod a2a_agent;
 
 use crate::component::ComponentRegistry;
 use async_trait::async_trait;
@@ -139,17 +136,16 @@ pub trait ExternalAgent: Send + Sync + Debug {
     fn profile(&self) -> ModelProfile;
 }
 
-/// Stand-ins for a remote agent, for the tests of what uses the facet.
-/// Registers the external agent kinds with `registry`, and `ExternalAgent`
-/// as a facet of which an external personality has exactly one. It has no
-/// default: a remote agent is always named, and a personality that names
-/// none fails to build where its agent asks for it.
+/// Registers `ExternalAgent` with `registry`, as a facet of which an
+/// external personality has exactly one. It has no default: a remote agent
+/// is always named, and a personality that names none fails to build where
+/// its agent asks for it. The kinds that provide it are registered by the
+/// plugins of their protocols.
 pub fn register_all(registry: &mut ComponentRegistry) {
     registry.single::<dyn ExternalAgent>(None);
-
-    a2a_agent::register(registry);
 }
 
+/// Stand-ins for a remote agent, for the tests of what uses the facet.
 #[cfg(test)]
 pub(crate) mod testing {
     use super::*;

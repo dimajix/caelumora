@@ -8,7 +8,7 @@
 //! Only A2A 1.x over JSON-RPC: a card that offers nothing else is refused
 //! when the agent is asked, not when the component is built.
 //!
-//! The protocol's types are in `wire`; between them and `crate::external`
+//! The protocol's types are in `wire`; between them and the facet
 //! translates `translation`; `client` reaches the agent and hands back
 //! what it answered, as wire types. What is left here is the component:
 //! which method the agent is asked with, and what of its answers is
@@ -21,19 +21,22 @@ mod wire;
 use self::client::{A2aClient, Responses};
 use self::translation::{wire_message, Translation, ACCEPTED_OUTPUT_MODES};
 use self::wire::{method, SendConfiguration, SendMessageParams, StreamResponse, TaskParams, WireTask, TASK_NOT_CANCELABLE};
-use crate::component::{config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::external::{ExternalAgent, ExternalAgentResult, ExternalStream, OutboundMessage};
-use caelumora_model::remote::RemoteEndpoint;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{ModelProfile, SenderFormat, SenderStyle};
 use caelumora_model::external_agent::{ConversationId, TaskId};
+use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::SecurityContext;
+use caelumora_runtime::component::{config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
+use caelumora_runtime::external::{ExternalAgent, ExternalAgentResult, ExternalStream, OutboundMessage};
 use futures::StreamExt;
+use futures::stream::once;
 use serde::Deserialize;
+use serde::de::IgnoredAny;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::time::sleep;
 use tracing::warn;
 
 pub const A2A_AGENT_KIND: &str = "a2a_agent";
@@ -136,7 +139,7 @@ impl A2aAgentComponent {
                         yield Ok(event);
                     }
                 }
-                tokio::time::sleep(wait).await;
+                sleep(wait).await;
                 wait = (wait * 2).min(POLL_LONGEST);
             }
         })
@@ -188,7 +191,7 @@ impl ExternalAgent for A2aAgentComponent {
                 let id = TaskId(task.id.clone());
                 Ok(self.polled(security, Some(task), id))
             }
-            None => Ok(translated(Box::pin(futures::stream::once(async move { Ok(response) })))),
+            None => Ok(translated(Box::pin(once(async move { Ok(response) })))),
         }
     }
 
@@ -201,7 +204,7 @@ impl ExternalAgent for A2aAgentComponent {
     }
 
     async fn cancel(&self, security: &SecurityContext, task: &TaskId) -> ExternalAgentResult<()> {
-        let answer = self.client.call::<serde::de::IgnoredAny>(security, method::CANCEL_TASK, TaskParams { id: task.0.clone() }).await?;
+        let answer = self.client.call::<IgnoredAny>(security, method::CANCEL_TASK, TaskParams { id: task.0.clone() }).await?;
         match answer {
             Err(error) if error.code == TASK_NOT_CANCELABLE => Ok(()),
             Err(error) => Err(self.client.rejected(error)),
@@ -234,7 +237,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::external::{ExternalEvent, Said};
+    use caelumora_runtime::external::{ExternalEvent, Said};
     use axum::extract::State;
     use axum::http::HeaderMap;
     use axum::routing::{get, post};

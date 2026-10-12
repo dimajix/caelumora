@@ -16,6 +16,7 @@ caelumora-logging = { path = "../caelumora-logging" }
 caelumora-rest-server = { path = "../caelumora-rest-server" }
 caelumora-skills = { path = "../caelumora-skills" }
 caelumora-mcp = { path = "../caelumora-mcp" }
+caelumora-a2a = { path = "../caelumora-a2a" }
 axum = "0.8.9"
 tokio = { version = "1.0", features = ["full"] }
 tracing = "0.1"

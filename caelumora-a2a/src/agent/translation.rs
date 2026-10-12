@@ -1,11 +1,11 @@
-//! Between the wire and `crate::external` (issue 210): what is said, as
-//! the message sent to the remote agent; and what the remote agent sends -
-//! a task, its status and its artifacts, or a message of its own - as
-//! `ExternalEvent`s.
+//! Between the wire and the facet (`caelumora_runtime::external`, issue
+//! 210): what is said, as the message sent to the remote agent; and what
+//! the remote agent sends - a task, its status and its artifacts, or a
+//! message of its own - as `ExternalEvent`s.
 
 use super::wire::{text_of, StreamResponse, WireMessage, WirePart, WireRole, WireStatus, WireTask, WireTaskState};
-use crate::external::{ExternalEvent, OutboundMessage};
 use caelumora_model::external_agent::{ConversationId, TaskId};
+use caelumora_runtime::external::{ExternalEvent, OutboundMessage};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -146,7 +146,7 @@ mod tests {
 
     #[test]
     fn what_is_said_is_sent_as_the_users_message_one_part_each_as_it_is_given() {
-        use crate::external::Said;
+        use caelumora_runtime::external::Said;
         let said = |text: &str| Said { sender: "alice".to_string(), text: text.to_string() };
         let first = OutboundMessage { prompts: Vec::new(), said: vec![said("alice: hello"), said("bob: hi")], answers: None };
         let sent = serde_json::to_value(wire_message(&first, None)).expect("json");
@@ -162,7 +162,7 @@ mod tests {
 
     #[test]
     fn the_prompt_parts_come_first_as_they_are() {
-        use crate::external::Said;
+        use caelumora_runtime::external::Said;
         let message = OutboundMessage {
             prompts: vec!["[Who is in this channel]\nYou are Hermes (@hermes).".to_string()],
             said: vec![Said { sender: "alice".to_string(), text: "alice: hello".to_string() }],

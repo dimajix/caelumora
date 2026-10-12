@@ -12,6 +12,7 @@ members = [
     "caelumora-rest-server",
     "caelumora-skills",
     "caelumora-mcp",
+    "caelumora-a2a",
 ]
 resolver = "2"
 

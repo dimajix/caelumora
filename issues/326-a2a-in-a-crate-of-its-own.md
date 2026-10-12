@@ -1,6 +1,6 @@
 # 326 — The A2A protocol is part of the runtime crate
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -54,3 +54,13 @@ A2A.
 
 - **2026-10-12** — Opened from the discussion of which subjects besides skills could move into
   crates of their own (issue 323).
+- **2026-10-12** — Done, as the third plugin. `caelumora-a2a` holds the kind (`agent`, with its
+  `client`, `translation` and `wire` as before) and its tests; `A2aPlugin` registers the kind alone
+  and is listed by `caelumora-app` among the plugins without routes and by `caelumora-tui`. The
+  runtime's `external` keeps the facet, its types and `register_all`, which registers the facet
+  without a kind. Decided by the maintainer for the shared remote helpers: `remote` of the runtime
+  becomes public, rather than moving to `caelumora-model::remote` - describing the error of an HTTP
+  client is the runtime's, and the model needs no dependency on `reqwest` for it; Open Terminal
+  and Ollama stay as they are. Nothing else had to be made visible. The paths written out in the
+  production code of the kind are imports now. `docs/COMPONENTS.md` names the facet's types and
+  `remote` among what a component kind outside the core may use.

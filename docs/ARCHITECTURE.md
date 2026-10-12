@@ -32,6 +32,10 @@ The project is a Rust workspace, with a web UI next to it:
     manager, component, views and routes, in layers by Cargo features.
 *   **`caelumora-mcp`** - the tools of MCP servers, a plugin that brings nothing but its component
     kind `mcp_tool`, and with it `rmcp` (issue 325). See [TOOLS.md](TOOLS.md#mcp-servers).
+*   **`caelumora-a2a`** - external agents reached over the Agent2Agent protocol, a plugin that
+    brings nothing but its component kind `a2a_agent`, so that the core keeps the facet
+    `ExternalAgent` and names no protocol (issue 326). See
+    [Agents that run elsewhere](#agents-that-run-elsewhere).
 *   **`caelumora-web-ui`** - the browser frontend (React, TypeScript), built on the REST API and
     served by `caelumora-app`. See [WEB-UI.md](WEB-UI.md).
 *   **`caelumora-tui`** - a terminal frontend that runs the runtime in its own process.
@@ -52,8 +56,8 @@ the members of a scope, and its sections of the configuration and of the seed. O
 extension trait on the runtime's `Views`, built from what they open. Which plugins are in is the
 program's choice: `caelumora-app` and `caelumora-tui` each list theirs; the core knows none. A
 plugin is one crate, cut into layers by Cargo features rather than crates. The first is
-`caelumora-skills` ([SKILLS.md](SKILLS.md#where-the-code-lives)); `caelumora-mcp` is one that
-brings a component kind alone ([TOOLS.md](TOOLS.md#mcp-servers)).
+`caelumora-skills` ([SKILLS.md](SKILLS.md#where-the-code-lives)); `caelumora-mcp`
+([TOOLS.md](TOOLS.md#mcp-servers)) and `caelumora-a2a` are ones that bring a component kind alone.
 
 Details: [COMPONENTS.md](COMPONENTS.md#plugins).
 
@@ -160,7 +164,8 @@ Details: [COMPONENTS.md](COMPONENTS.md), [TOOLS.md](TOOLS.md), [APPROVALS.md](AP
 
 An agent need not run here. A personality of kind `external` makes an **external agent**: another
 system with its own model, tools and memory, reached through the one component of the personality
-that provides `ExternalAgent` - `a2a_agent` speaks the Agent2Agent protocol. Its
+that provides `ExternalAgent` - `a2a_agent`, of the plugin `caelumora-a2a`, speaks the Agent2Agent
+protocol; the core holds the facet alone and names no protocol. Its
 `ExternalAgentActor` has no turn: it hears what is said in the channel, gives the remote agent what
 it has not heard yet when it is asked, and says what comes back, also on its own when a task of the
 remote agent ends later. What leaves the system is decided at the door: the roles its personality
