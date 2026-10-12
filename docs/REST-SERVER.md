@@ -1,9 +1,10 @@
 # REST Server
 
 `caelumora-rest-server` makes the runtime available over HTTP: a REST API, two server-sent event
-streams, and the login that guards both. It decides nothing itself - what a user may see or do is
-decided by the runtime, and the server maps the answers to responses. The browser frontend built on
-it is described in [WEB-UI.md](WEB-UI.md), the policy behind the permissions in
+streams, and the login that guards both. It is a library; the program that serves it is
+`caelumora-app`, under `/api`, with the web UI beside it. It decides nothing itself - what a user
+may see or do is decided by the runtime, and the server maps the answers to responses. The browser
+frontend built on it is described in [WEB-UI.md](WEB-UI.md), the policy behind the permissions in
 [SECURITY.md](SECURITY.md), and its configuration (`server`, `auth`) in
 [CONFIGURATION.md](CONFIGURATION.md).
 
@@ -11,10 +12,9 @@ it is described in [WEB-UI.md](WEB-UI.md), the policy behind the permissions in
 
 | File | Holds |
 |---|---|
-| `main.rs` | Startup: configuration, stores, runtime, the router and its layers (request span, request id) |
 | `state.rs` | `AppState`: the `Auth`, the `RuntimeManager` and the `SessionManager` every handler reaches |
 | `auth.rs` | Login, logout, renewal, and the middleware `require_auth` and `require_stream_auth` |
-| `routes/` | The handlers, by resource |
+| `routes/` | The handlers, by resource, and `routes::core`, the router of all of them |
 | `error.rs` | `ApiError` and the problem details it answers with; the `Json` and `Path` extractors |
 | `sse.rs` | What both event streams have in common |
 
@@ -24,6 +24,28 @@ that a client reads them without the server (issue 323). A response is made ther
 entities and snapshots, by `From` or an `of`. What only the runtime knows - the names of the places
 a message's knowledge was read in, a file of a workspace, a command of its shell - the handler puts
 into the response itself.
+
+### The program
+
+`caelumora-app` is the composition root: its `main.rs` reads the configuration, makes the stores,
+the runtime and the `AppState`, and serves:
+
+*   the API under `/api` - `routes::core` nested there, every path of this document below it, and a
+    path no route takes answered as a problem (`404 not_found`) like every other error;
+*   the web UI everywhere else, with the feature `web-ui` (on by default): the files `npm run build`
+    made in `caelumora-web-ui/dist`, embedded in a release build and read from there in a debug
+    build. A path that names no file is answered with `index.html`, which is never cached; the files
+    under `assets/`, whose names change with their content, are cached for long. Without the feature
+    the program serves the API alone.
+
+The build does not build the UI: `build.rs` checks that `dist/index.html` is there and otherwise
+fails, saying how to build it; with `CAELUMORA_BUILD_UI=1` it runs `npm ci` and `npm run build`
+itself. Node is a requirement of a build with the UI built in, not of every `cargo build`.
+
+The request span and the request id (`error::request_id`) are layers the program puts around
+everything it serves. Routes beyond the core's are merged beside `routes::core` where the program
+nests the API; a handler builds on the public modules of this library - `auth`, `error`, `state`,
+`sse`.
 
 ## How a handler works
 
@@ -49,7 +71,8 @@ A handler translates; it does not decide. Every handler derives its `SecurityCon
 
 ## Endpoints
 
-Everything except `POST /auth/login` and `POST /auth/logout` requires a logged-in user. `…` stands
+Every path below lies under `/api`. Everything except `POST /auth/login` and `POST /auth/logout`
+requires a logged-in user. `…` stands
 for `/sessions/{id}/channels/{cid}` (or `/sessions/{id}` for the list of channels). What each
 operation does in the runtime is described with it - channels and participants in
 [CHANNELS.md](CHANNELS.md), approvals and questions in [APPROVALS.md](APPROVALS.md), commands in
@@ -171,10 +194,30 @@ long, of whitespace alone, of several lines where one is asked for - is `400 inv
 the field (`ValueError`), wherever it is found out. A name that another of its kind has in its name
 space - a channel's in its session, an agent's in its scope - is `409 name_taken`, for every kind
 alike. Something the user may not read is answered as absent (`404`), like something that does not
-exist. A refusal by the runtime (`caelumora_runtime::error::is_forbidden`) is a `403`, not a `500`.
-Server errors state their cause only if `caelumora_runtime::error::user_message` allows it, and
-otherwise point to the log. The codes themselves are made in `error.rs` and the handlers; how
-handlers produce errors is a rule of [CODING-GUIDELINES.md](CODING-GUIDELINES.md#rest-errors).
+exist.
+
+Every error answers itself, by its type and its variant, not by what the handler was doing (issue
+323): each error type that reaches a handler implements `From<…> for ApiError` in `error.rs` - or,
+for a plugin's, in the plugin - and a handler passes it on with `?`.
+
+*   **A refusal** is `403 <subject>_forbidden`, named by what was refused: the error carries the
+    runtime's `Refused` as its source, and its subject is the kind of the entity (`skill_forbidden`,
+    `session_forbidden`) or what one of the core's own actions concerns (`context_forbidden` for
+    what an agent saw, `agent_forbidden` for its tools and components, `command_forbidden`, …). The
+    detail is the runtime's text. A refusal is found anywhere in an error's chain, also in an error
+    of a type the server does not know.
+*   **What a request named and was not found** is told by the operation's own error
+    (`SessionError::NotFound`, `ViewError::ChannelNotFound`, …), as `<kind>_not_found`. A
+    `StoreError::NotFound` met on the way - a personality missing while a session is loaded - is a
+    server error.
+*   **An `anyhow::Error`** is answered by an invalid value anywhere in its chain, then by its
+    outermost error if that is of a type the core knows, then by a name taken or a refusal anywhere
+    in the chain.
+*   **A server error** is `500 internal_error` (or a code of the error type's own, such as
+    `command_failed`), and states its cause only if `caelumora_runtime::error::user_message` allows
+    it, otherwise pointing to the log; the full chain is logged in the request's span.
+
+How handlers produce errors is a rule of [CODING-GUIDELINES.md](CODING-GUIDELINES.md#rest-errors).
 
 ## Streams
 

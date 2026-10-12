@@ -594,10 +594,8 @@ impl MemberView {
     pub async fn tool_sets(&self) -> ViewResult<Vec<ToolSet>> {
         let Some(attributes) = self.state.attributes() else { return Ok(Vec::new()) };
         let views = self.views();
-        let forbidden = || ViewError::Forbidden { actor: self.id() };
         views.security()
-            .require(views.context(), ActionType::ReadAgentTools { agent: attributes, channel: &self.channel.channel.security_attributes }, forbidden).await
-            .map_err(|_| forbidden())?;
+            .require(views.context(), ActionType::ReadAgentTools { agent: attributes, channel: &self.channel.channel.security_attributes }, |refused| ViewError::Forbidden { actor: self.id(), refused }).await?;
         if self.former {
             return Ok(Vec::new());
         }
@@ -617,10 +615,8 @@ impl MemberView {
     pub async fn components(&self) -> ViewResult<ComponentConfig> {
         let Some(attributes) = self.state.attributes() else { return Ok(ComponentConfig::default()) };
         let views = self.views();
-        let forbidden = || ViewError::Forbidden { actor: self.id() };
         views.security()
-            .require(views.context(), ActionType::ReadAgentComponents(attributes), forbidden).await
-            .map_err(|_| forbidden())?;
+            .require(views.context(), ActionType::ReadAgentComponents(attributes), |refused| ViewError::Forbidden { actor: self.id(), refused }).await?;
         if self.former {
             return Ok(ComponentConfig::default());
         }
@@ -696,7 +692,8 @@ impl MemberView {
     pub async fn context(&self) -> ViewResult<AgentContextView> {
         let agent = self.readable_agent().await?;
         if self.channel.readable == ChannelReading::Released {
-            return Err(ViewError::Forbidden { actor: self.id() });
+            let attributes = self.state.attributes().ok_or(ViewError::NoContext { actor: self.id() })?;
+            return Err(ViewError::Forbidden { actor: self.id(), refused: ActionType::ReadAgentContext(attributes).refused() });
         }
         agent.context().await
     }
@@ -706,10 +703,8 @@ impl MemberView {
         let no_context = || ViewError::NoContext { actor: self.id() };
         let attributes = self.state.attributes().ok_or_else(no_context)?;
         let views = self.views();
-        let forbidden = || ViewError::Forbidden { actor: self.id() };
         views.security()
-            .require(views.context(), ActionType::ReadAgentContext(attributes), forbidden).await
-            .map_err(|_| forbidden())?;
+            .require(views.context(), ActionType::ReadAgentContext(attributes), |refused| ViewError::Forbidden { actor: self.id(), refused }).await?;
         self.state.agent().ok_or_else(no_context)
     }
 

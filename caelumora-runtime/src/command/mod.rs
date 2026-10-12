@@ -20,7 +20,7 @@ use crate::channel::{ChannelLoop, ChannelMember};
 use crate::component::{ComponentError, ComponentImpl, ComponentRegistry, ComponentResult};
 use async_trait::async_trait;
 use caelumora_model::command::{Command, CommandOutput, CommandVisibility};
-use caelumora_model::security::{ActionType, Enforcement, SecurityAttributes, SecurityContext, SecurityManager};
+use caelumora_model::security::{ActionType, Enforcement, Refused, SecurityAttributes, SecurityContext, SecurityManager};
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -34,8 +34,8 @@ pub enum CommandError {
     /// commands cannot be found by trying names.
     #[error("Unknown command /{0}. Type /help for the list of commands.")]
     Unknown(String),
-    #[error("You are not permitted to run /{0}.")]
-    Forbidden(String),
+    #[error("You are not permitted to run /{name}.")]
+    Forbidden { name: String, #[source] refused: Refused },
     #[error("/{command}: {reason}")]
     InvalidArguments { command: String, reason: String },
     #[error("/{command} failed: {reason}")]
@@ -203,8 +203,8 @@ impl<P: ?Sized + ProvidesCommands> CommandExecutor<P> {
         let Some(entry) = entry else {
             return Err(CommandError::Unknown(name.to_string()));
         };
-        self.security_manager.require(issuer, show(&entry.command), || CommandError::Unknown(name.to_string())).await?;
-        self.security_manager.require(issuer, execute(&entry.command), || CommandError::Forbidden(name.to_string())).await?;
+        self.security_manager.require(issuer, show(&entry.command), |_| CommandError::Unknown(name.to_string())).await?;
+        self.security_manager.require(issuer, execute(&entry.command), |refused| CommandError::Forbidden { name: name.to_string(), refused }).await?;
         Ok(entry)
     }
 }

@@ -21,7 +21,7 @@ use caelumora_model::mention::MentionDirectory;
 use caelumora_model::question::{QuestionError, QuestionId};
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::work::TurnId;
-use caelumora_model::security::{ActionType, Enforcement, SecurityAttributes, SecurityContext, SecurityManager};
+use caelumora_model::security::{ActionType, Enforcement, Refused, SecurityAttributes, SecurityContext, SecurityManager};
 use caelumora_model::session::SessionId;
 use caelumora_model::store::{EntityStore, StateStore, StoreError, StoreResultExt};
 use caelumora_model::user::UserId;
@@ -75,7 +75,7 @@ pub enum ChannelError {
     /// which rule refused it and about what the caller would have to be
     /// instead - like a refused tool call (issue 15).
     #[error("{action} channel {channel} is not permitted")]
-    Forbidden { action: &'static str, channel: ChannelId },
+    Forbidden { action: &'static str, channel: ChannelId, #[source] refused: Refused },
     /// Only participants of the session can be added to its channels
     /// (issue 46).
     #[error("{participant} is not a participant of the session of channel {channel}")]
@@ -146,7 +146,7 @@ pub enum ChannelError {
 /// preconfigured components it includes (issue 270), are gone or not the
 /// agent's to read - rather than that the store failed.
 fn cannot_run(error: &anyhow::Error) -> bool {
-    matches!(error.downcast_ref::<StoreError>(), Some(StoreError::NotFound { .. } | StoreError::PermissionDenied))
+    matches!(error.downcast_ref::<StoreError>(), Some(StoreError::NotFound { .. } | StoreError::PermissionDenied(_)))
         || error.chain().any(|e| e.downcast_ref::<ComponentError>().is_some_and(ComponentError::is_unavailable))
 }
 
@@ -423,7 +423,7 @@ impl ChannelLoop {
     /// refused, not why.
     async fn require(&self, context: &SecurityContext, action: ActionType<'_>, what: &'static str) -> Result<()> {
         let channel = self.id;
-        Ok(self.security.require(context, action, || ChannelError::Forbidden { action: what, channel }).await?)
+        Ok(self.security.require(context, action, |refused| ChannelError::Forbidden { action: what, channel, refused }).await?)
     }
 
     /// The classification of the channel's contents (issue 133).

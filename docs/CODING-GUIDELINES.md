@@ -180,6 +180,12 @@ REST handlers return `Result<_, crate::error::ApiError>`. Never map an error to 
 the server answers every error with problem details, as described in
 [REST-SERVER.md](REST-SERVER.md#errors).
 
+*   Pass an error on with `?`: it answers itself. An error type that reaches a handler implements
+    `From<…> for ApiError`, answering each of its variants with a status and a code; a new variant
+    gets its answer there, not in the handlers.
+*   An error that means a refusal carries the `Refused` that `Enforcement::require` hands over as
+    its `#[source]` - never `#[error(transparent)]` directly around it, which would hide it from
+    the chain.
 *   Use `ApiError::internal` for server errors: it logs the full chain and discloses only what
     `user_message` allows.
 *   Use the `Json` and `Path` extractors from `crate::error`, so that malformed requests get problem

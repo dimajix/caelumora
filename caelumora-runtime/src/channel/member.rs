@@ -59,7 +59,7 @@ impl Member {
         };
         let personality = agent.personality().await?;
         let context = agent.security_context(channel.session_id, channel.id, personality.limiting_roles());
-        security.require(&context, ActionType::get(Personality::KIND, &personality.security_attributes), || StoreError::PermissionDenied).await?;
+        security.require(&context, ActionType::get(Personality::KIND, &personality.security_attributes), StoreError::PermissionDenied).await?;
         Ok(Some(match personality.kind {
             PersonalityKind::Internal => Member::Agent(agent, personality),
             PersonalityKind::External => Member::ExternalAgent(agent, personality),

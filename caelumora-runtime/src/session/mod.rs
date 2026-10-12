@@ -17,6 +17,7 @@ use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::store::{EntityKind, EntityStores, StoreError, StoreResult};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::{ChannelId, Session, SessionId};
+use caelumora_model::template::SessionTemplateId;
 use caelumora_model::group::GroupId;
 use crate::group::purge_participants;
 use caelumora_model::security::Grant;
@@ -56,6 +57,12 @@ pub enum SessionError {
     /// Only a user owns a session made from a template (issue 88).
     #[error("{0} cannot own a session: only a user can")]
     OwnerNotAUser(ActorId),
+    /// There is no such session, or none the caller may see (issue 323).
+    #[error("There is no session {0}")]
+    NotFound(SessionId),
+    /// There is no such session template, or none the caller may see.
+    #[error("There is no session template {0}")]
+    TemplateNotFound(SessionTemplateId),
     #[error("Session {session} has no channel {channel}")]
     ChannelNotFound { session: SessionId, channel: ChannelId },
     /// No classification that can be given (`require_classifiable`, issue
@@ -164,7 +171,7 @@ async fn require_attachable(workspaces: &WorkspaceManager, security: &dyn Securi
     if !shared.name.scope.admits(&Scope::SessionScope { session_id }) {
         return Err(SessionError::WorkspaceOutOfScope(id).into());
     }
-    security.require(context, ActionType::update(Workspace::KIND, &shared.security_attributes), || StoreError::PermissionDenied).await?;
+    security.require(context, ActionType::update(Workspace::KIND, &shared.security_attributes), StoreError::PermissionDenied).await?;
     Ok(())
 }
 

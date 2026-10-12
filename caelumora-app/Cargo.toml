@@ -1,0 +1,29 @@
+[package]
+name = "caelumora-app"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = ["web-ui"]
+# The web UI, built in `caelumora-web-ui/dist`, served from the binary.
+# Without it the binary serves the API alone.
+web-ui = ["dep:rust-embed", "dep:mime_guess"]
+
+[dependencies]
+caelumora-model = { path = "../caelumora-model" }
+caelumora-runtime = { path = "../caelumora-runtime" }
+caelumora-rest-server = { path = "../caelumora-rest-server" }
+axum = "0.8.9"
+tokio = { version = "1.0", features = ["full"] }
+tracing = "0.1"
+anyhow = "1.0"
+tower-http = { version = "0.7.1", features = ["trace"] }
+clap = { version = "4.6.7", features = ["derive"] }
+rust-embed = { version = "8.5.0", optional = true }
+mime_guess = { version = "2.0.5", optional = true }
+
+[dev-dependencies]
+tower = { version = "0.5.3", features = ["util"] }
+
+[lints]
+workspace = true

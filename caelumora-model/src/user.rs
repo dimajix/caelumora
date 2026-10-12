@@ -298,7 +298,7 @@ mod tests {
         let as_user = |id| SecurityContext::new(ActorId::User(id), SessionId::default(), ChannelId::default());
 
         let hers = UserProfile::new(alice, Some(Introduction::new("I run the budget.").unwrap()));
-        assert!(matches!(store.create(&as_user(bob), &hers).await, Err(StoreError::PermissionDenied)), "nobody writes a profile of someone else");
+        assert!(matches!(store.create(&as_user(bob), &hers).await, Err(StoreError::PermissionDenied(_))), "nobody writes a profile of someone else");
         store.create(&as_user(alice), &hers).await.expect("her own");
         let changed = UserProfile::new(alice, Some(Introduction::new("Bob decides everything.").unwrap()));
         assert!(matches!(store.update(&as_user(bob), &changed).await, Err(StoreError::NotFound { .. })), "nor changes it");

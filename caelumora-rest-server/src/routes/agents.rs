@@ -3,7 +3,7 @@
 //! way yet to create one here.
 
 use crate::auth::AuthenticatedUser;
-use crate::error::{ApiError, Json, Path, Subject};
+use crate::error::{ApiError, Json, Path};
 use caelumora_rest_api::agent::AgentResponse;
 use caelumora_rest_api::trash::{DeletedResponse, ListOptions};
 use crate::state::AppState;
@@ -19,12 +19,10 @@ use uuid::Uuid;
 pub async fn list_agents(State(state): State<Arc<AppState>>, Query(options): Query<ListOptions>, user: AuthenticatedUser) -> Result<Response, ApiError> {
     let views = crate::routes::views(&state, &user);
     if options.deleted {
-        let deleted = views.deleted_agents().await
-            .map_err(|e| ApiError::from_runtime(e.into(), Subject::Agent, "listing the deleted agents"))?;
+        let deleted = views.deleted_agents().await?;
         return Ok(Json(deleted.into_iter().map(DeletedResponse::from).collect::<Vec<_>>()).into_response());
     }
-    let agents = views.agents().await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Agent, "listing the agents"))?;
+    let agents = views.agents().await?;
     Ok(Json(agents.into_iter().map(AgentResponse::from).collect::<Vec<_>>()).into_response())
 }
 
@@ -32,8 +30,7 @@ pub async fn list_agents(State(state): State<Arc<AppState>>, Query(options): Que
 /// former member, and is kept marked until it is purged.
 pub async fn delete_agent(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
     let agent_id = AgentId(id);
-    let deleted = state.runtime_manager.agent_manager().delete(&user.security_context(), agent_id).await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Agent, &format!("deleting agent {agent_id}")))?;
+    let deleted = state.runtime_manager.agent_manager().delete(&user.security_context(), agent_id).await?;
     match deleted {
         true => Ok(StatusCode::NO_CONTENT),
         false => Err(ApiError::not_found("agent_not_found", format!("There is no agent {agent_id}"))),
@@ -44,11 +41,9 @@ pub async fn delete_agent(State(state): State<Arc<AppState>>, Path(id): Path<Uui
 /// rested in. `409` if another agent took its name meanwhile.
 pub async fn restore_agent(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<Json<AgentResponse>, ApiError> {
     let agent_id = AgentId(id);
-    state.runtime_manager.agent_manager().restore(&user.security_context(), agent_id).await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Agent, &format!("restoring agent {agent_id}")))?;
+    state.runtime_manager.agent_manager().restore(&user.security_context(), agent_id).await?;
     // As the list shows it: what the user may do with it is the views' to say.
-    let agents = crate::routes::views(&state, &user).agents().await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Agent, "listing the agents"))?;
+    let agents = crate::routes::views(&state, &user).agents().await?;
     agents.into_iter().find(|agent| agent.id == agent_id).map(|agent| Json(agent.into()))
         .ok_or_else(|| ApiError::not_found("agent_not_found", format!("Agent {agent_id} is not there")))
 }
@@ -57,8 +52,7 @@ pub async fn restore_agent(State(state): State<Arc<AppState>>, Path(id): Path<Uu
 /// allows, by default the system's alone.
 pub async fn purge_agent(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
     let agent_id = AgentId(id);
-    let purged = state.runtime_manager.agent_manager().purge(&user.security_context(), agent_id).await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Agent, &format!("purging agent {agent_id}")))?;
+    let purged = state.runtime_manager.agent_manager().purge(&user.security_context(), agent_id).await?;
     match purged {
         true => Ok(StatusCode::NO_CONTENT),
         false => Err(ApiError::not_found("agent_not_found", format!("There is no deleted agent {agent_id}"))),

@@ -212,7 +212,7 @@ where
 /// caller's to delete (issue 320), which leaves it.
 pub(crate) fn deleted_unless_refused(deleted: StoreResult<bool>) -> StoreResult<bool> {
     match deleted {
-        Err(StoreError::PermissionDenied) => Ok(false),
+        Err(StoreError::PermissionDenied(_)) => Ok(false),
         deleted => deleted,
     }
 }
@@ -227,7 +227,7 @@ pub(crate) fn restored_unless_refused<D: Stored, T>(restored: StoreResult<T>, de
             warn!(kind = %D::KIND, id = %deleted.id(), "Stays deleted: its name was taken while what holds its scope was deleted");
             Ok(None)
         }
-        Err(StoreError::NotFound { .. } | StoreError::PermissionDenied) => {
+        Err(StoreError::NotFound { .. } | StoreError::PermissionDenied(_)) => {
             info!(kind = %D::KIND, id = %deleted.id(), "Stays deleted: it is not the caller's to restore");
             Ok(None)
         }

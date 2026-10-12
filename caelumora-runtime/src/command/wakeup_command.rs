@@ -16,8 +16,8 @@ pub struct WakeupCommandProvider;
 /// A refusal from the channel is the command being refused; anything else is
 /// a failure, described only as far as `user_message` allows.
 fn channel_error(error: anyhow::Error) -> CommandError {
-    if crate::error::is_forbidden(&error) {
-        return CommandError::Forbidden(WAKEUP_COMMAND_NAME.to_string());
+    if let Some(refused) = crate::error::refusal(&error) {
+        return CommandError::Forbidden { name: WAKEUP_COMMAND_NAME.to_string(), refused: refused.clone() };
     }
     tracing::warn!("/wakeup failed: {:#}", error);
     let reason = crate::error::user_message(&error).unwrap_or_else(|| "see the server log".to_string());

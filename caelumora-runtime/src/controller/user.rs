@@ -258,7 +258,7 @@ mod tests {
         assert!(matches!(invalid, Err(StoreError::Invalid(_))), "a language, too: {invalid:?}");
 
         let forged = controller.update_profile(&as_user(UserId::new()), Some("I am alice."), None).await;
-        assert!(matches!(forged, Err(StoreError::PermissionDenied)), "not by someone else: {forged:?}");
+        assert!(matches!(forged, Err(StoreError::PermissionDenied(_))), "not by someone else: {forged:?}");
 
         assert_eq!(controller.profile().introduction, None);
         assert!(announced.0.lock().unwrap().is_empty());
@@ -274,7 +274,7 @@ mod tests {
         controller.update_profile(&hers, Some("I run the budget."), None).await.unwrap();
         let rule = ApprovalRule::new(ToolMatcher { tool: "shell".to_string(), arguments: Default::default() }, RuleDecision::Allow, Reach::Everywhere, None).unwrap();
 
-        assert!(matches!(controller.add_approval_rule(&as_user(UserId::new()), rule.clone()).await, Err(StoreError::PermissionDenied)), "not by someone else");
+        assert!(matches!(controller.add_approval_rule(&as_user(UserId::new()), rule.clone()).await, Err(StoreError::PermissionDenied(_))), "not by someone else");
         controller.add_approval_rule(&hers, rule.clone()).await.expect("hers");
         assert_eq!(controller.profile().approval_rules(), std::slice::from_ref(&rule), "live");
         assert_eq!(store.entity_stores().user_profiles.get(&hers, user.id).await.unwrap().approval_rules(), std::slice::from_ref(&rule), "stored");

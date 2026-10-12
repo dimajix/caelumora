@@ -18,7 +18,8 @@ The project is organized as a Rust workspace with the following crates:
 - **`caelumora-model`**: Core domain entities and data structures.
 - **`caelumora-runtime`**: The execution engine, handling event routing and agent cognitive cycles.
 - **`caelumora-rest-api`**: The request and response types of the REST interface.
-- **`caelumora-rest-server`**: REST interface for interacting with the system.
+- **`caelumora-rest-server`**: REST interface for interacting with the system, as a library.
+- **`caelumora-app`**: The program: the REST interface under `/api` and the web UI.
 - **`caelumora-tui`**: Terminal User Interface for Caelumora.
 - **`caelumora-client-api`**, **`caelumora-local-client`**, **`caelumora-rest-client`**: Reserved for a client interface and its implementations; empty so far.
 
@@ -35,12 +36,19 @@ Next to the workspace, **`caelumora-web-ui`** is the browser frontend (React, Ty
 ### Prerequisites
 
 - [Rust](https://www.rust-lang.org/) (latest stable version recommended)
+- [Node.js](https://nodejs.org/) with npm, to build the web UI
 
 ### Building the Project
 
+The program serves the web UI from its binary, so the UI is built first:
+
 ```bash
+(cd caelumora-web-ui && npm ci && npm run build)
 cargo build
 ```
+
+`CAELUMORA_BUILD_UI=1 cargo build --release` builds the UI as part of the build. Without the UI,
+`cargo build -p caelumora-app --no-default-features` builds a program that serves the API alone.
 
 ### Running Tests
 
@@ -59,13 +67,14 @@ picks another. It talks in the template's first channel. The templates and perso
 `examples/config.yaml` seeds (`examples/seed.yaml`) - without a configuration
 there are none. The TUI writes its log to `local/tui.log`.
 
-### Running the REST Server
+### Running the Program
 
 ```bash
-cargo run -p caelumora-rest-server -- --config examples/config.yaml
+cargo run -p caelumora-app -- --config examples/config.yaml
 ```
 
-The server requires a login. Users come from the providers in the config's
+It serves the web UI at `http://127.0.0.1:3000/` and the REST API under `/api`. The server requires
+a login. Users come from the providers in the config's
 `users` section; without one, nobody can log in. `examples/config.yaml`
 enables the `accept_any` provider for local development — it accepts any
 username and password and must never be enabled on a server reachable from a

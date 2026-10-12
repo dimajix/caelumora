@@ -478,7 +478,7 @@ impl ComponentRegistry {
             .map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
         let components = match self.component_store.get_components(&context.security_context, &target.id).await {
             Ok(stored) => stored.components,
-            Err(cause @ (StoreError::NotFound { .. } | StoreError::PermissionDenied)) => return Err(ComponentError::Unavailable { id: target.id, cause }),
+            Err(cause @ (StoreError::NotFound { .. } | StoreError::PermissionDenied(_))) => return Err(ComponentError::Unavailable { id: target.id, cause }),
             Err(e) => return Err(ComponentError::InvalidConfig(format!("no preconfigured component '{}': {}", target.id, e))),
         };
         if let Some(inner) = components.component_nodes.iter().find(|inner| inner.kind == PRECONFIGURED_REF_KIND) {

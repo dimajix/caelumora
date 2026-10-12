@@ -282,7 +282,7 @@ Besides these, what is simply the plugin's moves without a cut: `caelumora-model
 - **REST errors:** `ApiError::from_runtime` downcasts to every error type of the runtime. A plugin
   implements `From<SkillError> for ApiError` itself - the orphan rule allows it, the type is the
   plugin's. `Subject::Skill` goes: with `From` per error type the subject is known where the error
-  is made.
+  is made. How an error says what it is, so that `From` can answer it, is cut 12.
 
 ### Cut 9 - the REST side, in three layers
 
@@ -361,6 +361,83 @@ the manager, the component, the view extension, the scope member, `SkillAccess`;
 the routes and `From<SkillError> for ApiError`; `client` adds typed calls as an extension trait
 `SkillsClient` on the REST client - the same pattern as the server-side extensions. The default
 is all of them.
+
+### Cut 12 - errors answered by what they are
+
+**Before.** `ApiError::from_runtime(error, subject, action)` (`caelumora-rest-server/src/error.rs`)
+downcasts an `anyhow::Error` to every error type of the runtime, and about 95 handlers call it with
+a `Subject` (`Session`, `Agent`, `Participant`, `Cancel`, `Command`, `Context`, `Workspace`,
+`Skill`, `Artifact`, `Group`) and the text of their action. The subject names the code of a refusal
+(`<subject>_forbidden`) and of a server error (`<subject>_failed`); the action is in the detail
+("Renaming skill … is not permitted", "Renaming skill … failed: …"). Both come from the handler,
+not from the error: `StoreError::PermissionDenied` carries nothing, and `ViewError::Forbidden {
+actor }` is `context_forbidden` in one handler and `agent_forbidden` in another. A plugin can add
+neither its error types nor its subject, and an error of a plugin inside an `anyhow::Error` of the
+core - `ScopeMember::delete_lying_in` answers `anyhow` - is not recognised at all.
+
+| | Benefit | Cost |
+|---|---|---|
+| **A** `Subject` an open value (a constant per subject, a plugin defines its own); a mapping per kind next to its routes, falling back to `from_runtime` | API and runtime unchanged | handlers keep their `map_err`; subject and action stay with the handler; an error of a plugin inside an `anyhow` of the core is still a server error |
+| **B** `From<…> for ApiError` per error type; the error carries what was refused | handlers use `?`; a refusal says what it is, wherever it is found, also in a plugin's error inside an `anyhow` of the core, and in the log | a change across model, store and runtime; a refusal's detail is the runtime's text, not the handler's |
+| **C** a registry of mappings that `from_runtime` asks | handlers unchanged | `from_runtime` has no state: the registry would be global (`OnceLock`), hidden state |
+
+**Decided:** B (2026-10-12). The information the handler adds today moves to where the error is
+made. The design:
+
+1. **A refusal is a value.** `Refused` in `caelumora_model::security`, a `thiserror` error without
+   a source, `Clone`: `subject: &'static str` - the name the API gives what was refused, the
+   prefix of its code - and `action: String`, what `ActionType::describe` names it; displayed as
+   "{action} is not permitted". It is made by `ActionType::refused(&self) -> Refused`, whose
+   subject is the kind's name for `Entity { kind, .. }` and `List(kind)`, and for the core's own
+   actions: `ReadAgentContext` - `context`; `ReadAgentTools`, `ReadAgentComponents` - `agent`;
+   `ApproveToolCall` - `approval`; `StopSession` - `session`; `CancelChannel` - `cancel`;
+   `WakeChannel` - `channel`; `RetryMessage`, `ModifyMessage`, `RevokeMessage` - `message`;
+   `AnswerQuestion` - `question`; `Reclassify` - `classification`; `ShowCommand`,
+   `ExecuteCommand`, `ShowAgentCommand`, `ExecuteAgentCommand` - `command`; `CallTool` - `tool`;
+   `ReadSecret` - `secret`.
+2. **`Enforcement::require` hands it over.** Its refusal becomes `impl FnOnce(Refused) -> E`;
+   `require` makes the `Refused` from the action it was asked. A caller that hides what it refuses
+   as absent (`|_| StoreError::NotFound { .. }`, `|_| CommandError::Unknown(..)`) drops it. About
+   50 callers in model and runtime change.
+3. **Every error that means a refusal carries it as `#[source]`:**
+   `StoreError::PermissionDenied(#[source] Refused)` (still displayed "permission denied"; the
+   store's access check in `store::access` and the managers that refuse with it pass it on),
+   `ChannelError::Forbidden { action, channel, #[source] refused }`, `CommandError::Forbidden {
+   name, #[source] refused }`, `ViewError::Forbidden { actor, #[source] refused }`,
+   `SecretError::PermissionDenied`, and the managers' own refusals that come from `require`
+   (`WorkspaceError::ReadOnly`, …). Never `#[error(transparent)]` directly around a `Refused`: a
+   transparent variant passes on its inner error's *source*, so the `Refused` would vanish from
+   the chain; a transparent variant around an error that holds the `Refused` as its source - such
+   as `SkillError::Store(StoreError)` - keeps it there. `caelumora_runtime::error::is_forbidden`
+   becomes a search of the chain for a `Refused`.
+4. **What a request names and does not find, the operation says itself.** Where the server asked
+   `is_not_found(&error, kind)` - a session (opening and loading it), an agent, a workspace
+   (attaching it), a session template (making a session) - the operation answers an error of its
+   own that names it (e.g. `SessionError::NotFound(SessionId)`), not a `StoreError::NotFound` deep
+   in an `anyhow`. A `StoreError::NotFound` reached on the way - a personality missing while a
+   session is loaded - stays a server error, as today.
+5. **The server answers by type.** `ApiError::code` becomes `Cow<'static, str>`. Every error type
+   that reaches a handler has `From<…> for ApiError`, which answers each variant with the status and
+   code `from_runtime` gives it today; a refusal is `403 {refused.subject}_forbidden`, its detail
+   the error's own text. `From<anyhow::Error>` keeps the order of `from_runtime`: a `ValueError`
+   anywhere in the chain; then the outermost error by its type, if it is one of the core's (so that
+   `WorkspaceError::ReadOnly` stays `read_only`, though it carries a refusal); then
+   `StoreError::NameTaken` and a `Refused` anywhere in the chain - the latter also in an error of a
+   type unknown to the server, such as a plugin's -; and otherwise a server error: code
+   `internal_error`, detail "The request failed: {user_message}" or, if `user_message` has nothing
+   to disclose, the pointer to the log; the full chain is logged in the request's span, which names
+   method and path. `Subject`, `from_runtime` and the action texts of the handlers go;
+   `change_error(error, code)` keeps its own code for `StoreError::Validation`. The impls live in
+   `error.rs`; those of a kind that becomes a plugin move with it (step 10: `From<SkillError>` into
+   `caelumora-skills`, feature `server`).
+6. **Handlers use `?`.** `.map_err(|e| ApiError::from_runtime(e.into(), Subject::…, "…"))?`
+   becomes `?`.
+7. **Codes.** Kept: every code the web UI reads - `context_forbidden`, `agent_forbidden`,
+   `context_not_recorded`, `context_unavailable`, `command_not_found`, `workspace_not_found` - and
+   every not-found, conflict and invalid code of today. Changed: a refusal whose code came from
+   the handler's subject is named by what was refused (adding a participant, refused as an update
+   of the channel, is `channel_forbidden`, no longer `participant_forbidden`); `<subject>_failed`
+   becomes `internal_error`; a refusal's detail is the runtime's text.
 
 ### What is not decided here
 
@@ -458,12 +535,12 @@ which shows whether the seams hold. Every step runs the tests and `cargo clippy 
 - Documents: `ARCHITECTURE.md` (the crates), `REST-SERVER.md`.
 - Stored data: none.
 
-### Step 8 - the server library, `caelumora-app`, the embedded UI (cuts 9, 10)
+### Step 8 - the server library, `caelumora-app`, the embedded UI, errors (cuts 9, 10, 12)
+
+First part:
 
 - `caelumora-rest-server` becomes a library: `auth`, `error`, the extractors, `state`, `sse` and
-  `routes::core()` public; `ApiError::from_runtime`'s downcasts become `From<…> for ApiError`
-  per error type, each next to its error's crate boundary; `Subject` goes or shrinks to what the
-  core's own handlers need.
+  `routes::core()` public.
 - `caelumora-app`: `main.rs` from the server, the router nested under `/api`, `rust-embed` behind
   `web-ui`, `build.rs` as in cut 10, the fallback to `index.html`, the cache headers.
 - `caelumora-web-ui`: the Vite proxy no longer rewrites `/api`.
@@ -471,6 +548,27 @@ which shows whether the seams hold. Every step runs the tests and `cargo clippy 
   UI, how a plugin adds routes), `WEB-UI.md` (building for the binary), `README.md` (how to build
   and run).
 - Stored data: none. Deployments change their start command and base URL.
+
+Second part - errors answered by what they are (cut 12), in this order, each stage compiling with
+its tests passing:
+
+1. Model: `Refused`, `ActionType::refused`, `Enforcement::require` handing it to its refusal,
+   `StoreError::PermissionDenied(Refused)`, `store::access`; every caller of `require`; the tests
+   that match `PermissionDenied` (about 30, the security suite among them).
+2. Runtime: the errors of point 3 carry the `Refused` as `#[source]`; `is_forbidden` searches the
+   chain for it; the four operations of point 4 report what they did not find in their own error.
+3. Server: `ApiError::code` as `Cow`; `From<…> for ApiError` per error type, and for
+   `anyhow::Error`; `Subject` and `from_runtime` removed; the handlers use `?`; `change_error`
+   without a subject. The tests of `error.rs` become tests of the `From` impls, one per error type,
+   plus one that finds the refusal of an error unknown to the server inside an `anyhow` (as a
+   plugin's will be) and answers `403 <subject>_forbidden`.
+4. The web UI is checked against the codes of point 7 (`tsc`, and live: the context, history,
+   private notes and tools of an agent one may not read).
+5. Documents: `REST-SERVER.md` (*Errors*: codes by what was refused, `internal_error`, how a
+   new error type is answered), `CODING-GUIDELINES.md` (*REST errors*: handlers use `?`, an error
+   type that reaches a handler implements `From<…> for ApiError`, a refusal is carried as
+   `#[source]`), `SECURITY.md` and `PERMISSION-CHECKS.md` (`require` hands over a `Refused`).
+6. Stored data: none.
 
 ### Step 9 - `Plugin`, `RuntimeBuilder`, the plugins' sections (the composition)
 
@@ -699,3 +797,36 @@ of the runtime moved to the model: `CommandStatus` (`caelumora_model::workspace`
 command's state and the API share, and `LabelCauses` (`caelumora_model::confidentiality`), the
 rule which classifications set a message's label. The JSON of the API is unchanged. Stored data:
 none.
+
+**2026-10-12** — Step 8, first part, on branch `issue-323-app`. `caelumora-rest-server` is a
+library (`lib.rs`; `auth`, `error`, `routes`, `sse`, `state` public; `routes::core` in place of
+`create_router`); resolving the signing key moved from `main.rs` to `TokenService::from_secret`,
+and `LoginRequest` and `UserResponse`, left in the server by step 7, to `caelumora_rest_api::auth`.
+`caelumora-app` is the program: `main.rs` from the server, the API nested under `/api`, where a
+path no route takes is `404 not_found` as a problem, the web UI from `web_ui.rs` behind the
+feature `web-ui` with `index.html` as the fallback and the cache headers of cut 10, and `build.rs`
+as cut 10 has it. The Vite proxy keeps `/api`. Checked in the browser against the program: the
+page, logging in, the lists of the sidebar, a channel and both event streams under `/api`.
+
+Making each error type answer itself turned out to need more than the plan said: a `From` sees
+only the error, and today the handler, not the error, says what was refused and in which action.
+The options are cut 12; the maintainer decided B, the refusal carried by the error, as the second
+part of this step.
+
+**2026-10-12** — Step 8, second part (cut 12), on branch `issue-323-app`. `Refused` and
+`ActionType::refused` are in `caelumora_model::security`; `Enforcement::require` hands the refusal
+to the caller's error, and `StoreError::PermissionDenied`, `ChannelError::Forbidden`,
+`CommandError::Forbidden`, `ViewError::Forbidden`, `WorkspaceError::ReadOnly` and
+`SecretError::PermissionDenied` carry it as their source. `caelumora_runtime::error::refusal` finds
+it in a chain; `is_forbidden` asks it, and `is_not_found` is gone. The `SessionManager` answers
+what a request named and it did not find as `SessionError::NotFound` and `TemplateNotFound`. In the
+server `ApiError::code` is a `Cow`, every error type has its `From<…> for ApiError` in `error.rs`,
+and the about 90 handlers that called `from_runtime` pass their errors on with `?`; `Subject` and
+`from_runtime` are gone. In `From<anyhow::Error>` the order of `from_runtime` is kept - the
+outermost error by its type before a refusal anywhere in the chain - so that
+`WorkspaceError::ReadOnly` stays `read_only`; the plan said otherwise and is corrected. Checked
+against the program: an unknown session and template (`404 session_not_found`,
+`template_not_found`), a global skill renamed by another user (`403 skill_forbidden`), a blank
+name (`400 invalid_value`), an unknown command. `context_forbidden` and `agent_forbidden` are
+covered by tests only: making a user who may not read an agent's context a member of its channel
+needs a template that names them. Stored data: none.

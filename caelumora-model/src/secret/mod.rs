@@ -1,7 +1,7 @@
 pub mod env;
 pub mod file;
 
-use crate::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
+use crate::security::{ActionType, Enforcement, Refused, SecurityContext, SecurityManager};
 use async_trait::async_trait;
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -10,8 +10,8 @@ use std::sync::Arc;
 pub enum SecretError {
     #[error("secret not found: {0}")]
     NotFound(String),
-    #[error("access denied for secret: {0}")]
-    PermissionDenied(String),
+    #[error("access denied for secret: {key}")]
+    PermissionDenied { key: String, #[source] refused: Refused },
     #[error("backend: {0}")]
     Backend(String),
 }
@@ -44,7 +44,7 @@ impl SecretManager {
     }
 
     pub async fn resolve(&self, context: &SecurityContext, key: &str) -> SecretResult<String> {
-        self.security_manager.require(context, ActionType::ReadSecret(key), || SecretError::PermissionDenied(key.to_string())).await?;
+        self.security_manager.require(context, ActionType::ReadSecret(key), |refused| SecretError::PermissionDenied { key: key.to_string(), refused }).await?;
 
         for provider in &self.providers {
             match provider.get_secret(key).await {
@@ -159,6 +159,6 @@ mod tests {
         );
 
         let err = manager.resolve(&dummy_context(), "KEY").await.unwrap_err();
-        assert!(matches!(err, SecretError::PermissionDenied(_)));
+        assert!(matches!(err, SecretError::PermissionDenied { .. }));
     }
 }

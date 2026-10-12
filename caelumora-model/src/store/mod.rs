@@ -16,7 +16,7 @@ use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality};
 use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::StoredComponents;
 use crate::removal::Deletable;
-use crate::security::SecurityContext;
+use crate::security::{Refused, SecurityContext};
 use crate::session::Session;
 use crate::template::SessionTemplate;
 use crate::user::{User, UserProfile};
@@ -48,8 +48,9 @@ pub enum StoreError {
     Invalid(#[from] crate::value::ValueError),
     #[error("backend: {0}")]
     Backend(String),
+    /// Refused (issue 323): what was refused is its source.
     #[error("permission denied")]
-    PermissionDenied,
+    PermissionDenied(#[source] Refused),
 }
 
 pub type StoreResult<T> = Result<T, StoreError>;
