@@ -1,6 +1,6 @@
 # 330 — The setup of the log is part of the runtime library
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -43,3 +43,13 @@
 
 - **2026-10-12** — Opened from the discussion of which subjects besides skills could move into
   crates of their own (issue 323).
+- **2026-10-12** — Done, with a crate of its own instead of the recommended feature. Weighed again
+  after issue 323, which brought no crate the two binaries share: a feature would only have hidden
+  the dependency, while the runtime stayed the owner of the application's setup - and whatever
+  joins it later (an export, a rotation of the files) would have grown there too. The new crate
+  `caelumora-logging` holds `init` and `LogTarget` and is the only one that depends on
+  `tracing-subscriber`; `caelumora-app` and `caelumora-tui` call `caelumora_logging::init`. The
+  spans stay in `caelumora_runtime::logging`, whose callers now import them instead of writing
+  their path. Its test, which checks that the envelope ids reach the JSON log, moved along and
+  takes the runtime as a dev-dependency. `CODING-GUIDELINES.md`, `ARCHITECTURE.md` and the README
+  name the crate.

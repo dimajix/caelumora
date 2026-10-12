@@ -30,7 +30,6 @@ meval = "0.2.0"
 rmcp = { version = "3.4", features = ["client", "transport-streamable-http-client-reqwest"] }
 bollard = "0.21"
 tracing = "0.1.44"
-tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 tempfile = { version = "3.27", optional = true }
 
 [features]

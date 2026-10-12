@@ -1,6 +1,7 @@
 //! The run loop of a channel: starting and stopping its actors, admitting, routing, recording and
 //! appending to the history what they send.
 
+use crate::logging::envelope_span;
 use crate::transport::{EventSender, TransportError};
 use crate::transport::{FilteringEventSender, InMemoryEventReceiver, InMemoryEventSender, OriginEventSender};
 use anyhow::{anyhow, Result};
@@ -166,7 +167,7 @@ impl ChannelLoop {
                 debug!("Dropped {}: its sender left channel {}", event.describe(), self.id);
                 return false;
             }
-            let span = crate::logging::envelope_span(&event.context, event.event.kind());
+            let span = envelope_span(&event.context, event.event.kind());
             self.process_envelope(event, running).instrument(span).await;
             false
         } else {

@@ -4,6 +4,7 @@
 //! `/`, from the binary.
 
 use axum::Router;
+use caelumora_logging::LogTarget;
 use caelumora_model::config::AppConfig;
 use caelumora_rest_server::auth::{Auth, TokenService};
 use caelumora_rest_server::error::{self, ApiError};
@@ -11,7 +12,6 @@ use caelumora_rest_server::plugin::RestPlugin;
 use caelumora_rest_server::routes;
 use caelumora_rest_server::state::AppState;
 use caelumora_runtime::event::EventBus;
-use caelumora_runtime::logging::{self, LogTarget};
 use caelumora_runtime::runtime::RuntimeBuilder;
 use caelumora_runtime::session::SessionManager;
 use caelumora_skills::plugin::SkillsPlugin;
@@ -45,7 +45,7 @@ async fn main() -> anyhow::Result<()> {
         AppConfig::default()
     };
 
-    logging::init(&config.logging, LogTarget::Stderr, "info,tower_http=debug,axum::rejection=trace")?;
+    caelumora_logging::init(&config.logging, LogTarget::Stderr, "info,tower_http=debug,axum::rejection=trace")?;
 
     let plugins = plugins();
     let mut builder = RuntimeBuilder::from_config(&config)?;

@@ -20,7 +20,7 @@ use caelumora_runtime::session::SessionManager;
 use caelumora_skills::plugin::SkillsPlugin;
 use caelumora_runtime::view::Viewer;
 use clap::Parser;
-use caelumora_runtime::logging::{self, LogTarget};
+use caelumora_logging::LogTarget;
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
 use std::collections::HashMap;
@@ -455,7 +455,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Into a file by default: log lines on the terminal would break the prompt.
-    logging::init(&config.logging, LogTarget::File(PathBuf::from("local/tui.log")), "info")?;
+    caelumora_logging::init(&config.logging, LogTarget::File(PathBuf::from("local/tui.log")), "info")?;
 
     let mut builder = RuntimeBuilder::from_config(&config)?;
     for plugin in plugins() {

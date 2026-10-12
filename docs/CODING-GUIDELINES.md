@@ -205,7 +205,9 @@ the server answers every error with problem details, as described in
 *   Every crate logs through `tracing` (`tracing::{debug, info, warn, error, trace}`), never through
     `log` or `println!`. Records from dependencies that still use `log` are forwarded into
     `tracing`.
-*   Libraries never install a subscriber. Binaries call `caelumora_runtime::logging::init`.
+*   Libraries never install a subscriber. The programs install it with `caelumora_logging::init`;
+    `caelumora-logging` is the one place of the setup and the only crate that depends on
+    `tracing-subscriber` (issue 330).
 *   `RUST_LOG` selects the records; the configuration's `logging` section sets the format (`text`,
     the default, or `json`) and an optional file (see [CONFIGURATION.md](CONFIGURATION.md)). The
     REST server logs to stderr, the TUI to `local/tui.log`, so that log lines do not break its
@@ -239,7 +241,7 @@ fields: `span_id`, `event_id`, `correlation_id` and `span_depth`. There are thre
 *   **`request`** - one REST request, with `method`, `uri`, `request_id`, the authenticated
     `user_id`, and the `span_id` of the envelopes the request started.
 *   **`envelope`** - handling one envelope in the `ChannelLoop` or an idle agent
-    (`logging::envelope_span`), with session, channel, sender and event kind.
+    (`caelumora_runtime::logging::envelope_span`), with session, channel, sender and event kind.
 *   **`turn`** - one iteration of an agent's cognitive cycle, with agent and state and the ids of
     the turn's `EventContext`. An idle or sleeping agent runs in an `agent` span instead.
 

@@ -21,6 +21,7 @@ The project is organized as a Rust workspace with the following crates:
 - **`caelumora-rest-server`**: REST interface for interacting with the system, as a library.
 - **`caelumora-app`**: The program: the REST interface under `/api` and the web UI.
 - **`caelumora-tui`**: Terminal User Interface for Caelumora.
+- **`caelumora-logging`**: The setup of the log, shared by `caelumora-app` and `caelumora-tui`.
 - **`caelumora-client-api`**, **`caelumora-local-client`**, **`caelumora-rest-client`**: Reserved for a client interface and its implementations; empty so far.
 
 Next to the workspace, **`caelumora-web-ui`** is the browser frontend (React, TypeScript) for the REST server.

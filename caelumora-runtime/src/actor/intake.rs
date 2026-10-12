@@ -6,6 +6,7 @@
 
 use crate::message::{apply_stage_processors, PerceiveInProcessor};
 use crate::component::ComponentImpl;
+use crate::logging::envelope_span;
 use crate::runtime::ActorRuntime;
 use crate::transport::EventReceiver;
 use anyhow::Result;
@@ -125,7 +126,7 @@ pub(super) async fn take_in(
         if matches!(event.event, ActorEvent::CommandRequested { .. }) {
             return TakenIn { request, retries, command: Some(event) };
         }
-        let span = crate::logging::envelope_span(&event.context, event.event.kind());
+        let span = envelope_span(&event.context, event.event.kind());
         let asked = async {
             debug!("Received {}", event.describe());
             match event.event {
