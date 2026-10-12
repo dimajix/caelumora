@@ -427,8 +427,8 @@ that saw only internal things in a confidential channel stays readable in intern
 
 What the label was made of can be told afterwards: every prompt part and every knowledge read of a
 message's context records the classification it had when it was read. Which of them set the label is
-derived when it is asked for, against the message's classification as it is now; nothing about it is
-stored:
+derived when it is asked for, against the message's classification as it is now
+(`LabelCauses`); nothing about it is stored:
 
 *   a part that was not classified counted as the channel, and set the label to the channel's;
 *   if the classified parts had no audience in common, the label is the channel's, set by the parts

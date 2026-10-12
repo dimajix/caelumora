@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 caelumora-model = { path = "../caelumora-model" }
 caelumora-runtime = { path = "../caelumora-runtime" }
+caelumora-rest-api = { path = "../caelumora-rest-api" }
 axum = { version = "0.8.9", features = ["macros"] }
 tokio = { version = "1.0", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }

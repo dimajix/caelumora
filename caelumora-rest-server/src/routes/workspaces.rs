@@ -10,10 +10,12 @@
 
 use crate::auth::AuthenticatedUser;
 use crate::error::{ApiError, Json, Path, Subject};
-use crate::models::{
-    AccessEntry, AttachWorkspaceRequest, ChannelResponse, CommandResponse, CreateWorkspaceRequest, DeletedResponse, FileResponse, FilesQuery, ListOptions, RenameWorkspaceRequest,
-    SessionSnapshot, StorageResponse, UsesWorkspaceRequest, ItemDescriptionRequest, WorkspaceResponse,
-};
+use caelumora_rest_api::access::AccessEntry;
+use caelumora_rest_api::channel::ChannelResponse;
+use caelumora_rest_api::scope::ItemDescriptionRequest;
+use caelumora_rest_api::session::SessionSnapshot;
+use caelumora_rest_api::trash::{DeletedResponse, ListOptions};
+use caelumora_rest_api::workspace::{AttachWorkspaceRequest, CommandResponse, CreateWorkspaceRequest, FileResponse, FilesQuery, RenameWorkspaceRequest, StorageResponse, UsesWorkspaceRequest, WorkspaceResponse};
 use crate::state::AppState;
 use axum::body::Body;
 use axum::extract::{Query, State};
@@ -23,7 +25,7 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::security::Grant;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::workspace::WorkspaceId;
-use caelumora_runtime::terminal::{Terminal, WorkspacePath};
+use caelumora_runtime::terminal::{CommandState, FileEntry, Terminal, WorkspacePath};
 use futures::TryStreamExt;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -177,7 +179,7 @@ pub async fn set_uses_workspace(State(state): State<Arc<AppState>>, Path((id, ci
 pub async fn kill_command(State(state): State<Arc<AppState>>, Path((id, cid, command_id)): Path<(Uuid, Uuid, String)>, user: AuthenticatedUser) -> Result<Json<CommandResponse>, ApiError> {
     let killed = state.runtime_manager.workspace_manager().kill_command(&user.security_context(), SessionId(id), ChannelId(cid), &command_id, 0).await
         .map_err(|e| ApiError::from_runtime(e.into(), Subject::Workspace, &format!("ending command {command_id}")))?;
-    Ok(Json(killed.into()))
+    Ok(Json(command_response(killed)))
 }
 
 async fn set_workspace(state: &Arc<AppState>, user: &AuthenticatedUser, session_id: SessionId, workspace: Option<WorkspaceId>, share: Option<Grant>) -> Result<Json<SessionSnapshot>, ApiError> {
@@ -213,7 +215,7 @@ fn file_error(error: caelumora_runtime::terminal::TerminalError, action: &str) -
 
 async fn list(terminal: &dyn Terminal, dir: &str) -> Result<Json<Vec<FileResponse>>, ApiError> {
     let entries = terminal.list(&path(dir)?).await.map_err(|e| file_error(e, "listing the directory"))?;
-    Ok(Json(entries.into_iter().map(FileResponse::from).collect()))
+    Ok(Json(entries.into_iter().map(file_response).collect()))
 }
 
 /// The file, streamed, as an attachment under its name.
@@ -233,4 +235,14 @@ async fn upload(terminal: &dyn Terminal, file: &str, body: Body, limit: u64) -> 
 async fn remove(terminal: &dyn Terminal, file: &str) -> Result<StatusCode, ApiError> {
     terminal.delete(&path(file)?).await.map_err(|e| file_error(e, "deleting the file"))?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// `entry` of a directory as the API shows it.
+fn file_response(entry: FileEntry) -> FileResponse {
+    FileResponse { name: entry.name, is_dir: entry.is_dir, size: entry.size, modified: entry.modified }
+}
+
+/// How a command stands, as the API shows it.
+fn command_response(state: CommandState) -> CommandResponse {
+    CommandResponse { id: state.id, status: state.status, exit_code: state.exit_code, output: state.output, next_offset: state.next_offset, truncated: state.truncated }
 }

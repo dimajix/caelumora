@@ -2,7 +2,7 @@ use std::sync::Arc;
 use axum::extract::State;
 use crate::auth::AuthenticatedUser;
 use crate::error::{ApiError, Json};
-use crate::models::CompartmentResponse;
+use caelumora_rest_api::compartment::CompartmentResponse;
 use crate::state::AppState;
 
 /// The configured compartments, by name (issue 133) - what a client offers

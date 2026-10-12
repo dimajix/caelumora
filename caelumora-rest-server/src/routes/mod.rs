@@ -1,6 +1,7 @@
 use crate::auth::{require_auth, require_stream_auth, AuthenticatedUser};
 use crate::error::{ApiError, Subject};
-use crate::models::{ChannelResponse, SessionSnapshot};
+use caelumora_rest_api::channel::ChannelResponse;
+use caelumora_rest_api::session::SessionSnapshot;
 use crate::state::AppState;
 use axum::{
     routing::{get, post},

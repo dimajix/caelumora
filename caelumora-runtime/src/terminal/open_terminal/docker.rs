@@ -392,7 +392,8 @@ impl TerminalProvider for DockerProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terminal::{ByteStream, CommandStatus, WorkspacePath};
+    use crate::terminal::{ByteStream, WorkspacePath};
+    use caelumora_model::workspace::CommandStatus;
     use bytes::Bytes;
 
     fn path(text: &str) -> WorkspacePath {

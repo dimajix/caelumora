@@ -15,6 +15,7 @@
 //! axis, `Visibility`: ownership, not sensitivity.
 
 use crate::actor::ActorId;
+use crate::message::Message;
 use crate::privacy::SessionPrivacy;
 use crate::role::{RoleId, Roles};
 use crate::security::{ActionType, SecurityContext, SecurityManager};
@@ -246,6 +247,47 @@ impl fmt::Display for Classification {
             write!(f, " {{{}}}", names.join(", "))?;
         }
         Ok(())
+    }
+}
+
+/// Which of the classifications in a message's context set its label
+/// (issue 170). The label of a message is the join of everything its turn
+/// had seen, at most the channel's classification (issue 168); what set it
+/// is derived from that, nothing about it is stored:
+///
+/// - what was not classified counted as the channel, and so set the label
+///   to the channel's;
+/// - if the classified parts had no audience in common, the label is the
+///   channel's, set by the parts with an audience;
+/// - otherwise the parts at the label's level set it.
+#[derive(Debug)]
+pub struct LabelCauses {
+    label: Classification,
+    disjoint: bool,
+}
+
+impl LabelCauses {
+    /// The causes of `label`, the classification of a message whose
+    /// context's parts are classified `classifications` - those known.
+    pub fn new<'a>(label: Classification, classifications: impl IntoIterator<Item = &'a Classification>) -> Self {
+        let disjoint = Classification::join_all(classifications).is_none();
+        Self { label, disjoint }
+    }
+
+    /// Whether a part classified `classification` - `None`: not known -
+    /// set the label.
+    pub fn set_by(&self, classification: Option<&Classification>) -> bool {
+        match classification {
+            None => true,
+            Some(c) if self.disjoint => !c.compartments().is_empty(),
+            Some(c) => c.level() == self.label.level(),
+        }
+    }
+
+    /// Whether `message` set the label, by its own classification or that
+    /// of a tool result in it.
+    pub fn set_by_message(&self, message: &Message) -> bool {
+        self.set_by(Some(&message.classification)) || message.tool_results.iter().any(|r| self.set_by(Some(&r.classification)))
     }
 }
 
@@ -616,6 +658,7 @@ impl Visibility {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tool::{ToolCall, ToolCallResult};
     use Confidentiality::*;
 
     fn compartment(name: &str) -> Compartment {
@@ -933,6 +976,28 @@ mod tests {
         assert!(policy.may_copy_information(&someone(), &own, &own), "a channel into itself, without asking");
         assert!(!policy.may_copy_information(&someone(), &other, &own), "another channel as the policy decides");
     }
+
+    #[test]
+    fn what_set_a_label_is_told_by_level_by_audience_and_by_what_is_not_known() {
+        let classified = |level, compartments: &[&str]| Classification::new(level, compartments.iter().map(|c| Compartment::new(*c))).unwrap();
+        let (internal, confidential) = (Classification::general(Internal), Classification::general(Confidential));
+
+        let causes = LabelCauses::new(confidential.clone(), [&internal, &confidential]);
+        assert!(causes.set_by(Some(&confidential)), "a part at the label's level set it");
+        assert!(!causes.set_by(Some(&internal)), "one below did not");
+        assert!(causes.set_by(None), "what is not known counted as the channel");
+
+        let sales = classified(Internal, &["sales"]);
+        let causes = LabelCauses::new(confidential.clone(), [&sales, &classified(Internal, &["hr"])]);
+        assert!(causes.set_by(Some(&sales)), "without an audience in common, the parts with one set the channel's label");
+        assert!(!causes.set_by(Some(&internal)), "a general part did not");
+
+        let causes = LabelCauses::new(confidential.clone(), [&internal, &confidential]);
+        let result = ToolCallResult::of(
+            &ToolCall { id: Some("1".to_string()), function_name: "noop".to_string(), arguments: serde_json::json!({}), visibility: Default::default(), presentation: Default::default() },
+            Default::default(), "secret".to_string(), confidential.clone());
+        let message = Message { tool_results: vec![result], ..Message::new(internal.clone()) };
+        assert!(causes.set_by_message(&message), "a tool result in a message sets the label as the message");
+        assert!(!causes.set_by_message(&Message::new(internal)));
+    }
 }
-
-

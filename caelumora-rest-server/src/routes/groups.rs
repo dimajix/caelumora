@@ -6,7 +6,8 @@
 //! changed only by taking part.
 use crate::auth::AuthenticatedUser;
 use crate::error::{ApiError, Json, Path, Subject};
-use crate::models::{CreateGroupRequest, DeletedResponse, GroupResponse, ListOptions, RenameGroupRequest};
+use caelumora_rest_api::group::{CreateGroupRequest, GroupResponse, RenameGroupRequest};
+use caelumora_rest_api::trash::{DeletedResponse, ListOptions};
 use crate::state::AppState;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;

@@ -167,3 +167,6 @@ and the numbers that show it.
   the server into a crate `caelumora-rest-api` of their own (its step 7), on which the server and
   `caelumora-rest-client` both depend: the client of this issue builds on that crate rather than
   holding the types itself, so that the server does not depend on the client.
+- **2026-10-12** — Step 7 of issue [323](323-kinds-enumerated-in-the-core.md) is done:
+  `caelumora-rest-api` holds the requests and responses, one module per subject, and depends on the
+  model alone. The client of this issue reads them from there.

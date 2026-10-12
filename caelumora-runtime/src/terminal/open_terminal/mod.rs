@@ -43,7 +43,8 @@ pub(crate) use docker::DockerProvider;
 pub(crate) use shared::SharedProvider;
 
 use super::commands::{locked, Commands, Kept};
-use super::{ByteStream, CommandKey, CommandState, CommandStatus, FileEntry, Shell, Terminal, TerminalError, TerminalResult, WorkspacePath};
+use caelumora_model::workspace::CommandStatus;
+use super::{ByteStream, CommandKey, CommandState, FileEntry, Shell, Terminal, TerminalError, TerminalResult, WorkspacePath};
 use async_trait::async_trait;
 use caelumora_model::workspace::WorkspaceId;
 use chrono::{DateTime, Utc};

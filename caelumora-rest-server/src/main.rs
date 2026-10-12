@@ -13,7 +13,6 @@ use tower_http::trace::TraceLayer;
 
 mod auth;
 mod error;
-mod models;
 mod routes;
 mod sse;
 mod state;

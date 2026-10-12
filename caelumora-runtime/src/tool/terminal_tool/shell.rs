@@ -11,7 +11,8 @@
 //! through the same shell as `WorkspaceManager::kill_command` does for them.
 
 use super::{failed, tool, TerminalToolConfig};
-use crate::terminal::{CommandState, CommandStatus, Shell};
+use crate::terminal::{CommandState, Shell};
+use caelumora_model::workspace::CommandStatus;
 use crate::tool::{arguments, ToolError, ToolResult};
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation};
 use serde::Deserialize;

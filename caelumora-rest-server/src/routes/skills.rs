@@ -5,7 +5,8 @@
 //! an agent with `/skill`.
 use crate::auth::AuthenticatedUser;
 use crate::error::{ApiError, Json, Path, Subject};
-use crate::models::{CreateSkillRequest, DeletedResponse, ListOptions, RenameSkillRequest, SkillBodyRequest, SkillDescriptionRequest, SkillResponse};
+use caelumora_rest_api::skill::{CreateSkillRequest, RenameSkillRequest, SkillBodyRequest, SkillDescriptionRequest, SkillResponse};
+use caelumora_rest_api::trash::{DeletedResponse, ListOptions};
 use crate::state::AppState;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;

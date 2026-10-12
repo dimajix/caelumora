@@ -1,6 +1,7 @@
 use crate::auth::AuthenticatedUser;
 use crate::error::{ApiError, Subject};
-use crate::models::{CreateSessionRequest, DeletedResponse, DescriptionRequest, ListOptions, PrivateNotesResponse, RenameSessionRequest, SessionPrivacyRequest, SessionResponse, SessionSnapshot};
+use caelumora_rest_api::session::{CreateSessionRequest, DescriptionRequest, PrivateNotesResponse, RenameSessionRequest, SessionPrivacyRequest, SessionResponse, SessionSnapshot};
+use caelumora_rest_api::trash::{DeletedResponse, ListOptions};
 use crate::state::AppState;
 use axum::response::{IntoResponse, Response};
 use axum::{extract::{Query, State}, http::StatusCode};

@@ -10,7 +10,7 @@ use caelumora_model::store::{StoreError, StoreResultExt};
 use caelumora_runtime::controller::UserController;
 use crate::auth::AuthenticatedUser;
 use crate::error::{ApiError, Json, Path};
-use crate::models::{ApprovalRuleRequest, ProfileRequest, ProfileResponse};
+use caelumora_rest_api::profile::{ApprovalRuleRequest, ProfileRequest, ProfileResponse};
 use uuid::Uuid;
 use crate::state::AppState;
 

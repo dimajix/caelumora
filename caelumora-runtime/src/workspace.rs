@@ -874,7 +874,7 @@ pub(crate) mod testing {
 mod tests {
     use super::testing::{session_with_workspace, WithWorkspace};
     use super::*;
-    use crate::terminal::CommandStatus;
+    use caelumora_model::workspace::CommandStatus;
     use caelumora_model::channel::ChannelUpdateEvent;
 
     /// A command started by the agent in the session's channel, still
