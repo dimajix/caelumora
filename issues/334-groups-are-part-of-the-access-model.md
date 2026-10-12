@@ -1,6 +1,6 @@
 # 334 — Groups are part of the access model, teams a feature beside it
 
-**Status:** open
+**Status:** rejected
 **Area:** Code structure
 
 ## The problem
@@ -51,3 +51,6 @@ taken, the issue is closed as `rejected` with this reasoning.
 
 - **2026-10-12** — Opened as a follow-up of issue 323 (step 11): groups are a subject of the
   access model, and teams the only part of them a plugin could take.
+- **2026-10-12** — Decided by the maintainer: A. Groups stay in the core, teams with them - the
+  policy reads both, and a plugin that owns operations on a kind it does not define would be a
+  pattern with little gain. Closed as `rejected`; nothing in `docs/SECURITY.md` changes.

@@ -102,7 +102,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 
 | No. | Status | Issue |
 |---|---|---|
-| [323](323-kinds-enumerated-in-the-core.md) | in progress | Every stored kind is enumerated in the core - `ActionType`, `EntityKind`, `EntityStore`, `GlobalEvent`, the scope, the seed, `ApiError` and the routes - so a subject such as skills cannot be moved into a crate of its own. |
 | [324](324-backends-enumerated-in-the-core.md) | open | The backends of a service - the storages of workspaces and of artifacts, the user and secret providers, the stores - are each a closed `enum` of the configuration, so none can be added from a crate of its own. |
 | [325](325-mcp-in-a-crate-of-its-own.md) | open | The MCP integration is part of the runtime crate, so `rmcp` is built into everything that uses the runtime, though the core knows `mcp_tool` only as a component kind. |
 | [326](326-a2a-in-a-crate-of-its-own.md) | open | The A2A protocol is part of the runtime crate, though the core reaches external agents only through the `ExternalAgent` facet and names no protocol. |
@@ -111,7 +110,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [329](329-ollama-named-by-the-core.md) | open | The core names `ollama_client` as the default model, so the choice of a model provider is not the deployment's and a second provider cannot become the default without configuration. |
 | [330](330-log-setup-in-the-runtime.md) | open | The runtime library installs the `tracing` subscriber for the binaries and so depends on `tracing-subscriber`, though setting up the log is the application's decision. |
 | [333](333-workspaces-woven-into-sessions.md) | open | Workspaces are part of what sessions, channels and templates are - an attached workspace, its use per channel, one made by a template -, so they cannot leave the core as skills did. |
-| [334](334-groups-are-part-of-the-access-model.md) | open | Groups are the participants of sessions and channels and the teams users make in one kind, which the policy reads, so only teams could become a plugin. |
 | [335](335-channel-events-name-their-session.md) | open | The events of channels and their members are variants of their own beside `GlobalEvent::Entity`, which cannot say where an entity lies, so a plugin's kind that lies in a channel has no way to announce it. |
 
 ## Open architecture questions

@@ -1,6 +1,6 @@
 # 323 — Every stored kind is enumerated in the core, so no subject can leave it
 
-**Status:** in progress
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -927,3 +927,15 @@ with the client. Checked against the program: the skills of the seed listed, a s
 renamed, deleted, listed as deleted and restored, an unknown one `404 skill_not_found`, a blank
 name `400 invalid_value`, `401` without login; the TUI lists the skills an agent can load. Stored
 data: none - the store keeps skills where it kept them (`entities/skill`).
+
+**2026-10-12** — Step 11, the follow-ups. Opened: [333](333-workspaces-woven-into-sessions.md),
+workspaces, which sessions, channels and templates are made of, so that they cannot leave as skills
+did - with the recommendation to move artifacts first;
+[334](334-groups-are-part-of-the-access-model.md), groups, which the policy reads, so that only
+teams could become a plugin - with the recommendation to keep them;
+[335](335-channel-events-name-their-session.md), the events of channels and their members, which
+stayed variants in step 5; [336](336-errors-of-a-plugin-shown-as-a-failure.md), found in step 10:
+what a plugin's error says is shown as a failure where it travels inside an `anyhow`. Artifacts had
+their issue already, [328](328-artifacts-in-a-crate-of-their-own.md), which records what skills
+settled and showed for them; [307](307-load-and-performance-tests.md) records the wire types of a
+plugin and the client feature not made. Every step of the plan is done, and the issue with it.
