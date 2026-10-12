@@ -147,7 +147,7 @@ impl SessionManager {
         // Before anything is found or made for it.
         let name = Name::optional(name)?;
         let store = &self.stores.entities;
-        let template = store.get_session_template(context, template_id).await?;
+        let template = self.stores.session_templates.get(context, template_id).await?;
         let id = SessionId::new();
         // Its own verb before anything of others is asked or anything is
         // found or made for it (issue 312): who may not create the session
@@ -832,7 +832,7 @@ mod tests {
             privacy: Default::default(),
             deleted: None,
         };
-        store.create_session_template(&SecurityContext::system(), &template).await.unwrap();
+        runtime.entity_stores().session_templates.create(&SecurityContext::system(), &template).await.unwrap();
         let hers = SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
         let mut profile = caelumora_model::user::UserProfile::new(owner, None);
         profile.preferred_language = Some(Language::new("de").unwrap());

@@ -331,7 +331,7 @@ impl RuntimeManager {
         let artifacts = Arc::new(ArtifactManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&security_manager), Arc::clone(&confidentiality), &config.artifacts)?);
         let groups = Arc::new(GroupManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&security_manager)));
         let agents = Arc::new(AgentManager::new(Arc::clone(&entity_store), Arc::clone(&state_store), Arc::clone(&event_bus), Arc::clone(&security_manager)));
-        let scoped = Arc::new(ScopedEntities::new(Arc::clone(&entity_store), Arc::clone(&agents), Arc::clone(&workspaces), Arc::clone(&skills), Arc::clone(&artifacts), Arc::clone(&groups)));
+        let scoped = Arc::new(ScopedEntities::new(&entity_stores, Arc::clone(&agents), Arc::clone(&workspaces), Arc::clone(&skills), Arc::clone(&artifacts), Arc::clone(&groups)));
 
         let component_services = ComponentServices::empty()
             .with(Arc::clone(&security_manager))

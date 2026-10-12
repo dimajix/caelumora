@@ -592,3 +592,7 @@ Step 3e: groups on their own store. Groups are read and written beyond their man
 `SessionLoop`, the `SessionManager` and the `ControllerManager` hold `EntityStores`, as the views
 do, since they use many kinds; the `ArtifactManager` no longer needs the facade.
 
+Step 3f: session templates on their own store. They have no manager: `ScopedEntities` keeps the
+store, made from `&EntityStores` as the managers are, the `SessionManager`, the seed, the REST
+route of templates and the terminal frontend take it from `EntityStores`.
+

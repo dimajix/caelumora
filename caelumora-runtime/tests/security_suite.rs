@@ -307,7 +307,7 @@ impl World {
             privacy: Default::default(),
             deleted: None,
         };
-        self.store.create_session_template(&Self::system(), &template).await.unwrap();
+        self.runtime.entity_stores().session_templates.create(&Self::system(), &template).await.unwrap();
         template.id
     }
 
@@ -3334,9 +3334,9 @@ async fn an_agent_reaches_the_workspace_of_a_session_its_owner_does_not_take_par
 async fn template_with_workspace(world: &World, scope: ScopeTemplate, storage: &str) -> SessionTemplateId {
     let global = world.personality(&format!("global-{storage}"), None, &[]).await;
     let id = world.template(None, &[], &format!("helper-{storage}"), global.id).await;
-    let mut template = world.store.get_session_template(&World::system(), id).await.unwrap();
+    let mut template = world.runtime.entity_stores().session_templates.get(&World::system(), id).await.unwrap();
     template.workspace = Some(WorkspaceTemplate { name: Name::new("files").unwrap(), scope, storage: storage.to_string(), classification: Classification::general(Confidentiality::Internal), description: None });
-    world.store.update_session_template(&World::system(), &template).await.unwrap();
+    world.runtime.entity_stores().session_templates.update(&World::system(), &template).await.unwrap();
     id
 }
 

@@ -18,7 +18,7 @@ use crate::component::StoredComponents;
 use crate::removal::Deletable;
 use crate::security::SecurityContext;
 use crate::session::{Session, SessionId};
-use crate::template::{SessionTemplate, SessionTemplateId};
+use crate::template::SessionTemplate;
 use crate::user::{User, UserId, UserProfile};
 use crate::value::name::ScopedName;
 use crate::workspace::Workspace;
@@ -181,6 +181,7 @@ pub struct EntityStores {
     pub workspaces: Arc<dyn EntityStore<Workspace>>,
     pub artifacts: Arc<dyn EntityStore<Artifact>>,
     pub groups: Arc<dyn EntityStore<Group>>,
+    pub session_templates: Arc<dyn EntityStore<SessionTemplate>>,
 }
 
 /// Every kind's entities at once, as one store offered them before each
@@ -232,17 +233,6 @@ pub trait Entities : Debug + Sync + Send {
     async fn list_deleted_personalities(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Personality>>;
     async fn find_personality_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Personality>;
 
-    // Session templates
-    async fn create_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()>;
-    async fn get_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<SessionTemplate>;
-    async fn update_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()>;
-    async fn delete_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool>;
-    async fn list_session_templates(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<SessionTemplate>>;
-    async fn restore_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<SessionTemplate>;
-    async fn purge_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool>;
-    async fn get_deleted_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<SessionTemplate>;
-    async fn list_deleted_session_templates(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<SessionTemplate>>;
-    async fn find_session_template_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<SessionTemplate>;
 
     // Agents
     async fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()>;

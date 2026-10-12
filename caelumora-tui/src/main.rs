@@ -495,7 +495,7 @@ async fn main() -> anyhow::Result<()> {
     let security = runtime.controller_manager().user_controller(owner).await?.security_context(Default::default(), Default::default());
 
     // By name, among those this user may use.
-    let template = entity_store.list_session_templates(&security, &Query::all()).await.map(|page| page.items)?.into_iter()
+    let template = entity_stores.session_templates.list(&security, &Query::all()).await.map(|page| page.items)?.into_iter()
         .find(|t| t.name.name == args.template.as_str())
         .ok_or_else(|| anyhow::anyhow!("Session template '{}' not found: templates come from the `seed` of the configuration - `--config examples/config.yaml` seeds the demo ones", args.template))?;
 

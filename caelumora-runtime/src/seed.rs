@@ -99,8 +99,8 @@ impl Seed {
             }
         }
         for template in &self.session_templates {
-            if store.get_session_template(&system, template.id).await.optional()?.is_none() {
-                store.create_session_template(&system, template).await?;
+            if stores.session_templates.get(&system, template.id).await.optional()?.is_none() {
+                stores.session_templates.create(&system, template).await?;
                 info!("Seeded session template {} ({})", template.name, template.id);
             }
         }
@@ -181,7 +181,7 @@ mod tests {
         store.update_personality(&system, &changed).await.unwrap();
         load(&stores, store.as_ref(), policy.as_ref(), &[example()]).await.expect("seeding again is no conflict");
         assert_eq!(store.list_personalities(&system, &Query::all()).await.map(|page| page.items).unwrap().len(), seed.personalities.len(), "nothing twice");
-        assert_eq!(store.list_session_templates(&system, &Query::all()).await.map(|page| page.items).unwrap().len(), seed.session_templates.len());
+        assert_eq!(stores.session_templates.list(&system, &Query::all()).await.map(|page| page.items).unwrap().len(), seed.session_templates.len());
         assert_eq!(store.get_personality(&system, changed.id).await.unwrap().description, changed.description);
         let skills = stores.skills.list(&system, &Query::all()).await.map(|page| page.items).unwrap();
         assert!(!skills.is_empty() && skills.len() == seed.skills.len(), "the skills, once (issue 22)");

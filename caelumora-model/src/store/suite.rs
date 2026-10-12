@@ -376,8 +376,8 @@ pub(crate) async fn entity_store_behaves(stores: &EntityStores) {
     let store = stores.entities.as_ref();
     lifecycle!(store, personality(), |v: &Personality| v.id, name.name, "personality",
         create_personality, get_personality, update_personality, delete_personality, list_personalities);
-    lifecycle!(store, session_template(), |v: &SessionTemplate| v.id, name.name, "session_template",
-        create_session_template, get_session_template, update_session_template, delete_session_template, list_session_templates);
+    lifecycle!(stores.session_templates.as_ref(), session_template(), |v: &SessionTemplate| v.id, name.name, "session_template",
+        create, get, update, delete, list);
     lifecycle!(store, Agent::new(scoped("assistant-1"), &personality(), crate::actor::ActorId::None), |v: &Agent| v.id, name.name, "agent",
         create_agent, get_agent, update_agent, delete_agent, list_agents);
     lifecycle!(store, session(), |v: &Session| v.id, name, "session",
@@ -409,18 +409,18 @@ pub(crate) async fn entity_store_behaves(stores: &EntityStores) {
     // A template that would make sessions it can never lie in (issue 178).
     let ctx = SecurityContext::default();
     let in_session = SessionTemplate { name: ScopedName::new("nested", Scope::SessionScope { session_id: SessionId::new() }).unwrap(), ..session_template() };
-    let refused = store.create_session_template(&ctx, &in_session).await;
+    let refused = stores.session_templates.create(&ctx, &in_session).await;
     assert!(matches!(refused, Err(StoreError::Validation(_))), "a template of a session's scope is not stored, got {refused:?}");
     let template = session_template();
-    store.create_session_template(&ctx, &template).await.expect("a global one is");
+    stores.session_templates.create(&ctx, &template).await.expect("a global one is");
     let moved = SessionTemplate { name: ScopedName::new("nested", Scope::ChannelScope { session_id: SessionId::new(), channel_id: ChannelId::new() }).unwrap(), ..template };
-    let refused = store.update_session_template(&ctx, &moved).await;
+    let refused = stores.session_templates.update(&ctx, &moved).await;
     assert!(matches!(refused, Err(StoreError::Validation(_))), "nor moved into a channel's, got {refused:?}");
 
     found_by_name!(store, |name| Personality { name, id: PersonalityId::new(), ..personality() }, "personality",
         create_personality, delete_personality, find_personality_by_name);
-    found_by_name!(store, |name| SessionTemplate { name, id: SessionTemplateId::new(), ..session_template() }, "session_template",
-        create_session_template, delete_session_template, find_session_template_by_name);
+    found_by_name!(stores.session_templates.as_ref(), |name| SessionTemplate { name, id: SessionTemplateId::new(), ..session_template() }, "session_template",
+        create, delete, find_by_name);
     found_by_name!(store, |name| Agent::new(name, &personality(), crate::actor::ActorId::None), "agent",
         create_agent, delete_agent, find_agent_by_name);
 
@@ -487,10 +487,10 @@ pub(crate) async fn names_are_unique(stores: &EntityStores) {
         elsewhere: |name| Personality { name: in_scope(name, &users), id: PersonalityId::new(), ..personality() },
         rename: |value: Personality, name| Personality { name: in_scope(name, &value.name.scope), ..value }, "personality",
         create_personality, update_personality, delete_personality, restore_personality);
-    unique_by_name!(store, |name| SessionTemplate { name: in_scope(name, &global), id: SessionTemplateId::new(), ..session_template() },
+    unique_by_name!(stores.session_templates.as_ref(), |name| SessionTemplate { name: in_scope(name, &global), id: SessionTemplateId::new(), ..session_template() },
         elsewhere: |name| SessionTemplate { name: in_scope(name, &users), id: SessionTemplateId::new(), ..session_template() },
         rename: |value: SessionTemplate, name| SessionTemplate { name: in_scope(name, &value.name.scope), ..value }, "session_template",
-        create_session_template, update_session_template, delete_session_template, restore_session_template);
+        create, update, delete, restore);
     unique_by_name!(store, |name| Agent::new(in_scope(name, &global), &personality(), crate::actor::ActorId::None),
         elsewhere: |name| Agent::new(in_scope(name, &users), &personality(), crate::actor::ActorId::None),
         rename: |value: Agent, name| Agent { name: in_scope(name, &value.name.scope), ..value }, "agent",

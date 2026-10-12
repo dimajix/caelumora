@@ -12,7 +12,7 @@ use crate::skill::Skill;
 use crate::store::access::{name_free, Access};
 use crate::store::query::{self, Filter, NoField, Page, Query};
 use crate::store::{ComponentStore, Entities, EntityStore, EntityStores, Journaled, StateStore, StoreError, StoreResult};
-use crate::template::{SessionTemplate, SessionTemplateId};
+use crate::template::SessionTemplate;
 use crate::user::{User, UserId, UserProfile};
 use crate::value::name::ScopedName;
 use crate::workspace::Workspace;
@@ -30,7 +30,7 @@ use tracing::info;
 #[derive(Debug)]
 pub struct MemoryStore {
     personalities: MemoryEntityStore<Personality>,
-    session_templates: MemoryEntityStore<SessionTemplate>,
+    session_templates: Arc<MemoryEntityStore<SessionTemplate>>,
     agents: MemoryEntityStore<Agent>,
     sessions: MemoryEntityStore<Session>,
     channels: MemoryEntityStore<Channel>,
@@ -66,7 +66,7 @@ impl MemoryStore {
         let policies = (security_manager, confidentiality);
         Self {
             personalities: MemoryEntityStore::new(&policies),
-            session_templates: MemoryEntityStore::new(&policies),
+            session_templates: Arc::new(MemoryEntityStore::new(&policies)),
             agents: MemoryEntityStore::new(&policies),
             sessions: MemoryEntityStore::new(&policies),
             channels: MemoryEntityStore::new(&policies),
@@ -94,6 +94,7 @@ impl MemoryStore {
             workspaces: Arc::<MemoryEntityStore<Workspace>>::clone(&self.workspaces),
             artifacts: Arc::<MemoryEntityStore<Artifact>>::clone(&self.artifacts),
             groups: Arc::<MemoryEntityStore<Group>>::clone(&self.groups),
+            session_templates: Arc::<MemoryEntityStore<SessionTemplate>>::clone(&self.session_templates),
         }
     }
 }
@@ -305,36 +306,6 @@ impl Entities for MemoryStore {
     }
     async fn find_personality_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Personality> {
         self.personalities.find_by_name(ctx, name).await
-    }
-    async fn create_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()> {
-        self.session_templates.create(ctx, value).await
-    }
-    async fn get_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<SessionTemplate> {
-        self.session_templates.get(ctx, id).await
-    }
-    async fn update_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()> {
-        self.session_templates.update(ctx, value).await
-    }
-    async fn delete_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool> {
-        self.session_templates.delete(ctx, id).await
-    }
-    async fn list_session_templates(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<SessionTemplate>> {
-        self.session_templates.list(ctx, query).await
-    }
-    async fn restore_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<SessionTemplate> {
-        self.session_templates.restore(ctx, id).await
-    }
-    async fn purge_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool> {
-        self.session_templates.purge(ctx, id).await
-    }
-    async fn get_deleted_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<SessionTemplate> {
-        self.session_templates.get_deleted(ctx, id).await
-    }
-    async fn list_deleted_session_templates(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<SessionTemplate>> {
-        self.session_templates.list_deleted(ctx, query).await
-    }
-    async fn find_session_template_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<SessionTemplate> {
-        self.session_templates.find_by_name(ctx, name).await
     }
     async fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
         self.agents.create(ctx, value).await
