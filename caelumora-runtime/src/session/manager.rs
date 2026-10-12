@@ -25,6 +25,7 @@ use std::sync::Arc;
 use tokio::task::JoinHandle;
 use super::{SessionError, SessionLoop, purge_channel_document, require_attachable, require_classification};
 use caelumora_model::removal::Stored;
+use caelumora_model::session;
 
 pub struct SessionManager {
     sessions: DashMap<SessionId, Arc<SessionLoop>>,
@@ -103,7 +104,7 @@ impl SessionManager {
         });
         self.handles.insert(id, handle);
 
-        self.events.publish(GlobalEvent::SessionStarted(id), attributes);
+        self.events.publish(GlobalEvent::custom::<Session>(&id, session::STARTED, &()), attributes);
         Ok(session_loop)
     }
 
@@ -250,7 +251,7 @@ impl SessionManager {
         }
 
         let event_bus = &self.events;
-        event_bus.publish(GlobalEvent::SessionCreated(id), session.security_attributes.clone());
+        event_bus.publish(GlobalEvent::created::<Session>(&id), session.security_attributes.clone());
         for channel in &channels {
             event_bus.publish_classified(GlobalEvent::ChannelCreated(id, channel.id), channel.security_attributes.clone(), std::slice::from_ref(&channel.classification));
         }
@@ -271,8 +272,8 @@ impl SessionManager {
     }
 
     /// The session `id` for `context`: the running one, or loaded from the
-    /// store and started - which announces `SessionStarted`, not
-    /// `SessionCreated`, as the session exists already.
+    /// store and started - which announces it as `session::STARTED`, not
+    /// as created, as the session exists already.
     ///
     /// Started once, however many ask at the same time (issue 62): whoever
     /// comes second waits for the first and gets the session it started -
@@ -325,7 +326,7 @@ impl SessionManager {
         if let Some(session_loop) = &removed {
             let session = Arc::clone(&session_loop.session());
             self.workspaces.end_commands_in(&session.channels).await;
-            self.events.publish(GlobalEvent::SessionStopped(id), session.security_attributes.clone());
+            self.events.publish(GlobalEvent::custom::<Session>(&id, session::STOPPED, &()), session.security_attributes.clone());
         }
         removed
     }
@@ -387,7 +388,7 @@ impl SessionManager {
         for (channel_id, attributes, classification) in channels {
             event_bus.publish_classified(GlobalEvent::ChannelDeleted(id, channel_id), attributes, &[classification]);
         }
-        event_bus.publish(GlobalEvent::SessionDeleted(id), session.security_attributes.clone());
+        event_bus.publish(GlobalEvent::deleted::<Session>(&id), session.security_attributes.clone());
         self.starts.remove(&id);
         Ok(true)
     }
@@ -416,7 +417,7 @@ impl SessionManager {
                 warn!("Session {} was restored, but not what lies in its scope: {}", id, e);
             }
         }
-        self.events.publish(GlobalEvent::SessionRestored(id), session.security_attributes.clone());
+        self.events.publish(GlobalEvent::restored::<Session>(&id), session.security_attributes.clone());
         info!("Session {} restored by {}", id, context.caller_id);
         Ok(session)
     }
@@ -493,6 +494,9 @@ mod tests {
     use caelumora_model::confidentiality::ConfidentialityRules;
     use caelumora_model::config::AppConfig;
     use crate::component::ComponentRegistry;
+    use caelumora_model::event::EntityChange;
+    use caelumora_model::session::Session;
+    use caelumora_model::session;
 
     #[tokio::test]
     async fn create_session_emits_created_then_started() {
@@ -509,9 +513,9 @@ mod tests {
 
         // The manager emits these synchronously, in order, before returning.
         let events = drain(&mut rx);
-        let created = events.iter().position(|e| matches!(e, GlobalEvent::SessionCreated(id) if *id == session_id));
+        let created = events.iter().position(|e| e.about::<Session>() == Some((session_id, &EntityChange::Created)));
         let ch_created = events.iter().position(|e| matches!(e, GlobalEvent::ChannelCreated(sid, cid) if *sid == session_id && *cid == channel_id));
-        let started = events.iter().position(|e| matches!(e, GlobalEvent::SessionStarted(id) if *id == session_id));
+        let started = events.iter().position(|e| matches!(e.about::<Session>(), Some((id, EntityChange::Custom { name: session::STARTED, .. })) if id == session_id));
 
         assert!(created.is_some(), "expected SessionCreated, got {:?}", events);
         assert!(ch_created.is_some(), "expected ChannelCreated, got {:?}", events);
@@ -541,9 +545,9 @@ mod tests {
         assert!(manager.delete_session(&ctx, session_id).await.unwrap());
 
         let events = drain(&mut rx);
-        let stopped = events.iter().position(|e| matches!(e, GlobalEvent::SessionStopped(id) if *id == session_id));
+        let stopped = events.iter().position(|e| matches!(e.about::<Session>(), Some((id, EntityChange::Custom { name: session::STOPPED, .. })) if id == session_id));
         let ch_deleted = events.iter().position(|e| matches!(e, GlobalEvent::ChannelDeleted(sid, cid) if *sid == session_id && *cid == channel_id));
-        let deleted = events.iter().position(|e| matches!(e, GlobalEvent::SessionDeleted(id) if *id == session_id));
+        let deleted = events.iter().position(|e| e.about::<Session>() == Some((session_id, &EntityChange::Deleted)));
 
         assert!(stopped.is_some(), "expected SessionStopped, got {:?}", events);
         assert!(ch_deleted.is_some(), "expected ChannelDeleted, got {:?}", events);
@@ -570,11 +574,11 @@ mod tests {
 
         let events = drain(&mut rx);
         assert!(
-            events.iter().any(|e| matches!(e, GlobalEvent::SessionStarted(id) if *id == session_id)),
+            events.iter().any(|e| matches!(e.about::<Session>(), Some((id, EntityChange::Custom { name: session::STARTED, .. })) if id == session_id)),
             "expected SessionStarted, got {:?}", events
         );
         assert!(
-            !events.iter().any(|e| matches!(e, GlobalEvent::SessionCreated(_))),
+            !events.iter().any(|e| matches!(e.about::<Session>(), Some((_, EntityChange::Created)))),
             "load must not emit SessionCreated, got {:?}", events
         );
 
@@ -599,7 +603,7 @@ mod tests {
         let (first, second, third) = (first.unwrap(), second.unwrap(), third.unwrap());
         assert!(Arc::ptr_eq(&first, &second) && Arc::ptr_eq(&first, &third), "one loop for all of them");
 
-        let started = drain(&mut rx).into_iter().filter(|e| matches!(e, GlobalEvent::SessionStarted(id) if *id == session_id)).count();
+        let started = drain(&mut rx).into_iter().filter(|e| matches!(e.about::<Session>(), Some((id, EntityChange::Custom { name: session::STARTED, .. })) if id == session_id)).count();
         assert_eq!(started, 1, "the session started once");
         manager.stop_session(&SecurityContext::system(), session_id).await.unwrap();
     }

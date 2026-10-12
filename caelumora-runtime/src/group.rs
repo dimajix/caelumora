@@ -108,7 +108,7 @@ impl GroupManager {
         let group = Group::team(ScopedName::new(name, scope)?, owner);
         let _writing = self.writing.lock().await;
         self.groups.create(ctx, &group).await?;
-        self.events.publish(GlobalEvent::GroupCreated(group.id), group.security_attributes.clone());
+        self.events.publish(GlobalEvent::created::<Group>(&group.id), group.security_attributes.clone());
         info!(group = %group.id, by = %ctx.caller_id, "Group created");
         Ok(group)
     }
@@ -175,7 +175,7 @@ impl GroupManager {
         // Who left is told too: they read it no longer once it is stored.
         told.retain(|actor| !group.has_member(*actor));
         let attributes = told.into_iter().fold(before, |attributes, actor| attributes.granting(Subject::Actor(actor), Grant::Read));
-        self.events.publish(GlobalEvent::GroupUpdated(id, event), attributes);
+        self.events.publish(GlobalEvent::updated::<Group>(&id, &event), attributes);
         info!(group = %id, by = %ctx.caller_id, "Group changed");
         Ok(group)
     }
@@ -196,7 +196,7 @@ impl GroupManager {
         if !self.groups.delete(ctx, id).await? {
             return Ok(false);
         }
-        self.events.publish(GlobalEvent::GroupDeleted(id), group.security_attributes);
+        self.events.publish(GlobalEvent::deleted::<Group>(&id), group.security_attributes);
         info!(group = %id, by = %ctx.caller_id, "Group deleted");
         Ok(true)
     }
@@ -216,7 +216,7 @@ impl GroupManager {
             return Err(GroupError::Participants(id));
         }
         let group = self.groups.restore(ctx, id).await.map_err(store_error(id))?;
-        self.events.publish(GlobalEvent::GroupRestored(id), group.security_attributes.clone());
+        self.events.publish(GlobalEvent::restored::<Group>(&id), group.security_attributes.clone());
         info!(group = %id, by = %ctx.caller_id, "Group restored");
         Ok(group)
     }
@@ -260,7 +260,7 @@ impl ScopeMember for GroupManager {
         let mut left = 0;
         for group in self.groups.list(&system, &within(holder)).await?.items {
             if deleted_unless_refused(self.groups.delete(ctx, group.id).await)? {
-                self.events.publish(GlobalEvent::GroupDeleted(group.id), group.security_attributes);
+                self.events.publish(GlobalEvent::deleted::<Group>(&group.id), group.security_attributes);
             } else {
                 left += 1;
             }
@@ -281,7 +281,7 @@ impl ScopeMember for GroupManager {
         let _writing = self.writing.lock().await;
         for group in deleted_since(self.groups.list_deleted(&system, &within(holder)).await?.items, since) {
             if let Some(restored) = restored_unless_refused(self.groups.restore(ctx, group.id).await, &group)? {
-                self.events.publish(GlobalEvent::GroupRestored(restored.id), restored.security_attributes);
+                self.events.publish(GlobalEvent::restored::<Group>(&restored.id), restored.security_attributes);
             }
         }
         Ok(())

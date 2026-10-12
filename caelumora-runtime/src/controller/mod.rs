@@ -30,14 +30,14 @@ pub use user::UserController;
 
 use crate::event::EventBus;
 use caelumora_model::actor::ActorId;
-use caelumora_model::agent::AgentId;
+use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::approval::ApprovalRule;
 use caelumora_model::channel::Channel;
-use caelumora_model::event::GlobalEvent;
+use caelumora_model::event::EntityChange;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::Session;
 use caelumora_model::store::{EntityStores, StoreError, StoreResult, StoreResultExt};
-use caelumora_model::user::UserId;
+use caelumora_model::user::{User, UserId, UserProfile};
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::{Arc, OnceLock, Weak};
@@ -164,18 +164,14 @@ impl ControllerManager {
             let (agents, users) = (Arc::clone(&self.agents), Arc::clone(&self.users));
             tokio::spawn(async move {
                 while let Some(event) = events.recv().await {
-                    match &event {
-                        GlobalEvent::AgentUpdated(id, _) => {
-                            if let Some(controller) = agents.lock().await.get(id).and_then(Weak::upgrade) {
-                                controller.process_global_event(&event);
-                            }
+                    if let Some((id, EntityChange::Updated(_))) = event.about::<Agent>() {
+                        if let Some(controller) = agents.lock().await.get(&id).and_then(Weak::upgrade) {
+                            controller.process_global_event(&event);
                         }
-                        GlobalEvent::UserUpdated(id, _) | GlobalEvent::UserProfileUpdated(id, _) => {
-                            if let Some(controller) = users.lock().await.get(id).and_then(Weak::upgrade) {
-                                controller.process_global_event(&event);
-                            }
+                    } else if let Some((id, EntityChange::Updated(_))) = event.about::<User>().or_else(|| event.about::<UserProfile>()) {
+                        if let Some(controller) = users.lock().await.get(&id).and_then(Weak::upgrade) {
+                            controller.process_global_event(&event);
                         }
-                        _ => {}
                     }
                 }
             });
@@ -205,6 +201,7 @@ fn remember<K: Eq + Hash, C>(registry: &mut HashMap<K, Weak<C>>, id: K, controll
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::event::GlobalEvent;
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::agent::{Agent, AgentUpdateEvent, Personality, PersonalityId};
     use caelumora_model::actor::ActorId;
@@ -298,8 +295,8 @@ mod tests {
         let (agents_controller, users_controller) = (manager.agent_controller(agent.id).await.unwrap(), manager.user_controller(user.id).await.unwrap());
 
         // As another instance, or whoever changes users, would announce them.
-        bus.publish(GlobalEvent::AgentUpdated(agent.id, AgentUpdateEvent::NameChanged("from elsewhere".to_string())), Default::default());
-        bus.publish(GlobalEvent::UserUpdated(user.id, UserUpdateEvent::NameChanged("alice b.".to_string())), Default::default());
+        bus.publish(GlobalEvent::updated::<Agent>(&agent.id, &AgentUpdateEvent::NameChanged("from elsewhere".to_string())), Default::default());
+        bus.publish(GlobalEvent::updated::<User>(&user.id, &UserUpdateEvent::NameChanged("alice b.".to_string())), Default::default());
 
         eventually(|| agents_controller.name() == "from elsewhere" && users_controller.username() == "alice b.").await;
     }

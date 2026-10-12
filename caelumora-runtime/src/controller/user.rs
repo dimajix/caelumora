@@ -128,7 +128,7 @@ impl UserController {
         self.save(ctx, &profile).await?;
         self.profile.store(Arc::new(profile.clone()));
         let attributes = profile.security_attributes().clone();
-        self.event_publisher.publish(GlobalEvent::UserProfileUpdated(self.id, profile.clone()), attributes);
+        self.event_publisher.publish(GlobalEvent::updated::<UserProfile>(&self.id, &profile), attributes);
         Ok((changed, profile))
     }
 
@@ -171,14 +171,10 @@ impl UserController {
     /// is announced. An event carries the resulting value, so taking over
     /// this controller's own change again changes nothing.
     pub fn process_global_event(&self, event: &GlobalEvent) {
-        match event {
-            GlobalEvent::UserUpdated(uid, update) if *uid == self.id => {
-                self.process_user_update(update);
-            }
-            GlobalEvent::UserProfileUpdated(uid, profile) if *uid == self.id => {
-                self.profile.store(Arc::new(profile.clone()));
-            }
-            _ => {}
+        if let Some(update) = event.about::<User>().filter(|(uid, _)| *uid == self.id).and_then(|(_, change)| change.update::<UserUpdateEvent>()) {
+            self.process_user_update(&update);
+        } else if let Some(profile) = event.about::<UserProfile>().filter(|(uid, _)| *uid == self.id).and_then(|(_, change)| change.update::<UserProfile>()) {
+            self.profile.store(Arc::new(profile));
         }
     }
 }
@@ -231,7 +227,7 @@ mod tests {
             assert_eq!(controller.profile().introduction.as_ref().map(Introduction::as_str), Some(text), "live");
             assert_eq!(store.entity_stores().user_profiles.get(&hers, user.id).await.unwrap().introduction.as_ref().map(Introduction::as_str), Some(text), "stored");
         }
-        assert!(matches!(announced.0.lock().unwrap().as_slice(), [GlobalEvent::UserProfileUpdated(..), GlobalEvent::UserProfileUpdated(id, p)] if *id == user.id && p.introduction.as_ref().map(Introduction::as_str) == Some("I run the budget and the team.")));
+        assert!(matches!(announced.0.lock().unwrap().as_slice(), [_, event] if matches!(event.about::<UserProfile>(), Some((id, change)) if id == user.id && change.update::<UserProfile>().is_some_and(|p| p.introduction.as_ref().map(Introduction::as_str) == Some("I run the budget and the team.")))));
     }
 
     /// Issue 306: the roles the `UserManager` stored and announced are the
@@ -241,11 +237,11 @@ mod tests {
         let user = alice();
         let controller = UserController::new(user.clone(), None, Arc::new(Announced::default()), Arc::new(MemoryStore::new()).entity_stores().user_profiles);
         let staff = RoleId::new();
-        controller.process_global_event(&GlobalEvent::UserUpdated(UserId::new(), UserUpdateEvent::RolesChanged(vec![staff])));
+        controller.process_global_event(&GlobalEvent::updated::<User>(&UserId::new(), &UserUpdateEvent::RolesChanged(vec![staff])));
         assert!(controller.load().roles.is_empty(), "not someone else's");
-        controller.process_global_event(&GlobalEvent::UserUpdated(user.id, UserUpdateEvent::RolesChanged(vec![staff])));
+        controller.process_global_event(&GlobalEvent::updated::<User>(&user.id, &UserUpdateEvent::RolesChanged(vec![staff])));
         assert_eq!(controller.load().roles, [staff], "given");
-        controller.process_global_event(&GlobalEvent::UserUpdated(user.id, UserUpdateEvent::RolesChanged(Vec::new())));
+        controller.process_global_event(&GlobalEvent::updated::<User>(&user.id, &UserUpdateEvent::RolesChanged(Vec::new())));
         assert!(controller.load().roles.is_empty(), "and taken");
     }
 
@@ -299,9 +295,9 @@ mod tests {
         let controller = UserController::new(user.clone(), None, Arc::new(()), Arc::new(MemoryStore::new()).entity_stores().user_profiles);
         let changed = UserProfile::new(user.id, Some(Introduction::new("I run the budget.").unwrap()));
 
-        controller.process_global_event(&GlobalEvent::UserProfileUpdated(UserId::new(), UserProfile::new(UserId::new(), Some(Introduction::new("not hers").unwrap()))));
+        controller.process_global_event(&GlobalEvent::updated::<UserProfile>(&UserId::new(), &UserProfile::new(UserId::new(), Some(Introduction::new("not hers").unwrap()))));
         assert_eq!(controller.profile().introduction, None, "another user's");
-        controller.process_global_event(&GlobalEvent::UserProfileUpdated(user.id, changed));
+        controller.process_global_event(&GlobalEvent::updated::<UserProfile>(&user.id, &changed));
         assert_eq!(controller.profile().introduction.as_ref().map(Introduction::as_str), Some("I run the budget."));
     }
 }

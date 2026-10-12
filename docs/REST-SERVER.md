@@ -210,9 +210,13 @@ does not follow it.
 ### What the global stream shows
 
 The global stream is filtered by what the user may read: its snapshot through the store, its events
-through `EventBus::subscribe_as`. Global events name sessions and channels by id alone; a client
-follows them with `GET /sessions/{id}`, which answers in the snapshot's own form without starting a
-stopped session.
+through `EventBus::subscribe_as`. An event is written as serde writes a `GlobalEvent` (see
+[EVENTS.md](EVENTS.md#the-form-of-an-event)): one about an entity as `{"Entity": {"kind": "session",
+"id": "…", "change": "Deleted"}}`, with `{"Updated": …}` or `{"Custom": {"name": "started", "data":
+null}}` as its change; one of a channel or its members as `{"ChannelDeleted": ["<session id>",
+"<channel id>"]}`. Global events name sessions and channels by id alone; a client follows them
+with `GET /sessions/{id}`, which answers in the snapshot's own form without starting a stopped
+session.
 
 ### Snapshots
 

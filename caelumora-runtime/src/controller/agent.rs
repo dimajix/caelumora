@@ -92,7 +92,7 @@ impl AgentController {
         self.agents.update(ctx, &agent).await?;
         let attributes = agent.security_attributes.clone();
         self.agent.store(Arc::new(agent));
-        self.event_publisher.publish(GlobalEvent::AgentUpdated(self.id, event), attributes);
+        self.event_publisher.publish(GlobalEvent::updated::<Agent>(&self.id, &event), attributes);
         Ok(())
     }
 
@@ -113,14 +113,13 @@ impl AgentController {
     /// is announced. An event carries the resulting value, so taking over
     /// this controller's own change again changes nothing.
     pub fn process_global_event(&self, event: &GlobalEvent) {
-        if let GlobalEvent::AgentUpdated(aid, update) = event {
-            if *aid == self.id {
-                // Checked where it was made; one that does not fit here is
-                // left out rather than taken over half.
-                match self.apply(update) {
-                    Ok(agent) => self.agent.store(Arc::new(agent)),
-                    Err(e) => tracing::warn!(agent = %self.id, error = %e, "A change of the agent made elsewhere does not fit it"),
-                }
+        let update = event.about::<Agent>().filter(|(aid, _)| *aid == self.id).and_then(|(_, change)| change.update::<AgentUpdateEvent>());
+        if let Some(update) = update {
+            // Checked where it was made; one that does not fit here is left
+            // out rather than taken over half.
+            match self.apply(&update) {
+                Ok(agent) => self.agent.store(Arc::new(agent)),
+                Err(e) => tracing::warn!(agent = %self.id, error = %e, "A change of the agent made elsewhere does not fit it"),
             }
         }
     }
@@ -180,7 +179,7 @@ mod tests {
 
         let context = controller.security_context(session, channel, personality.limiting_roles());
         assert_eq!((context.principal_id, context.roles.clone(), context.limiting_roles.clone()), (ActorId::User(alice.id), vec![staff], Some(vec![staff])));
-        owner.process_global_event(&GlobalEvent::UserUpdated(alice.id, UserUpdateEvent::RolesChanged(vec![staff, hr])));
+        owner.process_global_event(&GlobalEvent::updated::<User>(&alice.id, &UserUpdateEvent::RolesChanged(vec![staff, hr])));
         let context = controller.security_context(session, channel, personality.limiting_roles());
         assert_eq!(context.roles, [staff, hr], "her roles as they are now");
         assert!(context.has_role(staff) && !context.has_role(hr), "but only those its personality names count");

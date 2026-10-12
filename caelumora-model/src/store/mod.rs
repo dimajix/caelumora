@@ -8,7 +8,7 @@ pub(crate) mod suite;
 
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
-use serde::Serialize;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -24,6 +24,7 @@ use crate::value::name::ScopedName;
 use crate::workspace::Workspace;
 use crate::skill::Skill;
 use crate::group::Group;
+use crate::intern::intern;
 use crate::artifact::Artifact;
 use crate::store::query::{NoField, Page, Query};
 
@@ -123,6 +124,21 @@ impl EntityKind {
             let mut letters = word.chars();
             letters.next().map(|first| first.to_ascii_uppercase().to_string() + letters.as_str()).unwrap_or_default()
         }).collect()
+    }
+}
+
+/// Written as its name; read back as the kind of that name (`intern`), so
+/// that an event from another instance (issue 122) names the kind this one
+/// defines - or one nothing here waits for.
+impl Serialize for EntityKind {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for EntityKind {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(|name| Self(intern(&name)))
     }
 }
 

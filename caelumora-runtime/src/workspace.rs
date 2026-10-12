@@ -61,6 +61,9 @@ use tokio_util::task::AbortOnDropHandle;
 use tracing::{info, warn};
 use caelumora_model::removal::Stored;
 use caelumora_model::group::Group;
+use caelumora_model::agent::Agent;
+use caelumora_model::event::EntityChange;
+use caelumora_model::user::User;
 
 /// How often the commands of the storages are checked besides the events
 /// that can change who may run them (issue 254).
@@ -242,7 +245,7 @@ impl WorkspaceManager {
             }
             return Err(e.into());
         }
-        self.events.publish_classified(GlobalEvent::WorkspaceCreated(workspace.id), workspace.security_attributes.clone(), std::slice::from_ref(&workspace.classification));
+        self.events.publish_classified(GlobalEvent::created::<Workspace>(&workspace.id), workspace.security_attributes.clone(), std::slice::from_ref(&workspace.classification));
         info!(workspace = %workspace.id, storage, by = %ctx.caller_id, "Workspace created");
         Ok(workspace)
     }
@@ -299,7 +302,7 @@ impl WorkspaceManager {
         workspace.security_attributes.acl = acl;
         workspace.updated_at = chrono::Utc::now();
         self.workspaces.update(ctx, &workspace).await.map_err(store_error(id))?;
-        self.events.publish_classified(GlobalEvent::WorkspaceUpdated(id, WorkspaceUpdateEvent::AccessChanged), workspace.security_attributes.clone(), std::slice::from_ref(&workspace.classification));
+        self.events.publish_classified(GlobalEvent::updated::<Workspace>(&id, &WorkspaceUpdateEvent::AccessChanged), workspace.security_attributes.clone(), std::slice::from_ref(&workspace.classification));
         info!(workspace = %id, by = %ctx.caller_id, "Workspace's access changed");
         Ok(workspace)
     }
@@ -353,7 +356,7 @@ impl WorkspaceManager {
         }
         workspace.updated_at = chrono::Utc::now();
         self.workspaces.update(ctx, &workspace).await.map_err(store_error(id))?;
-        self.events.publish_classified(GlobalEvent::WorkspaceUpdated(id, event), workspace.security_attributes.clone(), &[had, workspace.classification.clone()]);
+        self.events.publish_classified(GlobalEvent::updated::<Workspace>(&id, &event), workspace.security_attributes.clone(), &[had, workspace.classification.clone()]);
         info!(workspace = %id, by = %ctx.caller_id, "Workspace changed");
         Ok(workspace)
     }
@@ -374,7 +377,7 @@ impl WorkspaceManager {
         if !self.workspaces.delete(ctx, id).await? {
             return Ok(false);
         }
-        self.events.publish_classified(GlobalEvent::WorkspaceDeleted(id), workspace.security_attributes, std::slice::from_ref(&workspace.classification));
+        self.events.publish_classified(GlobalEvent::deleted::<Workspace>(&id), workspace.security_attributes, std::slice::from_ref(&workspace.classification));
         info!(workspace = %id, by = %ctx.caller_id, "Workspace deleted");
         Ok(true)
     }
@@ -388,7 +391,7 @@ impl WorkspaceManager {
     pub async fn restore(&self, ctx: &SecurityContext, id: WorkspaceId) -> WorkspaceResult<Workspace> {
         let _writing = self.writing.lock().await;
         let workspace = self.workspaces.restore(ctx, id).await.map_err(store_error(id))?;
-        self.events.publish_classified(GlobalEvent::WorkspaceRestored(id), workspace.security_attributes.clone(), std::slice::from_ref(&workspace.classification));
+        self.events.publish_classified(GlobalEvent::restored::<Workspace>(&id), workspace.security_attributes.clone(), std::slice::from_ref(&workspace.classification));
         info!(workspace = %id, by = %ctx.caller_id, "Workspace restored");
         Ok(workspace)
     }
@@ -666,7 +669,7 @@ impl ScopeMember for WorkspaceManager {
         let mut left = 0;
         for workspace in self.workspaces.list(&system, &within(holder)).await?.items {
             if deleted_unless_refused(self.workspaces.delete(ctx, workspace.id).await)? {
-                self.events.publish_classified(GlobalEvent::WorkspaceDeleted(workspace.id), workspace.security_attributes, std::slice::from_ref(&workspace.classification));
+                self.events.publish_classified(GlobalEvent::deleted::<Workspace>(&workspace.id), workspace.security_attributes, std::slice::from_ref(&workspace.classification));
             } else {
                 left += 1;
             }
@@ -687,7 +690,7 @@ impl ScopeMember for WorkspaceManager {
         let _writing = self.writing.lock().await;
         for workspace in deleted_since(self.workspaces.list_deleted(&system, &within(holder)).await?.items, since) {
             if let Some(restored) = restored_unless_refused(self.workspaces.restore(ctx, workspace.id).await, &workspace)? {
-                self.events.publish_classified(GlobalEvent::WorkspaceRestored(restored.id), restored.security_attributes, std::slice::from_ref(&restored.classification));
+                self.events.publish_classified(GlobalEvent::restored::<Workspace>(&restored.id), restored.security_attributes, std::slice::from_ref(&restored.classification));
             }
         }
         Ok(())
@@ -755,13 +758,14 @@ async fn check_commands(manager: Weak<WorkspaceManager>, mut events: broadcast::
 /// Whether `event` can change who may run a command in a channel: the
 /// session, the channel, its members, the workspace or who someone is.
 fn changes_who_may_run(event: &GlobalEvent) -> bool {
-    matches!(event,
-        GlobalEvent::SessionUpdated(..) | GlobalEvent::SessionDeleted(_)
-        | GlobalEvent::ChannelUpdated(..) | GlobalEvent::ChannelDeleted(..)
-        | GlobalEvent::AgentChannelLeft(..) | GlobalEvent::UserChannelLeft(..)
-        | GlobalEvent::AgentUpdated(..) | GlobalEvent::AgentDeleted(_)
-        | GlobalEvent::UserUpdated(..) | GlobalEvent::UserDeleted(_)
-        | GlobalEvent::WorkspaceUpdated(..) | GlobalEvent::WorkspaceDeleted(_))
+    match event {
+        GlobalEvent::Entity { kind, change: EntityChange::Updated(_) | EntityChange::Deleted, .. } => {
+            [Session::KIND, Agent::KIND, User::KIND, Workspace::KIND].contains(kind)
+        }
+        GlobalEvent::ChannelUpdated(..) | GlobalEvent::ChannelDeleted(..)
+        | GlobalEvent::AgentChannelLeft(..) | GlobalEvent::UserChannelLeft(..) => true,
+        _ => false,
+    }
 }
 
 /// What the tests of the components that work on a workspace share: a

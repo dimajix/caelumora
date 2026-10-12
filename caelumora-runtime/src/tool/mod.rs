@@ -667,6 +667,7 @@ pub fn register_all(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::event::GlobalEvent;
     use crate::agent::turn::Turn;
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::{AgentChannelState, AgentId};
@@ -873,7 +874,7 @@ mod tests {
 
         // As if set in another instance, and announced.
         let denying = caelumora_model::session::SessionUpdateEvent::ApprovalRulesChanged(vec![rule("test_tool", RuleDecision::Deny)]);
-        session.process_global_event(&caelumora_model::event::GlobalEvent::SessionUpdated(session.id(), denying));
+        session.process_global_event(&GlobalEvent::updated::<Session>(&session.id(), &denying));
         let result = executor.execute(&call("test_tool"), None, &mut turn, std::future::pending()).await;
         assert_eq!(result.status, ToolResultStatus::Forbidden, "as it stands when run");
         assert!(result.started_at.is_none(), "it never ran");

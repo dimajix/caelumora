@@ -66,7 +66,7 @@ impl AgentManager {
         if !self.agents.delete(context, id).await? {
             return Ok(false);
         }
-        self.events.publish(GlobalEvent::AgentDeleted(id), agent.security_attributes);
+        self.events.publish(GlobalEvent::deleted::<Agent>(&id), agent.security_attributes);
         info!("Agent {} deleted by {}", id, context.caller_id);
         Ok(true)
     }
@@ -83,7 +83,7 @@ impl AgentManager {
     /// name in its scope meanwhile (issue 250).
     pub async fn restore(&self, context: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
         let agent = self.agents.restore(context, id).await?;
-        self.events.publish(GlobalEvent::AgentRestored(id), agent.security_attributes.clone());
+        self.events.publish(GlobalEvent::restored::<Agent>(&id), agent.security_attributes.clone());
         info!("Agent {} restored by {}", id, context.caller_id);
         Ok(agent)
     }
@@ -128,7 +128,7 @@ impl ScopeMember for AgentManager {
         let mut left = 0;
         for agent in self.agents.list(&system, &within(holder)).await?.items {
             if deleted_unless_refused(self.agents.delete(ctx, agent.id).await)? {
-                self.events.publish(GlobalEvent::AgentDeleted(agent.id), agent.security_attributes);
+                self.events.publish(GlobalEvent::deleted::<Agent>(&agent.id), agent.security_attributes);
             } else {
                 left += 1;
             }
@@ -148,7 +148,7 @@ impl ScopeMember for AgentManager {
         let system = SecurityContext::system();
         for agent in deleted_since(self.agents.list_deleted(&system, &within(holder)).await?.items, since) {
             if let Some(restored) = restored_unless_refused(self.agents.restore(ctx, agent.id).await, &agent)? {
-                self.events.publish(GlobalEvent::AgentRestored(restored.id), restored.security_attributes);
+                self.events.publish(GlobalEvent::restored::<Agent>(&restored.id), restored.security_attributes);
             }
         }
         Ok(())

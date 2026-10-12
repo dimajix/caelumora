@@ -115,8 +115,8 @@ per personality.
     memory is now.
 *   **Taken over on the current state.** A staged change is applied to the agent's state as it is
     when the turn is taken over, under the state handle's lock, stored and announced
-    (`AgentStateChanged`). Actors of the same agent in other channels and sessions thus neither lose
-    nor overwrite each other's changes (see [STORAGE.md](STORAGE.md)).
+    (`agent::STATE_CHANGED`). Actors of the same agent in other channels and sessions thus neither
+    lose nor overwrite each other's changes (see [STORAGE.md](STORAGE.md)).
 *   **Numbers.** Unlike a note's, the number of a new entry is reserved at once on the agent's
     shared state, since turns in several channels may remember at the same time. This is
     deliberately the one exception to "commit, don't write".

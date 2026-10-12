@@ -1,10 +1,14 @@
-// What the session list does with an event of the global stream (issue 35).
+// What the views do with an event of the global stream (issue 35).
 //
-// Most events name a session by id alone; the list follows them by
-// removing the session, taking a new name straight from the event, or
-// fetching the session again (`GET /sessions/{id}`), which answers in the
-// form the snapshot uses. Events that do not change what the list shows are
-// ignored.
+// An event about an entity named by its own id - a session, an agent, a
+// user, a profile, a workspace, a skill, an artifact, a group - comes in one
+// form (issue 323): `{"Entity": {"kind", "id", "change"}}`. The events of a
+// channel and of its members name the session too, and keep a variant each.
+//
+// The session list follows a session's events by removing the session,
+// taking a new name straight from the event, or fetching the session again
+// (`GET /sessions/{id}`), which answers in the form the snapshot uses.
+// Events that do not change what the list shows are ignored.
 
 import type {ApprovalRule, GlobalEvent} from './types';
 import type {Classification} from './confidentiality';
@@ -15,12 +19,40 @@ export type SessionChange =
   | {kind: 'refresh'; sessionId: string}
   | {kind: 'ignore'};
 
+/**
+ * What happened to an entity: one of the four of its life, the same for
+ * every kind, or something particular to its kind under a name of its own -
+ * a session `started`, an agent's `state_changed`.
+ */
+export type EntityChange =
+  | 'Created'
+  | 'Deleted'
+  | 'Restored'
+  | {Updated: unknown}
+  | {Custom: {name: string; data: unknown}};
+
+/** An event about an entity, named by its kind and its own id. */
+export interface EntityEvent {
+  kind: string;
+  id: string;
+  change: EntityChange;
+}
+
+/** The entity `event` is about and what happened to it; `null` for an event of a channel or its members. */
+export function entityEvent(event: GlobalEvent): EntityEvent | null {
+  const entity = event.Entity as Partial<EntityEvent> | undefined;
+  if (!entity || typeof entity.kind !== 'string' || typeof entity.id !== 'string' || entity.change === undefined) return null;
+  return entity as EntityEvent;
+}
+
+/** What an update says, in the form of the kind's update event; `undefined` for another change. */
+export function updateOf(change: EntityChange): unknown {
+  return typeof change === 'object' && 'Updated' in change ? change.Updated : undefined;
+}
+
 // Events that change a session's channels or their members: the session is
-// fetched again. Starting and stopping change neither, and agents and users
-// themselves are not shown in the list.
+// fetched again. Agents and users themselves are not shown in the list.
 const REFRESHING = new Set([
-  'SessionCreated',
-  'SessionRestored',
   'ChannelRestored',
   'ChannelCreated',
   'ChannelUpdated',
@@ -31,7 +63,7 @@ const REFRESHING = new Set([
   'UserChannelLeft',
 ]);
 
-/** The session an event concerns: its only value, or the first of several. */
+/** The session an event of a channel concerns: the first of its values. */
 function sessionIdOf(value: unknown): string | null {
   if (typeof value === 'string') return value;
   if (Array.isArray(value) && typeof value[0] === 'string') return value[0];
@@ -40,17 +72,22 @@ function sessionIdOf(value: unknown): string | null {
 
 /** What the session list does with `event`. */
 export function sessionChange(event: GlobalEvent): SessionChange {
+  const entity = entityEvent(event);
+  if (entity) {
+    if (entity.kind !== 'session') return {kind: 'ignore'};
+    const {id: sessionId, change} = entity;
+    if (change === 'Deleted') return {kind: 'remove', sessionId};
+    if (change === 'Created' || change === 'Restored') return {kind: 'refresh', sessionId};
+    const update = updateOf(change);
+    if (update === undefined) return {kind: 'ignore'};
+    const name = update && typeof update === 'object' ? (update as {NameChanged?: unknown}).NameChanged : undefined;
+    return typeof name === 'string' ? {kind: 'rename', sessionId, name} : {kind: 'refresh', sessionId};
+  }
+
   const [kind, value] = Object.entries(event)[0] ?? [];
   if (!kind) return {kind: 'ignore'};
   const sessionId = sessionIdOf(value);
   if (!sessionId) return {kind: 'ignore'};
-
-  if (kind === 'SessionDeleted') return {kind: 'remove', sessionId};
-  if (kind === 'SessionUpdated') {
-    const update = Array.isArray(value) ? value[1] : undefined;
-    const name = update && typeof update === 'object' ? (update as {NameChanged?: unknown}).NameChanged : undefined;
-    return typeof name === 'string' ? {kind: 'rename', sessionId, name} : {kind: 'refresh', sessionId};
-  }
   if (REFRESHING.has(kind)) return {kind: 'refresh', sessionId};
   return {kind: 'ignore'};
 }
@@ -160,12 +197,14 @@ export function approvalRulesChangedChannel(event: GlobalEvent): {channelId: str
 }
 
 /**
- * The rules of the logged-in user now, for `UserProfileUpdated` (issue 13) -
- * which reaches only the user whose profile it is; `null` for any other
- * event.
+ * The rules of the logged-in user now, for an update of a `user_profile`
+ * (issue 13), which comes as the profile now stands and reaches only the user
+ * whose profile it is; `null` for any other event.
  */
 export function profileApprovalRules(event: GlobalEvent): ApprovalRule[] | null {
-  const value = event.UserProfileUpdated;
-  if (!Array.isArray(value) || typeof value[1] !== 'object' || value[1] === null) return null;
-  return (value[1] as {approval_rules?: ApprovalRule[]}).approval_rules ?? [];
+  const entity = entityEvent(event);
+  if (entity?.kind !== 'user_profile') return null;
+  const profile = updateOf(entity.change);
+  if (typeof profile !== 'object' || profile === null) return null;
+  return (profile as {approval_rules?: ApprovalRule[]}).approval_rules ?? [];
 }

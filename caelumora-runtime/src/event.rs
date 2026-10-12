@@ -10,14 +10,10 @@ use tracing::warn;
 use std::sync::{Arc, Mutex, OnceLock};
 use tokio::sync::{broadcast, mpsc};
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
-use caelumora_model::artifact::Artifact;
 use caelumora_model::channel::Channel;
-use caelumora_model::group::Group;
 use caelumora_model::session::Session;
-use caelumora_model::skill::Skill;
 
 
-use caelumora_model::workspace::Workspace;
 use caelumora_model::removal::Stored;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -56,18 +52,8 @@ impl PublishedEvent {
     /// by the channel's attributes, as reading the channel (issue 304).
     fn read_action(&self) -> ActionType<'_> {
         let kind = match self.event {
-            GlobalEvent::AgentCreated(..) | GlobalEvent::AgentUpdated(..) | GlobalEvent::AgentDeleted(..) | GlobalEvent::AgentRestored(..) | GlobalEvent::AgentStateChanged(_) => Agent::KIND,
-            GlobalEvent::ChannelCreated(..) | GlobalEvent::ChannelUpdated(..) | GlobalEvent::ChannelDeleted(..) | GlobalEvent::ChannelRestored(..)
-            | GlobalEvent::ChannelStarted(..) | GlobalEvent::ChannelStopped(..)
-            | GlobalEvent::AgentChannelJoined(..) | GlobalEvent::AgentChannelLeft(..) | GlobalEvent::AgentChannelStateChanged(..)
-            | GlobalEvent::UserChannelJoined(..) | GlobalEvent::UserChannelLeft(..) => Channel::KIND,
-            GlobalEvent::UserCreated(_) | GlobalEvent::UserUpdated(..) | GlobalEvent::UserDeleted(_) => User::KIND,
-            GlobalEvent::UserProfileUpdated(..) => UserProfile::KIND,
-            GlobalEvent::WorkspaceCreated(_) | GlobalEvent::WorkspaceUpdated(..) | GlobalEvent::WorkspaceDeleted(_) | GlobalEvent::WorkspaceRestored(_) => Workspace::KIND,
-            GlobalEvent::SkillCreated(_) | GlobalEvent::SkillUpdated(..) | GlobalEvent::SkillDeleted(_) | GlobalEvent::SkillRestored(_) => Skill::KIND,
-            GlobalEvent::GroupCreated(_) | GlobalEvent::GroupUpdated(..) | GlobalEvent::GroupDeleted(_) | GlobalEvent::GroupRestored(_) => Group::KIND,
-            GlobalEvent::ArtifactPublished(..) | GlobalEvent::ArtifactUpdated(_) | GlobalEvent::ArtifactDeleted(_) | GlobalEvent::ArtifactRestored(_) => Artifact::KIND,
-            _ => Session::KIND,
+            GlobalEvent::Entity { kind, .. } => kind,
+            _ => Channel::KIND,
         };
         ActionType::get(kind, self.security_attributes())
     }
@@ -267,43 +253,30 @@ impl EventBus {
         let mut topics_to_notify = vec![SubscriptionTopic::All];
 
         match &event {
-            GlobalEvent::SessionCreated(sid) | GlobalEvent::SessionUpdated(sid, _) | GlobalEvent::SessionDeleted(sid) | GlobalEvent::SessionRestored(sid) |
-            GlobalEvent::SessionStarted(sid) | GlobalEvent::SessionStopped(sid) => {
-                topics_to_notify.push(SubscriptionTopic::Session(*sid));
+            GlobalEvent::Entity { .. } => {
+                if let Some((sid, _)) = event.about::<Session>() {
+                    topics_to_notify.push(SubscriptionTopic::Session(sid));
+                } else if let Some((aid, _)) = event.about::<Agent>() {
+                    topics_to_notify.push(SubscriptionTopic::Agent(aid));
+                } else if let Some((uid, _)) = event.about::<User>().or_else(|| event.about::<UserProfile>()) {
+                    topics_to_notify.push(SubscriptionTopic::User(uid));
+                }
+                // Other kinds have no topic of their own until something
+                // follows one of them (issues 253, 22, 271, 286): `All`, and
+                // whoever may read it.
             }
             GlobalEvent::ChannelCreated(sid, cid) | GlobalEvent::ChannelUpdated(sid, cid, _) | GlobalEvent::ChannelDeleted(sid, cid) | GlobalEvent::ChannelRestored(sid, cid) |
-            GlobalEvent::ChannelStarted(sid, cid) | GlobalEvent::ChannelStopped(sid, cid) => {
+            GlobalEvent::ChannelStarted(sid, cid) | GlobalEvent::ChannelStopped(sid, cid) |
+            GlobalEvent::AgentChannelJoined(sid, cid, _) | GlobalEvent::AgentChannelLeft(sid, cid, _) |
+            GlobalEvent::UserChannelJoined(sid, cid, _) | GlobalEvent::UserChannelLeft(sid, cid, _) => {
                 topics_to_notify.push(SubscriptionTopic::Session(*sid));
                 topics_to_notify.push(SubscriptionTopic::Channel(*cid));
-            }
-            GlobalEvent::AgentCreated(aid) | GlobalEvent::AgentUpdated(aid, _) | GlobalEvent::AgentDeleted(aid) | GlobalEvent::AgentRestored(aid) => {
-                topics_to_notify.push(SubscriptionTopic::Agent(*aid));
-            }
-            GlobalEvent::AgentStateChanged(aid) => {
-                topics_to_notify.push(SubscriptionTopic::Agent(*aid));
             }
             GlobalEvent::AgentChannelStateChanged(sid, cid, aid) => {
                 topics_to_notify.push(SubscriptionTopic::Session(*sid));
                 topics_to_notify.push(SubscriptionTopic::Channel(*cid));
                 topics_to_notify.push(SubscriptionTopic::Agent(*aid));
             }
-            GlobalEvent::UserCreated(uid) | GlobalEvent::UserUpdated(uid, _) | GlobalEvent::UserDeleted(uid) | GlobalEvent::UserProfileUpdated(uid, _) => {
-                topics_to_notify.push(SubscriptionTopic::User(*uid));
-            }
-            GlobalEvent::AgentChannelJoined(sid, cid, _) | GlobalEvent::AgentChannelLeft(sid, cid, _) |
-            GlobalEvent::UserChannelJoined(sid, cid, _) | GlobalEvent::UserChannelLeft(sid, cid, _) => {
-                topics_to_notify.push(SubscriptionTopic::Session(*sid));
-                topics_to_notify.push(SubscriptionTopic::Channel(*cid));
-            }
-            // No topic of their own until something follows one workspace
-            // (issue 253): `All`, and whoever may read it.
-            GlobalEvent::WorkspaceCreated(_) | GlobalEvent::WorkspaceUpdated(..) | GlobalEvent::WorkspaceDeleted(_) | GlobalEvent::WorkspaceRestored(_) => {}
-            // Likewise for skills (issue 22).
-            GlobalEvent::SkillCreated(_) | GlobalEvent::SkillUpdated(..) | GlobalEvent::SkillDeleted(_) | GlobalEvent::SkillRestored(_) => {}
-            // Likewise for artifacts (issue 271).
-            GlobalEvent::ArtifactPublished(..) | GlobalEvent::ArtifactUpdated(_) | GlobalEvent::ArtifactDeleted(_) | GlobalEvent::ArtifactRestored(_) => {}
-            // Likewise for groups (issue 286).
-            GlobalEvent::GroupCreated(_) | GlobalEvent::GroupUpdated(..) | GlobalEvent::GroupDeleted(_) | GlobalEvent::GroupRestored(_) => {}
         }
 
         for topic in topics_to_notify {
@@ -330,13 +303,15 @@ mod tests {
     use std::time::Duration;
     use caelumora_model::channel::ChannelUpdateEvent;
     use caelumora_model::security::{Grant, Subject};
+    use caelumora_model::event::EntityChange;
+    use caelumora_model::workspace::Workspace;
 
     fn bus() -> EventBus {
         EventBus::new(Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()))
     }
 
     fn created() -> GlobalEvent {
-        GlobalEvent::SessionCreated(SessionId::new())
+        GlobalEvent::created::<Session>(&SessionId::new())
     }
 
     #[tokio::test]
@@ -359,12 +334,12 @@ mod tests {
             bus.publish(created(), Default::default());
         }
         let deleted = SessionId::new();
-        bus.publish(GlobalEvent::SessionDeleted(deleted), Default::default());
+        bus.publish(GlobalEvent::deleted::<Session>(&deleted), Default::default());
 
         let mut received = 0;
         while let Some(event) = subscription.try_recv() {
             received += 1;
-            if matches!(event, GlobalEvent::SessionDeleted(id) if id == deleted) {
+            if event.about::<Session>() == Some((deleted, &EntityChange::Deleted)) {
                 break;
             }
         }
@@ -402,15 +377,18 @@ mod tests {
 
         let hers = SecurityAttributes::owned_by(ActorId::User(alice)).granting(caelumora_model::security::Subject::Actor(ActorId::User(bob)), caelumora_model::security::Grant::Read);
         let (session, deleted) = (SessionId::new(), SessionId::new());
-        bus.publish(GlobalEvent::SessionCreated(session), hers.clone());
+        bus.publish(GlobalEvent::created::<Session>(&session), hers.clone());
         bus.publish(GlobalEvent::ChannelCreated(session, ChannelId::new()), hers.clone());
-        bus.publish(GlobalEvent::SessionDeleted(deleted), hers.clone());
-        bus.publish(GlobalEvent::UserCreated(carol), SecurityAttributes::owned_by(ActorId::User(carol)));
+        bus.publish(GlobalEvent::deleted::<Session>(&deleted), hers.clone());
+        bus.publish(GlobalEvent::created::<User>(&carol), SecurityAttributes::owned_by(ActorId::User(carol)));
 
-        let kinds = |events: Vec<GlobalEvent>| events.iter().map(|e| format!("{e:?}").split('(').next().unwrap().to_string()).collect::<Vec<_>>();
-        assert_eq!(kinds(drain(&mut alices).await), ["SessionCreated", "ChannelCreated", "SessionDeleted"], "the owner gets it all, in order - a deletion too");
-        assert_eq!(kinds(drain(&mut bobs).await), ["SessionCreated", "ChannelCreated", "SessionDeleted"], "so does a contributor");
-        assert_eq!(kinds(drain(&mut carols).await), ["UserCreated"], "a stranger only her own user event");
+        let kinds = |events: Vec<GlobalEvent>| events.iter().map(|e| match e {
+            GlobalEvent::Entity { kind, change, .. } => format!("{kind} {change:?}"),
+            other => format!("{other:?}").split('(').next().unwrap().to_string(),
+        }).collect::<Vec<_>>();
+        assert_eq!(kinds(drain(&mut alices).await), ["session Created", "ChannelCreated", "session Deleted"], "the owner gets it all, in order - a deletion too");
+        assert_eq!(kinds(drain(&mut bobs).await), ["session Created", "ChannelCreated", "session Deleted"], "so does a contributor");
+        assert_eq!(kinds(drain(&mut carols).await), ["user Created"], "a stranger only her own user event");
     }
 
     #[tokio::test]
@@ -433,7 +411,7 @@ mod tests {
         let mut alices = bus.subscribe_as(as_user(alice));
         let (session, channel) = (SessionId::new(), ChannelId::new());
         let attributes = SecurityAttributes::owned_by(ActorId::User(alice));
-        bus.publish(GlobalEvent::SessionCreated(session), attributes.clone());
+        bus.publish(GlobalEvent::created::<Session>(&session), attributes.clone());
         bus.publish(GlobalEvent::ChannelCreated(session, channel), attributes.clone());
         bus.publish(GlobalEvent::UserChannelJoined(session, channel, alice), attributes.clone());
         bus.publish(GlobalEvent::AgentChannelStateChanged(session, channel, caelumora_model::agent::AgentId::new()), attributes);
@@ -476,7 +454,7 @@ mod tests {
 
         let profile = caelumora_model::user::UserProfile::new(alice, Some(caelumora_model::value::text::Introduction::new("I run the budget.").unwrap()));
         let attributes = caelumora_model::security::Secured::security_attributes(&profile).clone();
-        bus.publish(GlobalEvent::UserProfileUpdated(alice, profile), attributes);
+        bus.publish(GlobalEvent::updated::<UserProfile>(&alice, &profile), attributes);
 
         assert_eq!(drain(&mut alices).await.len(), 1, "hers");
         assert!(drain(&mut bobs).await.is_empty(), "not his, although her user record is everybody's");
@@ -494,8 +472,8 @@ mod tests {
         let mut workspace = caelumora_model::workspace::Workspace::new(caelumora_model::value::name::ScopedName::new("docs", caelumora_model::scope::Scope::UserScope { user_id: alice }).unwrap(), "main", Default::default(), alice);
         workspace.security_attributes.acl.push(caelumora_model::security::AclEntry { subject: caelumora_model::security::Subject::Actor(ActorId::User(bob)), grant: caelumora_model::security::Grant::Read });
         let attributes = workspace.security_attributes.clone();
-        bus.publish(GlobalEvent::WorkspaceCreated(workspace.id), attributes.clone());
-        bus.publish(GlobalEvent::WorkspaceDeleted(workspace.id), attributes);
+        bus.publish(GlobalEvent::created::<Workspace>(&workspace.id), attributes.clone());
+        bus.publish(GlobalEvent::deleted::<Workspace>(&workspace.id), attributes);
 
         assert_eq!(drain(&mut alices).await.len(), 2, "its owner");
         assert_eq!(drain(&mut bobs).await.len(), 2, "a contributor");
@@ -507,7 +485,7 @@ mod tests {
     async fn what_belongs_to_the_system_reaches_every_party() {
         let bus = EventBus::new(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()));
         let mut someone = bus.subscribe_as(as_user(UserId::new()));
-        bus.publish(GlobalEvent::SessionCreated(SessionId::new()), SecurityAttributes::default());
+        bus.publish(GlobalEvent::created::<Session>(&SessionId::new()), SecurityAttributes::default());
         assert_eq!(drain(&mut someone).await.len(), 1);
     }
 
@@ -516,7 +494,7 @@ mod tests {
         let bus = EventBus::new(Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()));
         drop(bus.subscribe_as(as_user(UserId::new())));
         let mut kept = bus.subscribe_as(as_user(UserId::new()));
-        bus.publish(GlobalEvent::SessionCreated(SessionId::new()), SecurityAttributes::default());
+        bus.publish(GlobalEvent::created::<Session>(&SessionId::new()), SecurityAttributes::default());
         drain(&mut kept).await;
         assert_eq!(bus.parties.lock().unwrap().len(), 1);
     }
